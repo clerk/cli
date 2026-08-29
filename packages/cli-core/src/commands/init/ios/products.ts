@@ -22,36 +22,21 @@ export function shouldInstallClerkKitUI(target: IOSAppTarget): boolean {
   return clerkKitUIInstallDecision(target) === "prebuilt";
 }
 
-export function hasIOSProvenStartupKeyWiring(
-  target: IOSAppTarget,
-  wiring: "local-secrets-loader" | "process-info-environment",
-): boolean {
-  return target.swift.configureCalls.some(
-    (call) =>
-      call.startupBinding === "app-init" &&
-      call.publishableKeyWiring === wiring &&
-      (wiring !== "local-secrets-loader" || call.localSecretsRuntimeBinding === "proven"),
-  );
-}
-
-/** Existing runtime-key routes that direct source configuration must preserve. */
+/** Existing custom runtime-key routes that direct source configuration must preserve. */
 export function hasIOSDirectConfigCompatibility(
   inspection: IOSProjectInspectionResult,
   target: IOSAppTarget,
 ): boolean {
-  // Preserve the inspection parameter for callers that make this decision
-  // from a complete inspection, but never infer runtime wiring from artifacts.
+  // A custom expression belongs to the developer. Its value and loading
+  // strategy are deliberately not interpreted by the inspector.
   void inspection;
-  return (
-    hasIOSProvenStartupKeyWiring(target, "local-secrets-loader") ||
-    hasIOSProvenStartupKeyWiring(target, "process-info-environment")
-  );
+  return target.swift.configureCalls.some((call) => call.publishableKeyWiring === "custom");
 }
 
 /**
  * Routes only the fresh/direct-literal Swift path to the source mutator.
- * Existing LocalSecrets and ProcessInfo integrations remain compatibility
- * paths and are never rewritten into a literal automatically.
+ * Existing custom integrations remain compatibility paths and are never
+ * rewritten into a literal automatically.
  */
 export function shouldPlanIOSDirectConfig(
   inspection: IOSProjectInspectionResult,

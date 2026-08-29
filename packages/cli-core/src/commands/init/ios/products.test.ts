@@ -14,7 +14,6 @@ function target(): IOSAppTarget {
     projectPath: "MyApp.xcodeproj",
     configurations: [],
     packages: { package: "absent", clerkKit: "absent", clerkKitUI: "absent" },
-    runtimeKeySinks: [],
     swift: {
       sourceFilesScanned: 1,
       evidenceComplete: true,
@@ -22,7 +21,6 @@ function target(): IOSAppTarget {
       importsClerkKit: [],
       importsClerkKitUI: [],
       configureCalls: [],
-      localSecretsRuntimeBindings: [],
       environmentInjections: [],
       environmentConsumers: [],
       authFlowReferences: [],
@@ -101,18 +99,15 @@ describe("shouldInstallClerkKitUI", () => {
 });
 
 describe("direct configuration compatibility", () => {
-  test.each(["local-secrets-loader", "process-info-environment"] as const)(
-    "preserves a proven startup %s configure route",
-    (publishableKeyWiring) => {
+  test.each(["app-init", "unproven"] as const)(
+    "preserves a custom configure route with %s placement",
+    (startupBinding) => {
       const selected = target();
       selected.swift.configureCalls = [
         {
           path: "MyApp/MyAppApp.swift",
-          publishableKeyWiring,
-          startupBinding: "app-init",
-          ...(publishableKeyWiring === "local-secrets-loader"
-            ? { localSecretsRuntimeBinding: "proven" as const }
-            : {}),
+          publishableKeyWiring: "custom",
+          startupBinding,
         },
       ];
       const result = inspection(selected);
@@ -122,47 +117,20 @@ describe("direct configuration compatibility", () => {
     },
   );
 
-  test("does not infer compatibility from an enabled selected-target scheme key", () => {
+  test("plans direct configuration for a documented inline literal", () => {
     const selected = target();
-    const result = inspection(selected);
-    result.localPublishableKey.candidateSources = [
-      "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
+    selected.swift.configureCalls = [
+      {
+        path: "MyApp/MyAppApp.swift",
+        publishableKeyWiring: "inline-literal",
+        inlinePublishableKey: {
+          state: "valid",
+          frontendApiHost: "example.clerk.accounts.dev",
+          instanceType: "development",
+        },
+        startupBinding: "app-init",
+      },
     ];
-
-    expect(hasIOSDirectConfigCompatibility(result, selected)).toBe(false);
-    expect(shouldPlanIOSDirectConfig(result, selected)).toBe(true);
-  });
-
-  test("does not infer compatibility from a target-owned runtime key sink", () => {
-    const selected = target();
-    selected.runtimeKeySinks = [{ kind: "local-secrets-plist", path: "MyApp/LocalSecrets.plist" }];
-    const result = inspection(selected);
-
-    expect(hasIOSDirectConfigCompatibility(result, selected)).toBe(false);
-    expect(shouldPlanIOSDirectConfig(result, selected)).toBe(true);
-  });
-
-  test.each([
-    {
-      name: "non-startup ProcessInfo",
-      publishableKeyWiring: "process-info-environment" as const,
-      startupBinding: "unproven" as const,
-    },
-    {
-      name: "non-startup LocalSecrets",
-      publishableKeyWiring: "local-secrets-loader" as const,
-      startupBinding: "unproven" as const,
-      localSecretsRuntimeBinding: "proven" as const,
-    },
-    {
-      name: "unproven LocalSecrets loader",
-      publishableKeyWiring: "local-secrets-loader" as const,
-      startupBinding: "app-init" as const,
-      localSecretsRuntimeBinding: "unproven" as const,
-    },
-  ])("does not preserve $name wiring", (configureCall) => {
-    const selected = target();
-    selected.swift.configureCalls = [{ path: "MyApp/Auth.swift", ...configureCall }];
     const result = inspection(selected);
 
     expect(hasIOSDirectConfigCompatibility(result, selected)).toBe(false);

@@ -1,8 +1,6 @@
-import { readdir, stat } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { dirname, extname, relative, resolve, sep } from "node:path";
 import { parse as parsePbxProject } from "@bacons/xcode/json";
-import { parseEnvFile } from "../../../lib/dotenv.ts";
-import { decodePublishableKey } from "../../../lib/fapi.ts";
 import {
   addBuildSettingConflictDiagnostics,
   inspectTargetBuildConfigurations,
@@ -14,11 +12,8 @@ import {
   discoverIOSContainers,
   discoverReferencedIOSProjects,
   inspectWorkspace,
-  maskXMLComments,
   pathIsSafelyWithinIOSRoot,
   relativeIOSPath,
-  xcodeSchemeRunnableReferenceAttributes,
-  xmlAttribute,
 } from "./discovery.ts";
 import { hasInterruptedIOSFileTransaction } from "./file-transaction.ts";
 import { localClerkIOSPackageIsStructurallyValid } from "./local-package.ts";
@@ -35,7 +30,6 @@ import {
   type PbxObjects,
 } from "./pbx.ts";
 import { parseIOSPlist } from "./plist.ts";
-import { hasIOSProvenStartupKeyWiring } from "./products.ts";
 import { inspectSwiftSources } from "./swift.ts";
 import type {
   IOSAppTarget,
@@ -57,11 +51,6 @@ const MAX_ENTITLEMENTS_BYTES = 2_000_000;
 const MAX_PBXPROJ_BYTES = 15_000_000;
 const MAX_SOURCE_FILES = 2_500;
 const MAX_SOURCE_DEPTH = 24;
-const MAX_SCHEME_DISCOVERY_DEPTH = 6;
-const MAX_SCHEME_FILES = 100;
-const RUN_SCHEME_PRIORITY = 5;
-const MAX_SECRET_DISCOVERY_DEPTH = 5;
-const MAX_SECRET_FILES = 20;
 const SOURCE_IGNORES = new Set([
   ".build",
   ".git",
@@ -94,14 +83,6 @@ const sourceMembershipByInspection = new WeakMap<
   IOSTargetSourceMembership[]
 >();
 
-interface LocalSecretsDiscovery {
-  paths: string[];
-  complete: boolean;
-  evidence: IOSSourceEvidence[];
-}
-
-const localSecretsDiscoveryByTarget = new WeakMap<IOSAppTarget, LocalSecretsDiscovery>();
-
 function emptySwiftInspection() {
   return {
     sourceFilesScanned: 0,
@@ -110,7 +91,6 @@ function emptySwiftInspection() {
     importsClerkKit: [],
     importsClerkKitUI: [],
     configureCalls: [],
-    localSecretsRuntimeBindings: [],
     environmentInjections: [],
     environmentConsumers: [],
     authFlowReferences: [],
@@ -152,602 +132,73 @@ function buildFileIOSApplicability(object: PbxObject): {
   return { applies: false, recognized };
 }
 
-interface PublishableKeyCandidate {
-  kind:
-    | "inline-literal"
-    | "run-scheme"
-    | "local-secrets-plist"
-    | "environment-file"
-    | "keyless-file"
-    | "ambient-environment";
-  value?: string;
-  decoded?: { frontendApiHost: string; instanceType: "development" | "production" };
-  invalid?: true;
-  source: string;
-  evidence: IOSSourceEvidence[];
-  priority: number;
-  ambient?: true;
-}
-
-interface SchemeDiscoveryState {
-  paths: string[];
-  complete: boolean;
-  incompletePaths: Set<string>;
-}
-
-function markSchemeDiscoveryIncomplete(state: SchemeDiscoveryState, path: string): void {
-  state.complete = false;
-  state.incompletePaths.add(path);
-}
-
-async function collectSchemeFiles(
-  root: string,
-  directory: string,
-  state: SchemeDiscoveryState,
-  depth = 0,
-): Promise<void> {
-  if (depth > MAX_SCHEME_DISCOVERY_DEPTH) {
-    markSchemeDiscoveryIncomplete(state, directory);
-    return;
-  }
-  let entries;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch {
-    markSchemeDiscoveryIncomplete(state, directory);
-    return;
-  }
-  entries.sort((a, b) => a.name.localeCompare(b.name));
-  for (const entry of entries) {
-    const path = resolve(directory, entry.name);
-    if (entry.isSymbolicLink()) {
-      let couldHideScheme = entry.name.endsWith(".xcscheme");
-      if (!couldHideScheme) {
-        if (!(await pathIsSafelyWithinIOSRoot(root, path))) {
-          couldHideScheme = true;
-        } else {
-          try {
-            couldHideScheme = (await stat(path)).isDirectory();
-          } catch {
-            couldHideScheme = true;
-          }
-        }
-      }
-      if (couldHideScheme) markSchemeDiscoveryIncomplete(state, path);
-      continue;
-    }
-    if (entry.isDirectory()) {
-      if (state.paths.length >= MAX_SCHEME_FILES) {
-        markSchemeDiscoveryIncomplete(state, path);
-      } else {
-        await collectSchemeFiles(root, path, state, depth + 1);
-      }
-    } else if (entry.isFile() && entry.name.endsWith(".xcscheme")) {
-      if (state.paths.length >= MAX_SCHEME_FILES) {
-        markSchemeDiscoveryIncomplete(state, path);
-      } else if (await pathIsSafelyWithinIOSRoot(root, path)) {
-        state.paths.push(path);
-      } else {
-        markSchemeDiscoveryIncomplete(state, path);
-      }
-    }
-  }
-}
-
-function enclosingXcodeContainer(path: string): string | undefined {
-  let current = dirname(path);
-  while (true) {
-    if (current.endsWith(".xcodeproj") || current.endsWith(".xcworkspace")) return current;
-    const parent = dirname(current);
-    if (parent === current) return undefined;
-    current = parent;
-  }
-}
-
-function schemeReferencesSelectedProject(
-  root: string,
-  schemePath: string,
-  selectedProjectPath: string,
-  referencedContainer: string | undefined,
-): boolean {
-  const selectedProject = resolve(root, selectedProjectPath);
-  const enclosingContainer = enclosingXcodeContainer(schemePath);
-  if (!referencedContainer) {
-    return (
-      enclosingContainer?.endsWith(".xcodeproj") === true && enclosingContainer === selectedProject
-    );
-  }
-  const base = enclosingContainer ? dirname(enclosingContainer) : root;
-  const normalized = referencedContainer.replaceAll("\\", "/");
-  return resolve(base, ...normalized.split("/")) === selectedProject;
-}
-
-async function schemePublishableKeyCandidates(
-  root: string,
-  selection: IOSTargetSelection,
-  schemeRoots: string[],
-): Promise<{
-  candidates: PublishableKeyCandidate[];
-  complete: boolean;
-  incompleteEvidence: IOSSourceEvidence[];
-}> {
-  if (selection.state !== "selected") {
-    return { candidates: [], complete: true, incompleteEvidence: [] };
-  }
-  const state: SchemeDiscoveryState = {
-    paths: [],
-    complete: true,
-    incompletePaths: new Set(),
-  };
-  for (const schemeRoot of [...new Set(schemeRoots)].sort()) {
-    if (await pathIsSafelyWithinIOSRoot(root, schemeRoot)) {
-      await collectSchemeFiles(root, schemeRoot, state);
-    } else {
-      markSchemeDiscoveryIncomplete(state, schemeRoot);
-    }
-  }
-  const candidates: PublishableKeyCandidate[] = [];
-
-  for (const path of state.paths.sort()) {
-    const file = Bun.file(path);
-    if (!(await file.exists()) || file.size > 2_000_000) {
-      markSchemeDiscoveryIncomplete(state, path);
-      continue;
-    }
-    let xml: string;
-    try {
-      xml = maskXMLComments(await file.text());
-    } catch {
-      markSchemeDiscoveryIncomplete(state, path);
-      continue;
-    }
-
-    for (const launchAction of xml.matchAll(/<LaunchAction\b[^>]*>([\s\S]*?)<\/LaunchAction>/g)) {
-      const body = launchAction[1] ?? "";
-      const runnableReference = xcodeSchemeRunnableReferenceAttributes(body);
-      if (!runnableReference) continue;
-      if (xmlAttribute(runnableReference, "BlueprintIdentifier") !== selection.targetId) continue;
-      const container = xmlAttribute(runnableReference, "ReferencedContainer")?.replace(
-        /^container:/,
-        "",
-      );
-      if (!schemeReferencesSelectedProject(root, path, selection.projectPath, container)) continue;
-
-      for (const variable of body.matchAll(/<EnvironmentVariable\b([^>]*)\/?\s*>/g)) {
-        const attributes = variable[1] ?? "";
-        if (xmlAttribute(attributes, "key") !== "CLERK_PUBLISHABLE_KEY") continue;
-        if ((xmlAttribute(attributes, "isEnabled") ?? "YES").toUpperCase() === "NO") continue;
-        const value = xmlAttribute(attributes, "value")?.trim();
-        if (!value) continue;
-        const source = relativeIOSPath(root, path);
-        candidates.push({
-          kind: "run-scheme",
-          value,
-          source,
-          evidence: [{ path: source, keyPath: "LaunchAction.EnvironmentVariables" }],
-          priority: RUN_SCHEME_PRIORITY,
-        });
-      }
-    }
-  }
-  return {
-    candidates,
-    complete: state.complete,
-    incompleteEvidence: [...state.incompletePaths]
-      .sort()
-      .map((path) => ({ path: relativeIOSPath(root, path) })),
-  };
-}
-
-async function collectLocalSecretsPlists(
-  root: string,
-  directory: string,
-  output: string[],
-  state: { complete: boolean; incompletePaths: Set<string> },
-  depth = 0,
-): Promise<void> {
-  if (
-    depth > MAX_SECRET_DISCOVERY_DEPTH ||
-    output.length >= MAX_SECRET_FILES ||
-    !(await pathIsSafelyWithinIOSRoot(root, directory))
-  ) {
-    state.complete = false;
-    state.incompletePaths.add(directory);
-    return;
-  }
-  let entries;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch {
-    state.complete = false;
-    state.incompletePaths.add(directory);
-    return;
-  }
-
-  entries.sort((a, b) => a.name.localeCompare(b.name));
-  for (const entry of entries) {
-    const absolutePath = resolve(directory, entry.name);
-    if (output.length >= MAX_SECRET_FILES) {
-      const couldHideLocalSecrets =
-        (entry.isDirectory() || entry.isSymbolicLink()) &&
-        !SOURCE_IGNORES.has(entry.name) &&
-        !entry.name.startsWith(".");
-      if (couldHideLocalSecrets || (entry.isFile() && entry.name === "LocalSecrets.plist")) {
-        state.complete = false;
-        state.incompletePaths.add(absolutePath);
-        return;
-      }
-      continue;
-    }
-    if (entry.isSymbolicLink()) {
-      if (!SOURCE_IGNORES.has(entry.name) && !entry.name.startsWith(".")) {
-        state.complete = false;
-        state.incompletePaths.add(absolutePath);
-      }
-      continue;
-    }
-    if (entry.isDirectory()) {
-      if (!SOURCE_IGNORES.has(entry.name) && !entry.name.startsWith(".")) {
-        await collectLocalSecretsPlists(root, absolutePath, output, state, depth + 1);
-      }
-    } else if (entry.isFile() && entry.name === "LocalSecrets.plist") {
-      if (await pathIsSafelyWithinIOSRoot(root, absolutePath)) {
-        output.push(absolutePath);
-      } else {
-        state.complete = false;
-        state.incompletePaths.add(absolutePath);
-      }
-    }
-  }
-}
-
-async function readPublishableKeyCandidates(
-  root: string,
-  selection: IOSTargetSelection,
-  targetLocalSecretsPaths: string[],
-  schemeRoots: string[],
-  inlineCandidates: PublishableKeyCandidate[],
-): Promise<{
-  candidates: PublishableKeyCandidate[];
-  schemeDiscoveryComplete: boolean;
-  schemeDiscoveryEvidence: IOSSourceEvidence[];
-}> {
-  const selectedProjectDirectory =
-    selection.state === "selected" ? dirname(resolve(root, selection.projectPath)) : root;
-  const projectDirectories = [...new Set([selectedProjectDirectory, root])];
-  const schemeDiscovery = await schemePublishableKeyCandidates(root, selection, schemeRoots);
-  const candidates: PublishableKeyCandidate[] = [
-    ...inlineCandidates,
-    ...schemeDiscovery.candidates,
-  ];
-
-  for (const directory of projectDirectories) {
-    for (const [fileName, priority] of [
-      [".env.local", 20],
-      [".env", 30],
-    ] as const) {
-      const path = resolve(directory, fileName);
-      if (!(await pathIsSafelyWithinIOSRoot(root, path))) continue;
-      const file = Bun.file(path);
-      if (!(await file.exists()) || file.size > 1_000_000) continue;
-      try {
-        for (const line of parseEnvFile(await file.text())) {
-          if (line.type === "entry" && line.key === "CLERK_PUBLISHABLE_KEY" && line.value) {
-            candidates.push({
-              kind: "environment-file",
-              value: line.value,
-              source: relativeIOSPath(root, path),
-              evidence: [{ path: relativeIOSPath(root, path), keyPath: line.key }],
-              priority,
-            });
-          }
-        }
-      } catch {
-        // A partially-written env file is not evidence of a usable key.
-      }
-    }
-  }
-
-  for (const path of targetLocalSecretsPaths) {
-    const file = Bun.file(path);
-    if (!(await file.exists()) || file.size > 1_000_000) continue;
-    try {
-      const parsed = parseIOSPlist(await file.text());
-      const value = isRecord(parsed) ? asString(parsed.CLERK_PUBLISHABLE_KEY) : undefined;
-      if (value) {
-        candidates.push({
-          kind: "local-secrets-plist",
-          value,
-          source: relativeIOSPath(root, path),
-          evidence: [{ path: relativeIOSPath(root, path), keyPath: "CLERK_PUBLISHABLE_KEY" }],
-          priority: 10,
-        });
-      }
-    } catch {
-      candidates.push({
-        kind: "local-secrets-plist",
-        invalid: true,
-        source: relativeIOSPath(root, path),
-        evidence: [{ path: relativeIOSPath(root, path), keyPath: "CLERK_PUBLISHABLE_KEY" }],
-        priority: 10,
-      });
-    }
-  }
-
-  for (const directory of projectDirectories) {
-    const path = resolve(directory, ".clerk", ".tmp", "keyless.json");
-    if (!(await pathIsSafelyWithinIOSRoot(root, path))) continue;
-    const file = Bun.file(path);
-    if (!(await file.exists()) || file.size > 1_000_000) continue;
-    try {
-      const parsed: unknown = await file.json();
-      const value = isRecord(parsed) ? asString(parsed.publishableKey) : undefined;
-      if (value) {
-        candidates.push({
-          kind: "keyless-file",
-          value,
-          source: relativeIOSPath(root, path),
-          evidence: [{ path: relativeIOSPath(root, path), keyPath: "publishableKey" }],
-          priority: 40,
-        });
-      }
-    } catch {
-      // A partially-written SDK keyless file is not evidence of a usable key.
-    }
-  }
-
-  const ambient = process.env.CLERK_PUBLISHABLE_KEY;
-  if (ambient) {
-    candidates.push({
-      kind: "ambient-environment",
-      value: ambient,
-      source: "CLERK_PUBLISHABLE_KEY environment variable",
-      evidence: [],
-      priority: 50,
-      ambient: true,
-    });
-  }
-
-  return {
-    candidates: candidates.sort(
-      (a, b) => a.priority - b.priority || a.source.localeCompare(b.source),
-    ),
-    schemeDiscoveryComplete: schemeDiscovery.complete,
-    schemeDiscoveryEvidence: schemeDiscovery.incompleteEvidence,
-  };
-}
-
-async function inspectLocalPublishableKeys(
-  root: string,
-  selection: IOSTargetSelection,
-  targetLocalSecretsPaths: string[],
-  localSecretsDiscoveryComplete: boolean,
-  localSecretsDiscoveryEvidence: IOSSourceEvidence[],
-  schemeRoots: string[],
-  containerDiscoveryComplete: boolean,
-  inlineCandidates: PublishableKeyCandidate[],
-  preferredKind: PublishableKeyCandidate["kind"] | undefined,
+function inspectInlinePublishableKey(
+  target: IOSAppTarget | undefined,
   diagnostics: IOSDiagnostic[],
-): Promise<IOSProjectInspectionResult["localPublishableKey"]> {
-  const { candidates, schemeDiscoveryComplete, schemeDiscoveryEvidence } =
-    await readPublishableKeyCandidates(
-      root,
-      selection,
-      targetLocalSecretsPaths,
-      schemeRoots,
-      inlineCandidates,
-    );
-  const candidateSources = [...new Set(candidates.map((candidate) => candidate.source))].sort();
-  const decodedCandidates: Array<{
-    candidate: PublishableKeyCandidate;
-    decoded?: { frontendApiHost: string; instanceType: "development" | "production" };
-  }> = [];
-  const invalidSources = new Set<string>();
-  for (const candidate of candidates) {
-    if (candidate.decoded) {
-      decodedCandidates.push({ candidate, decoded: candidate.decoded });
-      continue;
-    }
-    try {
-      if (candidate.invalid || candidate.value == null) throw new Error("invalid candidate");
-      const value = decodePublishableKey(candidate.value);
-      decodedCandidates.push({
-        candidate,
-        decoded: { frontendApiHost: value.fapiHost, instanceType: value.instanceType },
-      });
-    } catch {
-      invalidSources.add(candidate.source);
-      decodedCandidates.push({ candidate });
-      diagnostics.push({
-        code: "clerk.invalid-publishable-key",
-        severity: "warning",
-        message: `A publishable key candidate from ${candidate.source} has an invalid format.`,
-        remedy: "Replace it with a valid pk_test_ or pk_live_ publishable key.",
-        evidence: candidate.evidence,
-      });
-    }
-  }
-
-  const localCandidates = decodedCandidates.filter((item) => !item.candidate.ambient);
-  const ambientCandidates = decodedCandidates.filter((item) => item.candidate.ambient);
-  const runSchemeCouldBeEffective =
-    (!schemeDiscoveryComplete || !containerDiscoveryComplete) &&
-    preferredKind !== "inline-literal" &&
-    preferredKind !== "local-secrets-plist";
-  const localSecretsCouldBeEffective =
-    !localSecretsDiscoveryComplete &&
-    preferredKind !== "inline-literal" &&
-    preferredKind !== "run-scheme";
-  if (runSchemeCouldBeEffective) {
-    diagnostics.push({
-      code: "xcode.incomplete-scheme-discovery",
-      severity: "warning",
-      message:
-        "Xcode container or Run-scheme discovery was incomplete, so Clerk could not prove the selected target's runtime publishable key.",
-      remedy:
-        "Make the selected Xcode project and workspace scheme directories readable, reduce excessive scheme nesting or count, and rerun the command.",
-      evidence: [
-        ...(!containerDiscoveryComplete ? [{ path: "." }] : []),
-        ...schemeDiscoveryEvidence,
-      ],
-    });
-  }
-  if (localSecretsCouldBeEffective) {
-    const targetDescription = selection.state === "selected" ? ` for ${selection.targetName}` : "";
-    diagnostics.push({
-      code: "xcode.incomplete-local-secrets-discovery",
-      severity: "warning",
-      message: `LocalSecrets.plist discovery was incomplete${targetDescription}, so Clerk could not prove the selected target's runtime publishable key.`,
-      remedy:
-        "Make the selected target's synchronized folders readable, remove unsafe symlinks, or reduce excessive LocalSecrets.plist nesting or count, and rerun the command.",
-      evidence: localSecretsDiscoveryEvidence,
-    });
-  }
-  if (runSchemeCouldBeEffective || localSecretsCouldBeEffective) {
+): IOSProjectInspectionResult["localPublishableKey"] {
+  if (!target?.swift.evidenceComplete) {
     return {
       evidenceComplete: false,
       found: false,
       conflict: false,
-      candidateSources,
-      invalidSources: [...invalidSources].sort(),
-    };
-  }
-  // Proven app-init wiring determines which class of candidate can reach the
-  // selected target. Discovery remains exhaustive and redacted for reporting.
-  const effectivePriority = localCandidates[0]?.candidate.priority;
-  const effectiveCandidates = preferredKind
-    ? decodedCandidates.filter((item) => item.candidate.kind === preferredKind)
-    : effectivePriority == null
-      ? ambientCandidates
-      : localCandidates.filter((item) => item.candidate.priority === effectivePriority);
-
-  // A non-empty higher-precedence source is what the app/CLI will consume.
-  // Never fall through to a lower-precedence valid key when that source is malformed.
-  if (effectiveCandidates.some((item) => !item.decoded)) {
-    return {
-      evidenceComplete: true,
-      found: false,
-      source: effectiveCandidates[0]!.candidate.source,
-      conflict: false,
-      candidateSources,
-      invalidSources: [...invalidSources].sort(),
+      candidateSources: [],
+      invalidSources: [],
     };
   }
 
-  const effectiveValid = effectiveCandidates.filter(
-    (
-      item,
-    ): item is typeof item & {
-      decoded: { frontendApiHost: string; instanceType: "development" | "production" };
-    } => item.decoded != null,
-  );
-  const identities = new Set(
-    effectiveValid.map((item) => `${item.decoded.instanceType}:${item.decoded.frontendApiHost}`),
-  );
-  const effective = effectiveValid[0];
+  const calls = target.swift.configureCalls;
+  const inlineCalls = calls.filter((call) => call.publishableKeyWiring === "inline-literal");
+  const candidateSources = [...new Set(inlineCalls.map((call) => call.path))].sort();
 
-  if (identities.size > 1) {
-    diagnostics.push({
-      code: "clerk.conflicting-publishable-keys",
-      severity: "error",
-      message: "Equally effective publishable-key sources point to different Clerk instances.",
-      remedy: "Remove the stale source or make the equally preferred values agree.",
-      evidence: effectiveValid.flatMap((item) => item.candidate.evidence),
-    });
-    return {
-      evidenceComplete: true,
-      found: true,
-      source: effective!.candidate.source,
-      conflict: true,
-      candidateSources,
-      invalidSources: [...invalidSources].sort(),
-    };
-  }
-
-  if (!effective) {
+  // Only the documented, single startup literal proves which Clerk instance
+  // the selected target runs against. Every other expression is custom and is
+  // intentionally preserved without inspecting its source or value.
+  if (
+    calls.length !== 1 ||
+    inlineCalls.length !== 1 ||
+    inlineCalls[0]?.startupBinding !== "app-init"
+  ) {
     return {
       evidenceComplete: true,
       found: false,
       conflict: false,
       candidateSources,
-      invalidSources: [...invalidSources].sort(),
+      invalidSources: [],
     };
   }
+
+  const call = inlineCalls[0];
+  if (!call || call.inlinePublishableKey?.state !== "valid") {
+    const source = call?.path;
+    if (source) {
+      diagnostics.push({
+        code: "clerk.invalid-publishable-key",
+        severity: "warning",
+        message: `The inline publishable key in ${source} has an invalid format.`,
+        remedy: "Replace it with a valid pk_test_ or pk_live_ publishable key.",
+        evidence: [{ path: source, keyPath: "Clerk.configure(publishableKey:)" }],
+      });
+    }
+    return {
+      evidenceComplete: true,
+      found: false,
+      ...(source ? { source } : {}),
+      conflict: false,
+      candidateSources,
+      invalidSources: source ? [source] : [],
+    };
+  }
+
   return {
     evidenceComplete: true,
     found: true,
+    source: call.path,
+    frontendApiHost: call.inlinePublishableKey.frontendApiHost,
+    instanceType: call.inlinePublishableKey.instanceType,
     conflict: false,
-    source: effective.candidate.source,
-    frontendApiHost: effective.decoded.frontendApiHost,
-    instanceType: effective.decoded.instanceType,
     candidateSources,
-    invalidSources: [...invalidSources].sort(),
+    invalidSources: [],
   };
-}
-
-function preferredRuntimeKeyCandidateKind(
-  target: IOSAppTarget | undefined,
-): PublishableKeyCandidate["kind"] | undefined {
-  if (!target?.swift.evidenceComplete) return undefined;
-  const startupCalls = target.swift.configureCalls.filter(
-    (call) => call.startupBinding === "app-init",
-  );
-  if (startupCalls.length !== 1) return undefined;
-
-  const call = startupCalls[0]!;
-  if (call.publishableKeyWiring === "inline-literal") return "inline-literal";
-  if (
-    call.publishableKeyWiring === "local-secrets-loader" &&
-    call.localSecretsRuntimeBinding === "proven"
-  ) {
-    return "local-secrets-plist";
-  }
-  if (call.publishableKeyWiring === "process-info-environment") return "run-scheme";
-  return undefined;
-}
-
-function addUnconsumedRuntimeKeyDiagnostics(
-  target: IOSAppTarget | undefined,
-  localPublishableKey: IOSProjectInspectionResult["localPublishableKey"],
-  diagnostics: IOSDiagnostic[],
-): void {
-  if (!target) return;
-
-  if (
-    target.runtimeKeySinks.length > 0 &&
-    !hasIOSProvenStartupKeyWiring(target, "local-secrets-loader")
-  ) {
-    diagnostics.push({
-      code: "clerk.unconsumed-publishable-key-source",
-      severity: "warning",
-      message:
-        "Clerk found a target-owned LocalSecrets.plist but could not prove that the selected app consumes it at startup.",
-      remedy:
-        "Clerk will leave this file unchanged. Connect it from Clerk.configure in the selected @main app's init(), or remove it if it is stale.",
-      evidence: target.runtimeKeySinks.map((sink) => ({
-        path: sink.path,
-        keyPath: "CLERK_PUBLISHABLE_KEY",
-      })),
-    });
-  }
-
-  const schemeSources = localPublishableKey.candidateSources.filter((source) =>
-    source.endsWith(".xcscheme"),
-  );
-  if (
-    schemeSources.length > 0 &&
-    !hasIOSProvenStartupKeyWiring(target, "process-info-environment")
-  ) {
-    diagnostics.push({
-      code: "clerk.unconsumed-publishable-key-source",
-      severity: "warning",
-      message:
-        "Clerk found a selected-target Run-scheme key but could not prove that the selected app consumes it at startup.",
-      remedy:
-        "Clerk will leave this scheme unchanged. Read CLERK_PUBLISHABLE_KEY from ProcessInfo in Clerk.configure in the selected @main app's init(), or remove the variable if it is stale.",
-      evidence: schemeSources.map((path) => ({ path, keyPath: "CLERK_PUBLISHABLE_KEY" })),
-    });
-  }
 }
 
 async function inspectPackageReferences(
@@ -1145,93 +596,6 @@ function synchronizedPathIsExcluded(path: string, excluded: Set<string>): boolea
   return [...excluded].some(
     (excludedPath) => path === excludedPath || path.startsWith(`${excludedPath}/`),
   );
-}
-
-async function localSecretsForTarget(options: {
-  root: string;
-  projectPath: string;
-  groupRootDirectory: string;
-  targetId: string;
-  targetObject: PbxObject;
-  objects: PbxObjects;
-  parents: Map<string, string>;
-}): Promise<LocalSecretsDiscovery> {
-  const { root, projectPath, groupRootDirectory, targetId, targetObject, objects, parents } =
-    options;
-  const projectDirectory = dirname(projectPath);
-  const paths = new Set<string>();
-  const state = { complete: true, incompletePaths: new Set<string>() };
-  const graphEvidence: IOSSourceEvidence[] = [];
-  const projectFileEvidence = (objectId: string): IOSSourceEvidence => ({
-    path: relativeIOSPath(root, resolve(projectPath, "project.pbxproj")),
-    objectId,
-  });
-  const resourcePhaseIds = new Set(
-    asStringArray(targetObject.buildPhases).filter(
-      (phaseId) => objects[phaseId]?.isa === "PBXResourcesBuildPhase",
-    ),
-  );
-
-  for (const phaseId of resourcePhaseIds) {
-    const phase = objects[phaseId];
-    if (phase?.isa !== "PBXResourcesBuildPhase") continue;
-    for (const buildFileId of asStringArray(phase.files)) {
-      const buildFile = objects[buildFileId];
-      if (!buildFile || !buildFileIOSApplicability(buildFile).applies) continue;
-      const fileReference = asString(buildFile.fileRef);
-      if (!fileReference) continue;
-      const absolutePath = resolvePbxFilePath(
-        fileReference,
-        objects,
-        parents,
-        projectDirectory,
-        groupRootDirectory,
-      );
-      if (absolutePath?.endsWith(`${sep}LocalSecrets.plist`)) {
-        if (await pathIsSafelyWithinIOSRoot(root, absolutePath)) {
-          paths.add(absolutePath);
-        } else {
-          state.complete = false;
-          state.incompletePaths.add(absolutePath);
-        }
-      }
-    }
-  }
-
-  for (const groupId of asStringArray(targetObject.fileSystemSynchronizedGroups)) {
-    const group = objects[groupId];
-    if (group?.isa !== "PBXFileSystemSynchronizedRootGroup") continue;
-    const groupPath = resolvePbxFilePath(
-      groupId,
-      objects,
-      parents,
-      projectDirectory,
-      groupRootDirectory,
-    );
-    if (!groupPath || !(await pathIsSafelyWithinIOSRoot(root, groupPath))) {
-      state.complete = false;
-      if (groupPath) state.incompletePaths.add(groupPath);
-      else graphEvidence.push(projectFileEvidence(groupId));
-      continue;
-    }
-
-    const discovered: string[] = [];
-    await collectLocalSecretsPlists(root, groupPath, discovered, state);
-    const excluded = synchronizedExclusions(group, targetId, resourcePhaseIds, objects);
-    for (const absolutePath of discovered) {
-      const relativePath = relative(groupPath, absolutePath).split(sep).join("/");
-      if (!synchronizedPathIsExcluded(relativePath, excluded)) paths.add(absolutePath);
-    }
-  }
-
-  return {
-    paths: [...paths].sort(),
-    complete: state.complete,
-    evidence: [
-      ...[...state.incompletePaths].sort().map((path) => ({ path: relativeIOSPath(root, path) })),
-      ...graphEvidence,
-    ],
-  };
 }
 
 async function collectSwiftFiles(
@@ -1673,15 +1037,6 @@ async function parseProject(
       });
     }
 
-    const targetLocalSecrets = await localSecretsForTarget({
-      root,
-      projectPath,
-      groupRootDirectory,
-      targetId,
-      targetObject,
-      objects,
-      parents,
-    });
     const appTarget: IOSAppTarget = {
       id: targetId,
       name: targetName,
@@ -1698,12 +1053,7 @@ async function parseProject(
         diagnostics,
       ),
       swift: swiftInspection,
-      runtimeKeySinks: targetLocalSecrets.paths.map((path) => ({
-        kind: "local-secrets-plist" as const,
-        path: relativeIOSPath(root, path),
-      })),
     };
-    localSecretsDiscoveryByTarget.set(appTarget, targetLocalSecrets);
     appTargets.push(appTarget);
   }
 
@@ -1952,42 +1302,7 @@ export async function inspectIOSProject(
             target.id === selection.targetId && target.projectPath === selection.projectPath,
         )
       : undefined;
-  const inlinePublishableKeyCandidates: PublishableKeyCandidate[] =
-    selectedAppTarget?.swift.configureCalls
-      .filter((call) => call.publishableKeyWiring === "inline-literal")
-      .map((call) => ({
-        kind: "inline-literal" as const,
-        source: call.path,
-        evidence: [{ path: call.path, keyPath: "Clerk.configure(publishableKey:)" }],
-        priority: 0,
-        ...(call.inlinePublishableKey?.state === "valid"
-          ? {
-              decoded: {
-                frontendApiHost: call.inlinePublishableKey.frontendApiHost,
-                instanceType: call.inlinePublishableKey.instanceType,
-              },
-            }
-          : { invalid: true as const }),
-      })) ?? [];
-  const selectedLocalSecretsDiscovery = selectedAppTarget
-    ? localSecretsDiscoveryByTarget.get(selectedAppTarget)
-    : undefined;
-  const localPublishableKeyInspection = await inspectLocalPublishableKeys(
-    root,
-    selection,
-    selectedAppTarget?.runtimeKeySinks.map((sink) => resolve(root, sink.path)) ?? [],
-    selectedLocalSecretsDiscovery?.complete ?? true,
-    selectedLocalSecretsDiscovery?.evidence ?? [],
-    [
-      ...(selection.state === "selected" ? [resolve(root, selection.projectPath)] : []),
-      ...discovered.workspacePaths,
-    ],
-    discovered.complete && referencedProjects.complete,
-    inlinePublishableKeyCandidates,
-    preferredRuntimeKeyCandidateKind(selectedAppTarget),
-    diagnostics,
-  );
-  addUnconsumedRuntimeKeyDiagnostics(selectedAppTarget, localPublishableKeyInspection, diagnostics);
+  const localPublishableKeyInspection = inspectInlinePublishableKey(selectedAppTarget, diagnostics);
   const result: IOSProjectInspectionResult = {
     schemaVersion: 1,
     platform: "ios",
