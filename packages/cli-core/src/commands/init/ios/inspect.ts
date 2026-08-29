@@ -17,6 +17,7 @@ import {
   maskXMLComments,
   pathIsSafelyWithinIOSRoot,
   relativeIOSPath,
+  xcodeSchemeRunnableReferenceAttributes,
   xmlAttribute,
 } from "./discovery.ts";
 import { hasInterruptedIOSFileTransaction } from "./file-transaction.ts";
@@ -303,20 +304,14 @@ async function schemePublishableKeyCandidates(
 
     for (const launchAction of xml.matchAll(/<LaunchAction\b[^>]*>([\s\S]*?)<\/LaunchAction>/g)) {
       const body = launchAction[1] ?? "";
-      const referencesTarget = [...body.matchAll(/<BuildableReference\b([^>]*)>/g)].some(
-        (reference) => {
-          const attributes = reference[1] ?? "";
-          if (xmlAttribute(attributes, "BlueprintIdentifier") !== selection.targetId) {
-            return false;
-          }
-          const container = xmlAttribute(attributes, "ReferencedContainer")?.replace(
-            /^container:/,
-            "",
-          );
-          return schemeReferencesSelectedProject(root, path, selection.projectPath, container);
-        },
+      const runnableReference = xcodeSchemeRunnableReferenceAttributes(body);
+      if (!runnableReference) continue;
+      if (xmlAttribute(runnableReference, "BlueprintIdentifier") !== selection.targetId) continue;
+      const container = xmlAttribute(runnableReference, "ReferencedContainer")?.replace(
+        /^container:/,
+        "",
       );
-      if (!referencesTarget) continue;
+      if (!schemeReferencesSelectedProject(root, path, selection.projectPath, container)) continue;
 
       for (const variable of body.matchAll(/<EnvironmentVariable\b([^>]*)\/?\s*>/g)) {
         const attributes = variable[1] ?? "";

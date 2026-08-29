@@ -1366,6 +1366,35 @@ struct MyApp: App {
     expect(JSON.stringify(inspection)).not.toContain(schemeKey);
   });
 
+  test("binds a Run-scheme key to the launched target instead of MacroExpansion", async () => {
+    const root = await fixture({ includeKey: false, secondTarget: true });
+    const schemeDirectory = join(root, "MyApp.xcodeproj", "xcshareddata", "xcschemes");
+    await mkdir(schemeDirectory, { recursive: true });
+    const schemeKey = `pk_test_${Buffer.from("launched.clerk.example$").toString("base64")}`;
+    await Bun.write(
+      join(schemeDirectory, "AdminApp.xcscheme"),
+      `<Scheme><LaunchAction><BuildableProductRunnable><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.secondTarget}" /></BuildableProductRunnable><MacroExpansion><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" /></MacroExpansion><EnvironmentVariables><EnvironmentVariable key="CLERK_PUBLISHABLE_KEY" value="${schemeKey}" isEnabled="YES" /></EnvironmentVariables></LaunchAction></Scheme>`,
+    );
+
+    const macroExpansionTarget = await inspectIOSProject(root, { target: "MyApp" });
+    const launchedTarget = await inspectIOSProject(root, { target: "AdminApp" });
+
+    expect(macroExpansionTarget.localPublishableKey).toMatchObject({
+      evidenceComplete: true,
+      found: false,
+      candidateSources: [],
+    });
+    expect(launchedTarget.localPublishableKey).toMatchObject({
+      evidenceComplete: true,
+      found: true,
+      source: "MyApp.xcodeproj/xcshareddata/xcschemes/AdminApp.xcscheme",
+      frontendApiHost: "launched.clerk.example",
+      conflict: false,
+    });
+    expect(JSON.stringify(macroExpansionTarget)).not.toContain(schemeKey);
+    expect(JSON.stringify(launchedTarget)).not.toContain(schemeKey);
+  });
+
   test("fails closed when bounded scheme discovery hides a conflicting workspace key", async () => {
     const root = await fixture({ includeKey: false, workspace: true });
     const visibleKey = `pk_test_${Buffer.from("visible.clerk.example$").toString("base64")}`;

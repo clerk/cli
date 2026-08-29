@@ -494,6 +494,28 @@ export function maskXMLComments(source: string): string {
 }
 
 /**
+ * Returns the single target reference that the Xcode Run action actually
+ * launches. References used only for MacroExpansion or other scheme metadata
+ * are not runtime ownership evidence.
+ */
+export function xcodeSchemeRunnableReferenceAttributes(
+  launchActionBody: string,
+): string | undefined {
+  const runnables = [
+    ...launchActionBody.matchAll(
+      /<BuildableProductRunnable\b[^>]*>([\s\S]*?)<\/BuildableProductRunnable>/g,
+    ),
+  ];
+  if (runnables.length !== 1) return undefined;
+
+  const references = [
+    ...(runnables[0]?.[1] ?? "").matchAll(/<BuildableReference\b([^>]*)\/?\s*>/g),
+  ];
+  if (references.length !== 1) return undefined;
+  return references[0]?.[1];
+}
+
+/**
  * Reads only project references from an Xcode workspace. We deliberately do
  * not use Xcode or resolve packages. Unsupported/external references remain
  * visible in the workspace inventory but are not traversed.
