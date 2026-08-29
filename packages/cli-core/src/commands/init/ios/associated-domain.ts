@@ -174,19 +174,13 @@ function runtimeFrontendHost(
     return undefined;
   }
   const source = key.source;
-  const connected = target.swift.configureCalls.some((call) => {
-    if (call.startupBinding !== "app-init") return false;
-    if (call.publishableKeyWiring === "inline-literal") {
-      return call.path === source && call.inlinePublishableKey?.state === "valid";
-    }
-    if (call.publishableKeyWiring === "local-secrets-loader") {
-      return (
-        call.localSecretsRuntimeBinding === "proven" &&
-        target.runtimeKeySinks.some((sink) => sink.path === source)
-      );
-    }
-    return call.publishableKeyWiring === "process-info-environment" && source.endsWith(".xcscheme");
-  });
+  const connected = target.swift.configureCalls.some(
+    (call) =>
+      call.startupBinding === "app-init" &&
+      call.publishableKeyWiring === "inline-literal" &&
+      call.path === source &&
+      call.inlinePublishableKey?.state === "valid",
+  );
   return connected ? key.frontendApiHost : undefined;
 }
 
