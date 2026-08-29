@@ -56,7 +56,7 @@ entitlements inspection used by `clerk init`. It reports separate results for:
 
 - application-target selection;
 - ClerkKit and ClerkKitUI product linkage;
-- `Clerk.configure` and the selected target's effective development key;
+- `Clerk.configure` and, for direct literal configuration, the selected target's effective development key;
 - SwiftUI environment injection and authentication-flow evidence;
 - AuthView's enabled methods and required local Apple capability;
 - Associated Domains and the optional Sign in with Apple entitlement;
@@ -66,12 +66,17 @@ entitlements inspection used by `clerk init`. It reports separate results for:
   native Apple entitlement.
 
 iOS diagnostics never require a secret key in the Xcode project or an env
-file. The linked development publishable key is used only to compare redacted
-Frontend API host metadata; keys, provider credentials, and raw remote config
-are not included in human or JSON output. AuthView, Native Application, and
-Apple remote checks are GET-only. Their remedies point back to `clerk init`;
-`doctor --fix` never enables an auth strategy or changes Native Application
-state.
+file. A direct literal publishable key is compared with the linked development
+application using only redacted Frontend API host metadata. For a single
+startup `Clerk.configure` call that uses a custom publishable-key source,
+Doctor verifies that the call exists but does not inspect its value. Once the
+project is linked, Doctor uses the explicitly selected development application
+for read-only AuthView, Native Application, Associated Domains, and Apple
+checks; this does not prove that the custom publishable key belongs to that
+application. Keys, provider credentials, and raw remote config are not included
+in human or JSON output. AuthView, Native Application, and Apple remote checks
+are GET-only. Their remedies point back to `clerk init`; `doctor --fix` never
+enables an auth strategy or changes Native Application state.
 
 Plain `clerk doctor` remains read-only and does not invoke Xcode. The execution
 flags are deliberately opt-in because Xcode can run package manifests, plugins,
@@ -89,9 +94,9 @@ macros, and project build scripts:
 
 A successful build or launch is not a successful authentication test. Doctor
 still asks the developer to verify sign-in, sign-out, relaunch, and any redirect
-methods in the app. Projects which load their publishable key only through an
-Xcode Run-scheme environment variable are built but must be launched from Xcode,
-because `simctl launch` does not reproduce arbitrary scheme environment state.
+methods in the app. Projects with a custom publishable-key source are built but
+must be launched from Xcode, because `simctl launch` cannot reproduce or verify
+arbitrary custom runtime inputs.
 
 ### Keyless applications
 

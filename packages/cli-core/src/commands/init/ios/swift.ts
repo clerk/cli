@@ -308,6 +308,10 @@ interface NominalTypeBody extends SourceBodyRange {
   identity: string;
 }
 
+function escapeRegularExpression(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function nominalTypeBodies(source: string): NominalTypeBody[] {
   const bodies: NominalTypeBody[] = [];
   const declaration = /\b(struct|class|enum|actor|extension)\s+([A-Za-z_][A-Za-z0-9_.]*)/g;

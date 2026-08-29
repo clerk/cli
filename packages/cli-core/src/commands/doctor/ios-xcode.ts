@@ -2564,16 +2564,12 @@ export async function runIOSXcodeVerification(
 
     if (!options.simulator) return results;
 
-    if (
-      target.swift.configureCalls.some(
-        (call) => call.publishableKeyWiring === "process-info-environment",
-      )
-    ) {
+    if (target.swift.configureCalls.some((call) => call.publishableKeyWiring === "custom")) {
       results.push(
         fail(
           "iOS Simulator",
-          "The app requires its Xcode Run-scheme Clerk environment variable",
-          `Run scheme ${scheme} from Xcode. simctl launch does not safely reproduce arbitrary LaunchAction environment settings.`,
+          "The app uses a custom Clerk publishable-key source",
+          `Run scheme ${scheme} from Xcode. simctl launch cannot reproduce or verify arbitrary custom runtime inputs.`,
         ),
       );
       return results;
