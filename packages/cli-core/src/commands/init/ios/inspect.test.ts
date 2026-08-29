@@ -1554,6 +1554,31 @@ let package = Package(
     );
   });
 
+  test("ignores iOS-only Clerk UI evidence for a macOS target", async () => {
+    const root = await fixture({ complete: true, platform: "macos", includeKey: false });
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `#if os(iOS)
+import ClerkKitUI
+let authentication = AuthView()
+#elseif os(macOS)
+import ClerkKit
+func configureClerk() { Clerk.configure(publishableKey: key) }
+#endif
+`,
+    );
+
+    const inspection = await inspectIOSProject(root);
+    const swift = inspection.appTargets[0]?.swift;
+
+    expect(inspection.platform).toBe("macos");
+    expect(swift?.importsClerkKitUI).toEqual([]);
+    expect(swift?.authViewReferences).toEqual([]);
+    expect(swift?.authFlowReferences).toEqual([]);
+    expect(swift?.importsClerkKit).toEqual([{ path: "MyApp/MyAppApp.swift" }]);
+    expect(swift?.configureCalls).toHaveLength(1);
+  });
+
   test("requires target selection when a root contains separate iOS and macOS apps", async () => {
     const root = await fixture({ platform: "macos", secondTarget: true });
     const ambiguous = await inspectIOSProject(root);
