@@ -111,6 +111,37 @@ async function transformProjectAt(
   await Bun.write(projectPath, buildPbxProject(project));
 }
 
+async function addSynchronizedPlatformFilteredSources(root: string): Promise<void> {
+  const synchronizedRootId = "404040404040404040404040";
+  const exceptionId = "414141414141414141414141";
+  await transformProject(root, (objects) => {
+    objects[synchronizedRootId] = {
+      isa: "PBXFileSystemSynchronizedRootGroup",
+      exceptions: [exceptionId],
+      path: "Synced",
+      sourceTree: "<group>",
+    };
+    objects[exceptionId] = {
+      isa: "PBXFileSystemSynchronizedBuildFileExceptionSet",
+      platformFiltersByRelativePath: {
+        "IOSOnly.swift": ["ios"],
+        "MacOnly.swift": ["macos"],
+      },
+      target: IOS_FIXTURE_IDS.appTarget,
+    };
+    objects[IOS_FIXTURE_IDS.appTarget]!.fileSystemSynchronizedGroups = [synchronizedRootId];
+  });
+  await mkdir(join(root, "Synced"), { recursive: true });
+  await Bun.write(
+    join(root, "Synced", "IOSOnly.swift"),
+    "import ClerkKitUI\nstruct IOSOnly { let view = AuthView() }\n",
+  );
+  await Bun.write(
+    join(root, "Synced", "MacOnly.swift"),
+    "import ClerkKit\nfunc macOnly() { Clerk.configure(publishableKey: key) }\n",
+  );
+}
+
 async function addProjectReference(
   ownerProjectPath: string,
   referencedProjectPath: string,
@@ -1752,6 +1783,39 @@ struct MyApp: App {
     expect(swift?.authViewReferences).toEqual([{ path: "Synced/Included/Auth.swift" }]);
     expect(swift?.authFlowReferences).toEqual([{ path: "Synced/Included/Auth.swift" }]);
     expect(swift?.configureCalls).toEqual([]);
+  });
+
+  test("honors macOS platform filters for a selected synchronized target", async () => {
+    const root = await fixture({ complete: false, platform: "macos", includeKey: false });
+    await addSynchronizedPlatformFilteredSources(root);
+
+    const inspection = await inspectIOSProject(root);
+    const target = inspection.appTargets[0];
+    const synchronizedAuthViews = target?.swift.authViewReferences
+      .map((reference) => reference.path)
+      .filter((path) => path.startsWith("Synced/"));
+    const synchronizedConfigureCalls = target?.swift.configureCalls
+      .map((call) => call.path)
+      .filter((path) => path.startsWith("Synced/"));
+
+    expect(target?.platform).toBe("macos");
+    expect(synchronizedAuthViews).toEqual([]);
+    expect(synchronizedConfigureCalls).toEqual(["Synced/MacOnly.swift"]);
+  });
+
+  test("includes every recognized synchronized platform filter in ownership discovery", async () => {
+    const root = await fixture({ complete: false, platform: "macos", includeKey: false });
+    await addSynchronizedPlatformFilteredSources(root);
+
+    const memberships = await inspectIOSSourceMembership(root);
+    const target = memberships.find(
+      (membership) => membership.targetId === IOS_FIXTURE_IDS.appTarget,
+    );
+    const synchronizedSources = target?.files
+      .map((file) => file.relativePath)
+      .filter((path) => path.startsWith("Synced/"));
+
+    expect(synchronizedSources).toEqual(["Synced/IOSOnly.swift", "Synced/MacOnly.swift"]);
   });
 
   test("does not use Catalyst-only classic build-file membership as native iOS evidence", async () => {
