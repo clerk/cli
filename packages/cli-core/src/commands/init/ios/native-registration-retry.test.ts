@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  IOSNativeRegistrationRetryLockError,
   createIOSNativeRegistrationRetryStore,
   type IOSNativeRegistrationRetryIdentity,
 } from "./native-registration-retry.ts";
@@ -119,7 +120,7 @@ describe("iOS native registration retry state", () => {
     await expect(store.getOrCreate(target)).rejects.toThrow("retry record is malformed");
   });
 
-  test("fails closed without stealing an abandoned stale filesystem lock", async () => {
+  test("reports an actionable stale lock without stealing it and reuses the key after recovery", async () => {
     const stateDirectory = await temporaryStateDirectory();
     const store = createIOSNativeRegistrationRetryStore(() => stateDirectory, {
       lockRetryMs: 1,
@@ -136,7 +137,52 @@ describe("iOS native registration retry state", () => {
     await utimes(lock, stale, stale);
 
     expect(first).toStartWith("clerk-init-ios-registration-");
-    await expect(store.getOrCreate(target)).rejects.toThrow("lock is stale");
+    let caught: unknown;
+    try {
+      await store.getOrCreate(target);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(IOSNativeRegistrationRetryLockError);
+    expect(caught).toMatchObject({
+      status: "stale",
+      recoveryPath: join("Clerk CLI config directory", "idempotency", `${filename!}.lock`),
+    });
+    expect((caught as Error).message).not.toContain(stateDirectory);
+    expect(await readdir(lock)).toEqual([]);
+
+    // Manual recovery removes only the empty lock. The pending record remains,
+    // so an ambiguous POST is retried with the exact same idempotency key.
+    await rm(lock, { recursive: true });
+    expect(await store.getOrCreate(target)).toBe(first);
+  });
+
+  test("distinguishes a live-looking busy lock without suggesting stale recovery", async () => {
+    const stateDirectory = await temporaryStateDirectory();
+    const store = createIOSNativeRegistrationRetryStore(() => stateDirectory, {
+      lockRetryMs: 1,
+      lockTimeoutMs: 5,
+      lockStaleMs: 60_000,
+    });
+    const target = identity();
+    await store.getOrCreate(target);
+    const directory = join(stateDirectory, "idempotency");
+    const [filename] = await readdir(directory);
+    const lock = join(directory, `${filename!}.lock`);
+    await mkdir(lock);
+
+    let caught: unknown;
+    try {
+      await store.getOrCreate(target);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(IOSNativeRegistrationRetryLockError);
+    expect(caught).toMatchObject({
+      status: "busy",
+      recoveryPath: join("Clerk CLI config directory", "idempotency", `${filename!}.lock`),
+    });
+    expect((caught as Error).message).not.toContain(stateDirectory);
     expect(await readdir(lock)).toEqual([]);
   });
 });

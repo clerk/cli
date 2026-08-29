@@ -20,9 +20,10 @@ import {
   type IOSApplication,
   type NativeSettings,
 } from "../../../lib/plapi.ts";
-import type {
-  IOSNativeRegistrationRetryIdentity,
-  IOSNativeRegistrationRetryStore,
+import {
+  IOSNativeRegistrationRetryLockError,
+  type IOSNativeRegistrationRetryIdentity,
+  type IOSNativeRegistrationRetryStore,
 } from "./native-registration-retry.ts";
 
 const APPLICATION_ID = "app_native_test";
@@ -1175,6 +1176,37 @@ describe("Clerk Native Application remote setup", () => {
     );
   });
 
+  test("surfaces safe manual recovery for a stale retry lock before remote access", async () => {
+    const recoveryPath = "$CLERK_CONFIG_DIR/idempotency/ios-native-registration-test.json.lock";
+    const retryStore: IOSNativeRegistrationRetryStore = {
+      async getOrCreate() {
+        throw new IOSNativeRegistrationRetryLockError("stale", recoveryPath);
+      },
+      async peek() {
+        throw new Error("unexpected peek");
+      },
+      async clear() {
+        throw new Error("unexpected clear");
+      },
+    };
+    const { api, calls } = scriptedAPI();
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "required" }),
+        api,
+        approvedTargetReader,
+        retryStore,
+      ),
+    ).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_REMOTE_APPLY_FAILED,
+      message: expect.stringContaining(
+        `Confirm no other Clerk command is running, then remove only the stale lock directory at \`${recoveryPath}\``,
+      ),
+    });
+    expect(calls).toEqual([]);
+  });
+
   test("reconciles an ambiguous registration-create error when the exact row now exists", async () => {
     const exactRegistration = registration();
     const ambiguousError = new Error("connection reset after create");
@@ -1331,6 +1363,42 @@ describe("Clerk Native Application remote setup", () => {
     expect(registrationIdempotencyKeys).toEqual([]);
     expect(calls).not.toContain("POST iOS registration");
     expect(retry.pending(registrationRetryIdentity())).toBeUndefined();
+  });
+
+  test("surfaces stale-lock recovery when verified remote state cannot clear retry state", async () => {
+    const recoveryPath = "~/.config/clerk-cli/idempotency/ios-native-registration-test.json.lock";
+    const retryKey = "clerk-init-ios-registration-11111111-1111-4111-8111-111111111111";
+    const retryStore: IOSNativeRegistrationRetryStore = {
+      async getOrCreate() {
+        return retryKey;
+      },
+      async peek() {
+        return retryKey;
+      },
+      async clear() {
+        throw new IOSNativeRegistrationRetryLockError("stale", recoveryPath);
+      },
+    };
+    const exactRegistration = registration();
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true), nativeSettings(true)],
+      registrationReads: [[], [exactRegistration]],
+    });
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "required" }),
+        api,
+        approvedTargetReader,
+        retryStore,
+      ),
+    ).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
+      message: expect.stringContaining(
+        `no further remote changes are required. Confirm no other Clerk command is running, then remove only the stale lock directory at \`${recoveryPath}\``,
+      ),
+    });
+    expect(calls.filter((call) => call === "POST iOS registration")).toHaveLength(1);
   });
 
   test("rechecks remote state after a paused invocation acquires a newer retry generation", async () => {

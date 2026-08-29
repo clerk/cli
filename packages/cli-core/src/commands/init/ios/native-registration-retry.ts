@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getConfigFile } from "../../../lib/config.ts";
 import { withHomeFsAccess } from "../../../lib/host-execution.ts";
 
@@ -33,6 +34,29 @@ export interface IOSNativeRegistrationRetryStore {
   getOrCreate(identity: IOSNativeRegistrationRetryIdentity): Promise<string>;
   peek(identity: IOSNativeRegistrationRetryIdentity): Promise<string | undefined>;
   clear(identity: IOSNativeRegistrationRetryIdentity, expectedKey: string): Promise<boolean>;
+}
+
+export type IOSNativeRegistrationRetryLockStatus = "busy" | "stale";
+
+/**
+ * A fail-closed retry-state lock failure with a path safe to render publicly.
+ * `recoveryPath` is always relative to the user's home or Clerk config root;
+ * the raw absolute filesystem path must stay out of logs and telemetry.
+ */
+export class IOSNativeRegistrationRetryLockError extends Error {
+  readonly status: IOSNativeRegistrationRetryLockStatus;
+  readonly recoveryPath: string;
+
+  constructor(status: IOSNativeRegistrationRetryLockStatus, recoveryPath: string) {
+    super(
+      status === "stale"
+        ? `The Clerk iOS registration retry-state lock is stale: ${recoveryPath}`
+        : "Timed out waiting for the Clerk iOS registration retry-state lock.",
+    );
+    this.name = "IOSNativeRegistrationRetryLockError";
+    this.status = status;
+    this.recoveryPath = recoveryPath;
+  }
 }
 
 interface IOSNativeRegistrationRetryRecord {
@@ -83,6 +107,35 @@ function lockPath(baseDirectory: string, identity: IOSNativeRegistrationRetryIde
   return `${retryPath(baseDirectory, identity)}.lock`;
 }
 
+function containedRelativePath(root: string, path: string): string | undefined {
+  const candidate = relative(resolve(root), resolve(path));
+  if (
+    candidate === "" ||
+    candidate === ".." ||
+    candidate.startsWith(`..${sep}`) ||
+    isAbsolute(candidate)
+  ) {
+    return undefined;
+  }
+  return candidate;
+}
+
+function publicLockPath(baseDirectory: string, path: string): string {
+  const relativeToConfig = containedRelativePath(baseDirectory, path);
+  // `path` is constructed below this base. Keep a defensive basename-only
+  // fallback so an unexpected caller can never put an absolute path in output.
+  const configPath = relativeToConfig ?? join(RETRY_DIRECTORY, path.split(sep).at(-1) ?? "lock");
+  const configuredDirectory = process.env.CLERK_CONFIG_DIR;
+  if (configuredDirectory && resolve(configuredDirectory) === resolve(baseDirectory)) {
+    return join("$CLERK_CONFIG_DIR", configPath);
+  }
+
+  const relativeToHome = containedRelativePath(homedir(), path);
+  if (relativeToHome) return join("~", relativeToHome);
+
+  return join("Clerk CLI config directory", configPath);
+}
+
 async function acquireLock(
   baseDirectory: string,
   identity: IOSNativeRegistrationRetryIdentity,
@@ -105,10 +158,9 @@ async function acquireLock(
           if (isMissingFile(statError)) continue;
           throw statError;
         }
-        throw new Error(
-          stale
-            ? `The Clerk iOS registration retry-state lock is stale and was left in place for safety: ${path}`
-            : "Timed out waiting for the Clerk iOS registration retry-state lock.",
+        throw new IOSNativeRegistrationRetryLockError(
+          stale ? "stale" : "busy",
+          publicLockPath(baseDirectory, path),
         );
       }
       await sleep(options.lockRetryMs);
