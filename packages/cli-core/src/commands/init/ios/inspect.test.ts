@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
 import { lstat, mkdtemp, mkdir, readFile, rm, symlink } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { discoverIOSContainers, inspectWorkspace } from "./discovery.ts";
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
@@ -60,10 +60,44 @@ async function transformProject(
   transform: (objects: PbxObjects) => void,
 ): Promise<void> {
   const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  await transformProjectAt(projectPath, transform);
+}
+
+async function transformProjectAt(
+  projectPath: string,
+  transform: (objects: PbxObjects) => void,
+): Promise<void> {
   const project = parsePbxProject(await Bun.file(projectPath).text());
   const objects = (project as unknown as { objects: PbxObjects }).objects;
   transform(objects);
   await Bun.write(projectPath, buildPbxProject(project));
+}
+
+async function addProjectReference(
+  ownerProjectPath: string,
+  referencedProjectPath: string,
+  referenceId: string,
+): Promise<void> {
+  await transformProjectAt(join(ownerProjectPath, "project.pbxproj"), (objects) => {
+    objects[referenceId] = {
+      isa: "PBXFileReference",
+      lastKnownFileType: "wrapper.pb-project",
+      path: relative(dirname(ownerProjectPath), referencedProjectPath),
+      sourceTree: "SOURCE_ROOT",
+    };
+    objects[IOS_FIXTURE_IDS.project]!.projectReferences = [{ ProjectRef: referenceId }];
+  });
+}
+
+async function makeFixtureExtensionOwnSource(
+  projectRoot: string,
+  sourcePath: string,
+): Promise<void> {
+  await transformProject(projectRoot, (objects) => {
+    objects[IOS_FIXTURE_IDS.appTarget]!.productType = "com.apple.product-type.app-extension";
+    objects[IOS_FIXTURE_IDS.appFile]!.path = relative(projectRoot, sourcePath);
+    objects[IOS_FIXTURE_IDS.appFile]!.sourceTree = "SOURCE_ROOT";
+  });
 }
 
 async function addSynchronizedTargetRoot(root: string, path = "Synced"): Promise<void> {
@@ -233,6 +267,99 @@ describe("discoverIOSContainers", () => {
     const discovery = await discoverIOSContainers(root, { exhaustive: true });
 
     expect(discovery.complete).toBe(true);
+  });
+
+  test("traverses referenced projects inside ignored directories and records shared source ownership", async () => {
+    const root = await fixture({ complete: true });
+    const referencedRoot = join(root, "Pods", "ReferencedApp");
+    await createIOSFixture(referencedRoot, { complete: true, includeKey: false });
+    await makeFixtureExtensionOwnSource(referencedRoot, join(root, "MyApp", "MyAppApp.swift"));
+    const primaryProject = join(root, "MyApp.xcodeproj");
+    const referencedProject = join(referencedRoot, "MyApp.xcodeproj");
+    await addProjectReference(primaryProject, referencedProject, "515151515151515151515151");
+
+    const discovery = await discoverIOSContainers(root, { exhaustive: true });
+    const memberships = await inspectIOSSourceMembership(root);
+    const owners = memberships.filter((membership) =>
+      membership.files.some((file) => file.relativePath === "MyApp/MyAppApp.swift"),
+    );
+
+    expect(discovery).toMatchObject({ complete: true, projectReferencesComplete: true });
+    expect(discovery.projectPaths).toEqual([primaryProject, referencedProject].sort());
+    expect(owners).toHaveLength(2);
+    expect(owners.every((membership) => membership.complete)).toBe(true);
+    expect(owners.map((membership) => membership.projectPath).sort()).toEqual([
+      "MyApp.xcodeproj",
+      "Pods/ReferencedApp/MyApp.xcodeproj",
+    ]);
+  });
+
+  test("marks external sibling project references incomplete for semantic ownership", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "clerk-ios-project-reference-"));
+    temporaryDirectories.push(parent);
+    const root = join(parent, "App");
+    const siblingRoot = join(parent, "Sibling");
+    await createIOSFixture(root, { complete: true });
+    await createIOSFixture(siblingRoot, { complete: true, includeKey: false });
+    await makeFixtureExtensionOwnSource(siblingRoot, join(root, "MyApp", "MyAppApp.swift"));
+    const primaryProject = join(root, "MyApp.xcodeproj");
+    await addProjectReference(
+      primaryProject,
+      join(siblingRoot, "MyApp.xcodeproj"),
+      "525252525252525252525252",
+    );
+
+    const discovery = await discoverIOSContainers(root, { exhaustive: true });
+    const inspection = await inspectIOSProject(root);
+    const memberships = await inspectIOSSourceMembership(root);
+
+    expect(discovery).toMatchObject({ complete: false, projectReferencesComplete: false });
+    expect(discovery.projectPaths).toEqual([primaryProject]);
+    expect(inspection.selection).toMatchObject({ state: "selected", targetName: "MyApp" });
+    expect(inspection.appTargets[0]?.swift.evidenceComplete).toBe(false);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.incomplete-source-membership",
+        severity: "warning",
+      }),
+    );
+    expect(memberships.length).toBeGreaterThan(0);
+    expect(memberships.every((membership) => !membership.complete)).toBe(true);
+  });
+
+  test("terminates complete project-reference cycles", async () => {
+    const root = await fixture({ complete: true });
+    const referencedRoot = join(root, "Pods", "ReferencedApp");
+    await createIOSFixture(referencedRoot, { complete: true, includeKey: false });
+    await makeFixtureExtensionOwnSource(
+      referencedRoot,
+      join(referencedRoot, "MyApp", "MyAppApp.swift"),
+    );
+    const primaryProject = join(root, "MyApp.xcodeproj");
+    const referencedProject = join(referencedRoot, "MyApp.xcodeproj");
+    await addProjectReference(primaryProject, referencedProject, "535353535353535353535353");
+    await addProjectReference(referencedProject, primaryProject, "545454545454545454545454");
+
+    const discovery = await discoverIOSContainers(root, { exhaustive: true });
+
+    expect(discovery).toMatchObject({ complete: true, projectReferencesComplete: true });
+    expect(discovery.projectPaths).toEqual([primaryProject, referencedProject].sort());
+  });
+
+  test("fails project-reference discovery closed for malformed records", async () => {
+    const root = await fixture({ complete: true });
+    await transformProject(root, (objects) => {
+      objects[IOS_FIXTURE_IDS.project]!.projectReferences = [{}];
+    });
+
+    const discovery = await discoverIOSContainers(root, { exhaustive: true });
+    const inspection = await inspectIOSProject(root);
+
+    expect(discovery).toMatchObject({ complete: false, projectReferencesComplete: false });
+    expect(inspection.appTargets[0]?.swift.evidenceComplete).toBe(false);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "xcode.incomplete-source-membership" }),
+    );
   });
 });
 

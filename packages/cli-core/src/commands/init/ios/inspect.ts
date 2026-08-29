@@ -11,6 +11,7 @@ import {
 } from "./build-settings.ts";
 import {
   discoverIOSContainers,
+  discoverReferencedIOSProjects,
   inspectWorkspace,
   maskXMLComments,
   pathIsSafelyWithinIOSRoot,
@@ -1882,6 +1883,9 @@ export async function inspectIOSProject(
     for (const projectPath of workspace.localProjectPaths) projectPaths.add(projectPath);
   }
 
+  const referencedProjects = await discoverReferencedIOSProjects(root, projectPaths);
+  for (const projectPath of referencedProjects.projectPaths) projectPaths.add(projectPath);
+
   if (projectPaths.size === 0) {
     diagnostics.push({
       code: "xcode.no-project",
@@ -1906,6 +1910,17 @@ export async function inspectIOSProject(
   }
   if (options.exhaustiveContainerDiscovery === true && !discovered.complete) {
     for (const membership of sourceMemberships) membership.complete = false;
+  }
+  if (!referencedProjects.complete) {
+    for (const membership of sourceMemberships) membership.complete = false;
+    for (const target of appTargets) target.swift.evidenceComplete = false;
+    diagnostics.push({
+      code: "xcode.incomplete-source-membership",
+      severity: "warning",
+      message:
+        "One or more referenced Xcode projects could not be inspected safely; source ownership checks are incomplete.",
+      evidence: [],
+    });
   }
   appTargets.sort(
     (a, b) =>
@@ -1968,7 +1983,7 @@ export async function inspectIOSProject(
       ...(selection.state === "selected" ? [resolve(root, selection.projectPath)] : []),
       ...discovered.workspacePaths,
     ],
-    discovered.complete,
+    discovered.complete && referencedProjects.complete,
     inlinePublishableKeyCandidates,
     preferredRuntimeKeyCandidateKind(selectedAppTarget),
     diagnostics,
