@@ -70,6 +70,10 @@ export interface IOSBuildConfiguration {
   developmentTeam: IOSValueResolution;
   entitlementsPath: IOSValueResolution;
   deploymentTarget: IOSValueResolution;
+  /** macOS-only sandbox build setting, omitted for iOS targets. */
+  appSandbox?: IOSValueResolution;
+  /** macOS-only outgoing-network build setting, omitted for iOS targets. */
+  outgoingNetworkConnections?: IOSValueResolution;
   entitlements?: IOSEntitlementsInspection;
 }
 

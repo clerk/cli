@@ -27,6 +27,8 @@ const INSPECTED_BUILD_SETTING_KEYS = [
   "CODE_SIGN_ENTITLEMENTS",
   "IPHONEOS_DEPLOYMENT_TARGET",
   "MACOSX_DEPLOYMENT_TARGET",
+  "ENABLE_APP_SANDBOX",
+  "ENABLE_OUTGOING_NETWORK_CONNECTIONS",
   "SDKROOT",
   "SUPPORTED_PLATFORMS",
 ] as const;
@@ -1068,6 +1070,26 @@ export async function inspectTargetBuildConfigurations(options: {
         diagnostics,
       ),
       deploymentTarget,
+      ...(platform === "macos"
+        ? {
+            appSandbox: resolveSettingAcrossContexts(
+              "ENABLE_APP_SANDBOX",
+              activeContexts,
+              evidence("ENABLE_APP_SANDBOX"),
+              targetName,
+              name,
+              diagnostics,
+            ),
+            outgoingNetworkConnections: resolveSettingAcrossContexts(
+              "ENABLE_OUTGOING_NETWORK_CONNECTIONS",
+              activeContexts,
+              evidence("ENABLE_OUTGOING_NETWORK_CONNECTIONS"),
+              targetName,
+              name,
+              diagnostics,
+            ),
+          }
+        : {}),
     };
     const relevantSettings: Array<[string, IOSValueResolution]> = [
       ["PRODUCT_BUNDLE_IDENTIFIER", model.bundleIdentifier],
@@ -1077,6 +1099,12 @@ export async function inspectTargetBuildConfigurations(options: {
       ["SDKROOT", sdkRootResolution],
       ["SUPPORTED_PLATFORMS", supportedPlatformsResolution],
     ];
+    if (platform === "macos") {
+      relevantSettings.push(
+        ["ENABLE_APP_SANDBOX", model.appSandbox!],
+        ["ENABLE_OUTGOING_NETWORK_CONNECTIONS", model.outgoingNetworkConnections!],
+      );
+    }
     for (const [setting, resolution] of relevantSettings) {
       if (resolution.state !== "unresolved") continue;
       addDiagnosticOnce(diagnostics, {
