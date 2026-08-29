@@ -77,7 +77,7 @@ describe("sanitizeSwiftSource", () => {
   });
 
   test("keeps ordinary string interpolation complete without hiding later Clerk calls", () => {
-    const source = String.raw`let message = "Hello \(user.name): \(format("%@", value))"
+    const source = String.raw`let message = "Hello \(user.name): \(format(value))"
 Clerk.configure(publishableKey: key)`;
 
     const result = sanitizeSwiftSourceWithStatus(source);
@@ -86,6 +86,17 @@ Clerk.configure(publishableKey: key)`;
     expect(result.sanitizedSource).not.toContain("user.name");
     expect(result.sanitizedSource).not.toContain("format");
     expect(result.sanitizedSource).toContain("Clerk.configure(publishableKey: key)");
+  });
+
+  test("keeps later Clerk calls visible after nested interpolation strings", () => {
+    const source = String.raw`let message = "Hello \("name)" + user.name)"
+Clerk.configure(publishableKey: key)
+let escaped = "say \"hello\""`;
+
+    const result = sanitizeSwiftSourceWithStatus(source);
+
+    expect(result.complete).toBe(true);
+    expect(result.sanitizedSource).toContain("Clerk.configure");
   });
 
   test("marks interpolation that contains executable Clerk evidence incomplete", () => {
@@ -135,7 +146,7 @@ describe("inspectSwiftSources", () => {
       String.raw`import ClerkKit
        @main struct AppMain: App {
          init() {
-           let diagnostic = "Hello \(user.name): \(format("%@", value))"
+           let diagnostic = "Hello \(user.name): \(format(value))"
            Clerk.configure(publishableKey: key)
          }
        }`,
