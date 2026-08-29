@@ -1983,6 +1983,104 @@ describe("Xcode subprocess safety", () => {
     expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(128);
   });
 
+  test("redacts PEM private keys before bounded output truncation", async () => {
+    const script = join(root, "truncated-private-key-output.ts");
+    const canary = "cGVtLXByaXZhdGUta2V5LWNhbmFyeQ==".repeat(4);
+    const output = [
+      "ordinary-prefix-".repeat(32),
+      "-----BEGIN PRIVATE KEY-----",
+      canary,
+      "-----END PRIVATE KEY-----",
+      "ordinary Xcode failure",
+    ].join("\n");
+    await Bun.write(script, `process.stdout.write(${JSON.stringify(output)});\n`);
+
+    const result = await runIOSXcodeCommand([process.execPath, script], {
+      cwd: root,
+      env: createIOSXcodeChildEnvironment(process.env),
+      timeoutMs: 5_000,
+      maxOutputBytes: 160,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.truncated).toBe(true);
+    expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(160);
+    expect(result.stdout).toContain("<redacted>");
+    expect(result.stdout).toContain("ordinary Xcode failure");
+    expect(result.stdout).not.toContain(canary);
+    expect(result.stdout).not.toContain("BEGIN PRIVATE KEY");
+    expect(result.stdout).not.toContain("END PRIVATE KEY");
+  });
+
+  test("redacts an unterminated PEM private key when the command is stopped", async () => {
+    const script = join(root, "unterminated-private-key-output.ts");
+    const canary = "dW50ZXJtaW5hdGVkLXByaXZhdGUta2V5LWNhbmFyeQ==";
+    await Bun.write(
+      script,
+      `process.stdout.write(${JSON.stringify(`-----BEGIN PRIVATE KEY-----\n${canary}\n`)});\nsetInterval(() => {}, 1000);\n`,
+    );
+
+    const result = await runIOSXcodeCommand([process.execPath, script], {
+      cwd: root,
+      env: createIOSXcodeChildEnvironment(process.env),
+      timeoutMs: 100,
+      maxOutputBytes: 128,
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.stdout).toBe("<redacted>");
+    expect(result.stdout).not.toContain(canary);
+    expect(result.stdout).not.toContain("BEGIN PRIVATE KEY");
+  });
+
+  test("does not end PEM redaction at a mismatched private-key footer", async () => {
+    const script = join(root, "mismatched-private-key-footer.ts");
+    const canary = "bWlzbWF0Y2hlZC1mb290ZXItY2FuYXJ5";
+    const output = [
+      "-----BEGIN RSA PRIVATE KEY-----",
+      "first-key-line",
+      "-----END PRIVATE KEY-----",
+      canary,
+      "-----END RSA PRIVATE KEY-----",
+      "ordinary failure after the key",
+    ].join("\n");
+    await Bun.write(script, `process.stdout.write(${JSON.stringify(output)});\n`);
+
+    const result = await runIOSXcodeCommand([process.execPath, script], {
+      cwd: root,
+      env: createIOSXcodeChildEnvironment(process.env),
+      timeoutMs: 5_000,
+      maxOutputBytes: 256,
+    });
+
+    expect(result.stdout).toContain("<redacted>");
+    expect(result.stdout).toContain("ordinary failure after the key");
+    expect(result.stdout).not.toContain(canary);
+    expect(result.stdout).not.toContain("END PRIVATE KEY");
+    expect(result.stdout).not.toContain("END RSA PRIVATE KEY");
+  });
+
+  test("fails closed when an incomplete PEM header exceeds the stream boundary", async () => {
+    const script = join(root, "oversized-private-key-header.ts");
+    const begin = `-----BEGIN ${"A".repeat(300)}`;
+    const canary = "b3ZlcnNpemVkLWhlYWRlci1jYW5hcnk=";
+    await Bun.write(
+      script,
+      `process.stdout.write(${JSON.stringify(begin)});\nawait Bun.sleep(20);\nprocess.stdout.write(${JSON.stringify(` PRIVATE KEY-----\n${canary}\n-----END PRIVATE KEY-----\n`)});\n`,
+    );
+
+    const result = await runIOSXcodeCommand([process.execPath, script], {
+      cwd: root,
+      env: createIOSXcodeChildEnvironment(process.env),
+      timeoutMs: 5_000,
+      maxOutputBytes: 128,
+    });
+
+    expect(result.stdout).toBe("<redacted>");
+    expect(result.stdout).not.toContain(canary);
+    expect(result.stdout).not.toContain("PRIVATE KEY");
+  });
+
   test("terminates a subprocess after its hard timeout", async () => {
     const script = join(root, "hang.ts");
     await Bun.write(script, "setInterval(() => {}, 1000);\n");
