@@ -603,6 +603,7 @@ function synchronizedExclusions(
   relevantPhaseIds: Set<string>,
   objects: PbxObjects,
   state: { complete: boolean },
+  platform?: IOSNativePlatform,
 ): SynchronizedExclusions {
   const opaqueFolders = new Set(
     synchronizedStringCollection(group, "explicitFolders", state).map(normalizeSynchronizedPath),
@@ -660,10 +661,8 @@ function synchronizedExclusions(
           state.complete = false;
           continue;
         }
-        if (
-          platformFilters.length > 0 &&
-          !platformFilters.some((filter) => /(?:^|[^a-z])(?:ios|iphone)/i.test(filter))
-        ) {
+        const applicability = buildFilePlatformApplicability({ platformFilters }, platform);
+        if (applicability.recognized && !applicability.applies) {
           excluded.add(normalizeSynchronizedPath(path));
         }
       }
@@ -883,7 +882,14 @@ async function sourceFilesForTarget(options: {
       continue;
     }
 
-    const excluded = synchronizedExclusions(group, targetId, sourcePhaseIds, objects, state);
+    const excluded = synchronizedExclusions(
+      group,
+      targetId,
+      sourcePhaseIds,
+      objects,
+      state,
+      platform,
+    );
     await collectSwiftFiles(root, groupPath, groupPath, excluded, files, state);
   }
 
