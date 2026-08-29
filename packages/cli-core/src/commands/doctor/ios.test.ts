@@ -627,7 +627,7 @@ struct ContentView: View {
     );
     expect(inspectedEnvironmentHost).toBe("clerk.example.test");
     expect(audit.inspection.localPublishableKey).toMatchObject({
-      found: false,
+      state: "unproven",
     });
     expect(JSON.stringify(audit)).not.toContain(localKey);
     expect(JSON.stringify(audit)).not.toContain(staleSchemeKey);
