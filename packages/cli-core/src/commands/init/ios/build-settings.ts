@@ -877,6 +877,7 @@ function resolveSettingAcrossContexts(
     targetName,
     configurationName,
     diagnostics,
+    reportConflict,
   );
 }
 
@@ -887,6 +888,7 @@ function resolveContextVariants(
   targetName: string,
   configurationName: string,
   diagnostics: IOSDiagnostic[],
+  reportConflict = true,
 ): IOSValueResolution {
   const signatures = new Set(variants.map(({ resolution }) => resolutionSignature(resolution)));
   if (signatures.size <= 1)

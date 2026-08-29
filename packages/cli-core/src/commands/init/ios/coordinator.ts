@@ -137,7 +137,7 @@ export async function prepareAppleNativeSetup(
   }
   if (options.agent && validatedAgentAuthLabel === null) {
     throwUsageError(
-      "Native iOS setup in agent mode requires valid Clerk authentication before any Xcode files can be changed. Ask the user to run `clerk auth login` or provide a valid Platform API key, then rerun `clerk init`.",
+      "Native Apple setup in agent mode requires valid Clerk authentication before any Xcode files can be changed. Ask the user to run `clerk auth login` or provide a valid Platform API key, then rerun `clerk init`.",
     );
   }
 
@@ -153,7 +153,7 @@ export async function prepareAppleNativeSetup(
   });
   if (options.agent && localSetup.requiresExplicitApplication && !options.requestedApplicationId) {
     throwUsageError(
-      "This iOS target already contains a publishable-key configuration that requires explicit Clerk application selection. Ask the developer which existing application it belongs to, then rerun with --app <app_id>. No local files were changed.",
+      "This native Apple target already contains a publishable-key configuration that requires explicit Clerk application selection. Ask the developer which existing application it belongs to, then rerun with --app <app_id>. No local files were changed.",
     );
   }
 

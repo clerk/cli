@@ -16,12 +16,13 @@ import {
   inspectIOSProject,
   inspectIOSSourceMembership,
 } from "./inspect.ts";
-import type { IOSBuildConfiguration } from "./types.ts";
+import type { IOSBuildConfiguration, IOSNativePlatform } from "./types.ts";
 
 export interface IOSPrebuiltAuthPlanOptions {
   root: string;
   projectPath: string;
   targetId: string;
+  platform?: IOSNativePlatform;
   allowDirty?: boolean;
 }
 
@@ -57,6 +58,7 @@ export interface IOSPrebuiltAuthPlan {
   root: string;
   projectPath: string;
   targetId: string;
+  platform: IOSNativePlatform;
   allowDirty: boolean;
   appSourcePath?: string;
   expectedAppSourceHash?: string;
@@ -133,6 +135,7 @@ function makePlan(
     root,
     projectPath,
     targetId: options.targetId,
+    platform: options.platform ?? "ios",
     allowDirty: options.allowDirty === true,
     appSourcePath: details.appSourcePath,
     expectedAppSourceHash: details.expectedAppSourceHash,
@@ -208,21 +211,24 @@ function compactSwift(source: string): string | undefined {
   return inString ? undefined : result;
 }
 
-function supportsPrebuiltAuthDeploymentTarget(value: string): boolean {
+function supportsPrebuiltAuthDeploymentTarget(value: string, platform: IOSNativePlatform): boolean {
   const match = /^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(value.trim());
   if (!match) return false;
   const components = match.slice(1).map((component) => Number(component ?? "0"));
   if (components.some((component) => !Number.isSafeInteger(component))) return false;
-  return (components[0] ?? 0) >= 17;
+  return (components[0] ?? 0) >= (platform === "macos" ? 14 : 17);
 }
 
-function targetSupportsPrebuiltAuth(configurations: IOSBuildConfiguration[]): boolean {
+function targetSupportsPrebuiltAuth(
+  configurations: IOSBuildConfiguration[],
+  platform: IOSNativePlatform,
+): boolean {
   return (
     configurations.length > 0 &&
     configurations.every(
       (configuration) =>
         configuration.deploymentTarget.state === "resolved" &&
-        supportsPrebuiltAuthDeploymentTarget(configuration.deploymentTarget.value),
+        supportsPrebuiltAuthDeploymentTarget(configuration.deploymentTarget.value, platform),
     )
   );
 }
@@ -385,7 +391,7 @@ async function preparePlan(options: IOSPrebuiltAuthPlanOptions): Promise<Prepare
       root,
       projectPath,
       "target-not-found",
-      "The selected native iOS application target could not be proven.",
+      "The selected native Apple application target could not be proven.",
     );
   }
   const generator =
@@ -396,7 +402,9 @@ async function preparePlan(options: IOSPrebuiltAuthPlanOptions): Promise<Prepare
       root,
       projectPath,
       "generated-project",
-      `This is a ${generator === "xcodegen" ? "XcodeGen" : "Tuist"} project; update its source manifest instead of generated Swift sources.`,
+      `This is a ${
+        generator === "xcodegen" ? "XcodeGen" : "Tuist"
+      } project; update its source manifest instead of generated Swift sources.`,
     );
   }
   const target = inspection.appTargets.find(
@@ -408,16 +416,29 @@ async function preparePlan(options: IOSPrebuiltAuthPlanOptions): Promise<Prepare
       root,
       projectPath,
       "target-not-found",
-      "The selected native iOS application target disappeared during inspection.",
+      "The selected native Apple application target disappeared during inspection.",
     );
   }
-  if (!targetSupportsPrebuiltAuth(target.configurations)) {
+  if (options.platform && target.platform !== options.platform) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "target-not-found",
+      "The selected application target changed platforms during inspection.",
+    );
+  }
+  if (!targetSupportsPrebuiltAuth(target.configurations, target.platform)) {
+    const guidance =
+      target.platform === "macos"
+        ? "macOS 14.0 or newer. Set MACOSX_DEPLOYMENT_TARGET to 14.0 or newer for every selected-target build configuration, make architecture values consistent"
+        : "iOS 17.0 or newer. Set IPHONEOS_DEPLOYMENT_TARGET to 17.0 or newer for every selected-target iPhone and iPad build configuration, make device and simulator values consistent";
     return blocked(
       options,
       root,
       projectPath,
       "incompatible-deployment-target",
-      "ClerkKitUI's native components require iOS 17.0 or newer. Set IPHONEOS_DEPLOYMENT_TARGET to 17.0 or newer for every selected-target iPhone and iPad build configuration, make device and simulator values consistent, then rerun clerk init.",
+      `ClerkKitUI's native components require ${guidance}, then rerun clerk init.`,
     );
   }
   if (!target.swift.evidenceComplete) {
@@ -637,7 +658,10 @@ function readyPrepared(
   validator: () => Promise<boolean>,
 ): PreparedIOSPrebuiltAuthMutation {
   const prepared = { status: "ready", plan } as PreparedIOSPrebuiltAuthMutation;
-  Object.defineProperty(prepared, "mutation", { value: mutation, enumerable: false });
+  Object.defineProperty(prepared, "mutation", {
+    value: mutation,
+    enumerable: false,
+  });
   preparedValidators.set(prepared, validator);
   return prepared;
 }
@@ -673,6 +697,7 @@ export async function prepareIOSPrebuiltAuthMutation(
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
     allowDirty: plan.allowDirty,
   });
   if (current.plan.status === "blocked" || !current.sourceSnapshot) {
@@ -693,7 +718,9 @@ export async function prepareIOSPrebuiltAuthMutation(
   if (current.plan.status === "satisfied") return { status: "satisfied", plan: current.plan };
 
   const newline = current.sourceSnapshot.newline;
-  const generated = `${current.sourceHeader ?? ""}${GENERATED_CONTENT_VIEW.replace(/\n/g, newline)}`;
+  const generated = `${
+    current.sourceHeader ?? ""
+  }${GENERATED_CONTENT_VIEW.replace(/\n/g, newline)}`;
   const candidateBytes = new TextEncoder().encode(generated);
   const boundary = await prepareIOSFileMutationBoundary(
     plan.root,
@@ -713,6 +740,7 @@ export async function prepareIOSPrebuiltAuthMutation(
       root: plan.root,
       projectPath: plan.projectPath,
       targetId: plan.targetId,
+      platform: plan.platform,
       allowDirty: true,
     });
     return (

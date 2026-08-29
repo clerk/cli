@@ -219,6 +219,32 @@ afterEach(async () => {
 });
 
 describe("iOS Clerk SDK installer", () => {
+  test("installs ClerkKit and ClerkKitUI for a pure macOS app", async () => {
+    const root = await fixture({ platform: "macos" });
+    await transformProject(root, removeClerkSDK);
+
+    const plan = await planIOSSDKInstall({
+      ...installOptions(root, true),
+      platform: "macos",
+      requirePrebuiltAuthCompatibility: true,
+    });
+
+    expect(plan).toMatchObject({
+      status: "ready",
+      platform: "macos",
+      products: ["ClerkKit", "ClerkKitUI"],
+      blockers: [],
+    });
+    expect((await applyIOSSDKInstall(plan)).status).toBe("applied");
+    const inspection = await inspectIOSProject(root, { target: IOS_FIXTURE_IDS.appTarget });
+    expect(inspection.selection).toMatchObject({ state: "selected", platform: "macos" });
+    expect(inspection.appTargets[0]?.packages).toEqual({
+      package: "remote",
+      clerkKit: "linked",
+      clerkKitUI: "linked",
+    });
+  });
+
   test("returns satisfied without serializing or changing a configured project", async () => {
     const root = await fixture();
     const before = await readFile(pbxprojPath(root));

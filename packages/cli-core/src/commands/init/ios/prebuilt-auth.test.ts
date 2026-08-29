@@ -85,13 +85,16 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true })));
 });
 
-async function createFixture(options: { shared?: boolean; crlf?: boolean } = {}): Promise<string> {
+async function createFixture(
+  options: { shared?: boolean; crlf?: boolean; platform?: "ios" | "macos" } = {},
+): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "clerk-prebuilt-auth-"));
   temporaryDirectories.push(root);
   await createIOSFixture(root, {
     clerkSDK: true,
     includeKey: false,
     secondTarget: options.shared === true,
+    platform: options.platform,
   });
   const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
   const project = parsePbxProject(await readFile(projectPath, "utf8"));
@@ -121,11 +124,12 @@ async function createFixture(options: { shared?: boolean; crlf?: boolean } = {})
   return root;
 }
 
-function options(root: string) {
+function options(root: string, platform: "ios" | "macos" = "ios") {
   return {
     root,
     projectPath: "MyApp.xcodeproj",
     targetId: IOS_FIXTURE_IDS.appTarget,
+    platform,
     allowDirty: true,
   } as const;
 }
@@ -148,6 +152,19 @@ async function updateDeploymentTargets(
 }
 
 describe("prebuilt AuthView source setup", () => {
+  test("supports a pristine macOS 14 SwiftUI app", async () => {
+    const root = await createFixture({ platform: "macos" });
+
+    const plan = await planIOSPrebuiltAuth(options(root, "macos"));
+
+    expect(plan).toMatchObject({
+      status: "ready",
+      platform: "macos",
+      sourcePath: "MyApp/ContentView.swift",
+      blockers: [],
+    });
+  });
+
   test("plans only an exact target-owned untouched SwiftUI placeholder", async () => {
     const root = await createFixture();
     const plan = await planIOSPrebuiltAuth(options(root));
