@@ -1313,6 +1313,37 @@ struct MyApp: App {
     expect(target?.packages.clerkKit).toBe("declared");
   });
 
+  test.each([
+    ["a scalar", "futureos"],
+    ["a partially malformed array", "( ios, 1, )"],
+  ])(
+    "does not use %s platformFilters value as authoritative iOS evidence",
+    async (_description, platformFilters) => {
+      const root = await fixture({ complete: true });
+      const projectFile = join(root, "MyApp.xcodeproj", "project.pbxproj");
+      const original = await Bun.file(projectFile).text();
+      await Bun.write(
+        projectFile,
+        original
+          .replace(
+            `${IOS_FIXTURE_IDS.sourceBuildFile} = { isa = PBXBuildFile; fileRef`,
+            `${IOS_FIXTURE_IDS.sourceBuildFile} = { isa = PBXBuildFile; platformFilters = ${platformFilters}; fileRef`,
+          )
+          .replace(
+            `${IOS_FIXTURE_IDS.clerkKitBuildFile} = { isa = PBXBuildFile; productRef`,
+            `${IOS_FIXTURE_IDS.clerkKitBuildFile} = { isa = PBXBuildFile; platformFilters = ${platformFilters}; productRef`,
+          ),
+      );
+
+      const inspection = await inspectIOSProject(root);
+      const target = inspection.appTargets[0];
+
+      expect(target?.swift.sourceFilesScanned).toBe(0);
+      expect(target?.swift.evidenceComplete).toBe(false);
+      expect(target?.packages.clerkKit).toBe("declared");
+    },
+  );
+
   test("reports malformed projects as blocked evidence", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-inspect-"));
     temporaryDirectories.push(root);
