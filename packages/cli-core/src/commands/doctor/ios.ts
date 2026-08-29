@@ -274,8 +274,8 @@ function linkedDevelopmentKeyResult(
   developmentInstanceId: string,
 ): CheckResult {
   const name = "iOS: Linked development key";
-  const localHost = inspection.localPublishableKey.frontendApiHost;
-  if (!localHost) {
+  const localPublishableKey = inspection.localPublishableKey;
+  if (localPublishableKey.state !== "valid") {
     return {
       name,
       status: "fail",
@@ -283,6 +283,7 @@ function linkedDevelopmentKeyResult(
       remedy: LOCAL_STEP_REMEDY,
     };
   }
+  const localHost = localPublishableKey.frontendApiHost;
 
   const instance = application.instances.find(
     (candidate) => candidate.instance_id === developmentInstanceId,
@@ -299,7 +300,7 @@ function linkedDevelopmentKeyResult(
   try {
     const linked = decodePublishableKey(instance.publishable_key);
     if (
-      inspection.localPublishableKey.instanceType !== "development" ||
+      localPublishableKey.instanceType !== "development" ||
       linked.instanceType !== "development" ||
       linked.fapiHost !== localHost
     ) {
@@ -427,9 +428,11 @@ async function remoteResults(
     hasSupportedIOSCustomConfigure(target);
   const preliminaryResults: CheckResult[] = [];
   if (target && !customSource) {
+    const localPublishableKey = inspection.localPublishableKey;
     const authView = await authViewEnvironmentResult(target, dependencies, {
       configureStatus: configureStep?.status,
-      fapiHost: inspection.localPublishableKey.frontendApiHost,
+      fapiHost:
+        localPublishableKey.state === "valid" ? localPublishableKey.frontendApiHost : undefined,
       customSource: false,
       linked: false,
     });
