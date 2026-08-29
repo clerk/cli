@@ -607,6 +607,35 @@ struct MyApp: App {
     expect(await readFile(appSourcePath(root))).toEqual(before);
   });
 
+  test("refuses mutation when the entry source has multiple PBX group parents", async () => {
+    const root = await fixture();
+    const alternateGroupId = "565656565656565656565656";
+    const alternateSourcePath = join(root, "Alternate", "MyAppApp.swift");
+    const originalBefore = await readFile(appSourcePath(root));
+    await mkdir(join(root, "Alternate"));
+    await writeFile(alternateSourcePath, originalBefore);
+    const alternateBefore = await readFile(alternateSourcePath);
+    await updateProject(root, (objects) => {
+      objects[alternateGroupId] = {
+        isa: "PBXGroup",
+        children: [IOS_FIXTURE_IDS.appFile],
+        path: "Alternate",
+        sourceTree: "<group>",
+      };
+      objects[IOS_FIXTURE_IDS.mainGroup]!.children = [
+        alternateGroupId,
+        ...((objects[IOS_FIXTURE_IDS.mainGroup]!.children as string[]) ?? []),
+      ];
+    });
+
+    const plan = await planIOSDirectConfig(planOptions(root));
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+    expect(await readFile(appSourcePath(root))).toEqual(originalBefore);
+    expect(await readFile(alternateSourcePath)).toEqual(alternateBefore);
+  });
+
   test("edits only the explicitly selected target", async () => {
     const root = await fixture({ secondTarget: true });
     const mainBefore = await readFile(appSourcePath(root));

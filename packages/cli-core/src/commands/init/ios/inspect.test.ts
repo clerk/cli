@@ -1408,6 +1408,36 @@ let package = Package(
     },
   );
 
+  test.each([
+    ["decimal", "&#46;"],
+    ["hexadecimal", "&#x2E;"],
+  ])(
+    "keeps an external workspace project with a %s numeric entity visible and incomplete",
+    async (_label, encodedDot) => {
+      const root = await fixture({ workspace: true });
+      const externalRoot = await fixture();
+      const workspace = join(root, "MyApp.xcworkspace");
+      const externalProject = join(externalRoot, "MyApp.xcodeproj");
+      const encodedExternalProject = externalProject.replace(
+        /\.xcodeproj$/,
+        `${encodedDot}xcodeproj`,
+      );
+      await Bun.write(
+        join(workspace, "contents.xcworkspacedata"),
+        `<Workspace version="1.0"><FileRef location="absolute:${encodedExternalProject}" /></Workspace>`,
+      );
+
+      const result = await inspectWorkspace(root, workspace);
+      const inventory = await discoverLocalIOSProjects(root);
+
+      expect(result.inspection.projectPaths).toContain(externalProject);
+      expect(result.localProjectPaths).not.toContain(externalProject);
+      expect(result.complete).toBe(false);
+      expect(inventory.projectPaths).not.toContain(externalProject);
+      expect(inventory.complete).toBe(false);
+    },
+  );
+
   test("does not guess when multiple application targets exist", async () => {
     const root = await fixture({ secondTarget: true });
     const inspection = await inspectIOSProject(root);
