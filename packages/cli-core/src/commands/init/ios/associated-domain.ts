@@ -1015,7 +1015,12 @@ export async function validatePreparedIOSAssociatedDomain(
     return false;
   }
   const expectedHost = prepared.expectedDomain.slice("webcredentials:".length);
-  if (runtimeFrontendHost(inspection, target) !== expectedHost) return false;
+  if (
+    !prepared.plan.requiresPublishableKey &&
+    runtimeFrontendHost(inspection, target) !== expectedHost
+  ) {
+    return false;
+  }
   if (target.configurations.length === 0) return false;
   const files: EntitlementsFile[] = [];
   for (const configuration of target.configurations) {

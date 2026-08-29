@@ -530,6 +530,36 @@ struct MyApp: App {
     expect(JSON.stringify(prepared)).not.toContain("candidateBytes");
   });
 
+  test("uses the selected application's host without inspecting a custom key source", async () => {
+    const root = await temporaryRoot();
+    await createIOSFixture(root, { includeKey: false });
+    await removeAssociatedDomains(root);
+    const sourcePath = join(root, "MyApp", "MyAppApp.swift");
+    const source = `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  init() {
+    Clerk.configure(publishableKey: CustomKeyProvider.current)
+  }
+
+  var body: some Scene { WindowGroup { Text("Hello") } }
+}
+`;
+    await writeFile(sourcePath, source);
+
+    const plan = await planIOSAssociatedDomain(planOptions(root, true));
+    const result = await applyIOSAssociatedDomain(plan, KEY);
+
+    expect(plan).toMatchObject({ status: "ready", requiresPublishableKey: true });
+    expect(result.status).toBe("applied");
+    expect(await readFile(sourcePath, "utf8")).toBe(source);
+    expect(await readFile(join(root, "MyApp", "MyApp.entitlements"), "utf8")).toContain(
+      `webcredentials:${HOST}`,
+    );
+  });
+
   test("returns stale when the selected target's inline key host changes after planning", async () => {
     const root = await directFixture();
     const path = join(root, "MyApp", "MyApp.entitlements");
