@@ -37,6 +37,15 @@ const UNSUPPORTED_XCODE_INSPECTION = {
   generatedProject: null,
   diagnostics: [],
 } as IOSProjectInspectionResult;
+const MISSING_TARGET_INSPECTION = {
+  ...UNSUPPORTED_XCODE_INSPECTION,
+  platform: "ios",
+  selection: {
+    state: "not-found",
+    requested: "MissingApp",
+    candidates: ["MyApp (APP_TARGET)"],
+  },
+} as IOSProjectInspectionResult;
 const DOCTOR_CONTEXT = {} as DoctorContext;
 
 function passingResult(name: string): CheckResult {
@@ -112,6 +121,42 @@ describe("Apple-native framework routing", () => {
     expect(nativeChecks).toBeFalse();
     expect(nativeAuditCalls).toBe(0);
     expect(results.map((result) => result.name)).toEqual(["Environment variables"]);
+  });
+
+  test("routes a missing explicit target through the native audit", async () => {
+    let nativeChecks = false;
+    let nativeAuditCalls = 0;
+    const results = await runChecks(
+      DOCTOR_CONTEXT,
+      { target: "MissingApp" },
+      {
+        dependencies: runDependencies({
+          inspectIOSProject: async () => MISSING_TARGET_INSPECTION,
+          getDoctorChecks: (native) => {
+            nativeChecks = native;
+            return [async () => passingResult("Common")];
+          },
+          runIOSDoctorChecks: async (_ctx, options) => {
+            nativeAuditCalls++;
+            expect(options.preparedInspection).toBe(MISSING_TARGET_INSPECTION);
+            return {
+              inspection: MISSING_TARGET_INSPECTION,
+              results: [
+                {
+                  name: "iOS: Select the iOS application target",
+                  status: "fail",
+                  message: 'The requested target "MissingApp" was not found.',
+                },
+              ],
+            };
+          },
+        }),
+      },
+    );
+
+    expect(nativeChecks).toBeTrue();
+    expect(nativeAuditCalls).toBe(1);
+    expect(results.some((result) => result.status === "fail")).toBeTrue();
   });
 });
 describe("doctor telemetry stages", () => {
