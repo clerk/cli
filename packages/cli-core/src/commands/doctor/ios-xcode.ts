@@ -392,11 +392,119 @@ function isCommandSuccess(result: IOSXcodeCommandResult): boolean {
   );
 }
 
+const PEM_STREAM_MARKER_BOUNDARY_CHARS = 256;
+const PEM_BEGIN_MARKER = /-----BEGIN ([A-Z0-9][A-Z0-9 -]*)-----/i;
+const PEM_END_MARKER = /-----END ([A-Z0-9][A-Z0-9 -]*)-----/gi;
+
+function isPrivateKeyPEMLabel(label: string): boolean {
+  return /\bPRIVATE KEY\b/i.test(label);
+}
+
+/**
+ * Redacts PEM private keys before subprocess output enters the bounded tail
+ * buffer. Keeping this state across chunks prevents truncation from discarding
+ * a BEGIN marker while retaining private-key bytes and the matching END marker.
+ */
+function createPEMPrivateKeyStreamRedactor(): {
+  transform: (value: Uint8Array) => Uint8Array;
+  finish: () => Uint8Array;
+} {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let pending = "";
+  let redacting = false;
+  let privateKeyLabel: string | undefined;
+  let finished = false;
+
+  const processText = (value: string, final: boolean): Uint8Array => {
+    pending += value;
+    let output = "";
+
+    while (pending.length > 0) {
+      if (redacting) {
+        let matchingEnd: RegExpExecArray | undefined;
+        if (privateKeyLabel) {
+          let candidate: RegExpExecArray | null;
+          while ((candidate = PEM_END_MARKER.exec(pending)) !== null) {
+            if (candidate[1]?.toUpperCase() === privateKeyLabel) {
+              matchingEnd = candidate;
+              break;
+            }
+          }
+          PEM_END_MARKER.lastIndex = 0;
+        }
+        if (matchingEnd?.index != null) {
+          pending = pending.slice(matchingEnd.index + matchingEnd[0].length);
+          redacting = false;
+          privateKeyLabel = undefined;
+          continue;
+        }
+        if (final) {
+          pending = "";
+        } else if (pending.length > PEM_STREAM_MARKER_BOUNDARY_CHARS) {
+          pending = pending.slice(-PEM_STREAM_MARKER_BOUNDARY_CHARS);
+        }
+        break;
+      }
+
+      const begin = PEM_BEGIN_MARKER.exec(pending);
+      if (begin?.index != null) {
+        if (!isPrivateKeyPEMLabel(begin[1] ?? "")) {
+          output += pending.slice(0, begin.index + begin[0].length);
+          pending = pending.slice(begin.index + begin[0].length);
+          continue;
+        }
+        output += `${pending.slice(0, begin.index)}<redacted>`;
+        pending = pending.slice(begin.index + begin[0].length);
+        redacting = true;
+        privateKeyLabel = begin[1]!.toUpperCase();
+        continue;
+      }
+      if (final) {
+        output += pending;
+        pending = "";
+      } else {
+        const beginCandidate = pending.toUpperCase().lastIndexOf("-----BEGIN ");
+        if (beginCandidate >= 0) {
+          output += pending.slice(0, beginCandidate);
+          pending = pending.slice(beginCandidate);
+          if (pending.length >= PEM_STREAM_MARKER_BOUNDARY_CHARS) {
+            output += "<redacted>";
+            pending = "";
+            redacting = true;
+            privateKeyLabel = undefined;
+          }
+          break;
+        }
+        const safeLength = Math.max(0, pending.length - PEM_STREAM_MARKER_BOUNDARY_CHARS);
+        output += pending.slice(0, safeLength);
+        pending = pending.slice(safeLength);
+      }
+      break;
+    }
+
+    return encoder.encode(output);
+  };
+
+  return {
+    transform: (value) => {
+      if (finished) return new Uint8Array(0);
+      return processText(decoder.decode(value, { stream: true }), false);
+    },
+    finish: () => {
+      if (finished) return new Uint8Array(0);
+      finished = true;
+      return processText(decoder.decode(), true);
+    },
+  };
+}
+
 function startBoundedStreamDrain(
   stream: ReadableStream<Uint8Array>,
   limit: number,
 ): BoundedOutputDrain {
   const reader = stream.getReader();
+  const pemRedactor = createPEMPrivateKeyStreamRedactor();
   let retained = new Uint8Array(0);
   let total = 0;
   let forcedClosed = false;
@@ -417,22 +525,25 @@ function startBoundedStreamDrain(
     // from becoming an unhandled rejection later.
     void cancellation.catch(() => {});
   };
+  const retain = (value: Uint8Array): void => {
+    if (value.byteLength >= limit) {
+      retained = value.slice(value.byteLength - limit);
+      return;
+    }
+    const overflow = Math.max(0, retained.byteLength + value.byteLength - limit);
+    const previous = overflow > 0 ? retained.slice(overflow) : retained;
+    const next = new Uint8Array(previous.byteLength + value.byteLength);
+    next.set(previous);
+    next.set(value, previous.byteLength);
+    retained = next;
+  };
   const completion = (async (): Promise<void> => {
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         total += value.byteLength;
-        if (value.byteLength >= limit) {
-          retained = value.slice(value.byteLength - limit);
-          continue;
-        }
-        const overflow = Math.max(0, retained.byteLength + value.byteLength - limit);
-        const previous = overflow > 0 ? retained.slice(overflow) : retained;
-        const next = new Uint8Array(previous.byteLength + value.byteLength);
-        next.set(previous);
-        next.set(value, previous.byteLength);
-        retained = next;
+        retain(pemRedactor.transform(value));
       }
     } catch (error) {
       if (!forcedClosed) {
@@ -440,6 +551,7 @@ function startBoundedStreamDrain(
         throw error;
       }
     } finally {
+      retain(pemRedactor.finish());
       try {
         await cancellation;
       } finally {
