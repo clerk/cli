@@ -3,6 +3,7 @@ import { ERROR_CODE, UserAbortError } from "../../../lib/errors.ts";
 import { getLogLevel, setLogLevel } from "../../../lib/log.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import type { IOSNativeReadinessTarget } from "./native-readiness.ts";
+import type { IOSNativePlatform } from "./types.ts";
 import {
   applyIOSNativeRemoteSetup,
   auditIOSNativeRemoteSetup,
@@ -77,6 +78,7 @@ function selectedTarget(
     appIdPrefixCandidates?: string[];
     projectPath?: string;
     targetId?: string;
+    platform?: IOSNativePlatform;
   } = {},
 ): IOSNativeReadinessTarget {
   const appIdPrefix = options.appIdPrefix === undefined ? LOCAL_PREFIX : options.appIdPrefix;
@@ -85,6 +87,7 @@ function selectedTarget(
     projectPath: options.projectPath ?? "NativeApp.xcodeproj",
     targetId: options.targetId ?? "TARGET_NATIVE_APP",
     targetName: "NativeApp",
+    platform: options.platform ?? "ios",
     bundleIdentifier: {
       status: "resolved",
       value: options.bundleIdentifier ?? BUNDLE_IDENTIFIER,
@@ -108,6 +111,7 @@ function targetSnapshot(
     root: IOS_ROOT,
     projectPath: target.projectPath,
     targetId: target.targetId,
+    platform: target.platform,
     bundleIdentifier: target.bundleIdentifier,
     appIdPrefix: target.appIdPrefix,
   };
@@ -118,6 +122,7 @@ const approvedTargetReader: IOSNativeRemoteTargetReader = async (snapshot) => ({
   projectPath: snapshot.projectPath,
   targetId: snapshot.targetId,
   targetName: "NativeApp",
+  platform: snapshot.platform,
   bundleIdentifier: snapshot.bundleIdentifier,
   appIdPrefix: snapshot.appIdPrefix,
 });
@@ -183,10 +188,12 @@ function plan(options: {
   registration: "required" | "satisfied";
   appIdPrefix?: string;
   localAppIdPrefix?: string | null;
+  platform?: IOSNativePlatform;
 }): IOSNativeRemotePlan {
   const appIdPrefix = options.appIdPrefix ?? LOCAL_PREFIX;
   const localTarget = selectedTarget({
     appIdPrefix: options.localAppIdPrefix === undefined ? appIdPrefix : options.localAppIdPrefix,
+    platform: options.platform,
   });
   return {
     schemaVersion: 1,
@@ -197,6 +204,7 @@ function plan(options: {
         : "ready",
     applicationId: APPLICATION_ID,
     instanceId: INSTANCE_ID,
+    platform: options.platform ?? "ios",
     localTarget: targetSnapshot(localTarget),
     bundleIdentifier: BUNDLE_IDENTIFIER,
     appIdPrefix,
@@ -207,7 +215,9 @@ function plan(options: {
         ? ["Enable the Native API for the linked development instance."]
         : []),
       ...(options.registration === "required"
-        ? [`Register iOS Bundle ID ${BUNDLE_IDENTIFIER} with Apple App ID Prefix ${appIdPrefix}.`]
+        ? [
+            `Register ${options.platform === "macos" ? "macOS" : "iOS"} Bundle ID ${BUNDLE_IDENTIFIER} with Apple App ID Prefix ${appIdPrefix}.`,
+          ]
         : []),
     ],
     blockers: [],
@@ -379,6 +389,28 @@ describe("Clerk Native Application remote setup", () => {
         api,
       ),
     ).rejects.toBe(transportError);
+  });
+
+  test("plans a macOS target through the existing Apple native application API", () => {
+    const result = buildIOSNativeRemotePlan({
+      applicationId: APPLICATION_ID,
+      instanceId: INSTANCE_ID,
+      root: IOS_ROOT,
+      target: selectedTarget({ platform: "macos" }),
+      nativeSettings: nativeSettings(false),
+      registrations: [],
+    });
+
+    expect(result).toMatchObject({
+      status: "ready",
+      platform: "macos",
+      localTarget: { platform: "macos" },
+      registration: "required",
+      nativeApi: "required",
+    });
+    expect(result.actions).toContain(
+      `Register macOS Bundle ID ${BUNDLE_IDENTIFIER} with Apple App ID Prefix ${LOCAL_PREFIX}.`,
+    );
   });
 
   test("validates Apple identity formats without equating a prefix to the Team ID", () => {
@@ -730,6 +762,43 @@ describe("Clerk Native Application remote setup", () => {
     });
 
     expect(calls).toEqual([]);
+  });
+
+  test("rejects a macOS target that changes platform before remote access", async () => {
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true)],
+      registrationReads: [[registration()]],
+    });
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "satisfied", platform: "macos" }),
+        api,
+        async () => selectedTarget({ platform: "ios" }),
+      ),
+    ).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_SETUP_STALE,
+      message: expect.stringContaining("Xcode target identity changed"),
+    });
+
+    expect(calls).toEqual([]);
+  });
+
+  test("registers a macOS target through the existing native application endpoint", async () => {
+    const exactRegistration = registration();
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true), nativeSettings(true)],
+      registrationReads: [[], [exactRegistration]],
+    });
+
+    await applyRemoteSetup(
+      plan({ nativeApi: "satisfied", registration: "required", platform: "macos" }),
+      api,
+      approvedTargetReader,
+    );
+
+    expect(calls.filter((call) => call === "POST iOS registration")).toHaveLength(1);
+    expect(captured.err).toContain(`macOS application ${BUNDLE_IDENTIFIER} registered with Clerk`);
   });
 
   test.each([
@@ -1767,7 +1836,7 @@ describe("Clerk Native Application remote setup", () => {
     expect(String(thrown)).not.toContain(sensitiveBearer);
     expect(JSON.stringify(thrown)).not.toContain(sensitiveBearer);
     expect(captured.err).toContain(
-      "Could not create the iOS application registration; underlying error details were omitted.",
+      "Could not create the Apple native application registration; underlying error details were omitted.",
     );
     expect(captured.err).not.toContain(sensitiveBearer);
   });

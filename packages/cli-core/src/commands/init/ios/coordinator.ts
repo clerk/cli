@@ -301,6 +301,7 @@ async function completeAppleNativeSetup(
     const preparedApple = await prepareIOSNativeAppleConnection({
       applicationId: keys.applicationId,
       instanceId: keys.instanceId,
+      platform: target.platform,
       bundleIdentifier: nativeRemotePlan.bundleIdentifier,
       nativeApplicationReady:
         nativeRemotePlan.status !== "blocked" && nativeRemotePlan.registration !== "blocked",

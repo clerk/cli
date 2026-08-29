@@ -30,6 +30,7 @@ import type {
   IOSUnverifiedAppIdPrefixSuggestion,
 } from "./native-readiness.ts";
 import { buildIOSNativeReadinessAudit } from "./native-readiness.ts";
+import type { IOSNativePlatform } from "./types.ts";
 import {
   IOSNativeRegistrationRetryLockError,
   cliStateIOSNativeRegistrationRetryStore,
@@ -68,9 +69,13 @@ function retryLockFailureMessage(
     ? "Clerk Native Application settings were verified, and no further remote changes are required."
     : "The local setup remains intact, and no registration request was sent.";
   if (error.status === "busy") {
-    return `Another Clerk command is updating the iOS registration retry state. ${outcome} Wait for it to finish, then rerun \`clerk init\`.`;
+    return `Another Clerk command is updating the Apple native application registration retry state. ${outcome} Wait for it to finish, then rerun \`clerk init\`.`;
   }
-  return `An interrupted Clerk command left a stale iOS registration retry-state lock. ${outcome} Confirm no other Clerk command is running, then remove only the stale lock directory at \`${error.recoveryPath}\` and rerun \`clerk init\`.`;
+  return `An interrupted Clerk command left a stale Apple native application registration retry-state lock. ${outcome} Confirm no other Clerk command is running, then remove only the stale lock directory at \`${error.recoveryPath}\` and rerun \`clerk init\`.`;
+}
+
+function platformName(platform: IOSNativePlatform | undefined): "iOS" | "macOS" {
+  return platform === "macos" ? "macOS" : "iOS";
 }
 
 export type IOSNativeRemoteBlockerCode =
@@ -93,6 +98,7 @@ export interface IOSNativeRemoteTargetSnapshot {
   root: string;
   projectPath: string;
   targetId: string;
+  platform: IOSNativePlatform;
   bundleIdentifier: IOSSelectedNativeReadinessTarget["bundleIdentifier"];
   appIdPrefix: IOSSelectedNativeReadinessTarget["appIdPrefix"];
 }
@@ -103,6 +109,7 @@ export type IOSNativeRemotePlan = {
   status: "ready" | "satisfied" | "blocked";
   applicationId: string;
   instanceId: string;
+  platform?: IOSNativePlatform;
   localTarget?: IOSNativeRemoteTargetSnapshot;
   bundleIdentifier?: string;
   appIdPrefix?: string;
@@ -241,6 +248,7 @@ function copyTargetSnapshot(
     root,
     projectPath: target.projectPath,
     targetId: target.targetId,
+    platform: target.platform,
     bundleIdentifier:
       target.bundleIdentifier.status === "conflicting"
         ? { ...target.bundleIdentifier, candidates: [...target.bundleIdentifier.candidates] }
@@ -269,6 +277,7 @@ const defaultTargetReader: IOSNativeRemoteTargetReader = async (snapshot) => {
 };
 
 function localIdentity(target: IOSNativeReadinessTarget): {
+  platform?: IOSNativePlatform;
   bundleIdentifier?: string;
   appIdPrefix?: string;
   appIdPrefixCandidates: string[];
@@ -280,7 +289,7 @@ function localIdentity(target: IOSNativeReadinessTarget): {
       blockers: [
         blocker(
           "target-not-selected",
-          "Select exactly one iOS application target before registering it with Clerk.",
+          "Select exactly one iOS or macOS application target before registering it with Clerk.",
         ),
       ],
     };
@@ -288,11 +297,12 @@ function localIdentity(target: IOSNativeReadinessTarget): {
 
   if (target.bundleIdentifier.status !== "resolved") {
     return {
+      platform: target.platform,
       appIdPrefixCandidates: [],
       blockers: [
         blocker(
           "bundle-identifier-unavailable",
-          "Resolve one Bundle ID across every selected-target build configuration before registering the iOS app with Clerk.",
+          `Resolve one Bundle ID across every selected-target build configuration before registering the ${platformName(target.platform)} app with Clerk.`,
         ),
       ],
     };
@@ -335,6 +345,7 @@ function localIdentity(target: IOSNativeReadinessTarget): {
   }
 
   return {
+    platform: target.platform,
     bundleIdentifier: target.bundleIdentifier.value,
     appIdPrefix:
       target.appIdPrefix.status === "resolved" &&
@@ -358,6 +369,7 @@ export function buildIOSNativeRemotePlan(options: {
   const nativeSettings = validateNativeSettings(options.nativeSettings);
   const registrations = validateIOSApplications(options.registrations);
   const identity = localIdentity(options.target);
+  const platform = identity.platform;
   const blockers = [...identity.blockers];
   const localBundleIdentifier = identity.bundleIdentifier;
   const explicitPrefix = validateAppIdPrefix(options.requestedAppIdPrefix);
@@ -456,7 +468,7 @@ export function buildIOSNativeRemotePlan(options: {
   const actions: string[] = [];
   if (registration === "required" && appIdPrefix && bundleIdentifier) {
     actions.push(
-      `Register iOS Bundle ID ${bundleIdentifier} with Apple App ID Prefix ${appIdPrefix}.`,
+      `Register ${platformName(platform)} Bundle ID ${bundleIdentifier} with Apple App ID Prefix ${appIdPrefix}.`,
     );
   }
   if (nativeApi === "required") {
@@ -475,6 +487,7 @@ export function buildIOSNativeRemotePlan(options: {
     status,
     applicationId: options.applicationId,
     instanceId: options.instanceId,
+    ...(platform ? { platform } : {}),
     localTarget: copyTargetSnapshot(options.root, options.target),
     bundleIdentifier,
     appIdPrefix,
@@ -522,7 +535,8 @@ async function readIOSNativeRemoteAudit(
 }
 
 /**
- * Reads Native API and iOS registration state without prompting, mutating, or
+ * Reads Native API and Apple native application registration state without
+ * prompting, mutating, or
  * wrapping transport errors. The returned plan is a redacted projection of
  * the two GET responses; raw response objects are not exposed.
  */
@@ -585,9 +599,9 @@ function appIdPrefixSuggestion(
 }
 
 /**
- * A newly created Clerk application cannot already contain the selected iOS
- * registration. Stop before application creation when agent mode still needs
- * the user to confirm an App ID Prefix.
+ * A newly created Clerk application cannot already contain the selected Apple
+ * native application registration. Stop before application creation when
+ * agent mode still needs the user to confirm an App ID Prefix.
  */
 export function assertIOSAppIdPrefixBeforeApplicationCreation(options: {
   target: IOSNativeReadinessTarget;
@@ -697,7 +711,11 @@ export async function prepareIOSNativeRemoteSetup(
   }
 
   if (plan.status === "satisfied") {
-    log.info(dim("Clerk Native API and iOS application registration are already configured."));
+    log.info(
+      dim(
+        `Clerk Native API and ${platformName(plan.platform)} application registration are already configured.`,
+      ),
+    );
     return plan;
   }
 
@@ -705,7 +723,7 @@ export async function prepareIOSNativeRemoteSetup(
   for (const action of plan.actions) log.info(`  ${yellow("REMOTE")}  ${action}`);
   log.info(
     dim(
-      "\n  Remote changes are additive. clerk init will not update or delete an existing iOS registration.",
+      "\n  Remote changes are additive. clerk init will not update or delete an existing Apple native application registration.",
     ),
   );
   log.blank();
@@ -732,6 +750,7 @@ async function reconciledPlan(
       projectPath: "",
       targetId: "",
       targetName: "",
+      platform: plan.platform ?? plan.localTarget?.platform ?? "ios",
       bundleIdentifier: { status: "resolved", value: plan.bundleIdentifier! },
       appIdPrefix: plan.appIdPrefix
         ? { status: "resolved", source: "literal-entitlements", value: plan.appIdPrefix }
@@ -780,6 +799,8 @@ function localTargetStillMatchesApprovedIdentity(
     current.status !== "selected" ||
     current.projectPath !== approved.projectPath ||
     current.targetId !== approved.targetId ||
+    current.platform !== approved.platform ||
+    plan.platform !== approved.platform ||
     current.bundleIdentifier.status !== "resolved" ||
     !bundleIdentifiersEqual(current.bundleIdentifier.value, plan.bundleIdentifier)
   ) {
@@ -832,6 +853,7 @@ function revalidatedActionSetIsAuthorized(
     current.status === "blocked" ||
     current.applicationId !== approved.applicationId ||
     current.instanceId !== approved.instanceId ||
+    current.platform !== approved.platform ||
     !bundleIdentifiersEqual(current.bundleIdentifier, approved.bundleIdentifier) ||
     current.appIdPrefix !== approved.appIdPrefix
   ) {
@@ -888,12 +910,14 @@ export async function applyIOSNativeRemoteSetup(
           ? await registrationRetryStore.getOrCreate(retryIdentity)
           : await registrationRetryStore.peek(retryIdentity);
     } catch (error) {
-      logSuppressedFailure("Could not read or preserve the iOS registration retry state");
+      logSuppressedFailure(
+        "Could not read or preserve the Apple native application registration retry state",
+      );
       if (error instanceof IOSNativeRegistrationRetryLockError) {
         throw iosRemoteError(retryLockFailureMessage(error, false));
       }
       throw iosRemoteError(
-        "The iOS application registration retry state could not be read or preserved safely. The local setup remains intact, and no registration request was sent; verify CLI state directory access and rerun clerk init.",
+        "The Apple native application registration retry state could not be read or preserved safely. The local setup remains intact, and no registration request was sent; verify CLI state directory access and rerun clerk init.",
       );
     }
   }
@@ -922,7 +946,7 @@ export async function applyIOSNativeRemoteSetup(
   }
 
   // Register first so Native API is never enabled by this command without a
-  // matching iOS application registration already present.
+  // matching Apple native application registration already present.
   if (currentPlan.registration === "required") {
     if (!retryIdentity) {
       throw iosRemoteError(
@@ -938,13 +962,15 @@ export async function applyIOSNativeRemoteSetup(
     }
     try {
       const created = validateIOSApplication(
-        await withSpinner("Registering the iOS application with Clerk...", async () =>
-          api.createIOSApplication(
-            plan.applicationId,
-            plan.instanceId,
-            { appIdPrefix: plan.appIdPrefix!, bundleId: plan.bundleIdentifier! },
-            { idempotencyKey: observedRegistrationRetryKey },
-          ),
+        await withSpinner(
+          `Registering the ${platformName(plan.platform)} application with Clerk...`,
+          async () =>
+            api.createIOSApplication(
+              plan.applicationId,
+              plan.instanceId,
+              { appIdPrefix: plan.appIdPrefix!, bundleId: plan.bundleIdentifier! },
+              { idempotencyKey: observedRegistrationRetryKey },
+            ),
         ),
       );
       if (
@@ -952,12 +978,12 @@ export async function applyIOSNativeRemoteSetup(
         created.app_id_prefix !== plan.appIdPrefix
       ) {
         throw iosRemoteError(
-          "Clerk returned an unexpected iOS application registration. The local setup remains intact; rerun clerk init to reconcile remote state.",
+          "Clerk returned an unexpected Apple native application registration. The local setup remains intact; rerun clerk init to reconcile remote state.",
           ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
         );
       }
     } catch (error) {
-      logSuppressedFailure("Could not create the iOS application registration");
+      logSuppressedFailure("Could not create the Apple native application registration");
       if (error instanceof CliError && error.code === ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE) {
         throw error;
       }
@@ -967,10 +993,10 @@ export async function applyIOSNativeRemoteSetup(
           await api.listIOSApplications(plan.applicationId, plan.instanceId),
         );
       } catch (fallbackError) {
-        logSuppressedFailure("Could not confirm the iOS application registration");
+        logSuppressedFailure("Could not confirm the Apple native application registration");
         rethrowKnownRemoteError(fallbackError);
         throw iosRemoteError(
-          "The iOS application registration could not be confirmed. The local setup remains intact; rerun clerk init to reconcile remote state.",
+          "The Apple native application registration could not be confirmed. The local setup remains intact; rerun clerk init to reconcile remote state.",
         );
       }
       const exact = registrations.some(
@@ -981,11 +1007,13 @@ export async function applyIOSNativeRemoteSetup(
       if (!exact) {
         rethrowKnownRemoteError(error);
         throw iosRemoteError(
-          "The iOS application could not be registered with Clerk. The local setup remains intact; rerun clerk init to retry safely.",
+          `The ${platformName(plan.platform)} application could not be registered with Clerk. The local setup remains intact; rerun clerk init to retry safely.`,
         );
       }
     }
-    log.success(`iOS application ${plan.bundleIdentifier} registered with Clerk`);
+    log.success(
+      `${platformName(plan.platform)} application ${plan.bundleIdentifier} registered with Clerk`,
+    );
   }
 
   if (currentPlan.nativeApi === "required") {
@@ -1030,13 +1058,13 @@ export async function applyIOSNativeRemoteSetup(
         logSuppressedFailure("Could not confirm Clerk Native API state");
         rethrowKnownRemoteError(fallbackError);
         throw iosRemoteError(
-          "Native API enablement could not be confirmed. The local setup and any completed iOS registration remain intact; rerun clerk init.",
+          "Native API enablement could not be confirmed. The local setup and any completed Apple native application registration remain intact; rerun clerk init.",
         );
       }
       if (!current.api_enabled) {
         rethrowKnownRemoteError(enableError);
         throw iosRemoteError(
-          "The Native API could not be enabled. The local setup and any completed iOS registration remain intact; rerun clerk init to retry safely.",
+          "The Native API could not be enabled. The local setup and any completed Apple native application registration remain intact; rerun clerk init to retry safely.",
         );
       }
     }
@@ -1058,7 +1086,7 @@ export async function applyIOSNativeRemoteSetup(
   }
   if (finalPlan.status !== "satisfied" || !revalidatedActionSetIsAuthorized(plan, finalPlan)) {
     throw iosRemoteError(
-      "Clerk Native Application settings did not pass the final verification. The local iOS setup remains intact; rerun clerk init to reconcile the additive remote steps.",
+      `Clerk Native Application settings did not pass the final verification. The local ${platformName(plan.platform)} setup remains intact; rerun clerk init to reconcile the additive remote steps.`,
       ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
     );
   }
@@ -1070,11 +1098,13 @@ export async function applyIOSNativeRemoteSetup(
       );
       if (!cleared) {
         log.debug(
-          "Preserved a newer iOS registration retry state created after this invocation began.",
+          "Preserved a newer Apple native application registration retry state created after this invocation began.",
         );
       }
     } catch (error) {
-      logSuppressedFailure("Could not clear the verified iOS registration retry state");
+      logSuppressedFailure(
+        "Could not clear the verified Apple native application registration retry state",
+      );
       if (error instanceof IOSNativeRegistrationRetryLockError) {
         throw iosRemoteError(
           retryLockFailureMessage(error, true),

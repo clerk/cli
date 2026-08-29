@@ -1,7 +1,12 @@
 import { associatedDomainMatches, type IOSAssociatedDomainPlan } from "./associated-domain.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
 import { normalizeBundleIdentifierIdentity } from "../../../lib/apple-native-identity.ts";
-import type { IOSAppTarget, IOSProjectInspectionResult, IOSSetupStepStatus } from "./types.ts";
+import type {
+  IOSAppTarget,
+  IOSNativePlatform,
+  IOSProjectInspectionResult,
+  IOSSetupStepStatus,
+} from "./types.ts";
 
 export const IOS_NATIVE_READINESS_PLAPI_BRIDGE_REQUIREMENT = {
   applicationId: "linked-application-id",
@@ -58,8 +63,7 @@ export type IOSNativeReadinessTarget =
       projectPath: string;
       targetId: string;
       targetName: string;
-      /** Platform selected for this automation run. */
-      platform: IOSAppTarget["platform"];
+      platform: IOSNativePlatform;
       bundleIdentifier: IOSNativeReadinessBundleIdentifier;
       appIdPrefix: IOSNativeReadinessAppIdPrefix;
     }

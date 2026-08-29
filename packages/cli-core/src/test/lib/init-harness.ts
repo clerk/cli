@@ -246,6 +246,7 @@ export function useInitHarness(): InitHarness {
         status: "satisfied",
         applicationId: "app_test",
         instanceId: "ins_test",
+        platform: "ios",
         bundleIdentifier: "com.example.MyApp",
         appIdPrefix: "LEGACY1234",
         nativeApi: "satisfied",
