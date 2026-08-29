@@ -327,9 +327,33 @@ describe("Clerk Native Application remote setup", () => {
     expect(validateAppIdPrefix("x".repeat(11))).toBeUndefined();
     expect(validateBundleIdentifier("NativeApp")).toBe("NativeApp");
     expect(validateBundleIdentifier("com.example-NativeApp")).toBe("com.example-NativeApp");
+    expect(validateBundleIdentifier(".")).toBeUndefined();
+    expect(validateBundleIdentifier(".com.example")).toBeUndefined();
+    expect(validateBundleIdentifier("com..example")).toBeUndefined();
+    expect(validateBundleIdentifier("com.example.")).toBeUndefined();
     expect(validateBundleIdentifier("com.example_bad")).toBeUndefined();
     expect(validateBundleIdentifier("x".repeat(256))).toBeUndefined();
   });
+
+  test.each([".", ".com.example", "com..example", "com.example."])(
+    "blocks the malformed Bundle ID %s before planning registration",
+    (bundleIdentifier) => {
+      const result = buildIOSNativeRemotePlan({
+        applicationId: APPLICATION_ID,
+        instanceId: INSTANCE_ID,
+        target: selectedTarget({ bundleIdentifier }),
+        nativeSettings: nativeSettings(false),
+        registrations: [],
+      });
+
+      expect(result.status).toBe("blocked");
+      expect(result.registration).toBe("blocked");
+      expect(result.actions).not.toContainEqual(expect.stringContaining("Register iOS Bundle ID"));
+      expect(result.blockers).toContainEqual(
+        expect.objectContaining({ code: "bundle-identifier-invalid" }),
+      );
+    },
+  );
 
   test("accepts a legacy App ID Prefix that differs from DEVELOPMENT_TEAM", async () => {
     const { api } = scriptedAPI({

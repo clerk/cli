@@ -210,7 +210,8 @@ export function validateAppIdPrefix(value: string | undefined): string | undefin
 export function validateBundleIdentifier(value: string | undefined): string | undefined {
   return value &&
     value.length <= BUNDLE_IDENTIFIER_MAX_LENGTH &&
-    BUNDLE_IDENTIFIER_PATTERN.test(value)
+    BUNDLE_IDENTIFIER_PATTERN.test(value) &&
+    value.split(".").every((component) => component.length > 0)
     ? value
     : undefined;
 }
@@ -286,7 +287,7 @@ function localIdentity(target: IOSNativeReadinessTarget): {
     blockers.push(
       blocker(
         "bundle-identifier-invalid",
-        `The selected target's Bundle ID must contain between 1 and ${BUNDLE_IDENTIFIER_MAX_LENGTH} ASCII letters, numbers, hyphens, or periods.`,
+        `The selected target's Bundle ID must contain between 1 and ${BUNDLE_IDENTIFIER_MAX_LENGTH} ASCII letters, numbers, hyphens, or periods, with no empty dot-separated components.`,
       ),
     );
   }
