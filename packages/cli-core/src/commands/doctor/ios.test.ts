@@ -179,8 +179,18 @@ describe("runIOSDoctorChecks", () => {
       ),
     );
     const before = await readFile(projectPath, "utf8");
+    const plannerOptions: Parameters<typeof planIOSSDKInstall>[0][] = [];
 
-    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        planIOSSDKInstall: async (options) => {
+          plannerOptions.push(options);
+          return planIOSSDKInstall(options);
+        },
+      }),
+    );
 
     const sdk = audit.results.find(
       (result) => result.name === "iOS: Install Clerk's iOS SDK for the selected target",
@@ -188,7 +198,106 @@ describe("runIOSDoctorChecks", () => {
     expect(sdk?.status).toBe("fail");
     expect(sdk?.message).toContain("blocked");
     expect(sdk?.detail).toContain("require clerk-ios");
+    expect(plannerOptions).toEqual([
+      {
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: IOS_FIXTURE_IDS.appTarget,
+        includeClerkKitUI: true,
+        requirePrebuiltAuthCompatibility: true,
+      },
+    ]);
     expect(await readFile(projectPath, "utf8")).toBe(before);
+  });
+
+  test("fails strict SDK validation for a core-only target with duplicate products", async () => {
+    const root = await fixture({ clerkSDK: "core-only", complete: false });
+    await writeFile(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  var body: some Scene { WindowGroup { Text("Custom auth") } }
+}
+`,
+    );
+    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+    const project = await readFile(projectPath, "utf8");
+    const duplicateProducts = project.replace(
+      `packageProductDependencies = ( ${IOS_FIXTURE_IDS.clerkKit},  );`,
+      `packageProductDependencies = ( ${IOS_FIXTURE_IDS.clerkKit}, ${IOS_FIXTURE_IDS.clerkKit},  );`,
+    );
+    expect(duplicateProducts).not.toBe(project);
+    await writeFile(projectPath, duplicateProducts);
+    const plannerOptions: Parameters<typeof planIOSSDKInstall>[0][] = [];
+
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        planIOSSDKInstall: async (options) => {
+          plannerOptions.push(options);
+          return planIOSSDKInstall(options);
+        },
+      }),
+    );
+
+    const sdk = audit.results.find(
+      (result) => result.name === "iOS: Install Clerk's iOS SDK for the selected target",
+    );
+    expect(audit.inspection.appTargets[0]?.swift.authViewReferences).toEqual([]);
+    expect(sdk?.status).toBe("fail");
+    expect(sdk?.message).toContain("blocked");
+    expect(sdk?.detail).toContain("duplicate object ID");
+    expect(plannerOptions).toEqual([
+      {
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: IOS_FIXTURE_IDS.appTarget,
+      },
+    ]);
+    expect(await readFile(projectPath, "utf8")).toBe(duplicateProducts);
+  });
+
+  test("requires ClerkKitUI for non-AuthView source evidence", async () => {
+    const root = await fixture({ clerkSDK: false, complete: false });
+    await writeFile(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKitUI
+import SwiftUI
+
+@main
+struct MyApp: App {
+  var body: some Scene { WindowGroup { UserButton() } }
+}
+`,
+    );
+    const plannerOptions: Parameters<typeof planIOSSDKInstall>[0][] = [];
+
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        planIOSSDKInstall: async (options) => {
+          plannerOptions.push(options);
+          return planIOSSDKInstall(options);
+        },
+      }),
+    );
+
+    const target = audit.inspection.appTargets[0];
+    expect(target?.swift.importsClerkKitUI).toEqual([{ path: "MyApp/MyAppApp.swift" }]);
+    expect(target?.swift.authViewReferences).toEqual([]);
+    expect(plannerOptions).toEqual([
+      {
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: IOS_FIXTURE_IDS.appTarget,
+        includeClerkKitUI: true,
+      },
+    ]);
   });
 
   test("does not pass an unused Clerk environment modifier as shipping root wiring", async () => {
