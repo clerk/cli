@@ -294,6 +294,12 @@ export async function applyIOSLocalSetup(
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
+  if (!selectedTarget.platformEvidenceComplete) {
+    throw iosSetupError(
+      "The selected target's iOS or macOS platform could not be proven consistently across every build configuration. No local or remote changes were made; resolve SDKROOT and SUPPORTED_PLATFORMS, then rerun clerk init.",
+      ERROR_CODE.IOS_TARGET_UNRESOLVED,
+    );
+  }
   const platformLabel = selectedTarget.platform === "macos" ? "macOS" : "iOS";
   if (productDecision === "unknown") {
     throw iosSetupError(

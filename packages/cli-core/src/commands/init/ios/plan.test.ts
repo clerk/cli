@@ -37,6 +37,19 @@ describe("buildIOSSetupPlan", () => {
     );
   });
 
+  test("blocks every setup step when a configuration platform is unresolved", async () => {
+    const plan = await planFor({
+      platform: "macos",
+      releasePlatform: "unresolved",
+      complete: true,
+    });
+
+    expect(plan.selection).toMatchObject({ state: "selected", platform: "macos" });
+    expect(plan.status).toBe("blocked");
+    expect(plan.steps.every((item) => item.status === "blocked")).toBe(true);
+    expect(plan.steps[0]?.description).toContain("platform is not proven consistently");
+  });
+
   test("returns stable ordered steps while preserving a custom project key source", async () => {
     const plan = await planFor({ complete: true });
 

@@ -219,6 +219,18 @@ afterEach(async () => {
 });
 
 describe("iOS Clerk SDK installer", () => {
+  test("blocks package planning when any configuration platform is unresolved", async () => {
+    const root = await fixture({ platform: "macos", releasePlatform: "unresolved" });
+    await transformProject(root, removeClerkSDK);
+
+    const plan = await planIOSSDKInstall({ ...installOptions(root), platform: "macos" });
+
+    expect(plan).toMatchObject({
+      status: "blocked",
+      blockers: [{ code: "unresolved-platform" }],
+    });
+  });
+
   test("installs ClerkKit and ClerkKitUI for a pure macOS app", async () => {
     const root = await fixture({ platform: "macos" });
     await transformProject(root, removeClerkSDK);

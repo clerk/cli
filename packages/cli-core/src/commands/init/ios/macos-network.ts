@@ -30,6 +30,7 @@ const MAX_ENTITLEMENTS_BYTES = 1_000_000;
 export type MacOSNetworkCapabilityBlockerCode =
   | "invalid-selection"
   | "unsupported-platform"
+  | "unresolved-platform"
   | "unresolved-sandbox-setting"
   | "conflicting-sandbox-setting"
   | "unresolved-network-setting"
@@ -460,6 +461,18 @@ export async function planMacOSNetworkCapability(
         "The selected native application target could not be resolved exactly.",
       ),
     ]);
+  }
+  if (!target.platformEvidenceComplete) {
+    return blockedPlan(
+      normalized,
+      [
+        blocker(
+          "unresolved-platform",
+          "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently across every selected-target build configuration before changing macOS capabilities.",
+        ),
+      ],
+      target.name,
+    );
   }
   if (target.platform !== "macos") {
     return blockedPlan(

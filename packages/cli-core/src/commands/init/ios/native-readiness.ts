@@ -69,7 +69,7 @@ export type IOSNativeReadinessTarget =
     }
   | {
       status: "blocked";
-      reason: "target-not-selected" | "selected-target-not-found";
+      reason: "target-not-selected" | "selected-target-not-found" | "target-platform-unresolved";
     };
 
 export type IOSAssociatedDomainAutomationBlockerCode =
@@ -215,6 +215,9 @@ function targetIdentity(
     return { status: "blocked", reason: "target-not-selected" };
   }
   if (!target) return { status: "blocked", reason: "selected-target-not-found" };
+  if (!target.platformEvidenceComplete) {
+    return { status: "blocked", reason: "target-platform-unresolved" };
+  }
 
   return {
     status: "selected",

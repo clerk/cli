@@ -114,23 +114,25 @@ export function buildIOSSetupPlan(
     step(
       "select-target",
       selectTargetTitle,
-      target ? "satisfied" : "blocked",
-      target
-        ? `Using ${target.name} in ${target.projectPath}.`
-        : inspection.selection.state === "ambiguous"
-          ? "More than one native Apple app target is eligible. Rerun with --target <name-or-id>; the CLI will not guess."
-          : inspection.selection.state === "not-found"
-            ? `The requested target "${inspection.selection.requested}" was not found.${
-                inspection.selection.candidates.length > 0
-                  ? ` Available targets: ${inspection.selection.candidates.join(", ")}.`
-                  : ""
-              }`
-            : "No usable iOS or macOS application target was found.",
+      target?.platformEvidenceComplete ? "satisfied" : "blocked",
+      target && !target.platformEvidenceComplete
+        ? `${target.name} was found, but its platform is not proven consistently across every build configuration. Resolve SDKROOT and SUPPORTED_PLATFORMS before Clerk changes the project or remote application.`
+        : target
+          ? `Using ${target.name} in ${target.projectPath}.`
+          : inspection.selection.state === "ambiguous"
+            ? "More than one native Apple app target is eligible. Rerun with --target <name-or-id>; the CLI will not guess."
+            : inspection.selection.state === "not-found"
+              ? `The requested target "${inspection.selection.requested}" was not found.${
+                  inspection.selection.candidates.length > 0
+                    ? ` Available targets: ${inspection.selection.candidates.join(", ")}.`
+                    : ""
+                }`
+              : "No usable iOS or macOS application target was found.",
       targetEvidence,
     ),
   );
 
-  if (!target) {
+  if (!target || !target.platformEvidenceComplete) {
     const blockedSteps: Array<[IOSSetupStep["id"], string]> = [
       [
         "install-clerk-sdk",
@@ -159,7 +161,9 @@ export function buildIOSSetupPlan(
           id,
           title,
           "blocked",
-          "Select a native Apple application target before planning this step.",
+          target
+            ? "Resolve the selected target's platform consistently across every build configuration before planning this step."
+            : "Select a native Apple application target before planning this step.",
         ),
       );
     }
