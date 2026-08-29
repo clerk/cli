@@ -14,7 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import {
   applyIOSDirectConfig,
   hasExactIOSSwiftUIAppContentRoot,
@@ -71,10 +71,30 @@ async function expectNoTransactionArtifacts(root: string): Promise<void> {
 
 async function updateProject(root: string, update: (objects: PbxObjects) => void): Promise<void> {
   const path = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  await updateProjectAt(path, update);
+}
+
+async function updateProjectAt(path: string, update: (objects: PbxObjects) => void): Promise<void> {
   const project = parsePbxProject(await readFile(path, "utf8"));
   const objects = (project as unknown as { objects: PbxObjects }).objects;
   update(objects);
   await writeFile(path, buildPbxProject(project));
+}
+
+async function addProjectReference(
+  ownerProjectPath: string,
+  referencedProjectPath: string,
+): Promise<void> {
+  await updateProjectAt(join(ownerProjectPath, "project.pbxproj"), (objects) => {
+    const referenceId = "464646464646464646464646";
+    objects[referenceId] = {
+      isa: "PBXFileReference",
+      lastKnownFileType: "wrapper.pb-project",
+      path: relative(dirname(ownerProjectPath), referencedProjectPath),
+      sourceTree: "SOURCE_ROOT",
+    };
+    objects[IOS_FIXTURE_IDS.project]!.projectReferences = [{ ProjectRef: referenceId }];
+  });
 }
 
 async function shareEntrySourceWithSecondTarget(root: string): Promise<void> {
@@ -561,6 +581,30 @@ struct MyApp: App {
     expect(blockerCodes(await planIOSDirectConfig(planOptions(externalRoot)))).toContain(
       "incomplete-source-membership",
     );
+  });
+
+  test("refuses mutation when an external referenced subproject owns the entry source", async () => {
+    const parentRoot = await temporaryRoot("clerk-ios-project-reference-");
+    const root = join(parentRoot, "App");
+    const siblingRoot = join(parentRoot, "Sibling");
+    await createIOSFixture(root);
+    await createIOSFixture(siblingRoot, { clerkSDK: false, includeKey: false });
+    const before = await readFile(appSourcePath(root));
+    await updateProjectAt(join(siblingRoot, "MyApp.xcodeproj", "project.pbxproj"), (objects) => {
+      objects[IOS_FIXTURE_IDS.appTarget]!.productType = "com.apple.product-type.app-extension";
+      objects[IOS_FIXTURE_IDS.appFile]!.path = relative(
+        siblingRoot,
+        join(root, "MyApp", "MyAppApp.swift"),
+      );
+      objects[IOS_FIXTURE_IDS.appFile]!.sourceTree = "SOURCE_ROOT";
+    });
+    await addProjectReference(join(root, "MyApp.xcodeproj"), join(siblingRoot, "MyApp.xcodeproj"));
+
+    const plan = await planIOSDirectConfig(planOptions(root));
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+    expect(await readFile(appSourcePath(root))).toEqual(before);
   });
 
   test("edits only the explicitly selected target", async () => {
