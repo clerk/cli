@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { inspectIOSProject } from "../init/ios/inspect.ts";
 import { createIOSFixture, IOS_FIXTURE_IDS } from "../init/ios/test-helpers.ts";
+import { formatCheckResult, formatJson } from "./format.ts";
 import {
   createIOSXcodeChildEnvironment,
   runIOSXcodeCommand,
@@ -1091,6 +1092,35 @@ describe("runIOSXcodeVerification", () => {
     expect(output).toContain("<redacted>");
   });
 
+  test("redacts VCS path credentials from rendered Xcode failure diagnostics", async () => {
+    await createIOSFixture(root);
+    await writeProjectPackageResolved();
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+    const pathCredential = "github_pat_FAKE012345678901234567890123456789";
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(
+        successfulXcodeRunner(invocations, {
+          buildFailure: `fatal: unable to access 'https://github.com/acme/${pathCredential}/private.git': authentication failed`,
+        }),
+      ),
+    );
+
+    const failureResult = results.at(-1)!;
+    const humanOutput = formatCheckResult(failureResult, true);
+    const jsonOutput = formatJson(results);
+    expect(failureResult).toMatchObject({ name: "Xcode build", status: "fail" });
+    expect(humanOutput).toContain("https://github.com/<redacted>");
+    expect(jsonOutput).toContain("https://github.com/<redacted>");
+    expect(humanOutput).not.toContain(pathCredential);
+    expect(jsonOutput).not.toContain(pathCredential);
+    expect(humanOutput).not.toContain("/acme/");
+    expect(jsonOutput).not.toContain("/acme/");
+  });
+
   test("builds, installs, and launches on the single booted iOS simulator", async () => {
     await createIOSFixture(root, { clerkSDK: false });
     const inspection = await inspectIOSProject(root, { target: "MyApp" });
@@ -1667,7 +1697,7 @@ describe("Xcode subprocess safety", () => {
     expect(output).not.toContain("diagnostic ended");
   });
 
-  test("redacts credentials embedded in HTTPS and SSH repository URLs", () => {
+  test("redacts credentials and paths embedded in HTTPS and SSH repository URLs", () => {
     const output = sanitizeIOSXcodeDiagnostic(
       [
         "https://alice:https-secret@part@github.com/acme/private.git",
@@ -1677,16 +1707,77 @@ describe("Xcode subprocess safety", () => {
       ].join("\n"),
     );
 
-    expect(output).toContain("https://<redacted>@github.com/acme/private.git");
-    expect(output).toContain("ssh://<redacted>@git.example.com/acme/private.git");
-    expect(output).toContain("git+ssh://<redacted>@git.example.com/acme/private.git");
-    expect(output).toContain("<redacted>@git.example.com:acme/private.git");
+    expect(output).toContain("https://<redacted>@github.com/<redacted>");
+    expect(output).toContain("ssh://<redacted>@git.example.com/<redacted>");
+    expect(output).toContain("git+ssh://<redacted>@git.example.com/<redacted>");
+    expect(output).toContain("<redacted>@git.example.com:<redacted>");
     expect(output).not.toContain("alice");
     expect(output).not.toContain("https-secret");
     expect(output).not.toContain("part");
     expect(output).not.toContain("ssh-secret");
     expect(output).not.toContain("encoded%2Dsecret");
     expect(output).not.toContain("scp-secret");
+    expect(output).not.toContain("acme/private.git");
+  });
+
+  test("redacts every supported VCS URL path while preserving hosts and punctuation", () => {
+    const encodedCredential = "github_pat%5FFAKE012345678901234567890123456789";
+    const output = sanitizeIOSXcodeDiagnostic(
+      [
+        `http://git.example.com/${encodedCredential}/repo.git,`,
+        `https://git.example.com/${encodedCredential}/repo.git).`,
+        `ssh://git.example.com:2222/${encodedCredential}/repo.git]`,
+        `git://git.example.com/${encodedCredential}/repo.git}`,
+        `git+ssh://git.example.com/${encodedCredential}/repo.git;`,
+        `builder@git.example.com:${encodedCredential}/repo.git,`,
+      ].join("\n"),
+    );
+
+    expect(output).toBe(
+      [
+        "http://git.example.com/<redacted>,",
+        "https://git.example.com/<redacted>).",
+        "ssh://git.example.com:2222/<redacted>]",
+        "git://git.example.com/<redacted>}",
+        "git+ssh://git.example.com/<redacted>;",
+        "<redacted>@git.example.com:<redacted>,",
+      ].join("\n"),
+    );
+    expect(output).not.toContain(encodedCredential);
+  });
+
+  test("redacts delimited SCP remotes and SSH config aliases", () => {
+    const pathCredential = "ghp_FAKE_PATH_SECRET";
+    const output = sanitizeIOSXcodeDiagnostic(
+      [
+        `fatal [git@git.example.com:${pathCredential}/acme.git]`,
+        `fallback <git@git.example.com:${pathCredential}/acme.git>`,
+        `retry git@my_host:${pathCredential}/acme.git, then continue.`,
+        `quoted (git@my_host:${pathCredential}/acme.git).`,
+        `label:git@team_alias:${pathCredential}/acme.git; keep going.`,
+        `label=git@team-alias:${pathCredential}/acme.git, keep going.`,
+        `label {git@team.alias:${pathCredential}/acme.git}.`,
+      ].join("\n"),
+    );
+
+    expect(output).toBe(
+      [
+        "fatal [<redacted>@git.example.com:<redacted>]",
+        "fallback <<redacted>@git.example.com:<redacted>>",
+        "retry <redacted>@my_host:<redacted>, then continue.",
+        "quoted (<redacted>@my_host:<redacted>).",
+        "label:<redacted>@team_alias:<redacted>; keep going.",
+        "label=<redacted>@team-alias:<redacted>, keep going.",
+        "label {<redacted>@team.alias:<redacted>}.",
+      ].join("\n"),
+    );
+    expect(output).not.toContain(pathCredential);
+    expect(output).not.toContain("acme.git");
+  });
+
+  test("does not classify ordinary email addresses as SCP remotes", () => {
+    const diagnostic = "Contact dev@example.com or dev@example.com: for repository access.";
+    expect(sanitizeIOSXcodeDiagnostic(diagnostic)).toBe(diagnostic);
   });
 
   test("removes URL query and fragment secrets and Basic authorization payloads", () => {
@@ -1700,10 +1791,10 @@ describe("Xcode subprocess safety", () => {
       ].join("\n"),
     );
 
-    expect(output).toContain("https://example.com/repo.git");
-    expect(output).toContain("(ssh://git.example.com/acme/private.git).");
-    expect(output).toContain("git+ssh://git.example.com/acme/private.git");
-    expect(output).toContain("git://git.example.com/acme/private.git");
+    expect(output).toContain("https://example.com/<redacted>");
+    expect(output).toContain("(ssh://git.example.com/<redacted>).");
+    expect(output).toContain("git+ssh://git.example.com/<redacted>");
+    expect(output).toContain("git://git.example.com/<redacted>");
     expect(output).toContain("Authorization: Basic <redacted>");
     expect(output).not.toContain("?key=");
     expect(output).not.toContain("#token=");

@@ -394,6 +394,61 @@ describe("runIOSDoctorChecks", () => {
     expect(remote?.remedy).toContain("clerk init");
   });
 
+  test("fails safely when Clerk returns malformed Native API settings", async () => {
+    const root = await fixture();
+    const sensitiveValue = "Bearer malformed-native-settings-secret";
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        getNativeSettings: async () =>
+          ({
+            object: "native_settings",
+            api_enabled: "false",
+            diagnostic: sensitiveValue,
+          }) as never,
+      }),
+    );
+
+    const remote = audit.results.find((result) => result.name === "iOS: Native Application");
+    expect(remote?.status).toBe("fail");
+    expect(remote?.message).toContain("invalid remote response");
+    expect(remote?.remedy).toContain("Update the Clerk CLI");
+    expect(remote?.remedy).toContain("Clerk support");
+    expect(audit.results.some((result) => result.status === "fail")).toBe(true);
+    expect(JSON.stringify(audit.results)).not.toContain(sensitiveValue);
+  });
+
+  test("fails safely when Clerk returns a malformed iOS registration list", async () => {
+    const root = await fixture();
+    const sensitiveValue = "Bearer malformed-registration-secret";
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        listIOSApplications: async () =>
+          [
+            {
+              object: "ios_application",
+              id: sensitiveValue,
+              app_id_prefix: "LEGACY1234",
+              bundle_id: "com.example.MyApp",
+              created_at: "not-a-number",
+              updated_at: 1,
+            },
+          ] as never,
+      }),
+    );
+
+    const remote = audit.results.find((result) => result.name === "iOS: Native Application");
+    expect(remote?.status).toBe("fail");
+    expect(remote?.message).toContain("invalid remote response");
+    expect(remote?.remedy).toContain("Update the Clerk CLI");
+    expect(remote?.remedy).toContain("Clerk support");
+    expect(audit.results.some((result) => result.status === "fail")).toBe(true);
+    expect(JSON.stringify(audit.results)).not.toContain(sensitiveValue);
+  });
+
   test("directs established apps to integrate their missing authentication flow manually", async () => {
     const root = await fixture();
     await writeFile(

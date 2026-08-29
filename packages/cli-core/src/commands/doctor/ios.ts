@@ -510,6 +510,18 @@ async function remoteResults(
     }
     return results;
   } catch (error) {
+    if (error instanceof CliError && error.code === ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE) {
+      return [
+        ...preliminaryResults,
+        {
+          name: "iOS: Native Application",
+          status: "fail",
+          message: "Native Application: Clerk returned an invalid remote response",
+          remedy:
+            "Update the Clerk CLI, rerun `clerk doctor`, and contact Clerk support if the response remains invalid.",
+        },
+      ];
+    }
     if (error instanceof PlapiError && error.status === 403) {
       return [
         ...preliminaryResults,
