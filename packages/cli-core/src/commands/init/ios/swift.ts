@@ -548,6 +548,106 @@ function withoutPreviewOnlyRegions(source: string): string {
   return chars.join("");
 }
 
+type SwiftTargetPlatform = "ios" | "macos";
+
+type PlatformCondition = boolean | "unknown";
+
+interface ConditionalCompilationFrame {
+  parentCanExecute: boolean;
+  priorConditionIsAlwaysTrue: boolean;
+  sawElse: boolean;
+}
+
+function evaluatePlatformCondition(
+  expression: string,
+  platform: SwiftTargetPlatform,
+): PlatformCondition {
+  const match = /^os\s*\(\s*(iOS|macOS)\s*\)$/.exec(expression.trim());
+  if (!match) return "unknown";
+  return match[1] === (platform === "ios" ? "iOS" : "macOS");
+}
+
+/**
+ * Blanks only branches proven inactive for the selected Apple platform.
+ * Unknown and compound conditions remain visible so inspection stays
+ * conservative without trying to reproduce Swift's full compilation model.
+ */
+function withoutInactivePlatformRegions(
+  source: string,
+  platform: SwiftTargetPlatform,
+): SwiftSourceSanitization {
+  const chars = source.split("");
+  const stack: ConditionalCompilationFrame[] = [];
+  let currentCanExecute = true;
+  let cursor = 0;
+  let complete = true;
+
+  while (cursor < source.length) {
+    const newline = source.indexOf("\n", cursor);
+    const lineEnd = newline === -1 ? source.length : newline;
+    const line = source.slice(cursor, lineEnd);
+    const directive = /^[ \t]*#(if|elseif|else|endif)\b(.*)$/.exec(line);
+
+    if (!directive) {
+      if (!currentCanExecute) blankRange(chars, cursor, lineEnd);
+      cursor = newline === -1 ? source.length : newline + 1;
+      continue;
+    }
+
+    const kind = directive[1];
+    const expression = directive[2]?.trim() ?? "";
+    if (kind === "if") {
+      if (!expression) {
+        complete = false;
+        break;
+      }
+      const condition = evaluatePlatformCondition(expression, platform);
+      stack.push({
+        parentCanExecute: currentCanExecute,
+        priorConditionIsAlwaysTrue: condition === true,
+        sawElse: false,
+      });
+      currentCanExecute = currentCanExecute && condition !== false;
+    } else if (kind === "elseif") {
+      const frame = stack.at(-1);
+      if (!frame || frame.sawElse || !expression) {
+        complete = false;
+        break;
+      }
+      const condition = evaluatePlatformCondition(expression, platform);
+      currentCanExecute =
+        frame.parentCanExecute && !frame.priorConditionIsAlwaysTrue && condition !== false;
+      frame.priorConditionIsAlwaysTrue ||= condition === true;
+    } else if (kind === "else") {
+      const frame = stack.at(-1);
+      if (!frame || frame.sawElse || expression) {
+        complete = false;
+        break;
+      }
+      frame.sawElse = true;
+      currentCanExecute = frame.parentCanExecute && !frame.priorConditionIsAlwaysTrue;
+      frame.priorConditionIsAlwaysTrue = true;
+    } else {
+      const frame = stack.pop();
+      if (!frame || expression) {
+        complete = false;
+        break;
+      }
+      currentCanExecute = frame.parentCanExecute;
+    }
+
+    // Keep directive lines intact. Besides preserving offsets, this lets
+    // mutation planners recognize that an entry point is conditionally built.
+    cursor = newline === -1 ? source.length : newline + 1;
+  }
+
+  if (stack.length > 0) complete = false;
+  return {
+    sanitizedSource: complete ? chars.join("") : source,
+    complete,
+  };
+}
+
 function hasClerkOpenURLHandler(source: string): boolean {
   const pattern = /\.\s*onOpenURL\b/g;
   let match: RegExpExecArray | null;
@@ -582,7 +682,7 @@ function hasClerkOpenURLHandler(source: string): boolean {
 
 export async function inspectSwiftSources(
   sourceFiles: Array<{ absolutePath: string; relativePath: string }>,
-  options: { membershipComplete?: boolean } = {},
+  options: { membershipComplete?: boolean; platform?: SwiftTargetPlatform } = {},
 ): Promise<IOSSwiftInspection> {
   const entryPoints: IOSSourceEvidence[] = [];
   const importsClerkKit: IOSSourceEvidence[] = [];
@@ -613,7 +713,11 @@ export async function inspectSwiftSources(
     sourceFilesScanned++;
     const structuralSource = sanitizeSwiftSourceWithStatus(source);
     if (!structuralSource.complete) evidenceComplete = false;
-    const sanitized = withoutPreviewOnlyRegions(structuralSource.sanitizedSource);
+    const platformSource = options.platform
+      ? withoutInactivePlatformRegions(structuralSource.sanitizedSource, options.platform)
+      : structuralSource;
+    if (!platformSource.complete) evidenceComplete = false;
+    const sanitized = withoutPreviewOnlyRegions(platformSource.sanitizedSource);
     const evidence = { path: file.relativePath };
     const importsKit = has(
       sanitized,

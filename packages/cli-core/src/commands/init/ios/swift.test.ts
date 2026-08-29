@@ -115,6 +115,131 @@ let escaped = "say \"hello\""`;
 });
 
 describe("inspectSwiftSources", () => {
+  test("uses the active macOS branch instead of iOS-only Clerk UI evidence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "Shared.swift");
+    await Bun.write(
+      path,
+      `#if os(iOS)
+       import ClerkKitUI
+       let authentication = AuthView()
+       #elseif os(macOS)
+       import ClerkKit
+       Clerk.configure(publishableKey: key)
+       #endif`,
+    );
+
+    const inspection = await inspectSwiftSources(
+      [{ absolutePath: path, relativePath: "Shared.swift" }],
+      { platform: "macos" },
+    );
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.importsClerkKitUI).toEqual([]);
+    expect(inspection.authFlowReferences).toEqual([]);
+    expect(inspection.importsClerkKit).toEqual([{ path: "Shared.swift" }]);
+    expect(inspection.configureCalls).toHaveLength(1);
+  });
+
+  test("uses the active iOS branch instead of macOS-only Clerk evidence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "Shared.swift");
+    await Bun.write(
+      path,
+      `#if os(macOS)
+       import ClerkKit
+       Clerk.configure(publishableKey: macKey)
+       #elseif os(iOS)
+       import ClerkKitUI
+       let authentication = AuthView()
+       #endif`,
+    );
+
+    const inspection = await inspectSwiftSources(
+      [{ absolutePath: path, relativePath: "Shared.swift" }],
+      { platform: "ios" },
+    );
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.configureCalls).toEqual([]);
+    expect(inspection.importsClerkKitUI).toEqual([{ path: "Shared.swift" }]);
+    expect(inspection.authFlowReferences).toEqual([{ path: "Shared.swift" }]);
+  });
+
+  test("filters nested inactive platform branches", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "Shared.swift");
+    await Bun.write(
+      path,
+      `#if DEBUG
+       import ClerkKit
+       #if os(iOS)
+       Clerk.configure(publishableKey: iosKey)
+       #else
+       Clerk.configure(publishableKey: macKey)
+       #endif
+       #endif`,
+    );
+
+    const inspection = await inspectSwiftSources(
+      [{ absolutePath: path, relativePath: "Shared.swift" }],
+      { platform: "macos" },
+    );
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.configureCalls).toHaveLength(1);
+  });
+
+  test("keeps unknown conditional-compilation branches conservative", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "Shared.swift");
+    await Bun.write(
+      path,
+      `#if DEBUG
+       import ClerkKitUI
+       let authentication = AuthView()
+       #else
+       import ClerkKit
+       Clerk.configure(publishableKey: key)
+       #endif`,
+    );
+
+    const inspection = await inspectSwiftSources(
+      [{ absolutePath: path, relativePath: "Shared.swift" }],
+      { platform: "macos" },
+    );
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.importsClerkKitUI).toEqual([{ path: "Shared.swift" }]);
+    expect(inspection.authFlowReferences).toEqual([{ path: "Shared.swift" }]);
+    expect(inspection.configureCalls).toHaveLength(1);
+  });
+
+  test("marks malformed conditional-compilation structure incomplete", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "Shared.swift");
+    await Bun.write(
+      path,
+      `#if os(iOS)
+       import ClerkKitUI
+       let authentication = AuthView()`,
+    );
+
+    const inspection = await inspectSwiftSources(
+      [{ absolutePath: path, relativePath: "Shared.swift" }],
+      { platform: "macos" },
+    );
+
+    expect(inspection.evidenceComplete).toBe(false);
+    expect(inspection.importsClerkKitUI).toEqual([{ path: "Shared.swift" }]);
+    expect(inspection.authFlowReferences).toEqual([{ path: "Shared.swift" }]);
+  });
+
   test("fails Clerk evidence closed when a configure call is hidden in interpolation", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
     temporaryDirectories.push(root);
