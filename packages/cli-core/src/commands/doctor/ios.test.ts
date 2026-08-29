@@ -373,6 +373,7 @@ describe("runIOSDoctorChecks", () => {
         root,
         projectPath: "MyApp.xcodeproj",
         targetId: IOS_FIXTURE_IDS.appTarget,
+        platform: "ios",
         includeClerkKitUI: true,
         requirePrebuiltAuthCompatibility: true,
       },
@@ -426,6 +427,7 @@ struct MyApp: App {
         root,
         projectPath: "MyApp.xcodeproj",
         targetId: IOS_FIXTURE_IDS.appTarget,
+        platform: "ios",
       },
     ]);
     expect(await readFile(projectPath, "utf8")).toBe(duplicateProducts);
@@ -465,6 +467,7 @@ struct MyApp: App {
         root,
         projectPath: "MyApp.xcodeproj",
         targetId: IOS_FIXTURE_IDS.appTarget,
+        platform: "ios",
         includeClerkKitUI: true,
       },
     ]);
