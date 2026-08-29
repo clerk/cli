@@ -137,18 +137,13 @@ function inspectInlinePublishableKey(
   diagnostics: IOSDiagnostic[],
 ): IOSProjectInspectionResult["localPublishableKey"] {
   if (!target?.swift.evidenceComplete) {
-    return {
-      evidenceComplete: false,
-      found: false,
-      conflict: false,
-      candidateSources: [],
-      invalidSources: [],
-    };
+    return { state: "unproven" };
   }
 
   const calls = target.swift.configureCalls;
+  if (calls.length === 0) return { state: "missing" };
+
   const inlineCalls = calls.filter((call) => call.publishableKeyWiring === "inline-literal");
-  const candidateSources = [...new Set(inlineCalls.map((call) => call.path))].sort();
 
   // Only the documented, single startup literal proves which Clerk instance
   // the selected target runs against. Every other expression is custom and is
@@ -158,13 +153,7 @@ function inspectInlinePublishableKey(
     inlineCalls.length !== 1 ||
     inlineCalls[0]?.startupBinding !== "app-init"
   ) {
-    return {
-      evidenceComplete: true,
-      found: false,
-      conflict: false,
-      candidateSources,
-      invalidSources: [],
-    };
+    return { state: "unproven" };
   }
 
   const call = inlineCalls[0];
@@ -179,25 +168,14 @@ function inspectInlinePublishableKey(
         evidence: [{ path: source, keyPath: "Clerk.configure(publishableKey:)" }],
       });
     }
-    return {
-      evidenceComplete: true,
-      found: false,
-      ...(source ? { source } : {}),
-      conflict: false,
-      candidateSources,
-      invalidSources: source ? [source] : [],
-    };
+    return source ? { state: "invalid", source } : { state: "unproven" };
   }
 
   return {
-    evidenceComplete: true,
-    found: true,
+    state: "valid",
     source: call.path,
     frontendApiHost: call.inlinePublishableKey.frontendApiHost,
     instanceType: call.inlinePublishableKey.instanceType,
-    conflict: false,
-    candidateSources,
-    invalidSources: [],
   };
 }
 
@@ -1198,13 +1176,7 @@ export async function inspectIOSProject(
       projects: [],
       appTargets: [],
       selection: { state: "none" },
-      localPublishableKey: {
-        evidenceComplete: false,
-        found: false,
-        conflict: false,
-        candidateSources: [],
-        invalidSources: [],
-      },
+      localPublishableKey: { state: "unproven" },
       generatedProject: null,
       diagnostics: [
         {

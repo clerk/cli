@@ -44,13 +44,7 @@ function inspection(selected: IOSAppTarget): IOSProjectInspectionResult {
       targetName: selected.name,
       projectPath: selected.projectPath,
     },
-    localPublishableKey: {
-      evidenceComplete: true,
-      found: false,
-      conflict: false,
-      candidateSources: [],
-      invalidSources: [],
-    },
+    localPublishableKey: { state: "missing" },
     generatedProject: null,
     diagnostics: [],
   };
