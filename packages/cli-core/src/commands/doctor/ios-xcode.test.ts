@@ -639,7 +639,33 @@ describe("runIOSXcodeVerification", () => {
     );
 
     expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
-    expect(results.at(-1)?.message).toContain("could not be proven local-only");
+    expect(results.at(-1)?.message).toContain("could not be inspected completely");
+    expect(invocations).toEqual([]);
+  });
+
+  test("rejects an external workspace reference despite a valid lock and direct remote package", async () => {
+    await createIOSFixture(root, { workspace: true });
+    await Bun.write(
+      join(root, "MyApp.xcworkspace", "contents.xcworkspacedata"),
+      '<?xml version="1.0" encoding="UTF-8"?><Workspace version="1.0"><FileRef location="group:MyApp.xcodeproj"></FileRef><FileRef location="absolute:/private/tmp/ExternalPackage"></FileRef></Workspace>',
+    );
+    await writeWorkspacePackageResolved();
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(successfulXcodeRunner(invocations, { workspace: true })),
+    );
+
+    expect(
+      inspection.projects.some((project) =>
+        project.packages.some((reference) => reference.kind === "remote"),
+      ),
+    ).toBe(true);
+    expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+    expect(results.at(-1)?.message).toContain("could not be inspected completely");
     expect(invocations).toEqual([]);
   });
 
@@ -681,7 +707,28 @@ describe("runIOSXcodeVerification", () => {
     );
 
     expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
-    expect(results.at(-1)?.message).toContain("could not be proven local-only");
+    expect(results.at(-1)?.message).toContain("could not be inspected completely");
+    expect(invocations).toEqual([]);
+  });
+
+  test("does not resolve packages for a malformed workspace despite a valid lock", async () => {
+    await createIOSFixture(root, { clerkSDK: false, workspace: true });
+    await Bun.write(
+      join(root, "MyApp.xcworkspace", "contents.xcworkspacedata"),
+      '<?xml version="1.0" encoding="UTF-8"?><Workspace version="1.0"><FileRef location="group:MyApp.xcodeproj"></FileRef></Group></Workspace>',
+    );
+    await writeWorkspacePackageResolved();
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { resolvePackages: true, build: true },
+      dependencies(successfulXcodeRunner(invocations, { workspace: true })),
+    );
+
+    expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+    expect(results.at(-1)?.message).toContain("could not be inspected completely");
     expect(invocations).toEqual([]);
   });
 
