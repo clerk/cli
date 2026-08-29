@@ -700,6 +700,10 @@ export async function discoverLocalIOSProjects(
     projectPaths.add(absoluteProjectPath);
   }
 
+  const referencedProjects = await discoverReferencedIOSProjects(root, projectPaths);
+  complete &&= referencedProjects.complete;
+  for (const projectPath of referencedProjects.projectPaths) projectPaths.add(projectPath);
+
   return { projectPaths: [...projectPaths].sort(), complete };
 }
 

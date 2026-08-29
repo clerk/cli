@@ -336,6 +336,38 @@ describe("discoverIOSContainers", () => {
       expect.objectContaining({ code: "xcode.incomplete-source-membership" }),
     );
   });
+
+  test.each(["required", "workspace"] as const)(
+    "follows project references discovered from a %s project seed",
+    async (seedKind) => {
+      const root = await mkdtemp(join(tmpdir(), "clerk-ios-local-projects-"));
+      temporaryDirectories.push(root);
+      const seedRoot = join(root, "Pods", "SeedProject");
+      const referencedRoot = join(root, "Pods", "ReferencedProject");
+      await createIOSFixture(seedRoot, { includeKey: false });
+      await createIOSFixture(referencedRoot, { includeKey: false });
+      const seedProject = join(seedRoot, "MyApp.xcodeproj");
+      const referencedProject = join(referencedRoot, "MyApp.xcodeproj");
+      await addProjectReference(seedProject, referencedProject, "555555555555555555555555");
+
+      let requiredProjectPaths: string[] = [];
+      if (seedKind === "required") {
+        requiredProjectPaths = [relative(root, seedProject)];
+      } else {
+        const workspace = join(root, "Seed.xcworkspace");
+        await mkdir(workspace, { recursive: true });
+        await Bun.write(
+          join(workspace, "contents.xcworkspacedata"),
+          '<Workspace version="1.0"><FileRef location="group:Pods/SeedProject/MyApp.xcodeproj" /></Workspace>',
+        );
+      }
+
+      const inventory = await discoverLocalIOSProjects(root, requiredProjectPaths);
+
+      expect(inventory.complete).toBe(true);
+      expect(inventory.projectPaths).toEqual([seedProject, referencedProject].sort());
+    },
+  );
 });
 
 describe("inspectIOSProject", () => {
