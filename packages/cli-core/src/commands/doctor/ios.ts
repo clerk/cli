@@ -16,6 +16,10 @@ import { auditIOSNativeAppleHealth } from "../init/ios/native-apple.ts";
 import { buildIOSNativeReadinessAudit } from "../init/ios/native-readiness.ts";
 import { auditIOSNativeRemoteSetup } from "../init/ios/native-remote.ts";
 import { planIOSSDKInstall, type IOSSDKInstallPlan } from "../init/ios/install-sdk.ts";
+import {
+  planMacOSNetworkCapability,
+  type MacOSNetworkCapabilityPlan,
+} from "../init/ios/macos-network.ts";
 import { buildIOSSetupPlan } from "../init/ios/plan.ts";
 import { hasSupportedIOSCustomConfigure } from "../init/ios/products.ts";
 import type {
@@ -65,6 +69,7 @@ export interface IOSDoctorDependencies {
   planIOSAppleEntitlement: typeof planIOSAppleEntitlement;
   auditIOSNativeAppleHealth: typeof auditIOSNativeAppleHealth;
   planIOSSDKInstall: typeof planIOSSDKInstall;
+  planMacOSNetworkCapability: typeof planMacOSNetworkCapability;
 }
 
 const defaultDependencies: IOSDoctorDependencies = {
@@ -77,6 +82,7 @@ const defaultDependencies: IOSDoctorDependencies = {
   planIOSAppleEntitlement,
   auditIOSNativeAppleHealth,
   planIOSSDKInstall,
+  planMacOSNetworkCapability,
 };
 
 function selectedTarget(inspection: IOSProjectInspectionResult): IOSAppTarget | undefined {
@@ -183,9 +189,11 @@ function localStepResult(step: IOSSetupStep, platform: IOSNativePlatform): Check
   const remedy =
     step.id === "select-target"
       ? step.description
-      : step.id === "add-authentication-flow"
-        ? AUTH_FLOW_REMEDY
-        : LOCAL_STEP_REMEDY;
+      : step.id === "enable-macos-network" && step.status === "blocked"
+        ? step.description
+        : step.id === "add-authentication-flow"
+          ? AUTH_FLOW_REMEDY
+          : LOCAL_STEP_REMEDY;
   switch (step.status) {
     case "satisfied":
       return {
@@ -224,8 +232,9 @@ function localStepResult(step: IOSSetupStep, platform: IOSNativePlatform): Check
 function localResults(
   inspection: IOSProjectInspectionResult,
   sdkInstallPlan?: IOSSDKInstallPlan,
+  macOSNetworkCapabilityPlan?: MacOSNetworkCapabilityPlan,
 ): CheckResult[] {
-  const plan = buildIOSSetupPlan(inspection, { sdkInstallPlan });
+  const plan = buildIOSSetupPlan(inspection, { sdkInstallPlan, macOSNetworkCapabilityPlan });
   const target = selectedTarget(inspection);
   const platform = target?.platform ?? (inspection.platform === "macos" ? "macos" : "ios");
   const results = plan.steps
@@ -270,6 +279,7 @@ async function appleEntitlementResult(
     root: inspection.root,
     projectPath: target.projectPath,
     targetId: target.id,
+    platform: target.platform,
   });
   if (plan.status === "satisfied") {
     return {
@@ -764,7 +774,16 @@ export async function runIOSDoctorChecks(
         ...(requiresAuthViewCompatibility ? { requirePrebuiltAuthCompatibility: true } : {}),
       })
     : undefined;
-  const results = localResults(inspection, sdkInstallPlan);
+  const macOSNetworkCapabilityPlan =
+    target?.platform === "macos"
+      ? await dependencies.planMacOSNetworkCapability({
+          root: inspection.root,
+          projectPath: target.projectPath,
+          targetId: target.id,
+          allowMissingEntitlementsCreation: true,
+        })
+      : undefined;
+  const results = localResults(inspection, sdkInstallPlan, macOSNetworkCapabilityPlan);
   if (target) {
     const apple = await appleEntitlementResult(inspection, target, dependencies);
     if (apple) results.splice(Math.max(0, results.length - 1), 0, apple);

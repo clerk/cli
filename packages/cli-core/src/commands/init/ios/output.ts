@@ -45,7 +45,16 @@ export function formatIOSSetupPlan(
   plan: IOSSetupPlan,
   options: IOSOutputOptions = {},
 ): string {
-  const lines = ["", "iOS setup plan (read-only)", `  Root: ${inspection.root}`];
+  const selection = inspection.selection;
+  const selected =
+    selection.state === "selected"
+      ? inspection.appTargets.find(
+          (target) =>
+            target.id === selection.targetId && target.projectPath === selection.projectPath,
+        )
+      : undefined;
+  const platformLabel = selected?.platform === "macos" ? "macOS" : "iOS";
+  const lines = ["", `${platformLabel} setup plan (read-only)`, `  Root: ${inspection.root}`];
 
   if (inspection.selection.state === "selected") {
     lines.push(
@@ -60,14 +69,6 @@ export function formatIOSSetupPlan(
     }
   }
 
-  const selection = inspection.selection;
-  const selected =
-    selection.state === "selected"
-      ? inspection.appTargets.find(
-          (target) =>
-            target.id === selection.targetId && target.projectPath === selection.projectPath,
-        )
-      : undefined;
   if (selected) {
     const bundles = [
       ...new Set(
@@ -118,17 +119,19 @@ export function formatIOSSetupPlan(
 
   const nativeReadiness =
     options.nativeReadiness ?? buildIOSNativeReadinessAudit(inspection, options);
-  lines.push("", "  Native iOS readiness:");
-  lines.push(
-    `    - Associated Domains: ${nativeReadiness.associatedDomain.status}${nativeReadiness.associatedDomain.automatable ? " (clerk init can apply)" : ""}`,
-  );
-  if (!nativeReadiness.associatedDomain.automatable) {
-    for (const blocker of nativeReadiness.associatedDomain.blockers) {
-      lines.push(`      ${blocker.message}`);
+  lines.push("", `  Native ${platformLabel} readiness:`);
+  if (selected?.platform !== "macos") {
+    lines.push(
+      `    - Associated Domains: ${nativeReadiness.associatedDomain.status}${nativeReadiness.associatedDomain.automatable ? " (clerk init can apply)" : ""}`,
+    );
+    if (!nativeReadiness.associatedDomain.automatable) {
+      for (const blocker of nativeReadiness.associatedDomain.blockers) {
+        lines.push(`      ${blocker.message}`);
+      }
     }
   }
   lines.push(
-    "    - Native API and Dashboard iOS registration: not inspected during this local-only dry-run. Regular `clerk init` audits and safely reconciles both on the linked development instance after authentication.",
+    `    - Native API and Dashboard ${platformLabel} registration: not inspected during this local-only dry-run. Regular \`clerk init\` audits and safely reconciles both on the linked development instance after authentication.`,
   );
 
   lines.push(

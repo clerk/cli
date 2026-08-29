@@ -153,12 +153,63 @@ describe("clerk init iOS SDK apply", () => {
     expect(setup).toMatchObject({
       platform: "macos",
       associatedDomainPlan: undefined,
+      macOSNetworkCapabilityPlan: { status: "satisfied" },
       nativeReadiness: {
         target: { status: "selected", platform: "macos" },
         associatedDomain: { status: "not-applicable", files: [], blockers: [] },
       },
     });
     expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test("composes macOS network and Apple entitlements in the aggregate transaction", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-macos-capability-apply-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, {
+      platform: "macos",
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+      macOSAppleEntitlement: false,
+    });
+    const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
+    await Bun.write(
+      entitlementsPath,
+      (await Bun.file(entitlementsPath).text()).replace(
+        /\s*<key>com\.apple\.security\.network\.client<\/key>\s*<true\s*\/>/,
+        "",
+      ),
+    );
+
+    const setup = await applyIOSLocalSetup({
+      root,
+      yes: true,
+      agent: true,
+      allowDirty: true,
+      prebuiltAuthUI: false,
+      signInWithApple: true,
+    });
+    expect(setup.macOSNetworkCapabilityPlan?.status).toBe("ready");
+    expect(setup.appleEntitlementPlan?.status).toBe("ready");
+
+    await applyIOSPlannedLocalSetup(setup);
+    const source = await Bun.file(entitlementsPath).text();
+    expect(source).toContain("com.apple.security.network.client");
+    expect(source).toContain("com.apple.developer.applesignin");
+
+    const firstDigest = await treeDigest(root);
+    const rerun = await applyIOSLocalSetup({
+      root,
+      yes: true,
+      agent: true,
+      allowDirty: true,
+      prebuiltAuthUI: false,
+      signInWithApple: true,
+    });
+    expect(rerun.macOSNetworkCapabilityPlan?.status).toBe("satisfied");
+    expect(rerun.appleEntitlementPlan?.status).toBe("satisfied");
+    await applyIOSPlannedLocalSetup(rerun);
+    expect(await treeDigest(root)).toEqual(firstDigest);
   });
 
   test("applies the explicit prebuilt AuthView opt-in in the aggregate Swift transaction", async () => {
