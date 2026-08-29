@@ -2,6 +2,7 @@ import { isAbsolute, resolve } from "node:path";
 
 export type PbxObject = Record<string, unknown> & { isa?: string };
 export type PbxObjects = Record<string, PbxObject>;
+export type PbxParentIndex = Map<string, string | null>;
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -31,11 +32,15 @@ export function asStringRecord(value: unknown): Record<string, string> {
   return result;
 }
 
-export function buildPbxParentIndex(objects: PbxObjects): Map<string, string> {
-  const parents = new Map<string, string>();
+export function buildPbxParentIndex(objects: PbxObjects): PbxParentIndex {
+  const parents: PbxParentIndex = new Map();
   for (const [id, object] of Object.entries(objects)) {
     for (const child of asStringArray(object.children)) {
-      if (!parents.has(child)) parents.set(child, id);
+      if (!parents.has(child)) {
+        parents.set(child, id);
+      } else if (parents.get(child) !== id) {
+        parents.set(child, null);
+      }
     }
   }
   return parents;
@@ -45,7 +50,7 @@ export function buildPbxParentIndex(objects: PbxObjects): Map<string, string> {
 export function resolvePbxFilePath(
   objectId: string,
   objects: PbxObjects,
-  parents: Map<string, string>,
+  parents: PbxParentIndex,
   projectDirectory: string,
   groupRootDirectory: string = projectDirectory,
   seen: Set<string> = new Set(),
@@ -76,6 +81,7 @@ export function resolvePbxFilePath(
   if (sourceTree !== "<group>") return undefined;
 
   const parentId = parents.get(objectId);
+  if (parentId === null) return undefined;
   if (!parentId) return resolve(groupRootDirectory, rawPath);
   const parentPath = resolvePbxFilePath(
     parentId,
