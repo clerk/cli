@@ -18,7 +18,12 @@ import { auditIOSNativeRemoteSetup } from "../init/ios/native-remote.ts";
 import { planIOSSDKInstall, type IOSSDKInstallPlan } from "../init/ios/install-sdk.ts";
 import { buildIOSSetupPlan } from "../init/ios/plan.ts";
 import { hasSupportedIOSCustomConfigure } from "../init/ios/products.ts";
-import type { IOSAppTarget, IOSProjectInspectionResult, IOSSetupStep } from "../init/ios/types.ts";
+import type {
+  IOSAppTarget,
+  IOSNativePlatform,
+  IOSProjectInspectionResult,
+  IOSSetupStep,
+} from "../init/ios/types.ts";
 import type { CheckResult, DoctorContext } from "./types.ts";
 
 const LOCAL_STEP_REMEDY = "Run `clerk init --target <target>` to safely complete this step.";
@@ -26,11 +31,25 @@ const AUTH_FLOW_REMEDY =
   "Integrate authentication at the app's intended signed-out entry point without replacing existing application UI: present ClerkKitUI's `AuthView`, or build a custom ClerkKit sign-in/sign-up flow.";
 const REMOTE_REMEDY =
   "Run `clerk init --target <target>` to preview and apply the missing Native Application setup.";
-const ASSOCIATED_DOMAIN_RESULT_NAME = "iOS: Add Clerk's associated domain";
+const IOS_ASSOCIATED_DOMAIN_RESULT_NAME = "iOS: Add Clerk's associated domain";
+
+function platformLabel(platform: IOSNativePlatform): "iOS" | "macOS" {
+  return platform === "macos" ? "macOS" : "iOS";
+}
+
+function doctorStepTitle(step: IOSSetupStep, platform: IOSNativePlatform): string {
+  if (platform === "ios") return step.title;
+  return step.title
+    .replace("iOS application target", "macOS application target")
+    .replace("Clerk's iOS SDK", "Clerk's Swift SDK")
+    .replace("the iOS app", "the macOS app");
+}
 
 export interface IOSDoctorOptions {
   root: string;
   target?: string;
+  /** A same-run semantic inspection prepared by Doctor's framework router. */
+  preparedInspection?: IOSProjectInspectionResult;
 }
 
 export interface IOSDoctorDependencies {
@@ -80,7 +99,7 @@ async function authViewEnvironmentResult(
 ): Promise<CheckResult | undefined> {
   if (target.swift.authViewReferences.length === 0) return undefined;
 
-  const name = "iOS: AuthView authentication methods";
+  const name = `${platformLabel(target.platform)}: AuthView authentication methods`;
   if (options.configureStatus !== "satisfied" || !options.fapiHost) {
     const customUnlinked = options.customSource && !options.linked;
     return {
@@ -158,8 +177,9 @@ async function authViewEnvironmentResult(
   }
 }
 
-function localStepResult(step: IOSSetupStep): CheckResult {
-  const name = `iOS: ${step.title}`;
+function localStepResult(step: IOSSetupStep, platform: IOSNativePlatform): CheckResult {
+  const title = doctorStepTitle(step, platform);
+  const name = `${platformLabel(platform)}: ${title}`;
   const remedy =
     step.id === "select-target"
       ? step.description
@@ -171,14 +191,14 @@ function localStepResult(step: IOSSetupStep): CheckResult {
       return {
         name,
         status: "pass",
-        message: `${step.title}: configured`,
+        message: `${title}: configured`,
         detail: step.description,
       };
     case "review":
       return {
         name,
         status: "warn",
-        message: `${step.title}: review needed`,
+        message: `${title}: review needed`,
         detail: step.description,
         remedy: step.description,
       };
@@ -186,7 +206,7 @@ function localStepResult(step: IOSSetupStep): CheckResult {
       return {
         name,
         status: "fail",
-        message: `${step.title}: setup required`,
+        message: `${title}: setup required`,
         detail: step.description,
         remedy,
       };
@@ -194,7 +214,7 @@ function localStepResult(step: IOSSetupStep): CheckResult {
       return {
         name,
         status: "fail",
-        message: `${step.title}: blocked`,
+        message: `${title}: blocked`,
         detail: step.description,
         remedy,
       };
@@ -206,16 +226,22 @@ function localResults(
   sdkInstallPlan?: IOSSDKInstallPlan,
 ): CheckResult[] {
   const plan = buildIOSSetupPlan(inspection, { sdkInstallPlan });
+  const target = selectedTarget(inspection);
+  const platform = target?.platform ?? (inspection.platform === "macos" ? "macos" : "ios");
   const results = plan.steps
-    .filter((step) => step.id !== "register-native-application" || step.status === "blocked")
-    .map(localStepResult);
+    .filter(
+      (step) =>
+        (step.id !== "register-native-application" || step.status === "blocked") &&
+        (platform !== "macos" || step.id !== "add-associated-domain"),
+    )
+    .map((step) => localStepResult(step, platform));
   const readiness = buildIOSNativeReadinessAudit(inspection);
   if (
     readiness.target.status === "selected" &&
     readiness.target.appIdPrefix.status === "conflicting"
   ) {
     results.push({
-      name: "iOS: App ID Prefix evidence",
+      name: `${platformLabel(platform)}: App ID Prefix evidence`,
       status: "fail",
       message: "App ID Prefix evidence: conflicting values were found",
       detail:
@@ -247,7 +273,7 @@ async function appleEntitlementResult(
   });
   if (plan.status === "satisfied") {
     return {
-      name: "iOS: Sign in with Apple entitlement",
+      name: `${platformLabel(target.platform)}: Sign in with Apple entitlement`,
       status: "pass",
       message: "Sign in with Apple entitlement: configured",
       detail: "Every selected-target configuration has the exact native Apple entitlement.",
@@ -259,7 +285,7 @@ async function appleEntitlementResult(
       ? plan.actions.join("\n")
       : plan.blockers.map((blocker) => blocker.message).join("\n");
   return {
-    name: "iOS: Sign in with Apple entitlement",
+    name: `${platformLabel(target.platform)}: Sign in with Apple entitlement`,
     status: "fail",
     message: "Sign in with Apple entitlement: incomplete",
     ...(detail ? { detail } : {}),
@@ -273,7 +299,8 @@ function linkedDevelopmentKeyResult(
   application: Application,
   developmentInstanceId: string,
 ): CheckResult {
-  const name = "iOS: Linked development key";
+  const target = selectedTarget(inspection);
+  const name = `${platformLabel(target?.platform ?? "ios")}: Linked development key`;
   const localPublishableKey = inspection.localPublishableKey;
   if (localPublishableKey.state !== "valid") {
     return {
@@ -331,8 +358,9 @@ function linkedDevelopmentKeyResult(
 function linkedCustomApplicationResult(
   application: Application,
   developmentInstanceId: string,
+  platform: IOSNativePlatform,
 ): { result: CheckResult; fapiHost?: string } {
-  const name = "iOS: Linked Clerk application";
+  const name = `${platformLabel(platform)}: Linked Clerk application`;
   const instance = application.instances.find(
     (candidate) => candidate.instance_id === developmentInstanceId,
   );
@@ -395,14 +423,14 @@ function linkedCustomAssociatedDomainResult(
   );
   return configured
     ? {
-        name: ASSOCIATED_DOMAIN_RESULT_NAME,
+        name: IOS_ASSOCIATED_DOMAIN_RESULT_NAME,
         status: "pass",
         message: "Clerk's associated domain: matches the linked application",
         detail:
           "The custom publishable-key value was not inspected; this verifies the entitlements against the explicitly linked application.",
       }
     : {
-        name: ASSOCIATED_DOMAIN_RESULT_NAME,
+        name: IOS_ASSOCIATED_DOMAIN_RESULT_NAME,
         status: "fail",
         message: "Clerk's associated domain: does not match the linked application",
         detail:
@@ -419,6 +447,9 @@ async function remoteResults(
 ): Promise<CheckResult[]> {
   const readiness = buildIOSNativeReadinessAudit(inspection);
   const target = selectedTarget(inspection);
+  const platform = target?.platform ?? (inspection.platform === "macos" ? "macos" : "ios");
+  const nativeApplicationName = `${platformLabel(platform)}: Native Application`;
+  const appleResultName = `${platformLabel(platform)}: Clerk Sign in with Apple`;
   const configureStep = buildIOSSetupPlan(inspection).steps.find(
     (step) => step.id === "configure-publishable-key",
   );
@@ -452,7 +483,7 @@ async function remoteResults(
     return [
       ...preliminaryResults,
       {
-        name: "iOS: Native Application",
+        name: nativeApplicationName,
         status: "warn",
         message: "Native Application: remote state not inspected (project is not linked)",
         remedy: customSource
@@ -466,9 +497,9 @@ async function remoteResults(
     return [
       ...preliminaryResults,
       {
-        name: "iOS: Native Application",
+        name: nativeApplicationName,
         status: "warn",
-        message: "Native Application: remote state not inspected (select one iOS target)",
+        message: `Native Application: remote state not inspected (select one ${platformLabel(platform)} target)`,
         remedy: "Rerun with `clerk doctor --target <name-or-id>`.",
       },
     ];
@@ -490,7 +521,7 @@ async function remoteResults(
       ),
     ]);
     const customApplication = customSource
-      ? linkedCustomApplicationResult(application, instanceId)
+      ? linkedCustomApplicationResult(application, instanceId, platform)
       : undefined;
     const linkedResult =
       customApplication?.result ??
@@ -513,7 +544,7 @@ async function remoteResults(
       if (authView) preliminaryResults.push(authView);
     }
     const customAssociatedDomain =
-      target && customApplication?.fapiHost
+      platform === "ios" && target && customApplication?.fapiHost
         ? linkedCustomAssociatedDomainResult(target, customApplication.fapiHost)
         : undefined;
     const results = [
@@ -523,9 +554,9 @@ async function remoteResults(
     ];
     if (remotePlan.status === "satisfied") {
       results.push({
-        name: "iOS: Native Application",
+        name: nativeApplicationName,
         status: "pass",
-        message: "Native API and iOS registration: configured",
+        message: `Native API and ${platformLabel(platform)} registration: configured`,
         detail: remotePlan.bundleIdentifier
           ? `Bundle ID: ${remotePlan.bundleIdentifier}`
           : undefined,
@@ -536,12 +567,12 @@ async function remoteResults(
           ? remotePlan.actions.join("\n")
           : remotePlan.blockers.map((blocker) => blocker.message).join("\n");
       results.push({
-        name: "iOS: Native Application",
+        name: nativeApplicationName,
         status: "fail",
         message:
           remotePlan.status === "ready"
-            ? "Native API or iOS registration: setup required"
-            : "Native API or iOS registration: blocked",
+            ? `Native API or ${platformLabel(platform)} registration: setup required`
+            : `Native API or ${platformLabel(platform)} registration: blocked`,
         ...(detail ? { detail } : {}),
         remedy: REMOTE_REMEDY,
       });
@@ -571,7 +602,7 @@ async function remoteResults(
         });
         if (apple.runtime.status === "satisfied") {
           results.push({
-            name: "iOS: Clerk Sign in with Apple",
+            name: appleResultName,
             status: "pass",
             message: "Clerk Sign in with Apple: configured for the selected Bundle ID",
             detail:
@@ -585,7 +616,7 @@ async function remoteResults(
             .map((blocker) => blocker.message)
             .join("\n");
           results.push({
-            name: "iOS: Clerk Sign in with Apple",
+            name: appleResultName,
             status: "fail",
             message:
               apple.runtime.bundleIdentifierConfiguration === "required"
@@ -606,7 +637,7 @@ async function remoteResults(
           });
         } else {
           results.push({
-            name: "iOS: Clerk Sign in with Apple",
+            name: appleResultName,
             status: "fail",
             message: "Clerk Sign in with Apple: configuration conflict",
             detail: apple.runtime.blockers.map((blocker) => blocker.message).join("\n"),
@@ -616,7 +647,7 @@ async function remoteResults(
       } catch (error) {
         if (error instanceof PlapiError && error.status === 403) {
           results.push({
-            name: "iOS: Clerk Sign in with Apple",
+            name: appleResultName,
             status: "fail",
             message: "Clerk Sign in with Apple: application access is not permitted",
             remedy:
@@ -624,21 +655,21 @@ async function remoteResults(
           });
         } else if (isAuthError(error) || (error instanceof PlapiError && error.status === 401)) {
           results.push({
-            name: "iOS: Clerk Sign in with Apple",
+            name: appleResultName,
             status: "fail",
             message: "Clerk Sign in with Apple: Clerk authentication is invalid",
             remedy: "Run `clerk auth login`, then rerun `clerk doctor`.",
           });
         } else if (error instanceof PlapiError && error.status === 404) {
           results.push({
-            name: "iOS: Clerk Sign in with Apple",
+            name: appleResultName,
             status: "fail",
             message: "Clerk Sign in with Apple: the linked app or instance was not found",
             remedy: "Run `clerk link` to refresh this project's application and instance IDs.",
           });
         } else {
           results.push({
-            name: "iOS: Clerk Sign in with Apple",
+            name: appleResultName,
             status: "warn",
             message: "Clerk Sign in with Apple: remote state could not be inspected",
             remedy: "Check your Clerk authentication and network connection, then rerun doctor.",
@@ -652,7 +683,7 @@ async function remoteResults(
       return [
         ...preliminaryResults,
         {
-          name: "iOS: Native Application",
+          name: nativeApplicationName,
           status: "fail",
           message: "Native Application: Clerk returned an invalid remote response",
           remedy:
@@ -664,7 +695,7 @@ async function remoteResults(
       return [
         ...preliminaryResults,
         {
-          name: "iOS: Native Application",
+          name: nativeApplicationName,
           status: "fail",
           message: "Native Application: application access is not permitted",
           remedy:
@@ -676,7 +707,7 @@ async function remoteResults(
       return [
         ...preliminaryResults,
         {
-          name: "iOS: Native Application",
+          name: nativeApplicationName,
           status: "fail",
           message: "Native Application: Clerk authentication is invalid",
           remedy: "Run `clerk auth login`, then rerun `clerk doctor`.",
@@ -687,7 +718,7 @@ async function remoteResults(
       return [
         ...preliminaryResults,
         {
-          name: "iOS: Native Application",
+          name: nativeApplicationName,
           status: "fail",
           message: "Native Application: the linked app or development instance was not found",
           remedy: "Run `clerk link` to refresh this project's application and instance IDs.",
@@ -697,7 +728,7 @@ async function remoteResults(
     return [
       ...preliminaryResults,
       {
-        name: "iOS: Native Application",
+        name: nativeApplicationName,
         status: "warn",
         message: "Native Application: remote state could not be inspected",
         remedy:
@@ -712,10 +743,12 @@ export async function runIOSDoctorChecks(
   options: IOSDoctorOptions,
   dependencies: IOSDoctorDependencies = defaultDependencies,
 ): Promise<{ inspection: IOSProjectInspectionResult; results: CheckResult[] }> {
-  const inspection = await dependencies.inspectIOSProject(options.root, {
-    target: options.target,
-    exhaustiveContainerDiscovery: true,
-  });
+  const inspection =
+    options.preparedInspection ??
+    (await dependencies.inspectIOSProject(options.root, {
+      target: options.target,
+      exhaustiveContainerDiscovery: true,
+    }));
   const target = selectedTarget(inspection);
   const requiresAuthViewCompatibility = (target?.swift.authViewReferences.length ?? 0) > 0;
   const requiresClerkKitUI =
@@ -736,7 +769,7 @@ export async function runIOSDoctorChecks(
   }
   for (const remoteResult of await remoteResults(ctx, inspection, dependencies)) {
     const existingIndex =
-      remoteResult.name === ASSOCIATED_DOMAIN_RESULT_NAME
+      remoteResult.name === IOS_ASSOCIATED_DOMAIN_RESULT_NAME
         ? results.findIndex((result) => result.name === remoteResult.name)
         : -1;
     if (existingIndex === -1) {
