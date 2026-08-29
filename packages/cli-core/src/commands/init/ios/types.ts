@@ -24,13 +24,10 @@ export interface IOSDiagnostic {
     | "xcode.external-path"
     | "xcode.generated-project"
     | "xcode.incomplete-source-membership"
-    | "xcode.incomplete-scheme-discovery"
-    | "xcode.incomplete-local-secrets-discovery"
     | "xcode.interrupted-file-transaction"
     | "clerk.package-unattributed"
     | "clerk.invalid-publishable-key"
-    | "clerk.conflicting-publishable-keys"
-    | "clerk.unconsumed-publishable-key-source";
+    | "clerk.conflicting-publishable-keys";
   severity: IOSDiagnosticSeverity;
   message: string;
   remedy?: string;
@@ -95,11 +92,7 @@ export interface IOSClerkPackageState {
   clerkKitUI: IOSProductLinkState;
 }
 
-export type IOSPublishableKeyWiring =
-  | "inline-literal"
-  | "local-secrets-loader"
-  | "process-info-environment"
-  | "unknown";
+export type IOSPublishableKeyWiring = "inline-literal" | "custom";
 
 export type IOSInlinePublishableKeyInspection =
   | {
@@ -116,8 +109,6 @@ export interface IOSConfigureCallEvidence extends IOSSourceEvidence {
   inlinePublishableKey?: IOSInlinePublishableKeyInspection;
   /** Whether this call is a direct statement in the selected @main type's init(). */
   startupBinding: "app-init" | "unproven";
-  /** Whether the referenced LocalSecrets symbol is the exact inspected runtime loader. */
-  localSecretsRuntimeBinding?: "proven" | "unproven";
 }
 
 export interface IOSSwiftInspection {
@@ -128,19 +119,11 @@ export interface IOSSwiftInspection {
   importsClerkKit: IOSSourceEvidence[];
   importsClerkKitUI: IOSSourceEvidence[];
   configureCalls: IOSConfigureCallEvidence[];
-  /** Exact target source that loads LocalSecrets.plist and CLERK_PUBLISHABLE_KEY. */
-  localSecretsRuntimeBindings: IOSSourceEvidence[];
   environmentInjections: IOSSourceEvidence[];
   environmentConsumers: IOSSourceEvidence[];
   authFlowReferences: IOSSourceEvidence[];
   openURLHandlers: IOSSourceEvidence[];
   status: "complete" | "partial" | "absent" | "ambiguous";
-}
-
-export interface IOSRuntimeKeySink {
-  kind: "local-secrets-plist";
-  /** Project-root-relative path. The publishable-key value is never exposed. */
-  path: string;
 }
 
 export interface IOSAppTarget {
@@ -151,8 +134,6 @@ export interface IOSAppTarget {
   configurations: IOSBuildConfiguration[];
   packages: IOSClerkPackageState;
   swift: IOSSwiftInspection;
-  /** Target-owned runtime destinations proven from the Xcode project graph. */
-  runtimeKeySinks: IOSRuntimeKeySink[];
 }
 
 export interface IOSProjectInspection {
