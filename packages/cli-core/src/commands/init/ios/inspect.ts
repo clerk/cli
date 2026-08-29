@@ -1004,6 +1004,7 @@ async function parseProject(
       targetSources.files.length > 0
         ? await inspectSwiftSources(targetSources.files, {
             membershipComplete: targetSources.complete,
+            platform: "ios",
           })
         : emptySwiftInspection();
     if (targetSources.complete && !swiftInspection.evidenceComplete) {
