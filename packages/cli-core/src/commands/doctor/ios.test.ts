@@ -173,6 +173,7 @@ describe("runIOSDoctorChecks", () => {
       platform: "macos",
       includeKey: false,
       localSecrets: true,
+      macOSAppleEntitlement: false,
     });
     const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
 
@@ -208,7 +209,7 @@ describe("runIOSDoctorChecks", () => {
   });
 
   test("audits native Sign in with Apple for a pure macOS application", async () => {
-    const root = await fixture({ platform: "macos" });
+    const root = await fixture({ platform: "macos", macOSAppleEntitlement: false });
     await addAppleEntitlement(root);
     let appleHealthCalls = 0;
     const audit = await runIOSDoctorChecks(

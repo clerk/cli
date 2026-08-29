@@ -598,6 +598,7 @@ async function remoteResults(
         const apple = await dependencies.auditIOSNativeAppleHealth({
           applicationId,
           instanceId,
+          platform,
           bundleIdentifier: registeredBundleIdentifier,
         });
         if (apple.runtime.status === "satisfied") {
@@ -758,6 +759,7 @@ export async function runIOSDoctorChecks(
         root: inspection.root,
         projectPath: target.projectPath,
         targetId: target.id,
+        platform: target.platform,
         ...(requiresClerkKitUI ? { includeClerkKitUI: true } : {}),
         ...(requiresAuthViewCompatibility ? { requirePrebuiltAuthCompatibility: true } : {}),
       })

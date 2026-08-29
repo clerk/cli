@@ -52,6 +52,8 @@ export interface IOSFixtureOptions {
   generated?: "xcodegen" | "tuist";
   xcconfig?: boolean;
   localSecrets?: boolean;
+  /** Include the canonical native Apple entitlement in the macOS fixture. */
+  macOSAppleEntitlement?: boolean;
   /** Include a fully linked clerk-ios package graph. Defaults to both products. */
   clerkSDK?: boolean | "core-only";
 }
@@ -244,14 +246,16 @@ const ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
 </dict></plist>
 `;
 
-const MACOS_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
+function macOSEntitlements(includeApple: boolean): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>com.apple.security.app-sandbox</key><true/>
 <key>com.apple.security.network.client</key><true/>
-<key>com.apple.developer.applesignin</key><array><string>Default</string></array>
+${includeApple ? "<key>com.apple.developer.applesignin</key><array><string>Default</string></array>" : ""}
 </dict></plist>
 `;
+}
 
 export async function createIOSFixture(
   root: string,
@@ -264,7 +268,9 @@ export async function createIOSFixture(
   await Bun.write(join(root, "MyApp", "MyAppApp.swift"), swiftSource(options.complete === true));
   await Bun.write(
     join(root, "MyApp", "MyApp.entitlements"),
-    options.platform === "macos" ? MACOS_ENTITLEMENTS : ENTITLEMENTS,
+    options.platform === "macos"
+      ? macOSEntitlements(options.macOSAppleEntitlement !== false)
+      : ENTITLEMENTS,
   );
   if (options.secondTarget) {
     const platform = options.secondTarget === "watchos" ? "watchos" : "ios";

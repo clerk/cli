@@ -185,7 +185,7 @@ export async function init(options: InitOptions = {}) {
       options.prebuiltAuthUI)
   ) {
     throwUsageError(
-      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native iOS projects.",
+      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native Apple projects.",
     );
   }
   if (ctx.framework.dep === "ios") {
@@ -393,7 +393,7 @@ function assertUsableFlags(options: InitOptions): void {
       options.prebuiltAuthUI)
   ) {
     throwUsageError(
-      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui require an existing native iOS project and cannot be combined with --starter.",
+      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui require an existing native Apple project and cannot be combined with --starter.",
     );
   }
   if (
@@ -423,24 +423,24 @@ function assertUsableFlags(options: InitOptions): void {
 }
 
 /**
- * Rejects keyless-only flags before the iOS apply phase. Native iOS does not
+ * Rejects keyless-only flags before the native Apple apply phase. Native Apple projects do not
  * consume Clerk's keyless bootstrap, so letting strategy resolution reject
  * these later could otherwise modify the Xcode project before a usage error.
  */
 function assertIOSUsableFlags(options: InitOptions): void {
   if (options.keyless) {
     throwUsageError(
-      "--keyless is not supported for iOS (Swift). Run `clerk auth login` and use `clerk init --app <app_id>` instead.",
+      "--keyless is not supported for native Apple projects. Run `clerk auth login` and use `clerk init --app <app_id>` instead.",
     );
   }
   if (options.template) {
     throwUsageError(
-      "--template only applies to keyless applications, but iOS (Swift) does not support keyless mode. Drop --template.",
+      "--template only applies to keyless applications, but native Apple projects do not support keyless mode. Drop --template.",
     );
   }
   if (options.fresh) {
     throwUsageError(
-      "--fresh only applies to keyless applications, but iOS (Swift) does not support keyless mode. Drop --fresh.",
+      "--fresh only applies to keyless applications, but native Apple projects do not support keyless mode. Drop --fresh.",
     );
   }
 }
@@ -580,7 +580,7 @@ async function resolveExistingProjectContext(
   );
   if (!ctx) {
     throw new CliError(
-      "Could not detect an existing native iOS project. --target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui never bootstrap a new project.",
+      "Could not detect an existing native Apple project. --target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui never bootstrap a new project.",
       { code: ERROR_CODE.FRAMEWORK_UNDETECTED },
     );
   }
