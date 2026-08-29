@@ -718,16 +718,18 @@ export async function runIOSDoctorChecks(
     exhaustiveContainerDiscovery: true,
   });
   const target = selectedTarget(inspection);
-  const sdkInstallPlan =
-    target && target.swift.authViewReferences.length > 0
-      ? await dependencies.planIOSSDKInstall({
-          root: inspection.root,
-          projectPath: target.projectPath,
-          targetId: target.id,
-          includeClerkKitUI: true,
-          requirePrebuiltAuthCompatibility: true,
-        })
-      : undefined;
+  const requiresAuthViewCompatibility = (target?.swift.authViewReferences.length ?? 0) > 0;
+  const requiresClerkKitUI =
+    (target?.swift.importsClerkKitUI.length ?? 0) > 0 || requiresAuthViewCompatibility;
+  const sdkInstallPlan = target
+    ? await dependencies.planIOSSDKInstall({
+        root: inspection.root,
+        projectPath: target.projectPath,
+        targetId: target.id,
+        ...(requiresClerkKitUI ? { includeClerkKitUI: true } : {}),
+        ...(requiresAuthViewCompatibility ? { requirePrebuiltAuthCompatibility: true } : {}),
+      })
+    : undefined;
   const results = localResults(inspection, sdkInstallPlan);
   if (target) {
     const apple = await appleEntitlementResult(inspection, target, dependencies);
