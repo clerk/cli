@@ -15,7 +15,7 @@ const CLERK_CONFIGURE_CALL = /\bClerk\s*\.\s*configure\s*\(/;
 const CLERK_URL_HANDLER = /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*handle\s*\(/;
 const CLERK_NATIVE_AUTH_FLOW =
   /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*(?:signIn(?:With(?:Password|EmailCode|EmailLink|PhoneCode|OAuth|IdToken|Apple|Passkey|EnterpriseSSO|Ticket))?|signUp(?:With(?:OAuth|Apple|IdToken|EnterpriseSSO|Ticket))?|startHostedAuth)\s*\(/;
-const CLERK_MAGIC_LINK_AUTH_FLOW =
+const CLERK_EMAIL_LINK_AUTH_FLOW =
   /(?:\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*signInWithEmailLink|\.\s*sendEmailLink)\s*\(/;
 const CLERK_ENVIRONMENT_INJECTION =
   /\.\s*environment\s*\(\s*Clerk\s*\.\s*shared\s*\)/;
@@ -99,7 +99,7 @@ const CLERK_EVIDENCE_PATTERNS = [
   CLERK_CONFIGURE_CALL,
   CLERK_URL_HANDLER,
   CLERK_NATIVE_AUTH_FLOW,
-  CLERK_MAGIC_LINK_AUTH_FLOW,
+  CLERK_EMAIL_LINK_AUTH_FLOW,
   CLERK_ENVIRONMENT_INJECTION,
   CLERK_ENVIRONMENT_CONSUMER,
   CLERK_AUTH_VIEW,
@@ -768,9 +768,7 @@ export async function inspectSwiftSources(
   const rootEnvironmentInjections: IOSSourceEvidence[] = [];
   const environmentConsumers: IOSSourceEvidence[] = [];
   const authFlowReferences: IOSSourceEvidence[] = [];
-  const magicLinkAuthReferences: IOSSourceEvidence[] = [];
   const openURLHandlers: IOSSourceEvidence[] = [];
-  const rootOpenURLHandlers: IOSSourceEvidence[] = [];
   let sourceFilesScanned = 0;
   let evidenceComplete = options.membershipComplete ?? true;
 
@@ -831,18 +829,13 @@ export async function inspectSwiftSources(
     }
     if (
       (importsUI && has(sanitized, CLERK_AUTH_VIEW)) ||
-      (importsClerkModule && has(sanitized, CLERK_NATIVE_AUTH_FLOW))
+      (importsClerkModule &&
+        (has(sanitized, CLERK_NATIVE_AUTH_FLOW) || has(sanitized, CLERK_EMAIL_LINK_AUTH_FLOW)))
     ) {
       authFlowReferences.push(evidence);
     }
-    if (importsClerkModule && has(sanitized, CLERK_MAGIC_LINK_AUTH_FLOW)) {
-      magicLinkAuthReferences.push(evidence);
-    }
     if (importsClerkModule && hasClerkOpenURLHandler(sanitized)) {
       openURLHandlers.push(evidence);
-    }
-    if (importsClerkModule && appRoot?.clerkOpenURLHandler) {
-      rootOpenURLHandlers.push(evidence);
     }
   }
 
@@ -853,7 +846,6 @@ export async function inspectSwiftSources(
     appRootEvidence[0]?.path === entryPoints[0]?.path;
   const provenAppRootEvidence = hasUniqueProvenAppRoot ? appRootEvidence : [];
   const provenRootEnvironmentInjections = hasUniqueProvenAppRoot ? rootEnvironmentInjections : [];
-  const provenRootOpenURLHandlers = hasUniqueProvenAppRoot ? rootOpenURLHandlers : [];
 
   const anyClerkEvidence =
     importsClerkKit.length +
@@ -861,8 +853,7 @@ export async function inspectSwiftSources(
       configureCalls.length +
       environmentInjections.length +
       environmentConsumers.length +
-      authFlowReferences.length +
-      magicLinkAuthReferences.length >
+      authFlowReferences.length >
     0;
   const status =
     entryPoints.length > 1
@@ -885,9 +876,7 @@ export async function inspectSwiftSources(
     rootEnvironmentInjections: provenRootEnvironmentInjections,
     environmentConsumers,
     authFlowReferences,
-    magicLinkAuthReferences,
     openURLHandlers,
-    rootOpenURLHandlers: provenRootOpenURLHandlers,
     status,
   };
 }

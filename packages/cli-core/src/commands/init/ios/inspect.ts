@@ -98,9 +98,7 @@ function emptySwiftInspection() {
     rootEnvironmentInjections: [],
     environmentConsumers: [],
     authFlowReferences: [],
-    magicLinkAuthReferences: [],
     openURLHandlers: [],
-    rootOpenURLHandlers: [],
     status: "absent" as const,
   };
 }

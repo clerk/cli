@@ -128,12 +128,8 @@ export interface IOSSwiftInspection {
   rootEnvironmentInjections: IOSSourceEvidence[];
   environmentConsumers: IOSSourceEvidence[];
   authFlowReferences: IOSSourceEvidence[];
-  /** Lexical selected-target evidence of a custom native email-link flow. */
-  magicLinkAuthReferences: IOSSourceEvidence[];
   /** Broad lexical evidence retained for diagnostics and conflict detection only. */
   openURLHandlers: IOSSourceEvidence[];
-  /** Documented-shape Clerk URL handler candidate on the proven shipping WindowGroup root. */
-  rootOpenURLHandlers: IOSSourceEvidence[];
   status: "complete" | "partial" | "absent" | "ambiguous";
 }
 
@@ -200,7 +196,6 @@ export type IOSSetupStepId =
   | "install-clerk-sdk"
   | "configure-publishable-key"
   | "inject-clerk-environment"
-  | "wire-auth-callbacks"
   | "register-native-application"
   | "enable-native-apple"
   | "add-associated-domain"

@@ -315,37 +315,6 @@ export function buildIOSSetupPlan(
     ),
   );
 
-  if (target.swift.magicLinkAuthReferences.length > 0) {
-    const rootHandlesMagicLinks =
-      provenAppRoot &&
-      target.swift.rootOpenURLHandlers.some(
-        (evidence) => evidence.path === target.swift.appRootEvidence[0]?.path,
-      );
-    const hasUnprovenHandler = target.swift.openURLHandlers.length > 0 && !rootHandlesMagicLinks;
-    steps.push(
-      step(
-        "wire-auth-callbacks",
-        "Wire custom email-link callbacks",
-        "review",
-        rootHandlesMagicLinks
-          ? "The proven shipping WindowGroup root contains the documented Clerk callback shape. Confirm that custom email-link callbacks reach Clerk at runtime."
-          : hasUnprovenHandler
-            ? "A Clerk onOpenURL handler exists in target source, but it is not proven on the shipping WindowGroup root. Confirm that custom email-link callbacks reach Clerk."
-            : provenAppRoot
-              ? "A custom email-link flow is referenced, but the proven shipping WindowGroup root does not forward incoming URLs to Clerk. Review the flow's callback wiring."
-              : "A custom email-link flow is referenced, but the shipping root and its callback wiring could not be proven structurally. Review the flow manually.",
-        [
-          ...target.swift.magicLinkAuthReferences,
-          ...(rootHandlesMagicLinks
-            ? target.swift.rootOpenURLHandlers
-            : target.swift.openURLHandlers),
-        ],
-        undefined,
-        false,
-      ),
-    );
-  }
-
   const bundleIdentifiers = distinctResolved(
     target,
     (configuration) => configuration.bundleIdentifier,

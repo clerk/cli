@@ -231,38 +231,3 @@ test("does not derive setup state from a LocalSecrets value", async () => {
     plan.postInstructions.some((i) => i.includes("dashboard.clerk.com/~/native-applications")),
   ).toBe(true);
 });
-
-test("only recommends callback wiring for a custom native email-link flow", async () => {
-  const root = await makeIOSFixture(false);
-  await Bun.write(
-    join(root, "MyApp", "MyAppApp.swift"),
-    `import ClerkKit
-     import SwiftUI
-     @main struct MyApp: App {
-       var body: some Scene { WindowGroup { ContentView().environment(Clerk.shared) } }
-     }
-     func begin(_ signIn: SignIn) async throws { try await signIn.sendEmailLink() }`,
-  );
-
-  const magicLinkPlan = await ios.scaffold({ ...makeCtx(), cwd: root });
-  expect(
-    magicLinkPlan.postInstructions.some(
-      (instruction) =>
-        instruction.includes("custom native email-link flow") && instruction.includes("onOpenURL"),
-    ),
-  ).toBe(true);
-
-  await Bun.write(
-    join(root, "MyApp", "MyAppApp.swift"),
-    `import ClerkKit
-     import SwiftUI
-     @main struct MyApp: App {
-       var body: some Scene { WindowGroup { ContentView().environment(Clerk.shared) } }
-     }
-     func begin() async throws { try await Clerk.shared.auth.signInWithApple() }`,
-  );
-  const applePlan = await ios.scaffold({ ...makeCtx(), cwd: root });
-  expect(applePlan.postInstructions.some((instruction) => instruction.includes("onOpenURL"))).toBe(
-    false,
-  );
-});

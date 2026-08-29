@@ -25,7 +25,6 @@ export interface SwiftUIAppRootStructure {
   body: SwiftUISceneBodyRange;
   root: SwiftUIRootExpression;
   clerkEnvironment: { found: boolean; conflicting: boolean };
-  clerkOpenURLHandler: boolean;
 }
 
 export type SwiftUIAppRootInspection =
@@ -362,57 +361,6 @@ function clerkEnvironment(
   return { found, conflicting };
 }
 
-function regexEscape(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function onOpenURLClosureBody(body: string): string | undefined {
-  const trimmed = body.trim();
-  const wrapper = /^(?:perform\s*:\s*)?\{/.exec(trimmed);
-  if (!wrapper) return trimmed;
-  const openingBrace = trimmed.indexOf("{", wrapper.index);
-  const closingBrace = matchingBrace(trimmed, openingBrace);
-  if (closingBrace == null || trimmed.slice(closingBrace + 1).trim() !== "") return undefined;
-  return trimmed.slice(openingBrace + 1, closingBrace);
-}
-
-function closureURLBinding(body: string): { parameter: string; bodyStart: number } | undefined {
-  const captureList = /^\s*\[[^\]]*\]\s*/.exec(body)?.[0] ?? "";
-  const header = body.slice(captureList.length);
-  const parenthesized = /^\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^)]*)?\)\s+in\b/.exec(header);
-  if (parenthesized?.[1]) {
-    return {
-      parameter: parenthesized[1],
-      bodyStart: captureList.length + parenthesized[0].length,
-    };
-  }
-  const named = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s+in\b/.exec(header);
-  return named?.[1]
-    ? { parameter: named[1], bodyStart: captureList.length + named[0].length }
-    : undefined;
-}
-
-function isExactClerkOpenURLForwarder(body: string, parameter: string): boolean {
-  const escaped = regexEscape(parameter);
-  const forwarder = new RegExp(
-    `^\\s*Task\\s*\\{\\s*(?:_\\s*=\\s*)?try[!?]?\\s+await\\s+Clerk\\s*\\.\\s*shared\\s*\\.\\s*handle\\s*\\(\\s*${escaped}\\s*\\)\\s*;?\\s*\\}\\s*$`,
-  );
-  return forwarder.test(body);
-}
-
-function hasClerkOpenURLHandler(source: string, root: SwiftUIRootExpression): boolean {
-  return root.modifierStarts.some((modifierStart) => {
-    const modifier = modifierDetails(source, root, modifierStart);
-    if (modifier?.name !== "onOpenURL" || modifier.body == null) return false;
-    const closureBody = onOpenURLClosureBody(modifier.body);
-    if (!closureBody) return false;
-    const binding = closureURLBinding(closureBody);
-    if (!binding || binding.parameter === "_") return false;
-    const handlerBody = closureBody.slice(binding.bodyStart);
-    return isExactClerkOpenURLForwarder(handlerBody, binding.parameter);
-  });
-}
-
 /**
  * Proves only the narrow shipping SwiftUI root that Clerk can reason about
  * deterministically: one unconditional top-level `@main` App, one
@@ -433,7 +381,6 @@ export function inspectSwiftUIAppRootWithStatus(source: string): SwiftUIAppRootI
       body,
       root,
       clerkEnvironment: clerkEnvironment(source, root),
-      clerkOpenURLHandler: hasClerkOpenURLHandler(source, root),
     },
   };
 }

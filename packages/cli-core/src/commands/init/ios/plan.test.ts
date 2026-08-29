@@ -255,10 +255,9 @@ struct MyApp: App {
     expect(plan.steps.find((step) => step.id === "add-authentication-flow")?.description).toContain(
       "--prebuilt-auth-ui",
     );
-    expect(plan.steps.find((step) => step.id === "wire-auth-callbacks")).toBeUndefined();
   });
 
-  test("uses the documented AuthView sheet without generating app-level callback code", async () => {
+  test("uses the documented AuthView sheet when prebuilt authentication is selected", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-selected-prebuilt-auth-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, { complete: false, includeKey: false });
@@ -278,7 +277,6 @@ struct MyApp: App {
       status: "required",
       automatable: true,
     });
-    expect(plan.steps.find((step) => step.id === "wire-auth-callbacks")).toBeUndefined();
     expect(plan.steps.find((step) => step.id === "add-authentication-flow")?.description).toContain(
       "network-free local plan",
     );
@@ -287,7 +285,7 @@ struct MyApp: App {
     );
   });
 
-  test("scopes callback review to custom email-link flows on the proven root", async () => {
+  test("treats a custom email-link implementation as an existing authentication flow", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-magic-link-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, { complete: false, includeKey: false });
@@ -301,72 +299,17 @@ struct MyApp: App {
            WindowGroup {
              ContentView()
                .environment(Clerk.shared)
-               .onOpenURL { url in Task { try await Clerk.shared.handle(url) } }
            }
          }
        }
        func send(_ signIn: SignIn) async throws { try await signIn.sendEmailLink() }`,
     );
 
-    const provenPlan = buildIOSSetupPlan(await inspectIOSProject(root));
-    expect(provenPlan.steps.find((step) => step.id === "wire-auth-callbacks")).toMatchObject({
-      title: "Wire custom email-link callbacks",
-      status: "review",
-      automatable: false,
-    });
-    expect(
-      provenPlan.steps.find((step) => step.id === "wire-auth-callbacks")?.description,
-    ).toContain("Confirm that custom email-link callbacks reach Clerk at runtime");
-
-    await Bun.write(
-      appPath,
-      `import ClerkKit
-       import SwiftUI
-       @main struct MyApp: App {
-         var body: some Scene { WindowGroup { ContentView().environment(Clerk.shared) } }
-       }
-       struct UnusedHelper: View {
-         var body: some View {
-           Text("Unused").onOpenURL { url in Task { try await Clerk.shared.handle(url) } }
-         }
-       }
-       func send(_ signIn: SignIn) async throws { try await signIn.sendEmailLink() }`,
-    );
-
-    const offRootPlan = buildIOSSetupPlan(await inspectIOSProject(root));
-    expect(offRootPlan.steps.find((step) => step.id === "wire-auth-callbacks")).toMatchObject({
-      status: "review",
-      automatable: false,
-    });
-    expect(
-      offRootPlan.steps.find((step) => step.id === "wire-auth-callbacks")?.description,
-    ).toContain("not proven on the shipping WindowGroup root");
-  });
-
-  test("omits callback setup for AuthView and non-magic custom authentication", async () => {
-    const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-non-magic-"));
-    temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: false, includeKey: false });
-    const appPath = join(root, "MyApp", "MyAppApp.swift");
-    await Bun.write(
-      appPath,
-      `import ClerkKit
-       import ClerkKitUI
-       import SwiftUI
-       @main struct MyApp: App {
-         var body: some Scene { WindowGroup { AuthView().environment(Clerk.shared) } }
-       }
-       func otherFlows() async throws {
-         _ = try await Clerk.shared.auth.signInWithPassword(identifier: "a", password: "b")
-         _ = try await Clerk.shared.auth.signInWithEmailCode(emailAddress: "a")
-         _ = try await Clerk.shared.auth.signInWithOAuth(provider: .google)
-         _ = try await Clerk.shared.auth.signInWithApple()
-         _ = try await Clerk.shared.auth.startHostedAuth()
-       }`,
-    );
-
     const plan = buildIOSSetupPlan(await inspectIOSProject(root));
-    expect(plan.steps.find((step) => step.id === "wire-auth-callbacks")).toBeUndefined();
+    expect(plan.steps.find((step) => step.id === "add-authentication-flow")).toMatchObject({
+      status: "satisfied",
+      automatable: false,
+    });
   });
 
   test("blocks a selected AuthView scaffold when the SDK compatibility proof fails", async () => {
@@ -401,7 +344,6 @@ struct MyApp: App {
       status: "blocked",
       automatable: false,
     });
-    expect(plan.steps.find((step) => step.id === "wire-auth-callbacks")).toBeUndefined();
   });
 
   test("blocks an explicitly requested scaffold over a partial existing auth flow", async () => {

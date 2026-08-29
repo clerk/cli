@@ -153,12 +153,6 @@ export const ios: FrameworkScaffold = {
               : "Native Sign in with Apple is ready; AuthView displays Apple automatically, while custom flows can call `try await Clerk.shared.auth.signInWithApple()`",
         ]
       : [];
-    const callbackInstructions = needsAttention("wire-auth-callbacks")
-      ? [
-          "For a custom native email-link flow, attach an onOpenURL handler to the shipping SwiftUI root and forward incoming URLs to Clerk",
-        ]
-      : [];
-
     return {
       actions: [],
       postInstructions: [
@@ -169,7 +163,6 @@ export const ios: FrameworkScaffold = {
         ...nativeAppleInstructions,
         ...authFlowInstructions,
         ...environmentInstructions,
-        ...callbackInstructions,
         "Full setup guide: https://clerk.com/docs/ios/getting-started/quickstart",
       ],
     };

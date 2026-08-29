@@ -791,11 +791,10 @@ Clerk.configure(publishableKey: key)`,
     expect(inspection.environmentInjections).toEqual([{ path: "UnusedHelper.swift" }]);
     expect(inspection.rootEnvironmentInjections).toEqual([]);
     expect(inspection.openURLHandlers).toEqual([{ path: "UnusedHelper.swift" }]);
-    expect(inspection.rootOpenURLHandlers).toEqual([]);
     expect(inspection.status).toBe("partial");
   });
 
-  test("proves Clerk modifiers only when attached to the unique WindowGroup root", async () => {
+  test("proves Clerk environment injection only on the unique WindowGroup root", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-root-"));
     temporaryDirectories.push(root);
     const path = join(root, "App.swift");
@@ -824,8 +823,8 @@ Clerk.configure(publishableKey: key)`,
 
     expect(inspection.appRootEvidence).toEqual([{ path: "App.swift" }]);
     expect(inspection.rootEnvironmentInjections).toEqual([{ path: "App.swift" }]);
-    expect(inspection.magicLinkAuthReferences).toEqual([{ path: "App.swift" }]);
-    expect(inspection.rootOpenURLHandlers).toEqual([{ path: "App.swift" }]);
+    expect(inspection.authFlowReferences).toEqual([{ path: "App.swift" }]);
+    expect(inspection.openURLHandlers).toEqual([{ path: "App.swift" }]);
     expect(inspection.status).toBe("complete");
   });
 
@@ -856,75 +855,9 @@ Clerk.configure(publishableKey: key)`,
     expect(inspection.evidenceComplete).toBe(false);
     expect(inspection.appRootEvidence).toEqual([]);
     expect(inspection.rootEnvironmentInjections).toEqual([]);
-    expect(inspection.rootOpenURLHandlers).toEqual([]);
   });
 
-  test("proves only an incoming URL forwarded directly to Clerk.shared", async () => {
-    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-root-callback-"));
-    temporaryDirectories.push(root);
-    const path = join(root, "App.swift");
-    const inspect = async (handler: string) => {
-      await Bun.write(
-        path,
-        `import ClerkKit
-         import SwiftUI
-         @main struct AppMain: App {
-           var body: some Scene {
-             WindowGroup { ContentView().onOpenURL { ${handler} } }
-           }
-         }`,
-      );
-      return inspectSwiftSources([{ absolutePath: path, relativePath: "App.swift" }]);
-    };
-
-    expect(
-      (await inspect("url in Task { try await Clerk.shared.handle(url) }")).rootOpenURLHandlers,
-    ).toEqual([{ path: "App.swift" }]);
-    expect(
-      (await inspect("_ in Task { try await Clerk.shared.handle(fallbackURL) }"))
-        .rootOpenURLHandlers,
-    ).toEqual([]);
-    expect(
-      (await inspect("url in Task { try await clerk.handle(url) }")).rootOpenURLHandlers,
-    ).toEqual([]);
-    expect(
-      (
-        await inspect(
-          "url in do { let url = fallbackURL; Task { try await Clerk.shared.handle(url) } }",
-        )
-      ).rootOpenURLHandlers,
-    ).toEqual([]);
-    expect(
-      (
-        await inspect(
-          "url in values.forEach { url in Task { try await Clerk.shared.handle(url) } }",
-        )
-      ).rootOpenURLHandlers,
-    ).toEqual([]);
-    expect(
-      (
-        await inspect(
-          "url in if case let .some(url) = fallbackURL { Task { try await Clerk.shared.handle(url) } }",
-        )
-      ).rootOpenURLHandlers,
-    ).toEqual([]);
-    expect(
-      (
-        await inspect(
-          "url in do { let ((first, second), url) = fallback; Task { try await Clerk.shared.handle(url) } }",
-        )
-      ).rootOpenURLHandlers,
-    ).toEqual([]);
-    expect(
-      (
-        await inspect(
-          "url in struct Local { init(url: URL) { Task { try await Clerk.shared.handle(url) } } }; _ = Local.self",
-        )
-      ).rootOpenURLHandlers,
-    ).toEqual([]);
-  });
-
-  test("recognizes the Auth email-link convenience API as a custom magic-link flow", async () => {
+  test("recognizes the Auth email-link convenience API as an authentication flow", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-magic-link-"));
     temporaryDirectories.push(root);
     const path = join(root, "MagicLink.swift");
@@ -940,7 +873,7 @@ Clerk.configure(publishableKey: key)`,
       { absolutePath: path, relativePath: "MagicLink.swift" },
     ]);
 
-    expect(inspection.magicLinkAuthReferences).toEqual([{ path: "MagicLink.swift" }]);
+    expect(inspection.authFlowReferences).toEqual([{ path: "MagicLink.swift" }]);
   });
 
   test("does not prove an ambiguous, unsupported, or sanitized-decoy app root", async () => {
@@ -974,7 +907,6 @@ Clerk.configure(publishableKey: key)`,
     expect(ambiguous.status).toBe("ambiguous");
     expect(ambiguous.appRootEvidence).toEqual([]);
     expect(ambiguous.rootEnvironmentInjections).toEqual([]);
-    expect(ambiguous.magicLinkAuthReferences).toEqual([]);
 
     await Bun.write(
       secondPath,
@@ -989,7 +921,6 @@ Clerk.configure(publishableKey: key)`,
     ]);
     expect(unsupported.appRootEvidence).toEqual([]);
     expect(unsupported.rootEnvironmentInjections).toEqual([]);
-    expect(unsupported.rootOpenURLHandlers).toEqual([]);
   });
 
   test("recognizes native Clerk auth calls without matching unrelated sign-in APIs", async () => {
@@ -1066,7 +997,6 @@ Clerk.configure(publishableKey: key)`,
       { path: "Password.swift" },
       { path: "SignUp.swift" },
     ]);
-    expect(inspection.magicLinkAuthReferences).toEqual([]);
   });
 
   test("marks multiple entry points as ambiguous", async () => {
