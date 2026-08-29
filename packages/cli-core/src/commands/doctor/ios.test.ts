@@ -237,6 +237,33 @@ describe("runIOSDoctorChecks", () => {
     expect(environment?.detail).toContain("proven shipping WindowGroup root");
   });
 
+  test.each(["\\.self", ".self"])(
+    "does not pass the invalid EnvironmentValues overload %s",
+    async (keyPath) => {
+      const root = await fixture({ complete: true });
+      await writeFile(
+        join(root, "MyApp", "MyAppApp.swift"),
+        `import ClerkKit
+         import ClerkKitUI
+         import SwiftUI
+         @main struct MyApp: App {
+           var body: some Scene {
+             WindowGroup { AuthView().environment(${keyPath}, Clerk.shared) }
+           }
+         }`,
+      );
+
+      const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+      const environment = audit.results.find(
+        (result) => result.name === "iOS: Inject Clerk into the SwiftUI environment",
+      );
+
+      expect(environment?.status).toBe("fail");
+      expect(environment?.message).toContain("setup required");
+      expect(environment?.detail).toContain("add `.environment(Clerk.shared)`");
+    },
+  );
+
   test("omits callback diagnostics for AuthView and non-magic authentication", async () => {
     const root = await fixture({ complete: true });
     const authViewAudit = await runIOSDoctorChecks(
