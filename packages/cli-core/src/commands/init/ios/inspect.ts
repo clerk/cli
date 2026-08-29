@@ -657,7 +657,9 @@ function synchronizedExclusions(
           continue;
         }
         const applicability = buildFilePlatformApplicability({ platformFilters }, platform);
-        if (applicability.recognized && !applicability.applies) {
+        if (!applicability.recognized) {
+          state.complete = false;
+        } else if (!applicability.applies) {
           excluded.add(normalizeSynchronizedPath(path));
         }
       }
