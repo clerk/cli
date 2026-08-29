@@ -63,6 +63,7 @@ function iosRemotePlan(overrides: Partial<IOSNativeRemotePlan> = {}): IOSNativeR
     status: "ready",
     applicationId: "app_test",
     instanceId: "ins_test",
+    platform: "ios",
     bundleIdentifier: "com.example.MyApp",
     appIdPrefix: "LEGACY1234",
     nativeApi: "required",
@@ -1150,6 +1151,7 @@ describe("init iOS", () => {
     expect(prepareApple).toHaveBeenCalledWith({
       applicationId: "app_test",
       instanceId: "ins_test",
+      platform: "ios",
       bundleIdentifier: "com.Example.MyApp",
       nativeApplicationReady: true,
       requested: true,

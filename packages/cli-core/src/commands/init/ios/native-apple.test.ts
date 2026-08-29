@@ -641,6 +641,37 @@ describe("native Sign in with Apple remote setup", () => {
     });
   });
 
+  test("reuses the narrow native Apple connection path for a macOS target", async () => {
+    const harness = statefulAPI();
+    const prepared = await prepareIOSNativeAppleConnection(baseOptions({ platform: "macos" }), {
+      api: harness.api,
+      prompts: unexpectedPrompts(),
+    });
+
+    expect(prepared).toMatchObject({ status: "ready", platform: "macos" });
+    if (prepared.status !== "ready") throw new Error("expected ready plan");
+
+    await applyIOSNativeAppleConnection(prepared, harness.api);
+
+    expect(harness.actualWrites()).toBe(1);
+    expect(harness.patchCalls.map((call) => call.config)).toEqual([
+      {
+        connection_oauth_apple: {
+          enabled: true,
+          authenticatable: true,
+          bundle_id: BUNDLE_IDENTIFIER,
+        },
+      },
+      {
+        connection_oauth_apple: {
+          enabled: true,
+          authenticatable: true,
+          bundle_id: BUNDLE_IDENTIFIER,
+        },
+      },
+    ]);
+  });
+
   test("requires the exact native Bundle ID even when Apple is already authenticatable", async () => {
     const harness = statefulAPI({ initial: connection(true, true) });
     const prepared = await prepareIOSNativeAppleConnection(baseOptions(), {
