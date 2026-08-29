@@ -48,6 +48,8 @@ export interface IOSLocalSetupProposal {
   inspection: IOSProjectInspectionResult;
   selectedTarget?: IOSAppTarget;
   productDecision?: ProductDecision;
+  /** Platform selected for local native Apple automation. */
+  platform?: IOSAppTarget["platform"];
   setupPlan: IOSSetupPlan;
   nativeReadiness: IOSNativeReadinessAudit;
   unverifiedAppIdPrefixSuggestion?: IOSUnverifiedAppIdPrefixSuggestion;
@@ -156,6 +158,7 @@ export async function buildIOSLocalSetupProposal(
       inspection,
       selectedTarget,
       productDecision,
+      ...(selectedTarget ? { platform: selectedTarget.platform } : {}),
       setupPlan,
       nativeReadiness: buildIOSNativeReadinessAudit(inspection),
       prebuiltAuthRequested: options.prebuiltAuthUI === true,
@@ -172,6 +175,7 @@ export async function buildIOSLocalSetupProposal(
     root: options.root,
     projectPath: selection.projectPath,
     targetId: selection.targetId,
+    platform: selectedTarget.platform,
     allowDirty: options.allowDirty,
   });
   let prebuiltAuthRequested = options.prebuiltAuthUI === true;
@@ -195,6 +199,7 @@ export async function buildIOSLocalSetupProposal(
     root: options.root,
     projectPath: selection.projectPath,
     targetId: selection.targetId,
+    platform: selectedTarget.platform,
     includeClerkKitUI,
     requirePrebuiltAuthCompatibility: prebuiltAuthActive,
   });
@@ -208,10 +213,11 @@ export async function buildIOSLocalSetupProposal(
     selectedTarget,
     prebuiltAuthActive ? "prebuilt" : productDecision,
   )
-    ? await planIOSDirectConfig({
+      ? await planIOSDirectConfig({
         root: options.root,
         projectPath: selection.projectPath,
         targetId: selection.targetId,
+        platform: selectedTarget.platform,
         allowDirty: options.allowDirty,
       })
     : undefined;
@@ -236,15 +242,19 @@ export async function buildIOSLocalSetupProposal(
       : inspectedPrebuiltAuthPlan;
   const prebuiltAuthPlan = prebuiltAuthActive ? prebuiltAuthPlanForSetup : undefined;
 
-  const plannedAssociatedDomain = await planIOSAssociatedDomain({
-    root: options.root,
-    projectPath: selection.projectPath,
-    targetId: selection.targetId,
-    deferToPublishableKey: directConfigPlan?.status === "ready" || hasSupportedCustomConfigure,
-    allowMissingEntitlementsCreation: true,
-  });
+  const plannedAssociatedDomain =
+    selectedTarget.platform === "ios"
+      ? await planIOSAssociatedDomain({
+          root: options.root,
+          projectPath: selection.projectPath,
+          targetId: selection.targetId,
+          deferToPublishableKey:
+            directConfigPlan?.status === "ready" || hasSupportedCustomConfigure,
+          allowMissingEntitlementsCreation: true,
+        })
+      : undefined;
   const associatedDomainPlan =
-    plannedAssociatedDomain.status === "blocked" ? undefined : plannedAssociatedDomain;
+    plannedAssociatedDomain?.status === "blocked" ? undefined : plannedAssociatedDomain;
   const nativeReadiness = buildIOSNativeReadinessAudit(inspection, {
     associatedDomainPlan: plannedAssociatedDomain,
   });
@@ -306,6 +316,7 @@ export async function buildIOSLocalSetupProposal(
     inspection,
     selectedTarget,
     productDecision,
+    platform: selectedTarget.platform,
     setupPlan,
     nativeReadiness,
     ...(unverifiedAppIdPrefixSuggestion ? { unverifiedAppIdPrefixSuggestion } : {}),

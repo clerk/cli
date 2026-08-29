@@ -222,6 +222,24 @@ describe("iOS direct Clerk configuration", () => {
     expect(await treeDigest(root)).toEqual(before);
   });
 
+  test("plans the same direct SwiftUI configuration for a macOS app", async () => {
+    const root = await fixture({ platform: "macos" });
+
+    const plan = await planIOSDirectConfig({ ...planOptions(root), platform: "macos" });
+
+    expect(plan).toMatchObject({
+      status: "ready",
+      platform: "macos",
+      sourcePath: "MyApp/MyAppApp.swift",
+      changes: {
+        clerkKitImport: "insert",
+        configuration: "insert-initializer",
+        environment: "insert",
+      },
+      blockers: [],
+    });
+  });
+
   test("plans a fully redacted pristine SwiftUI setup without writing", async () => {
     const root = await fixture();
     const before = await treeDigest(root);

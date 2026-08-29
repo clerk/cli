@@ -87,6 +87,7 @@ export type IOSLocalSetupResult = Pick<
   | "prebuiltAuthRequested"
   | "prebuiltAuthActive"
   | "nativeAppleRequested"
+  | "platform"
 > & {
   targetName: string;
   /** Authentication must return an exact app ID and development key before commit. */
@@ -240,7 +241,7 @@ export async function applyIOSLocalSetup(
   const context = createIOSLocalSetupContext(inspection);
   if (hasIncompleteIOSContainerDiscovery(inspection)) {
     throw iosSetupError(
-      "Xcode project discovery was incomplete, so Clerk cannot safely select an iOS application target. Run the command from the intended project's directory, make nested project directories readable, or reduce excessive project nesting or count.",
+      "Xcode project discovery was incomplete, so Clerk cannot safely select a native Apple application target. Run the command from the intended project's directory, make nested project directories readable, or reduce excessive project nesting or count.",
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
@@ -254,18 +255,18 @@ export async function applyIOSLocalSetup(
         )
         .join(", ");
       throwUsageError(
-        `More than one iOS application target is eligible: ${candidates}. Rerun with --target <name-or-id>; if IDs collide across copied projects, run the command from the intended project's directory.`,
+        `More than one native Apple application target is eligible: ${candidates}. Rerun with --target <name-or-id>; if IDs collide across copied projects, run the command from the intended project's directory.`,
       );
     }
     if (selection.state === "not-found") {
       throwUsageError(
-        `The iOS target "${selection.requested}" was not found. Available targets: ${
+        `The native Apple target "${selection.requested}" was not found. Available targets: ${
           selection.candidates.join(", ") || "none"
         }.`,
       );
     }
     throw iosSetupError(
-      "No usable iOS application target was found.",
+      "No usable iOS or macOS application target was found.",
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
@@ -273,17 +274,18 @@ export async function applyIOSLocalSetup(
   const selectedTarget = context.selectedTarget;
   if (!selectedTarget) {
     throw iosSetupError(
-      "The selected iOS target could not be resolved safely.",
+      "The selected native Apple target could not be resolved safely.",
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
   const productDecision = context.productDecision;
   if (!productDecision) {
     throw iosSetupError(
-      "The selected iOS target could not be planned safely.",
+      "The selected native Apple target could not be planned safely.",
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
+  const platformLabel = selectedTarget.platform === "macos" ? "macOS" : "iOS";
   if (productDecision === "unknown") {
     throw iosSetupError(
       "The selected target's Swift source membership could not be inspected completely, so Clerk cannot safely choose between the prebuilt ClerkKitUI path and a core-only custom flow. Resolve the Xcode source-membership diagnostics, then rerun clerk init.",
@@ -329,9 +331,13 @@ export async function applyIOSLocalSetup(
     hasSupportedCustomConfigure,
     prebuiltRuntimeBlockers,
   } = proposal;
-  if (!installPlan || !plannedAssociatedDomain || !inspectedPrebuiltAuthPlan) {
+  if (
+    !installPlan ||
+    !inspectedPrebuiltAuthPlan ||
+    (selectedTarget.platform === "ios" && !plannedAssociatedDomain)
+  ) {
     throw iosSetupError(
-      "The selected iOS target did not produce one complete local setup proposal.",
+      `The selected ${platformLabel} target did not produce one complete local setup proposal.`,
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
@@ -348,7 +354,7 @@ export async function applyIOSLocalSetup(
     directConfigPlan?.sourcePath === prebuiltAuthPlan.sourcePath
   ) {
     throw iosSetupError(
-      "The approved iOS setup resolved the Clerk initializer and prebuilt AuthView scaffold to the same Swift source unexpectedly. No local files were changed; review the app root and rerun clerk init.",
+      `The approved ${platformLabel} setup resolved the Clerk initializer and prebuilt AuthView scaffold to the same Swift source unexpectedly. No local files were changed; review the app root and rerun clerk init.`,
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
@@ -357,7 +363,7 @@ export async function applyIOSLocalSetup(
     nativeReadiness.target.bundleIdentifier.status !== "resolved"
   ) {
     throw iosSetupError(
-      "The selected iOS target does not have one proven Bundle ID across all build configurations. No local files were changed; resolve PRODUCT_BUNDLE_IDENTIFIER, then rerun clerk init.",
+      `The selected ${platformLabel} target does not have one proven Bundle ID across all build configurations. No local files were changed; resolve PRODUCT_BUNDLE_IDENTIFIER, then rerun clerk init.`,
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
@@ -518,9 +524,9 @@ export async function applyIOSLocalSetup(
     appleEntitlementPlan?.status === "ready" ||
     prebuiltAuthAppleEntitlementPlan?.status === "ready";
   if (hasLocalWrites) {
-    log.info("\nclerk init will make the following local iOS changes:\n");
+    log.info(`\nclerk init will make the following local ${platformLabel} changes:\n`);
   } else if (directConfigPlan || appleEntitlementPlan || prebuiltAuthPlan) {
-    log.info("\nclerk init will perform the following read-only iOS verification:\n");
+    log.info(`\nclerk init will perform the following read-only ${platformLabel} verification:\n`);
   }
   if (installPlan.status === "ready") {
     log.info(`  ${yellow("MODIFY")}  ${selection.projectPath}/project.pbxproj`);
@@ -646,7 +652,7 @@ export async function applyIOSLocalSetup(
   }
   if (hasLocalWrites && !options.yes) {
     const proceed = await confirm({
-      message: "Apply these local iOS changes?",
+      message: `Apply these local ${platformLabel} changes?`,
       default: false,
     });
     if (!proceed) throwUserAbort();
@@ -899,6 +905,12 @@ function assertCoherentLocalSetup(setup: IOSLocalSetupResult): void {
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
+  if (setup.nativeReadiness.target.platform !== setup.platform) {
+    throw iosSetupError(
+      "The approved native Apple setup no longer identifies one consistent platform. No local setup changes were written; rerun clerk init.",
+      ERROR_CODE.IOS_SETUP_PLAN_INVALID,
+    );
+  }
   plans.push({
     root: setup.nativeReadiness.root,
     projectPath: setup.nativeReadiness.target.projectPath,
@@ -948,7 +960,8 @@ export async function applyIOSPlannedLocalSetup(
       hasIncompleteIOSContainerDiscovery(inspection) ||
       inspection.selection.state !== "selected" ||
       inspection.selection.targetId !== setup.nativeReadiness.target.targetId ||
-      inspection.selection.projectPath !== setup.nativeReadiness.target.projectPath
+      inspection.selection.projectPath !== setup.nativeReadiness.target.projectPath ||
+      inspection.selection.platform !== setup.platform
     ) {
       throw iosSetupError(
         "The approved prebuilt AuthView setup no longer identifies the same exhaustively discovered Xcode target. No local setup changes were written; rerun clerk init.",

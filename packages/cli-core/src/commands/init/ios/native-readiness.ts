@@ -58,6 +58,8 @@ export type IOSNativeReadinessTarget =
       projectPath: string;
       targetId: string;
       targetName: string;
+      /** Platform selected for this automation run. */
+      platform: IOSAppTarget["platform"];
       bundleIdentifier: IOSNativeReadinessBundleIdentifier;
       appIdPrefix: IOSNativeReadinessAppIdPrefix;
     }
@@ -83,7 +85,7 @@ export interface IOSAssociatedDomainAutomationBlocker {
 
 export interface IOSAssociatedDomainReadiness {
   /** The local status from the canonical iOS setup plan. */
-  status: IOSSetupStepStatus;
+  status: IOSSetupStepStatus | "not-applicable";
   /** Exact entitlement value derived from redacted publishable-key metadata. */
   expectedDomain?: string;
   /** Existing, inspected XML entitlements files owned by the selected target. */
@@ -185,10 +187,18 @@ function appIdPrefix(target: IOSAppTarget): IOSNativeReadinessAppIdPrefix {
       (configuration) => configuration.entitlements?.literalAppIdentifierPrefix === candidates[0],
     )
   ) {
-    return { status: "resolved", source: "literal-entitlements", value: candidates[0]! };
+    return {
+      status: "resolved",
+      source: "literal-entitlements",
+      value: candidates[0]!,
+    };
   }
   if (candidates.length > 1) {
-    return { status: "conflicting", source: "literal-entitlements", candidates };
+    return {
+      status: "conflicting",
+      source: "literal-entitlements",
+      candidates,
+    };
   }
   return { status: "missing", source: "literal-entitlements", candidates };
 }
@@ -207,6 +217,7 @@ function targetIdentity(
     projectPath: target.projectPath,
     targetId: target.id,
     targetName: target.name,
+    platform: target.platform,
     bundleIdentifier: bundleIdentifier(target),
     appIdPrefix: appIdPrefix(target),
   };
@@ -217,6 +228,14 @@ function associatedDomainReadiness(
   target: IOSAppTarget | undefined,
   associatedDomainPlan: IOSAssociatedDomainPlan | undefined,
 ): IOSAssociatedDomainReadiness {
+  if (target?.platform === "macos") {
+    return {
+      status: "not-applicable",
+      files: [],
+      automatable: false,
+      blockers: [],
+    };
+  }
   const plan = buildIOSSetupPlan(inspection, { associatedDomainPlan });
   const planStep = plan.steps.find((step) => step.id === "add-associated-domain");
   const host =

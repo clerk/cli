@@ -83,6 +83,7 @@ function iosAppleEntitlementPlan(
     root: "/tmp/test",
     projectPath: "MyApp.xcodeproj",
     targetId: "TARGET",
+    platform: "ios",
     targetName: "MyApp",
     files: [
       {
@@ -138,6 +139,7 @@ function iosPrebuiltAuthPlan(overrides: Partial<IOSPrebuiltAuthPlan> = {}): IOSP
 function iosSetupResult(overrides: Partial<IOSLocalSetupResult> = {}): IOSLocalSetupResult {
   return {
     targetName: "MyApp",
+    platform: "ios",
     setupPlan: {
       schemaVersion: 1,
       kind: "clerk-ios-setup",
