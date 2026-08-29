@@ -85,6 +85,7 @@ function retryRecordFailureMessage(error: IOSNativeRegistrationRetryRecordError)
 
 export type IOSNativeRemoteBlockerCode =
   | "target-not-selected"
+  | "target-platform-unresolved"
   | "bundle-identifier-unavailable"
   | "bundle-identifier-invalid"
   | "app-id-prefix-required"
@@ -289,12 +290,15 @@ function localIdentity(target: IOSNativeReadinessTarget): {
   blockers: IOSNativeRemoteBlocker[];
 } {
   if (target.status !== "selected") {
+    const platformUnresolved = target.reason === "target-platform-unresolved";
     return {
       appIdPrefixCandidates: [],
       blockers: [
         blocker(
-          "target-not-selected",
-          "Select exactly one iOS or macOS application target before registering it with Clerk.",
+          platformUnresolved ? "target-platform-unresolved" : "target-not-selected",
+          platformUnresolved
+            ? "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently across every selected-target build configuration before registering it with Clerk."
+            : "Select exactly one iOS or macOS application target before registering it with Clerk.",
         ),
       ],
     };

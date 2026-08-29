@@ -813,7 +813,10 @@ describe("inspectTargetBuildConfigurations", () => {
       },
     });
 
-    expect(configurations[0]?.platform).toBe("ios");
+    expect(configurations[0]).toMatchObject({
+      platform: "ios",
+      platformEvidenceComplete: false,
+    });
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -899,6 +902,7 @@ describe("inspectTargetBuildConfigurations", () => {
 
     expect(configurations[0]).toMatchObject({
       platform: "macos",
+      platformEvidenceComplete: true,
       model: {
         bundleIdentifier: { state: "resolved", value: "com.clerk.MacExampleApp" },
         deploymentTarget: { state: "resolved", value: "14.0" },
@@ -925,6 +929,27 @@ describe("inspectTargetBuildConfigurations", () => {
     });
 
     expect(configurations[0]?.platform).toBe("ios");
+    expect(configurations[0]?.platformEvidenceComplete).toBe(true);
+    expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
+      "iphoneos/arm64",
+      "iphonesimulator/arm64",
+      "iphonesimulator/x86_64",
+    ]);
+  });
+
+  test("treats SDKROOT auto as neutral for a proven iOS-capable multiplatform target", async () => {
+    const { configurations } = await inspectFixture({
+      targetBuildSettings: {
+        SDKROOT: "auto",
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator macosx xros xrsimulator",
+        MACOSX_DEPLOYMENT_TARGET: "14.0",
+      },
+    });
+
+    expect(configurations[0]).toMatchObject({
+      platform: "ios",
+      platformEvidenceComplete: true,
+    });
     expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
       "iphoneos/arm64",
       "iphonesimulator/arm64",
@@ -961,6 +986,7 @@ describe("inspectTargetBuildConfigurations", () => {
           id: "target",
           name: "Example",
           platform: "ios",
+          platformEvidenceComplete: false,
           projectPath: "Example.xcodeproj",
           configurations: configurations.map(({ model }) => model),
           packages: { package: "absent", clerkKit: "absent", clerkKitUI: "absent" },

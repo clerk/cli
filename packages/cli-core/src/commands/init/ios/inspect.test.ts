@@ -1554,6 +1554,50 @@ let package = Package(
     );
   });
 
+  test("retains a macOS target but marks unresolved configuration platform evidence incomplete", async () => {
+    const root = await fixture({
+      complete: true,
+      platform: "macos",
+      releasePlatform: "unresolved",
+    });
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.selection).toMatchObject({
+      state: "selected",
+      targetName: "MyApp",
+      platform: "macos",
+    });
+    expect(inspection.appTargets[0]).toMatchObject({
+      platform: "macos",
+      platformEvidenceComplete: false,
+    });
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.unresolved-target-platform",
+        severity: "error",
+        message: expect.stringContaining("Debug=macOS, Release=unresolved"),
+      }),
+    );
+  });
+
+  test("keeps concrete cross-configuration platform conflicts discoverable but unsafe", async () => {
+    const root = await fixture({
+      complete: true,
+      platform: "macos",
+      releasePlatform: "ios",
+    });
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.selection.state).toBe("selected");
+    expect(inspection.appTargets[0]?.platformEvidenceComplete).toBe(false);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.unresolved-target-platform",
+        message: expect.stringContaining("Debug=macOS, Release=iOS"),
+      }),
+    );
+  });
+
   test("ignores iOS-only Clerk UI evidence for a macOS target", async () => {
     const root = await fixture({ complete: true, platform: "macos", includeKey: false });
     await Bun.write(

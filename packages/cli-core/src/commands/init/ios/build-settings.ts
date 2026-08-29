@@ -829,6 +829,8 @@ export interface InspectedTargetConfiguration {
   sourceFilters: IOSSourceFilterContext[];
   /** Undefined when resolved platform evidence excludes iOS and macOS. */
   platform?: IOSNativePlatform;
+  /** True only when concrete build settings prove this configuration's platform. */
+  platformEvidenceComplete: boolean;
   /** Compatibility flag for existing iOS-only mutation planners. */
   isIOS: boolean;
 }
@@ -948,6 +950,7 @@ function missingConfiguration(
     // Preserve the existing iOS fail-closed path for a dangling application
     // configuration whose platform cannot be resolved.
     platform: "ios",
+    platformEvidenceComplete: false,
     isIOS: true,
   };
 }
@@ -1123,6 +1126,7 @@ export async function inspectTargetBuildConfigurations(options: {
       initialSDKRootResolution.state === "resolved"
         ? initialSDKRootResolution.value.toLowerCase()
         : "";
+    const sdkRootIsAuto = initialSDKRoot === "auto";
     const hasIOSSDK = /iphone(?:os|simulator)/.test(initialSDKRoot);
     const hasMacOSSDK = initialSDKRoot.includes("macosx");
     const hasUnknownPlatformEvidence =
@@ -1131,6 +1135,7 @@ export async function inspectTargetBuildConfigurations(options: {
     const hasResolvedUnsupportedEvidence =
       (initialSDKRootResolution.state === "resolved" &&
         initialSDKRoot !== "" &&
+        !sdkRootIsAuto &&
         !hasIOSSDK &&
         !hasMacOSSDK) ||
       (initialSupportedPlatformsResolution.state === "resolved" &&
@@ -1138,16 +1143,42 @@ export async function inspectTargetBuildConfigurations(options: {
         !hasIOSPlatform &&
         !hasMacOSPlatform);
     // Existing iOS-capable multiplatform targets intentionally retain the iOS
-    // setup path. A target is classified as macOS only when no iOS evidence is
-    // present. Unknown evidence retains the existing fail-closed iOS path.
-    const platform: IOSNativePlatform | undefined =
-      hasIOSPlatform || hasIOSSDK
-        ? "ios"
-        : hasMacOSPlatform || hasMacOSSDK
-          ? "macos"
-          : hasUnknownPlatformEvidence || !hasResolvedUnsupportedEvidence
-            ? "ios"
-            : undefined;
+    // setup path. Unknown evidence keeps the target discoverable, but its
+    // incomplete certainty is preserved so every mutation planner can refuse.
+    const supportedClassification: IOSNativePlatform | "unsupported" | undefined =
+      initialSupportedPlatformsResolution.state === "resolved" && supportedPlatforms !== ""
+        ? hasIOSPlatform
+          ? "ios"
+          : hasMacOSPlatform
+            ? "macos"
+            : "unsupported"
+        : undefined;
+    const sdkClassification: IOSNativePlatform | "unsupported" | undefined =
+      initialSDKRootResolution.state === "resolved" && initialSDKRoot !== "" && !sdkRootIsAuto
+        ? hasIOSSDK
+          ? "ios"
+          : hasMacOSSDK
+            ? "macos"
+            : "unsupported"
+        : undefined;
+    const concreteClassifications = new Set(
+      [supportedClassification, sdkClassification].filter(
+        (value): value is IOSNativePlatform | "unsupported" => value !== undefined,
+      ),
+    );
+    const platformEvidenceComplete =
+      concreteClassifications.size === 1 && !hasUnknownPlatformEvidence;
+    const platform: IOSNativePlatform | undefined = concreteClassifications.has("ios")
+      ? "ios"
+      : concreteClassifications.has("macos")
+        ? "macos"
+        : hasUnknownPlatformEvidence
+          ? "ios"
+          : concreteClassifications.has("unsupported")
+            ? undefined
+            : !hasResolvedUnsupportedEvidence
+              ? "ios"
+              : undefined;
     const platformContexts = platform
       ? evaluatedContexts.filter(({ context }) => context.platform === platform)
       : evaluatedContexts;
@@ -1303,6 +1334,7 @@ export async function inspectTargetBuildConfigurations(options: {
         builtins: { ...builtins },
       })),
       platform,
+      platformEvidenceComplete,
       isIOS: platform === "ios",
     });
   }

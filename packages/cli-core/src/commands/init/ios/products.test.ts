@@ -12,6 +12,7 @@ function target(): IOSAppTarget {
     id: "TARGET",
     name: "MyApp",
     platform: "ios",
+    platformEvidenceComplete: true,
     projectPath: "MyApp.xcodeproj",
     configurations: [],
     packages: { package: "absent", clerkKit: "absent", clerkKitUI: "absent" },

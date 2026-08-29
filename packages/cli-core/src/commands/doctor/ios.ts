@@ -764,7 +764,7 @@ export async function runIOSDoctorChecks(
   const requiresAuthViewCompatibility = (target?.swift.authViewReferences.length ?? 0) > 0;
   const requiresClerkKitUI =
     (target?.swift.importsClerkKitUI.length ?? 0) > 0 || requiresAuthViewCompatibility;
-  const sdkInstallPlan = target
+  const sdkInstallPlan = target?.platformEvidenceComplete
     ? await dependencies.planIOSSDKInstall({
         root: inspection.root,
         projectPath: target.projectPath,
@@ -775,7 +775,7 @@ export async function runIOSDoctorChecks(
       })
     : undefined;
   const macOSNetworkCapabilityPlan =
-    target?.platform === "macos"
+    target?.platformEvidenceComplete && target.platform === "macos"
       ? await dependencies.planMacOSNetworkCapability({
           root: inspection.root,
           projectPath: target.projectPath,
@@ -784,6 +784,9 @@ export async function runIOSDoctorChecks(
         })
       : undefined;
   const results = localResults(inspection, sdkInstallPlan, macOSNetworkCapabilityPlan);
+  if (target && !target.platformEvidenceComplete) {
+    return { inspection, results };
+  }
   if (target) {
     const apple = await appleEntitlementResult(inspection, target, dependencies);
     if (apple) results.splice(Math.max(0, results.length - 1), 0, apple);
