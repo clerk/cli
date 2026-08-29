@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
-import { lstat, mkdtemp, mkdir, readFile, rm, symlink } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readFile, rm, symlink, truncate } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { discoverIOSContainers, inspectWorkspace } from "./discovery.ts";
@@ -11,6 +11,44 @@ import { createIOSFixture, IOS_FIXTURE_IDS, treeDigest } from "./test-helpers.ts
 
 const temporaryDirectories: string[] = [];
 const FILE_TRANSACTION_MODULE = `${import.meta.dir}/file-transaction.ts`;
+const INSPECT_MODULE = `${import.meta.dir}/inspect.ts`;
+const DISCOVERY_MODULE = `${import.meta.dir}/discovery.ts`;
+
+async function runBoundedInspectionChild(source: string): Promise<string> {
+  const child = Bun.spawn([process.execPath, "-e", source], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const outcome = await Promise.race([
+    child.exited.then((exitCode) => ({ status: "exited" as const, exitCode })),
+    new Promise<{ status: "timeout" }>((resolve) => {
+      timeout = setTimeout(() => resolve({ status: "timeout" }), 3_000);
+    }),
+  ]);
+  if (timeout) clearTimeout(timeout);
+  if (outcome.status === "timeout") {
+    child.kill("SIGKILL");
+    await child.exited;
+    throw new Error("iOS inspection blocked while reading a non-regular file");
+  }
+
+  const [stdout, stderr] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (outcome.exitCode !== 0) {
+    throw new Error(`iOS inspection child failed: ${stderr.trim()}`);
+  }
+  return stdout.trim();
+}
+
+function createFIFO(path: string): void {
+  const result = Bun.spawnSync(["mkfifo", path], { stdout: "ignore", stderr: "pipe" });
+  if (result.exitCode !== 0) {
+    throw new Error(`Could not create FIFO: ${result.stderr.toString().trim()}`);
+  }
+}
 
 async function fixture(options: Parameters<typeof createIOSFixture>[1] = {}): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "clerk-ios-inspect-"));
@@ -695,6 +733,34 @@ let package = Package(
     }
   });
 
+  test("rejects an entitlements FIFO without blocking inspection", async () => {
+    if (process.platform === "win32") return;
+    const root = await fixture({ complete: true });
+    const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
+    await rm(entitlementsPath);
+    createFIFO(entitlementsPath);
+
+    const output = await runBoundedInspectionChild(`
+        const { inspectIOSProject } = await import(${JSON.stringify(INSPECT_MODULE)});
+        const result = await inspectIOSProject(${JSON.stringify(root)});
+        console.log(JSON.stringify(result.diagnostics.map((diagnostic) => diagnostic.code)));
+      `);
+
+    expect(JSON.parse(output)).toContain("xcode.unreadable-entitlements");
+  }, 10_000);
+
+  test("rejects oversized entitlements before loading their bytes", async () => {
+    const root = await fixture({ complete: true });
+    await truncate(join(root, "MyApp", "MyApp.entitlements"), 2_000_001);
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.configurations[0]?.entitlements).toBeUndefined();
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "xcode.unreadable-entitlements" }),
+    );
+  });
+
   test("resolves matching associated-domain variables across device and simulator contexts", async () => {
     const root = await fixture({ complete: true });
     await addTargetBuildSettings(root, [
@@ -881,6 +947,39 @@ let package = Package(
 
     expect(result.inspection.projectPaths).toEqual(["MyApp.xcodeproj"]);
     expect(result.localProjectPaths).toEqual([join(root, "MyApp.xcodeproj")]);
+  });
+
+  test("rejects a workspace metadata FIFO without blocking inspection", async () => {
+    if (process.platform === "win32") return;
+    const root = await fixture({ workspace: true });
+    const workspace = join(root, "MyApp.xcworkspace");
+    const contentsPath = join(workspace, "contents.xcworkspacedata");
+    await rm(contentsPath);
+    createFIFO(contentsPath);
+
+    const output = await runBoundedInspectionChild(`
+        const { inspectWorkspace } = await import(${JSON.stringify(DISCOVERY_MODULE)});
+        const result = await inspectWorkspace(${JSON.stringify(root)}, ${JSON.stringify(workspace)});
+        console.log(JSON.stringify(result));
+      `);
+
+    expect(JSON.parse(output)).toEqual({
+      inspection: { path: "MyApp.xcworkspace", projectPaths: [] },
+      localProjectPaths: [],
+    });
+  }, 10_000);
+
+  test("rejects oversized workspace metadata before loading its bytes", async () => {
+    const root = await fixture({ workspace: true });
+    const workspace = join(root, "MyApp.xcworkspace");
+    await truncate(join(workspace, "contents.xcworkspacedata"), 2_000_001);
+
+    const result = await inspectWorkspace(root, workspace);
+
+    expect(result).toEqual({
+      inspection: { path: "MyApp.xcworkspace", projectPaths: [] },
+      localProjectPaths: [],
+    });
   });
 
   test("does not guess when multiple application targets exist", async () => {
@@ -1974,6 +2073,37 @@ struct MyApp: App {
     expect(
       inspection.diagnostics.some((diagnostic) => diagnostic.code === "xcode.malformed-project"),
     ).toBe(true);
+  });
+
+  test("rejects a project metadata FIFO without blocking inspection", async () => {
+    if (process.platform === "win32") return;
+    const root = await fixture({ complete: true });
+    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+    await rm(projectPath);
+    createFIFO(projectPath);
+
+    const output = await runBoundedInspectionChild(`
+        const { inspectIOSProject } = await import(${JSON.stringify(INSPECT_MODULE)});
+        const result = await inspectIOSProject(${JSON.stringify(root)});
+        console.log(JSON.stringify(result.diagnostics.map((diagnostic) => diagnostic.code)));
+      `);
+
+    expect(JSON.parse(output)).toContain("xcode.malformed-project");
+  }, 10_000);
+
+  test("rejects oversized project metadata before loading its bytes", async () => {
+    const root = await fixture({ complete: true });
+    await truncate(join(root, "MyApp.xcodeproj", "project.pbxproj"), 15_000_001);
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.selection.state).toBe("none");
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.malformed-project",
+        message: expect.stringContaining("too large"),
+      }),
+    );
   });
 
   test("detects generated projects and never mutates the inspected tree", async () => {
