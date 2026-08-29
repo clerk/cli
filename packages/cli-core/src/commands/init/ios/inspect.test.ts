@@ -1818,6 +1818,54 @@ struct MyApp: App {
     expect(synchronizedSources).toEqual(["Synced/IOSOnly.swift", "Synced/MacOnly.swift"]);
   });
 
+  test("keeps unknown synchronized filters visible while marking evidence incomplete", async () => {
+    const root = await fixture({ complete: false, includeKey: false });
+    const synchronizedRootId = "404040404040404040404040";
+    const exceptionId = "414141414141414141414141";
+    await transformProject(root, (objects) => {
+      objects[synchronizedRootId] = {
+        isa: "PBXFileSystemSynchronizedRootGroup",
+        exceptions: [exceptionId],
+        path: "Synced",
+        sourceTree: "<group>",
+      };
+      objects[exceptionId] = {
+        isa: "PBXFileSystemSynchronizedBuildFileExceptionSet",
+        platformFiltersByRelativePath: {
+          "FutureOnly.swift": ["futureos"],
+          "Malformed.swift": "macos",
+        },
+        target: IOS_FIXTURE_IDS.appTarget,
+      };
+      objects[IOS_FIXTURE_IDS.appTarget]!.fileSystemSynchronizedGroups = [synchronizedRootId];
+    });
+    await mkdir(join(root, "Synced"), { recursive: true });
+    await Bun.write(
+      join(root, "Synced", "FutureOnly.swift"),
+      "import ClerkKitUI\nstruct FutureOnly { let view = AuthView() }\n",
+    );
+    await Bun.write(
+      join(root, "Synced", "Malformed.swift"),
+      "import ClerkKit\nfunc malformed() { Clerk.configure(publishableKey: key) }\n",
+    );
+
+    const inspection = await inspectIOSProject(root);
+    const memberships = await inspectIOSSourceMembership(root);
+    const membership = memberships.find(
+      (candidate) => candidate.targetId === IOS_FIXTURE_IDS.appTarget,
+    );
+    const synchronizedSources = membership?.files
+      .map((file) => file.relativePath)
+      .filter((path) => path.startsWith("Synced/"));
+
+    expect(inspection.appTargets[0]?.swift.evidenceComplete).toBe(false);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "xcode.incomplete-source-membership" }),
+    );
+    expect(membership?.complete).toBe(false);
+    expect(synchronizedSources).toEqual(["Synced/FutureOnly.swift", "Synced/Malformed.swift"]);
+  });
+
   test("does not use Catalyst-only classic build-file membership as native iOS evidence", async () => {
     const root = await fixture({ complete: true });
     const projectFile = join(root, "MyApp.xcodeproj", "project.pbxproj");
