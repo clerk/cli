@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
 import { lstat, mkdir, mkdtemp, readdir, rename, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { inspectIOSProject } from "../init/ios/inspect.ts";
+import type { PbxObjects } from "../init/ios/pbx.ts";
 import { createIOSFixture, IOS_FIXTURE_IDS } from "../init/ios/test-helpers.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
 import {
@@ -137,6 +139,43 @@ async function addSecondWorkspaceProjectWithRemotePackage(): Promise<void> {
     join(root, "MyApp.xcworkspace", "contents.xcworkspacedata"),
     '<?xml version="1.0" encoding="UTF-8"?><Workspace version="1.0"><FileRef location="group:MyApp.xcodeproj"></FileRef><FileRef location="group:Second/MyApp.xcodeproj"></FileRef></Workspace>',
   );
+}
+
+async function transformProjectAt(
+  projectPath: string,
+  transform: (objects: PbxObjects) => void,
+): Promise<void> {
+  const projectFilePath = join(projectPath, "project.pbxproj");
+  const project = parsePbxProject(await Bun.file(projectFilePath).text());
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
+  transform(objects);
+  await Bun.write(projectFilePath, buildPbxProject(project));
+}
+
+async function addProjectReference(
+  ownerProjectPath: string,
+  referencedProjectPath: string,
+): Promise<void> {
+  await transformProjectAt(ownerProjectPath, (objects) => {
+    const referenceId = "515151515151515151515151";
+    objects[referenceId] = {
+      isa: "PBXFileReference",
+      lastKnownFileType: "wrapper.pb-project",
+      path: relative(dirname(ownerProjectPath), referencedProjectPath),
+      sourceTree: "SOURCE_ROOT",
+    };
+    objects[IOS_FIXTURE_IDS.project]!.projectReferences = [{ ProjectRef: referenceId }];
+  });
+}
+
+async function addReferencedProjectWithRemotePackage(): Promise<void> {
+  const nestedRoot = join(root, "Referenced");
+  await createIOSFixture(nestedRoot, { includeKey: false });
+  const referencedProjectPath = join(nestedRoot, "MyApp.xcodeproj");
+  await transformProjectAt(referencedProjectPath, (objects) => {
+    objects[IOS_FIXTURE_IDS.project]!.targets = [];
+  });
+  await addProjectReference(join(root, "MyApp.xcodeproj"), referencedProjectPath);
 }
 
 async function writeSharedScheme(name: string, xml: string): Promise<void> {
@@ -621,6 +660,55 @@ describe("runIOSXcodeVerification", () => {
     expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
     expect(results.at(-1)?.message).toContain("Remote Swift packages");
     expect(invocations).toEqual([]);
+  });
+
+  test("includes transitively referenced projects in package detection", async () => {
+    await createIOSFixture(root, { clerkSDK: false });
+    await addReferencedProjectWithRemotePackage();
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const invocations: Invocation[] = [];
+
+    const results = await runIOSXcodeVerification(
+      inspection,
+      { build: true },
+      dependencies(successfulXcodeRunner(invocations)),
+    );
+
+    expect(inspection.projects.map((project) => project.path)).toContain(
+      "Referenced/MyApp.xcodeproj",
+    );
+    expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+    expect(results.at(-1)?.message).toContain("Remote Swift packages");
+    expect(JSON.stringify(results)).not.toContain("No remote Swift package lock is required");
+    expect(invocations).toEqual([]);
+  });
+
+  test("fails closed for an external project reference despite a valid lock", async () => {
+    const parent = dirname(root);
+    const siblingRoot = join(parent, `${basename(root)}-external`);
+    await createIOSFixture(root, { clerkSDK: false });
+    await createIOSFixture(siblingRoot, { includeKey: false });
+    try {
+      await addProjectReference(
+        join(root, "MyApp.xcodeproj"),
+        join(siblingRoot, "MyApp.xcodeproj"),
+      );
+      await writeProjectPackageResolved();
+      const inspection = await inspectIOSProject(root, { target: "MyApp" });
+      const invocations: Invocation[] = [];
+
+      const results = await runIOSXcodeVerification(
+        inspection,
+        { build: true },
+        dependencies(successfulXcodeRunner(invocations)),
+      );
+
+      expect(results.at(-1)).toMatchObject({ name: "Swift packages", status: "fail" });
+      expect(results.at(-1)?.message).toContain("could not be inspected completely");
+      expect(invocations).toEqual([]);
+    } finally {
+      await rm(siblingRoot, { recursive: true, force: true });
+    }
   });
 
   test("fails closed when a workspace contains an external non-project reference", async () => {
