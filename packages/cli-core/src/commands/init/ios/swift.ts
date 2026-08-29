@@ -87,15 +87,23 @@ function consumeRegexLiteral(
   return { end: chars.length, complete: false };
 }
 
-function containsClerkEvidence(source: string): boolean {
-  return [
-    CLERK_CONFIGURE_CALL,
-    CLERK_URL_HANDLER,
-    CLERK_NATIVE_AUTH_FLOW,
-    CLERK_ENVIRONMENT_INJECTION,
-    CLERK_ENVIRONMENT_CONSUMER,
-    CLERK_AUTH_VIEW,
-  ].some((pattern) => pattern.test(source));
+const CLERK_EVIDENCE_PATTERNS = [
+  CLERK_CONFIGURE_CALL,
+  CLERK_URL_HANDLER,
+  CLERK_NATIVE_AUTH_FLOW,
+  CLERK_ENVIRONMENT_INJECTION,
+  CLERK_ENVIRONMENT_CONSUMER,
+  CLERK_AUTH_VIEW,
+];
+
+function evidenceCount(source: string, pattern: RegExp): number {
+  return source.match(new RegExp(pattern.source, "g"))?.length ?? 0;
+}
+
+function hidesClerkEvidence(source: string, sanitizedSource: string): boolean {
+  return CLERK_EVIDENCE_PATTERNS.some(
+    (pattern) => evidenceCount(source, pattern) > evidenceCount(sanitizedSource, pattern),
+  );
 }
 
 /**
@@ -110,6 +118,7 @@ function sanitizeSwift(source: string, blankStrings: boolean): SwiftSourceSaniti
   const chars = source.split("");
   let i = 0;
   let complete = true;
+  let hasStringInterpolation = false;
 
   while (i < chars.length) {
     if (chars[i] === "/" && chars[i + 1] === "/") {
@@ -171,15 +180,11 @@ function sanitizeSwift(source: string, blankStrings: boolean): SwiftSourceSaniti
       chars[quoteIndex] === '"' && chars[quoteIndex + 1] === '"' && chars[quoteIndex + 2] === '"';
     i = quoteIndex + (multiline ? 3 : 1);
     let closed = false;
-    let interpolationDepth = 0;
-    let hasClosedInterpolation = false;
 
     while (i < chars.length) {
-      const closesQuote =
-        interpolationDepth === 0 &&
-        (multiline
-          ? chars[i] === '"' && chars[i + 1] === '"' && chars[i + 2] === '"'
-          : chars[i] === '"');
+      const closesQuote = multiline
+        ? chars[i] === '"' && chars[i + 1] === '"' && chars[i + 2] === '"'
+        : chars[i] === '"';
 
       if (closesQuote) {
         const quoteLength = multiline ? 3 : 1;
@@ -201,32 +206,21 @@ function sanitizeSwift(source: string, blankStrings: boolean): SwiftSourceSaniti
         while (chars[i + 1 + escapeHashes] === "#") escapeHashes++;
         if (escapeHashes === hashCount) {
           const escapedCharacter = i + 1 + escapeHashes;
-          if (interpolationDepth === 0 && chars[escapedCharacter] === "(") {
-            interpolationDepth = 1;
-          }
+          if (chars[escapedCharacter] === "(") hasStringInterpolation = true;
           i = escapedCharacter + 1;
           continue;
-        }
-      }
-
-      if (interpolationDepth > 0) {
-        if (chars[i] === "(") interpolationDepth++;
-        if (chars[i] === ")") {
-          interpolationDepth--;
-          if (interpolationDepth === 0) hasClosedInterpolation = true;
         }
       }
       i++;
     }
 
     if (!closed) complete = false;
-    if (hasClosedInterpolation && containsClerkEvidence(chars.slice(start, i).join(""))) {
-      complete = false;
-    }
     if (blankStrings) blankRange(chars, start, i);
   }
 
-  return { sanitizedSource: chars.join(""), complete };
+  const sanitizedSource = chars.join("");
+  if (hasStringInterpolation && hidesClerkEvidence(source, sanitizedSource)) complete = false;
+  return { sanitizedSource, complete };
 }
 
 export function sanitizeSwiftSource(source: string): string {
