@@ -726,7 +726,6 @@ describe("inspectTargetBuildConfigurations", () => {
           projectPath: "Example.xcodeproj",
           configurations: configurations.map(({ model }) => model),
           packages: { package: "absent", clerkKit: "absent", clerkKitUI: "absent" },
-          runtimeKeySinks: [],
           swift: {
             sourceFilesScanned: 0,
             evidenceComplete: true,
@@ -734,7 +733,6 @@ describe("inspectTargetBuildConfigurations", () => {
             importsClerkKit: [],
             importsClerkKitUI: [],
             configureCalls: [],
-            localSecretsRuntimeBindings: [],
             appRootEvidence: [],
             environmentInjections: [],
             rootEnvironmentInjections: [],

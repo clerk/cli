@@ -2,7 +2,11 @@ import type { FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js
 import { planIOSDirectConfig } from "../ios/direct-config.ts";
 import { inspectIOSProject } from "../ios/inspect.ts";
 import { buildIOSSetupPlan } from "../ios/plan.ts";
-import { clerkKitUIInstallDecision, shouldPlanIOSDirectConfig } from "../ios/products.ts";
+import {
+  clerkKitUIInstallDecision,
+  hasSupportedIOSCustomConfigure,
+  shouldPlanIOSDirectConfig,
+} from "../ios/products.ts";
 import { planIOSAssociatedDomain } from "../ios/associated-domain.ts";
 
 /**
@@ -37,9 +41,7 @@ export const ios: FrameworkScaffold = {
         : undefined;
     const productDecision = target ? clerkKitUIInstallDecision(target) : "prebuilt";
     const includeClerkKitUI = productDecision === "prebuilt";
-    const hasCustomConfigure = target?.swift.configureCalls.some(
-      (call) => call.publishableKeyWiring === "custom",
-    );
+    const hasCustomConfigure = target != null && hasSupportedIOSCustomConfigure(target);
     const shouldPlanDirectConfig =
       selection.state === "selected" &&
       target != null &&

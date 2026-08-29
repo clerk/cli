@@ -165,6 +165,10 @@ async function handleExistingProfile(
 ): Promise<boolean> {
   printExistingStatus(existing, normalizedRemote);
 
+  // Supplying the currently linked app is already an explicit selection.
+  // Do not ask the developer to confirm or relink it a second time.
+  if (options.app === existing.profile.appId) return false;
+
   if (existing.availableRemote) {
     log.info(
       `We detected this is now a git repository with remote ${dim(existing.availableRemote)}.`,
@@ -176,7 +180,7 @@ async function handleExistingProfile(
     if (upgrade) {
       await moveProfile(existing.path, existing.availableRemote);
       log.info(`\nLink updated to use git remote (${cyan(existing.availableRemote)})`);
-      return false;
+      if (!options.requireExistingAppSelection) return false;
     }
   }
 
@@ -221,7 +225,7 @@ async function resolveApp(
   detectKeys: boolean,
   allowCreate = true,
 ): Promise<Application> {
-  const apps = await fetchAppsTolerantly();
+  const apps = await fetchAppsTolerantly({ allowCreate });
 
   if (apps.length > 0 && detectKeys) {
     const detected = await tryDetectApp(cwd, apps);

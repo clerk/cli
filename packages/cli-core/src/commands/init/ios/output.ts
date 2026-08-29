@@ -1,6 +1,7 @@
 import type { IOSProjectInspectionResult, IOSSetupPlan, IOSSetupStepStatus } from "./types.ts";
 import { buildIOSNativeReadinessAudit, type IOSNativeReadinessAudit } from "./native-readiness.ts";
 import type { IOSAssociatedDomainPlan } from "./associated-domain.ts";
+import { hasSupportedIOSCustomConfigure } from "./products.ts";
 
 const STATUS_MARKER: Record<IOSSetupStepStatus, string> = {
   satisfied: "✓",
@@ -84,6 +85,8 @@ export function formatIOSSetupPlan(
     lines.push(
       `  Publishable key: found (${inspection.localPublishableKey.instanceType}; ${inspection.localPublishableKey.frontendApiHost})`,
     );
+  } else if (selected && hasSupportedIOSCustomConfigure(selected)) {
+    lines.push("  Publishable key: custom source (value not inspected)");
   } else {
     const keyStatus = inspection.localPublishableKey.conflict
       ? "conflicting local sources"

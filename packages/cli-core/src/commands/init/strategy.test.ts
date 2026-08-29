@@ -392,7 +392,7 @@ describe("init strategy", () => {
     expect(captured.err).toContain("clerk init --app <app_id>");
     expect(captured.err).toContain("Clerk.configure(publishableKey:");
     expect(captured.err).toContain(".environment(Clerk.shared)");
-    expect(captured.err).toContain("LocalSecrets loaders remain supported compatibility paths");
+    expect(captured.err).toContain("custom Clerk.configure(...) sources remain unchanged");
     expect(captured.err).not.toContain("clerk env pull");
   });
 

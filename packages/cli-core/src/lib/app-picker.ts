@@ -27,13 +27,15 @@ export function appLabel(app: Application): string {
  * Fetch the user's applications. Returns an empty list when PLAPI is degraded
  * (5xx) so the caller can still offer "create a new application".
  */
-export async function fetchAppsTolerantly(): Promise<Application[]> {
+export async function fetchAppsTolerantly(
+  options: { allowCreate?: boolean } = {},
+): Promise<Application[]> {
   try {
     return await withSpinner("Fetching applications...", async () =>
       withApiContext(listApplications(), "Failed to fetch applications"),
     );
   } catch (error) {
-    if (error instanceof PlapiError && error.status >= 500) {
+    if (error instanceof PlapiError && error.status >= 500 && options.allowCreate !== false) {
       log.info("Could not fetch your applications, you can still create a new one");
       return [];
     }

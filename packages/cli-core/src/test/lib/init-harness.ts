@@ -220,10 +220,9 @@ export function useInitHarness(): InitHarness {
         nativeAppleRequested: false,
         requiresLinkedApp: false,
         requiresDevelopmentKey: false,
-        verifiesExistingKey: false,
+        requiresExplicitApplication: false,
       }),
       spyOn(iosApplyModule, "applyIOSPlannedLocalSetup").mockResolvedValue(undefined),
-      spyOn(iosApplyModule, "verifyIOSRuntimeKeySetup").mockResolvedValue(undefined),
       spyOn(nativeRemoteModule, "prepareIOSNativeRemoteSetup").mockResolvedValue({
         schemaVersion: 1,
         kind: "clerk-ios-native-remote-setup",

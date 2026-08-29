@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 describe("buildIOSSetupPlan", () => {
-  test("returns stable ordered steps without treating a project env key as runtime wiring", async () => {
+  test("returns stable ordered steps while preserving a custom project key source", async () => {
     const plan = await planFor({ complete: true });
 
     expect(plan.steps.map((step) => step.id)).toEqual([
@@ -43,10 +43,9 @@ describe("buildIOSSetupPlan", () => {
     });
     expect(plan.steps.filter((step) => step.automatable)).toEqual([]);
     const configureStep = plan.steps.find((step) => step.id === "configure-publishable-key");
-    expect(configureStep?.status).toBe("review");
-    expect(configureStep?.description).toContain(
-      "could not validate a usable selected-target runtime key source",
-    );
+    expect(configureStep?.status).toBe("satisfied");
+    expect(configureStep?.description).toContain("custom publishable-key source");
+    expect(configureStep?.description).toContain("value is not inspected");
     const domainStep = plan.steps.find((step) => step.id === "add-associated-domain");
     expect(domainStep?.status).toBe("blocked");
     expect(domainStep?.description).toContain("valid local publishable key is needed");
@@ -56,7 +55,7 @@ describe("buildIOSSetupPlan", () => {
     expect(JSON.stringify(plan)).not.toContain("CLERK_PUBLISHABLE_KEY=");
   });
 
-  test("satisfies configuration when a target LocalSecrets key has recognized loader wiring", async () => {
+  test("classifies a LocalSecrets loader as a preserved custom key source", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
@@ -66,12 +65,13 @@ describe("buildIOSSetupPlan", () => {
 
     expect(inspection.appTargets[0]?.swift.configureCalls).toEqual([
       {
+        inlinePublishableKey: undefined,
         path: "MyApp/MyAppApp.swift",
-        publishableKeyWiring: "local-secrets-loader",
+        publishableKeyWiring: "custom",
         startupBinding: "app-init",
-        localSecretsRuntimeBinding: "proven",
       },
     ]);
+    expect(inspection.localPublishableKey.found).toBe(false);
     expect(plan.steps.find((step) => step.id === "configure-publishable-key")?.status).toBe(
       "satisfied",
     );
@@ -84,7 +84,7 @@ describe("buildIOSSetupPlan", () => {
     const inspection = await inspectIOSProject(root);
     inspection.appTargets[0]!.swift.configureCalls.push({
       path: "MyApp/SecondarySetup.swift",
-      publishableKeyWiring: "unknown",
+      publishableKeyWiring: "custom",
       startupBinding: "unproven",
     });
 
@@ -94,35 +94,6 @@ describe("buildIOSSetupPlan", () => {
 
     expect(configureStep).toMatchObject({ status: "review", automatable: false });
     expect(configureStep?.description).toContain("More than one Clerk.configure");
-  });
-
-  test("does not replace an empty LocalSecrets source from a stale scheme candidate", async () => {
-    const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
-    temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
-    await Bun.write(
-      join(root, "MyApp", "LocalSecrets.plist"),
-      '<?xml version="1.0"?><plist version="1.0"><dict></dict></plist>',
-    );
-    const inspection = await inspectIOSProject(root);
-    const schemePath = "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme";
-    inspection.localPublishableKey = {
-      evidenceComplete: true,
-      found: true,
-      source: schemePath,
-      frontendApiHost: "stale.clerk.example",
-      instanceType: "development",
-      conflict: false,
-      candidateSources: [schemePath],
-      invalidSources: [],
-    };
-
-    const configureStep = buildIOSSetupPlan(inspection).steps.find(
-      (step) => step.id === "configure-publishable-key",
-    );
-
-    expect(configureStep).toMatchObject({ status: "review", automatable: false });
-    expect(configureStep?.description).toContain("could not be connected to its loader");
   });
 
   test("satisfies configuration and derives the domain from a redacted inline literal", async () => {
@@ -573,7 +544,7 @@ struct MyApp: App {
     });
   });
 
-  test("does not satisfy or automate LocalSecrets wiring from a same-file helper", async () => {
+  test("does not satisfy a custom configure call outside app startup", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
@@ -593,9 +564,8 @@ struct MyApp: App {
     const plan = buildIOSSetupPlan(inspection);
 
     expect(inspection.appTargets[0]?.swift.configureCalls[0]).toMatchObject({
-      publishableKeyWiring: "local-secrets-loader",
+      publishableKeyWiring: "custom",
       startupBinding: "unproven",
-      localSecretsRuntimeBinding: "proven",
     });
     expect(plan.steps.find((step) => step.id === "configure-publishable-key")).toMatchObject({
       status: "review",
@@ -603,150 +573,29 @@ struct MyApp: App {
     });
   });
 
-  test("reviews a target runtime key when the configure expression has unknown wiring", async () => {
+  test("classifies ProcessInfo wiring as a preserved custom key source", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
     temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
+    await createIOSFixture(root, { complete: true });
     const inspection = await inspectIOSProject(root);
+    if (inspection.selection.state !== "selected") throw new Error("fixture target not selected");
     inspection.appTargets[0]!.swift.configureCalls = [
       {
         path: "MyApp/MyAppApp.swift",
-        publishableKeyWiring: "unknown",
+        publishableKeyWiring: "custom",
         startupBinding: "app-init",
       },
     ];
 
     const plan = buildIOSSetupPlan(inspection);
 
-    expect(plan.steps.find((step) => step.id === "configure-publishable-key")?.status).toBe(
-      "review",
-    );
-  });
-
-  test("satisfies configuration for a selected-target Run scheme and ProcessInfo wiring", async () => {
-    const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
-    temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true });
-    const inspection = await inspectIOSProject(root);
-    if (inspection.selection.state !== "selected") throw new Error("fixture target not selected");
-    const directConfigPlan = await planIOSDirectConfig({
-      root,
-      projectPath: inspection.selection.projectPath,
-      targetId: inspection.selection.targetId,
-    });
-    const schemePath = "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme";
-    inspection.localPublishableKey = {
-      evidenceComplete: true,
-      found: true,
-      source: schemePath,
-      frontendApiHost: "clerk.example.test",
-      instanceType: "development",
-      conflict: false,
-      candidateSources: [schemePath],
-      invalidSources: [],
-    };
-    inspection.appTargets[0]!.swift.configureCalls = [
-      {
-        path: "MyApp/MyAppApp.swift",
-        publishableKeyWiring: "process-info-environment",
-        startupBinding: "app-init",
-      },
-    ];
-
-    const plan = buildIOSSetupPlan(inspection, { directConfigPlan });
-
-    expect(directConfigPlan.status).toBe("blocked");
     expect(plan.steps.find((step) => step.id === "configure-publishable-key")?.status).toBe(
       "satisfied",
     );
+    expect(inspection.localPublishableKey.found).toBe(false);
   });
 
-  test("keeps non-runtime key sources as available-to-copy evidence", async () => {
-    const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
-    temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true });
-    const inspection = await inspectIOSProject(root);
-
-    for (const source of [
-      ".env",
-      ".clerk/.tmp/keyless.json",
-      "CLERK_PUBLISHABLE_KEY environment variable",
-    ]) {
-      inspection.localPublishableKey = {
-        evidenceComplete: true,
-        found: true,
-        source,
-        frontendApiHost: "clerk.example.test",
-        instanceType: "development",
-        conflict: false,
-        candidateSources: [source],
-        invalidSources: [],
-      };
-      const step = buildIOSSetupPlan(inspection).steps.find(
-        (candidate) => candidate.id === "configure-publishable-key",
-      );
-      expect(step?.status).toBe("review");
-      expect(step?.description).toContain("available to copy");
-    }
-  });
-
-  test("reviews a malformed available-only key instead of treating it as runtime failure", async () => {
-    const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
-    temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true, includeKey: false });
-    await Bun.write(join(root, ".env"), "CLERK_PUBLISHABLE_KEY=not-a-key\n");
-    const inspection = await inspectIOSProject(root);
-
-    const plan = buildIOSSetupPlan(inspection);
-
-    expect(inspection.localPublishableKey).toMatchObject({
-      found: false,
-      candidateSources: [".env"],
-      invalidSources: [".env"],
-    });
-    expect(inspection.localPublishableKey.source).toBeUndefined();
-    expect(plan.steps.find((step) => step.id === "configure-publishable-key")?.status).toBe(
-      "review",
-    );
-  });
-
-  test("preserves a malformed key in a proven selected-target runtime sink", async () => {
-    const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
-    temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
-    await Bun.write(
-      join(root, "MyApp", "LocalSecrets.plist"),
-      '<?xml version="1.0"?><plist version="1.0"><dict><key>CLERK_PUBLISHABLE_KEY</key><string>not-a-key</string></dict></plist>',
-    );
-    const inspection = await inspectIOSProject(root);
-    if (inspection.selection.state !== "selected") throw new Error("fixture target not selected");
-    const directConfigPlan = await planIOSDirectConfig({
-      root,
-      projectPath: inspection.selection.projectPath,
-      targetId: inspection.selection.targetId,
-    });
-
-    const plan = buildIOSSetupPlan(inspection, { directConfigPlan });
-
-    expect(inspection.localPublishableKey).toMatchObject({
-      found: false,
-      source: "MyApp/LocalSecrets.plist",
-      invalidSources: ["MyApp/LocalSecrets.plist"],
-    });
-    expect(directConfigPlan.status).toBe("blocked");
-    expect(plan.steps.find((step) => step.id === "configure-publishable-key")).toMatchObject({
-      status: "blocked",
-      automatable: false,
-    });
-    expect(
-      plan.steps.find((step) => step.id === "configure-publishable-key")?.description,
-    ).toContain("malformed");
-    expect(
-      plan.steps.find((step) => step.id === "configure-publishable-key")?.description,
-    ).not.toContain("Automatic direct configuration stopped");
-  });
-
-  test("does not automate a name-only LocalSecrets expression without an exact loader binding", async () => {
+  test("preserves an arbitrary named key loader without interpreting it", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
@@ -768,7 +617,7 @@ struct MyApp: App {
     const plan = buildIOSSetupPlan(await inspectIOSProject(root));
 
     expect(plan.steps.find((step) => step.id === "configure-publishable-key")).toMatchObject({
-      status: "blocked",
+      status: "satisfied",
       automatable: false,
     });
   });
@@ -934,18 +783,28 @@ struct MyApp: App {
     expect(plan.steps.find((step) => step.id === "add-authentication-flow")?.status).toBe("review");
   });
 
-  test("reviews an existing configure call when no usable local key can be validated", async () => {
+  test("preserves an existing custom configure call without validating its value", async () => {
     const plan = await planFor({ complete: true, includeKey: false });
 
     expect(plan.steps.find((step) => step.id === "configure-publishable-key")?.status).toBe(
-      "review",
+      "satisfied",
     );
   });
 
   test("requires the bare domain when only Apple's developer-mode suffix is present", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
     temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
+    await createIOSFixture(root, { complete: true, includeKey: false });
+    const key = `pk_test_${Buffer.from("native.clerk.example$").toString("base64")}`;
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+@main struct MyApp: App {
+  init() { Clerk.configure(publishableKey: "${key}") }
+  var body: some Scene { WindowGroup { Text("Hello").environment(Clerk.shared) } }
+}`,
+    );
     const inspection = await inspectIOSProject(root);
     for (const configuration of inspection.appTargets[0]!.configurations) {
       configuration.entitlements!.associatedDomains = [
@@ -961,7 +820,17 @@ struct MyApp: App {
   test("matches only the associated-domain hostname case-insensitively", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
     temporaryDirectories.push(root);
-    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
+    await createIOSFixture(root, { complete: true, includeKey: false });
+    const key = `pk_test_${Buffer.from("native.clerk.example$").toString("base64")}`;
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import ClerkKit
+import SwiftUI
+@main struct MyApp: App {
+  init() { Clerk.configure(publishableKey: "${key}") }
+  var body: some Scene { WindowGroup { Text("Hello").environment(Clerk.shared) } }
+}`,
+    );
     const inspection = await inspectIOSProject(root);
 
     for (const configuration of inspection.appTargets[0]!.configurations) {

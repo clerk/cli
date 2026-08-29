@@ -23,6 +23,26 @@ async function inspectionFor(
   return inspectIOSProject(root, { target });
 }
 
+async function inspectionWithInlineKey(options: Parameters<typeof createIOSFixture>[1] = {}) {
+  const root = await mkdtemp(join(tmpdir(), "clerk-ios-native-readiness-inline-"));
+  temporaryDirectories.push(root);
+  await createIOSFixture(root, { ...options, complete: false, includeKey: false });
+  const encodedHost = Buffer.from("native.clerk.example$").toString("base64");
+  await Bun.write(
+    join(root, "MyApp", "MyAppApp.swift"),
+    `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  init() { Clerk.configure(publishableKey: "pk_test_${encodedHost}") }
+  var body: some Scene { WindowGroup { Text("Hello") } }
+}
+`,
+  );
+  return inspectIOSProject(root, { target: "MyApp" });
+}
+
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true })));
 });
@@ -144,11 +164,7 @@ describe("buildIOSNativeReadinessAudit", () => {
   });
 
   test("requires the bare domain when only Apple's developer-mode entry is present", async () => {
-    const inspection = await inspectionFor({
-      complete: true,
-      includeKey: false,
-      localSecrets: true,
-    });
+    const inspection = await inspectionWithInlineKey();
     for (const configuration of inspection.appTargets[0]!.configurations) {
       configuration.entitlements!.associatedDomains = [
         "webcredentials:native.clerk.example?mode=developer",
@@ -167,11 +183,7 @@ describe("buildIOSNativeReadinessAudit", () => {
   });
 
   test("recognizes the exact bare domain as locally satisfied", async () => {
-    const inspection = await inspectionFor({
-      complete: true,
-      includeKey: false,
-      localSecrets: true,
-    });
+    const inspection = await inspectionWithInlineKey();
     for (const configuration of inspection.appTargets[0]!.configurations) {
       configuration.entitlements!.associatedDomains = ["webcredentials:native.clerk.example"];
     }
@@ -188,11 +200,7 @@ describe("buildIOSNativeReadinessAudit", () => {
   });
 
   test("does not satisfy readiness with a differently cased service token", async () => {
-    const inspection = await inspectionFor({
-      complete: true,
-      includeKey: false,
-      localSecrets: true,
-    });
+    const inspection = await inspectionWithInlineKey();
     for (const configuration of inspection.appTargets[0]!.configurations) {
       configuration.entitlements!.associatedDomains = ["WEBCREDENTIALS:native.clerk.example"];
     }
@@ -206,11 +214,7 @@ describe("buildIOSNativeReadinessAudit", () => {
   });
 
   test("blocks automation when configurations have mixed entitlements evidence", async () => {
-    const inspection = await inspectionFor({
-      complete: true,
-      includeKey: false,
-      localSecrets: true,
-    });
+    const inspection = await inspectionWithInlineKey();
     const target = inspection.appTargets[0]!;
     target.configurations[1]!.entitlements = undefined;
 
@@ -250,11 +254,7 @@ describe("buildIOSNativeReadinessAudit", () => {
   });
 
   test("preserves all distinct existing XML entitlements routes", async () => {
-    const inspection = await inspectionFor({
-      complete: true,
-      includeKey: false,
-      localSecrets: true,
-    });
+    const inspection = await inspectionWithInlineKey();
     const target = inspection.appTargets[0]!;
     const release = target.configurations[1]!;
     release.entitlements = {

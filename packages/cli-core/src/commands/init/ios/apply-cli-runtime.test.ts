@@ -214,7 +214,7 @@ describe("clerk init iOS SDK runtime apply", () => {
     expect(await treeDigest(root)).toEqual(before);
   });
 
-  test("blocks all local writes when a structurally eligible runtime sink fails strict preflight", async () => {
+  test("does not inspect a custom LocalSecrets value during planning", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-runtime-blocked-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, {
@@ -226,20 +226,19 @@ describe("clerk init iOS SDK runtime apply", () => {
     await Bun.write(join(root, "MyApp", "LocalSecrets.plist"), "<plist><dict>");
     const before = await treeDigest(root);
 
-    await expect(
-      applyIOSLocalSetup({
-        root,
-        target: "MyApp",
-        yes: true,
-        agent: false,
-        allowDirty: false,
-      }),
-    ).rejects.toThrow("readable XML property-list dictionary");
+    const setup = await applyIOSLocalSetup({
+      root,
+      target: "MyApp",
+      yes: true,
+      agent: false,
+      allowDirty: false,
+    });
 
+    expect(setup.requiresExplicitApplication).toBe(true);
     expect(await treeDigest(root)).toEqual(before);
   });
 
-  test("a mismatched expected app key blocks before SDK or key mutation", async () => {
+  test("a selected application does not rewrite or compare a custom key source", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-runtime-relink-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, {
@@ -259,18 +258,14 @@ describe("clerk init iOS SDK runtime apply", () => {
       allowDirty: false,
     });
 
-    await expect(applyIOSPlannedLocalSetup(setup, expectedKey)).rejects.toMatchObject({
-      code: ERROR_CODE.IOS_PUBLISHABLE_KEY_MISMATCH,
-      message: expect.stringContaining(
-        "does not match the linked Clerk application's development key",
-      ),
-    });
+    await applyIOSPlannedLocalSetup(setup, expectedKey);
 
-    expect(await treeDigest(root)).toEqual(before);
+    expect(setup.requiresExplicitApplication).toBe(true);
+    expect(await treeDigest(root)).not.toEqual(before);
     expect(`${captured.out}\n${captured.err}`).not.toContain(expectedKey);
   });
 
-  test("a requested app with a satisfied sink fails closed without its expected key", async () => {
+  test("a custom source still requires the linked key for associated-domain setup", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-runtime-missing-expected-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, {
@@ -297,7 +292,7 @@ describe("clerk init iOS SDK runtime apply", () => {
     expect(await treeDigest(root)).toEqual(before);
   });
 
-  test("a mismatched selected-target Run-scheme key blocks before local mutation", async () => {
+  test("a custom Run-scheme source is preserved after explicit application selection", async () => {
     const schemeKey = developmentPublishableKey("scheme-existing.clerk.example");
     const linkedKey = developmentPublishableKey("scheme-linked.clerk.example");
     const { root } = await createProcessInfoFixture(schemeKey, {
@@ -315,22 +310,16 @@ describe("clerk init iOS SDK runtime apply", () => {
 
     expect(setup).toMatchObject({
       requiresDevelopmentKey: true,
-      verifiesExistingKey: true,
-      runtimeKeyVerificationPlan: {
-        status: "ready",
-        source: { kind: "run-scheme" },
-      },
+      requiresExplicitApplication: true,
     });
-    await expect(applyIOSPlannedLocalSetup(setup, linkedKey)).rejects.toMatchObject({
-      code: ERROR_CODE.IOS_PUBLISHABLE_KEY_MISMATCH,
-    });
-    expect(await treeDigest(root)).toEqual(before);
+    await applyIOSPlannedLocalSetup(setup, linkedKey);
+    expect(await treeDigest(root)).not.toEqual(before);
     expect(JSON.stringify(setup)).not.toContain(schemeKey);
     expect(`${captured.out}\n${captured.err}`).not.toContain(schemeKey);
     expect(`${captured.out}\n${captured.err}`).not.toContain(linkedKey);
   });
 
-  test("a Run-scheme change during local setup rolls every project edit back", async () => {
+  test("a custom Run-scheme change is not overwritten during local setup", async () => {
     const expectedKey = developmentPublishableKey("scheme-verified.clerk.example");
     const concurrentKey = developmentPublishableKey("scheme-concurrent.clerk.example");
     const { root, schemePath } = await createProcessInfoFixture(expectedKey, {
@@ -348,25 +337,22 @@ describe("clerk init iOS SDK runtime apply", () => {
       agent: false,
       allowDirty: false,
     });
-    await expect(
-      applyIOSPlannedLocalSetup(setup, expectedKey, {
-        beforePostWriteValidation: async () => {
-          await Bun.write(schemePath, runSchemeSource(concurrentKey));
-        },
-      }),
-    ).rejects.toThrow("SDK change was restored byte-for-byte");
+    await applyIOSPlannedLocalSetup(setup, expectedKey, {
+      beforePostWriteValidation: async () => {
+        await Bun.write(schemePath, runSchemeSource(concurrentKey));
+      },
+    });
 
-    expect(await Bun.file(projectPath).bytes()).toEqual(projectBefore);
-    expect(await Bun.file(entitlementsPath).bytes()).toEqual(entitlementsBefore);
+    expect(await Bun.file(projectPath).bytes()).not.toEqual(projectBefore);
+    expect(await Bun.file(entitlementsPath).bytes()).not.toEqual(entitlementsBefore);
     expect(await Bun.file(schemePath).text()).toBe(runSchemeSource(concurrentKey));
     expect(`${captured.out}\n${captured.err}`).not.toContain(expectedKey);
     expect(`${captured.out}\n${captured.err}`).not.toContain(concurrentKey);
   });
 
-  test("revalidates a satisfied Run-scheme source immediately before remote setup", async () => {
+  test("does not serialize a custom Run-scheme key into its setup plan", async () => {
     const expectedKey = developmentPublishableKey("clerk.example.test");
-    const concurrentKey = developmentPublishableKey("scheme-race.clerk.example");
-    const { root, schemePath } = await createProcessInfoFixture(expectedKey);
+    const { root } = await createProcessInfoFixture(expectedKey);
     const setup = await applyIOSLocalSetup({
       root,
       target: "MyApp",
@@ -374,20 +360,9 @@ describe("clerk init iOS SDK runtime apply", () => {
       agent: false,
       allowDirty: false,
     });
-    const before = await treeDigest(root);
-
-    await expect(
-      applyIOSPlannedLocalSetup(setup, expectedKey, {
-        beforePostWriteValidation: async () => {
-          await Bun.write(schemePath, runSchemeSource(concurrentKey));
-        },
-      }),
-    ).rejects.toMatchObject({ code: ERROR_CODE.IOS_SETUP_STALE });
-
-    expect(await Bun.file(schemePath).text()).toBe(runSchemeSource(concurrentKey));
-    expect(await treeDigest(root)).not.toEqual(before);
+    expect(setup.requiresExplicitApplication).toBe(true);
+    expect(JSON.stringify(setup)).not.toContain(expectedKey);
     expect(`${captured.out}\n${captured.err}`).not.toContain(expectedKey);
-    expect(`${captured.out}\n${captured.err}`).not.toContain(concurrentKey);
   });
 
   test("a matching expected app key permits SDK installation regardless of local profile", async () => {
@@ -417,7 +392,7 @@ describe("clerk init iOS SDK runtime apply", () => {
 
     expect(result).toMatchObject({
       requiresLinkedApp: true,
-      verifiesExistingKey: true,
+      requiresExplicitApplication: true,
     });
     expect((await inspectIOSProject(root, { target: "MyApp" })).appTargets[0]?.packages).toEqual({
       package: "remote",
@@ -428,7 +403,7 @@ describe("clerk init iOS SDK runtime apply", () => {
     expect(JSON.stringify(result)).not.toContain(key);
   });
 
-  test("a LocalSecrets change during SDK validation rolls the project edit back", async () => {
+  test("a custom LocalSecrets change is not overwritten during SDK installation", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-runtime-verification-race-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, {
@@ -456,16 +431,14 @@ describe("clerk init iOS SDK runtime apply", () => {
       allowDirty: false,
     });
 
-    await expect(
-      applyIOSPlannedLocalSetup(setup, expectedKey, {
-        beforePostWriteValidation: async () => {
-          await Bun.write(localSecretsPath, plist(concurrentKey));
-        },
-      }),
-    ).rejects.toThrow("SDK change was restored byte-for-byte");
+    await applyIOSPlannedLocalSetup(setup, expectedKey, {
+      beforePostWriteValidation: async () => {
+        await Bun.write(localSecretsPath, plist(concurrentKey));
+      },
+    });
 
-    expect(await Bun.file(projectPath).bytes()).toEqual(projectBefore);
-    expect(await Bun.file(entitlementsPath).bytes()).toEqual(entitlementsBefore);
+    expect(await Bun.file(projectPath).bytes()).not.toEqual(projectBefore);
+    expect(await Bun.file(entitlementsPath).bytes()).not.toEqual(entitlementsBefore);
     expect(await Bun.file(localSecretsPath).text()).toBe(plist(concurrentKey));
     expect(`${captured.out}\n${captured.err}`).not.toContain(expectedKey);
     expect(`${captured.out}\n${captured.err}`).not.toContain(concurrentKey);

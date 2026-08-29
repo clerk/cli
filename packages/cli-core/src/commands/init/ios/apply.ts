@@ -20,7 +20,11 @@ import {
   type PreparedIOSSDKInstallMutation,
 } from "./install-sdk.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
-import { clerkKitUIInstallDecision, shouldPlanIOSDirectConfig } from "./products.ts";
+import {
+  clerkKitUIInstallDecision,
+  hasSupportedIOSCustomConfigure,
+  shouldPlanIOSDirectConfig,
+} from "./products.ts";
 import {
   planIOSDirectConfig,
   prepareIOSDirectConfigMutation,
@@ -400,15 +404,10 @@ export async function applyIOSLocalSetup(
     requirePrebuiltAuthCompatibility: prebuiltAuthActive,
   });
 
-  const customConfigureCalls = selectedTarget.swift.configureCalls.filter(
+  const hasCustomConfigure = selectedTarget.swift.configureCalls.some(
     (call) => call.publishableKeyWiring === "custom",
   );
-  const hasCustomConfigure = customConfigureCalls.length > 0;
-  const hasSupportedCustomConfigure =
-    selectedTarget.swift.evidenceComplete &&
-    selectedTarget.swift.status !== "ambiguous" &&
-    selectedTarget.swift.configureCalls.length === 1 &&
-    customConfigureCalls[0]?.startupBinding === "app-init";
+  const hasSupportedCustomConfigure = hasSupportedIOSCustomConfigure(selectedTarget);
   const shouldPlanDirectConfig = shouldPlanIOSDirectConfig(
     inspection,
     selectedTarget,
@@ -669,6 +668,13 @@ export async function applyIOSLocalSetup(
     log.info(
       dim(
         "          The linked development publishable key will remain in memory and is redacted from the preview and command output.",
+      ),
+    );
+  }
+  if (hasSupportedCustomConfigure) {
+    log.info(
+      dim(
+        "  PRESERVE  Custom Clerk.configure(...) publishable-key source. Its value will not be inspected; the developer must select the existing Clerk application it belongs to.",
       ),
     );
   }

@@ -144,7 +144,7 @@ test("explains that the prebuilt AuthView exposes Apple automatically after nati
   ).toBe(true);
 });
 
-test("keeps a proven LocalSecrets loader as a compatibility path", async () => {
+test("preserves a custom LocalSecrets loader without interpreting its value", async () => {
   const root = await mkdtemp(join(tmpdir(), "clerk-ios-framework-local-secrets-"));
   temporaryRoots.push(root);
   await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
@@ -155,8 +155,8 @@ test("keeps a proven LocalSecrets loader as a compatibility path", async () => {
 
   const plan = await ios.scaffold({ ...makeCtx(), cwd: root, iosTarget: "MyApp" });
 
-  expect(plan.postInstructions.some((i) => i.includes("LocalSecrets.plist"))).toBe(true);
-  expect(plan.postInstructions.some((i) => i.includes("will not replace it"))).toBe(true);
+  expect(plan.postInstructions.some((i) => i.includes("LocalSecrets.plist"))).toBe(false);
+  expect(plan.postInstructions.some((i) => i.includes("custom key value"))).toBe(false);
   expect(
     plan.postInstructions.some((i) => i.includes("single shipping `@main` App initializer")),
   ).toBe(false);
@@ -207,7 +207,7 @@ test("omits SwiftUI environment injection when it is already present", async () 
   expect(plan.postInstructions.some((i) => i.includes(".environment(Clerk.shared)"))).toBe(false);
 });
 
-test("omits locally satisfied setup instructions for the selected target", async () => {
+test("does not derive setup state from a LocalSecrets value", async () => {
   const root = await mkdtemp(join(tmpdir(), "clerk-ios-framework-satisfied-"));
   temporaryRoots.push(root);
   await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
@@ -220,7 +220,7 @@ test("omits locally satisfied setup instructions for the selected target", async
   const plan = await ios.scaffold({ ...makeCtx(), cwd: root, iosTarget: "MyApp" });
 
   expect(plan.postInstructions.some((i) => i.includes("github.com/clerk/clerk-ios"))).toBe(false);
-  expect(plan.postInstructions.some((i) => i.includes("Associated Domains"))).toBe(false);
+  expect(plan.postInstructions.some((i) => i.includes("Associated Domains"))).toBe(true);
   expect(plan.postInstructions.some((i) => i.includes("Configure Clerk"))).toBe(false);
   expect(plan.postInstructions.some((i) => i.includes("signed-out authentication route"))).toBe(
     false,

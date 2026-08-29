@@ -111,9 +111,9 @@ describe("clerk init --dry-run", () => {
       expect(output).toMatchObject({
         schemaVersion: 1,
         mode: "read-only",
-        status: "ready",
+        status: "action-required",
         inspection: { platform: "ios", selection: { state: "selected", targetName: "MyApp" } },
-        plan: { kind: "clerk-ios-setup", status: "ready" },
+        plan: { kind: "clerk-ios-setup", status: "action-required" },
         nativeReadiness: {
           kind: "clerk-ios-native-readiness",
           remote: {
@@ -625,7 +625,7 @@ struct MyApp: App {
     expect(await treeDigest(root)).toEqual(before);
   });
 
-  test("does not advertise runtime-key automation when the strict plist preflight blocks", async () => {
+  test("does not inspect a malformed custom LocalSecrets value", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-cli-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
@@ -644,9 +644,40 @@ struct MyApp: App {
     const configure = output.plan.steps.find(
       (step: { id: string }) => step.id === "configure-publishable-key",
     );
-    expect(configure).toMatchObject({ status: "blocked", automatable: false });
-    expect(configure.description).toContain("readable XML property-list dictionary");
-    expect(configure.description).not.toContain("clerk init can fetch");
+    expect(configure).toMatchObject({ status: "satisfied", automatable: false });
+    expect(configure.description).toContain("custom publishable-key source");
+    expect(configure.description).toContain("value is not inspected");
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test("does not defer domain automation for an ambiguous custom configuration", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-cli-custom-ambiguous-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
+    const sourcePath = join(root, "MyApp", "MyAppApp.swift");
+    await Bun.write(
+      sourcePath,
+      `${await Bun.file(sourcePath).text()}\nfunc configureAgain() { Clerk.configure(publishableKey: OtherSecrets.key) }\n`,
+    );
+    const configDir = await createIsolatedCLIState();
+    const before = await treeDigest(root);
+
+    const result = await runCLI(
+      root,
+      ["--mode", "human", "init", "--dry-run", "--json"],
+      isolatedCLIEnvironment(configDir),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.plan.steps).toContainEqual(
+      expect.objectContaining({
+        id: "add-associated-domain",
+        status: "review",
+        automatable: false,
+      }),
+    );
+    expect(output.nativeReadiness.associatedDomain.automatable).toBe(false);
     expect(await treeDigest(root)).toEqual(before);
   });
 
@@ -689,6 +720,24 @@ struct MyApp: App {
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("Plan blocked");
     expect(await treeDigest(root)).toEqual(projectBefore);
     expect(await treeDigest(configDir)).toEqual(configBefore);
+  });
+
+  test("human output labels a supported custom key source without claiming the key is missing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-cli-custom-output-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
+    const configDir = await createIsolatedCLIState();
+
+    const result = await runCLI(
+      root,
+      ["--mode", "human", "init", "--dry-run"],
+      isolatedCLIEnvironment(configDir),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const output = `${result.stdout}\n${result.stderr}`;
+    expect(output).toContain("Publishable key: custom source (value not inspected)");
+    expect(output).not.toContain("Publishable key: not found");
   });
 
   test("human output distinguishes an actionable plan from a ready plan", async () => {

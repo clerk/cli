@@ -287,14 +287,6 @@ describe("clerk init iOS SDK apply", () => {
     const localSecretsPath = join(root, "MyApp", "LocalSecrets.plist");
     const localSecretsBefore = await Bun.file(localSecretsPath).text();
 
-    const before = await inspectIOSProject(root, { target: "MyApp" });
-    expect(before.diagnostics).toContainEqual(
-      expect.objectContaining({
-        code: "clerk.unconsumed-publishable-key-source",
-        severity: "warning",
-      }),
-    );
-
     const setup = await applyIOSLocalSetup({
       root,
       target: "MyApp",
@@ -310,7 +302,7 @@ describe("clerk init iOS SDK apply", () => {
         environment: "insert",
       },
     });
-    expect(setup.runtimeKeyVerificationPlan).toBeUndefined();
+    expect(setup.requiresExplicitApplication).toBe(false);
     await applyIOSPlannedLocalSetup(setup, authFixtureKey);
 
     const appSource = await Bun.file(join(root, "MyApp", "MyAppApp.swift")).text();
@@ -329,14 +321,6 @@ describe("clerk init iOS SDK apply", () => {
     const schemeSource = `<Scheme><LaunchAction><BuildableProductRunnable><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" /></BuildableProductRunnable><EnvironmentVariables><EnvironmentVariable key="CLERK_PUBLISHABLE_KEY" value="${staleKey}" isEnabled="YES" /></EnvironmentVariables></LaunchAction></Scheme>`;
     await mkdir(schemeDirectory, { recursive: true });
     await Bun.write(schemePath, schemeSource);
-
-    const before = await inspectIOSProject(root, { target: "MyApp" });
-    expect(before.diagnostics).toContainEqual(
-      expect.objectContaining({
-        code: "clerk.unconsumed-publishable-key-source",
-        severity: "warning",
-      }),
-    );
 
     const setup = await applyIOSLocalSetup({
       root,
@@ -488,7 +472,18 @@ struct MyApp: App {
 
     const result = await runCLI(
       root,
-      ["--mode", "agent", "init", "--yes", "--target", "MyApp", "--app-id-prefix", "LEGACY1234"],
+      [
+        "--mode",
+        "agent",
+        "init",
+        "--yes",
+        "--target",
+        "MyApp",
+        "--app",
+        "app_ios_apply",
+        "--app-id-prefix",
+        "LEGACY1234",
+      ],
       configDir,
     );
 
@@ -521,7 +516,18 @@ struct MyApp: App {
     const digest = await treeDigest(root);
     const second = await runCLI(
       root,
-      ["--mode", "agent", "init", "--yes", "--target", "MyApp", "--app-id-prefix", "LEGACY1234"],
+      [
+        "--mode",
+        "agent",
+        "init",
+        "--yes",
+        "--target",
+        "MyApp",
+        "--app",
+        "app_ios_apply",
+        "--app-id-prefix",
+        "LEGACY1234",
+      ],
       configDir,
     );
     expect(second.exitCode).toBe(0);
@@ -599,7 +605,17 @@ struct MyApp: App {
     const digest = await treeDigest(root);
     const second = await runCLI(
       root,
-      ["--mode", "agent", "init", "--yes", "--target", "MyApp", "--sign-in-with-apple"],
+      [
+        "--mode",
+        "agent",
+        "init",
+        "--yes",
+        "--target",
+        "MyApp",
+        "--app",
+        "app_ios_apply",
+        "--sign-in-with-apple",
+      ],
       configDir,
     );
     expect(second.exitCode).toBe(0);
@@ -639,7 +655,7 @@ struct MyApp: App {
     resetAppleConfiguration({ enabled: false, authenticatable: true });
     const withoutOptIn = await runCLI(
       root,
-      ["--mode", "agent", "init", "--yes", "--target", "MyApp"],
+      ["--mode", "agent", "init", "--yes", "--target", "MyApp", "--app", "app_ios_apply"],
       configDir,
     );
 
@@ -690,7 +706,7 @@ struct MyApp: App {
 
     const result = await runCLI(
       root,
-      ["--mode", "agent", "init", "--yes", "--target", "MyApp"],
+      ["--mode", "agent", "init", "--yes", "--target", "MyApp", "--app", "app_ios_apply"],
       configDir,
     );
 
@@ -727,7 +743,7 @@ struct MyApp: App {
     const afterFirstRun = await treeDigest(root);
     const second = await runCLI(
       root,
-      ["--mode", "agent", "init", "--yes", "--target", "MyApp"],
+      ["--mode", "agent", "init", "--yes", "--target", "MyApp", "--app", "app_ios_apply"],
       configDir,
     );
     expect(second.exitCode).toBe(0);
@@ -937,7 +953,7 @@ import SwiftUI
     expect(await treeDigest(root)).toEqual(before);
   });
 
-  test("an already-linked SDK returns a read-only runtime verification without prompting or writing", async () => {
+  test("an already-linked SDK preserves a custom runtime source without prompting or writing", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-runtime-verification-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, {
@@ -960,18 +976,12 @@ import SwiftUI
       const result = await applyIOSLocalSetup({
         root,
         target: "MyApp",
-        yes: false,
+        yes: true,
         agent: true,
         allowDirty: false,
       });
 
-      expect(result.runtimeKeyVerificationPlan).toMatchObject({
-        status: "ready",
-        source: {
-          kind: "local-secrets-plist",
-          path: "MyApp/LocalSecrets.plist",
-        },
-      });
+      expect(result.requiresExplicitApplication).toBe(true);
       expect(confirmation).not.toHaveBeenCalled();
       expect(await treeDigest(root)).toEqual(before);
     } finally {
@@ -979,7 +989,7 @@ import SwiftUI
     }
   });
 
-  test("preserves a LocalSecrets runtime sink that has no valid key", async () => {
+  test("preserves a custom LocalSecrets source without inspecting its value", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-runtime-preflight-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, {
@@ -993,16 +1003,15 @@ import SwiftUI
     );
     const before = await treeDigest(root);
 
-    await expect(
-      applyIOSLocalSetup({
-        root,
-        target: "MyApp",
-        yes: true,
-        agent: false,
-        allowDirty: false,
-      }),
-    ).rejects.toThrow("will not change that compatibility file");
+    const setup = await applyIOSLocalSetup({
+      root,
+      target: "MyApp",
+      yes: true,
+      agent: false,
+      allowDirty: false,
+    });
 
+    expect(setup.requiresExplicitApplication).toBe(true);
     expect(await treeDigest(root)).toEqual(before);
   });
 });

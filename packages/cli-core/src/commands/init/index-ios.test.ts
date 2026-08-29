@@ -28,14 +28,13 @@ import * as telemetryMod from "../../lib/telemetry.ts";
 import { getLogLevel, setLogLevel } from "../../lib/log.ts";
 import * as iosFileTransactionMod from "./ios/file-transaction.ts";
 import { init } from "./index.ts";
-import { CliError, ERROR_CODE, PlapiError } from "../../lib/errors.ts";
+import { ERROR_CODE, PlapiError } from "../../lib/errors.ts";
 import type { IOSLocalSetupResult } from "./ios/apply.ts";
 import type { IOSAppleEntitlementPlan } from "./ios/apple-entitlement.ts";
 import type { IOSNativeApplePlan } from "./ios/native-apple.ts";
 import type { IOSNativeRemotePlan } from "./ios/native-remote.ts";
 import type { IOSNativeReadinessTarget } from "./ios/native-readiness.ts";
 import type { IOSPrebuiltAuthPlan } from "./ios/prebuilt-auth.ts";
-import type { IOSRuntimeKeyVerificationPlan } from "./ios/runtime-key.ts";
 
 const VALID_DEVELOPMENT_KEY = `pk_test_${btoa("example.clerk.accounts.dev$")}`;
 
@@ -144,25 +143,8 @@ function iosSetupResult(overrides: Partial<IOSLocalSetupResult> = {}): IOSLocalS
     requiresLinkedApp: false,
     requiresDevelopmentKey:
       overrides.requiresDevelopmentKey ?? overrides.requiresLinkedApp ?? false,
-    verifiesExistingKey: false,
+    requiresExplicitApplication: false,
     ...overrides,
-  };
-}
-
-function iosRuntimeKeyVerificationPlan(): IOSRuntimeKeyVerificationPlan {
-  return {
-    schemaVersion: 1,
-    kind: "clerk-ios-runtime-key-verification",
-    status: "ready",
-    root: "/tmp/test",
-    projectPath: "MyApp.xcodeproj",
-    targetId: "TARGET",
-    source: {
-      kind: "run-scheme",
-      path: "MyApp.xcodeproj/xcshareddata/xcschemes/MyApp.xcscheme",
-      expectedHash: "scheme-hash",
-    },
-    blockers: [],
   };
 }
 
@@ -307,7 +289,7 @@ describe("init iOS", () => {
     expect(iosApplyMod.applyIOSPlannedLocalSetup).not.toHaveBeenCalled();
   });
 
-  test("does not let agent mode guess an application for an existing runtime key", async () => {
+  test("requires --app in agent mode for a preserved custom key source", async () => {
     setup({ isAgent: true, email: "test@test.com" });
     const iosCtx = nativeIOSContext();
     spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
@@ -315,13 +297,13 @@ describe("init iOS", () => {
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(
       iosSetupResult({
         requiresLinkedApp: true,
-        requiresDevelopmentKey: true,
-        verifiesExistingKey: true,
+        requiresDevelopmentKey: false,
+        requiresExplicitApplication: true,
       }),
     );
 
     await expect(init({ yes: true })).rejects.toThrow(
-      "Agent mode cannot choose its matching Clerk application safely; rerun with --app <app_id>",
+      "requires explicit Clerk application selection",
     );
 
     expect(linkMod.link).not.toHaveBeenCalled();
@@ -1399,184 +1381,45 @@ describe("init iOS", () => {
     expect(iosApplyMod.applyIOSPlannedLocalSetup).not.toHaveBeenCalled();
   });
 
-  test("rejects an explicit same-profile app when its existing iOS runtime key is stale", async () => {
+  test("preserves a custom key source after the developer selects its application", async () => {
     const { captured } = setup({ email: "test@test.com" });
     const iosCtx = nativeIOSContext();
-    const linkedKey = `pk_test_${Buffer.from("explicit-stale.clerk.example$").toString("base64")}`;
+    const linkedKey = `pk_test_${Buffer.from("selected.clerk.example$").toString("base64")}`;
     spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
     spyOn(config, "resolveProfile").mockResolvedValue({
-      profile: { appId: "app_same_profile" },
+      profile: { appId: "app_selected" },
     } as never);
     const setupResult = iosSetupResult({
       requiresLinkedApp: true,
-      verifiesExistingKey: true,
-    });
-    const localApply = spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
-    const commit = spyOn(iosApplyMod, "applyIOSPlannedLocalSetup").mockRejectedValue(
-      new Error("The existing iOS runtime publishable key does not match the linked app."),
-    );
-    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
-      applicationId: "app_same_profile",
-      instanceId: "ins_same_profile",
-      publishableKey: linkedKey,
-    });
-    await expect(init({ yes: true, app: "app_same_profile" })).rejects.toThrow(
-      "does not match the linked app",
-    );
-
-    expect(iosApplyMod.applyIOSLocalSetup).toHaveBeenCalledWith(
-      expect.not.objectContaining({ expectedPublishableKey: expect.anything() }),
-    );
-    expect(linkMod.link).not.toHaveBeenCalled();
-    expect(localApply).toHaveBeenCalledTimes(1);
-    expect(commit).toHaveBeenCalledWith(setupResult, linkedKey);
-    expect(pullMod.pull).not.toHaveBeenCalled();
-    expect(`${captured.out}\n${captured.err}`).not.toContain(linkedKey);
-  });
-
-  test("rejects an implicitly linked profile when its existing iOS runtime key is stale", async () => {
-    const { captured } = setup({ email: "test@test.com" });
-    const iosCtx = nativeIOSContext();
-    const linkedKey = `pk_test_${Buffer.from("implicit-stale.clerk.example$").toString("base64")}`;
-    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
-    spyOn(config, "resolveProfile").mockResolvedValue({
-      profile: { appId: "app_implicitly_linked" },
-    } as never);
-    const setupResult = iosSetupResult({
-      requiresLinkedApp: true,
-      verifiesExistingKey: true,
-    });
-    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
-    spyOn(iosApplyMod, "applyIOSPlannedLocalSetup").mockRejectedValue(
-      new Error("The existing iOS runtime publishable key does not match the linked app."),
-    );
-    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
-      applicationId: "app_implicitly_linked",
-      instanceId: "ins_implicitly_linked",
-      publishableKey: linkedKey,
-    });
-    await expect(init({ yes: true })).rejects.toThrow("does not match the linked app");
-
-    expect(linkMod.link).not.toHaveBeenCalled();
-    expect(iosApplyMod.applyIOSPlannedLocalSetup).toHaveBeenCalledWith(setupResult, linkedKey);
-    expect(pullMod.pull).not.toHaveBeenCalled();
-    expect(`${captured.out}\n${captured.err}`).not.toContain(linkedKey);
-  });
-
-  test("revalidates an existing runtime key after local setup and before Native mutation", async () => {
-    setup({ email: "test@test.com" });
-    const iosCtx = nativeIOSContext();
-    const linkedKey = `pk_test_${Buffer.from("revalidated.clerk.example$").toString("base64")}`;
-    const verificationPlan = iosRuntimeKeyVerificationPlan();
-    const setupResult = iosSetupResult({
-      requiresLinkedApp: true,
-      requiresDevelopmentKey: true,
-      verifiesExistingKey: true,
-      runtimeKeyVerificationPlan: verificationPlan,
-    });
-    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
-    spyOn(config, "resolveProfile").mockResolvedValue({
-      profile: { appId: "app_revalidated" },
-    } as never);
-    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
-    const commitLocal = spyOn(iosApplyMod, "applyIOSPlannedLocalSetup").mockResolvedValue(
-      undefined,
-    );
-    const revalidateRuntime = spyOn(iosApplyMod, "verifyIOSRuntimeKeySetup").mockResolvedValue(
-      undefined,
-    );
-    const applyRemote = spyOn(nativeRemoteMod, "applyIOSNativeRemoteSetup").mockResolvedValue(
-      undefined,
-    );
-    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
-      applicationId: "app_revalidated",
-      instanceId: "ins_revalidated",
-      publishableKey: linkedKey,
-    });
-    spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(
-      iosRemotePlan({ applicationId: "app_revalidated", instanceId: "ins_revalidated" }),
-    );
-
-    await init({ yes: true });
-
-    expect(revalidateRuntime).toHaveBeenCalledWith(verificationPlan, linkedKey);
-    expect(commitLocal.mock.invocationCallOrder[0]).toBeLessThan(
-      revalidateRuntime.mock.invocationCallOrder[0]!,
-    );
-    expect(revalidateRuntime.mock.invocationCallOrder[0]).toBeLessThan(
-      applyRemote.mock.invocationCallOrder[0]!,
-    );
-  });
-
-  test("blocks Native mutation when the final runtime-key revalidation fails", async () => {
-    setup({ email: "test@test.com" });
-    const iosCtx = nativeIOSContext();
-    const linkedKey = `pk_test_${Buffer.from("runtime-race.clerk.example$").toString("base64")}`;
-    const verificationPlan = iosRuntimeKeyVerificationPlan();
-    const setupResult = iosSetupResult({
-      requiresLinkedApp: true,
-      requiresDevelopmentKey: true,
-      verifiesExistingKey: true,
-      runtimeKeyVerificationPlan: verificationPlan,
-    });
-    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
-    spyOn(config, "resolveProfile").mockResolvedValue({
-      profile: { appId: "app_runtime_race" },
-    } as never);
-    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
-    spyOn(iosApplyMod, "applyIOSPlannedLocalSetup").mockResolvedValue(undefined);
-    spyOn(iosApplyMod, "verifyIOSRuntimeKeySetup").mockRejectedValue(
-      new CliError("The selected iOS runtime-key source changed.", {
-        code: ERROR_CODE.IOS_SETUP_STALE,
-      }),
-    );
-    spyOn(iosDevelopmentKeyMod, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
-      applicationId: "app_runtime_race",
-      instanceId: "ins_runtime_race",
-      publishableKey: linkedKey,
-    });
-    spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(
-      iosRemotePlan({ applicationId: "app_runtime_race", instanceId: "ins_runtime_race" }),
-    );
-
-    await expect(init({ yes: true })).rejects.toMatchObject({
-      code: ERROR_CODE.IOS_SETUP_STALE,
-    });
-
-    expect(nativeRemoteMod.applyIOSNativeRemoteSetup).not.toHaveBeenCalled();
-  });
-
-  test("matching an existing iOS runtime key is a read-only authenticated no-op", async () => {
-    const { captured } = setup({ email: "test@test.com" });
-    const iosCtx = nativeIOSContext();
-    const linkedKey = `pk_test_${Buffer.from("matching.clerk.example$").toString("base64")}`;
-    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
-    spyOn(config, "resolveProfile").mockResolvedValue({
-      profile: { appId: "app_matching" },
-    } as never);
-    const setupResult = iosSetupResult({
-      requiresLinkedApp: true,
-      verifiesExistingKey: true,
+      requiresExplicitApplication: true,
     });
     spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
     const resolveKeys = spyOn(
       iosDevelopmentKeyMod,
       "resolveIOSDevelopmentPublicKey",
     ).mockResolvedValue({
-      applicationId: "app_matching",
-      instanceId: "ins_matching",
+      applicationId: "app_selected",
+      instanceId: "ins_selected",
       publishableKey: linkedKey,
     });
     spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(
       iosRemotePlan({
-        applicationId: "app_matching",
-        instanceId: "ins_matching",
+        applicationId: "app_selected",
+        instanceId: "ins_selected",
       }),
     );
-    await init({ yes: true });
+    await init({ yes: true, app: "app_selected" });
 
     expect(resolveKeys).toHaveBeenCalledTimes(1);
-    expect(resolveKeys).toHaveBeenCalledWith("app_matching");
+    expect(resolveKeys).toHaveBeenCalledWith("app_selected");
+    expect(linkMod.link).toHaveBeenCalledWith({
+      skipIfLinked: true,
+      app: "app_selected",
+      cwd: iosCtx.cwd,
+      createIfMissing: undefined,
+      skipAutolink: true,
+      requireExistingAppSelection: true,
+    });
     expect(iosApplyMod.applyIOSPlannedLocalSetup).toHaveBeenCalledWith(setupResult, linkedKey);
     expect(pullMod.pull).not.toHaveBeenCalled();
     expect(`${captured.out}\n${captured.err}`).not.toContain(linkedKey);
@@ -1601,7 +1444,7 @@ describe("init iOS", () => {
     });
     const setupResult = iosSetupResult({
       requiresLinkedApp: true,
-      verifiesExistingKey: true,
+      requiresExplicitApplication: true,
     });
     const localApply = spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
     spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(
@@ -1622,6 +1465,7 @@ describe("init iOS", () => {
       cwd: iosCtx.cwd,
       createIfMissing: undefined,
       skipAutolink: true,
+      requireExistingAppSelection: true,
     });
     expect(resolveKeys).toHaveBeenCalledTimes(1);
     expect(iosApplyMod.applyIOSPlannedLocalSetup).toHaveBeenCalledWith(setupResult, key);

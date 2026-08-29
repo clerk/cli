@@ -69,7 +69,11 @@ import { inspectIOSProject } from "./ios/inspect.ts";
 import { recoverIOSFileTransactions } from "./ios/file-transaction.ts";
 import { buildIOSSetupPlan } from "./ios/plan.ts";
 import { planIOSDirectConfig } from "./ios/direct-config.ts";
-import { clerkKitUIInstallDecision, shouldPlanIOSDirectConfig } from "./ios/products.ts";
+import {
+  clerkKitUIInstallDecision,
+  hasSupportedIOSCustomConfigure,
+  shouldPlanIOSDirectConfig,
+} from "./ios/products.ts";
 import { planIOSAssociatedDomain } from "./ios/associated-domain.ts";
 import { planIOSAppleEntitlement } from "./ios/apple-entitlement.ts";
 import { planIOSPrebuiltAuth } from "./ios/prebuilt-auth.ts";
@@ -240,9 +244,8 @@ export async function init(options: InitOptions = {}) {
           )
         : undefined;
     const productDecision = selectedTarget ? clerkKitUIInstallDecision(selectedTarget) : undefined;
-    const hasCustomConfigure = selectedTarget?.swift.configureCalls.some(
-      (call) => call.publishableKeyWiring === "custom",
-    );
+    const hasSupportedCustomConfigure =
+      selectedTarget != null && hasSupportedIOSCustomConfigure(selectedTarget);
     const inspectedPrebuiltAuthPlan =
       dryRunSelection.state === "selected"
         ? await planIOSPrebuiltAuth({
@@ -295,7 +298,7 @@ export async function init(options: InitOptions = {}) {
             projectPath: dryRunSelection.projectPath,
             targetId: dryRunSelection.targetId,
             deferToPublishableKey:
-              directConfigPlan?.status === "ready" || hasCustomConfigure === true,
+              directConfigPlan?.status === "ready" || hasSupportedCustomConfigure,
             allowMissingEntitlementsCreation: true,
           })
         : undefined;
@@ -389,7 +392,7 @@ export async function init(options: InitOptions = {}) {
     });
     if (agent && iosLocalSetup.requiresExplicitApplication && !options.app) {
       throwUsageError(
-        "This iOS target already contains a preserved publishable-key configuration. Agent mode cannot choose its Clerk application; ask the developer which existing application it belongs to, then rerun with --app <app_id>. The custom key value was not inspected and no local files were changed.",
+        "This iOS target already contains a publishable-key configuration that requires explicit Clerk application selection. Ask the developer which existing application it belongs to, then rerun with --app <app_id>. No local files were changed.",
       );
     }
   }
@@ -1019,7 +1022,7 @@ function printBootstrapManualSetupInfo(framework: FrameworkInfo): void {
       `\n  Set up Clerk for ${framework.name}:`,
       "    Run `clerk init --app <app_id>` to link the project and configure a safely inspectable fresh SwiftUI target automatically.",
       '    Manual source setup uses `Clerk.configure(publishableKey: "<development-publishable-key>")` in the shipping @main App initializer and `.environment(Clerk.shared)` on the WindowGroup root.',
-      "    Existing ProcessInfo/Run-scheme and LocalSecrets loaders remain supported compatibility paths; clerk init does not replace a custom runtime source.",
+      "    Existing custom Clerk.configure(...) sources remain unchanged; select the existing Clerk application they belong to with --app <app_id>.",
     ];
     log.info(lines.map(dim).join("\n"));
     return;
