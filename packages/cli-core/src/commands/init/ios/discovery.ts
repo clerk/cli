@@ -1,11 +1,22 @@
-import { readdir, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { parse as parsePbxProject } from "@bacons/xcode/json";
+import {
+  asString,
+  asStringArray,
+  buildPbxParentIndex,
+  isRecord,
+  resolvePbxFilePath,
+  type PbxObjects,
+} from "./pbx.ts";
 import type { IOSWorkspaceInspection } from "./types.ts";
 
 const MAX_DISCOVERY_DEPTH = 3;
 const MAX_EXHAUSTIVE_DISCOVERY_DEPTH = 24;
 const MAX_DISCOVERY_DIRECTORIES = 10_000;
 const MAX_DISCOVERED_CONTAINERS = 1_000;
+const MAX_PROJECT_REFERENCE_DEPTH = 24;
+const MAX_PBXPROJ_BYTES = 15_000_000;
 const IGNORED_DIRECTORIES = new Set([
   ".build",
   ".git",
@@ -22,6 +33,14 @@ export interface IOSContainerDiscovery {
   projectPaths: string[];
   workspacePaths: string[];
   /** False when a bounded or unreadable traversal could have hidden another container. */
+  complete: boolean;
+  /** False when a PBXProject project-reference closure could not be proven complete. */
+  projectReferencesComplete: boolean;
+}
+
+export interface IOSProjectReferenceDiscovery {
+  /** Verified project containers in the transitive closure, including valid seeds. */
+  projectPaths: string[];
   complete: boolean;
 }
 
@@ -164,6 +183,212 @@ async function walkContainers(
   }
 }
 
+function normalizePbxObjects(value: unknown): PbxObjects | undefined {
+  if (!isRecord(value)) return undefined;
+  const objects: PbxObjects = {};
+  for (const [id, object] of Object.entries(value)) {
+    if (!isRecord(object)) return undefined;
+    objects[id] = object;
+  }
+  return objects;
+}
+
+async function referencedProjectsForProject(
+  root: string,
+  projectPath: string,
+): Promise<{
+  projectPaths: string[];
+  complete: boolean;
+  valid: boolean;
+  canonicalProjectPath?: string;
+}> {
+  if (!projectPath.endsWith(".xcodeproj")) {
+    return { projectPaths: [], complete: false, valid: false };
+  }
+  if (!(await pathIsSafelyWithinIOSRoot(root, projectPath))) {
+    return { projectPaths: [], complete: false, valid: false };
+  }
+
+  let canonicalProjectPath: string;
+  try {
+    const projectInfo = await lstat(projectPath);
+    if (!projectInfo.isDirectory() || projectInfo.isSymbolicLink()) {
+      return { projectPaths: [], complete: false, valid: false };
+    }
+    canonicalProjectPath = await realpath(projectPath);
+  } catch {
+    return { projectPaths: [], complete: false, valid: false };
+  }
+
+  const pbxprojPath = resolve(projectPath, "project.pbxproj");
+  if (!(await pathIsSafelyWithinIOSRoot(root, pbxprojPath))) {
+    return { projectPaths: [], complete: false, valid: true };
+  }
+
+  let source: string;
+  try {
+    const projectFileInfo = await lstat(pbxprojPath);
+    if (
+      !projectFileInfo.isFile() ||
+      projectFileInfo.isSymbolicLink() ||
+      projectFileInfo.size > MAX_PBXPROJ_BYTES
+    ) {
+      return { projectPaths: [], complete: false, valid: true };
+    }
+    source = await readFile(pbxprojPath, "utf8");
+  } catch {
+    return { projectPaths: [], complete: false, valid: true };
+  }
+
+  let archive: Record<string, unknown>;
+  try {
+    const parsed: unknown = parsePbxProject(source);
+    if (!isRecord(parsed)) throw new Error("invalid project root");
+    archive = parsed;
+  } catch {
+    return { projectPaths: [], complete: false, valid: true };
+  }
+
+  const objects = normalizePbxObjects(archive.objects);
+  const rootObjectId = asString(archive.rootObject);
+  const projectObject = rootObjectId && objects ? objects[rootObjectId] : undefined;
+  if (!objects || projectObject?.isa !== "PBXProject") {
+    return { projectPaths: [], complete: false, valid: true };
+  }
+
+  const projectReferences = projectObject.projectReferences;
+  if (projectReferences == null) {
+    return {
+      projectPaths: [],
+      complete: true,
+      valid: true,
+      canonicalProjectPath,
+    };
+  }
+  if (!Array.isArray(projectReferences)) {
+    return { projectPaths: [], complete: false, valid: true };
+  }
+
+  const projectDirectory = dirname(projectPath);
+  const groupRootDirectory = resolve(
+    projectDirectory,
+    asString(projectObject.projectDirPath) ?? "",
+  );
+  const parents = buildPbxParentIndex(objects);
+  const parentCounts = new Map<string, number>();
+  for (const object of Object.values(objects)) {
+    for (const childId of asStringArray(object.children)) {
+      parentCounts.set(childId, (parentCounts.get(childId) ?? 0) + 1);
+    }
+  }
+  const projectPaths = new Set<string>();
+  let complete = true;
+  for (const projectReference of projectReferences) {
+    if (!isRecord(projectReference)) {
+      complete = false;
+      continue;
+    }
+    const fileReferenceId = asString(projectReference.ProjectRef);
+    const fileReference = fileReferenceId ? objects[fileReferenceId] : undefined;
+    if (!fileReferenceId || fileReference?.isa !== "PBXFileReference") {
+      complete = false;
+      continue;
+    }
+    const parentCount = parentCounts.get(fileReferenceId) ?? 0;
+    const sourceTree = asString(fileReference.sourceTree) ?? "<group>";
+    const rawPath = asString(fileReference.path);
+    if (parentCount > 1 || (sourceTree === "<absolute>" && (!rawPath || !isAbsolute(rawPath)))) {
+      complete = false;
+      continue;
+    }
+    const referencedProjectPath = resolvePbxFilePath(
+      fileReferenceId,
+      objects,
+      parents,
+      projectDirectory,
+      groupRootDirectory,
+    );
+    if (!referencedProjectPath || !referencedProjectPath.endsWith(".xcodeproj")) {
+      complete = false;
+      continue;
+    }
+    projectPaths.add(referencedProjectPath);
+  }
+
+  return {
+    projectPaths: [...projectPaths].sort(),
+    complete,
+    valid: true,
+    canonicalProjectPath,
+  };
+}
+
+/**
+ * Resolves PBXProject.projectReferences without invoking Xcode. Callers should
+ * seed this after filesystem, workspace, and any required project paths have
+ * been assembled so the returned closure covers every project they rely on.
+ */
+export async function discoverReferencedIOSProjects(
+  rootInput: string,
+  seedProjectPaths: Iterable<string>,
+): Promise<IOSProjectReferenceDiscovery> {
+  const resolvedInput = resolve(rootInput);
+  const root =
+    resolvedInput.endsWith(".xcodeproj") || resolvedInput.endsWith(".xcworkspace")
+      ? dirname(resolvedInput)
+      : resolvedInput;
+  const seeds = [
+    ...new Set(
+      [...seedProjectPaths].map((path) => (isAbsolute(path) ? resolve(path) : resolve(root, path))),
+    ),
+  ].sort();
+  const queue = seeds.slice(0, MAX_DISCOVERED_CONTAINERS).map((path) => ({ path, depth: 0 }));
+  const scheduled = new Set(queue.map(({ path }) => path));
+  const canonicalOwners = new Map<string, string>();
+  const discovered = new Set<string>();
+  let complete = seeds.length <= MAX_DISCOVERED_CONTAINERS;
+
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index];
+    if (!current) break;
+    const inspected = await referencedProjectsForProject(root, current.path);
+    if (!inspected.valid) {
+      complete = false;
+      continue;
+    }
+    const canonicalProjectPath = inspected.canonicalProjectPath;
+    if (!canonicalProjectPath) {
+      complete = false;
+      continue;
+    }
+    const canonicalOwner = canonicalOwners.get(canonicalProjectPath);
+    if (canonicalOwner && canonicalOwner !== current.path) {
+      complete = false;
+      continue;
+    }
+    canonicalOwners.set(canonicalProjectPath, current.path);
+    discovered.add(current.path);
+    if (!inspected.complete) complete = false;
+
+    for (const referencedProjectPath of inspected.projectPaths) {
+      const absolutePath = resolve(referencedProjectPath);
+      if (scheduled.has(absolutePath)) continue;
+      if (current.depth >= MAX_PROJECT_REFERENCE_DEPTH) {
+        complete = false;
+        continue;
+      }
+      if (scheduled.size >= MAX_DISCOVERED_CONTAINERS) {
+        complete = false;
+        continue;
+      }
+      scheduled.add(absolutePath);
+      queue.push({ path: absolutePath, depth: current.depth + 1 });
+    }
+  }
+
+  return { projectPaths: [...discovered].sort(), complete };
+}
+
 export async function discoverIOSContainers(
   rootInput: string,
   options: IOSContainerDiscoveryOptions = {},
@@ -187,10 +412,19 @@ export async function discoverIOSContainers(
     await walkContainers(root, 0, projects, workspaces, state);
   }
 
+  const projectReferenceRoot = root.endsWith(".xcodeproj")
+    ? dirname(root)
+    : root.endsWith(".xcworkspace")
+      ? dirname(root)
+      : root;
+  const projectReferences = await discoverReferencedIOSProjects(projectReferenceRoot, projects);
+  for (const projectPath of projectReferences.projectPaths) projects.add(projectPath);
+
   return {
     projectPaths: [...projects].sort(),
     workspacePaths: [...workspaces].sort(),
-    complete: state.complete,
+    complete: state.complete && projectReferences.complete,
+    projectReferencesComplete: projectReferences.complete,
   };
 }
 
