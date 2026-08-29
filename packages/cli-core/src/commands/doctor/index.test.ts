@@ -15,7 +15,28 @@ const IOS_FRAMEWORK: FrameworkInfo = {
   ecosystem: "swift",
 };
 
-const IOS_INSPECTION = {} as IOSProjectInspectionResult;
+const IOS_INSPECTION = {
+  platform: "ios",
+  appTargets: [{ platform: "ios" }],
+  selection: { state: "selected", platform: "ios" },
+} as IOSProjectInspectionResult;
+const MACOS_INSPECTION = {
+  platform: "macos",
+  appTargets: [{ platform: "macos" }],
+  selection: { state: "selected", platform: "macos" },
+} as IOSProjectInspectionResult;
+const UNSUPPORTED_XCODE_INSPECTION = {
+  schemaVersion: 1,
+  platform: "apple-native",
+  root: "/fixture",
+  workspaces: [],
+  projects: [],
+  appTargets: [],
+  selection: { state: "none" },
+  localPublishableKey: { state: "missing" },
+  generatedProject: null,
+  diagnostics: [],
+} as IOSProjectInspectionResult;
 const DOCTOR_CONTEXT = {} as DoctorContext;
 
 function passingResult(name: string): CheckResult {
@@ -25,6 +46,7 @@ function passingResult(name: string): CheckResult {
 function runDependencies(overrides: Partial<DoctorRunDependencies> = {}): DoctorRunDependencies {
   return {
     detectFramework: async () => IOS_FRAMEWORK,
+    inspectIOSProject: async () => IOS_INSPECTION,
     getDoctorChecks: () => [async () => passingResult("Common")],
     runIOSDoctorChecks: async () => ({
       inspection: IOS_INSPECTION,
@@ -41,6 +63,57 @@ describe("getDoctorChecks", () => {
   });
 });
 
+describe("Apple-native framework routing", () => {
+  test("keeps a pure macOS application on native Clerk checks", async () => {
+    let nativeChecks = false;
+    const results = await runChecks(
+      DOCTOR_CONTEXT,
+      {},
+      {
+        dependencies: runDependencies({
+          inspectIOSProject: async () => MACOS_INSPECTION,
+          getDoctorChecks: (native) => {
+            nativeChecks = native;
+            return [async () => passingResult("Common")];
+          },
+          runIOSDoctorChecks: async (_ctx, options) => ({
+            inspection: options.preparedInspection ?? MACOS_INSPECTION,
+            results: [passingResult("macOS")],
+          }),
+        }),
+      },
+    );
+
+    expect(nativeChecks).toBeTrue();
+    expect(results.map((result) => result.name)).toEqual(["Common", "macOS"]);
+  });
+
+  test("uses ordinary checks for an unsupported Xcode-only project", async () => {
+    let nativeChecks = true;
+    let nativeAuditCalls = 0;
+    const results = await runChecks(
+      DOCTOR_CONTEXT,
+      {},
+      {
+        dependencies: runDependencies({
+          inspectIOSProject: async () => UNSUPPORTED_XCODE_INSPECTION,
+          getDoctorChecks: (native) => {
+            nativeChecks = native;
+            return [async () => passingResult(native ? "Native" : "Environment variables")];
+          },
+          runIOSDoctorChecks: async () => {
+            nativeAuditCalls++;
+            return { inspection: UNSUPPORTED_XCODE_INSPECTION, results: [] };
+          },
+        }),
+      },
+    );
+
+    expect(nativeChecks).toBeFalse();
+    expect(nativeAuditCalls).toBe(0);
+    expect(results.map((result) => result.name)).toEqual(["Environment variables"]);
+  });
+});
 describe("doctor telemetry stages", () => {
   test("reports the ordered native diagnostic boundaries", async () => {
     const stage = spyOn(telemetryMod, "setTelemetryStage");

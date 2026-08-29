@@ -167,6 +167,90 @@ describe("runIOSDoctorChecks", () => {
     );
   });
 
+  test("uses native Clerk checks for a pure macOS application and skips Associated Domains", async () => {
+    const root = await fixture({
+      complete: true,
+      platform: "macos",
+      includeKey: false,
+      localSecrets: true,
+    });
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+
+    expect(audit.inspection.selection).toMatchObject({ state: "selected", platform: "macos" });
+    expect(
+      audit.results.find(
+        (result) => result.name === "macOS: Install Clerk's Swift SDK for the selected target",
+      )?.status,
+    ).toBe("pass");
+    expect(
+      audit.results.find(
+        (result) => result.name === "macOS: Configure Clerk with a publishable key",
+      )?.status,
+    ).toBe("pass");
+    expect(
+      audit.results.find(
+        (result) => result.name === "macOS: Inject Clerk into the SwiftUI environment",
+      )?.status,
+    ).toBe("pass");
+    expect(
+      audit.results.find((result) => result.name === "macOS: Add an authentication flow")?.status,
+    ).toBe("pass");
+    expect(
+      audit.results.find((result) => result.name === "macOS: AuthView authentication methods")
+        ?.status,
+    ).toBe("pass");
+    expect(
+      audit.results.find((result) => result.name === "macOS: Native Application")?.status,
+    ).toBe("pass");
+    expect(audit.results.some((result) => result.name.includes("associated domain"))).toBeFalse();
+    expect(audit.results.some((result) => result.name.startsWith("iOS:"))).toBeFalse();
+    expect(audit.results.some((result) => result.name === "Environment variables")).toBeFalse();
+  });
+
+  test("audits native Sign in with Apple for a pure macOS application", async () => {
+    const root = await fixture({ platform: "macos" });
+    await addAppleEntitlement(root);
+    let appleHealthCalls = 0;
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        planIOSAppleEntitlement: async (options) => {
+          const { planIOSAppleEntitlement } = await import("../init/ios/apple-entitlement.ts");
+          return planIOSAppleEntitlement(options);
+        },
+        auditIOSNativeAppleHealth: async ({ applicationId, instanceId, bundleIdentifier }) => {
+          appleHealthCalls++;
+          return {
+            schemaVersion: 1,
+            kind: "clerk-ios-native-apple-health",
+            applicationId,
+            instanceId,
+            bundleIdentifier,
+            runtime: {
+              status: "satisfied",
+              connection: "satisfied",
+              bundleIdentifierConfiguration: "satisfied",
+              current: { enabled: true, authenticatable: true },
+              blockers: [],
+            },
+            automation: { status: "supported", blockers: [] },
+          };
+        },
+      }),
+    );
+
+    expect(appleHealthCalls).toBe(1);
+    expect(
+      audit.results.find((result) => result.name === "macOS: Sign in with Apple entitlement")
+        ?.status,
+    ).toBe("pass");
+    expect(
+      audit.results.find((result) => result.name === "macOS: Clerk Sign in with Apple")?.status,
+    ).toBe("pass");
+    expect(audit.results.some((result) => result.name.includes("associated domain"))).toBeFalse();
+  });
+
   test("fails AuthView setup when the linked clerk-ios SDK is incompatible", async () => {
     const root = await fixture({ complete: true });
     const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
