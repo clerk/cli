@@ -1730,13 +1730,13 @@ describe("runIOSXcodeVerification", () => {
     expect(await Bun.file(join(root, cleanupEntry!, "replacement.txt")).text()).toBe("preserve me");
   });
 
-  test("builds but blocks simctl launch for a Run-scheme publishable key", async () => {
+  test("builds but blocks simctl launch for a custom publishable-key source", async () => {
     await createIOSFixture(root, { clerkSDK: false });
     const inspection = await inspectIOSProject(root, { target: "MyApp" });
     const target = inspection.appTargets.find((candidate) => candidate.name === "MyApp")!;
     target.swift.configureCalls.push({
       path: "MyApp/MyAppApp.swift",
-      publishableKeyWiring: "process-info-environment",
+      publishableKeyWiring: "custom",
       startupBinding: "app-init",
     });
     const invocations: Invocation[] = [];
@@ -1749,7 +1749,7 @@ describe("runIOSXcodeVerification", () => {
 
     expect(results.find((result) => result.name === "Xcode build")?.status).toBe("pass");
     expect(results.at(-1)).toMatchObject({ name: "iOS Simulator", status: "fail" });
-    expect(results.at(-1)?.message).toContain("Run-scheme");
+    expect(results.at(-1)?.message).toContain("custom");
     expect(invocations.some((invocation) => invocation.argv.includes("simctl"))).toBe(false);
   });
 

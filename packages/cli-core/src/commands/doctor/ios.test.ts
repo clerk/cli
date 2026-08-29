@@ -409,7 +409,10 @@ describe("runIOSDoctorChecks", () => {
       context(),
       { root, target: "MyApp" },
       dependencies({
-        getNativeSettings: async () => ({ object: "native_settings", api_enabled: false }),
+        getNativeSettings: async () => ({
+          object: "native_settings",
+          api_enabled: false,
+        }),
         listIOSApplications: async () => [],
       }),
     );
@@ -609,7 +612,14 @@ struct ContentView: View {
   });
 
   test("redacts keys while diagnosing a linked development-key mismatch", async () => {
-    const root = await fixture({ complete: true, includeKey: false, localSecrets: true });
+    const root = await fixture({ complete: true, includeKey: false });
+    const localKey = publishableKey("clerk.example.test");
+    const sourcePath = join(root, "MyApp", "MyAppApp.swift");
+    const source = await readFile(sourcePath, "utf8");
+    await writeFile(
+      sourcePath,
+      source.replace('QuickstartLocalSecrets.load().publishableKey ?? ""', `"${localKey}"`),
+    );
     const secret = "sk_test_must_never_escape";
     const audit = await runIOSDoctorChecks(
       context(),
@@ -632,12 +642,16 @@ struct ContentView: View {
     const key = audit.results.find((result) => result.name === "iOS: Linked development key");
     expect(key?.status).toBe("fail");
     expect(key?.message).toContain("different Clerk instance");
-    expect(JSON.stringify(audit.results)).not.toContain("pk_");
+    expect(JSON.stringify(audit.results)).not.toContain(localKey);
     expect(JSON.stringify(audit.results)).not.toContain(secret);
   });
 
-  test("uses the proven LocalSecrets key instead of a stale Run-scheme key", async () => {
-    const root = await fixture({ complete: true, includeKey: false, localSecrets: true });
+  test("uses the explicitly linked application for a custom key source without claiming a match", async () => {
+    const root = await fixture({
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+    });
     const localKey = publishableKey("clerk.example.test");
     const staleSchemeKey = publishableKey("stale-scheme.clerk.example");
     await writeFile(
@@ -662,23 +676,63 @@ struct ContentView: View {
       audit.results.find((result) => result.name === "iOS: Configure Clerk with a publishable key")
         ?.status,
     ).toBe("pass");
-    expect(audit.results.find((result) => result.name === "iOS: Linked development key")).toEqual(
+    expect(audit.results.find((result) => result.name === "iOS: Linked Clerk application")).toEqual(
       expect.objectContaining({
         status: "pass",
-        detail: "Frontend API host: clerk.example.test",
+        message: "Linked Clerk application: selected for remote checks",
+        detail: expect.stringContaining("did not inspect its value or verify"),
+      }),
+    );
+    expect(
+      audit.results.some((result) => result.name === "iOS: Linked development key"),
+    ).toBeFalse();
+    expect(
+      audit.results.find((result) => result.name === "iOS: Add Clerk's associated domain"),
+    ).toEqual(
+      expect.objectContaining({
+        status: "pass",
+        message: "Clerk's associated domain: matches the linked application",
+        detail: expect.stringContaining("custom publishable-key value was not inspected"),
       }),
     );
     expect(inspectedEnvironmentHost).toBe("clerk.example.test");
     expect(audit.inspection.localPublishableKey).toMatchObject({
-      source: "MyApp/LocalSecrets.plist",
-      frontendApiHost: "clerk.example.test",
+      found: false,
     });
     expect(JSON.stringify(audit)).not.toContain(localKey);
     expect(JSON.stringify(audit)).not.toContain(staleSchemeKey);
   });
 
-  test("warns when another same-target configure call is unproven", async () => {
+  test("reports when a custom source's entitlements do not match the linked application", async () => {
     const root = await fixture({ complete: true, includeKey: false, localSecrets: true });
+    const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
+    await writeFile(
+      entitlementsPath,
+      (await readFile(entitlementsPath, "utf8")).replace(
+        "webcredentials:clerk.example.test",
+        "webcredentials:other.clerk.example",
+      ),
+    );
+
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+
+    const domain = audit.results.find(
+      (result) => result.name === "iOS: Add Clerk's associated domain",
+    );
+    expect(domain).toMatchObject({
+      status: "fail",
+      message: "Clerk's associated domain: does not match the linked application",
+    });
+    expect(domain?.remedy).toContain("--app <app_id>");
+    expect(domain?.detail).toContain("custom publishable-key value was not inspected");
+  });
+
+  test("warns when another same-target configure call is unproven", async () => {
+    const root = await fixture({
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+    });
     const appPath = join(root, "MyApp", "MyAppApp.swift");
     const source = await readFile(appPath, "utf8");
     await writeFile(
@@ -696,15 +750,23 @@ struct ContentView: View {
     expect(configuration?.message).toContain("review needed");
     expect(configuration?.detail).toContain("More than one Clerk.configure");
     expect(
-      audit.results.some((result) => result.name === "iOS: Linked development key"),
+      audit.results.some(
+        (result) =>
+          result.name === "iOS: Linked development key" ||
+          result.name === "iOS: Linked Clerk application",
+      ),
     ).toBeFalse();
   });
 
-  test("does not use an available-only key candidate to inspect AuthView methods", async () => {
+  test("does not inspect AuthView methods for an unlinked custom key source", async () => {
     const root = await fixture({ complete: true });
     let environmentCalls = 0;
+    const unlinkedContext: DoctorContext = {
+      ...context(),
+      getProfile: async () => undefined,
+    };
     const audit = await runIOSDoctorChecks(
-      context(),
+      unlinkedContext,
       { root, target: "MyApp" },
       dependencies({
         fetchUserSettings: async () => {
@@ -719,11 +781,19 @@ struct ContentView: View {
       (result) => result.name === "iOS: AuthView authentication methods",
     );
     expect(methods?.status).toBe("warn");
-    expect(methods?.message).toContain("runtime key was not proven");
+    expect(methods?.message).toContain("custom key source has no linked application");
+    expect(methods?.remedy).toContain("clerk link --app <app_id>");
+    expect(
+      audit.results.find((result) => result.name === "iOS: Native Application")?.remedy,
+    ).toContain("clerk link --app <app_id>");
   });
 
   test("fails when AuthView offers Apple but the selected target lacks its entitlement", async () => {
-    const root = await fixture({ complete: true, includeKey: false, localSecrets: true });
+    const root = await fixture({
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+    });
     let environmentCalls = 0;
     let appleHealthCalls = 0;
     const audit = await runIOSDoctorChecks(
@@ -762,7 +832,14 @@ struct ContentView: View {
   });
 
   test("audits public AuthView methods even before the local project is linked", async () => {
-    const root = await fixture({ complete: true, includeKey: false, localSecrets: true });
+    const root = await fixture({ complete: true, includeKey: false });
+    const inlineKey = publishableKey("clerk.example.test");
+    const sourcePath = join(root, "MyApp", "MyAppApp.swift");
+    const source = await readFile(sourcePath, "utf8");
+    await writeFile(
+      sourcePath,
+      source.replace('QuickstartLocalSecrets.load().publishableKey ?? ""', `"${inlineKey}"`),
+    );
     let environmentCalls = 0;
     let nativeCalls = 0;
     const unlinkedContext: DoctorContext = {
@@ -805,6 +882,7 @@ struct ContentView: View {
     expect(audit.results.find((result) => result.name === "iOS: Native Application")?.status).toBe(
       "warn",
     );
+    expect(JSON.stringify(audit.results)).not.toContain(inlineKey);
   });
 
   test("audits a custom Apple flow without treating it as AuthView", async () => {
@@ -853,7 +931,11 @@ struct MyApp: App {
               current: { enabled: false, authenticatable: false },
               blockers: [],
             },
-            automation: { status: "supported", configVersion: "v1_12345678", blockers: [] },
+            automation: {
+              status: "supported",
+              configVersion: "v1_12345678",
+              blockers: [],
+            },
           };
         },
       }),
@@ -908,7 +990,11 @@ struct MyApp: App {
   });
 
   test("warns without leaking transport details when AuthView settings are unavailable", async () => {
-    const root = await fixture({ complete: true, includeKey: false, localSecrets: true });
+    const root = await fixture({
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+    });
     const audit = await runIOSDoctorChecks(
       context(),
       { root, target: "MyApp" },
@@ -999,7 +1085,11 @@ struct MyApp: App {
               current: { enabled: false, authenticatable: false },
               blockers: [],
             },
-            automation: { status: "supported", configVersion: "v1_12345678", blockers: [] },
+            automation: {
+              status: "supported",
+              configVersion: "v1_12345678",
+              blockers: [],
+            },
           };
         },
       }),
@@ -1056,7 +1146,11 @@ struct MyApp: App {
             current: { enabled: true, authenticatable: true },
             blockers: [],
           },
-          automation: { status: "supported", configVersion: "v1_12345678", blockers: [] },
+          automation: {
+            status: "supported",
+            configVersion: "v1_12345678",
+            blockers: [],
+          },
         }),
       }),
     );
