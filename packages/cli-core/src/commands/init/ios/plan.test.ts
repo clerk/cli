@@ -71,7 +71,7 @@ describe("buildIOSSetupPlan", () => {
         startupBinding: "app-init",
       },
     ]);
-    expect(inspection.localPublishableKey.found).toBe(false);
+    expect(inspection.localPublishableKey.state).toBe("unproven");
     expect(plan.steps.find((step) => step.id === "configure-publishable-key")?.status).toBe(
       "satisfied",
     );
@@ -88,12 +88,15 @@ describe("buildIOSSetupPlan", () => {
       startupBinding: "unproven",
     });
 
-    const configureStep = buildIOSSetupPlan(inspection).steps.find(
-      (step) => step.id === "configure-publishable-key",
-    );
+    const plan = buildIOSSetupPlan(inspection);
+    const configureStep = plan.steps.find((step) => step.id === "configure-publishable-key");
 
     expect(configureStep).toMatchObject({ status: "review", automatable: false });
     expect(configureStep?.description).toContain("More than one Clerk.configure");
+    const output = formatIOSSetupPlan(inspection, plan);
+    expect(output).toContain("Publishable key: configuration needs review (value not inspected)");
+    expect(output).not.toContain("found but invalid");
+    expect(output).not.toContain("Publishable key: not found");
   });
 
   test("satisfies configuration and derives the domain from a redacted inline literal", async () => {
@@ -534,7 +537,7 @@ struct MyApp: App {
     expect(plan.steps.find((step) => step.id === "configure-publishable-key")?.status).toBe(
       "satisfied",
     );
-    expect(inspection.localPublishableKey.found).toBe(false);
+    expect(inspection.localPublishableKey.state).toBe("unproven");
   });
 
   test("preserves an arbitrary named key loader without interpreting it", async () => {

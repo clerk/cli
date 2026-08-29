@@ -749,13 +749,7 @@ describe("inspectTargetBuildConfigurations", () => {
         targetName: "Example",
         projectPath: "Example.xcodeproj",
       },
-      localPublishableKey: {
-        evidenceComplete: true,
-        found: false,
-        conflict: false,
-        candidateSources: [],
-        invalidSources: [],
-      },
+      localPublishableKey: { state: "missing" },
       generatedProject: null,
       diagnostics,
     };

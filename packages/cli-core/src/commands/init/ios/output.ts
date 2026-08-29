@@ -81,18 +81,20 @@ export function formatIOSSetupPlan(
       `  ClerkKit: ${selected.packages.clerkKit}; ClerkKitUI: ${selected.packages.clerkKitUI}`,
     );
   }
-  if (inspection.localPublishableKey.frontendApiHost) {
+  const localPublishableKey = inspection.localPublishableKey;
+  if (localPublishableKey.state === "valid") {
     lines.push(
-      `  Publishable key: found (${inspection.localPublishableKey.instanceType}; ${inspection.localPublishableKey.frontendApiHost})`,
+      `  Publishable key: found (${localPublishableKey.instanceType}; ${localPublishableKey.frontendApiHost})`,
     );
   } else if (selected && hasSupportedIOSCustomConfigure(selected)) {
     lines.push("  Publishable key: custom source (value not inspected)");
   } else {
-    const keyStatus = inspection.localPublishableKey.conflict
-      ? "conflicting local sources"
-      : inspection.localPublishableKey.candidateSources.length > 0
-        ? "found but invalid"
-        : "not found";
+    const keyStatus =
+      localPublishableKey.state === "invalid"
+        ? "invalid inline key"
+        : localPublishableKey.state === "unproven"
+          ? "configuration needs review (value not inspected)"
+          : "not found";
     lines.push(`  Publishable key: ${keyStatus}`);
   }
 

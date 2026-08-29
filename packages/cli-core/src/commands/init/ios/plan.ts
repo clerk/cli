@@ -207,6 +207,7 @@ export function buildIOSSetupPlan(
   const customConfigureReady =
     oneStartupConfigure && configureCall?.publishableKeyWiring === "custom";
   const publishableKeyBlocked =
+    oneStartupConfigure &&
     configureCall?.publishableKeyWiring === "inline-literal" &&
     configureCall.inlinePublishableKey?.state === "invalid";
   const directConfigPlanApplies = options.directConfigPlan != null;
@@ -373,9 +374,10 @@ export function buildIOSSetupPlan(
     );
   }
 
-  const expectedDomain = inspection.localPublishableKey.frontendApiHost
-    ? `webcredentials:${inspection.localPublishableKey.frontendApiHost}`
-    : undefined;
+  const expectedDomain =
+    inspection.localPublishableKey.state === "valid"
+      ? `webcredentials:${inspection.localPublishableKey.frontendApiHost}`
+      : undefined;
   const expectedDomainIsSelectedTargetRuntime = inlineConfigureValid;
   const entitlements = target.configurations
     .map((configuration) => configuration.entitlements)
@@ -429,9 +431,7 @@ export function buildIOSSetupPlan(
               ? allEntitlementsPresent && hasUnresolvedAssociatedDomains
                 ? `Some associated-domain values use unresolved build settings. Confirm they expand to ${expectedDomain} in every selected-target configuration.`
                 : `Enable Associated Domains for ${target.name} and add ${expectedDomain} to every selected-target entitlements configuration.`
-              : inspection.localPublishableKey.conflict
-                ? "Local publishable-key sources point at different Clerk instances, so the associated domain cannot be chosen safely. Resolve the key conflict and rerun this plan."
-                : "A valid local publishable key is needed to derive the exact `webcredentials:` Frontend API host. Add the key, then rerun this plan.";
+              : "A valid local publishable key is needed to derive the exact `webcredentials:` Frontend API host. Add the key, then rerun this plan.";
   steps.push(
     step(
       "add-associated-domain",

@@ -226,7 +226,10 @@ function associatedDomainReadiness(
 ): IOSAssociatedDomainReadiness {
   const plan = buildIOSSetupPlan(inspection, { associatedDomainPlan });
   const planStep = plan.steps.find((step) => step.id === "add-associated-domain");
-  const host = inspection.localPublishableKey.frontendApiHost;
+  const host =
+    inspection.localPublishableKey.state === "valid"
+      ? inspection.localPublishableKey.frontendApiHost
+      : undefined;
   const expectedDomain = host ? `webcredentials:${host}` : undefined;
   const files =
     associatedDomainPlan?.files.map((file) => file.path) ??
