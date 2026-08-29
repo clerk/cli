@@ -9,6 +9,7 @@ import {
   type NativeSettings,
 } from "../../lib/plapi.ts";
 import { planIOSAppleEntitlement } from "../init/ios/apple-entitlement.ts";
+import { associatedDomainMatches } from "../init/ios/associated-domain.ts";
 import { auditIOSPrebuiltAuthEnvironment } from "../init/ios/prebuilt-auth-environment.ts";
 import { inspectIOSProject } from "../init/ios/inspect.ts";
 import { auditIOSNativeAppleHealth } from "../init/ios/native-apple.ts";
@@ -16,6 +17,7 @@ import { buildIOSNativeReadinessAudit } from "../init/ios/native-readiness.ts";
 import { auditIOSNativeRemoteSetup } from "../init/ios/native-remote.ts";
 import { planIOSSDKInstall, type IOSSDKInstallPlan } from "../init/ios/install-sdk.ts";
 import { buildIOSSetupPlan } from "../init/ios/plan.ts";
+import { hasSupportedIOSCustomConfigure } from "../init/ios/products.ts";
 import type { IOSAppTarget, IOSProjectInspectionResult, IOSSetupStep } from "../init/ios/types.ts";
 import type { CheckResult, DoctorContext } from "./types.ts";
 
@@ -24,6 +26,7 @@ const AUTH_FLOW_REMEDY =
   "Integrate authentication at the app's intended signed-out entry point without replacing existing application UI: present ClerkKitUI's `AuthView`, or build a custom ClerkKit sign-in/sign-up flow.";
 const REMOTE_REMEDY =
   "Run `clerk init --target <target>` to preview and apply the missing Native Application setup.";
+const ASSOCIATED_DOMAIN_RESULT_NAME = "iOS: Add Clerk's associated domain";
 
 export interface IOSDoctorOptions {
   root: string;
@@ -66,35 +69,42 @@ function selectedTarget(inspection: IOSProjectInspectionResult): IOSAppTarget | 
 }
 
 async function authViewEnvironmentResult(
-  inspection: IOSProjectInspectionResult,
   target: IOSAppTarget,
   dependencies: IOSDoctorDependencies,
+  options: {
+    configureStatus: IOSSetupStep["status"] | undefined;
+    fapiHost?: string;
+    customSource: boolean;
+    linked: boolean;
+  },
 ): Promise<CheckResult | undefined> {
   if (target.swift.authViewReferences.length === 0) return undefined;
 
   const name = "iOS: AuthView authentication methods";
-  const configureStep = buildIOSSetupPlan(inspection).steps.find(
-    (step) => step.id === "configure-publishable-key",
-  );
-  const fapiHost = inspection.localPublishableKey.frontendApiHost;
-  if (configureStep?.status !== "satisfied" || !fapiHost) {
+  if (options.configureStatus !== "satisfied" || !options.fapiHost) {
+    const customUnlinked = options.customSource && !options.linked;
     return {
       name,
       status: "warn",
-      message: "AuthView methods: remote state not inspected (runtime key was not proven)",
-      remedy: LOCAL_STEP_REMEDY,
+      message: customUnlinked
+        ? "AuthView methods: remote state not inspected (custom key source has no linked application)"
+        : "AuthView methods: remote state not inspected (runtime environment was not proven)",
+      remedy: customUnlinked
+        ? "Run `clerk link --app <app_id>` for the intended Clerk application, then rerun `clerk doctor`."
+        : LOCAL_STEP_REMEDY,
     };
   }
 
   try {
     const environment = dependencies.auditIOSPrebuiltAuthEnvironment(
-      await dependencies.fetchUserSettings(fapiHost, {}),
+      await dependencies.fetchUserSettings(options.fapiHost, {}),
     );
+    const linkedApplicationSuffix = options.customSource ? " in the linked application" : "";
     if (environment.apple === "blocked") {
       return {
         name,
         status: "fail",
-        message: "AuthView methods: Clerk returned an unsupported Apple provider state",
+        message: `AuthView methods: Clerk returned an unsupported Apple provider state${linkedApplicationSuffix}`,
         remedy: "Review the Apple connection in Clerk Dashboard, then rerun `clerk doctor`.",
       };
     }
@@ -102,7 +112,7 @@ async function authViewEnvironmentResult(
       return {
         name,
         status: "pass",
-        message: "AuthView methods: native Apple sign-in is not currently offered",
+        message: `AuthView methods: native Apple sign-in is not currently offered${linkedApplicationSuffix}`,
       };
     }
 
@@ -115,7 +125,7 @@ async function authViewEnvironmentResult(
       ? {
           name,
           status: "pass",
-          message: "AuthView methods: Apple is enabled and the local entitlement is present",
+          message: `AuthView methods: Apple is enabled${linkedApplicationSuffix} and the local entitlement is present`,
         }
       : {
           name,
@@ -317,6 +327,90 @@ function linkedDevelopmentKeyResult(
   }
 }
 
+function linkedCustomApplicationResult(
+  application: Application,
+  developmentInstanceId: string,
+): { result: CheckResult; fapiHost?: string } {
+  const name = "iOS: Linked Clerk application";
+  const instance = application.instances.find(
+    (candidate) => candidate.instance_id === developmentInstanceId,
+  );
+  if (!instance) {
+    return {
+      result: {
+        name,
+        status: "fail",
+        message: "Linked Clerk application: linked development instance is stale",
+        remedy: "Run `clerk link --app <app_id>` to select a valid application.",
+      },
+    };
+  }
+
+  try {
+    const linked = decodePublishableKey(instance.publishable_key);
+    if (linked.instanceType !== "development") throw new Error("not a development key");
+    return {
+      result: {
+        name,
+        status: "pass",
+        message: "Linked Clerk application: selected for remote checks",
+        detail:
+          "Clerk.configure uses a custom publishable-key source. Doctor did not inspect its value or verify that it belongs to the linked application.",
+      },
+      fapiHost: linked.fapiHost,
+    };
+  } catch {
+    return {
+      result: {
+        name,
+        status: "fail",
+        message: "Linked Clerk application: Clerk returned an invalid development publishable key",
+        remedy: "Relink the project or contact Clerk support before changing the Xcode target.",
+      },
+    };
+  }
+}
+
+function linkedCustomAssociatedDomainResult(
+  target: IOSAppTarget,
+  fapiHost: string,
+): CheckResult | undefined {
+  if (
+    target.configurations.length === 0 ||
+    target.configurations.some(
+      (configuration) =>
+        configuration.entitlements == null ||
+        configuration.entitlements.unresolvedAssociatedDomains.length > 0,
+    )
+  ) {
+    return undefined;
+  }
+
+  const expectedDomain = `webcredentials:${fapiHost}`;
+  const configured = target.configurations.every((configuration) =>
+    configuration.entitlements!.associatedDomains.some((domain) =>
+      associatedDomainMatches(domain, expectedDomain),
+    ),
+  );
+  return configured
+    ? {
+        name: ASSOCIATED_DOMAIN_RESULT_NAME,
+        status: "pass",
+        message: "Clerk's associated domain: matches the linked application",
+        detail:
+          "The custom publishable-key value was not inspected; this verifies the entitlements against the explicitly linked application.",
+      }
+    : {
+        name: ASSOCIATED_DOMAIN_RESULT_NAME,
+        status: "fail",
+        message: "Clerk's associated domain: does not match the linked application",
+        detail:
+          "The custom publishable-key value was not inspected; this check uses the explicitly linked application.",
+        remedy:
+          "Run `clerk init --target <target> --app <app_id>` to preview and add the linked application's exact domain.",
+      };
+}
+
 async function remoteResults(
   ctx: DoctorContext,
   inspection: IOSProjectInspectionResult,
@@ -324,9 +418,21 @@ async function remoteResults(
 ): Promise<CheckResult[]> {
   const readiness = buildIOSNativeReadinessAudit(inspection);
   const target = selectedTarget(inspection);
+  const configureStep = buildIOSSetupPlan(inspection).steps.find(
+    (step) => step.id === "configure-publishable-key",
+  );
+  const customSource =
+    target != null &&
+    configureStep?.status === "satisfied" &&
+    hasSupportedIOSCustomConfigure(target);
   const preliminaryResults: CheckResult[] = [];
-  if (target) {
-    const authView = await authViewEnvironmentResult(inspection, target, dependencies);
+  if (target && !customSource) {
+    const authView = await authViewEnvironmentResult(target, dependencies, {
+      configureStatus: configureStep?.status,
+      fapiHost: inspection.localPublishableKey.frontendApiHost,
+      customSource: false,
+      linked: false,
+    });
     if (authView) preliminaryResults.push(authView);
   }
 
@@ -343,13 +449,23 @@ async function remoteResults(
 
   const profile = await ctx.getProfile();
   if (!profile) {
+    if (target && customSource) {
+      const authView = await authViewEnvironmentResult(target, dependencies, {
+        configureStatus: configureStep?.status,
+        customSource: true,
+        linked: false,
+      });
+      if (authView) preliminaryResults.push(authView);
+    }
     return [
       ...preliminaryResults,
       {
         name: "iOS: Native Application",
         status: "warn",
         message: "Native Application: remote state not inspected (project is not linked)",
-        remedy: "Run `clerk link`, then rerun `clerk doctor`.",
+        remedy: customSource
+          ? "Run `clerk link --app <app_id>` for the intended Clerk application, then rerun `clerk doctor`."
+          : "Run `clerk link`, then rerun `clerk doctor`.",
       },
     ];
   }
@@ -370,7 +486,9 @@ async function remoteResults(
   const instanceId = profile.profile.instances.development;
   try {
     const [application, remotePlan] = await Promise.all([
-      dependencies.fetchApplication(applicationId, { includeSecretKeys: false }),
+      dependencies.fetchApplication(applicationId, {
+        includeSecretKeys: false,
+      }),
       auditIOSNativeRemoteSetup(
         { applicationId, instanceId, target: readiness.target },
         {
@@ -379,14 +497,32 @@ async function remoteResults(
         },
       ),
     ]);
-    const configureStep = buildIOSSetupPlan(inspection).steps.find(
-      (step) => step.id === "configure-publishable-key",
-    );
-    const linkedKeyResult =
-      configureStep?.status === "satisfied"
+    const customApplication = customSource
+      ? linkedCustomApplicationResult(application, instanceId)
+      : undefined;
+    if (target && customSource) {
+      const authView = await authViewEnvironmentResult(target, dependencies, {
+        configureStatus: configureStep?.status,
+        fapiHost: customApplication?.fapiHost,
+        customSource: true,
+        linked: true,
+      });
+      if (authView) preliminaryResults.push(authView);
+    }
+    const linkedResult =
+      customApplication?.result ??
+      (configureStep?.status === "satisfied"
         ? linkedDevelopmentKeyResult(inspection, application, instanceId)
+        : undefined);
+    const customAssociatedDomain =
+      target && customApplication?.fapiHost
+        ? linkedCustomAssociatedDomainResult(target, customApplication.fapiHost)
         : undefined;
-    const results = [...preliminaryResults, ...(linkedKeyResult ? [linkedKeyResult] : [])];
+    const results = [
+      ...preliminaryResults,
+      ...(linkedResult ? [linkedResult] : []),
+      ...(customAssociatedDomain ? [customAssociatedDomain] : []),
+    ];
     if (remotePlan.status === "satisfied") {
       results.push({
         name: "iOS: Native Application",
@@ -594,6 +730,16 @@ export async function runIOSDoctorChecks(
     const apple = await appleEntitlementResult(inspection, target, dependencies);
     if (apple) results.splice(Math.max(0, results.length - 1), 0, apple);
   }
-  results.push(...(await remoteResults(ctx, inspection, dependencies)));
+  for (const remoteResult of await remoteResults(ctx, inspection, dependencies)) {
+    const existingIndex =
+      remoteResult.name === ASSOCIATED_DOMAIN_RESULT_NAME
+        ? results.findIndex((result) => result.name === remoteResult.name)
+        : -1;
+    if (existingIndex === -1) {
+      results.push(remoteResult);
+    } else {
+      results[existingIndex] = remoteResult;
+    }
+  }
   return { inspection, results };
 }
