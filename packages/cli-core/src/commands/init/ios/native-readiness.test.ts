@@ -73,6 +73,7 @@ describe("buildIOSNativeReadinessAudit", () => {
         projectPath: "MyApp.xcodeproj",
         targetId: IOS_FIXTURE_IDS.appTarget,
         targetName: "MyApp",
+        platform: "ios",
         bundleIdentifier: { status: "resolved", value: "com.example.MyApp" },
         appIdPrefix: {
           status: "resolved",
