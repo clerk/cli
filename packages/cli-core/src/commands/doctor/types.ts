@@ -78,6 +78,6 @@ export interface DoctorOptions {
   json?: boolean;
   spotlight?: boolean;
   fix?: boolean;
-  /** Exact Xcode application target name or PBX object ID. */
+  /** Exact iOS or macOS application target name or PBX object ID. */
   target?: string;
 }
