@@ -578,6 +578,26 @@ describe("iOS Clerk SDK installer", () => {
     expect((await planIOSSDKInstall(installOptions(root))).status).toBe("satisfied");
   });
 
+  test.each<{ description: string; platformFilter: unknown }>([
+    { description: "array-valued", platformFilter: ["ios"] },
+    { description: "object-valued", platformFilter: { filter: "ios" } },
+  ])(
+    "blocks an $description singular platform filter without writing",
+    async ({ platformFilter }) => {
+      const root = await fixture({ clerkSDK: "core-only" });
+      await transformProject(root, (graph) => {
+        graph.objects[IOS_FIXTURE_IDS.clerkKitBuildFile]!.platformFilter = platformFilter;
+      });
+      const before = await readFile(pbxprojPath(root));
+
+      const plan = await planIOSSDKInstall(installOptions(root));
+
+      expect(plan.status).toBe("blocked");
+      expect(plan.blockers[0]?.code).toBe("unsupported-project");
+      expect(await readFile(pbxprojPath(root))).toEqual(before);
+    },
+  );
+
   test("reuses a verified local package and canonical remote URL variants", async () => {
     const localRoot = await fixture();
     await mkdir(join(localRoot, "LocalClerk", "Sources", "ClerkKit"), { recursive: true });

@@ -550,7 +550,11 @@ function buildFileIOSApplicability(object: PbxObject): {
   ) {
     return { applies: false, recognized: false };
   }
-  const platformFilter = asString(object.platformFilter);
+  const rawPlatformFilter = object.platformFilter;
+  const platformFilter = asString(rawPlatformFilter);
+  if (Object.hasOwn(object, "platformFilter") && platformFilter == null) {
+    return { applies: false, recognized: false };
+  }
   const filters = [...asStringArray(rawFilters), ...(platformFilter ? [platformFilter] : [])];
   if (filters.length === 0) return { applies: true, recognized: true };
   if (filters.some((filter) => /(?:^|[^a-z])(?:ios|iphone)/i.test(filter))) {
