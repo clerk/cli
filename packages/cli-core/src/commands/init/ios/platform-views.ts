@@ -75,6 +75,8 @@ export interface IOSPlatformSwiftSnapshot {
 export interface IOSPlatformTargetViewSnapshot {
   platform: IOSNativePlatform;
   productDecision: ClerkKitUIInstallDecision;
+  /** Any exact or malformed Sign in with Apple entitlement evidence for this platform. */
+  hasAppleEntitlementIntent: boolean;
   swift: IOSPlatformSwiftSnapshot;
 }
 
@@ -300,6 +302,14 @@ function literalAppIdPrefixes(target: IOSAppTarget): string[] {
   ].sort();
 }
 
+function hasAppleEntitlementIntent(target: IOSAppTarget): boolean {
+  return target.configurations.some(
+    (configuration) =>
+      configuration.entitlements != null &&
+      configuration.entitlements.signInWithAppleState !== "absent",
+  );
+}
+
 function aggregateProductDecision(
   views: readonly IOSPlatformTargetViewSnapshot[],
 ): ClerkKitUIInstallDecision {
@@ -475,6 +485,7 @@ export async function inspectIOSPlatformViews(
     .map(({ platform, target }): IOSPlatformTargetViewSnapshot => ({
       platform,
       productDecision: clerkKitUIInstallDecision(target),
+      hasAppleEntitlementIntent: hasAppleEntitlementIntent(target),
       swift: swiftSnapshot(target.swift),
     }))
     .sort(
@@ -541,6 +552,18 @@ export function iosPlatformViewsSnapshotsEqual(
   right: IOSPlatformViewsSnapshot,
 ): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+export function iosPlatformViewsHaveAppleEntitlementIntent(
+  snapshot: IOSPlatformViewsSnapshot,
+): boolean {
+  return snapshot.platforms.some((view) => view.hasAppleEntitlementIntent);
+}
+
+export function iosPlatformViewsHaveNativeAppleIntent(snapshot: IOSPlatformViewsSnapshot): boolean {
+  return snapshot.platforms.some(
+    (view) => view.hasAppleEntitlementIntent || view.swift.appleAuthReferences.length > 0,
+  );
 }
 
 /**

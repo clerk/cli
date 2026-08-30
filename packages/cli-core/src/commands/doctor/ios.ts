@@ -23,6 +23,8 @@ import {
 import { buildIOSSetupPlan } from "../init/ios/plan.ts";
 import {
   inspectIOSPlatformViews,
+  iosPlatformViewsHaveAppleEntitlementIntent,
+  iosPlatformViewsHaveNativeAppleIntent,
   type IOSPlatformViewsSnapshot,
 } from "../init/ios/platform-views.ts";
 import { hasSupportedIOSCustomConfigure } from "../init/ios/products.ts";
@@ -283,15 +285,10 @@ function localResults(
 async function appleEntitlementResult(
   inspection: IOSProjectInspectionResult,
   target: IOSAppTarget,
+  platformViews: IOSPlatformViewsSnapshot,
   dependencies: IOSDoctorDependencies,
 ): Promise<CheckResult | undefined> {
-  const hasCustomAppleIntent = target.swift.appleAuthReferences.length > 0;
-  const anyAppleEntitlement = target.configurations.some(
-    (configuration) =>
-      configuration.entitlements !== undefined &&
-      configuration.entitlements.signInWithAppleState !== "absent",
-  );
-  if (!hasCustomAppleIntent && !anyAppleEntitlement) return undefined;
+  if (!iosPlatformViewsHaveNativeAppleIntent(platformViews)) return undefined;
 
   const plan = await dependencies.planIOSAppleEntitlement({
     root: inspection.root,
@@ -611,14 +608,18 @@ async function remoteResults(
     }
 
     const bundleIdentifier = readiness.target.bundleIdentifier;
-    const hasAppleEntitlement = target?.configurations.some(
-      (configuration) =>
-        configuration.entitlements !== undefined &&
-        configuration.entitlements.signInWithAppleState !== "absent",
-    );
-    const hasCustomAppleIntent = (target?.swift.appleAuthReferences.length ?? 0) > 0;
+    const hasAppleEntitlement = platformViews
+      ? iosPlatformViewsHaveAppleEntitlementIntent(platformViews)
+      : target?.configurations.some(
+          (configuration) =>
+            configuration.entitlements != null &&
+            configuration.entitlements.signInWithAppleState !== "absent",
+        ) === true;
+    const hasNativeAppleIntent = platformViews
+      ? iosPlatformViewsHaveNativeAppleIntent(platformViews)
+      : hasAppleEntitlement || (target?.swift.appleAuthReferences.length ?? 0) > 0;
     if (
-      (hasAppleEntitlement || hasCustomAppleIntent) &&
+      hasNativeAppleIntent &&
       bundleIdentifier.status === "resolved" &&
       remotePlan.registration === "satisfied"
     ) {
@@ -829,7 +830,9 @@ export async function runIOSDoctorChecks(
     return { inspection, results };
   }
   if (target) {
-    const apple = await appleEntitlementResult(inspection, target, dependencies);
+    const apple =
+      platformViews &&
+      (await appleEntitlementResult(inspection, target, platformViews, dependencies));
     if (apple) results.splice(Math.max(0, results.length - 1), 0, apple);
   }
   if (target && !platformViews) return { inspection, results };
