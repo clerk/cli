@@ -23,7 +23,7 @@ const PLATFORMS = [
     instructions: [
       "ClerkKit and ClerkKitUI linked to MyApp",
       "Clerk configured in MyApp/MyAppApp.swift",
-      "Clerk Native API and iOS application registration verified",
+      "Clerk Native API and application registration verified",
     ],
     expectedGitEntries: ["M MyApp.xcodeproj/project.pbxproj", "M MyApp/MyAppApp.swift"],
   },
