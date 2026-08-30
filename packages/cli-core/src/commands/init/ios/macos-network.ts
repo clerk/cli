@@ -528,23 +528,6 @@ export async function planMacOSNetworkCapability(
     );
   }
 
-  const outgoingStates = target.configurations.map((configuration) =>
-    booleanBuildSetting(configuration.outgoingNetworkConnections),
-  );
-  const outgoingSet = uniqueStates(outgoingStates);
-  if (outgoingSet.has("invalid")) {
-    return blockedPlan(
-      normalized,
-      [
-        blocker(
-          "unresolved-network-setting",
-          "ENABLE_OUTGOING_NETWORK_CONNECTIONS could not be resolved to YES, NO, or absence for every macOS build context.",
-        ),
-      ],
-      target.name,
-    );
-  }
-
   const resolvedPaths = target.configurations.flatMap((configuration) =>
     configuration.entitlementsPath.state === "resolved"
       ? [configuration.entitlementsPath.value]
@@ -669,6 +652,23 @@ export async function planMacOSNetworkCapability(
       actions: [],
       blockers: [],
     };
+  }
+
+  const outgoingStates = target.configurations.map((configuration) =>
+    booleanBuildSetting(configuration.outgoingNetworkConnections),
+  );
+  const outgoingSet = uniqueStates(outgoingStates);
+  if (outgoingSet.has("invalid")) {
+    return blockedPlan(
+      normalized,
+      [
+        blocker(
+          "unresolved-network-setting",
+          "ENABLE_OUTGOING_NETWORK_CONNECTIONS could not be resolved to YES, NO, or absence for every macOS build context.",
+        ),
+      ],
+      target.name,
+    );
   }
 
   if (outgoingSet.has("false")) {
