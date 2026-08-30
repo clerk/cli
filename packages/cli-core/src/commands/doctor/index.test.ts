@@ -35,7 +35,14 @@ const UNSUPPORTED_XCODE_INSPECTION = {
   selection: { state: "none" },
   localPublishableKey: { state: "missing" },
   generatedProject: null,
-  diagnostics: [],
+  diagnostics: [
+    {
+      code: "xcode.no-ios-app-target",
+      severity: "error",
+      message: "No supported iOS or macOS application target was found.",
+      evidence: [],
+    },
+  ],
 } as IOSProjectInspectionResult;
 const MISSING_TARGET_INSPECTION = {
   ...UNSUPPORTED_XCODE_INSPECTION,
@@ -121,6 +128,57 @@ describe("Apple-native framework routing", () => {
     expect(nativeChecks).toBeFalse();
     expect(nativeAuditCalls).toBe(0);
     expect(results.map((result) => result.name)).toEqual(["Environment variables"]);
+  });
+
+  test.each([
+    ["xcode.malformed-project", "Could not parse App.xcodeproj/project.pbxproj."],
+    ["xcode.missing-project-file", "App.xcodeproj does not contain project.pbxproj."],
+  ] as const)("fails native inspection for %s", async (code, message) => {
+    const failedInspection = {
+      ...UNSUPPORTED_XCODE_INSPECTION,
+      diagnostics: [
+        {
+          code,
+          severity: "error" as const,
+          message,
+          remedy: "Repair the Xcode project file.",
+          evidence: [],
+        },
+      ],
+    } as IOSProjectInspectionResult;
+    let nativeChecks = false;
+    let nativeAuditCalls = 0;
+
+    const results = await runChecks(
+      DOCTOR_CONTEXT,
+      {},
+      {
+        dependencies: runDependencies({
+          inspectIOSProject: async () => failedInspection,
+          getDoctorChecks: (native) => {
+            nativeChecks = native;
+            return [async () => passingResult(native ? "Native" : "Environment variables")];
+          },
+          runIOSDoctorChecks: async () => {
+            nativeAuditCalls++;
+            return { inspection: failedInspection, results: [] };
+          },
+        }),
+      },
+    );
+
+    expect(nativeChecks).toBeTrue();
+    expect(nativeAuditCalls).toBe(0);
+    expect(results).toEqual([
+      passingResult("Native"),
+      {
+        name: "Apple-native inspection",
+        status: "fail",
+        message: "Apple-native project inspection failed",
+        detail: message,
+        remedy: "Repair the Xcode project file.",
+      },
+    ]);
   });
 
   test("routes a missing explicit target through the native audit", async () => {
