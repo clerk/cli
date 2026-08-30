@@ -53,7 +53,16 @@ export function formatIOSSetupPlan(
             target.id === selection.targetId && target.projectPath === selection.projectPath,
         )
       : undefined;
-  const platformLabel = selected?.platform === "macos" ? "macOS" : "iOS";
+  const platform = selected
+    ? selected.platformEvidenceComplete
+      ? selected.platform
+      : undefined
+    : inspection.platform === "ios" || inspection.platform === "macos"
+      ? inspection.platform
+      : undefined;
+  const platformLabel =
+    platform === "macos" ? "macOS" : platform === "ios" ? "iOS" : "native Apple";
+  const readinessLabel = platform == null ? "Native Apple" : `Native ${platformLabel}`;
   const lines = ["", `${platformLabel} setup plan (read-only)`, `  Root: ${inspection.root}`];
 
   if (inspection.selection.state === "selected") {
@@ -119,8 +128,8 @@ export function formatIOSSetupPlan(
 
   const nativeReadiness =
     options.nativeReadiness ?? buildIOSNativeReadinessAudit(inspection, options);
-  lines.push("", `  Native ${platformLabel} readiness:`);
-  if (selected?.platform !== "macos") {
+  lines.push("", `  ${readinessLabel} readiness:`);
+  if (platform === "ios") {
     lines.push(
       `    - Associated Domains: ${nativeReadiness.associatedDomain.status}${nativeReadiness.associatedDomain.automatable ? " (clerk init can apply)" : ""}`,
     );
