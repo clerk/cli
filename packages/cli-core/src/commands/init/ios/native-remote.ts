@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { bundleIdentifiersEqual } from "../../../lib/apple-native-identity.ts";
 import { dim, yellow } from "../../../lib/color.ts";
 import {
   ApiError,
@@ -343,7 +344,7 @@ export function buildIOSNativeRemotePlan(options: {
   const registrations = validateIOSApplications(options.registrations);
   const identity = localIdentity(options.target);
   const blockers = [...identity.blockers];
-  const bundleIdentifier = identity.bundleIdentifier;
+  const localBundleIdentifier = identity.bundleIdentifier;
   const explicitPrefix = validateAppIdPrefix(options.requestedAppIdPrefix);
   if (options.requestedAppIdPrefix != null && !explicitPrefix) {
     blockers.push(
@@ -360,14 +361,20 @@ export function buildIOSNativeRemotePlan(options: {
     blockers.push(
       blocker(
         "app-id-prefix-conflict",
-        `The supplied App ID Prefix does not match the literal prefix proven for ${bundleIdentifier ?? "the selected target"}.`,
+        `The supplied App ID Prefix does not match the literal prefix proven for ${localBundleIdentifier ?? "the selected target"}.`,
       ),
     );
   }
 
-  const matchingBundle = bundleIdentifier
-    ? registrations.filter((registration) => registration.bundle_id === bundleIdentifier)
+  const matchingBundle = localBundleIdentifier
+    ? registrations.filter((registration) =>
+        bundleIdentifiersEqual(registration.bundle_id, localBundleIdentifier),
+      )
     : [];
+  // The backend currently uses the registered Bundle ID's original spelling
+  // for the native Apple lookup. Once a case-insensitive match exists, carry
+  // that authoritative stored spelling through the rest of reconciliation.
+  const bundleIdentifier = matchingBundle[0]?.bundle_id ?? localBundleIdentifier;
   const invalidRegisteredPrefixes = matchingBundle.filter(
     (registration) =>
       validateAppIdPrefix(registration.app_id_prefix) !== registration.app_id_prefix,
@@ -718,12 +725,12 @@ function localTargetStillMatchesApprovedIdentity(
     !plan.bundleIdentifier ||
     !plan.appIdPrefix ||
     approved.bundleIdentifier.status !== "resolved" ||
-    approved.bundleIdentifier.value !== plan.bundleIdentifier ||
+    !bundleIdentifiersEqual(approved.bundleIdentifier.value, plan.bundleIdentifier) ||
     current.status !== "selected" ||
     current.projectPath !== approved.projectPath ||
     current.targetId !== approved.targetId ||
     current.bundleIdentifier.status !== "resolved" ||
-    current.bundleIdentifier.value !== plan.bundleIdentifier
+    !bundleIdentifiersEqual(current.bundleIdentifier.value, plan.bundleIdentifier)
   ) {
     return false;
   }
@@ -774,7 +781,7 @@ function revalidatedActionSetIsAuthorized(
     current.status === "blocked" ||
     current.applicationId !== approved.applicationId ||
     current.instanceId !== approved.instanceId ||
-    current.bundleIdentifier !== approved.bundleIdentifier ||
+    !bundleIdentifiersEqual(current.bundleIdentifier, approved.bundleIdentifier) ||
     current.appIdPrefix !== approved.appIdPrefix
   ) {
     return false;
@@ -890,7 +897,7 @@ export async function applyIOSNativeRemoteSetup(
         ),
       );
       if (
-        created.bundle_id !== plan.bundleIdentifier ||
+        !bundleIdentifiersEqual(created.bundle_id, plan.bundleIdentifier) ||
         created.app_id_prefix !== plan.appIdPrefix
       ) {
         throw iosRemoteError(
@@ -917,7 +924,7 @@ export async function applyIOSNativeRemoteSetup(
       }
       const exact = registrations.some(
         (registration) =>
-          registration.bundle_id === plan.bundleIdentifier &&
+          bundleIdentifiersEqual(registration.bundle_id, plan.bundleIdentifier) &&
           registration.app_id_prefix === plan.appIdPrefix,
       );
       if (!exact) {

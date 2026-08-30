@@ -227,6 +227,15 @@ describe("deploy OAuth provider descriptors", () => {
       }),
     ).toEqual({ status: "ready", bundleId: "com.example.app" });
     expect(
+      inspectNativeAppleConfiguration(config, apple, [iosApplication("COM.EXAMPLE.APP")], {
+        object: "native_settings",
+        api_enabled: true,
+      }),
+    ).toEqual({
+      status: "registration-bundle-case-mismatch",
+      bundleId: "com.example.app",
+    });
+    expect(
       inspectNativeAppleConfiguration(config, apple, [iosApplication("com.example.other")], {
         object: "native_settings",
         api_enabled: true,

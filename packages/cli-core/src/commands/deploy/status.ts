@@ -80,6 +80,7 @@ type NativeAppleReadinessIssue = {
   reason:
     | "authentication-disabled"
     | "registration-missing"
+    | "registration-bundle-case-mismatch"
     | "registration-ambiguous"
     | "native-api-disabled"
     | "verification-unavailable";
@@ -549,6 +550,7 @@ function isNativeAppleReadinessIssue(
   return (
     status === "authentication-disabled" ||
     status === "registration-missing" ||
+    status === "registration-bundle-case-mismatch" ||
     status === "registration-ambiguous" ||
     status === "native-api-disabled" ||
     status === "verification-unavailable"
@@ -566,6 +568,12 @@ function nativeAppleReadinessNextAction(issue: NativeAppleReadinessIssue): strin
     return (
       `Native Sign in with Apple has more than one App ID Prefix registration for ${issue.bundleId}. ` +
       "Review the existing registrations at https://dashboard.clerk.com/~/native-applications before continuing; do not create another registration."
+    );
+  }
+  if (issue.reason === "registration-bundle-case-mismatch") {
+    return (
+      `The Apple connection Bundle ID ${issue.bundleId} differs only by letter casing from its existing iOS Native Application registration. ` +
+      "Update the Apple connection to use the registration's exact Bundle ID spelling in the Clerk Dashboard; do not create another registration."
     );
   }
   if (issue.reason === "authentication-disabled") {

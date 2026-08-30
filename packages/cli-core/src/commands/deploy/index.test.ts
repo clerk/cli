@@ -1308,6 +1308,53 @@ describe("deploy", () => {
       expect(err).not.toContain("Configure Apple OAuth for production");
     });
 
+    test("refuses case-only Apple registration mismatches without suggesting another registration", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
+      });
+      mockLiveProduction({
+        instanceId: "ins_prod_native_apple",
+        developmentConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+        productionConfig: {
+          connection_oauth_apple: {
+            enabled: true,
+            authenticatable: true,
+            bundle_id: "com.example.native",
+          },
+        },
+      });
+      mockListIOSApplications.mockResolvedValue([
+        {
+          object: "ios_application",
+          id: "ios_native",
+          app_id_prefix: "ABCDE12345",
+          bundle_id: "com.Example.Native",
+          created_at: 1,
+          updated_at: 1,
+        },
+      ]);
+      mockIsAgent.mockReturnValue(false);
+
+      const thrown = await runDeploy({}).catch((error: unknown) => error);
+
+      expect(thrown).toBeInstanceOf(CliError);
+      const message = (thrown as Error).message;
+      expect(message).toContain("letter casing does not exactly match");
+      expect(message).toContain("registration's exact Bundle ID spelling");
+      expect(message).toContain("Do not create another registration");
+      expect(message).not.toContain("Register it at");
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockPassword).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+    });
+
     test("refuses ambiguous App ID Prefix registrations for native-only Apple", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },

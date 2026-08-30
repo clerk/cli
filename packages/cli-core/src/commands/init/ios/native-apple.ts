@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { bundleIdentifiersEqual } from "../../../lib/apple-native-identity.ts";
 import { dim, yellow } from "../../../lib/color.ts";
 import {
   ApiError,
@@ -318,7 +319,7 @@ export function buildIOSNativeApplePlan(
     parsed.status === "valid" &&
     parsed.bundleIdentifier &&
     bundleIdentifier &&
-    parsed.bundleIdentifier !== bundleIdentifier
+    !bundleIdentifiersEqual(parsed.bundleIdentifier, bundleIdentifier)
   ) {
     blockers.push(
       blocker(
@@ -506,7 +507,9 @@ function validatePatchProjection(
         ? "satisfied"
         : before.bundleIdentifier == null
           ? "required"
-          : "blocked";
+          : bundleIdentifiersEqual(before.bundleIdentifier, bundleIdentifier)
+            ? "required"
+            : "blocked";
   if (
     before.status !== "valid" ||
     after.status !== "valid" ||
@@ -627,7 +630,7 @@ function planIdentityMatches(approved: IOSNativeApplePlan, current: IOSNativeApp
   return (
     current.applicationId === approved.applicationId &&
     current.instanceId === approved.instanceId &&
-    current.bundleIdentifier === approved.bundleIdentifier
+    bundleIdentifiersEqual(current.bundleIdentifier, approved.bundleIdentifier)
   );
 }
 

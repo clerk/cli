@@ -3,6 +3,10 @@ import { lstat, mkdir, readFile, rmdir, unlink, writeFile } from "node:fs/promis
 import { homedir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  bundleIdentifiersEqual,
+  normalizeBundleIdentifierIdentity,
+} from "../../../lib/apple-native-identity.ts";
 import { getConfigFile } from "../../../lib/config.ts";
 import { withHomeFsAccess } from "../../../lib/host-execution.ts";
 
@@ -76,7 +80,7 @@ function retryFingerprint(identity: IOSNativeRegistrationRetryIdentity): string 
       JSON.stringify({
         applicationId: identity.applicationId,
         instanceId: identity.instanceId,
-        bundleIdentifier: identity.bundleIdentifier,
+        bundleIdentifier: normalizeBundleIdentifierIdentity(identity.bundleIdentifier),
         appIdPrefix: identity.appIdPrefix,
       }),
     )
@@ -210,7 +214,8 @@ function isRetryRecord(
     record.kind === "clerk-ios-native-registration-retry" &&
     record.applicationId === identity.applicationId &&
     record.instanceId === identity.instanceId &&
-    record.bundleIdentifier === identity.bundleIdentifier &&
+    typeof record.bundleIdentifier === "string" &&
+    bundleIdentifiersEqual(record.bundleIdentifier, identity.bundleIdentifier) &&
     record.appIdPrefix === identity.appIdPrefix &&
     typeof record.idempotencyKey === "string" &&
     IDEMPOTENCY_KEY_PATTERN.test(record.idempotencyKey) &&
@@ -278,7 +283,7 @@ async function getOrCreateRetryKey(
     kind: "clerk-ios-native-registration-retry",
     applicationId: identity.applicationId,
     instanceId: identity.instanceId,
-    bundleIdentifier: identity.bundleIdentifier,
+    bundleIdentifier: normalizeBundleIdentifierIdentity(identity.bundleIdentifier),
     appIdPrefix: identity.appIdPrefix,
     idempotencyKey: `${IDEMPOTENCY_KEY_PREFIX}${randomUUID()}`,
     createdAt: new Date().toISOString(),

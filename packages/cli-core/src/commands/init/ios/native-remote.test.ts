@@ -956,6 +956,52 @@ describe("Clerk Native Application remote setup", () => {
     });
   });
 
+  test("matches Bundle IDs case-insensitively and preserves the registration's stored spelling", () => {
+    const storedBundleIdentifier = "com.example.nativeapp";
+    const result = buildIOSNativeRemotePlan({
+      applicationId: APPLICATION_ID,
+      instanceId: INSTANCE_ID,
+      root: IOS_ROOT,
+      target: selectedTarget(),
+      nativeSettings: nativeSettings(true),
+      registrations: [registration(LOCAL_PREFIX, storedBundleIdentifier)],
+    });
+
+    expect(result).toMatchObject({
+      status: "satisfied",
+      bundleIdentifier: storedBundleIdentifier,
+      registration: "satisfied",
+      blockers: [],
+    });
+    expect(result.localTarget).toMatchObject({
+      bundleIdentifier: { status: "resolved", value: BUNDLE_IDENTIFIER },
+    });
+  });
+
+  test("keeps a case-only rerun read-only", async () => {
+    const storedBundleIdentifier = "com.example.nativeapp";
+    const approved = buildIOSNativeRemotePlan({
+      applicationId: APPLICATION_ID,
+      instanceId: INSTANCE_ID,
+      root: IOS_ROOT,
+      target: selectedTarget(),
+      nativeSettings: nativeSettings(true),
+      registrations: [registration(LOCAL_PREFIX, storedBundleIdentifier)],
+    });
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true), nativeSettings(true)],
+      registrationReads: [
+        [registration(LOCAL_PREFIX, storedBundleIdentifier)],
+        [registration(LOCAL_PREFIX, storedBundleIdentifier)],
+      ],
+    });
+
+    await applyRemoteSetup(approved, api, approvedTargetReader);
+
+    expect(calls).not.toContain("POST iOS registration");
+    expect(calls).not.toContain("PATCH native settings");
+  });
+
   test.each([
     {
       name: "duplicate prefixes for one Bundle ID",

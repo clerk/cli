@@ -683,6 +683,13 @@ async function nativeAppleCredentialsAreAlreadyConfigured(
     );
   }
 
+  if (nativeConfiguration.status === "registration-bundle-case-mismatch") {
+    throwUsageError(
+      `Native Sign in with Apple uses Bundle ID ${nativeConfiguration.bundleId}, but its letter casing does not exactly match the existing iOS Native Application registration. ` +
+        "Update the Apple connection to use the registration's exact Bundle ID spelling in the Clerk Dashboard, then rerun `clerk deploy`. Do not create another registration or add unrelated Apple web credentials.",
+    );
+  }
+
   throwUsageError(
     `Native Sign in with Apple is configured for ${preliminary.bundleId}, but the production instance does not have an exact iOS Native Application registration for that Bundle ID. ` +
       "Register it at https://dashboard.clerk.com/~/native-applications, then rerun `clerk deploy`. The CLI will not infer an App ID Prefix or request unrelated Apple web credentials.",

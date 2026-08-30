@@ -70,6 +70,18 @@ describe("iOS native registration retry state", () => {
     }
   });
 
+  test("reuses retry state when only Bundle ID casing changes", async () => {
+    const stateDirectory = await temporaryStateDirectory();
+    const store = createIOSNativeRegistrationRetryStore(() => stateDirectory);
+    const first = await store.getOrCreate(identity());
+    const caseOnlyRerun = identity({ bundleIdentifier: "COM.EXAMPLE.nativeapp" });
+
+    expect(await store.peek(caseOnlyRerun)).toBe(first);
+    expect(await store.getOrCreate(caseOnlyRerun)).toBe(first);
+    expect(await store.clear(caseOnlyRerun, first)).toBe(true);
+    expect(await store.peek(identity())).toBeUndefined();
+  });
+
   test("clears a verified operation so a later registration receives a new key", async () => {
     const stateDirectory = await temporaryStateDirectory();
     const store = createIOSNativeRegistrationRetryStore(() => stateDirectory);

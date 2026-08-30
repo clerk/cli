@@ -576,11 +576,20 @@ export async function init(options: InitOptions = {}) {
           { code: ERROR_CODE.IOS_TARGET_UNRESOLVED },
         );
       }
+      if (!nativeRemotePlan.bundleIdentifier) {
+        throw new CliError(
+          "The selected iOS Bundle ID could not be matched to its Clerk Native Application registration. No local or Apple connection changes were written.",
+          { code: ERROR_CODE.IOS_SETUP_PLAN_INVALID },
+        );
+      }
       setTelemetryStage("ios_apple_plan");
       const preparedApple = await prepareIOSNativeAppleConnection({
         applicationId: keys.applicationId,
         instanceId: keys.instanceId,
-        bundleIdentifier: target.bundleIdentifier.value,
+        // Use the existing registration's stored spelling when its Bundle ID
+        // differs from Xcode only by case. The backend's native Apple lookup
+        // currently uses that authoritative value.
+        bundleIdentifier: nativeRemotePlan.bundleIdentifier,
         nativeApplicationReady:
           nativeRemotePlan.status !== "blocked" && nativeRemotePlan.registration !== "blocked",
         requested: true,

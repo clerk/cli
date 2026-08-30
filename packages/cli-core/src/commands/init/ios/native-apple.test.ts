@@ -267,6 +267,45 @@ describe("native Sign in with Apple remote setup", () => {
     expect(captured.err).toContain("already enabled");
   });
 
+  test("normalizes a case-only Apple config difference to the registration's spelling", async () => {
+    const harness = statefulAPI({
+      initial: connection(true, true, { bundle_id: "com.example.nativeapple" }),
+    });
+    const plan = await prepareIOSNativeAppleConnection(baseOptions(), {
+      api: harness.api,
+      prompts: unexpectedPrompts(),
+    });
+
+    expect(plan).toMatchObject({
+      status: "ready",
+      bundleIdentifier: BUNDLE_IDENTIFIER,
+      bundleIdentifierConfiguration: "required",
+      blockers: [],
+    });
+    if (plan.status !== "ready") throw new Error("expected ready plan");
+    await applyIOSNativeAppleConnection(plan, harness.api);
+
+    expect(harness.patchCalls).toHaveLength(2);
+    expect(harness.patchCalls.map((call) => call.config)).toEqual([
+      {
+        connection_oauth_apple: {
+          enabled: true,
+          authenticatable: true,
+          bundle_id: BUNDLE_IDENTIFIER,
+        },
+      },
+      {
+        connection_oauth_apple: {
+          enabled: true,
+          authenticatable: true,
+          bundle_id: BUNDLE_IDENTIFIER,
+        },
+      },
+    ]);
+    expect(harness.actualWrites()).toBe(1);
+    expect(harness.current().bundle_id).toBe(BUNDLE_IDENTIFIER);
+  });
+
   test("keeps a versionless already-satisfied connection read-only", async () => {
     const harness = statefulAPI({
       initial: connection(true, true, { bundle_id: BUNDLE_IDENTIFIER }),

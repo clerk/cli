@@ -292,6 +292,47 @@ describe("resolveDeployState", () => {
     }
   });
 
+  test("reports a case-only native Apple registration mismatch without suggesting a duplicate", async () => {
+    mockActiveProductionEnvironment();
+    mockFetchInstanceConfig.mockImplementation((_appId: string, instanceId: string) =>
+      instanceId === "ins_prod"
+        ? {
+            connection_oauth_apple: {
+              enabled: true,
+              authenticatable: true,
+              bundle_id: "com.example.native",
+            },
+          }
+        : { connection_oauth_apple: { enabled: true } },
+    );
+    mockListIOSApplications.mockResolvedValue([
+      {
+        object: "ios_application",
+        id: "ios_native",
+        app_id_prefix: "ABCDE12345",
+        bundle_id: "com.Example.Native",
+        created_at: 1,
+        updated_at: 1,
+      },
+    ]);
+
+    const state = await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" });
+
+    expect(state.kind).toBe("active");
+    if (state.kind === "active") {
+      expect(state.snapshot.nativeAppleReadinessIssue).toEqual({
+        bundleId: "com.example.native",
+        reason: "registration-bundle-case-mismatch",
+      });
+      const report = buildDeployStatusReport(state, null);
+      expect(report.complete).toBe(false);
+      expect(report.nextAction).toContain("differs only by letter casing");
+      expect(report.nextAction).toContain("exact Bundle ID spelling");
+      expect(report.nextAction).toContain("do not create another registration");
+      expect(report.nextAction).not.toContain("Register that Bundle ID");
+    }
+  });
+
   test("reports native Apple verification as unavailable when native endpoint reads fail", async () => {
     mockActiveProductionEnvironment();
     mockFetchInstanceConfig.mockImplementation((_appId: string, instanceId: string) =>

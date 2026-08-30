@@ -1,4 +1,5 @@
 import { OAUTH_PROVIDERS } from "@clerk/shared/oauth";
+import { bundleIdentifiersEqual } from "../../lib/apple-native-identity.ts";
 import { bold, cyan, dim, yellow } from "../../lib/color.ts";
 import { clerkSubdomains } from "./copy.ts";
 import { log } from "../../lib/log.ts";
@@ -74,6 +75,7 @@ export type NativeAppleConfiguration =
         | "ready"
         | "authentication-disabled"
         | "registration-missing"
+        | "registration-bundle-case-mismatch"
         | "registration-ambiguous"
         | "native-api-disabled"
         | "verification-unavailable";
@@ -262,7 +264,7 @@ export function inspectNativeAppleConfiguration(
 
   const registeredPrefixes = new Set(
     iosApplications
-      .filter((application) => application.bundle_id === bundleId)
+      .filter((application) => bundleIdentifiersEqual(application.bundle_id, bundleId))
       .map((application) => application.app_id_prefix),
   );
   if (registeredPrefixes.size === 0) {
@@ -270,6 +272,9 @@ export function inspectNativeAppleConfiguration(
   }
   if (registeredPrefixes.size > 1) {
     return { status: "registration-ambiguous", bundleId };
+  }
+  if (!iosApplications.some((application) => application.bundle_id === bundleId)) {
+    return { status: "registration-bundle-case-mismatch", bundleId };
   }
   return nativeSettings?.api_enabled === true
     ? { status: "ready", bundleId }

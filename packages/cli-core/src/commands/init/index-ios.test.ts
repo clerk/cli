@@ -1037,7 +1037,7 @@ describe("init iOS", () => {
     } as never);
     const preflightLocal = spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
     const prepareNative = spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(
-      iosRemotePlan(),
+      iosRemotePlan({ bundleIdentifier: "com.Example.MyApp" }),
     );
     const applePlan = iosNativeApplePlan();
     const prepareApple = spyOn(nativeAppleMod, "prepareIOSNativeAppleConnection").mockResolvedValue(
@@ -1063,7 +1063,7 @@ describe("init iOS", () => {
     expect(prepareApple).toHaveBeenCalledWith({
       applicationId: "app_test",
       instanceId: "ins_test",
-      bundleIdentifier: "com.example.MyApp",
+      bundleIdentifier: "com.Example.MyApp",
       nativeApplicationReady: true,
       requested: true,
       agent: false,
