@@ -169,6 +169,66 @@ afterEach(async () => {
 });
 
 describe("runIOSDoctorChecks", () => {
+  test("runs and labels the macOS network check for a primary-iOS multiplatform target", async () => {
+    const root = await fixture({ complete: true });
+    const { inspectIOSProject } = await import("../init/ios/inspect.ts");
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const target = inspection.appTargets[0];
+    if (!target) throw new Error("Expected an application target");
+    target.supportedPlatforms = ["ios", "macos"];
+    let networkPlanCalls = 0;
+
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp", preparedInspection: inspection },
+      dependencies({
+        planMacOSNetworkCapability: async (options) => {
+          networkPlanCalls += 1;
+          return {
+            schemaVersion: 1,
+            kind: "clerk-macos-network-capability",
+            status: "satisfied",
+            root: options.root,
+            projectPath: options.projectPath,
+            targetId: options.targetId,
+            targetName: "MyApp",
+            files: [],
+            actions: [],
+            blockers: [],
+          };
+        },
+      }),
+    );
+
+    expect(networkPlanCalls).toBe(1);
+    expect(audit.inspection.selection).toMatchObject({ state: "selected", platform: "ios" });
+    expect(
+      audit.results.find((result) => result.name === "macOS: Allow outgoing network access")
+        ?.status,
+    ).toBe("pass");
+    expect(
+      audit.results.find((result) => result.name === "iOS: Add Clerk's associated domain"),
+    ).toBeDefined();
+  });
+
+  test("does not run the macOS network planner for a pure iOS target", async () => {
+    const root = await fixture({ complete: true });
+    let networkPlanCalls = 0;
+
+    await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        planMacOSNetworkCapability: async (...args) => {
+          networkPlanCalls += 1;
+          return planMacOSNetworkCapability(...args);
+        },
+      }),
+    );
+
+    expect(networkPlanCalls).toBe(0);
+  });
+
   test("uses semantic iOS checks instead of web environment checks", async () => {
     const root = await fixture();
     const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());

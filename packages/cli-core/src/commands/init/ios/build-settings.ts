@@ -827,6 +827,8 @@ export interface InspectedTargetConfiguration {
   model: IOSBuildConfiguration;
   entitlementContexts: EntitlementBuildContext[];
   sourceFilters: IOSSourceFilterContext[];
+  /** Modeled native platforms declared or inferred for this configuration. */
+  supportedPlatforms: IOSNativePlatform[];
   /** Undefined when resolved platform evidence excludes iOS and macOS. */
   platform?: IOSNativePlatform;
   /** True only when concrete build settings prove this configuration's platform. */
@@ -930,6 +932,7 @@ function missingConfiguration(
   root: string,
   projectPath: string,
   configurationId: string,
+  platform: IOSNativePlatform = "ios",
 ): InspectedTargetConfiguration {
   const evidence: IOSSourceEvidence = {
     path: relativeIOSPath(root, resolve(projectPath, "project.pbxproj")),
@@ -947,11 +950,12 @@ function missingConfiguration(
     },
     entitlementContexts: [],
     sourceFilters: [],
-    // Preserve the existing iOS fail-closed path for a dangling application
-    // configuration whose platform cannot be resolved.
-    platform: "ios",
+    supportedPlatforms: [],
+    // Preserve the selected fail-closed platform view for a dangling
+    // application configuration whose evidence cannot be resolved.
+    platform,
     platformEvidenceComplete: false,
-    isIOS: true,
+    isIOS: platform === "ios",
   };
 }
 
@@ -965,6 +969,8 @@ export async function inspectTargetBuildConfigurations(options: {
   objects: PbxObjects;
   parents: PbxParentIndex;
   diagnostics: IOSDiagnostic[];
+  /** Resolve settings through one platform view while preserving all declared platforms. */
+  platform?: IOSNativePlatform;
 }): Promise<InspectedTargetConfiguration[]> {
   const {
     root,
@@ -976,6 +982,7 @@ export async function inspectTargetBuildConfigurations(options: {
     objects,
     parents,
     diagnostics,
+    platform: requestedPlatform,
   } = options;
   const projectDirectory = dirname(projectPath);
   const pbxprojRelativePath = relativeIOSPath(root, resolve(projectPath, "project.pbxproj"));
@@ -1006,7 +1013,9 @@ export async function inspectTargetBuildConfigurations(options: {
   )) {
     const targetConfig = targetReference.object;
     if (!targetConfig) {
-      inspected.push(missingConfiguration(root, projectPath, targetReference.id));
+      inspected.push(
+        missingConfiguration(root, projectPath, targetReference.id, requestedPlatform ?? "ios"),
+      );
       continue;
     }
     const name = asString(targetConfig.name) ?? "Unnamed";
@@ -1105,11 +1114,12 @@ export async function inspectTargetBuildConfigurations(options: {
     const hasIOSPlatform =
       supportedPlatformTokens.has("iphoneos") || supportedPlatformTokens.has("iphonesimulator");
     const hasMacOSPlatform = supportedPlatformTokens.has("macosx");
-    const supportedPlatform: IOSNativePlatform | undefined = hasIOSPlatform
-      ? "ios"
-      : hasMacOSPlatform
-        ? "macos"
-        : undefined;
+    const declaredPlatforms: IOSNativePlatform[] = [
+      ...(hasIOSPlatform ? (["ios"] as const) : []),
+      ...(hasMacOSPlatform ? (["macos"] as const) : []),
+    ];
+    const supportedPlatform: IOSNativePlatform | undefined =
+      requestedPlatform ?? (hasIOSPlatform ? "ios" : hasMacOSPlatform ? "macos" : undefined);
     const platformCandidateContexts = supportedPlatform
       ? evaluatedContexts.filter(({ context }) => context.platform === supportedPlatform)
       : evaluatedContexts;
@@ -1143,15 +1153,15 @@ export async function inspectTargetBuildConfigurations(options: {
         !hasIOSPlatform &&
         !hasMacOSPlatform);
     // Existing iOS-capable multiplatform targets intentionally retain the iOS
-    // setup path. Unknown evidence keeps the target discoverable, but its
-    // incomplete certainty is preserved so every mutation planner can refuse.
+    // setup path by default. A capability planner may request a macOS view;
+    // unknown or contradictory evidence stays incomplete so mutations refuse.
     const supportedClassification: IOSNativePlatform | "unsupported" | undefined =
       initialSupportedPlatformsResolution.state === "resolved" && supportedPlatforms !== ""
-        ? hasIOSPlatform
-          ? "ios"
-          : hasMacOSPlatform
-            ? "macos"
+        ? requestedPlatform
+          ? declaredPlatforms.includes(requestedPlatform)
+            ? requestedPlatform
             : "unsupported"
+          : (supportedPlatform ?? "unsupported")
         : undefined;
     const sdkClassification: IOSNativePlatform | "unsupported" | undefined =
       initialSDKRootResolution.state === "resolved" && initialSDKRoot !== "" && !sdkRootIsAuto
@@ -1166,19 +1176,28 @@ export async function inspectTargetBuildConfigurations(options: {
         (value): value is IOSNativePlatform | "unsupported" => value !== undefined,
       ),
     );
-    const platformEvidenceComplete =
-      concreteClassifications.size === 1 && !hasUnknownPlatformEvidence;
-    const platform: IOSNativePlatform | undefined = concreteClassifications.has("ios")
-      ? "ios"
-      : concreteClassifications.has("macos")
-        ? "macos"
-        : hasUnknownPlatformEvidence
-          ? "ios"
-          : concreteClassifications.has("unsupported")
-            ? undefined
-            : !hasResolvedUnsupportedEvidence
-              ? "ios"
-              : undefined;
+    const platformEvidenceComplete = requestedPlatform
+      ? concreteClassifications.size === 1 &&
+        concreteClassifications.has(requestedPlatform) &&
+        !hasUnknownPlatformEvidence
+      : concreteClassifications.size === 1 && !hasUnknownPlatformEvidence;
+    const platform: IOSNativePlatform | undefined = requestedPlatform
+      ? requestedPlatform
+      : concreteClassifications.has("ios")
+        ? "ios"
+        : concreteClassifications.has("macos")
+          ? "macos"
+          : hasUnknownPlatformEvidence
+            ? (requestedPlatform ?? "ios")
+            : concreteClassifications.has("unsupported")
+              ? undefined
+              : !hasResolvedUnsupportedEvidence
+                ? (requestedPlatform ?? "ios")
+                : undefined;
+    const supportedNativePlatforms: IOSNativePlatform[] = [
+      ...declaredPlatforms,
+      ...(sdkClassification === "ios" || sdkClassification === "macos" ? [sdkClassification] : []),
+    ].filter((value, index, values): value is IOSNativePlatform => values.indexOf(value) === index);
     const platformContexts = platform
       ? evaluatedContexts.filter(({ context }) => context.platform === platform)
       : evaluatedContexts;
@@ -1333,6 +1352,7 @@ export async function inspectTargetBuildConfigurations(options: {
         globalTaintOverrides: new Set(evaluation.globalTaintOverrides),
         builtins: { ...builtins },
       })),
+      supportedPlatforms: supportedNativePlatforms,
       platform,
       platformEvidenceComplete,
       isIOS: platform === "ios",

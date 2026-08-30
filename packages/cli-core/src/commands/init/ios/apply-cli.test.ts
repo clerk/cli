@@ -31,8 +31,77 @@ import {
 
 setDefaultTimeout(15_000);
 
+async function convertFixtureToUnsandboxedMultiplatform(root: string): Promise<void> {
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = await Bun.file(projectPath).text();
+  await Bun.write(
+    projectPath,
+    project
+      .replaceAll("SDKROOT = iphoneos;", "SDKROOT = auto;")
+      .replaceAll(
+        'SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";',
+        'SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";',
+      )
+      .replaceAll(
+        "IPHONEOS_DEPLOYMENT_TARGET = 17.0;",
+        "IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; ENABLE_APP_SANDBOX = NO;",
+      ),
+  );
+}
+
 describe("clerk init iOS SDK apply", () => {
   const captured = useCaptureLog();
+
+  test("dry-run includes the macOS network step for a primary-iOS multiplatform target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-multiplatform-dry-run-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, {
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+    });
+    await convertFixtureToUnsandboxedMultiplatform(root);
+    const configDir = await createIsolatedCLIState();
+
+    const result = await runCLI(
+      root,
+      ["--mode", "agent", "init", "--dry-run", "--target", "MyApp"],
+      configDir,
+    );
+    const output = `${result.stdout}\n${result.stderr}`;
+
+    expect(result.exitCode).toBe(0);
+    expect(output).toContain("Select the iOS application target");
+    expect(output).toContain("Allow outgoing network access for macOS");
+  });
+
+  test("plans macOS network readiness for a primary-iOS multiplatform target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-multiplatform-local-setup-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, {
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+    });
+    await convertFixtureToUnsandboxedMultiplatform(root);
+    const before = await treeDigest(root);
+
+    const setup = await applyIOSLocalSetup({
+      root,
+      yes: true,
+      agent: true,
+      allowDirty: false,
+      prebuiltAuthUI: false,
+      signInWithApple: false,
+    });
+
+    expect(setup).toMatchObject({
+      platform: "ios",
+      supportedPlatforms: ["ios", "macos"],
+      macOSNetworkCapabilityPlan: { status: "satisfied" },
+    });
+    expect(await treeDigest(root)).toEqual(before);
+  });
 
   test("makes no local or remote plan when a configuration platform is unresolved", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-native-unresolved-platform-"));
