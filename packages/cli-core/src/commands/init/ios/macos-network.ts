@@ -452,6 +452,7 @@ export async function planMacOSNetworkCapability(
   const inspection = await inspectIOSProject(normalized.root, {
     target: normalized.targetId,
     exhaustiveContainerDiscovery: true,
+    platform: "macos",
   });
   const target = selectedTarget(inspection, normalized.projectPath, normalized.targetId);
   if (!target) {
@@ -462,25 +463,20 @@ export async function planMacOSNetworkCapability(
       ),
     ]);
   }
-  if (!target.platformEvidenceComplete) {
+  if (!target.supportedPlatforms.includes("macos")) {
+    return blockedPlan(
+      normalized,
+      [blocker("unsupported-platform", "The selected target does not support macOS.")],
+      target.name,
+    );
+  }
+  if (!target.platformEvidenceComplete || target.platform !== "macos") {
     return blockedPlan(
       normalized,
       [
         blocker(
           "unresolved-platform",
           "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently across every selected-target build configuration before changing macOS capabilities.",
-        ),
-      ],
-      target.name,
-    );
-  }
-  if (target.platform !== "macos") {
-    return blockedPlan(
-      normalized,
-      [
-        blocker(
-          "unsupported-platform",
-          "The selected target is not a pure macOS application target.",
         ),
       ],
       target.name,
@@ -552,48 +548,20 @@ export async function planMacOSNetworkCapability(
   let files: MacOSNetworkCapabilityPlanFile[] = [];
   let documents: EntitlementsDocument[] = [];
   if (!allEntitlementsMissing) {
-    const probe = await planIOSAssociatedDomain({
-      root: normalized.root,
-      projectPath: normalized.projectPath,
-      targetId: normalized.targetId,
-      deferToPublishableKey: true,
-    });
-    if (probe.status === "blocked") {
-      return blockedPlan(
-        normalized,
-        probe.blockers.map((item) =>
-          blocker(
-            item.code === "shared-entitlements"
-              ? "unsafe-entitlements"
-              : "unsupported-entitlements",
-            item.message,
-          ),
-        ),
-        target.name,
-      );
-    }
-    files = probe.files.map((file) => ({
-      path: file.path,
-      operation: "modify" as const,
-      ...(file.expectedHash ? { expectedHash: file.expectedHash } : {}),
-    }));
-    for (const file of files) {
-      const inspected = await inspectEntitlementsFile(
-        normalized.root,
-        resolve(normalized.root, file.path),
-      );
+    for (const configuredPath of new Set(resolvedPaths)) {
+      const absolutePath = resolve(normalized.root, normalized.projectPath, "..", configuredPath);
+      const inspected = await inspectEntitlementsFile(normalized.root, absolutePath);
       if (inspected.status === "blocked") {
         return blockedPlan(normalized, [inspected.blocker], target.name);
       }
-      if (inspected.document.hash !== file.expectedHash) {
-        return blockedPlan(
-          normalized,
-          [blocker("stale-entitlements", `${file.path} changed while setup was inspected.`)],
-          target.name,
-        );
-      }
       documents.push(inspected.document);
     }
+    documents.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+    files = documents.map((document) => ({
+      path: document.relativePath,
+      operation: "modify" as const,
+      expectedHash: document.hash,
+    }));
   }
 
   const hasExplicitSandboxNo = sandboxSet.has("false");
@@ -755,6 +723,31 @@ export async function planMacOSNetworkCapability(
       blockers: [],
     };
   }
+
+  const ownershipProbe = await planIOSAssociatedDomain({
+    root: normalized.root,
+    projectPath: normalized.projectPath,
+    targetId: normalized.targetId,
+    platform: "macos",
+    deferToPublishableKey: true,
+  });
+  if (ownershipProbe.status === "blocked") {
+    return blockedPlan(
+      normalized,
+      ownershipProbe.blockers.map((item) =>
+        blocker(
+          item.code === "shared-entitlements" ? "unsafe-entitlements" : "unsupported-entitlements",
+          item.message,
+        ),
+      ),
+      target.name,
+    );
+  }
+  files = ownershipProbe.files.map((file) => ({
+    path: file.path,
+    operation: "modify" as const,
+    ...(file.expectedHash ? { expectedHash: file.expectedHash } : {}),
+  }));
 
   return {
     ...planBase(normalized),

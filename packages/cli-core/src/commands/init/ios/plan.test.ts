@@ -24,6 +24,51 @@ afterEach(async () => {
 });
 
 describe("buildIOSSetupPlan", () => {
+  test("adds an explicitly labeled macOS network step for a multiplatform target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-multiplatform-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true });
+    const inspection = await inspectIOSProject(root);
+    const target = inspection.appTargets[0];
+    if (!target) throw new Error("Expected an application target");
+    target.supportedPlatforms = ["ios", "macos"];
+
+    const plan = buildIOSSetupPlan(inspection, {
+      macOSNetworkCapabilityPlan: {
+        status: "satisfied",
+        actions: [],
+        blockers: [],
+        files: [],
+      },
+    });
+
+    expect(plan.selection).toMatchObject({ state: "selected", platform: "ios" });
+    expect(plan.steps.find((step) => step.id === "enable-macos-network")).toMatchObject({
+      title: "Allow outgoing network access for macOS",
+      status: "satisfied",
+    });
+    expect(plan.steps.map((step) => step.id)).toContain("add-associated-domain");
+  });
+
+  test("does not add a macOS network step to a pure iOS target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-only-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true });
+    const inspection = await inspectIOSProject(root);
+
+    const plan = buildIOSSetupPlan(inspection, {
+      macOSNetworkCapabilityPlan: {
+        status: "satisfied",
+        actions: [],
+        blockers: [],
+        files: [],
+      },
+    });
+
+    expect(inspection.appTargets[0]?.supportedPlatforms).toEqual(["ios"]);
+    expect(plan.steps.map((step) => step.id)).not.toContain("enable-macos-network");
+  });
+
   test("uses macOS labels and omits the iOS Associated Domain step", async () => {
     const plan = await planFor({ platform: "macos", complete: true });
 

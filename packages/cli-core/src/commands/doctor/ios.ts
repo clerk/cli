@@ -43,6 +43,7 @@ function platformLabel(platform: IOSNativePlatform): "iOS" | "macOS" {
 
 function doctorStepTitle(step: IOSSetupStep, platform: IOSNativePlatform): string {
   if (platform === "ios") return step.title;
+  if (step.id === "enable-macos-network") return "Allow outgoing network access";
   return step.title
     .replace("iOS application target", "macOS application target")
     .replace("Clerk's iOS SDK", "Clerk's Swift SDK")
@@ -243,7 +244,7 @@ function localResults(
         (step.id !== "register-native-application" || step.status === "blocked") &&
         (platform !== "macos" || step.id !== "add-associated-domain"),
     )
-    .map((step) => localStepResult(step, platform));
+    .map((step) => localStepResult(step, step.id === "enable-macos-network" ? "macos" : platform));
   const readiness = buildIOSNativeReadinessAudit(inspection);
   if (
     readiness.target.status === "selected" &&
@@ -774,15 +775,14 @@ export async function runIOSDoctorChecks(
         ...(requiresAuthViewCompatibility ? { requirePrebuiltAuthCompatibility: true } : {}),
       })
     : undefined;
-  const macOSNetworkCapabilityPlan =
-    target?.platformEvidenceComplete && target.platform === "macos"
-      ? await dependencies.planMacOSNetworkCapability({
-          root: inspection.root,
-          projectPath: target.projectPath,
-          targetId: target.id,
-          allowMissingEntitlementsCreation: true,
-        })
-      : undefined;
+  const macOSNetworkCapabilityPlan = target?.supportedPlatforms.includes("macos")
+    ? await dependencies.planMacOSNetworkCapability({
+        root: inspection.root,
+        projectPath: target.projectPath,
+        targetId: target.id,
+        allowMissingEntitlementsCreation: true,
+      })
+    : undefined;
   const results = localResults(inspection, sdkInstallPlan, macOSNetworkCapabilityPlan);
   if (target && !target.platformEvidenceComplete) {
     return { inspection, results };
