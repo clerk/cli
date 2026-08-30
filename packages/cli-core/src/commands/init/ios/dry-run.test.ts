@@ -155,6 +155,34 @@ describe("clerk init --dry-run", () => {
     expect(await treeDigest(configDir)).toEqual(configBefore);
   });
 
+  test("uses exhaustive target discovery before selecting an implicit target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-cli-exhaustive-dry-run-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true });
+    await createIOSFixture(join(root, "packages", "native", "nested", "DeepApp"), {
+      complete: true,
+    });
+    const configDir = await createIsolatedCLIState();
+    const projectBefore = await treeDigest(root);
+    const configBefore = await treeDigest(configDir);
+
+    const result = await runCLI(
+      root,
+      ["--mode", "human", "init", "--dry-run", "--json"],
+      isolatedCLIEnvironment(configDir),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.inspection.selection.state).toBe("ambiguous");
+    expect(output.inspection.projects.map((project: { path: string }) => project.path)).toEqual([
+      "MyApp.xcodeproj",
+      "packages/native/nested/DeepApp/MyApp.xcodeproj",
+    ]);
+    expect(await treeDigest(root)).toEqual(projectBefore);
+    expect(await treeDigest(configDir)).toEqual(configBefore);
+  });
+
   test("fresh SwiftUI output advertises direct configuration and environment automation", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-cli-direct-"));
     temporaryDirectories.push(root);

@@ -230,7 +230,11 @@ export async function init(options: InitOptions = {}) {
       );
     }
     setTelemetryStage("ios_inspect");
-    const inspect = async () => inspectIOSProject(ctx.cwd, { target: options.target });
+    const inspect = async () =>
+      inspectIOSProject(ctx.cwd, {
+        target: options.target,
+        exhaustiveContainerDiscovery: true,
+      });
     const inspection = machineOutput
       ? await inspect()
       : await withSpinner("Inspecting Xcode project...", inspect);
