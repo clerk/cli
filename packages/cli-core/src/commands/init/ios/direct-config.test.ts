@@ -712,6 +712,26 @@ struct MyApp: App {
     },
   );
 
+  test("refuses mutation when malformed synchronized membership owns the entry source", async () => {
+    const root = await fixture({ secondTarget: true });
+    const before = await readFile(appSourcePath(root));
+    const synchronizedRootId = "616161616161616161616161";
+    await updateProject(root, (objects) => {
+      objects[synchronizedRootId] = {
+        isa: "PBXFileSystemSynchronizedRootGroup",
+        path: "MyApp",
+        sourceTree: "<group>",
+      };
+      objects[IOS_FIXTURE_IDS.secondTarget]!.fileSystemSynchronizedGroups = synchronizedRootId;
+    });
+
+    const plan = await planIOSDirectConfig(planOptions(root));
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+    expect(await readFile(appSourcePath(root))).toEqual(before);
+  });
+
   test("refuses an entry source aliased into another target through a hard link", async () => {
     const root = await fixture({ secondTarget: true });
     const aliasPath = join(root, "AdminApp", "SharedApp.swift");
