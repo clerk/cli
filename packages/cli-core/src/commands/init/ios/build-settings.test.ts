@@ -939,7 +939,7 @@ describe("inspectTargetBuildConfigurations", () => {
     ]);
   });
 
-  test("treats SDKROOT auto as neutral for a proven iOS-capable multiplatform target", async () => {
+  test("marks modeled platform evidence incomplete when the target also declares visionOS", async () => {
     const { configurations } = await inspectFixture({
       targetBuildSettings: {
         SDKROOT: "auto",
@@ -951,7 +951,8 @@ describe("inspectTargetBuildConfigurations", () => {
     expect(configurations[0]).toMatchObject({
       platform: "ios",
       supportedPlatforms: ["ios", "macos"],
-      platformEvidenceComplete: true,
+      unmodeledPlatforms: ["xros", "xrsimulator"],
+      platformEvidenceComplete: false,
     });
     expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
       "iphoneos/arm64",

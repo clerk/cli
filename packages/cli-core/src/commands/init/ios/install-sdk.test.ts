@@ -260,6 +260,27 @@ describe("iOS Clerk SDK installer", () => {
     });
   });
 
+  test("blocks package changes when a multiplatform target includes visionOS", async () => {
+    const root = await fixture({ clerkSDK: false });
+    await makeMultiplatformTarget(root);
+    await transformProject(root, (graph) => {
+      for (const configurationId of [IOS_FIXTURE_IDS.targetDebug, IOS_FIXTURE_IDS.targetRelease]) {
+        const settings = graph.objects[configurationId]!.buildSettings as Record<string, unknown>;
+        settings.SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+      }
+    });
+    const before = await readFile(pbxprojPath(root));
+
+    const plan = await planIOSSDKInstall(installOptions(root));
+
+    expect(plan).toMatchObject({
+      status: "blocked",
+      blockers: [{ code: "unresolved-platform" }],
+    });
+    expect(await applyIOSSDKInstall(plan)).toMatchObject({ status: "blocked" });
+    expect(await readFile(pbxprojPath(root))).toEqual(before);
+  });
+
   test("blocks ClerkKit for an iOS target below the supported deployment floor", async () => {
     const root = await fixture({ clerkSDK: false });
     await setDeploymentTargets(root, { ios: "16.4" });

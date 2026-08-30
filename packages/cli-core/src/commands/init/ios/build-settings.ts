@@ -38,6 +38,7 @@ const INSPECTED_BUILD_SETTING_KEYS = [
   "SDKROOT",
   "SUPPORTED_PLATFORMS",
 ] as const;
+const MODELED_SUPPORTED_PLATFORM_TOKENS = new Set(["iphoneos", "iphonesimulator", "macosx"]);
 
 interface BuildContext {
   label: string;
@@ -829,6 +830,8 @@ export interface InspectedTargetConfiguration {
   sourceFilters: IOSSourceFilterContext[];
   /** Modeled native platforms declared or inferred for this configuration. */
   supportedPlatforms: IOSNativePlatform[];
+  /** Declared Xcode platforms that this CLI does not model for automatic setup. */
+  unmodeledPlatforms: string[];
   /** Undefined when resolved platform evidence excludes iOS and macOS. */
   platform?: IOSNativePlatform;
   /** True only when concrete build settings prove this configuration's platform. */
@@ -951,6 +954,7 @@ function missingConfiguration(
     entitlementContexts: [],
     sourceFilters: [],
     supportedPlatforms: [],
+    unmodeledPlatforms: [],
     // Preserve the selected fail-closed platform view for a dangling
     // application configuration whose evidence cannot be resolved.
     platform,
@@ -1114,6 +1118,9 @@ export async function inspectTargetBuildConfigurations(options: {
     const hasIOSPlatform =
       supportedPlatformTokens.has("iphoneos") || supportedPlatformTokens.has("iphonesimulator");
     const hasMacOSPlatform = supportedPlatformTokens.has("macosx");
+    const unmodeledPlatforms = [...supportedPlatformTokens]
+      .filter((token) => !MODELED_SUPPORTED_PLATFORM_TOKENS.has(token))
+      .sort();
     const declaredPlatforms: IOSNativePlatform[] = [
       ...(hasIOSPlatform ? (["ios"] as const) : []),
       ...(hasMacOSPlatform ? (["macos"] as const) : []),
@@ -1176,11 +1183,16 @@ export async function inspectTargetBuildConfigurations(options: {
         (value): value is IOSNativePlatform | "unsupported" => value !== undefined,
       ),
     );
+    const hasMixedUnmodeledPlatforms =
+      declaredPlatforms.length > 0 && unmodeledPlatforms.length > 0;
     const platformEvidenceComplete = requestedPlatform
       ? concreteClassifications.size === 1 &&
         concreteClassifications.has(requestedPlatform) &&
-        !hasUnknownPlatformEvidence
-      : concreteClassifications.size === 1 && !hasUnknownPlatformEvidence;
+        !hasUnknownPlatformEvidence &&
+        !hasMixedUnmodeledPlatforms
+      : concreteClassifications.size === 1 &&
+        !hasUnknownPlatformEvidence &&
+        !hasMixedUnmodeledPlatforms;
     const platform: IOSNativePlatform | undefined = requestedPlatform
       ? requestedPlatform
       : concreteClassifications.has("ios")
@@ -1353,6 +1365,7 @@ export async function inspectTargetBuildConfigurations(options: {
         builtins: { ...builtins },
       })),
       supportedPlatforms: supportedNativePlatforms,
+      unmodeledPlatforms,
       platform,
       platformEvidenceComplete,
       isIOS: platform === "ios",
