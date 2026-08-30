@@ -101,6 +101,24 @@ describe("macOS outgoing network capability", () => {
     expect(await treeDigest(root)).toEqual(before);
   });
 
+  test("ignores unresolved outgoing-network settings for a provably unsandboxed app", async () => {
+    const root = await temporaryRoot();
+    await updateBuildSettings(root, (settings) => {
+      settings.ENABLE_APP_SANDBOX = "NO";
+      settings.ENABLE_OUTGOING_NETWORK_CONNECTIONS = "$(UNRESOLVED_NETWORK_SETTING)";
+    });
+    await writeFile(
+      entitlementsPath(root),
+      '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict></dict></plist>\n',
+    );
+
+    await expect(planMacOSNetworkCapability(options(root))).resolves.toMatchObject({
+      status: "satisfied",
+      files: [],
+      blockers: [],
+    });
+  });
+
   test("adds only network.client to an existing sandboxed entitlement plist", async () => {
     const root = await temporaryRoot();
     await enableSandbox(root);
