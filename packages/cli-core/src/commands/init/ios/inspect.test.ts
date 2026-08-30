@@ -361,6 +361,58 @@ describe("inspectIOSProject", () => {
     expect(inspection.appTargets[0]?.swift.evidenceComplete).toBe(true);
   });
 
+  test.each([
+    ["a scalar", "616161616161616161616161"],
+    ["a partially malformed array", ["616161616161616161616161", {}]],
+  ])(
+    "marks %s synchronized-group collection incomplete while preserving valid members",
+    async (_description, synchronizedGroups) => {
+      const root = await fixture({ complete: true });
+      const synchronizedRootId = "616161616161616161616161";
+      await mkdir(join(root, "Synced"));
+      await Bun.write(
+        join(root, "Synced", "SyncedApp.swift"),
+        'import SwiftUI\n\n@main\nstruct SyncedApp: App {\n  var body: some Scene { WindowGroup { Text("Synced") } }\n}\n',
+      );
+      await transformProject(root, (objects) => {
+        objects[synchronizedRootId] = {
+          isa: "PBXFileSystemSynchronizedRootGroup",
+          path: "Synced",
+          sourceTree: "<group>",
+        };
+        objects[IOS_FIXTURE_IDS.appTarget]!.fileSystemSynchronizedGroups = synchronizedGroups;
+      });
+
+      const inspection = await inspectIOSProject(root);
+      const memberships = await inspectIOSSourceMembership(root);
+      const target = inspection.appTargets[0];
+      const membership = memberships.find(
+        (candidate) => candidate.targetId === IOS_FIXTURE_IDS.appTarget,
+      );
+
+      expect(target?.swift.sourceFilesScanned).toBe(2);
+      expect(target?.swift.entryPoints).toContainEqual({ path: "Synced/SyncedApp.swift" });
+      expect(target?.swift.evidenceComplete).toBe(false);
+      expect(membership?.files).toContainEqual({
+        absolutePath: join(root, "Synced", "SyncedApp.swift"),
+        relativePath: "Synced/SyncedApp.swift",
+      });
+      expect(membership?.complete).toBe(false);
+      expect(inspection.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: "xcode.incomplete-source-membership",
+          severity: "info",
+          evidence: [
+            {
+              path: "MyApp.xcodeproj/project.pbxproj",
+              objectId: IOS_FIXTURE_IDS.appTarget,
+            },
+          ],
+        }),
+      );
+    },
+  );
+
   test("marks source membership incomplete when a group-relative file has multiple parents", async () => {
     const root = await fixture({ complete: true });
     const alternateGroupId = "565656565656565656565656";
@@ -1363,6 +1415,43 @@ struct MyApp: App {
       expect(target?.swift.sourceFilesScanned).toBe(0);
       expect(target?.swift.evidenceComplete).toBe(false);
       expect(target?.packages.clerkKit).toBe("declared");
+    },
+  );
+
+  test.each([
+    ["an array", "( ios, )"],
+    ["an object", "{ value = ios; }"],
+  ])(
+    "does not use %s platformFilter value as authoritative iOS evidence",
+    async (_description, platformFilter) => {
+      const root = await fixture({ complete: true });
+      const projectFile = join(root, "MyApp.xcodeproj", "project.pbxproj");
+      const original = await Bun.file(projectFile).text();
+      await Bun.write(
+        projectFile,
+        original
+          .replace(
+            `${IOS_FIXTURE_IDS.sourceBuildFile} = { isa = PBXBuildFile; fileRef`,
+            `${IOS_FIXTURE_IDS.sourceBuildFile} = { isa = PBXBuildFile; platformFilter = ${platformFilter}; fileRef`,
+          )
+          .replace(
+            `${IOS_FIXTURE_IDS.clerkKitBuildFile} = { isa = PBXBuildFile; productRef`,
+            `${IOS_FIXTURE_IDS.clerkKitBuildFile} = { isa = PBXBuildFile; platformFilter = ${platformFilter}; productRef`,
+          ),
+      );
+
+      const inspection = await inspectIOSProject(root);
+      const target = inspection.appTargets[0];
+
+      expect(target?.swift.sourceFilesScanned).toBe(0);
+      expect(target?.swift.evidenceComplete).toBe(false);
+      expect(target?.packages.clerkKit).toBe("declared");
+      expect(inspection.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: "xcode.incomplete-source-membership",
+          severity: "info",
+        }),
+      );
     },
   );
 

@@ -125,7 +125,11 @@ function buildFileIOSApplicability(object: PbxObject): {
   ) {
     return { applies: false, recognized: false };
   }
-  const platformFilter = asString(object.platformFilter);
+  const rawFilter = object.platformFilter;
+  const platformFilter = asString(rawFilter);
+  if (Object.hasOwn(object, "platformFilter") && platformFilter == null) {
+    return { applies: false, recognized: false };
+  }
   const filters = [...asStringArray(rawFilters), ...(platformFilter ? [platformFilter] : [])];
   if (filters.length === 0) return { applies: true, recognized: true };
   if (filters.some((filter) => /(?:^|[^a-z])(?:ios|iphone)/i.test(filter))) {
@@ -745,7 +749,10 @@ async function sourceFilesForTarget(options: {
     }
   }
 
-  for (const groupId of asStringArray(targetObject.fileSystemSynchronizedGroups)) {
+  const synchronizedGroupIds = Object.hasOwn(targetObject, "fileSystemSynchronizedGroups")
+    ? requiredStringCollection(targetObject.fileSystemSynchronizedGroups)
+    : [];
+  for (const groupId of synchronizedGroupIds) {
     const group = objects[groupId];
     if (group?.isa !== "PBXFileSystemSynchronizedRootGroup") {
       reportDangling(
