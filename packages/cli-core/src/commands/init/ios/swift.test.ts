@@ -828,6 +828,34 @@ Clerk.configure(publishableKey: key)`,
     expect(inspection.status).toBe("complete");
   });
 
+  test("proves the WindowGroup root through a macOS scene modifier", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-macos-swift-root-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "App.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       import SwiftUI
+       @main struct AppMain: App {
+         var body: some Scene {
+           WindowGroup {
+             ContentView()
+               .environment(Clerk.shared)
+           }
+           .defaultSize(width: 1100, height: 800)
+           .windowResizability(.contentSize)
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "App.swift" },
+    ]);
+
+    expect(inspection.appRootEvidence).toEqual([{ path: "App.swift" }]);
+    expect(inspection.rootEnvironmentInjections).toEqual([{ path: "App.swift" }]);
+  });
+
   test("does not prove a root when selected-target source evidence is incomplete", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-root-incomplete-"));
     temporaryDirectories.push(root);
@@ -913,7 +941,11 @@ Clerk.configure(publishableKey: key)`,
       `import ClerkKit
        import SwiftUI
        @main struct Unsupported: App {
-         var body: some Scene { WindowGroup { ContentView() }; Settings { Text("Settings") } }
+         var body: some Scene {
+           WindowGroup { ContentView() }
+             .defaultSize(width: 1100, height: 800)
+           Settings { Text("Settings") }
+         }
        }`,
     );
     const unsupported = await inspectSwiftSources([

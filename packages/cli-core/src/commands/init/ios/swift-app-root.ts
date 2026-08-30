@@ -289,7 +289,19 @@ function windowGroupRoot(
   if (source[cursor] !== "{") return undefined;
   const groupClosingBrace = matchingBrace(source, cursor);
   if (groupClosingBrace == null || groupClosingBrace >= body.closingBrace) return undefined;
-  if (skipWhitespace(source, groupClosingBrace + 1, body.closingBrace) !== body.closingBrace) {
+  let sceneCursor = groupClosingBrace + 1;
+  while (true) {
+    sceneCursor = skipWhitespace(source, sceneCursor, body.closingBrace);
+    if (source[sceneCursor] !== ".") break;
+    const nameStart = skipWhitespace(source, sceneCursor + 1, body.closingBrace);
+    const nameEnd = identifierEnd(source, nameStart);
+    if (nameEnd == null) return undefined;
+    sceneCursor = skipWhitespace(source, nameEnd, body.closingBrace);
+    const suffixEnd = consumeBalancedSuffix(source, sceneCursor, body.closingBrace);
+    if (suffixEnd == null) return undefined;
+    sceneCursor = suffixEnd;
+  }
+  if (skipWhitespace(source, sceneCursor, body.closingBrace) !== body.closingBrace) {
     return undefined;
   }
   const expressionStart = skipWhitespace(source, cursor + 1, groupClosingBrace);

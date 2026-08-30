@@ -273,6 +273,38 @@ struct MyApp: App {
     expect(await readFile(appSourcePath(root))).toEqual(beforeSecondApply);
   });
 
+  test("configures a SwiftData app with a WindowGroup scene modifier", async () => {
+    const root = await fixture();
+    await replaceSource(
+      root,
+      `import SwiftData
+import SwiftUI
+
+@main
+struct MyApp: App {
+  var body: some Scene {
+    WindowGroup {
+      ContentView()
+    }
+    .modelContainer(for: Item.self)
+  }
+}
+`,
+    );
+
+    expect(hasExactIOSSwiftUIAppContentRoot(await source(root))).toBe(true);
+    const plan = await planIOSDirectConfig(planOptions(root));
+
+    expect(plan.status).toBe("ready");
+    expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("applied");
+    const configured = await source(root);
+    expect(configured).toContain(".environment(Clerk.shared)");
+    expect(configured).toContain(".modelContainer(for: Item.self)");
+    expect(configured.indexOf(".environment(Clerk.shared)")).toBeLessThan(
+      configured.indexOf(".modelContainer(for: Item.self)"),
+    );
+  });
+
   test("inserts configuration first in one existing initializer", async () => {
     const root = await fixture();
     await replaceSource(
