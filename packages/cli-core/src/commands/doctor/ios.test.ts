@@ -2,7 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createIOSFixture, IOS_FIXTURE_IDS } from "../init/ios/test-helpers.ts";
+import {
+  convertIOSFixtureToMultiplatform,
+  createIOSFixture,
+  IOS_FIXTURE_IDS,
+} from "../init/ios/test-helpers.ts";
 import { planIOSSDKInstall } from "../init/ios/install-sdk.ts";
 import { planMacOSNetworkCapability } from "../init/ios/macos-network.ts";
 import type { IOSNativeAppleBlockerCode } from "../init/ios/native-apple.ts";
@@ -75,7 +79,7 @@ async function fixture(options: Parameters<typeof createIOSFixture>[1] = {}): Pr
   return root;
 }
 
-async function makeMultiplatform(root: string): Promise<void> {
+async function makeMultiplatform(root: string, macOSDeploymentTarget = "14.0"): Promise<void> {
   const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
   const project = await readFile(projectPath, "utf8");
   await writeFile(
@@ -88,7 +92,7 @@ async function makeMultiplatform(root: string): Promise<void> {
       )
       .replaceAll(
         "IPHONEOS_DEPLOYMENT_TARGET = 17.0;",
-        "IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; ENABLE_APP_SANDBOX = NO;",
+        `IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = ${macOSDeploymentTarget}; ENABLE_APP_SANDBOX = NO;`,
       ),
   );
 }
@@ -243,6 +247,97 @@ describe("runIOSDoctorChecks", () => {
     expect(
       audit.results.find((result) => result.name === "iOS: Add Clerk's associated domain"),
     ).toBeDefined();
+  });
+
+  test("fails when a multiplatform target is missing the macOS Apple entitlement", async () => {
+    const root = await fixture({ complete: true });
+    await addAppleEntitlement(root);
+    await writeFile(
+      join(root, "MyApp", "MyApp.mac.entitlements"),
+      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>com.apple.security.network.client</key><true/></dict></plist>`,
+    );
+    await convertIOSFixtureToMultiplatform(root);
+    let appleHealthCalls = 0;
+
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        fetchUserSettings: async () =>
+          ({
+            social: {
+              oauth_apple: {
+                enabled: true,
+                authenticatable: true,
+                strategy: "oauth_apple",
+              },
+            },
+          }) as UserSettingsJSON,
+        planIOSAppleEntitlement: async (options) => {
+          const { planIOSAppleEntitlement } = await import("../init/ios/apple-entitlement.ts");
+          return planIOSAppleEntitlement(options);
+        },
+        auditIOSNativeAppleHealth: async () => {
+          appleHealthCalls++;
+          return {
+            runtime: {
+              status: "satisfied",
+              connection: "satisfied",
+              bundleIdentifierConfiguration: "satisfied",
+              current: { enabled: true, authenticatable: true },
+              blockers: [],
+            },
+            automation: { status: "supported", blockers: [] },
+          } as never;
+        },
+      }),
+    );
+
+    const entitlement = audit.results.find(
+      (result) => result.name === "iOS: Sign in with Apple entitlement",
+    );
+    expect(entitlement).toMatchObject({
+      status: "fail",
+      message: "Sign in with Apple entitlement: incomplete",
+    });
+    expect(entitlement?.detail).toContain("macOS");
+    expect(
+      audit.results.find((result) => result.name === "iOS: AuthView authentication methods"),
+    ).toMatchObject({
+      status: "fail",
+      message: "AuthView offers Apple sign-in but the selected target lacks its entitlement",
+    });
+    expect(appleHealthCalls).toBe(1);
+  });
+
+  test("fails SDK validation when a secondary supported platform is below its floor", async () => {
+    const root = await fixture({ complete: true });
+    await makeMultiplatform(root, "13.5");
+
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        planMacOSNetworkCapability: async (options) => ({
+          schemaVersion: 1,
+          kind: "clerk-macos-network-capability",
+          status: "satisfied",
+          root: options.root,
+          projectPath: options.projectPath,
+          targetId: options.targetId,
+          targetName: "MyApp",
+          files: [],
+          actions: [],
+          blockers: [],
+        }),
+      }),
+    );
+
+    const sdk = audit.results.find(
+      (result) => result.name === "iOS: Install Clerk's iOS SDK for the selected target",
+    );
+    expect(sdk).toMatchObject({ status: "fail", message: expect.stringContaining("blocked") });
+    expect(sdk?.detail).toContain("requires macOS 14.0 or newer");
   });
 
   test("does not run the macOS network planner for a pure iOS target", async () => {
@@ -1234,6 +1329,10 @@ struct ContentView: View {
               },
             },
           } as unknown as UserSettingsJSON;
+        },
+        planIOSAppleEntitlement: async (options) => {
+          const { planIOSAppleEntitlement } = await import("../init/ios/apple-entitlement.ts");
+          return planIOSAppleEntitlement(options);
         },
         auditIOSNativeAppleHealth: async () => {
           appleHealthCalls++;
