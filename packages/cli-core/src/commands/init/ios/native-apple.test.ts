@@ -305,6 +305,43 @@ describe("native Sign in with Apple remote setup", () => {
     });
   });
 
+  test("reports a case-only Bundle ID difference as a supported spelling repair", async () => {
+    const api: IOSNativeAppleReadAPI = {
+      async fetchInstanceConfig() {
+        return config(
+          connection(true, true, {
+            bundle_id: BUNDLE_IDENTIFIER.toLowerCase(),
+          }),
+        );
+      },
+      async fetchInstanceConfigSchema() {
+        return appleSchema();
+      },
+    };
+
+    const result = await auditIOSNativeAppleHealth(
+      {
+        applicationId: APPLICATION_ID,
+        instanceId: INSTANCE_ID,
+        bundleIdentifier: BUNDLE_IDENTIFIER,
+      },
+      api,
+    );
+
+    expect(result.runtime).toEqual({
+      status: "required",
+      connection: "required",
+      bundleIdentifierConfiguration: "required",
+      current: { enabled: true, authenticatable: true },
+      blockers: [],
+    });
+    expect(result.automation).toEqual({
+      status: "supported",
+      configVersion: CONFIG_VERSION,
+      blockers: [],
+    });
+  });
+
   test("requires a config version only when the health audit finds a repair", async () => {
     const api: IOSNativeAppleReadAPI = {
       async fetchInstanceConfig() {

@@ -329,7 +329,7 @@ function buildIOSNativeAppleHealthAudit(
     parsed.status === "valid" &&
     parsed.bundleIdentifier &&
     bundleIdentifier &&
-    parsed.bundleIdentifier !== bundleIdentifier
+    !bundleIdentifiersEqual(parsed.bundleIdentifier, bundleIdentifier)
   ) {
     runtimeBlockers.push(
       blocker(
