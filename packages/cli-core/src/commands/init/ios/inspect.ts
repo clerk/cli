@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { dirname, extname, relative, resolve, sep } from "node:path";
 import { parse as parsePbxProject } from "@bacons/xcode/json";
+import { bundleIdentifiersEqual } from "../../../lib/apple-native-identity.ts";
 import {
   addBuildSettingConflictDiagnostics,
   inspectTargetBuildConfigurations,
@@ -476,7 +477,7 @@ async function attachEntitlements(
     const literalAppIdentifierPrefix =
       prefixMatch &&
       configuration.bundleIdentifier.state === "resolved" &&
-      prefixMatch[2] === configuration.bundleIdentifier.value
+      bundleIdentifiersEqual(prefixMatch[2], configuration.bundleIdentifier.value)
         ? prefixMatch[1]
         : undefined;
     configuration.entitlements = {
