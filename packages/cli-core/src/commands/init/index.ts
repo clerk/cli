@@ -238,6 +238,10 @@ export async function init(options: InitOptions = {}) {
       validateAgentAuthentication,
     });
     validatedAgentAuthLabel = appleNativeSetup.validatedAgentAuthLabel;
+    ctx.framework = {
+      ...ctx.framework,
+      name: appleNativeSetup.frameworkName,
+    };
   }
 
   await enrichProjectContext(ctx);
