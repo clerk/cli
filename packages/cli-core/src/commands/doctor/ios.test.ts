@@ -660,6 +660,7 @@ struct ContentView: View {
       source.replace('QuickstartLocalSecrets.load().publishableKey ?? ""', `"${localKey}"`),
     );
     const secret = "sk_test_must_never_escape";
+    let environmentCalls = 0;
     const audit = await runIOSDoctorChecks(
       context(),
       { root, target: "MyApp" },
@@ -675,14 +676,71 @@ struct ContentView: View {
             },
           ],
         }),
+        fetchUserSettings: async () => {
+          environmentCalls++;
+          throw new Error("must not contact an unverified Frontend API host");
+        },
       }),
     );
 
+    expect(environmentCalls).toBe(0);
     const key = audit.results.find((result) => result.name === "iOS: Linked development key");
     expect(key?.status).toBe("fail");
     expect(key?.message).toContain("different Clerk instance");
     expect(JSON.stringify(audit.results)).not.toContain(localKey);
     expect(JSON.stringify(audit.results)).not.toContain(secret);
+  });
+
+  test("audits inline AuthView settings only after the linked development key matches", async () => {
+    const root = await fixture({ complete: true, includeKey: false });
+    const inlineKey = publishableKey("clerk.example.test");
+    const sourcePath = join(root, "MyApp", "MyAppApp.swift");
+    const source = await readFile(sourcePath, "utf8");
+    await writeFile(
+      sourcePath,
+      source.replace('QuickstartLocalSecrets.load().publishableKey ?? ""', `"${inlineKey}"`),
+    );
+    const calls: string[] = [];
+
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        fetchApplication: async () => {
+          calls.push("application:start");
+          await Promise.resolve();
+          calls.push("application:finish");
+          return {
+            application_id: "app_test",
+            instances: [
+              {
+                instance_id: "ins_test",
+                environment_type: "development",
+                publishable_key: publishableKey("clerk.example.test"),
+              },
+            ],
+          };
+        },
+        fetchUserSettings: async (host) => {
+          calls.push(`environment:${host}`);
+          return { social: {} } as UserSettingsJSON;
+        },
+      }),
+    );
+
+    expect(calls).toEqual([
+      "application:start",
+      "application:finish",
+      "environment:clerk.example.test",
+    ]);
+    expect(
+      audit.results.find((result) => result.name === "iOS: AuthView authentication methods"),
+    ).toEqual(
+      expect.objectContaining({
+        status: "pass",
+        message: "AuthView methods: native Apple sign-in is not currently offered",
+      }),
+    );
   });
 
   test("uses the explicitly linked application for a custom key source without claiming a match", async () => {
@@ -870,7 +928,7 @@ struct ContentView: View {
     expect(JSON.stringify(audit.results)).not.toContain("apple-private-material-must-not-escape");
   });
 
-  test("audits public AuthView methods even before the local project is linked", async () => {
+  test("does not contact an inline AuthView host before the local project is linked", async () => {
     const root = await fixture({ complete: true, includeKey: false });
     const inlineKey = publishableKey("clerk.example.test");
     const sourcePath = join(root, "MyApp", "MyAppApp.swift");
@@ -912,12 +970,17 @@ struct ContentView: View {
       }),
     );
 
-    expect(environmentCalls).toBe(1);
+    expect(environmentCalls).toBe(0);
     expect(nativeCalls).toBe(0);
     expect(
-      audit.results.find((result) => result.name === "iOS: AuthView authentication methods")
-        ?.status,
-    ).toBe("fail");
+      audit.results.find((result) => result.name === "iOS: AuthView authentication methods"),
+    ).toEqual(
+      expect.objectContaining({
+        status: "warn",
+        message:
+          "AuthView methods: remote state not inspected (runtime environment was not proven)",
+      }),
+    );
     expect(audit.results.find((result) => result.name === "iOS: Native Application")?.status).toBe(
       "warn",
     );

@@ -427,17 +427,6 @@ async function remoteResults(
     configureStep?.status === "satisfied" &&
     hasSupportedIOSCustomConfigure(target);
   const preliminaryResults: CheckResult[] = [];
-  if (target && !customSource) {
-    const localPublishableKey = inspection.localPublishableKey;
-    const authView = await authViewEnvironmentResult(target, dependencies, {
-      configureStatus: configureStep?.status,
-      fapiHost:
-        localPublishableKey.state === "valid" ? localPublishableKey.frontendApiHost : undefined,
-      customSource: false,
-      linked: false,
-    });
-    if (authView) preliminaryResults.push(authView);
-  }
 
   if (
     readiness.target.status === "selected" &&
@@ -452,10 +441,10 @@ async function remoteResults(
 
   const profile = await ctx.getProfile();
   if (!profile) {
-    if (target && customSource) {
+    if (target) {
       const authView = await authViewEnvironmentResult(target, dependencies, {
         configureStatus: configureStep?.status,
-        customSource: true,
+        customSource,
         linked: false,
       });
       if (authView) preliminaryResults.push(authView);
@@ -503,20 +492,26 @@ async function remoteResults(
     const customApplication = customSource
       ? linkedCustomApplicationResult(application, instanceId)
       : undefined;
-    if (target && customSource) {
-      const authView = await authViewEnvironmentResult(target, dependencies, {
-        configureStatus: configureStep?.status,
-        fapiHost: customApplication?.fapiHost,
-        customSource: true,
-        linked: true,
-      });
-      if (authView) preliminaryResults.push(authView);
-    }
     const linkedResult =
       customApplication?.result ??
       (configureStep?.status === "satisfied"
         ? linkedDevelopmentKeyResult(inspection, application, instanceId)
         : undefined);
+    const localPublishableKey = inspection.localPublishableKey;
+    const verifiedFapiHost =
+      customApplication?.fapiHost ??
+      (!customSource && linkedResult?.status === "pass" && localPublishableKey.state === "valid"
+        ? localPublishableKey.frontendApiHost
+        : undefined);
+    if (target) {
+      const authView = await authViewEnvironmentResult(target, dependencies, {
+        configureStatus: configureStep?.status,
+        fapiHost: verifiedFapiHost,
+        customSource,
+        linked: true,
+      });
+      if (authView) preliminaryResults.push(authView);
+    }
     const customAssociatedDomain =
       target && customApplication?.fapiHost
         ? linkedCustomAssociatedDomainResult(target, customApplication.fapiHost)
