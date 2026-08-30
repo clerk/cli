@@ -559,11 +559,15 @@ async function remoteResults(
       bundleIdentifier.status === "resolved" &&
       remotePlan.registration === "satisfied"
     ) {
+      const registeredBundleIdentifier = remotePlan.bundleIdentifier;
+      if (!registeredBundleIdentifier) {
+        throw new Error("A satisfied iOS registration must include its Bundle ID.");
+      }
       try {
         const apple = await dependencies.auditIOSNativeAppleHealth({
           applicationId,
           instanceId,
-          bundleIdentifier: bundleIdentifier.value,
+          bundleIdentifier: registeredBundleIdentifier,
         });
         if (apple.runtime.status === "satisfied") {
           results.push({
