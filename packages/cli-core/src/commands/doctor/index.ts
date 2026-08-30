@@ -88,8 +88,17 @@ export async function runChecks(
       appleNativeInspectionFailed = true;
     }
   }
+  const fatalAppleNativeInspectionDiagnostic =
+    appleNativeInspection?.appTargets.length === 0 &&
+    appleNativeInspection.selection.state === "none"
+      ? appleNativeInspection.diagnostics.find(
+          (diagnostic) =>
+            diagnostic.severity === "error" && diagnostic.code !== "xcode.no-ios-app-target",
+        )
+      : undefined;
   const appleNative =
     appleNativeInspectionFailed ||
+    fatalAppleNativeInspectionDiagnostic != null ||
     options.target != null ||
     (appleNativeInspection?.appTargets.length ?? 0) > 0;
   const common = await Promise.all(
@@ -116,6 +125,20 @@ export async function runChecks(
         message: "Apple-native project inspection failed",
         detail: "The semantic Xcode inspection did not complete safely.",
         remedy: "Run from the Xcode project root and pass `--target <name-or-id>` if needed.",
+      },
+    ];
+  }
+  if (fatalAppleNativeInspectionDiagnostic) {
+    return [
+      ...common,
+      {
+        name: "Apple-native inspection",
+        status: "fail",
+        message: "Apple-native project inspection failed",
+        detail: fatalAppleNativeInspectionDiagnostic.message,
+        remedy:
+          fatalAppleNativeInspectionDiagnostic.remedy ??
+          "Run from the Xcode project root and verify that its project files are readable.",
       },
     ];
   }
