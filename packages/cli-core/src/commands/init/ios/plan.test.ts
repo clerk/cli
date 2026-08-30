@@ -38,16 +38,24 @@ describe("buildIOSSetupPlan", () => {
   });
 
   test("blocks every setup step when a configuration platform is unresolved", async () => {
-    const plan = await planFor({
+    const root = await mkdtemp(join(tmpdir(), "clerk-native-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, {
       platform: "macos",
       releasePlatform: "unresolved",
       complete: true,
     });
+    const inspection = await inspectIOSProject(root);
+    const plan = buildIOSSetupPlan(inspection);
+    const output = formatIOSSetupPlan(inspection, plan);
 
     expect(plan.selection).toMatchObject({ state: "selected", platform: "macos" });
     expect(plan.status).toBe("blocked");
     expect(plan.steps.every((item) => item.status === "blocked")).toBe(true);
     expect(plan.steps[0]?.description).toContain("platform is not proven consistently");
+    expect(output).toContain("native Apple setup plan (read-only)");
+    expect(output).toContain("Native Apple readiness:");
+    expect(output).not.toContain("Associated Domains:");
   });
 
   test("returns stable ordered steps while preserving a custom project key source", async () => {
@@ -858,6 +866,34 @@ import SwiftUI
 
     expect(plan.steps[0]?.status).toBe("blocked");
     expect(plan.steps.slice(1).every((step) => step.status === "blocked")).toBe(true);
+  });
+
+  test("uses native Apple labels for an ambiguous mixed-platform selection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-native-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { platform: "macos", secondTarget: true });
+    const inspection = await inspectIOSProject(root);
+    const output = formatIOSSetupPlan(inspection, buildIOSSetupPlan(inspection));
+
+    expect(inspection.selection.state).toBe("ambiguous");
+    expect(inspection.platform).toBe("apple-native");
+    expect(output).toContain("native Apple setup plan (read-only)");
+    expect(output).toContain("Native Apple readiness:");
+    expect(output).not.toContain("Associated Domains:");
+  });
+
+  test("uses the inspected macOS platform when the requested target is missing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-macos-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { platform: "macos" });
+    const inspection = await inspectIOSProject(root, { target: "MissingApp" });
+    const output = formatIOSSetupPlan(inspection, buildIOSSetupPlan(inspection));
+
+    expect(inspection.selection.state).toBe("not-found");
+    expect(inspection.platform).toBe("macos");
+    expect(output).toContain("macOS setup plan (read-only)");
+    expect(output).toContain("Native macOS readiness:");
+    expect(output).not.toContain("Associated Domains:");
   });
 
   test("includes usable choices when the requested target is missing", async () => {
