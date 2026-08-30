@@ -1115,6 +1115,11 @@ async function parseProject(
       !hasResolvedUnsupportedConfiguration &&
       concretePlatforms.size === 1;
     if (!platformEvidenceComplete) {
+      const unmodeledPlatforms = [
+        ...new Set(
+          targetConfigurations.flatMap((configuration) => configuration.unmodeledPlatforms),
+        ),
+      ].sort();
       const configurationSummary =
         targetConfigurations.length === 0
           ? "no build configurations were inspectable"
@@ -1133,9 +1138,16 @@ async function parseProject(
       configurationDiagnostics.push({
         code: "xcode.unresolved-target-platform",
         severity: "error",
-        message: `${targetName} does not have one proven native platform across every build configuration (${configurationSummary}).`,
+        message:
+          unmodeledPlatforms.length > 0
+            ? `${targetName} also supports ${unmodeledPlatforms.join(
+                ", ",
+              )}, which Clerk CLI does not automate.`
+            : `${targetName} does not have one proven native platform across every build configuration (${configurationSummary}).`,
         remedy:
-          "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently for every build configuration before running Clerk setup.",
+          unmodeledPlatforms.length > 0
+            ? "Use an iOS/macOS-only target for automatic setup, or configure Clerk manually for this multiplatform target."
+            : "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently for every build configuration before running Clerk setup.",
         evidence: [
           {
             path: relativeIOSPath(root, resolve(projectPath, "project.pbxproj")),
