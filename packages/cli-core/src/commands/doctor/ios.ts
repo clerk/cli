@@ -21,6 +21,10 @@ import {
   type MacOSNetworkCapabilityPlan,
 } from "../init/ios/macos-network.ts";
 import { buildIOSSetupPlan } from "../init/ios/plan.ts";
+import {
+  inspectIOSPlatformViews,
+  type IOSPlatformViewsSnapshot,
+} from "../init/ios/platform-views.ts";
 import { hasSupportedIOSCustomConfigure } from "../init/ios/products.ts";
 import type {
   IOSAppTarget,
@@ -240,8 +244,15 @@ function localResults(
   inspection: IOSProjectInspectionResult,
   sdkInstallPlan?: IOSSDKInstallPlan,
   macOSNetworkCapabilityPlan?: MacOSNetworkCapabilityPlan,
+  platformViews?: IOSPlatformViewsSnapshot,
+  platformCompatibilityBlockers?: readonly string[],
 ): CheckResult[] {
-  const plan = buildIOSSetupPlan(inspection, { sdkInstallPlan, macOSNetworkCapabilityPlan });
+  const plan = buildIOSSetupPlan(inspection, {
+    sdkInstallPlan,
+    macOSNetworkCapabilityPlan,
+    productDecision: platformViews?.productDecision,
+    platformCompatibilityBlockers,
+  });
   const target = selectedTarget(inspection);
   const platform = target?.platform ?? (inspection.platform === "macos" ? "macos" : "ios");
   const results = plan.steps
@@ -251,7 +262,7 @@ function localResults(
         (platform !== "macos" || step.id !== "add-associated-domain"),
     )
     .map((step) => localStepResult(step, step.id === "enable-macos-network" ? "macos" : platform));
-  const readiness = buildIOSNativeReadinessAudit(inspection);
+  const readiness = buildIOSNativeReadinessAudit(inspection, { platformViews });
   if (
     readiness.target.status === "selected" &&
     readiness.target.appIdPrefix.status === "conflicting"
@@ -462,8 +473,9 @@ async function remoteResults(
   ctx: DoctorContext,
   inspection: IOSProjectInspectionResult,
   dependencies: IOSDoctorDependencies,
+  platformViews?: IOSPlatformViewsSnapshot,
 ): Promise<CheckResult[]> {
-  const readiness = buildIOSNativeReadinessAudit(inspection);
+  const readiness = buildIOSNativeReadinessAudit(inspection, { platformViews });
   const target = selectedTarget(inspection);
   const platform = target?.platform ?? (inspection.platform === "macos" ? "macos" : "ios");
   const nativeApplicationName = `${platformLabel(platform)}: Native Application`;
@@ -771,29 +783,48 @@ export async function runIOSDoctorChecks(
       exhaustiveContainerDiscovery: true,
     }));
   const target = selectedTarget(inspection);
-  const requiresAuthViewCompatibility = (target?.swift.authViewReferences.length ?? 0) > 0;
-  const requiresClerkKitUI =
-    (target?.swift.importsClerkKitUI.length ?? 0) > 0 || requiresAuthViewCompatibility;
-  const sdkInstallPlan = target?.platformEvidenceComplete
-    ? await dependencies.planIOSSDKInstall({
-        root: inspection.root,
-        projectPath: target.projectPath,
-        targetId: target.id,
-        platform: target.platform,
-        supportedPlatforms: target.supportedPlatforms,
-        ...(requiresClerkKitUI ? { includeClerkKitUI: true } : {}),
-        ...(requiresAuthViewCompatibility ? { requirePrebuiltAuthCompatibility: true } : {}),
-      })
+  const platformViewsAudit = target
+    ? await inspectIOSPlatformViews(inspection, dependencies.inspectIOSProject)
     : undefined;
-  const macOSNetworkCapabilityPlan = target?.supportedPlatforms.includes("macos")
-    ? await dependencies.planMacOSNetworkCapability({
-        root: inspection.root,
-        projectPath: target.projectPath,
-        targetId: target.id,
-        allowMissingEntitlementsCreation: true,
-      })
-    : undefined;
-  const results = localResults(inspection, sdkInstallPlan, macOSNetworkCapabilityPlan);
+  const platformViews =
+    platformViewsAudit?.status === "ready" ? platformViewsAudit.snapshot : undefined;
+  const platformCompatibilityBlockers =
+    platformViewsAudit?.status === "blocked"
+      ? platformViewsAudit.blockers.map((blocker) => blocker.message)
+      : undefined;
+  const requiresAuthViewCompatibility = platformViews?.requiresAuthViewCompatibility === true;
+  const requiresClerkKitUI = platformViews?.requiresClerkKitUI === true;
+  const sdkInstallPlan =
+    target?.platformEvidenceComplete && platformViews
+      ? await dependencies.planIOSSDKInstall({
+          root: inspection.root,
+          projectPath: target.projectPath,
+          targetId: target.id,
+          platform: target.platform,
+          supportedPlatforms: target.supportedPlatforms,
+          ...(requiresClerkKitUI ? { includeClerkKitUI: true } : {}),
+          ...(requiresAuthViewCompatibility ? { requirePrebuiltAuthCompatibility: true } : {}),
+        })
+      : undefined;
+  const macOSNetworkCapabilityPlan =
+    platformViews && target?.supportedPlatforms.includes("macos")
+      ? await dependencies.planMacOSNetworkCapability({
+          root: inspection.root,
+          projectPath: target.projectPath,
+          targetId: target.id,
+          allowMissingEntitlementsCreation: true,
+        })
+      : undefined;
+  const results = localResults(
+    inspection,
+    sdkInstallPlan,
+    macOSNetworkCapabilityPlan,
+    platformViews,
+    platformCompatibilityBlockers,
+  );
+  if (platformViewsAudit?.status === "blocked") {
+    return { inspection, results };
+  }
   if (target && !target.platformEvidenceComplete) {
     return { inspection, results };
   }
@@ -801,7 +832,8 @@ export async function runIOSDoctorChecks(
     const apple = await appleEntitlementResult(inspection, target, dependencies);
     if (apple) results.splice(Math.max(0, results.length - 1), 0, apple);
   }
-  for (const remoteResult of await remoteResults(ctx, inspection, dependencies)) {
+  if (target && !platformViews) return { inspection, results };
+  for (const remoteResult of await remoteResults(ctx, inspection, dependencies, platformViews)) {
     const existingIndex =
       remoteResult.name === IOS_ASSOCIATED_DOMAIN_RESULT_NAME
         ? results.findIndex((result) => result.name === remoteResult.name)

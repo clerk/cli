@@ -495,12 +495,38 @@ describe("native Sign in with Apple remote setup", () => {
     expect(plan.status).toBe("satisfied");
     expect(harness.patchCalls).toHaveLength(0);
     if (plan.status === "satisfied") {
-      await applyIOSNativeAppleConnection(plan, harness.api);
+      await applyIOSNativeAppleConnection(plan, { api: harness.api });
     }
     expect(harness.patchCalls).toHaveLength(0);
     expect(harness.calls.filter((call) => call === "GET config")).toHaveLength(2);
     expect(harness.calls.filter((call) => call === "GET schema")).toHaveLength(2);
     expect(captured.err).toContain("already enabled");
+  });
+
+  test("revalidates caller-owned local state before accepting a no-op", async () => {
+    const harness = statefulAPI({
+      initial: connection(true, true, { bundle_id: BUNDLE_IDENTIFIER }),
+    });
+    const plan = await prepareIOSNativeAppleConnection(baseOptions(), {
+      api: harness.api,
+      prompts: unexpectedPrompts(),
+    });
+    if (plan.status !== "satisfied") throw new Error("expected satisfied plan");
+    let revalidations = 0;
+
+    await expect(
+      applyIOSNativeAppleConnection(plan, {
+        api: harness.api,
+        revalidateLocalPreconditions: async () => {
+          revalidations += 1;
+          throw new Error("secondary platform identity changed");
+        },
+      }),
+    ).rejects.toThrow("secondary platform identity changed");
+
+    expect(revalidations).toBe(1);
+    expect(harness.patchCalls).toHaveLength(0);
+    expect(harness.actualWrites()).toBe(0);
   });
 
   test("normalizes a case-only Apple config difference to the registration's spelling", async () => {
@@ -519,7 +545,7 @@ describe("native Sign in with Apple remote setup", () => {
       blockers: [],
     });
     if (plan.status !== "ready") throw new Error("expected ready plan");
-    await applyIOSNativeAppleConnection(plan, harness.api);
+    await applyIOSNativeAppleConnection(plan, { api: harness.api });
 
     expect(harness.patchCalls).toHaveLength(2);
     expect(harness.patchCalls.map((call) => call.config)).toEqual([
@@ -554,7 +580,7 @@ describe("native Sign in with Apple remote setup", () => {
 
     expect(plan.status).toBe("satisfied");
     if (plan.status !== "satisfied") throw new Error("expected satisfied plan");
-    await applyIOSNativeAppleConnection(plan, harness.api);
+    await applyIOSNativeAppleConnection(plan, { api: harness.api });
 
     expect(harness.patchCalls).toHaveLength(0);
     expect(harness.actualWrites()).toBe(0);
@@ -580,7 +606,7 @@ describe("native Sign in with Apple remote setup", () => {
 
     let thrown: unknown;
     try {
-      await applyIOSNativeAppleConnection(plan, harness.api);
+      await applyIOSNativeAppleConnection(plan, { api: harness.api });
     } catch (error) {
       thrown = error;
     }
@@ -615,7 +641,7 @@ describe("native Sign in with Apple remote setup", () => {
     // registration transaction has run.
     expect(harness.patchCalls).toHaveLength(0);
 
-    await applyIOSNativeAppleConnection(prepared, harness.api);
+    await applyIOSNativeAppleConnection(prepared, { api: harness.api });
 
     expect(harness.actualWrites()).toBe(1);
     expect(harness.patchCalls).toHaveLength(2);
@@ -651,7 +677,7 @@ describe("native Sign in with Apple remote setup", () => {
     expect(prepared).toMatchObject({ status: "ready", platform: "macos" });
     if (prepared.status !== "ready") throw new Error("expected ready plan");
 
-    await applyIOSNativeAppleConnection(prepared, harness.api);
+    await applyIOSNativeAppleConnection(prepared, { api: harness.api });
 
     expect(harness.actualWrites()).toBe(1);
     expect(harness.patchCalls.map((call) => call.config)).toEqual([
@@ -844,7 +870,7 @@ describe("native Sign in with Apple remote setup", () => {
     if (prepared.status !== "ready") throw new Error("expected ready plan");
     harness.setVersion(NEXT_CONFIG_VERSION);
 
-    await expect(applyIOSNativeAppleConnection(prepared, harness.api)).rejects.toThrow(
+    await expect(applyIOSNativeAppleConnection(prepared, { api: harness.api })).rejects.toThrow(
       "changed after the approved preview",
     );
     expect(harness.patchCalls).toHaveLength(0);
@@ -874,7 +900,9 @@ describe("native Sign in with Apple remote setup", () => {
     if (prepared.status !== "ready") throw new Error("expected ready plan");
     const incomplete = { ...prepared, configVersion: undefined };
 
-    await expect(applyIOSNativeAppleConnection(incomplete, harness.api)).rejects.toMatchObject({
+    await expect(
+      applyIOSNativeAppleConnection(incomplete, { api: harness.api }),
+    ).rejects.toMatchObject({
       code: ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     });
     expect(harness.patchCalls).toHaveLength(0);
@@ -889,7 +917,7 @@ describe("native Sign in with Apple remote setup", () => {
     });
     if (prepared.status !== "ready") throw new Error("expected ready plan");
 
-    await expect(applyIOSNativeAppleConnection(prepared, harness.api)).rejects.toThrow(
+    await expect(applyIOSNativeAppleConnection(prepared, { api: harness.api })).rejects.toThrow(
       "could not safely validate native Sign in with Apple",
     );
     expect(harness.actualWrites()).toBe(0);
@@ -911,7 +939,7 @@ describe("native Sign in with Apple remote setup", () => {
     });
     if (prepared.status !== "ready") throw new Error("expected ready plan");
 
-    await expect(applyIOSNativeAppleConnection(prepared, harness.api)).rejects.toThrow(
+    await expect(applyIOSNativeAppleConnection(prepared, { api: harness.api })).rejects.toThrow(
       "could not safely validate native Sign in with Apple",
     );
     expect(harness.patchCalls.map((call) => call.options.dryRun)).toEqual([true]);
@@ -938,12 +966,38 @@ describe("native Sign in with Apple remote setup", () => {
     });
     if (prepared.status !== "ready") throw new Error("expected ready plan");
 
-    await expect(applyIOSNativeAppleConnection(prepared, harness.api)).rejects.toThrow(
+    await expect(applyIOSNativeAppleConnection(prepared, { api: harness.api })).rejects.toThrow(
       "could not safely validate native Sign in with Apple",
     );
     expect(harness.patchCalls.map((call) => call.options.dryRun)).toEqual([true]);
     expect(harness.actualWrites()).toBe(0);
     expect(captured.err).not.toContain(PRIVATE_KEY);
+  });
+
+  test("revalidates caller-owned local state after preflight and before the actual write", async () => {
+    const harness = statefulAPI({
+      initial: connection(false, false),
+    });
+    const prepared = await prepareIOSNativeAppleConnection(baseOptions(), {
+      api: harness.api,
+      prompts: unexpectedPrompts(),
+    });
+    if (prepared.status !== "ready") throw new Error("expected ready plan");
+    let revalidations = 0;
+
+    await expect(
+      applyIOSNativeAppleConnection(prepared, {
+        api: harness.api,
+        revalidateLocalPreconditions: async () => {
+          revalidations += 1;
+          throw new Error("secondary platform identity changed");
+        },
+      }),
+    ).rejects.toThrow("secondary platform identity changed");
+
+    expect(revalidations).toBe(1);
+    expect(harness.patchCalls.map((call) => call.options.dryRun)).toEqual([true]);
+    expect(harness.actualWrites()).toBe(0);
   });
 
   test("rejects an actual-write projection that changes a preserved credential value", async () => {
@@ -960,7 +1014,7 @@ describe("native Sign in with Apple remote setup", () => {
 
     let thrown: unknown;
     try {
-      await applyIOSNativeAppleConnection(prepared, harness.api);
+      await applyIOSNativeAppleConnection(prepared, { api: harness.api });
     } catch (error) {
       thrown = error;
     }
@@ -998,7 +1052,7 @@ describe("native Sign in with Apple remote setup", () => {
 
     let thrown: unknown;
     try {
-      await applyIOSNativeAppleConnection(prepared, harness.api);
+      await applyIOSNativeAppleConnection(prepared, { api: harness.api });
     } catch (error) {
       thrown = error;
     }
@@ -1021,7 +1075,9 @@ describe("native Sign in with Apple remote setup", () => {
     });
     if (prepared.status !== "ready") throw new Error("expected ready plan");
 
-    await expect(applyIOSNativeAppleConnection(prepared, harness.api)).rejects.toMatchObject({
+    await expect(
+      applyIOSNativeAppleConnection(prepared, { api: harness.api }),
+    ).rejects.toMatchObject({
       code: ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
       message: expect.stringContaining("did not pass final verification"),
     });
@@ -1050,7 +1106,7 @@ describe("native Sign in with Apple remote setup", () => {
     if (dryRunPrepared.status !== "ready") throw new Error("expected ready plan");
     let dryRunError: unknown;
     try {
-      await applyIOSNativeAppleConnection(dryRunPrepared, dryRunHarness.api);
+      await applyIOSNativeAppleConnection(dryRunPrepared, { api: dryRunHarness.api });
     } catch (error) {
       dryRunError = error;
     }
@@ -1064,7 +1120,7 @@ describe("native Sign in with Apple remote setup", () => {
     if (prepared.status !== "ready") throw new Error("expected ready plan");
     let writeError: unknown;
     try {
-      await applyIOSNativeAppleConnection(prepared, writeHarness.api);
+      await applyIOSNativeAppleConnection(prepared, { api: writeHarness.api });
     } catch (error) {
       writeError = error;
     }

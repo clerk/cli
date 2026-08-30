@@ -7,7 +7,7 @@ import type {
   IOSSourceEvidence,
   IOSValueResolution,
 } from "./types.ts";
-import { clerkKitUIInstallDecision } from "./products.ts";
+import { clerkKitUIInstallDecision, type ClerkKitUIInstallDecision } from "./products.ts";
 import type { IOSDirectConfigPlan } from "./direct-config.ts";
 import { associatedDomainMatches, type IOSAssociatedDomainPlan } from "./associated-domain.ts";
 import type { IOSAppleEntitlementPlan } from "./apple-entitlement.ts";
@@ -64,6 +64,10 @@ function step(
 }
 
 export interface BuildIOSSetupPlanOptions {
+  /** Aggregate product choice after inspecting every supported Apple platform view. */
+  productDecision?: ClerkKitUIInstallDecision;
+  /** Fail-closed target-wide blockers shared by init, dry-run, and Doctor. */
+  platformCompatibilityBlockers?: readonly string[];
   /** Strict SDK/package compatibility from the same planner used by apply. */
   sdkInstallPlan?: Pick<IOSSDKInstallPlan, "status" | "blockers">;
   /** Strict, publishable-key-redacted Swift source readiness from the apply planner. */
@@ -171,7 +175,7 @@ export function buildIOSSetupPlan(
   }
 
   const usesClerkKitUI = target.swift.importsClerkKitUI.length > 0;
-  const productDecision = clerkKitUIInstallDecision(target);
+  const productDecision = options.productDecision ?? clerkKitUIInstallDecision(target);
   const includeClerkKitUI =
     productDecision === "prebuilt" ||
     options.prebuiltAuthSelected === true ||
@@ -590,15 +594,21 @@ export function buildIOSSetupPlan(
     ),
   );
 
-  const actionable = steps.some((item) => item.status === "required" || item.status === "blocked");
+  const platformCompatibilityDetail = options.platformCompatibilityBlockers?.join(" ");
+  const actionable =
+    platformCompatibilityDetail != null ||
+    steps.some((item) => item.status === "required" || item.status === "blocked");
   steps.push(
     step(
       "verify-integration",
-      "Build and verify sign-in",
-      "review",
-      actionable
-        ? "After completing the required steps, build the selected target and verify sign-in, sign-out, app relaunch, and any redirect-based method you enabled."
-        : "The local evidence looks complete. Build the selected target and verify sign-in, sign-out, app relaunch, and any redirect-based method you enabled.",
+      platformCompatibilityDetail
+        ? "Validate the multiplatform target"
+        : "Build and verify sign-in",
+      platformCompatibilityDetail ? "blocked" : "review",
+      platformCompatibilityDetail ??
+        (actionable
+          ? "After completing the required steps, build the selected target and verify sign-in, sign-out, app relaunch, and any redirect-based method you enabled."
+          : "The local evidence looks complete. Build the selected target and verify sign-in, sign-out, app relaunch, and any redirect-based method you enabled."),
       targetEvidence,
       [{ kind: "documentation", url: QUICKSTART_URL }],
     ),

@@ -401,6 +401,115 @@ export async function convertIOSFixtureToMultiplatform(root: string): Promise<vo
   await writeFile(projectPath, buildPbxProject(project));
 }
 
+export interface IOSPlatformFilteredSourceFixture {
+  platform: "ios" | "macos";
+  relativePath: string;
+  source: string;
+  fileReferenceId: string;
+  buildFileId: string;
+}
+
+/** Adds one classic-group Swift member that is compiled for only one Apple platform. */
+export async function addIOSFixturePlatformFilteredSource(
+  root: string,
+  fixture: IOSPlatformFilteredSourceFixture,
+): Promise<void> {
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = parsePbxProject(await readFile(projectPath, "utf8"));
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
+  objects[fixture.fileReferenceId] = {
+    isa: "PBXFileReference",
+    lastKnownFileType: "sourcecode.swift",
+    path: fixture.relativePath,
+    sourceTree: "<group>",
+  };
+  objects[fixture.buildFileId] = {
+    isa: "PBXBuildFile",
+    fileRef: fixture.fileReferenceId,
+    platformFilter: fixture.platform,
+  };
+  (objects[IDS.appGroup]!.children as string[]).push(fixture.fileReferenceId);
+  (objects[IDS.sourcesPhase]!.files as string[]).push(fixture.buildFileId);
+  await writeFile(projectPath, buildPbxProject(project));
+  await writeFile(join(root, "MyApp", fixture.relativePath), fixture.source);
+}
+
+export interface IOSPlatformFilteredAppRootsFixture {
+  sharedAppRoot?: boolean;
+  iosSource?: string;
+  macOSSource?: string;
+  iosBundleIdentifier?: string;
+  macOSBundleIdentifier?: string;
+  iosAppIdPrefix?: string;
+  macOSAppIdPrefix?: string;
+}
+
+/**
+ * Converts one fixture target into an iOS/macOS target with distinct, filtered
+ * @main sources and optionally conditioned Bundle IDs/App ID Prefix evidence.
+ */
+export async function convertIOSFixtureToPlatformFilteredAppRoots(
+  root: string,
+  fixture: IOSPlatformFilteredAppRootsFixture = {},
+): Promise<void> {
+  await convertIOSFixtureToMultiplatform(root);
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = parsePbxProject(await readFile(projectPath, "utf8"));
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
+  if (!fixture.sharedAppRoot) objects[IDS.sourceBuildFile]!.platformFilter = "ios";
+  for (const configurationId of [IDS.targetDebug, IDS.targetRelease]) {
+    const settings = objects[configurationId]!.buildSettings as Record<string, unknown>;
+    delete settings.PRODUCT_BUNDLE_IDENTIFIER;
+    settings["PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]"] =
+      fixture.iosBundleIdentifier ?? "com.example.MyApp";
+    settings["PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*]"] =
+      fixture.iosBundleIdentifier ?? "com.example.MyApp";
+    settings["PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]"] =
+      fixture.macOSBundleIdentifier ?? "com.example.MyApp";
+    if (fixture.macOSAppIdPrefix) {
+      settings["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"] = "MyApp/MyApp.mac.entitlements";
+    }
+  }
+  await writeFile(projectPath, buildPbxProject(project));
+
+  if (!fixture.sharedAppRoot) {
+    await addIOSFixturePlatformFilteredSource(root, {
+      platform: "macos",
+      relativePath: "MyAppMacApp.swift",
+      source: fixture.macOSSource ?? swiftSource(false).replaceAll("MyApp", "MyAppMac"),
+      fileReferenceId: "616161616161616161616161",
+      buildFileId: "626262626262626262626262",
+    });
+  }
+  if (fixture.iosSource) {
+    await writeFile(join(root, "MyApp", "MyAppApp.swift"), fixture.iosSource);
+  }
+  if (fixture.iosAppIdPrefix) {
+    const path = join(root, "MyApp", "MyApp.entitlements");
+    const bundleIdentifier = fixture.iosBundleIdentifier ?? "com.example.MyApp";
+    await writeFile(
+      path,
+      (await readFile(path, "utf8")).replace(
+        /<key>application-identifier<\/key><string>[^<]*<\/string>/,
+        `<key>application-identifier</key><string>${fixture.iosAppIdPrefix}.${bundleIdentifier}</string>`,
+      ),
+    );
+  }
+  if (fixture.macOSAppIdPrefix) {
+    const bundleIdentifier = fixture.macOSBundleIdentifier ?? "com.example.MyApp";
+    await writeFile(
+      join(root, "MyApp", "MyApp.mac.entitlements"),
+      `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>application-identifier</key><string>${fixture.macOSAppIdPrefix}.${bundleIdentifier}</string>
+<key>com.apple.security.app-sandbox</key><true/>
+<key>com.apple.security.network.client</key><true/>
+</dict></plist>
+`,
+    );
+  }
+}
+
 async function digestEntry(root: string, path: string): Promise<string[]> {
   const info = await lstat(path);
   const relativePath = relative(root, path).split("\\").join("/") || ".";

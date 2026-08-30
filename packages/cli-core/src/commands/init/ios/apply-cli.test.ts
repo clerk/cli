@@ -10,6 +10,7 @@ import { inspectIOSProject } from "./inspect.ts";
 import { applyIOSLocalSetup, applyIOSPlannedLocalSetup } from "./apply.ts";
 import {
   convertIOSFixtureToMultiplatform,
+  convertIOSFixtureToPlatformFilteredAppRoots,
   convertIOSFixtureToSynchronizedMissingEntitlements,
   convertIOSFixtureToSynchronizedRoot,
   createIOSFixture,
@@ -333,6 +334,86 @@ describe("clerk init iOS SDK apply", () => {
     expect(await treeDigest(root)).toEqual(digestAfterFirst);
     expect(currentNativeRemoteState()).toEqual(remoteAfterFirst);
     expectAutomatedDoctorChecksToPass((await auditCurrentNativeFixture(root)).results);
+  });
+
+  test("stops before local or remote work when platform Swift application roots differ", async () => {
+    const root = await createUnconfiguredFixture();
+    await convertIOSFixtureToPlatformFilteredAppRoots(root, {
+      iosSource: `import ClerkKit
+import ClerkKitUI
+import SwiftUI
+
+@main
+struct MyApp: App {
+  init() { Clerk.configure(publishableKey: "${authFixtureKey}") }
+  var body: some Scene { WindowGroup { AuthView().environment(Clerk.shared) } }
+}
+`,
+    });
+    const beforeTree = await treeDigest(root);
+    const beforeRemote = currentNativeRemoteState();
+    const configDir = await createIsolatedCLIState();
+
+    const result = await runCLI(
+      root,
+      ["--mode", "agent", "init", "--yes", "--target", "MyApp"],
+      configDir,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("different Swift application roots");
+    expect(await treeDigest(root)).toEqual(beforeTree);
+    expect(currentNativeRemoteState()).toEqual(beforeRemote);
+  });
+
+  test("stops before local or remote work when platform Bundle IDs differ", async () => {
+    const root = await createUnconfiguredFixture();
+    await convertIOSFixtureToPlatformFilteredAppRoots(root, {
+      sharedAppRoot: true,
+      iosBundleIdentifier: "com.example.MyApp.ios",
+      macOSBundleIdentifier: "com.example.MyApp.macos",
+    });
+    const beforeTree = await treeDigest(root);
+    const beforeRemote = currentNativeRemoteState();
+    const configDir = await createIsolatedCLIState();
+
+    const result = await runCLI(
+      root,
+      ["--mode", "agent", "init", "--yes", "--target", "MyApp"],
+      configDir,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      "different Bundle IDs across its supported platforms",
+    );
+    expect(await treeDigest(root)).toEqual(beforeTree);
+    expect(currentNativeRemoteState()).toEqual(beforeRemote);
+  });
+
+  test("revalidates every platform identity before committing an approved local plan", async () => {
+    const root = await createUnconfiguredFixture();
+    await convertIOSFixtureToSynchronizedMissingEntitlements(root);
+    await convertIOSFixtureToMultiplatform(root);
+    const setup = await applyIOSLocalSetup({
+      root,
+      yes: true,
+      agent: true,
+      allowDirty: true,
+      prebuiltAuthUI: false,
+      signInWithApple: false,
+    });
+    await convertIOSFixtureToPlatformFilteredAppRoots(root, {
+      sharedAppRoot: true,
+      iosBundleIdentifier: "com.example.MyApp",
+      macOSBundleIdentifier: "com.example.MyApp.changed",
+    });
+    const changedTree = await treeDigest(root);
+
+    await expect(applyIOSPlannedLocalSetup(setup, authFixtureKey)).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_SETUP_STALE,
+    });
+    expect(await treeDigest(root)).toEqual(changedTree);
   });
 
   test("repairs only missing macOS pieces in a partial multiplatform setup", async () => {
