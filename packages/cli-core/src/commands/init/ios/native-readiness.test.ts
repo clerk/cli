@@ -297,6 +297,28 @@ describe("buildIOSNativeReadinessAudit", () => {
     });
   });
 
+  test("treats case-only Bundle ID variants as one identity and preserves the first spelling", async () => {
+    const inspection = await inspectionFor({ complete: true });
+    const target = inspection.appTargets[0]!;
+    target.configurations[0]!.bundleIdentifier = {
+      state: "resolved",
+      value: "com.Example.MyApp",
+      evidence: [],
+    };
+    target.configurations[1]!.bundleIdentifier = {
+      state: "resolved",
+      value: "COM.EXAMPLE.MYAPP",
+      evidence: [],
+    };
+
+    const audit = buildIOSNativeReadinessAudit(inspection);
+
+    expect(audit.target).toMatchObject({
+      status: "selected",
+      bundleIdentifier: { status: "resolved", value: "com.Example.MyApp" },
+    });
+  });
+
   test("preserves a partial App ID Prefix candidate when one selected configuration lacks it", async () => {
     const inspection = await inspectionFor({ complete: true });
     const releaseEntitlements = inspection.appTargets[0]!.configurations[1]!.entitlements!;

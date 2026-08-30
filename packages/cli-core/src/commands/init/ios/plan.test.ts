@@ -55,6 +55,40 @@ describe("buildIOSSetupPlan", () => {
     expect(JSON.stringify(plan)).not.toContain("CLERK_PUBLISHABLE_KEY=");
   });
 
+  test("does not block native registration for case-only Bundle ID variants", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true });
+    const inspection = await inspectIOSProject(root);
+    const target = inspection.appTargets[0]!;
+    target.configurations[0]!.bundleIdentifier = {
+      state: "resolved",
+      value: "com.Example.MyApp",
+      evidence: [],
+    };
+    target.configurations[1]!.bundleIdentifier = {
+      state: "resolved",
+      value: "COM.EXAMPLE.MYAPP",
+      evidence: [],
+    };
+
+    const registration = buildIOSSetupPlan(inspection).steps.find(
+      (step) => step.id === "register-native-application",
+    );
+
+    expect(registration).toMatchObject({ status: "review" });
+    expect(registration?.description).toContain("com.Example.MyApp");
+    expect(registration?.description).not.toContain("COM.EXAMPLE.MYAPP");
+  });
+
+  test("continues to block genuinely different Bundle IDs", async () => {
+    const plan = await planFor({ complete: true, conflictingBundle: true });
+
+    expect(plan.steps.find((step) => step.id === "register-native-application")).toMatchObject({
+      status: "blocked",
+    });
+  });
+
   test("classifies a LocalSecrets loader as a preserved custom key source", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-plan-"));
     temporaryDirectories.push(root);

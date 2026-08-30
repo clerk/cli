@@ -1,11 +1,7 @@
 import { associatedDomainMatches, type IOSAssociatedDomainPlan } from "./associated-domain.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
-import type {
-  IOSAppTarget,
-  IOSProjectInspectionResult,
-  IOSSetupStepStatus,
-  IOSValueResolution,
-} from "./types.ts";
+import { normalizeBundleIdentifierIdentity } from "../../../lib/apple-native-identity.ts";
+import type { IOSAppTarget, IOSProjectInspectionResult, IOSSetupStepStatus } from "./types.ts";
 
 export const IOS_NATIVE_READINESS_PLAPI_BRIDGE_REQUIREMENT = {
   applicationId: "linked-application-id",
@@ -122,18 +118,15 @@ function selectedTarget(inspection: IOSProjectInspectionResult): IOSAppTarget | 
   );
 }
 
-function resolvedValues(
-  target: IOSAppTarget,
-  select: (configuration: IOSAppTarget["configurations"][number]) => IOSValueResolution,
-): string[] {
-  return [
-    ...new Set(
-      target.configurations.flatMap((configuration) => {
-        const value = select(configuration);
-        return value.state === "resolved" ? [value.value] : [];
-      }),
-    ),
-  ].sort();
+function resolvedBundleIdentifiers(target: IOSAppTarget): string[] {
+  const candidatesByIdentity = new Map<string, string>();
+  for (const configuration of target.configurations) {
+    const value = configuration.bundleIdentifier;
+    if (value.state !== "resolved") continue;
+    const identity = normalizeBundleIdentifierIdentity(value.value);
+    if (!candidatesByIdentity.has(identity)) candidatesByIdentity.set(identity, value.value);
+  }
+  return [...candidatesByIdentity.values()].sort();
 }
 
 export function suggestAppIdPrefixFromDevelopmentTeam(
@@ -169,7 +162,7 @@ function bundleIdentifier(target: IOSAppTarget): IOSNativeReadinessBundleIdentif
     return { status: "unresolved" };
   }
 
-  const candidates = resolvedValues(target, (configuration) => configuration.bundleIdentifier);
+  const candidates = resolvedBundleIdentifiers(target);
   if (candidates.length === 1) return { status: "resolved", value: candidates[0]! };
   if (candidates.length === 0) return { status: "missing" };
   return { status: "conflicting", candidates };

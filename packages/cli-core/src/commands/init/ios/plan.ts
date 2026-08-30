@@ -13,6 +13,7 @@ import { associatedDomainMatches, type IOSAssociatedDomainPlan } from "./associa
 import type { IOSAppleEntitlementPlan } from "./apple-entitlement.ts";
 import type { IOSPrebuiltAuthPlan } from "./prebuilt-auth.ts";
 import type { IOSSDKInstallPlan } from "./install-sdk.ts";
+import { normalizeBundleIdentifierIdentity } from "../../../lib/apple-native-identity.ts";
 
 const NATIVE_APPLICATIONS_URL = "https://dashboard.clerk.com/~/native-applications";
 const QUICKSTART_URL = "https://clerk.com/docs/ios/getting-started/quickstart";
@@ -31,21 +32,15 @@ function selectedEvidence(target: IOSAppTarget | undefined): IOSSourceEvidence[]
   return target ? [{ path: target.projectPath, objectId: target.id }] : [];
 }
 
-function distinctResolved(
-  target: IOSAppTarget,
-  select: (configuration: IOSAppTarget["configurations"][number]) => IOSValueResolution,
-): string[] {
-  return [
-    ...new Set(
-      target.configurations
-        .map(select)
-        .filter(
-          (value): value is Extract<IOSValueResolution, { state: "resolved" }> =>
-            value.state === "resolved",
-        )
-        .map((value) => value.value),
-    ),
-  ].sort();
+function distinctResolvedBundleIdentifiers(target: IOSAppTarget): string[] {
+  const candidatesByIdentity = new Map<string, string>();
+  for (const configuration of target.configurations) {
+    const value = configuration.bundleIdentifier;
+    if (value.state !== "resolved") continue;
+    const identity = normalizeBundleIdentifierIdentity(value.value);
+    if (!candidatesByIdentity.has(identity)) candidatesByIdentity.set(identity, value.value);
+  }
+  return [...candidatesByIdentity.values()].sort();
 }
 
 function allEvidence(
@@ -316,10 +311,7 @@ export function buildIOSSetupPlan(
     ),
   );
 
-  const bundleIdentifiers = distinctResolved(
-    target,
-    (configuration) => configuration.bundleIdentifier,
-  );
+  const bundleIdentifiers = distinctResolvedBundleIdentifiers(target);
   const appPrefixes = [
     ...new Set(
       target.configurations
