@@ -1,4 +1,4 @@
-import { describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import { cp, mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,9 +17,11 @@ import type { PbxObjects } from "./pbx.ts";
 import {
   authFixtureKey,
   canonicalSwiftUIFixture,
+  cleanupApplyCLITestState,
   createIsolatedCLIState,
   createUnconfiguredFixture,
   developmentPublishableKey,
+  resetApplyCLITestRemoteState,
   runCLI,
   runCommand,
   temporaryDirectories,
@@ -27,6 +29,9 @@ import {
 import { ERROR_CODE } from "../../../lib/errors.ts";
 
 setDefaultTimeout(15_000);
+
+beforeEach(resetApplyCLITestRemoteState);
+afterEach(cleanupApplyCLITestState);
 
 function runSchemeSource(key: string): string {
   return `<Scheme><LaunchAction><BuildableProductRunnable><BuildableReference BlueprintIdentifier="${IOS_FIXTURE_IDS.appTarget}" /></BuildableProductRunnable><EnvironmentVariables><EnvironmentVariable key="CLERK_PUBLISHABLE_KEY" value="${key}" isEnabled="YES" /></EnvironmentVariables></LaunchAction></Scheme>`;

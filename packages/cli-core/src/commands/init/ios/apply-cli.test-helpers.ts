@@ -1,4 +1,3 @@
-import { afterAll, afterEach } from "bun:test";
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -26,6 +25,9 @@ const authFixtureApp = {
 };
 let nativeAPIEnabled = false;
 let nextIOSApplication = 1;
+let nativeSettingsPatchCount = 0;
+let iosApplicationPostCount = 0;
+let appleConfigPatchCount = 0;
 let appleConfigVersion = "v1_1234abcd";
 let appleConnection: Record<string, unknown> = {
   enabled: false,
@@ -62,6 +64,7 @@ const authServer = Bun.serve({
         return Response.json({ object: "native_settings", api_enabled: nativeAPIEnabled });
       }
       if (request.method === "PATCH") {
+        nativeSettingsPatchCount += 1;
         const body = (await request.json()) as { api_enabled?: boolean };
         if (body.api_enabled !== true) return Response.json({ error: "invalid" }, { status: 422 });
         nativeAPIEnabled = true;
@@ -71,6 +74,7 @@ const authServer = Bun.serve({
     if (url.pathname === `${nativeBase}/native_applications/ios`) {
       if (request.method === "GET") return Response.json(iosApplications);
       if (request.method === "POST") {
+        iosApplicationPostCount += 1;
         const body = (await request.json()) as { app_id_prefix: string; bundle_id: string };
         const existing = iosApplications.find(
           (application) =>
@@ -118,6 +122,7 @@ const authServer = Bun.serve({
         });
       }
       if (request.method === "PATCH") {
+        appleConfigPatchCount += 1;
         const body = (await request.json()) as {
           connection_oauth_apple?: Record<string, unknown>;
         };
@@ -142,17 +147,28 @@ const authServer = Bun.serve({
   },
 });
 
-afterAll(async () => authServer.stop(true));
+// This helper is shared by multiple test files in the same Bun test worker. Keep
+// the fixture server available for the worker's lifetime without keeping the
+// process alive; a file-scoped afterAll hook can otherwise stop it while another
+// importing test file is still running.
+authServer.unref();
 
-afterEach(async () => {
+export function resetApplyCLITestRemoteState(): void {
+  nativeAPIEnabled = false;
+  nextIOSApplication = 1;
+  nativeSettingsPatchCount = 0;
+  iosApplicationPostCount = 0;
+  appleConfigPatchCount = 0;
+  iosApplications.splice(0);
+  resetAppleConfiguration({ enabled: false, authenticatable: true });
+}
+
+export async function cleanupApplyCLITestState(): Promise<void> {
   await Promise.all(
     temporaryDirectories.splice(0).map(async (path) => rm(path, { recursive: true })),
   );
-  nativeAPIEnabled = false;
-  nextIOSApplication = 1;
-  iosApplications.splice(0);
-  resetAppleConfiguration({ enabled: false, authenticatable: true });
-});
+  resetApplyCLITestRemoteState();
+}
 
 export async function createIsolatedCLIState(): Promise<string> {
   const configDir = await mkdtemp(join(tmpdir(), "clerk-ios-apply-config-"));
@@ -275,4 +291,17 @@ export function resetAppleConfiguration(connection: Record<string, unknown>): vo
 
 export function currentAppleConnection(): Record<string, unknown> {
   return appleConnection;
+}
+
+export function currentNativeRemoteState() {
+  return {
+    application: structuredClone(authFixtureApp),
+    nativeAPIEnabled,
+    iosApplications: structuredClone(iosApplications),
+    mutations: {
+      nativeSettingsPatchCount,
+      iosApplicationPostCount,
+      appleConfigPatchCount,
+    },
+  };
 }

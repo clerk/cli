@@ -332,9 +332,7 @@ export async function createIOSFixture(
 }
 
 /** Converts the classic fixture into the modern synchronized-root shape used by new Xcode apps. */
-export async function convertIOSFixtureToSynchronizedMissingEntitlements(
-  root: string,
-): Promise<void> {
+export async function convertIOSFixtureToSynchronizedRoot(root: string): Promise<void> {
   const synchronizedRootId = "515151515151515151515151";
   const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
   const project = parsePbxProject(await readFile(projectPath, "utf8"));
@@ -351,6 +349,16 @@ export async function convertIOSFixtureToSynchronizedMissingEntitlements(
   };
   objects[IDS.appTarget]!.fileSystemSynchronizedGroups = [synchronizedRootId];
   delete objects[IDS.entitlementsFile];
+  await writeFile(projectPath, buildPbxProject(project));
+}
+
+export async function convertIOSFixtureToSynchronizedMissingEntitlements(
+  root: string,
+): Promise<void> {
+  await convertIOSFixtureToSynchronizedRoot(root);
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = parsePbxProject(await readFile(projectPath, "utf8"));
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
   for (const id of [IDS.targetDebug, IDS.targetRelease]) {
     const settings = objects[id]!.buildSettings as Record<string, unknown>;
     delete settings.CODE_SIGN_ENTITLEMENTS;
@@ -358,6 +366,39 @@ export async function convertIOSFixtureToSynchronizedMissingEntitlements(
   }
   await writeFile(projectPath, buildPbxProject(project));
   await rm(join(root, "MyApp", "MyApp.entitlements"), { force: true });
+}
+
+/** Converts the selected fixture target into Xcode's common single-target iOS + macOS shape. */
+export async function convertIOSFixtureToMultiplatform(root: string): Promise<void> {
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = parsePbxProject(await readFile(projectPath, "utf8"));
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
+  const macOSEntitlementsExists = await Bun.file(
+    join(root, "MyApp", "MyApp.mac.entitlements"),
+  ).exists();
+
+  for (const id of [IDS.projectDebug, IDS.projectRelease]) {
+    const settings = objects[id]!.buildSettings as Record<string, unknown>;
+    settings.SDKROOT = "auto";
+  }
+
+  for (const id of [IDS.targetDebug, IDS.targetRelease]) {
+    const settings = objects[id]!.buildSettings as Record<string, unknown>;
+    const existingEntitlements = settings.CODE_SIGN_ENTITLEMENTS;
+    delete settings.CODE_SIGN_ENTITLEMENTS;
+    settings.SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+    settings.IPHONEOS_DEPLOYMENT_TARGET = "17.0";
+    settings.MACOSX_DEPLOYMENT_TARGET = "14.0";
+    settings.ENABLE_APP_SANDBOX = "YES";
+    if (typeof existingEntitlements === "string" && existingEntitlements.length > 0) {
+      settings["CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]"] = existingEntitlements;
+      settings["CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]"] = existingEntitlements;
+      settings["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"] = "MyApp/MyApp.mac.entitlements";
+    }
+    if (!macOSEntitlementsExists) delete settings["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"];
+  }
+
+  await writeFile(projectPath, buildPbxProject(project));
 }
 
 async function digestEntry(root: string, path: string): Promise<string[]> {
