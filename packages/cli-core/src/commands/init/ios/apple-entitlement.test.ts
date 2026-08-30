@@ -15,6 +15,7 @@ import {
 } from "./apple-entitlement.ts";
 import { applyIOSFileTransaction } from "./file-transaction.ts";
 import {
+  convertIOSFixtureToMultiplatform,
   convertIOSFixtureToSynchronizedMissingEntitlements,
   createIOSFixture,
   IOS_FIXTURE_IDS,
@@ -79,6 +80,85 @@ afterEach(async () => {
 });
 
 describe("iOS Sign in with Apple entitlement setup", () => {
+  test("applies and revalidates separate iOS and macOS entitlements", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "MyApp", "MyApp.mac.entitlements"),
+      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>com.apple.security.network.client</key><true/></dict></plist>`,
+    );
+    await convertIOSFixtureToMultiplatform(root);
+    const options = {
+      ...planOptions(root),
+      platform: "ios" as const,
+      supportedPlatforms: ["ios", "macos"] as const,
+    };
+
+    const plan = await planIOSAppleEntitlement(options);
+    expect(plan).toMatchObject({
+      status: "ready",
+      supportedPlatforms: ["ios", "macos"],
+      platformPlans: [
+        { platform: "ios", status: "ready" },
+        { platform: "macos", status: "ready" },
+      ],
+    });
+    expect(plan.files.map((file) => file.path)).toEqual([
+      "MyApp/MyApp.entitlements",
+      "MyApp/MyApp.mac.entitlements",
+    ]);
+
+    expect((await applyIOSAppleEntitlement(plan)).status).toBe("applied");
+    for (const file of ["MyApp.entitlements", "MyApp.mac.entitlements"]) {
+      expect(await readFile(join(root, "MyApp", file), "utf8")).toContain(APPLE_KEY);
+    }
+    expect(await planIOSAppleEntitlement(options)).toMatchObject({ status: "satisfied" });
+  });
+
+  test("deduplicates one entitlement shared by iOS and macOS", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "MyApp", "MyApp.mac.entitlements"),
+      `<?xml version="1.0"?><plist version="1.0"><dict/></plist>`,
+    );
+    await convertIOSFixtureToMultiplatform(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+    await writeFile(
+      projectPath,
+      (await readFile(projectPath, "utf8")).replaceAll(
+        "MyApp/MyApp.mac.entitlements",
+        "MyApp/MyApp.entitlements",
+      ),
+    );
+    const options = {
+      ...planOptions(root),
+      platform: "ios" as const,
+      supportedPlatforms: ["ios", "macos"] as const,
+    };
+
+    const plan = await planIOSAppleEntitlement(options);
+    expect(plan).toMatchObject({ status: "ready" });
+    expect(plan.files).toHaveLength(1);
+    expect((await applyIOSAppleEntitlement(plan)).status).toBe("applied");
+    expect(await planIOSAppleEntitlement(options)).toMatchObject({ status: "satisfied" });
+  });
+
+  test("blocks every write when a secondary platform entitlement is malformed", async () => {
+    const root = await fixture();
+    await writeFile(join(root, "MyApp", "MyApp.mac.entitlements"), "not a plist");
+    await convertIOSFixtureToMultiplatform(root);
+    const before = await treeDigest(root);
+    const plan = await planIOSAppleEntitlement({
+      ...planOptions(root),
+      platform: "ios",
+      supportedPlatforms: ["ios", "macos"],
+    });
+
+    expect(plan).toMatchObject({ status: "blocked" });
+    expect(plan.blockers.some((item) => item.message.startsWith("macOS:"))).toBeTrue();
+    expect((await applyIOSAppleEntitlement(plan)).status).toBe("blocked");
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
   test("adds exactly Default while preserving comments, CRLF newlines, mode, and idempotence", async () => {
     const root = await fixture();
     const path = join(root, "MyApp", "MyApp.entitlements");

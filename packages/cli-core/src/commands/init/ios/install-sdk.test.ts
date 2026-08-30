@@ -154,6 +154,19 @@ async function makeMultiplatformTarget(root: string): Promise<void> {
   });
 }
 
+async function setDeploymentTargets(
+  root: string,
+  targets: { ios?: string; macos?: string },
+): Promise<void> {
+  await transformProject(root, (graph) => {
+    for (const configurationId of [IOS_FIXTURE_IDS.targetDebug, IOS_FIXTURE_IDS.targetRelease]) {
+      const settings = graph.objects[configurationId]!.buildSettings as Record<string, unknown>;
+      if (targets.ios) settings.IPHONEOS_DEPLOYMENT_TARGET = targets.ios;
+      if (targets.macos) settings.MACOSX_DEPLOYMENT_TARGET = targets.macos;
+    }
+  });
+}
+
 function removeClerkSDK(graph: MutableGraph): void {
   graph.root.packageReferences = [];
   removeClerkProductLinks(graph);
@@ -244,6 +257,63 @@ describe("iOS Clerk SDK installer", () => {
     expect(plan).toMatchObject({
       status: "blocked",
       blockers: [{ code: "unresolved-platform" }],
+    });
+  });
+
+  test("blocks ClerkKit for an iOS target below the supported deployment floor", async () => {
+    const root = await fixture({ clerkSDK: false });
+    await setDeploymentTargets(root, { ios: "16.4" });
+    const before = await readFile(pbxprojPath(root));
+
+    const plan = await planIOSSDKInstall(installOptions(root));
+
+    expect(plan).toMatchObject({
+      status: "blocked",
+      blockers: [
+        {
+          code: "incompatible-sdk",
+          message: expect.stringContaining("requires iOS 17.0 or newer"),
+        },
+      ],
+    });
+    expect(await applyIOSSDKInstall(plan)).toMatchObject({ status: "blocked" });
+    expect(await readFile(pbxprojPath(root))).toEqual(before);
+  });
+
+  test("blocks ClerkKit for a macOS target below the supported deployment floor", async () => {
+    const root = await fixture({ clerkSDK: "core-only", platform: "macos" });
+    await setDeploymentTargets(root, { macos: "13.5" });
+
+    const plan = await planIOSSDKInstall({ ...installOptions(root), platform: "macos" });
+
+    expect(plan).toMatchObject({
+      status: "blocked",
+      blockers: [
+        {
+          code: "incompatible-sdk",
+          message: expect.stringContaining("requires macOS 14.0 or newer"),
+        },
+      ],
+    });
+  });
+
+  test("blocks a shared ClerkKit link when any supported platform is below its floor", async () => {
+    const root = await fixture({ clerkSDK: "core-only" });
+    await makeMultiplatformTarget(root);
+    await setDeploymentTargets(root, { ios: "17.0", macos: "13.5" });
+
+    const plan = await planIOSSDKInstall(installOptions(root));
+
+    expect(plan).toMatchObject({
+      status: "blocked",
+      platform: "ios",
+      supportedPlatforms: ["ios", "macos"],
+      blockers: [
+        {
+          code: "incompatible-sdk",
+          message: expect.stringContaining("requires macOS 14.0 or newer"),
+        },
+      ],
     });
   });
 

@@ -9,7 +9,11 @@ import {
   planIOSPrebuiltAuth,
   prepareIOSPrebuiltAuthMutation,
 } from "./prebuilt-auth.ts";
-import { createIOSFixture, IOS_FIXTURE_IDS } from "./test-helpers.ts";
+import {
+  convertIOSFixtureToMultiplatform,
+  createIOSFixture,
+  IOS_FIXTURE_IDS,
+} from "./test-helpers.ts";
 
 const CONTENT_FILE_ID = "616161616161616161616161";
 const CONTENT_BUILD_FILE_ID = "626262626262626262626262";
@@ -162,6 +166,42 @@ describe("prebuilt AuthView source setup", () => {
       platform: "macos",
       sourcePath: "MyApp/ContentView.swift",
       blockers: [],
+    });
+  });
+
+  test("supports a multiplatform AuthView target at both deployment floors", async () => {
+    const root = await createFixture();
+    await convertIOSFixtureToMultiplatform(root);
+
+    const plan = await planIOSPrebuiltAuth(options(root));
+
+    expect(plan).toMatchObject({
+      status: "ready",
+      platform: "ios",
+      sourcePath: "MyApp/ContentView.swift",
+      blockers: [],
+    });
+  });
+
+  test("blocks a multiplatform AuthView target below the macOS deployment floor", async () => {
+    const root = await createFixture();
+    await convertIOSFixtureToMultiplatform(root);
+    await updateDeploymentTargets(root, (settings) => {
+      settings.MACOSX_DEPLOYMENT_TARGET = "13.0";
+    });
+
+    const plan = await planIOSPrebuiltAuth(options(root));
+
+    expect(plan).toMatchObject({
+      status: "blocked",
+      platform: "ios",
+      blockers: [
+        {
+          code: "incompatible-deployment-target",
+          message:
+            "ClerkKitUI's native components require macOS 14.0 or newer. Set MACOSX_DEPLOYMENT_TARGET to 14.0 or newer for every selected-target build configuration, make architecture values consistent, then rerun clerk init.",
+        },
+      ],
     });
   });
 

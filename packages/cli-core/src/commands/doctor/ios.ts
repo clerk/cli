@@ -98,6 +98,7 @@ async function authViewEnvironmentResult(
   target: IOSAppTarget,
   dependencies: IOSDoctorDependencies,
   options: {
+    root: string;
     configureStatus: IOSSetupStep["status"] | undefined;
     fapiHost?: string;
     customSource: boolean;
@@ -143,10 +144,15 @@ async function authViewEnvironmentResult(
     }
 
     const entitlementIsComplete =
-      target.configurations.length > 0 &&
-      target.configurations.every(
-        (configuration) => configuration.entitlements?.signInWithAppleState === "exact",
-      );
+      (
+        await dependencies.planIOSAppleEntitlement({
+          root: options.root,
+          projectPath: target.projectPath,
+          targetId: target.id,
+          platform: target.platform,
+          supportedPlatforms: target.supportedPlatforms,
+        })
+      ).status === "satisfied";
     return entitlementIsComplete
       ? {
           name,
@@ -281,6 +287,7 @@ async function appleEntitlementResult(
     projectPath: target.projectPath,
     targetId: target.id,
     platform: target.platform,
+    supportedPlatforms: target.supportedPlatforms,
   });
   if (plan.status === "satisfied") {
     return {
@@ -485,6 +492,7 @@ async function remoteResults(
   if (!profile) {
     if (target) {
       const authView = await authViewEnvironmentResult(target, dependencies, {
+        root: inspection.root,
         configureStatus: configureStep?.status,
         customSource,
         linked: false,
@@ -547,6 +555,7 @@ async function remoteResults(
         : undefined);
     if (target) {
       const authView = await authViewEnvironmentResult(target, dependencies, {
+        root: inspection.root,
         configureStatus: configureStep?.status,
         fapiHost: verifiedFapiHost,
         customSource,

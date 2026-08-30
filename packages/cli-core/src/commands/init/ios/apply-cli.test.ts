@@ -228,6 +228,55 @@ describe("clerk init iOS SDK apply", () => {
     expect(await treeDigest(root)).toEqual(before);
   });
 
+  test("plans explicit Apple capability for every multiplatform target platform", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-multiplatform-apple-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true, includeKey: false, localSecrets: true });
+    await Bun.write(
+      join(root, "MyApp", "MyApp.mac.entitlements"),
+      `<?xml version="1.0"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>com.apple.security.network.client</key><true/></dict></plist>`,
+    );
+    await convertIOSFixtureToMultiplatform(root);
+
+    const setup = await applyIOSLocalSetup({
+      root,
+      yes: true,
+      agent: true,
+      allowDirty: true,
+      prebuiltAuthUI: false,
+      signInWithApple: true,
+    });
+
+    expect(setup.appleEntitlementPlan).toMatchObject({
+      status: "ready",
+      supportedPlatforms: ["ios", "macos"],
+      platformPlans: [
+        { platform: "ios", status: "ready" },
+        { platform: "macos", status: "ready" },
+      ],
+    });
+
+    await applyIOSPlannedLocalSetup(setup, authFixtureKey);
+    for (const file of ["MyApp.entitlements", "MyApp.mac.entitlements"]) {
+      expect(await Bun.file(join(root, "MyApp", file)).text()).toContain(
+        "com.apple.developer.applesignin",
+      );
+    }
+
+    const applied = await treeDigest(root);
+    const rerun = await applyIOSLocalSetup({
+      root,
+      yes: true,
+      agent: true,
+      allowDirty: true,
+      prebuiltAuthUI: false,
+      signInWithApple: true,
+    });
+    expect(rerun.appleEntitlementPlan).toMatchObject({ status: "satisfied" });
+    await applyIOSPlannedLocalSetup(rerun, authFixtureKey);
+    expect(await treeDigest(root)).toEqual(applied);
+  });
+
   test("keeps fresh multiplatform init, rerun, and Doctor in agreement", async () => {
     const root = await createUnconfiguredFixture();
     await convertIOSFixtureToSynchronizedMissingEntitlements(root);

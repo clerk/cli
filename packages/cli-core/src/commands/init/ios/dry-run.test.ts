@@ -601,7 +601,7 @@ struct MyApp: App {
         (step: { id: string }) => step.id === "add-authentication-flow",
       );
       expect(auth).toMatchObject({ status: "blocked", automatable: false });
-      expect(auth.description).toContain("require iOS 17.0 or newer");
+      expect(auth.description).toContain("requires iOS 17.0 or newer");
       expect(auth.description).toContain("IPHONEOS_DEPLOYMENT_TARGET");
       expect(requestCount).toBe(0);
       expect(await treeDigest(root)).toEqual(before);
