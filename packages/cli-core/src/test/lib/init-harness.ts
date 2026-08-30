@@ -99,6 +99,7 @@ export const FAKE_IOS_PLATFORM_VIEWS: IOSPlatformViewsSnapshot = {
     {
       platform: "ios",
       productDecision: "core-only",
+      hasAppleEntitlementIntent: false,
       swift: EMPTY_SWIFT_PLATFORM_SNAPSHOT,
     },
   ],

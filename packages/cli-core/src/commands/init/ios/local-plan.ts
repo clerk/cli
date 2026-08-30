@@ -16,6 +16,7 @@ import {
 } from "./macos-network.ts";
 import {
   inspectIOSPlatformViews,
+  iosPlatformViewsHaveAppleEntitlementIntent,
   type IOSPlatformViewsSnapshot,
 } from "./platform-views.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
@@ -322,11 +323,8 @@ export async function buildIOSLocalSetupProposal(
         })
       : undefined;
 
-  const hasLocalAppleEntitlement = selectedTarget.configurations.some(
-    (configuration) =>
-      configuration.entitlements !== undefined &&
-      configuration.entitlements.signInWithAppleState !== "absent",
-  );
+  const hasLocalAppleEntitlement =
+    iosPlatformViewsHaveAppleEntitlementIntent(platformViews);
   let nativeAppleRequested = options.signInWithApple === true;
   if (
     !nativeAppleRequested &&
