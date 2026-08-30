@@ -501,7 +501,7 @@ export async function convertIOSFixtureToPlatformFilteredAppRoots(
       join(root, "MyApp", "MyApp.mac.entitlements"),
       `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
-<key>application-identifier</key><string>${fixture.macOSAppIdPrefix}.${bundleIdentifier}</string>
+<key>com.apple.application-identifier</key><string>${fixture.macOSAppIdPrefix}.${bundleIdentifier}</string>
 <key>com.apple.security.app-sandbox</key><true/>
 <key>com.apple.security.network.client</key><true/>
 </dict></plist>
