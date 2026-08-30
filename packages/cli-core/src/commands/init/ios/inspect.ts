@@ -353,6 +353,7 @@ function appleEntitlementState(
 async function inspectEntitlements(
   root: string,
   absolutePath: string,
+  platform: IOSNativePlatform,
   evidence: IOSSourceEvidence[],
   diagnostics: IOSDiagnostic[],
 ): Promise<IOSEntitlementsInspection | undefined> {
@@ -398,7 +399,9 @@ async function inspectEntitlements(
       rawAssociatedDomains.every((value): value is string => typeof value === "string")
         ? rawAssociatedDomains
         : [];
-    const applicationIdentifier = asString(parsed["application-identifier"]);
+    const applicationIdentifier = asString(
+      parsed[platform === "macos" ? "com.apple.application-identifier" : "application-identifier"],
+    );
     const signInWithAppleState = appleEntitlementState(parsed);
     if (signInWithAppleState === "invalid") {
       diagnostics.push({
@@ -433,6 +436,7 @@ async function inspectEntitlements(
 async function attachEntitlements(
   root: string,
   projectPath: string,
+  platform: IOSNativePlatform,
   configurations: IOSBuildConfiguration[],
   contextsByConfiguration: Map<string, EntitlementBuildContext[]>,
   diagnostics: IOSDiagnostic[],
@@ -469,6 +473,7 @@ async function attachEntitlements(
         await inspectEntitlements(
           root,
           absolutePath,
+          platform,
           configuration.entitlementsPath.evidence,
           diagnostics,
         ),
@@ -1187,6 +1192,7 @@ async function parseProject(
     await attachEntitlements(
       root,
       projectPath,
+      targetPlatform,
       configurations,
       new Map(
         targetConfigurations.map((configuration) => [

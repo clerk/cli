@@ -297,4 +297,52 @@ struct MacCallbackView: View {
     expect(result.status).toBe("blocked");
     expect(blockerCodes(result)).toContain("conflicting-app-id-prefix");
   });
+
+  test("reads the App ID Prefix from each platform's application identifier entitlement", async () => {
+    const root = await fixture();
+    await convertIOSFixtureToPlatformFilteredAppRoots(root, {
+      sharedAppRoot: true,
+      iosAppIdPrefix: "LEGACY1234",
+      macOSAppIdPrefix: "LEGACY1234",
+    });
+
+    const [ios, macOS] = await Promise.all([
+      inspectIOSProject(root, { target: "MyApp", platform: "ios" }),
+      inspectIOSProject(root, { target: "MyApp", platform: "macos" }),
+    ]);
+
+    expect(ios.appTargets[0]?.configurations[0]?.entitlements).toMatchObject({
+      applicationIdentifier: "LEGACY1234.com.example.MyApp",
+      literalAppIdentifierPrefix: "LEGACY1234",
+    });
+    expect(macOS.appTargets[0]?.configurations[0]?.entitlements).toMatchObject({
+      applicationIdentifier: "LEGACY1234.com.example.MyApp",
+      literalAppIdentifierPrefix: "LEGACY1234",
+    });
+  });
+
+  test("does not use the iOS application identifier key as macOS prefix evidence", async () => {
+    const root = await fixture();
+    await convertIOSFixtureToPlatformFilteredAppRoots(root, {
+      sharedAppRoot: true,
+      macOSAppIdPrefix: "LEGACY1234",
+    });
+    const entitlementsPath = join(root, "MyApp", "MyApp.mac.entitlements");
+    await Bun.write(
+      entitlementsPath,
+      (await Bun.file(entitlementsPath).text()).replace(
+        "com.apple.application-identifier",
+        "application-identifier",
+      ),
+    );
+
+    const macOS = await inspectIOSProject(root, { target: "MyApp", platform: "macos" });
+
+    expect(
+      macOS.appTargets[0]?.configurations[0]?.entitlements?.applicationIdentifier,
+    ).toBeUndefined();
+    expect(
+      macOS.appTargets[0]?.configurations[0]?.entitlements?.literalAppIdentifierPrefix,
+    ).toBeUndefined();
+  });
 });
