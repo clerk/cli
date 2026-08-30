@@ -118,6 +118,12 @@ export interface IOSNativeAppleAPI {
   ): Promise<Record<string, unknown>>;
 }
 
+export interface ApplyIOSNativeAppleConnectionOptions {
+  api?: IOSNativeAppleAPI;
+  /** Rechecks caller-owned local state immediately before the remote mutation. */
+  revalidateLocalPreconditions?: () => Promise<void>;
+}
+
 /** GET-only Apple connection API surface used by read-only diagnostics. */
 export type IOSNativeAppleReadAPI = Pick<
   IOSNativeAppleAPI,
@@ -822,8 +828,9 @@ function planVersionMatches(approved: IOSNativeApplePlan, current: IOSNativeAppl
 
 export async function applyIOSNativeAppleConnection(
   plan: IOSNativeApplePlan,
-  api: IOSNativeAppleAPI = defaultAPI,
+  options: ApplyIOSNativeAppleConnectionOptions = {},
 ): Promise<void> {
+  const { api = defaultAPI, revalidateLocalPreconditions } = options;
   if (
     plan.status === "blocked" ||
     !plan.current ||
@@ -870,9 +877,13 @@ export async function applyIOSNativeAppleConnection(
         ERROR_CODE.IOS_SETUP_STALE,
       );
     }
+    await revalidateLocalPreconditions?.();
     return;
   }
-  if (current.status === "satisfied") return;
+  if (current.status === "satisfied") {
+    await revalidateLocalPreconditions?.();
+    return;
+  }
   if (
     current.status !== "ready" ||
     !current.current ||
@@ -887,6 +898,7 @@ export async function applyIOSNativeAppleConnection(
   }
 
   await preflightIOSNativeAppleConnection(current, api);
+  await revalidateLocalPreconditions?.();
 
   try {
     await withSpinner("Enabling native Sign in with Apple in Clerk...", async () =>

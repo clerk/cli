@@ -448,6 +448,7 @@ async function preparePlan(options: IOSPrebuiltAuthPlanOptions): Promise<Prepare
   const projectPath = relativeIOSPath(root, absoluteProjectPath);
   const inspection = await inspectIOSProject(root, {
     target: options.targetId,
+    platform: options.platform,
     exhaustiveContainerDiscovery: true,
   });
   if (hasIncompleteIOSContainerDiscovery(inspection)) {

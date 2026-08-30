@@ -64,6 +64,11 @@ import {
   planIOSPrebuiltAuthRuntimeBlockers,
   type IOSLocalSetupProposal,
 } from "./local-plan.ts";
+import {
+  iosPlatformViewsIdentityMatches,
+  iosPlatformViewsSnapshotsEqual,
+  reinspectIOSPlatformViews,
+} from "./platform-views.ts";
 
 function iosSetupError(message: string, code: ErrorCode = ERROR_CODE.IOS_SETUP_BLOCKED): CliError {
   return new CliError(message, { code });
@@ -100,6 +105,7 @@ export type IOSLocalSetupResult = Pick<
   targetName: string;
   platform: NonNullable<IOSLocalSetupProposal["platform"]>;
   supportedPlatforms: NonNullable<IOSLocalSetupProposal["supportedPlatforms"]>;
+  platformViews: NonNullable<IOSLocalSetupProposal["platformViews"]>;
   /** Authentication must return an exact app ID and development key before commit. */
   requiresLinkedApp: boolean;
   /** The approved local transaction consumes the linked development publishable key. */
@@ -218,6 +224,7 @@ async function validatePrebuiltAuthRuntimePostcondition(
   const target = setup.nativeReadiness.target;
   const inspection = await inspectIOSProject(setup.nativeReadiness.root, {
     target: target.targetId,
+    platform: setup.platform,
     exhaustiveContainerDiscovery: true,
   });
   if (
@@ -232,6 +239,14 @@ async function validatePrebuiltAuthRuntimePostcondition(
   const configureStep = setupPlan.steps.find((step) => step.id === "configure-publishable-key");
   const environmentStep = setupPlan.steps.find((step) => step.id === "inject-clerk-environment");
   return configureStep?.status === "satisfied" && environmentStep?.status === "satisfied";
+}
+
+async function validatePlatformViewsPostcondition(setup: IOSLocalSetupResult): Promise<boolean> {
+  const current = await reinspectIOSPlatformViews(setup.platformViews);
+  return (
+    current.status === "ready" &&
+    iosPlatformViewsIdentityMatches(setup.platformViews, current.snapshot)
+  );
 }
 
 /**
@@ -288,13 +303,6 @@ export async function applyIOSLocalSetup(
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
-  const productDecision = context.productDecision;
-  if (!productDecision) {
-    throw iosSetupError(
-      "The selected native Apple target could not be planned safely.",
-      ERROR_CODE.IOS_TARGET_UNRESOLVED,
-    );
-  }
   if (!selectedTarget.platformEvidenceComplete) {
     throw iosSetupError(
       "The selected target's iOS or macOS platform could not be proven consistently across every build configuration. No local or remote changes were made; resolve SDKROOT and SUPPORTED_PLATFORMS, then rerun clerk init.",
@@ -302,12 +310,6 @@ export async function applyIOSLocalSetup(
     );
   }
   const platformLabel = selectedTarget.platform === "macos" ? "macOS" : "iOS";
-  if (productDecision === "unknown") {
-    throw iosSetupError(
-      "The selected target's Swift source membership could not be inspected completely, so Clerk cannot safely choose between the prebuilt ClerkKitUI path and a core-only custom flow. Resolve the Xcode source-membership diagnostics, then rerun clerk init.",
-      ERROR_CODE.IOS_TARGET_UNRESOLVED,
-    );
-  }
 
   const proposal = await buildIOSLocalSetupProposal(context, {
     root: options.root,
@@ -330,6 +332,9 @@ export async function applyIOSLocalSetup(
       : {}),
   });
   const {
+    productDecision,
+    platformViews,
+    platformCompatibilityBlockers,
     inspectedPrebuiltAuthPlan,
     prebuiltAuthPlan,
     prebuiltAuthRequested,
@@ -348,6 +353,28 @@ export async function applyIOSLocalSetup(
     hasSupportedCustomConfigure,
     prebuiltRuntimeBlockers,
   } = proposal;
+  if (!platformViews) {
+    throw iosSetupError(
+      `The selected target could not be configured safely across every supported Apple platform. No local or remote changes were made${
+        platformCompatibilityBlockers.length > 0
+          ? `:\n${platformCompatibilityBlockers.map((message) => `  • ${message}`).join("\n")}`
+          : "."
+      }`,
+      ERROR_CODE.IOS_TARGET_UNRESOLVED,
+    );
+  }
+  if (!productDecision) {
+    throw iosSetupError(
+      "The selected native Apple target could not be planned safely.",
+      ERROR_CODE.IOS_TARGET_UNRESOLVED,
+    );
+  }
+  if (productDecision === "unknown") {
+    throw iosSetupError(
+      "The selected target's Swift source membership could not be inspected completely, so Clerk cannot safely choose between the prebuilt ClerkKitUI path and a core-only custom flow. Resolve the Xcode source-membership diagnostics, then rerun clerk init.",
+      ERROR_CODE.IOS_TARGET_UNRESOLVED,
+    );
+  }
   if (
     !installPlan ||
     !inspectedPrebuiltAuthPlan ||
@@ -734,6 +761,7 @@ export async function applyIOSLocalSetup(
     targetName: selection.targetName,
     platform: selectedTarget.platform,
     supportedPlatforms: [...selectedTarget.supportedPlatforms],
+    platformViews,
     requiresLinkedApp: true,
     requiresDevelopmentKey:
       directConfigPlan != null || associatedDomainPlan?.requiresPublishableKey === true,
@@ -960,6 +988,7 @@ async function validateSatisfiedPrebuiltAuth(plan: IOSPrebuiltAuthPlan): Promise
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
     allowDirty: true,
   });
   return current.status === "satisfied" && current.sourcePath === plan.sourcePath;
@@ -1037,6 +1066,19 @@ function assertCoherentLocalSetup(setup: IOSLocalSetupResult): void {
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
+  if (
+    setup.platformViews.root !== setup.nativeReadiness.root ||
+    setup.platformViews.projectPath !== setup.nativeReadiness.target.projectPath ||
+    setup.platformViews.targetId !== setup.nativeReadiness.target.targetId ||
+    setup.platformViews.primaryPlatform !== setup.platform ||
+    JSON.stringify(setup.platformViews.supportedPlatforms) !==
+      JSON.stringify(setup.supportedPlatforms)
+  ) {
+    throw iosSetupError(
+      "The approved native Apple setup contains inconsistent multiplatform target evidence. No local setup changes were written; rerun clerk init.",
+      ERROR_CODE.IOS_SETUP_PLAN_INVALID,
+    );
+  }
   if (setup.nativeReadiness.target.platform !== setup.platform) {
     throw iosSetupError(
       "The approved native Apple setup no longer identifies one consistent platform. No local setup changes were written; rerun clerk init.",
@@ -1089,6 +1131,16 @@ export async function applyIOSPlannedLocalSetup(
   options: ApplyIOSPlannedLocalSetupOptions = {},
 ): Promise<void> {
   assertCoherentLocalSetup(setup);
+  const currentPlatformViews = await reinspectIOSPlatformViews(setup.platformViews);
+  if (
+    currentPlatformViews.status !== "ready" ||
+    !iosPlatformViewsSnapshotsEqual(setup.platformViews, currentPlatformViews.snapshot)
+  ) {
+    throw iosSetupError(
+      "The selected target's multiplatform Swift setup or native identity changed after the approved preview. No local setup changes were written; rerun clerk init.",
+      ERROR_CODE.IOS_SETUP_STALE,
+    );
+  }
   const platformLabel = setup.platform === "macos" ? "macOS" : "iOS";
   if (setup.prebuiltAuthActive) {
     if (setup.nativeReadiness.target.status !== "selected") {
@@ -1099,6 +1151,7 @@ export async function applyIOSPlannedLocalSetup(
     }
     const inspection = await inspectIOSProject(setup.nativeReadiness.root, {
       target: setup.nativeReadiness.target.targetId,
+      platform: setup.platform,
       exhaustiveContainerDiscovery: true,
     });
     if (
@@ -1228,6 +1281,7 @@ export async function applyIOSPlannedLocalSetup(
     if (setup.prebuiltAuthActive) {
       postconditions.push(async () => validatePrebuiltAuthRuntimePostcondition(setup));
     }
+    postconditions.push(async () => validatePlatformViewsPostcondition(setup));
     assertUniqueMutationPaths(mutations);
 
     if (mutations.length > 0) {
@@ -1329,6 +1383,7 @@ export async function applyIOSPlannedLocalSetup(
       ...(setup.prebuiltAuthActive
         ? [async () => validatePrebuiltAuthRuntimePostcondition(setup)]
         : []),
+      async () => validatePlatformViewsPostcondition(setup),
     ];
     if (options.beforePostWriteValidation) {
       postconditions.push(async () => {

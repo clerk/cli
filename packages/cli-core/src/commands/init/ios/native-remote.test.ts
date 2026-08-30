@@ -179,8 +179,14 @@ async function applyRemoteSetup(
   api: IOSNativeRemoteAPI,
   targetReader: IOSNativeRemoteTargetReader = approvedTargetReader,
   registrationRetryStore: IOSNativeRegistrationRetryStore = memoryRegistrationRetryStore().store,
+  revalidateLocalPreconditions?: () => Promise<void>,
 ): Promise<void> {
-  await applyIOSNativeRemoteSetup(approved, api, targetReader, registrationRetryStore);
+  await applyIOSNativeRemoteSetup(approved, {
+    api,
+    targetReader,
+    registrationRetryStore,
+    revalidateLocalPreconditions,
+  });
 }
 
 function plan(options: {
@@ -1309,6 +1315,71 @@ describe("Clerk Native Application remote setup", () => {
     ).rejects.toMatchObject({ code: ERROR_CODE.IOS_SETUP_STALE });
 
     expect(calls).toEqual([]);
+    expect(calls).not.toContain("POST iOS registration");
+    expect(calls).not.toContain("PATCH native settings");
+  });
+
+  test.each([
+    {
+      name: "registration",
+      approved: plan({ nativeApi: "satisfied", registration: "required" }),
+      nativeReads: [nativeSettings(true)] as NativeSettings[],
+      registrationReads: [[]] as IOSApplication[][],
+    },
+    {
+      name: "Native API",
+      approved: plan({ nativeApi: "required", registration: "satisfied" }),
+      nativeReads: [nativeSettings(false)] as NativeSettings[],
+      registrationReads: [[registration()]] as IOSApplication[][],
+    },
+  ])(
+    "revalidates caller-owned local state at the $name mutation boundary",
+    async ({ approved, nativeReads, registrationReads }) => {
+      const { api, calls } = scriptedAPI({ nativeReads, registrationReads });
+      const retry = memoryRegistrationRetryStore();
+      let revalidations = 0;
+
+      await expect(
+        applyRemoteSetup(approved, api, approvedTargetReader, retry.store, async () => {
+          revalidations += 1;
+          throw new Error("secondary platform identity changed");
+        }),
+      ).rejects.toThrow("secondary platform identity changed");
+
+      expect(revalidations).toBe(1);
+      expect(calls).toEqual(["GET native settings", "GET iOS registrations"]);
+      expect(calls).not.toContain("POST iOS registration");
+      expect(calls).not.toContain("PATCH native settings");
+    },
+  );
+
+  test("revalidates caller-owned local state before accepting a remote no-op", async () => {
+    const { api, calls } = scriptedAPI({
+      nativeReads: [nativeSettings(true), nativeSettings(true)],
+      registrationReads: [[registration()], [registration()]],
+    });
+    let revalidations = 0;
+
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "satisfied" }),
+        api,
+        approvedTargetReader,
+        memoryRegistrationRetryStore().store,
+        async () => {
+          revalidations += 1;
+          throw new Error("secondary platform identity changed");
+        },
+      ),
+    ).rejects.toThrow("secondary platform identity changed");
+
+    expect(revalidations).toBe(1);
+    expect(calls).toEqual([
+      "GET native settings",
+      "GET iOS registrations",
+      "GET native settings",
+      "GET iOS registrations",
+    ]);
     expect(calls).not.toContain("POST iOS registration");
     expect(calls).not.toContain("PATCH native settings");
   });

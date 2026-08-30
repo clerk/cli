@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   convertIOSFixtureToMultiplatform,
+  convertIOSFixtureToPlatformFilteredAppRoots,
   createIOSFixture,
   IOS_FIXTURE_IDS,
 } from "../init/ios/test-helpers.ts";
@@ -191,6 +192,35 @@ afterEach(async () => {
 });
 
 describe("runIOSDoctorChecks", () => {
+  test("fails without remote reads when supported platforms use different Swift app roots", async () => {
+    const root = await fixture({ complete: true });
+    await convertIOSFixtureToPlatformFilteredAppRoots(root);
+    let remoteReads = 0;
+    const unexpectedRemoteRead = async (): Promise<never> => {
+      remoteReads += 1;
+      throw new Error("remote state must not be read for a divergent platform target");
+    };
+
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        fetchApplication: unexpectedRemoteRead,
+        getNativeSettings: unexpectedRemoteRead,
+        listIOSApplications: unexpectedRemoteRead,
+        fetchUserSettings: unexpectedRemoteRead,
+      }),
+    );
+
+    expect(remoteReads).toBe(0);
+    expect(
+      audit.results.find((result) => result.name === "iOS: Validate the multiplatform target"),
+    ).toMatchObject({
+      status: "fail",
+      detail: expect.stringContaining("different Swift application roots"),
+    });
+  });
+
   test("runs and labels the macOS network check for a primary-iOS multiplatform target", async () => {
     const root = await fixture({ complete: true });
     await makeMultiplatform(root);

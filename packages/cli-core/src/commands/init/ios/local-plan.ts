@@ -14,6 +14,10 @@ import {
   planMacOSNetworkCapability,
   type MacOSNetworkCapabilityPlan,
 } from "./macos-network.ts";
+import {
+  inspectIOSPlatformViews,
+  type IOSPlatformViewsSnapshot,
+} from "./platform-views.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
 import {
   buildIOSNativeReadinessAudit,
@@ -56,6 +60,9 @@ export interface IOSLocalSetupProposal {
   platform?: IOSAppTarget["platform"];
   /** Native Apple platforms declared or inferred for the selected target. */
   supportedPlatforms?: IOSAppTarget["supportedPlatforms"];
+  /** Exhaustive, credential-free evidence shared by local and remote safety checks. */
+  platformViews?: IOSPlatformViewsSnapshot;
+  platformCompatibilityBlockers: string[];
   setupPlan: IOSSetupPlan;
   nativeReadiness: IOSNativeReadinessAudit;
   unverifiedAppIdPrefixSuggestion?: IOSUnverifiedAppIdPrefixSuggestion;
@@ -155,22 +162,23 @@ export async function buildIOSLocalSetupProposal(
   context: IOSLocalSetupContext,
   options: BuildIOSLocalSetupProposalOptions,
 ): Promise<IOSLocalSetupProposal> {
-  const { inspection, selectedTarget, productDecision } = context;
+  const { inspection, selectedTarget, productDecision: contextProductDecision } = context;
   const selection = inspection.selection;
-  if (selection.state !== "selected" || !selectedTarget || !productDecision) {
+  if (selection.state !== "selected" || !selectedTarget || !contextProductDecision) {
     const setupPlan = buildIOSSetupPlan(inspection, {
       prebuiltAuthSelected: options.prebuiltAuthUI === true,
     });
     return {
       inspection,
       selectedTarget,
-      productDecision,
+      productDecision: contextProductDecision,
       ...(selectedTarget ? { platform: selectedTarget.platform } : {}),
       ...(selectedTarget
         ? { supportedPlatforms: [...selectedTarget.supportedPlatforms] }
         : {}),
       setupPlan,
       nativeReadiness: buildIOSNativeReadinessAudit(inspection),
+      platformCompatibilityBlockers: [],
       prebuiltAuthRequested: options.prebuiltAuthUI === true,
       prebuiltAuthActive: false,
       prebuiltRuntimeBlockers: [],
@@ -180,6 +188,39 @@ export async function buildIOSLocalSetupProposal(
       hasSupportedCustomConfigure: false,
     };
   }
+
+  let productDecision = contextProductDecision;
+
+  const platformViewsAudit = await inspectIOSPlatformViews(inspection);
+  if (platformViewsAudit.status === "blocked") {
+    const platformCompatibilityBlockers = platformViewsAudit.blockers.map(
+      (blocker) => blocker.message,
+    );
+    const setupPlan = buildIOSSetupPlan(inspection, {
+      productDecision,
+      platformCompatibilityBlockers,
+      prebuiltAuthSelected: options.prebuiltAuthUI === true,
+    });
+    return {
+      inspection,
+      selectedTarget,
+      productDecision,
+      platform: selectedTarget.platform,
+      supportedPlatforms: [...selectedTarget.supportedPlatforms],
+      setupPlan,
+      nativeReadiness: buildIOSNativeReadinessAudit(inspection),
+      platformCompatibilityBlockers,
+      prebuiltAuthRequested: options.prebuiltAuthUI === true,
+      prebuiltAuthActive: false,
+      prebuiltRuntimeBlockers: [],
+      reviewOnlyUnattributedInstall: false,
+      nativeAppleRequested: options.signInWithApple === true,
+      hasCustomConfigure: false,
+      hasSupportedCustomConfigure: false,
+    };
+  }
+  const platformViews = platformViewsAudit.snapshot;
+  productDecision = platformViews.productDecision;
 
   const inspectedPrebuiltAuthPlan = await planIOSPrebuiltAuth({
     root: options.root,
@@ -204,7 +245,7 @@ export async function buildIOSLocalSetupProposal(
     inspectedPrebuiltAuthPlan.status !== "blocked" &&
     (prebuiltAuthRequested || inspectedPrebuiltAuthPlan.status === "satisfied");
 
-  const includeClerkKitUI = productDecision === "prebuilt" || prebuiltAuthActive;
+  const includeClerkKitUI = platformViews.requiresClerkKitUI || prebuiltAuthActive;
   const installPlan = await planIOSSDKInstall({
     root: options.root,
     projectPath: selection.projectPath,
@@ -212,7 +253,8 @@ export async function buildIOSLocalSetupProposal(
     platform: selectedTarget.platform,
     supportedPlatforms: selectedTarget.supportedPlatforms,
     includeClerkKitUI,
-    requirePrebuiltAuthCompatibility: prebuiltAuthActive,
+    requirePrebuiltAuthCompatibility:
+      platformViews.requiresAuthViewCompatibility || prebuiltAuthActive,
   });
 
   const hasCustomConfigure = selectedTarget.swift.configureCalls.some(
@@ -268,6 +310,7 @@ export async function buildIOSLocalSetupProposal(
     plannedAssociatedDomain?.status === "blocked" ? undefined : plannedAssociatedDomain;
   const nativeReadiness = buildIOSNativeReadinessAudit(inspection, {
     associatedDomainPlan: plannedAssociatedDomain,
+    platformViews,
   });
   const macOSNetworkCapabilityPlan =
     selectedTarget.supportedPlatforms.includes("macos")
@@ -325,6 +368,7 @@ export async function buildIOSLocalSetupProposal(
     prebuiltAuthActive,
   });
   const setupPlan = buildIOSSetupPlan(inspection, {
+    productDecision,
     sdkInstallPlan,
     directConfigPlan,
     associatedDomainPlan: plannedAssociatedDomain,
@@ -341,6 +385,8 @@ export async function buildIOSLocalSetupProposal(
     productDecision,
     platform: selectedTarget.platform,
     supportedPlatforms: [...selectedTarget.supportedPlatforms],
+    platformViews,
+    platformCompatibilityBlockers: [],
     setupPlan,
     nativeReadiness,
     ...(unverifiedAppIdPrefixSuggestion ? { unverifiedAppIdPrefixSuggestion } : {}),

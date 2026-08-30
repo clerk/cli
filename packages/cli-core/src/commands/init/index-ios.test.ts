@@ -20,9 +20,11 @@ import {
   nativeRemoteMod,
   nativeAppleMod,
   iosDevelopmentKeyMod,
+  iosPlatformViewsMod,
   plapiMod,
   fapiMod,
   FAKE_IOS_NATIVE_READINESS,
+  FAKE_IOS_PLATFORM_VIEWS,
 } from "../../test/lib/init-harness.ts";
 import * as telemetryMod from "../../lib/telemetry.ts";
 import { getLogLevel, setLogLevel } from "../../lib/log.ts";
@@ -140,6 +142,7 @@ function iosSetupResult(overrides: Partial<IOSLocalSetupResult> = {}): IOSLocalS
     targetName: "MyApp",
     platform: "ios",
     supportedPlatforms: ["ios"],
+    platformViews: FAKE_IOS_PLATFORM_VIEWS,
     setupPlan: {
       schemaVersion: 1,
       kind: "clerk-ios-setup",
@@ -1052,7 +1055,10 @@ describe("init iOS", () => {
       yes: true,
     });
     expect(commitLocal).toHaveBeenCalledWith(setupResult, undefined);
-    expect(applyRemote).toHaveBeenCalledWith(expect.objectContaining({ status: "ready" }));
+    expect(applyRemote).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "ready" }),
+      expect.objectContaining({ revalidateLocalPreconditions: expect.any(Function) }),
+    );
     expect(resolveKeys.mock.invocationCallOrder[0]).toBeLessThan(
       prepareRemote.mock.invocationCallOrder[0]!,
     );
@@ -1288,6 +1294,45 @@ describe("init iOS", () => {
         linkedApplicationId = "app_changed";
       },
     );
+    const applyRemote = spyOn(nativeRemoteMod, "applyIOSNativeRemoteSetup").mockResolvedValue(
+      undefined,
+    );
+
+    await expect(init({ yes: true })).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_SETUP_STALE,
+      message: expect.stringContaining(
+        "Local changes remain intact, but no Clerk Native Application changes were made",
+      ),
+    });
+
+    expect(commitLocal).toHaveBeenCalledTimes(1);
+    expect(applyRemote).not.toHaveBeenCalled();
+    expect(nativeAppleMod.applyIOSNativeAppleConnection).not.toHaveBeenCalled();
+  });
+
+  test("does not mutate native state when a secondary platform identity changes during local commit", async () => {
+    setup({ email: "test@test.com" });
+    const iosCtx = nativeIOSContext();
+    const setupResult = iosSetupResult({
+      requiresLinkedApp: true,
+      requiresDevelopmentKey: false,
+    });
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(config, "resolveProfile").mockResolvedValue({
+      profile: { appId: "app_test" },
+    } as never);
+    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
+    spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(iosRemotePlan());
+    const commitLocal = spyOn(iosApplyMod, "applyIOSPlannedLocalSetup").mockResolvedValue(
+      undefined,
+    );
+    spyOn(iosPlatformViewsMod, "reinspectIOSPlatformViews").mockResolvedValue({
+      status: "ready",
+      snapshot: {
+        ...FAKE_IOS_PLATFORM_VIEWS,
+        bundleIdentifier: "com.example.changed",
+      },
+    });
     const applyRemote = spyOn(nativeRemoteMod, "applyIOSNativeRemoteSetup").mockResolvedValue(
       undefined,
     );

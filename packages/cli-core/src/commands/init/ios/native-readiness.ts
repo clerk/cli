@@ -7,6 +7,7 @@ import type {
   IOSProjectInspectionResult,
   IOSSetupStepStatus,
 } from "./types.ts";
+import type { IOSPlatformViewsSnapshot } from "./platform-views.ts";
 
 export const IOS_NATIVE_READINESS_PLAPI_BRIDGE_REQUIREMENT = {
   applicationId: "linked-application-id",
@@ -114,6 +115,8 @@ export interface IOSNativeReadinessAudit {
 
 export interface BuildIOSNativeReadinessAuditOptions {
   associatedDomainPlan?: IOSAssociatedDomainPlan;
+  /** Exhaustive cross-platform identity evidence for a multiplatform target. */
+  platformViews?: IOSPlatformViewsSnapshot;
 }
 
 function selectedTarget(inspection: IOSProjectInspectionResult): IOSAppTarget | undefined {
@@ -375,11 +378,28 @@ export function buildIOSNativeReadinessAudit(
   options: BuildIOSNativeReadinessAuditOptions = {},
 ): IOSNativeReadinessAudit {
   const target = selectedTarget(inspection);
+  let identity = targetIdentity(inspection, target);
+  const platformPrefix = options.platformViews?.appIdPrefix;
+  if (
+    platformPrefix &&
+    identity.status === "selected" &&
+    identity.appIdPrefix.status === "missing"
+  ) {
+    identity = {
+      ...identity,
+      appIdPrefix: {
+        ...identity.appIdPrefix,
+        candidates: [
+          ...new Set([...(identity.appIdPrefix.candidates ?? []), platformPrefix]),
+        ].sort(),
+      },
+    };
+  }
   return {
     schemaVersion: 1,
     kind: "clerk-ios-native-readiness",
     root: inspection.root,
-    target: targetIdentity(inspection, target),
+    target: identity,
     associatedDomain: associatedDomainReadiness(inspection, target, options.associatedDomainPlan),
     remote: {
       status: "not-inspected",

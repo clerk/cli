@@ -33,6 +33,7 @@ export * as iosApplyMod from "../../commands/init/ios/apply.ts";
 export * as nativeRemoteMod from "../../commands/init/ios/native-remote.ts";
 export * as nativeAppleMod from "../../commands/init/ios/native-apple.ts";
 export * as iosDevelopmentKeyMod from "../../commands/init/ios/development-key.ts";
+export * as iosPlatformViewsMod from "../../commands/init/ios/platform-views.ts";
 export * as plapiMod from "../../lib/plapi.ts";
 export * as fapiMod from "../../lib/fapi.ts";
 
@@ -55,12 +56,53 @@ import * as iosApplyModule from "../../commands/init/ios/apply.ts";
 import * as nativeRemoteModule from "../../commands/init/ios/native-remote.ts";
 import * as nativeAppleModule from "../../commands/init/ios/native-apple.ts";
 import * as iosDevelopmentKeyModule from "../../commands/init/ios/development-key.ts";
+import * as iosPlatformViewsModule from "../../commands/init/ios/platform-views.ts";
 import * as plapiModule from "../../lib/plapi.ts";
 import * as fapiModule from "../../lib/fapi.ts";
 import {
   IOS_NATIVE_READINESS_PLAPI_BRIDGE_REQUIREMENT,
   type IOSNativeReadinessAudit,
 } from "../../commands/init/ios/native-readiness.ts";
+import type { IOSPlatformViewsSnapshot } from "../../commands/init/ios/platform-views.ts";
+
+const EMPTY_SWIFT_PLATFORM_SNAPSHOT = {
+  evidenceComplete: true,
+  status: "absent" as const,
+  entryPoints: [],
+  importsClerkKit: [],
+  importsClerkKitUI: [],
+  configureCalls: [],
+  appRootEvidence: [],
+  environmentInjections: [],
+  rootEnvironmentInjections: [],
+  environmentConsumers: [],
+  authViewReferences: [],
+  authFlowReferences: [],
+  appleAuthReferences: [],
+};
+
+export const FAKE_IOS_PLATFORM_VIEWS: IOSPlatformViewsSnapshot = {
+  schemaVersion: 1,
+  kind: "clerk-ios-platform-views",
+  root: "/tmp/test",
+  projectPath: "MyApp.xcodeproj",
+  targetId: "TARGET",
+  primaryPlatform: "ios",
+  supportedPlatforms: ["ios"],
+  bundleIdentifier: "com.example.myapp",
+  productDecision: "core-only",
+  requiresClerkKitUI: false,
+  requiresAuthViewCompatibility: false,
+  sharedEntryPointPath: null,
+  sharedAppRootPath: null,
+  platforms: [
+    {
+      platform: "ios",
+      productDecision: "core-only",
+      swift: EMPTY_SWIFT_PLATFORM_SNAPSHOT,
+    },
+  ],
+};
 
 export const FAKE_CTX = {
   cwd: "/tmp/test",
@@ -210,6 +252,10 @@ export function useInitHarness(): InitHarness {
         instanceId: "ins_test",
         publishableKey: "pk_test_redacted",
       }),
+      spyOn(iosPlatformViewsModule, "reinspectIOSPlatformViews").mockResolvedValue({
+        status: "ready",
+        snapshot: FAKE_IOS_PLATFORM_VIEWS,
+      }),
       spyOn(fapiModule, "fetchUserSettings").mockResolvedValue({ social: {} } as never),
       spyOn(bootstrapModule, "promptAndBootstrap").mockResolvedValue(FAKE_BOOTSTRAP),
       spyOn(bootstrapModule, "confirmOverwrite").mockResolvedValue(undefined),
@@ -217,6 +263,7 @@ export function useInitHarness(): InitHarness {
         targetName: "MyApp",
         platform: "ios",
         supportedPlatforms: ["ios"],
+        platformViews: FAKE_IOS_PLATFORM_VIEWS,
         setupPlan: {
           schemaVersion: 1,
           kind: "clerk-ios-setup",
