@@ -690,9 +690,18 @@ async function entitlementsDestinationIsExclusive(
   projectPaths: readonly string[],
   selectedProjectPath: string,
   selectedTargetId: string,
+  selectedPlatform: IOSNativePlatform,
   destination: string,
 ): Promise<boolean> {
   const normalizedDestination = resolve(destination).toLocaleLowerCase("en-US");
+  let canonicalDestination: string;
+  try {
+    canonicalDestination = (
+      await canonicalPathWithPossibleMissingLeaf(destination)
+    ).toLocaleLowerCase("en-US");
+  } catch {
+    return false;
+  }
   for (const absoluteProjectPath of projectPaths) {
     const pbxprojPath = resolve(absoluteProjectPath, "project.pbxproj");
     if (!(await pathIsSafelyWithinIOSRoot(root, pbxprojPath))) return false;
@@ -717,12 +726,11 @@ async function entitlementsDestinationIsExclusive(
       asString(projectObject.projectDirPath) ?? "",
     );
     for (const targetId of targetIds) {
-      if (absoluteProjectPath === selectedProjectPath && targetId === selectedTargetId) continue;
       const targetObject = objects[targetId];
       if (!targetObject) return false;
       if (targetObject.isa !== "PBXNativeTarget") continue;
-      const diagnostics: IOSDiagnostic[] = [];
-      const configurations = await inspectTargetBuildConfigurations({
+      const primaryDiagnostics: IOSDiagnostic[] = [];
+      const primaryConfigurations = await inspectTargetBuildConfigurations({
         root,
         projectPath: absoluteProjectPath,
         groupRootDirectory,
@@ -731,21 +739,84 @@ async function entitlementsDestinationIsExclusive(
         targetObject,
         objects,
         parents,
-        diagnostics,
+        diagnostics: primaryDiagnostics,
       });
       if (
-        configurations.length === 0 ||
-        diagnostics.some((diagnostic) => diagnostic.severity === "error")
+        primaryConfigurations.length === 0 ||
+        primaryConfigurations.some((configuration) => !configuration.platformEvidenceComplete) ||
+        primaryDiagnostics.some((diagnostic) => diagnostic.severity === "error")
       ) {
         return false;
       }
-      for (const configuration of configurations) {
-        const resolution = configuration.model.entitlementsPath;
-        if (resolution.state === "unresolved") return false;
-        if (resolution.state !== "resolved") continue;
-        const siblingPath = resolve(dirname(absoluteProjectPath), resolution.value);
-        if (!(await pathIsSafelyWithinIOSRoot(root, siblingPath))) return false;
-        if (siblingPath.toLocaleLowerCase("en-US") === normalizedDestination) return false;
+      const primaryPlatforms = new Set(
+        primaryConfigurations
+          .map((configuration) => configuration.platform)
+          .filter((platform): platform is IOSNativePlatform => platform !== undefined),
+      );
+      if (primaryPlatforms.size > 1) return false;
+      const primaryPlatform = [...primaryPlatforms][0];
+      const supportedPlatforms = new Set(
+        primaryConfigurations.flatMap((configuration) => configuration.supportedPlatforms),
+      );
+      const views: Array<{
+        platform?: IOSNativePlatform;
+        configurations: typeof primaryConfigurations;
+      }> = [{ platform: primaryPlatform, configurations: primaryConfigurations }];
+      for (const platform of supportedPlatforms) {
+        if (platform === primaryPlatform) continue;
+        const diagnostics: IOSDiagnostic[] = [];
+        const configurations = await inspectTargetBuildConfigurations({
+          root,
+          projectPath: absoluteProjectPath,
+          groupRootDirectory,
+          projectObject,
+          targetId,
+          targetObject,
+          objects,
+          parents,
+          diagnostics,
+          platform,
+        });
+        if (
+          configurations.length !== primaryConfigurations.length ||
+          configurations.length === 0 ||
+          configurations.some(
+            (configuration) =>
+              !configuration.platformEvidenceComplete || configuration.platform !== platform,
+          ) ||
+          diagnostics.some((diagnostic) => diagnostic.severity === "error")
+        ) {
+          return false;
+        }
+        views.push({ platform, configurations });
+      }
+      for (const view of views) {
+        if (
+          absoluteProjectPath === selectedProjectPath &&
+          targetId === selectedTargetId &&
+          view.platform === selectedPlatform
+        ) {
+          continue;
+        }
+        for (const configuration of view.configurations) {
+          const resolution = configuration.model.entitlementsPath;
+          if (resolution.state === "unresolved") return false;
+          if (resolution.state !== "resolved") continue;
+          const siblingPath = resolve(dirname(absoluteProjectPath), resolution.value);
+          if (!(await pathIsSafelyWithinIOSRoot(root, siblingPath))) return false;
+          if (siblingPath.toLocaleLowerCase("en-US") === normalizedDestination) return false;
+          try {
+            if (
+              (await canonicalPathWithPossibleMissingLeaf(siblingPath)).toLocaleLowerCase(
+                "en-US",
+              ) === canonicalDestination
+            ) {
+              return false;
+            }
+          } catch {
+            return false;
+          }
+        }
       }
     }
   }
@@ -765,6 +836,8 @@ function destinationForRoot(
   root: string,
   absoluteProjectPath: string,
   synchronizedRoot: SynchronizedRoot,
+  platform: IOSNativePlatform,
+  platformSpecific: boolean,
 ):
   | { absolutePath: string; relativePath: string; buildSettingPath: string }
   | { blocker: IOSMissingEntitlementsSettingsBlocker } {
@@ -783,7 +856,8 @@ function destinationForRoot(
       ),
     };
   }
-  const absolutePath = resolve(synchronizedRoot.absolutePath, `${rootName}.entitlements`);
+  const suffix = platform === "macos" && platformSpecific ? ".mac.entitlements" : ".entitlements";
+  const absolutePath = resolve(synchronizedRoot.absolutePath, `${rootName}${suffix}`);
   const projectDirectory = dirname(absoluteProjectPath);
   const buildSettingPath = relative(projectDirectory, absolutePath).split(sep).join("/");
   if (
@@ -875,10 +949,12 @@ async function buildSettingState(
     objects: snapshot.graph.objects,
     parents,
     diagnostics,
+    platform,
   });
   if (
     inspected.length !== snapshot.graph.configurationIds.length ||
     inspected.length === 0 ||
+    inspected.some((configuration) => !configuration.platformEvidenceComplete) ||
     !inspected.every((configuration) => configuration.platform === platform) ||
     diagnostics.some((diagnostic) => diagnostic.severity === "error")
   ) {
@@ -906,10 +982,20 @@ async function inspectSelectedTarget(
   root: string,
   projectPath: string,
   targetId: string,
-): Promise<{ name: string; platform: IOSNativePlatform } | undefined> {
+  platform: IOSNativePlatform,
+): Promise<
+  | {
+      name: string;
+      platform: IOSNativePlatform;
+      supportedPlatforms: IOSNativePlatform[];
+      platformEvidenceComplete: boolean;
+    }
+  | undefined
+> {
   const inspection = await inspectIOSProject(root, {
     target: targetId,
     exhaustiveContainerDiscovery: true,
+    platform,
   });
   if (
     inspection.selection.state !== "selected" ||
@@ -921,7 +1007,14 @@ async function inspectSelectedTarget(
   const target = inspection.appTargets.find(
     (target) => target.id === targetId && target.projectPath === projectPath,
   );
-  return target ? { name: target.name, platform: target.platform } : undefined;
+  return target
+    ? {
+        name: target.name,
+        platform: target.platform,
+        supportedPlatforms: target.supportedPlatforms,
+        platformEvidenceComplete: target.platformEvidenceComplete,
+      }
+    : undefined;
 }
 
 export async function planIOSMissingEntitlementsSettings(
@@ -965,8 +1058,17 @@ export async function planIOSMissingEntitlementsSettings(
       ),
     );
   }
-  const selectedTarget = await inspectSelectedTarget(root, normalizedProjectPath, options.targetId);
-  if (!selectedTarget || selectedTarget.platform !== normalizedOptions.platform) {
+  const selectedTarget = await inspectSelectedTarget(
+    root,
+    normalizedProjectPath,
+    options.targetId,
+    normalizedOptions.platform,
+  );
+  if (
+    !selectedTarget ||
+    selectedTarget.platform !== normalizedOptions.platform ||
+    !selectedTarget.supportedPlatforms.includes(normalizedOptions.platform)
+  ) {
     return blockedPlan(
       normalizedOptions,
       blocker(
@@ -974,6 +1076,21 @@ export async function planIOSMissingEntitlementsSettings(
         `The selected object is not the exact inspected native ${normalizedOptions.platform === "macos" ? "macOS" : "iOS"} application target.`,
       ),
       {
+        expectedPbxprojHash: snapshot.hash,
+        expectedPbxprojMode: snapshot.mode,
+        configurationIds: snapshot.graph.configurationIds,
+      },
+    );
+  }
+  if (!selectedTarget.platformEvidenceComplete) {
+    return blockedPlan(
+      normalizedOptions,
+      blocker(
+        "incomplete-build-configurations",
+        `Every selected-target build configuration must prove ${normalizedOptions.platform === "macos" ? "macOS" : "iOS"} support before adding entitlements settings.`,
+      ),
+      {
+        targetName: selectedTarget.name,
         expectedPbxprojHash: snapshot.hash,
         expectedPbxprojMode: snapshot.mode,
         configurationIds: snapshot.graph.configurationIds,
@@ -990,7 +1107,13 @@ export async function planIOSMissingEntitlementsSettings(
       configurationIds: snapshot.graph.configurationIds,
     });
   }
-  const destination = destinationForRoot(root, snapshot.absoluteProjectPath, synchronized.root);
+  const destination = destinationForRoot(
+    root,
+    snapshot.absoluteProjectPath,
+    synchronized.root,
+    normalizedOptions.platform,
+    normalizedOptions.platform === "macos" && selectedTarget.supportedPlatforms.includes("ios"),
+  );
   if ("blocker" in destination) {
     return blockedPlan(normalizedOptions, destination.blocker, {
       targetName,
@@ -1108,6 +1231,7 @@ export async function planIOSMissingEntitlementsSettings(
       inventory.projectPaths,
       snapshot.absoluteProjectPath,
       options.targetId,
+      normalizedOptions.platform,
       destination.absolutePath,
     ))
   ) {

@@ -433,7 +433,7 @@ export function buildIOSSetupPlan(
     );
   }
 
-  if (target.platform === "macos" && options.macOSNetworkCapabilityPlan) {
+  if (target.supportedPlatforms.includes("macos") && options.macOSNetworkCapabilityPlan) {
     const networkPlan = options.macOSNetworkCapabilityPlan;
     const networkStatus: IOSSetupStepStatus =
       networkPlan.status === "satisfied"
@@ -451,7 +451,7 @@ export function buildIOSSetupPlan(
     steps.push(
       step(
         "enable-macos-network",
-        "Allow outgoing network access",
+        "Allow outgoing network access for macOS",
         networkStatus,
         networkDescription,
         networkPlan.files.map((file) => ({ path: file.path })),

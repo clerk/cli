@@ -54,6 +54,8 @@ export interface IOSLocalSetupProposal {
   productDecision?: ProductDecision;
   /** Platform selected for local native Apple automation. */
   platform?: IOSAppTarget["platform"];
+  /** Native Apple platforms declared or inferred for the selected target. */
+  supportedPlatforms?: IOSAppTarget["supportedPlatforms"];
   setupPlan: IOSSetupPlan;
   nativeReadiness: IOSNativeReadinessAudit;
   unverifiedAppIdPrefixSuggestion?: IOSUnverifiedAppIdPrefixSuggestion;
@@ -164,6 +166,9 @@ export async function buildIOSLocalSetupProposal(
       selectedTarget,
       productDecision,
       ...(selectedTarget ? { platform: selectedTarget.platform } : {}),
+      ...(selectedTarget
+        ? { supportedPlatforms: [...selectedTarget.supportedPlatforms] }
+        : {}),
       setupPlan,
       nativeReadiness: buildIOSNativeReadinessAudit(inspection),
       prebuiltAuthRequested: options.prebuiltAuthUI === true,
@@ -264,7 +269,7 @@ export async function buildIOSLocalSetupProposal(
     associatedDomainPlan: plannedAssociatedDomain,
   });
   const macOSNetworkCapabilityPlan =
-    selectedTarget.platform === "macos"
+    selectedTarget.supportedPlatforms.includes("macos")
       ? await planMacOSNetworkCapability({
           root: options.root,
           projectPath: selection.projectPath,
@@ -333,6 +338,7 @@ export async function buildIOSLocalSetupProposal(
     selectedTarget,
     productDecision,
     platform: selectedTarget.platform,
+    supportedPlatforms: [...selectedTarget.supportedPlatforms],
     setupPlan,
     nativeReadiness,
     ...(unverifiedAppIdPrefixSuggestion ? { unverifiedAppIdPrefixSuggestion } : {}),

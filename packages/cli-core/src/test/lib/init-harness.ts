@@ -216,6 +216,7 @@ export function useInitHarness(): InitHarness {
       spyOn(iosApplyModule, "applyIOSLocalSetup").mockResolvedValue({
         targetName: "MyApp",
         platform: "ios",
+        supportedPlatforms: ["ios"],
         setupPlan: {
           schemaVersion: 1,
           kind: "clerk-ios-setup",

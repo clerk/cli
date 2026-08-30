@@ -69,6 +69,7 @@ export interface IOSAssociatedDomainPlan {
   root: string;
   projectPath: string;
   targetId: string;
+  platform: IOSNativePlatform;
   targetName?: string;
   /** Public Frontend API hostname only. A publishable key is never retained. */
   expectedDomain?: string;
@@ -148,6 +149,7 @@ function blockedPlan(
     root: resolve(options.root),
     projectPath: options.projectPath,
     targetId: options.targetId,
+    platform: options.platform ?? "ios",
     ...(targetName ? { targetName } : {}),
     requiresPublishableKey: options.deferToPublishableKey === true,
     files: [],
@@ -401,6 +403,7 @@ async function ownershipIsExclusive(
   projectPath: string,
   selectedTargetId: string,
   selectedFiles: readonly EntitlementsFile[],
+  selectedPlatform: IOSNativePlatform,
 ): Promise<boolean> {
   try {
     const selectedCanonical = new Set<string>();
@@ -441,12 +444,11 @@ async function ownershipIsExclusive(
       );
 
       for (const targetId of targetIds) {
-        if (absoluteProject === selectedProject && targetId === selectedTargetId) continue;
         const targetObject = objects[targetId];
         if (!targetObject) return false;
         if (targetObject.isa !== "PBXNativeTarget") continue;
-        const diagnostics: IOSDiagnostic[] = [];
-        const configurations = await inspectTargetBuildConfigurations({
+        const primaryDiagnostics: IOSDiagnostic[] = [];
+        const primaryConfigurations = await inspectTargetBuildConfigurations({
           root,
           projectPath: absoluteProject,
           groupRootDirectory,
@@ -455,28 +457,87 @@ async function ownershipIsExclusive(
           targetObject,
           objects,
           parents,
-          diagnostics,
+          diagnostics: primaryDiagnostics,
         });
         if (
-          configurations.length === 0 ||
-          diagnostics.some((diagnostic) => diagnostic.severity === "error")
+          primaryConfigurations.length === 0 ||
+          primaryConfigurations.some((configuration) => !configuration.platformEvidenceComplete) ||
+          primaryDiagnostics.some((diagnostic) => diagnostic.severity === "error")
         ) {
           return false;
         }
-        for (const configuration of configurations) {
-          const resolution = configuration.model.entitlementsPath;
-          if (resolution.state === "unresolved") return false;
-          if (resolution.state !== "resolved") continue;
-          const siblingPath = resolve(dirname(absoluteProject), resolution.value);
-          if (!(await pathIsSafelyWithinIOSRoot(root, siblingPath))) return false;
-          try {
-            const canonical = await realpath(siblingPath);
-            const info = await lstat(siblingPath);
-            if (selectedCanonical.has(canonical) || selectedInodes.has(`${info.dev}:${info.ino}`)) {
-              return false;
+
+        if (
+          !primaryConfigurations.every(
+            (configuration) => configuration.platform === primaryConfigurations[0]?.platform,
+          )
+        ) {
+          return false;
+        }
+        const primaryPlatform = primaryConfigurations[0]?.platform;
+        const supportedPlatforms = (["ios", "macos"] as const).filter((platform) =>
+          primaryConfigurations.some((configuration) =>
+            configuration.supportedPlatforms.includes(platform),
+          ),
+        );
+        const views: Array<{
+          platform?: IOSNativePlatform;
+          configurations: typeof primaryConfigurations;
+        }> = [{ platform: primaryPlatform, configurations: primaryConfigurations }];
+        for (const platform of supportedPlatforms) {
+          if (platform === primaryPlatform) continue;
+          const diagnostics: IOSDiagnostic[] = [];
+          const configurations = await inspectTargetBuildConfigurations({
+            root,
+            projectPath: absoluteProject,
+            groupRootDirectory,
+            projectObject,
+            targetId,
+            targetObject,
+            objects,
+            parents,
+            diagnostics,
+            platform,
+          });
+          if (
+            configurations.length !== primaryConfigurations.length ||
+            configurations.some(
+              (configuration) =>
+                !configuration.platformEvidenceComplete || configuration.platform !== platform,
+            ) ||
+            diagnostics.some((diagnostic) => diagnostic.severity === "error")
+          ) {
+            return false;
+          }
+          views.push({ platform, configurations });
+        }
+
+        for (const view of views) {
+          if (
+            absoluteProject === selectedProject &&
+            targetId === selectedTargetId &&
+            view.platform === selectedPlatform
+          ) {
+            continue;
+          }
+          for (const configuration of view.configurations) {
+            const resolution = configuration.model.entitlementsPath;
+            if (resolution.state === "unresolved") return false;
+            if (resolution.state !== "resolved") continue;
+            const siblingPath = resolve(dirname(absoluteProject), resolution.value);
+            if (!(await pathIsSafelyWithinIOSRoot(root, siblingPath))) return false;
+            try {
+              const canonical = await realpath(siblingPath);
+              const info = await lstat(siblingPath);
+              if (
+                selectedCanonical.has(canonical) ||
+                selectedInodes.has(`${info.dev}:${info.ino}`)
+              ) {
+                return false;
+              }
+            } catch {
+              // A missing sibling entitlements path cannot currently alias an existing selected file.
             }
-          } catch {
-            // A missing sibling entitlements path cannot currently alias an existing selected file.
           }
         }
       }
@@ -542,9 +603,11 @@ export async function planIOSAssociatedDomain(
   options: IOSAssociatedDomainPlanOptions,
 ): Promise<IOSAssociatedDomainPlan> {
   const root = resolve(options.root);
+  const platform = options.platform ?? "ios";
   const inspection = await inspectIOSProject(root, {
     target: options.targetId,
     exhaustiveContainerDiscovery: true,
+    platform,
   });
   const target = selectedTarget(inspection, options.projectPath, options.targetId);
   if (!target) {
@@ -636,7 +699,7 @@ export async function planIOSAssociatedDomain(
         root,
         projectPath: options.projectPath,
         targetId: options.targetId,
-        platform: options.platform,
+        platform,
       });
       if (settingsPlan.status === "ready" && settingsPlan.entitlementsPath) {
         return {
@@ -646,6 +709,7 @@ export async function planIOSAssociatedDomain(
           root,
           projectPath: options.projectPath,
           targetId: options.targetId,
+          platform,
           targetName: target.name,
           ...(expectedDomain ? { expectedDomain } : {}),
           requiresPublishableKey: expectedDomain == null,
@@ -655,7 +719,7 @@ export async function planIOSAssociatedDomain(
             expectedDomain
               ? `Create ${settingsPlan.entitlementsPath} with ${expectedDomain}.`
               : `Create ${settingsPlan.entitlementsPath} with the linked development instance's exact webcredentials host (resolved after authentication).`,
-            options.platform === "macos"
+            platform === "macos"
               ? `Attach ${settingsPlan.entitlementsPath} only to macOS SDK builds for every selected-target configuration.`
               : `Attach ${settingsPlan.entitlementsPath} only to iPhone and iPad SDK builds for every selected-target configuration.`,
           ],
@@ -729,7 +793,7 @@ export async function planIOSAssociatedDomain(
   const files = [...filesByPath.values()].sort((a, b) =>
     a.relativePath.localeCompare(b.relativePath),
   );
-  if (!(await ownershipIsExclusive(root, options.projectPath, options.targetId, files))) {
+  if (!(await ownershipIsExclusive(root, options.projectPath, options.targetId, files, platform))) {
     return blockedPlan(
       options,
       [
@@ -752,6 +816,7 @@ export async function planIOSAssociatedDomain(
     root,
     projectPath: options.projectPath,
     targetId: options.targetId,
+    platform,
     targetName: target.name,
     ...(expectedDomain ? { expectedDomain } : {}),
     requiresPublishableKey: expectedDomain == null,
@@ -945,6 +1010,7 @@ export async function prepareIOSAssociatedDomainMutation(
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
     deferToPublishableKey: plan.requiresPublishableKey,
     allowMissingEntitlementsCreation: plan.missingEntitlementsSettings != null,
   });
@@ -1061,6 +1127,7 @@ export async function validatePreparedIOSAssociatedDomain(
   const inspection = await inspectIOSProject(prepared.plan.root, {
     target: prepared.plan.targetId,
     exhaustiveContainerDiscovery: true,
+    platform: prepared.plan.platform,
   });
   if (hasIncompleteIOSContainerDiscovery(inspection)) return false;
   const target = selectedTarget(inspection, prepared.plan.projectPath, prepared.plan.targetId);
@@ -1102,6 +1169,7 @@ export async function validatePreparedIOSAssociatedDomain(
     prepared.plan.projectPath,
     prepared.plan.targetId,
     [...new Map(files.map((file) => [file.absolutePath, file])).values()],
+    prepared.plan.platform,
   );
 }
 

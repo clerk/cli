@@ -139,6 +139,7 @@ function iosSetupResult(overrides: Partial<IOSLocalSetupResult> = {}): IOSLocalS
   return {
     targetName: "MyApp",
     platform: "ios",
+    supportedPlatforms: ["ios"],
     setupPlan: {
       schemaVersion: 1,
       kind: "clerk-ios-setup",

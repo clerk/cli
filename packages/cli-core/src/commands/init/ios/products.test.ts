@@ -12,6 +12,7 @@ function target(): IOSAppTarget {
     id: "TARGET",
     name: "MyApp",
     platform: "ios",
+    supportedPlatforms: ["ios"],
     platformEvidenceComplete: true,
     projectPath: "MyApp.xcodeproj",
     configurations: [],

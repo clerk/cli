@@ -154,6 +154,8 @@ export interface IOSAppTarget {
    * includes iOS continues through the iOS path.
    */
   platform: IOSNativePlatform;
+  /** Modeled native platforms declared or inferred across the target's build configurations. */
+  supportedPlatforms: IOSNativePlatform[];
   /** False when any build configuration's native platform is unresolved or conflicts. */
   platformEvidenceComplete: boolean;
   productName?: string;

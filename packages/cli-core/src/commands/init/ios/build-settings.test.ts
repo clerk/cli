@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { inspectTargetBuildConfigurations } from "./build-settings.ts";
 import type { PbxObject, PbxObjects } from "./pbx.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
-import type { IOSDiagnostic, IOSProjectInspectionResult } from "./types.ts";
+import type { IOSDiagnostic, IOSNativePlatform, IOSProjectInspectionResult } from "./types.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -20,6 +20,7 @@ interface BuildSettingsFixtureOptions {
   targetBuildSettings?: Record<string, string>;
   projectConfigurationIds?: string[];
   targetConfigurationIds?: string[];
+  inspectionPlatform?: IOSNativePlatform;
 }
 
 async function inspectFixture(options: BuildSettingsFixtureOptions = {}) {
@@ -105,6 +106,7 @@ async function inspectFixture(options: BuildSettingsFixtureOptions = {}) {
     objects,
     parents: new Map(),
     diagnostics,
+    platform: options.inspectionPlatform,
   });
   return { configurations, diagnostics, root };
 }
@@ -762,6 +764,7 @@ describe("inspectTargetBuildConfigurations", () => {
 
     expect(configurations[0]).toMatchObject({
       platform: "ios",
+      supportedPlatforms: ["ios", "macos"],
       platformEvidenceComplete: true,
     });
     expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
@@ -769,6 +772,45 @@ describe("inspectTargetBuildConfigurations", () => {
       "iphonesimulator/arm64",
       "iphonesimulator/x86_64",
     ]);
+  });
+
+  test("inspects a proven macOS view without changing the multiplatform primary platform", async () => {
+    const settings = {
+      SDKROOT: "auto",
+      SUPPORTED_PLATFORMS: "iphoneos iphonesimulator macosx",
+      MACOSX_DEPLOYMENT_TARGET: "14.0",
+    };
+    const primary = await inspectFixture({ targetBuildSettings: settings });
+    const macOS = await inspectFixture({
+      targetBuildSettings: settings,
+      inspectionPlatform: "macos",
+    });
+
+    expect(primary.configurations[0]).toMatchObject({
+      platform: "ios",
+      supportedPlatforms: ["ios", "macos"],
+      platformEvidenceComplete: true,
+    });
+    expect(macOS.configurations[0]).toMatchObject({
+      platform: "macos",
+      supportedPlatforms: ["ios", "macos"],
+      platformEvidenceComplete: true,
+      model: { deploymentTarget: { state: "resolved", value: "14.0" } },
+    });
+    expect(macOS.configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
+      "macosx/arm64",
+      "macosx/x86_64",
+    ]);
+  });
+
+  test("marks a forced macOS view incomplete when the configuration only supports iOS", async () => {
+    const { configurations } = await inspectFixture({ inspectionPlatform: "macos" });
+
+    expect(configurations[0]).toMatchObject({
+      platform: "macos",
+      supportedPlatforms: ["ios"],
+      platformEvidenceComplete: false,
+    });
   });
 
   test("preserves dangling target configurations as blocking placeholders", async () => {
@@ -800,6 +842,7 @@ describe("inspectTargetBuildConfigurations", () => {
           id: "target",
           name: "Example",
           platform: "ios",
+          supportedPlatforms: ["ios"],
           platformEvidenceComplete: false,
           projectPath: "Example.xcodeproj",
           configurations: configurations.map(({ model }) => model),

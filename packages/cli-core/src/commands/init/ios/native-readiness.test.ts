@@ -251,6 +251,7 @@ describe("buildIOSNativeReadinessAudit", () => {
       root: inspection.root,
       projectPath: "MyApp.xcodeproj",
       targetId: IOS_FIXTURE_IDS.appTarget,
+      platform: "ios",
       targetName: "MyApp",
       requiresPublishableKey: false,
       files: [],

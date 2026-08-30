@@ -912,6 +912,7 @@ async function parseProject(
   root: string,
   projectPath: string,
   requestedTarget?: string,
+  requestedPlatform?: IOSNativePlatform,
 ): Promise<ParsedProject> {
   const projectRelativePath = relativeIOSPath(root, projectPath);
   const pbxprojPath = resolve(projectPath, "project.pbxproj");
@@ -1076,6 +1077,7 @@ async function parseProject(
       objects,
       parents,
       diagnostics: configurationDiagnostics,
+      platform: requestedPlatform,
     });
     const concretePlatforms = new Set(
       targetConfigurations.flatMap((configuration) =>
@@ -1095,15 +1097,17 @@ async function parseProject(
         configuration.platform ? [configuration.platform] : [],
       ),
     );
-    const targetPlatform: IOSNativePlatform | undefined = concretePlatforms.has("ios")
-      ? "ios"
-      : concretePlatforms.has("macos")
-        ? "macos"
-        : hasUncertainConfiguration || targetConfigurations.length === 0
-          ? inferredPlatforms.has("macos")
-            ? "macos"
-            : "ios"
-          : undefined;
+    const targetPlatform: IOSNativePlatform | undefined = requestedPlatform
+      ? requestedPlatform
+      : concretePlatforms.has("ios")
+        ? "ios"
+        : concretePlatforms.has("macos")
+          ? "macos"
+          : hasUncertainConfiguration || targetConfigurations.length === 0
+            ? inferredPlatforms.has("macos")
+              ? "macos"
+              : "ios"
+            : undefined;
     if (!targetPlatform) continue;
     const platformEvidenceComplete =
       targetConfigurations.length > 0 &&
@@ -1153,6 +1157,11 @@ async function parseProject(
     diagnostics.push(...configurationDiagnostics);
 
     const configurations = targetConfigurations.map((configuration) => configuration.model);
+    const supportedPlatforms = (["ios", "macos"] as const).filter((platform) =>
+      targetConfigurations.some((configuration) =>
+        configuration.supportedPlatforms.includes(platform),
+      ),
+    );
     await attachEntitlements(
       root,
       projectPath,
@@ -1207,6 +1216,7 @@ async function parseProject(
       id: targetId,
       name: targetName,
       platform: targetPlatform,
+      supportedPlatforms,
       platformEvidenceComplete,
       productName: asString(targetObject.productName),
       projectPath: projectRelativePath,
@@ -1349,7 +1359,12 @@ async function detectGeneratedProject(
 
 export async function inspectIOSProject(
   rootInput: string,
-  options: { target?: string; exhaustiveContainerDiscovery?: boolean } = {},
+  options: {
+    target?: string;
+    exhaustiveContainerDiscovery?: boolean;
+    /** Inspect one platform's conditioned target settings without changing its primary platform. */
+    platform?: IOSNativePlatform;
+  } = {},
 ): Promise<IOSProjectInspectionResult> {
   const invocationPath = resolve(rootInput);
   const root = invocationPath.endsWith(".xcodeproj")
@@ -1429,7 +1444,7 @@ export async function inspectIOSProject(
   const appTargetCandidates: ParsedProject["appTargetCandidates"] = [];
   const sourceMemberships: IOSTargetSourceMembership[] = [];
   for (const projectPath of [...projectPaths].sort()) {
-    const parsed = await parseProject(root, projectPath, options.target);
+    const parsed = await parseProject(root, projectPath, options.target, options.platform);
     projects.push(parsed.inspection);
     appTargets.push(...parsed.appTargets);
     appTargetCandidates.push(...parsed.appTargetCandidates);

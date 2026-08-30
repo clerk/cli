@@ -96,9 +96,10 @@ export type IOSLocalSetupResult = Pick<
   | "prebuiltAuthRequested"
   | "prebuiltAuthActive"
   | "nativeAppleRequested"
-  | "platform"
 > & {
   targetName: string;
+  platform: NonNullable<IOSLocalSetupProposal["platform"]>;
+  supportedPlatforms: NonNullable<IOSLocalSetupProposal["supportedPlatforms"]>;
   /** Authentication must return an exact app ID and development key before commit. */
   requiresLinkedApp: boolean;
   /** The approved local transaction consumes the linked development publishable key. */
@@ -731,6 +732,8 @@ export async function applyIOSLocalSetup(
   return {
     ...proposal,
     targetName: selection.targetName,
+    platform: selectedTarget.platform,
+    supportedPlatforms: [...selectedTarget.supportedPlatforms],
     requiresLinkedApp: true,
     requiresDevelopmentKey:
       directConfigPlan != null || associatedDomainPlan?.requiresPublishableKey === true,
@@ -924,6 +927,7 @@ async function validateSatisfiedAssociatedDomain(plan: IOSAssociatedDomainPlan):
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
   });
   return (
     current.status === "satisfied" &&
@@ -1038,7 +1042,13 @@ function assertCoherentLocalSetup(setup: IOSLocalSetupResult): void {
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
-  if ((setup.platform === "macos") !== (setup.macOSNetworkCapabilityPlan != null)) {
+  if (!setup.supportedPlatforms.includes(setup.platform)) {
+    throw iosSetupError(
+      "The approved native Apple setup contains inconsistent supported-platform state. No local setup changes were written; rerun clerk init.",
+      ERROR_CODE.IOS_SETUP_PLAN_INVALID,
+    );
+  }
+  if (setup.supportedPlatforms.includes("macos") !== (setup.macOSNetworkCapabilityPlan != null)) {
     throw iosSetupError(
       "The approved native Apple setup contains inconsistent macOS network-capability state. No local setup changes were written; rerun clerk init.",
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,

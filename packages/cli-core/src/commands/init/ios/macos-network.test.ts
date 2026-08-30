@@ -16,7 +16,12 @@ import {
   validatePreparedMacOSNetworkCapability,
 } from "./macos-network.ts";
 import type { PbxObjects } from "./pbx.ts";
-import { createIOSFixture, IOS_FIXTURE_IDS, treeDigest } from "./test-helpers.ts";
+import {
+  convertIOSFixtureToSynchronizedMissingEntitlements,
+  createIOSFixture,
+  IOS_FIXTURE_IDS,
+  treeDigest,
+} from "./test-helpers.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -65,6 +70,30 @@ async function enableSandbox(root: string): Promise<void> {
   await updateBuildSettings(root, (settings) => {
     settings.ENABLE_APP_SANDBOX = "YES";
   });
+}
+
+async function makeMultiplatform(root: string): Promise<void> {
+  await updateBuildSettings(root, (settings) => {
+    settings.SDKROOT = "auto";
+    settings.SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+    settings.IPHONEOS_DEPLOYMENT_TARGET = "17.0";
+    settings.MACOSX_DEPLOYMENT_TARGET = "14.0";
+  });
+}
+
+async function useSeparatePlatformEntitlements(root: string): Promise<string> {
+  const iosPath = join(root, "MyApp", "MyApp.ios.entitlements");
+  await writeFile(
+    iosPath,
+    '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict></dict></plist>\n',
+  );
+  await updateBuildSettings(root, (settings) => {
+    delete settings.CODE_SIGN_ENTITLEMENTS;
+    settings["CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]"] = "MyApp/MyApp.ios.entitlements";
+    settings["CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]"] = "MyApp/MyApp.ios.entitlements";
+    settings["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"] = "MyApp/MyApp.entitlements";
+  });
+  return iosPath;
 }
 
 async function removeNetworkEntitlement(root: string): Promise<void> {
@@ -164,6 +193,112 @@ describe("macOS outgoing network capability", () => {
     });
   });
 
+  test("accepts an already-satisfied shared entitlement on a multiplatform target", async () => {
+    const root = await temporaryRoot();
+    await makeMultiplatform(root);
+
+    await expect(planMacOSNetworkCapability(options(root))).resolves.toMatchObject({
+      status: "satisfied",
+      blockers: [],
+    });
+  });
+
+  test("modifies only a separately attached macOS entitlement on a multiplatform target", async () => {
+    const root = await temporaryRoot();
+    await makeMultiplatform(root);
+    await enableSandbox(root);
+    const iosPath = await useSeparatePlatformEntitlements(root);
+    await removeNetworkEntitlement(root);
+    const iosBefore = await readFile(iosPath, "utf8");
+
+    const plan = await planMacOSNetworkCapability(options(root));
+
+    expect(plan).toMatchObject({
+      status: "ready",
+      files: [{ path: "MyApp/MyApp.entitlements", operation: "modify" }],
+      blockers: [],
+    });
+    expect((await applyMacOSNetworkCapability(plan)).status).toBe("applied");
+    expect(await readFile(iosPath, "utf8")).toBe(iosBefore);
+    expect(await readFile(entitlementsPath(root), "utf8")).toContain(
+      "com.apple.security.network.client",
+    );
+  });
+
+  test("blocks mutating an entitlement shared by iOS and macOS builds", async () => {
+    const root = await temporaryRoot();
+    await makeMultiplatform(root);
+    await enableSandbox(root);
+    await removeNetworkEntitlement(root);
+
+    await expect(planMacOSNetworkCapability(options(root))).resolves.toMatchObject({
+      status: "blocked",
+      blockers: [{ code: "unsafe-entitlements" }],
+    });
+  });
+
+  test("blocks a macOS entitlement aliased by a sibling multiplatform target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-macos-network-sibling-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, {
+      platform: "macos",
+      includeKey: false,
+      macOSAppleEntitlement: false,
+      secondTarget: true,
+    });
+    await makeMultiplatform(root);
+    await enableSandbox(root);
+    await useSeparatePlatformEntitlements(root);
+    await removeNetworkEntitlement(root);
+    const path = pbxprojPath(root);
+    const project = parsePbxProject(await readFile(path, "utf8"));
+    const objects = (project as unknown as { objects: PbxObjects }).objects;
+    for (const id of [IOS_FIXTURE_IDS.secondDebug, IOS_FIXTURE_IDS.secondRelease]) {
+      const settings = objects[id]!.buildSettings as Record<string, unknown>;
+      settings.SDKROOT = "auto";
+      settings.SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+      settings.IPHONEOS_DEPLOYMENT_TARGET = "17.0";
+      settings.MACOSX_DEPLOYMENT_TARGET = "14.0";
+      settings["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"] = "MyApp/MyApp.entitlements";
+    }
+    await writeFile(path, buildPbxProject(project));
+
+    await expect(planMacOSNetworkCapability(options(root))).resolves.toMatchObject({
+      status: "blocked",
+      blockers: [{ code: "unsafe-entitlements" }],
+    });
+  });
+
+  test("requires every configuration to prove macOS support", async () => {
+    const root = await temporaryRoot();
+    await makeMultiplatform(root);
+    const path = pbxprojPath(root);
+    const project = parsePbxProject(await readFile(path, "utf8"));
+    const objects = (project as unknown as { objects: PbxObjects }).objects;
+    const release = objects[IOS_FIXTURE_IDS.targetRelease]!.buildSettings as Record<
+      string,
+      unknown
+    >;
+    release.SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+    await writeFile(path, buildPbxProject(project));
+
+    await expect(planMacOSNetworkCapability(options(root))).resolves.toMatchObject({
+      status: "blocked",
+      blockers: [{ code: "unresolved-platform" }],
+    });
+  });
+
+  test("reports a pure iOS target as unsupported", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-macos-network-ios-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { includeKey: false });
+
+    await expect(planMacOSNetworkCapability(options(root))).resolves.toMatchObject({
+      status: "blocked",
+      blockers: [{ code: "unsupported-platform" }],
+    });
+  });
+
   test("blocks explicit false, malformed, and architecture-conflicting values", async () => {
     const explicitFalse = await temporaryRoot();
     await enableSandbox(explicitFalse);
@@ -243,6 +378,40 @@ describe("macOS outgoing network capability", () => {
     expect(entitlements).toContain("<key>com.apple.security.app-sandbox</key>");
     expect(entitlements).toContain("<key>com.apple.security.network.client</key>");
     expect((await planMacOSNetworkCapability(options(root))).status).toBe("satisfied");
+  });
+
+  test("creates a distinct macOS entitlement for a multiplatform target", async () => {
+    const root = await temporaryRoot();
+    await makeMultiplatform(root);
+    await enableSandbox(root);
+    await convertIOSFixtureToSynchronizedMissingEntitlements(root);
+    await updateBuildSettings(root, (settings) => {
+      delete settings["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"];
+    });
+
+    const plan = await planMacOSNetworkCapability(options(root, true));
+    expect(plan).toMatchObject({
+      status: "ready",
+      files: [{ path: "MyApp/MyApp.mac.entitlements", operation: "create" }],
+      missingEntitlementsSettings: {
+        platform: "macos",
+        buildSettingPath: "MyApp/MyApp.mac.entitlements",
+        status: "ready",
+      },
+    });
+    expect((await applyMacOSNetworkCapability(plan)).status).toBe("applied");
+
+    const project = parsePbxProject(await readFile(pbxprojPath(root), "utf8"));
+    const objects = (project as unknown as { objects: PbxObjects }).objects;
+    for (const id of [IOS_FIXTURE_IDS.targetDebug, IOS_FIXTURE_IDS.targetRelease]) {
+      const settings = objects[id]!.buildSettings as Record<string, unknown>;
+      expect(settings["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"]).toBe("MyApp/MyApp.mac.entitlements");
+      expect(settings["CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]"]).toBeUndefined();
+      expect(settings["CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]"]).toBeUndefined();
+    }
+    expect(await readFile(join(root, "MyApp", "MyApp.mac.entitlements"), "utf8")).toContain(
+      "com.apple.security.network.client",
+    );
   });
 
   test("composes its candidate with a later Sign in with Apple entitlement", async () => {
