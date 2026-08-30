@@ -35,7 +35,7 @@ export const ios: FrameworkScaffold = {
     const selection = inspection.selection;
     const target = proposal.selectedTarget;
     const platform =
-      target?.platform ??
+      proposal.platform ??
       (ctx.framework.name === "macOS (Swift)"
         ? "macos"
         : ctx.framework.name === "iOS (Swift)"
@@ -48,6 +48,19 @@ export const ios: FrameworkScaffold = {
     const includeClerkKitUI = productDecision === "prebuilt";
     const hasCustomConfigure = proposal.hasSupportedCustomConfigure;
     const setupPlan = proposal.setupPlan;
+    const platformCompatibilityBlockers = proposal.platformCompatibilityBlockers;
+    if (platformCompatibilityBlockers.length > 0) {
+      return {
+        actions: [],
+        postInstructions: [
+          ...platformCompatibilityBlockers,
+          "Automatic setup stopped before using one platform's Swift setup or Bundle ID for the whole target. Make the supported-platform setup consistent, then rerun clerk init.",
+          platform === "ios"
+            ? "Full setup guide: https://clerk.com/docs/ios/getting-started/quickstart"
+            : "Clerk Swift SDK guide: https://github.com/clerk/clerk-ios",
+        ],
+      };
+    }
     const configureStep = setupPlan.steps.find((step) => step.id === "configure-publishable-key");
     const needsAttention = (id: string) => {
       const setupStep = setupPlan.steps.find((step) => step.id === id);

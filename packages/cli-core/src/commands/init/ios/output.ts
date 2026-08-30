@@ -1,6 +1,7 @@
 import type { IOSProjectInspectionResult, IOSSetupPlan, IOSSetupStepStatus } from "./types.ts";
 import { buildIOSNativeReadinessAudit, type IOSNativeReadinessAudit } from "./native-readiness.ts";
 import type { IOSAssociatedDomainPlan } from "./associated-domain.ts";
+import type { IOSPlatformViewsSnapshot } from "./platform-views.ts";
 import { hasSupportedIOSCustomConfigure } from "./products.ts";
 
 const STATUS_MARKER: Record<IOSSetupStepStatus, string> = {
@@ -23,6 +24,7 @@ export interface IOSOutputOptions {
   associatedDomainPlan?: IOSAssociatedDomainPlan;
   /** Exact readiness audit from the shared local setup proposal. */
   nativeReadiness?: IOSNativeReadinessAudit;
+  platformViews?: IOSPlatformViewsSnapshot;
 }
 
 export function createIOSDryRunOutput(

@@ -136,6 +136,14 @@ export interface IOSNativeRemoteAPI {
   ): Promise<IOSApplication>;
 }
 
+export interface ApplyIOSNativeRemoteSetupOptions {
+  api?: IOSNativeRemoteAPI;
+  targetReader?: IOSNativeRemoteTargetReader;
+  registrationRetryStore?: IOSNativeRegistrationRetryStore;
+  /** Rechecks caller-owned local state immediately before the first remote mutation. */
+  revalidateLocalPreconditions?: () => Promise<void>;
+}
+
 /** GET-only Native Application API surface used by read-only diagnostics. */
 export type IOSNativeRemoteReadAPI = Pick<
   IOSNativeRemoteAPI,
@@ -886,10 +894,14 @@ function registrationRetryIdentity(
 
 export async function applyIOSNativeRemoteSetup(
   plan: IOSNativeRemotePlan,
-  api: IOSNativeRemoteAPI = defaultAPI,
-  targetReader: IOSNativeRemoteTargetReader = defaultTargetReader,
-  registrationRetryStore: IOSNativeRegistrationRetryStore = cliStateIOSNativeRegistrationRetryStore,
+  options: ApplyIOSNativeRemoteSetupOptions = {},
 ): Promise<void> {
+  const {
+    api = defaultAPI,
+    targetReader = defaultTargetReader,
+    registrationRetryStore = cliStateIOSNativeRegistrationRetryStore,
+    revalidateLocalPreconditions,
+  } = options;
   if (plan.status === "blocked" || !plan.bundleIdentifier || !plan.appIdPrefix) {
     throw iosRemoteError(
       "The approved Clerk Native Application plan is incomplete. No remote changes were made; rerun clerk init.",
@@ -949,6 +961,13 @@ export async function applyIOSNativeRemoteSetup(
     );
   }
 
+  let localPreconditionsRevalidated = false;
+  const revalidateBeforeFirstMutation = async (): Promise<void> => {
+    if (localPreconditionsRevalidated) return;
+    await revalidateLocalPreconditions?.();
+    localPreconditionsRevalidated = true;
+  };
+
   // Register first so Native API is never enabled by this command without a
   // matching Apple native application registration already present.
   if (currentPlan.registration === "required") {
@@ -964,6 +983,7 @@ export async function applyIOSNativeRemoteSetup(
         ERROR_CODE.IOS_SETUP_PLAN_INVALID,
       );
     }
+    await revalidateBeforeFirstMutation();
     try {
       const created = validateIOSApplication(
         await withSpinner(
@@ -1021,6 +1041,7 @@ export async function applyIOSNativeRemoteSetup(
   }
 
   if (currentPlan.nativeApi === "required") {
+    await revalidateBeforeFirstMutation();
     let enableError: unknown;
     let enabledResponse: unknown;
     let enableCompleted = false;
@@ -1094,6 +1115,9 @@ export async function applyIOSNativeRemoteSetup(
       ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
     );
   }
+  // A no-op still must not claim success for caller-owned local state that
+  // changed while the authoritative Clerk state was being read.
+  await revalidateBeforeFirstMutation();
   if (retryIdentity && observedRegistrationRetryKey) {
     try {
       const cleared = await registrationRetryStore.clear(

@@ -1026,6 +1026,7 @@ async function prepareDirectConfig(
   const projectPath = relativeIOSPath(root, absoluteProjectPath);
   const inspection = await inspectIOSProject(root, {
     target: options.targetId,
+    platform: options.platform,
     exhaustiveContainerDiscovery: true,
   });
   if (hasIncompleteIOSContainerDiscovery(inspection)) {

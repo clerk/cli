@@ -23,6 +23,10 @@ import { inspectIOSProject } from "./inspect.ts";
 import { type IOSLocalSetupResult } from "./apply.ts";
 import { createIOSDryRunOutput, formatIOSSetupPlan } from "./output.ts";
 import { buildIOSLocalSetupProposal, createIOSLocalSetupContext } from "./local-plan.ts";
+import {
+  iosPlatformViewsIdentityMatches,
+  reinspectIOSPlatformViews,
+} from "./platform-views.ts";
 
 type LinkedProfile = Awaited<ReturnType<typeof resolveProfile>>;
 
@@ -104,6 +108,7 @@ export async function runAppleNativeDryRun(options: AppleNativeDryRunOptions): P
         createIOSDryRunOutput(inspection, plan, {
           associatedDomainPlan,
           nativeReadiness: proposal.nativeReadiness,
+          platformViews: proposal.platformViews,
         }),
         null,
         2,
@@ -114,6 +119,7 @@ export async function runAppleNativeDryRun(options: AppleNativeDryRunOptions): P
       formatIOSSetupPlan(inspection, plan, {
         associatedDomainPlan,
         nativeReadiness: proposal.nativeReadiness,
+        platformViews: proposal.platformViews,
       }),
     );
     await outro(plan.status === "ready" ? "Setup looks ready" : "Setup incomplete");
@@ -373,28 +379,42 @@ async function completeAppleNativeSetup(
     setupForCommit,
     setupForCommit.requiresDevelopmentKey ? keys.publishableKey : undefined,
   );
-  await assertApplicationLinkStillMatches({
-    root: preparation.root,
-    applicationId: nativeRemotePlan.applicationId,
-    phase: "native-application",
-  });
+  const revalidateNativeApplicationPreconditions = async (): Promise<void> => {
+    await assertPlatformIdentityStillMatches(setupForCommit.platformViews, "native-application");
+    await assertApplicationLinkStillMatches({
+      root: preparation.root,
+      applicationId: nativeRemotePlan.applicationId,
+      phase: "native-application",
+    });
+  };
+  await revalidateNativeApplicationPreconditions();
   await applyRemoteStep(
     "ios_native_setup",
-    async () => applyIOSNativeRemoteSetup(nativeRemotePlan),
+    async () =>
+      applyIOSNativeRemoteSetup(nativeRemotePlan, {
+        revalidateLocalPreconditions: revalidateNativeApplicationPreconditions,
+      }),
     "Could not reconcile Clerk Native Application settings; underlying error details were omitted.",
     "The local native Apple setup completed, but Clerk Native Application settings could not be completed remotely. Local changes remain intact; rerun clerk init to safely reconcile the additive remote steps.",
   );
   log.success("Clerk Native API and application registration verified");
 
   if (nativeApplePlan) {
-    await assertApplicationLinkStillMatches({
-      root: preparation.root,
-      applicationId: nativeApplePlan.applicationId,
-      phase: "native-apple",
-    });
+    const revalidateNativeApplePreconditions = async (): Promise<void> => {
+      await assertPlatformIdentityStillMatches(setupForCommit.platformViews, "native-apple");
+      await assertApplicationLinkStillMatches({
+        root: preparation.root,
+        applicationId: nativeApplePlan.applicationId,
+        phase: "native-apple",
+      });
+    };
+    await revalidateNativeApplePreconditions();
     await applyRemoteStep(
       "ios_apple_setup",
-      async () => applyIOSNativeAppleConnection(nativeApplePlan),
+      async () =>
+        applyIOSNativeAppleConnection(nativeApplePlan, {
+          revalidateLocalPreconditions: revalidateNativeApplePreconditions,
+        }),
       "Could not reconcile the native Apple connection; underlying error details were omitted.",
       "The local native Apple setup and Clerk Native Application registration completed, but the native Apple connection could not be completed. Those completed changes remain intact; rerun clerk init to reconcile Sign in with Apple safely.",
     );
@@ -461,5 +481,21 @@ async function assertApplicationLinkStillMatches(options: {
     options.phase === "native-application"
       ? "The local Clerk application link changed after the approved native Apple setup was committed. Local changes remain intact, but no Clerk Native Application changes were made; rerun clerk init."
       : "The local Clerk application link changed after Clerk Native Application setup completed. The completed local and Clerk Native Application changes remain intact, but no native Apple connection changes were made; rerun clerk init.";
+  throw new CliError(message, { code: ERROR_CODE.IOS_SETUP_STALE });
+}
+
+async function assertPlatformIdentityStillMatches(
+  approved: IOSLocalSetupResult["platformViews"],
+  phase: "native-application" | "native-apple",
+): Promise<void> {
+  const current = await reinspectIOSPlatformViews(approved);
+  if (current.status === "ready" && iosPlatformViewsIdentityMatches(approved, current.snapshot)) {
+    return;
+  }
+
+  const message =
+    phase === "native-application"
+      ? "The selected target's supported platforms or native identity changed after the local setup completed. Local changes remain intact, but no Clerk Native Application changes were made; rerun clerk init."
+      : "The selected target's supported platforms or native identity changed after Clerk Native Application setup completed. Completed local and registration changes remain intact, but no native Apple connection changes were made; rerun clerk init.";
   throw new CliError(message, { code: ERROR_CODE.IOS_SETUP_STALE });
 }
