@@ -665,21 +665,30 @@ async function sourceFilesForTarget(options: {
       evidence: [{ path: projectEvidencePath, objectId }],
     });
   };
-  for (const phaseId of asStringArray(targetObject.buildPhases)) {
+  const requiredStringCollection = (value: unknown): string[] => {
+    if (Array.isArray(value)) {
+      const strings = value.filter((item): item is string => typeof item === "string");
+      if (strings.length !== value.length) state.complete = false;
+      return strings;
+    }
+
+    state.complete = false;
+    return typeof value === "string" ? [value] : [];
+  };
+  const buildPhaseIds = requiredStringCollection(targetObject.buildPhases);
+  for (const phaseId of buildPhaseIds) {
     if (!objects[phaseId]) {
       reportDangling(phaseId, `Target ${targetId} contains a dangling build phase reference.`);
     }
   }
   const sourcePhaseIds = new Set(
-    asStringArray(targetObject.buildPhases).filter(
-      (phaseId) => objects[phaseId]?.isa === "PBXSourcesBuildPhase",
-    ),
+    buildPhaseIds.filter((phaseId) => objects[phaseId]?.isa === "PBXSourcesBuildPhase"),
   );
 
   for (const phaseId of sourcePhaseIds) {
     const phase = objects[phaseId];
     if (phase?.isa !== "PBXSourcesBuildPhase") continue;
-    for (const buildFileId of asStringArray(phase.files)) {
+    for (const buildFileId of requiredStringCollection(phase.files)) {
       const buildFile = objects[buildFileId];
       if (!buildFile) {
         reportDangling(

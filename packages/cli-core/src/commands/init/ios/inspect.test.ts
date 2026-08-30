@@ -339,6 +339,28 @@ describe("discoverIOSContainers", () => {
 });
 
 describe("inspectIOSProject", () => {
+  test("marks malformed source-membership collections incomplete while preserving valid owners", async () => {
+    const root = await fixture({ complete: true, secondTarget: true });
+    await transformProject(root, (objects) => {
+      objects[IOS_FIXTURE_IDS.secondTarget]!.buildPhases = IOS_FIXTURE_IDS.secondSourcesPhase;
+      objects[IOS_FIXTURE_IDS.secondSourcesPhase]!.files = IOS_FIXTURE_IDS.secondSourceBuildFile;
+      objects[IOS_FIXTURE_IDS.secondSourceBuildFile]!.fileRef = IOS_FIXTURE_IDS.appFile;
+    });
+
+    const inspection = await inspectIOSProject(root, { target: "MyApp" });
+    const memberships = await inspectIOSSourceMembership(root);
+    const owners = memberships.filter((membership) =>
+      membership.files.some((file) => file.relativePath === "MyApp/MyAppApp.swift"),
+    );
+    const secondMembership = owners.find(
+      (membership) => membership.targetId === IOS_FIXTURE_IDS.secondTarget,
+    );
+
+    expect(owners).toHaveLength(2);
+    expect(secondMembership).toMatchObject({ complete: false });
+    expect(inspection.appTargets[0]?.swift.evidenceComplete).toBe(true);
+  });
+
   test("marks source membership incomplete when a group-relative file has multiple parents", async () => {
     const root = await fixture({ complete: true });
     const alternateGroupId = "565656565656565656565656";
