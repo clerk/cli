@@ -690,6 +690,28 @@ struct MyApp: App {
     expect(await readFile(appSourcePath(root))).toEqual(before);
   });
 
+  test.each(["build-phases", "source-phase-files"] as const)(
+    "refuses mutation when shared-source ownership uses malformed %s",
+    async (collection) => {
+      const root = await fixture({ secondTarget: true });
+      const before = await readFile(appSourcePath(root));
+      await shareEntrySourceWithSecondTarget(root);
+      await updateProject(root, (objects) => {
+        if (collection === "build-phases") {
+          objects[IOS_FIXTURE_IDS.secondTarget]!.buildPhases = IOS_FIXTURE_IDS.secondSourcesPhase;
+        } else {
+          objects[IOS_FIXTURE_IDS.secondSourcesPhase]!.files = SHARED_ENTRY_BUILD_FILE_ID;
+        }
+      });
+
+      const plan = await planIOSDirectConfig(planOptions(root));
+
+      expect(plan.status).toBe("blocked");
+      expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+      expect(await readFile(appSourcePath(root))).toEqual(before);
+    },
+  );
+
   test("refuses an entry source aliased into another target through a hard link", async () => {
     const root = await fixture({ secondTarget: true });
     const aliasPath = join(root, "AdminApp", "SharedApp.swift");
