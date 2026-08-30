@@ -41,7 +41,10 @@ export interface IOSSDKInstallOptions {
   /** Project-root-relative path selected by the iOS inspector. */
   projectPath: string;
   targetId: string;
+  /** Primary platform view used to inspect the selected target. */
   platform?: IOSNativePlatform;
+  /** Every platform on which the selected target must link the requested products. */
+  supportedPlatforms?: IOSNativePlatform[];
   includeClerkKitUI?: boolean;
   /** Used only when a new clerk-ios remote reference must be created. */
   minimumVersion?: string;
@@ -82,6 +85,7 @@ export interface IOSSDKInstallPlan {
   projectPath: string;
   targetId: string;
   platform: IOSNativePlatform;
+  supportedPlatforms: IOSNativePlatform[];
   products: IOSSDKProduct[];
   minimumVersion: string;
   requirePrebuiltAuthCompatibility?: true;
@@ -113,8 +117,9 @@ interface VerifiedPackage {
 interface ProductGraph {
   productId?: string;
   inTarget: boolean;
-  buildFileId?: string;
-  hasOtherPlatformBuildFile: boolean;
+  /** One applicable build file per requested platform, when present. */
+  buildFileIds: Partial<Record<IOSNativePlatform, string>>;
+  hasAnyBuildFile: boolean;
 }
 
 interface PreparedInstall {
@@ -130,6 +135,15 @@ interface PreparedInstall {
 
 function requestedProducts(includeClerkKitUI: boolean | undefined): IOSSDKProduct[] {
   return includeClerkKitUI ? ["ClerkKit", "ClerkKitUI"] : ["ClerkKit"];
+}
+
+function canonicalPlatforms(platforms: readonly IOSNativePlatform[]): IOSNativePlatform[] {
+  const selected = new Set(platforms);
+  return (["ios", "macos"] as const).filter((platform) => selected.has(platform));
+}
+
+function planPlatforms(options: IOSSDKInstallOptions): IOSNativePlatform[] {
+  return canonicalPlatforms(options.supportedPlatforms ?? [options.platform ?? "ios"]);
 }
 
 function validMinimumVersion(value: string): boolean {
@@ -225,6 +239,7 @@ function makePlan(
     projectPath,
     targetId: options.targetId,
     platform: options.platform ?? "ios",
+    supportedPlatforms: planPlatforms(options),
     products: requestedProducts(options.includeClerkKitUI),
     minimumVersion: effectiveMinimumVersion(options),
     ...(options.requirePrebuiltAuthCompatibility ? { requirePrebuiltAuthCompatibility: true } : {}),
@@ -622,7 +637,7 @@ function scanProductGraph(
   objects: PbxObjects,
   verifiedPackageIds: Set<string>,
   unsafeLocalPackageIds: Set<string>,
-  platform: IOSNativePlatform,
+  platforms: IOSNativePlatform[],
 ): { graph?: ProductGraph; blocker?: IOSSDKInstallBlocker } {
   const targetMatches = targetProductIds.filter(
     (id) => clerkProductName(objects[id]) === productName,
@@ -636,8 +651,11 @@ function scanProductGraph(
     };
   }
 
-  const phaseMatches: Array<{ buildFileId: string; productId: string }> = [];
-  let hasOtherPlatformBuildFile = false;
+  const phaseMatches: Array<{
+    buildFileId: string;
+    productId: string;
+    applies: IOSNativePlatform[];
+  }> = [];
   for (const buildFileId of frameworkFiles) {
     const buildFile = objects[buildFileId];
     if (!buildFile || buildFile.isa !== "PBXBuildFile") {
@@ -650,8 +668,11 @@ function scanProductGraph(
     }
     const productId = asString(buildFile.productRef);
     if (productId && clerkProductName(objects[productId]) === productName) {
-      const applicability = buildFilePlatformApplicability(buildFile, platform);
-      if (!applicability.recognized) {
+      const applicability = platforms.map((platform) => ({
+        platform,
+        ...buildFilePlatformApplicability(buildFile, platform),
+      }));
+      if (applicability.some((item) => !item.recognized)) {
         return {
           blocker: {
             code: "unsupported-project",
@@ -659,25 +680,38 @@ function scanProductGraph(
           },
         };
       }
-      if (applicability.applies) {
-        phaseMatches.push({ buildFileId, productId });
-      } else {
-        hasOtherPlatformBuildFile = true;
-      }
+      phaseMatches.push({
+        buildFileId,
+        productId,
+        applies: applicability.filter((item) => item.applies).map((item) => item.platform),
+      });
     }
   }
-  if (phaseMatches.length > 1) {
-    return {
-      blocker: {
-        code: "duplicate-build-file",
-        message: `The selected target links ${productName} more than once in its Frameworks phase.`,
-      },
-    };
+  for (const platform of platforms) {
+    if (phaseMatches.filter((match) => match.applies.includes(platform)).length > 1) {
+      return {
+        blocker: {
+          code: "duplicate-build-file",
+          message: `The selected target links ${productName} more than once for ${
+            platform === "macos" ? "macOS" : "iOS"
+          } in its Frameworks phase.`,
+        },
+      };
+    }
   }
 
   const targetProductId = targetMatches[0];
-  const phaseMatch = phaseMatches[0];
-  if (targetProductId && phaseMatch && targetProductId !== phaseMatch.productId) {
+  const phaseProductIds = [...new Set(phaseMatches.map((match) => match.productId))];
+  if (phaseProductIds.length > 1) {
+    return {
+      blocker: {
+        code: "duplicate-product",
+        message: `The selected target links more than one ${productName} product dependency.`,
+      },
+    };
+  }
+  const phaseProductId = phaseProductIds[0];
+  if (targetProductId && phaseProductId && targetProductId !== phaseProductId) {
     return {
       blocker: {
         code: "duplicate-product",
@@ -685,7 +719,7 @@ function scanProductGraph(
       },
     };
   }
-  const productId = targetProductId ?? phaseMatch?.productId;
+  const productId = targetProductId ?? phaseProductId;
   if (productId) {
     const blocker = validateProductPackage(
       productId,
@@ -699,8 +733,13 @@ function scanProductGraph(
     graph: {
       productId,
       inTarget: targetProductId != null,
-      buildFileId: phaseMatch?.buildFileId,
-      hasOtherPlatformBuildFile,
+      buildFileIds: Object.fromEntries(
+        platforms.flatMap((platform) => {
+          const match = phaseMatches.find((candidate) => candidate.applies.includes(platform));
+          return match ? [[platform, match.buildFileId]] : [];
+        }),
+      ),
+      hasAnyBuildFile: phaseMatches.length > 0,
     },
   };
 }
@@ -709,7 +748,7 @@ function validateCandidateGraph(
   parts: ProjectParts,
   packageId: string,
   products: IOSSDKProduct[],
-  platform: IOSNativePlatform,
+  platforms: IOSNativePlatform[],
 ): boolean {
   const packageReferences = strictStringArray(parts.projectObject, "packageReferences");
   const targetProducts = strictStringArray(parts.targetObject, "packageProductDependencies");
@@ -731,26 +770,31 @@ function validateCandidateGraph(
     const productId = productIds[0];
     if (productIds.length !== 1 || !productId) return false;
     if (asString(parts.objects[productId]?.package) !== packageId) return false;
-    const linked = frameworkFiles.filter((buildFileId) => {
-      const buildFile = parts.objects[buildFileId];
-      return (
-        buildFile?.isa === "PBXBuildFile" &&
-        asString(buildFile?.productRef) === productId &&
-        buildFilePlatformApplicability(buildFile, platform).recognized &&
-        buildFilePlatformApplicability(buildFile, platform).applies
-      );
-    });
-    if (linked.length !== 1) return false;
-    const allLinkedProducts = frameworkFiles.filter((buildFileId) => {
-      const buildFile = parts.objects[buildFileId];
-      if (!buildFile || buildFile.isa !== "PBXBuildFile") return false;
-      const linkedProduct = parts.objects[asString(buildFile.productRef) ?? ""];
-      return (
-        clerkProductName(linkedProduct) === productName &&
-        buildFilePlatformApplicability(buildFile, platform).applies
-      );
-    });
-    if (allLinkedProducts.length !== 1) return false;
+    for (const platform of platforms) {
+      const linked = frameworkFiles.filter((buildFileId) => {
+        const buildFile = parts.objects[buildFileId];
+        if (!buildFile || buildFile.isa !== "PBXBuildFile") return false;
+        const applicability = buildFilePlatformApplicability(buildFile, platform);
+        return (
+          asString(buildFile.productRef) === productId &&
+          applicability.recognized &&
+          applicability.applies
+        );
+      });
+      if (linked.length !== 1) return false;
+      const allLinkedProducts = frameworkFiles.filter((buildFileId) => {
+        const buildFile = parts.objects[buildFileId];
+        if (!buildFile || buildFile.isa !== "PBXBuildFile") return false;
+        const linkedProduct = parts.objects[asString(buildFile.productRef) ?? ""];
+        const applicability = buildFilePlatformApplicability(buildFile, platform);
+        return (
+          clerkProductName(linkedProduct) === productName &&
+          applicability.recognized &&
+          applicability.applies
+        );
+      });
+      if (allLinkedProducts.length !== 1) return false;
+    }
   }
   return true;
 }
@@ -873,6 +917,7 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
   const inspection = await inspectIOSProject(root, {
     target: options.targetId,
     exhaustiveContainerDiscovery: true,
+    ...(options.platform ? { platform: options.platform } : {}),
   });
   const generator =
     inspection.generatedProject ?? (await generatedProjectKind(root, absoluteProjectPath));
@@ -924,6 +969,24 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
       source,
     );
   }
+  const supportedPlatforms = canonicalPlatforms(inspectedTarget.supportedPlatforms);
+  const requestedSupportedPlatforms = options.supportedPlatforms
+    ? canonicalPlatforms(options.supportedPlatforms)
+    : supportedPlatforms;
+  if (
+    supportedPlatforms.length === 0 ||
+    requestedSupportedPlatforms.length !== supportedPlatforms.length ||
+    requestedSupportedPlatforms.some((item, index) => item !== supportedPlatforms[index])
+  ) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "unresolved-platform",
+      "The selected target's supported iOS and macOS platforms changed after this SDK plan was created.",
+      source,
+    );
+  }
   if (options.platform && platform !== options.platform) {
     return blocked(
       options,
@@ -936,7 +999,39 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
       source,
     );
   }
-  options = { ...options, platform };
+  for (const supportedPlatform of supportedPlatforms) {
+    const platformInspection =
+      supportedPlatform === platform
+        ? inspection
+        : await inspectIOSProject(root, {
+            target: options.targetId,
+            exhaustiveContainerDiscovery: true,
+            platform: supportedPlatform,
+          });
+    const platformTarget = platformInspection.appTargets.find(
+      (target) => target.id === options.targetId && target.projectPath === projectPath,
+    );
+    if (
+      hasIncompleteIOSContainerDiscovery(platformInspection) ||
+      platformInspection.selection.state !== "selected" ||
+      platformInspection.selection.targetId !== options.targetId ||
+      platformInspection.selection.projectPath !== projectPath ||
+      platformInspection.selection.platform !== supportedPlatform ||
+      !platformTarget?.platformEvidenceComplete
+    ) {
+      return blocked(
+        options,
+        root,
+        projectPath,
+        "unresolved-platform",
+        `The selected target's ${
+          supportedPlatform === "macos" ? "macOS" : "iOS"
+        } build settings could not be proven consistently across every configuration.`,
+        source,
+      );
+    }
+  }
+  options = { ...options, platform, supportedPlatforms };
 
   // Parse a second model instead of structured-cloning. pbxproj data literals
   // can be Buffers, which structuredClone turns into writer-incompatible
@@ -1109,7 +1204,7 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
       parts.objects,
       verifiedPackageIds,
       unsafeLocalPackageIds,
-      platform,
+      supportedPlatforms,
     );
     if (result.blocker) {
       productBlockers.push(result.blocker);
@@ -1183,8 +1278,8 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
     actions.push("Attach the verified clerk-ios package reference to the Xcode project.");
   }
 
-  const requiresFrameworkPhase = products.some(
-    (productName) => !graphs.get(productName)?.buildFileId,
+  const requiresFrameworkPhase = products.some((productName) =>
+    supportedPlatforms.some((platform) => !graphs.get(productName)?.buildFileIds[platform]),
   );
   if (!frameworkPhaseId && requiresFrameworkPhase) {
     frameworkPhaseId = stableObjectId(
@@ -1221,7 +1316,8 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
       parts.targetObject.packageProductDependencies = [...currentProducts, productId];
       actions.push(`Add ${productName} to the selected target's package products.`);
     }
-    if (!graph.buildFileId) {
+    const missingPlatforms = supportedPlatforms.filter((platform) => !graph.buildFileIds[platform]);
+    if (missingPlatforms.length > 0) {
       if (!frameworkPhaseId) {
         return blocked(
           options,
@@ -1232,19 +1328,39 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
           source,
         );
       }
-      const buildFileId = stableObjectId(
-        parts.objects,
-        `${parts.projectObjectId}:${options.targetId}:build-file:${productId}`,
-      );
-      parts.objects[buildFileId] = {
-        isa: "PBXBuildFile",
-        productRef: productId,
-        ...(graph.hasOtherPlatformBuildFile ? { platformFilter: platform } : {}),
-      };
       const phase = parts.objects[frameworkPhaseId]!;
-      const currentFiles = strictStringArray(phase, "files")!;
-      phase.files = [...currentFiles, buildFileId];
-      actions.push(`Link ${productName} in the selected target's Frameworks phase.`);
+      if (!graph.hasAnyBuildFile) {
+        const buildFileId = stableObjectId(
+          parts.objects,
+          `${parts.projectObjectId}:${options.targetId}:build-file:${productId}`,
+        );
+        parts.objects[buildFileId] = {
+          isa: "PBXBuildFile",
+          productRef: productId,
+        };
+        const currentFiles = strictStringArray(phase, "files")!;
+        phase.files = [...currentFiles, buildFileId];
+        actions.push(`Link ${productName} in the selected target's Frameworks phase.`);
+      } else {
+        for (const missingPlatform of missingPlatforms) {
+          const buildFileId = stableObjectId(
+            parts.objects,
+            `${parts.projectObjectId}:${options.targetId}:build-file:${productId}:${missingPlatform}`,
+          );
+          parts.objects[buildFileId] = {
+            isa: "PBXBuildFile",
+            productRef: productId,
+            platformFilter: missingPlatform,
+          };
+          const currentFiles = strictStringArray(phase, "files")!;
+          phase.files = [...currentFiles, buildFileId];
+          actions.push(
+            `Link ${productName} for ${
+              missingPlatform === "macos" ? "macOS" : "iOS"
+            } in the selected target's Frameworks phase.`,
+          );
+        }
+      }
     }
   }
 
@@ -1297,7 +1413,7 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
   const candidateParts = projectParts(reparsed, options.targetId);
   if (
     !candidateParts ||
-    !validateCandidateGraph(candidateParts, selectedPackage.id, products, platform)
+    !validateCandidateGraph(candidateParts, selectedPackage.id, products, supportedPlatforms)
   ) {
     return blocked(
       options,
@@ -1341,7 +1457,7 @@ export async function validateIOSSDKInstallPostcondition(
   if (
     packages.length !== 1 ||
     !selectedPackage ||
-    !validateCandidateGraph(parts, selectedPackage.id, plan.products, plan.platform)
+    !validateCandidateGraph(parts, selectedPackage.id, plan.products, plan.supportedPlatforms)
   ) {
     return false;
   }
@@ -1349,6 +1465,7 @@ export async function validateIOSSDKInstallPostcondition(
   const inspection = await inspectIOSProject(plan.root, {
     target: plan.targetId,
     exhaustiveContainerDiscovery: true,
+    platform: plan.platform,
   });
   if (hasIncompleteIOSContainerDiscovery(inspection)) return false;
   if (inspection.generatedProject || (await generatedProjectKind(plan.root, absoluteProjectPath))) {
@@ -1378,14 +1495,46 @@ export async function validateIOSSDKInstallPostcondition(
   const target = inspection.appTargets.find(
     (item) => item.id === plan.targetId && item.projectPath === plan.projectPath,
   );
-  if (!target?.platformEvidenceComplete || !["remote", "local"].includes(target.packages.package)) {
+  if (
+    !target?.platformEvidenceComplete ||
+    !["remote", "local"].includes(target.packages.package) ||
+    canonicalPlatforms(target.supportedPlatforms).join(",") !== plan.supportedPlatforms.join(",")
+  ) {
     return false;
   }
-  return plan.products.every((productName) =>
-    productName === "ClerkKit"
-      ? target.packages.clerkKit === "linked"
-      : target.packages.clerkKitUI === "linked",
-  );
+  for (const platform of plan.supportedPlatforms) {
+    const platformInspection =
+      platform === plan.platform
+        ? inspection
+        : await inspectIOSProject(plan.root, {
+            target: plan.targetId,
+            exhaustiveContainerDiscovery: true,
+            platform,
+          });
+    if (
+      hasIncompleteIOSContainerDiscovery(platformInspection) ||
+      platformInspection.selection.state !== "selected" ||
+      platformInspection.selection.targetId !== plan.targetId ||
+      platformInspection.selection.projectPath !== plan.projectPath ||
+      platformInspection.selection.platform !== platform
+    ) {
+      return false;
+    }
+    const platformTarget = platformInspection.appTargets.find(
+      (item) => item.id === plan.targetId && item.projectPath === plan.projectPath,
+    );
+    if (
+      !platformTarget?.platformEvidenceComplete ||
+      !plan.products.every((productName) =>
+        productName === "ClerkKit"
+          ? platformTarget.packages.clerkKit === "linked"
+          : platformTarget.packages.clerkKitUI === "linked",
+      )
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export async function planIOSSDKInstall(options: IOSSDKInstallOptions): Promise<IOSSDKInstallPlan> {
@@ -1424,6 +1573,7 @@ export async function prepareIOSSDKInstallMutation(
     projectPath: plan.projectPath,
     targetId: plan.targetId,
     platform: plan.platform,
+    supportedPlatforms: plan.supportedPlatforms,
     includeClerkKitUI: plan.products.includes("ClerkKitUI"),
     minimumVersion: plan.minimumVersion,
     requirePrebuiltAuthCompatibility: plan.requirePrebuiltAuthCompatibility,
@@ -1453,6 +1603,7 @@ export async function prepareIOSSDKInstallMutation(
           projectPath: plan.projectPath,
           targetId: plan.targetId,
           platform: plan.platform,
+          supportedPlatforms: plan.supportedPlatforms,
           includeClerkKitUI: plan.products.includes("ClerkKitUI"),
           minimumVersion: plan.minimumVersion,
           requirePrebuiltAuthCompatibility: plan.requirePrebuiltAuthCompatibility,

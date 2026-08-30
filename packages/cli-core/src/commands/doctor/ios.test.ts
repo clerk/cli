@@ -75,6 +75,24 @@ async function fixture(options: Parameters<typeof createIOSFixture>[1] = {}): Pr
   return root;
 }
 
+async function makeMultiplatform(root: string): Promise<void> {
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = await readFile(projectPath, "utf8");
+  await writeFile(
+    projectPath,
+    project
+      .replaceAll("SDKROOT = iphoneos;", "SDKROOT = auto;")
+      .replaceAll(
+        'SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";',
+        'SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";',
+      )
+      .replaceAll(
+        "IPHONEOS_DEPLOYMENT_TARGET = 17.0;",
+        "IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; ENABLE_APP_SANDBOX = NO;",
+      ),
+  );
+}
+
 async function addAppleEntitlement(
   root: string,
   value = "<array><string>Default</string></array>",
@@ -171,17 +189,22 @@ afterEach(async () => {
 describe("runIOSDoctorChecks", () => {
   test("runs and labels the macOS network check for a primary-iOS multiplatform target", async () => {
     const root = await fixture({ complete: true });
+    await makeMultiplatform(root);
     const { inspectIOSProject } = await import("../init/ios/inspect.ts");
     const inspection = await inspectIOSProject(root, { target: "MyApp" });
     const target = inspection.appTargets[0];
     if (!target) throw new Error("Expected an application target");
-    target.supportedPlatforms = ["ios", "macos"];
     let networkPlanCalls = 0;
+    const sdkPlannerOptions: Parameters<typeof planIOSSDKInstall>[0][] = [];
 
     const audit = await runIOSDoctorChecks(
       context(),
       { root, target: "MyApp", preparedInspection: inspection },
       dependencies({
+        planIOSSDKInstall: async (options) => {
+          sdkPlannerOptions.push(options);
+          return planIOSSDKInstall(options);
+        },
         planMacOSNetworkCapability: async (options) => {
           networkPlanCalls += 1;
           return {
@@ -201,6 +224,17 @@ describe("runIOSDoctorChecks", () => {
     );
 
     expect(networkPlanCalls).toBe(1);
+    expect(sdkPlannerOptions).toEqual([
+      {
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: IOS_FIXTURE_IDS.appTarget,
+        platform: "ios",
+        supportedPlatforms: ["ios", "macos"],
+        includeClerkKitUI: true,
+        requirePrebuiltAuthCompatibility: true,
+      },
+    ]);
     expect(audit.inspection.selection).toMatchObject({ state: "selected", platform: "ios" });
     expect(
       audit.results.find((result) => result.name === "macOS: Allow outgoing network access")
@@ -465,6 +499,7 @@ describe("runIOSDoctorChecks", () => {
         projectPath: "MyApp.xcodeproj",
         targetId: IOS_FIXTURE_IDS.appTarget,
         platform: "ios",
+        supportedPlatforms: ["ios"],
         includeClerkKitUI: true,
         requirePrebuiltAuthCompatibility: true,
       },
@@ -519,6 +554,7 @@ struct MyApp: App {
         projectPath: "MyApp.xcodeproj",
         targetId: IOS_FIXTURE_IDS.appTarget,
         platform: "ios",
+        supportedPlatforms: ["ios"],
       },
     ]);
     expect(await readFile(projectPath, "utf8")).toBe(duplicateProducts);
@@ -559,6 +595,7 @@ struct MyApp: App {
         projectPath: "MyApp.xcodeproj",
         targetId: IOS_FIXTURE_IDS.appTarget,
         platform: "ios",
+        supportedPlatforms: ["ios"],
         includeClerkKitUI: true,
       },
     ]);

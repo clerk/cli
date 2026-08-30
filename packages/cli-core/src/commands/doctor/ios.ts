@@ -771,6 +771,7 @@ export async function runIOSDoctorChecks(
         projectPath: target.projectPath,
         targetId: target.id,
         platform: target.platform,
+        supportedPlatforms: target.supportedPlatforms,
         ...(requiresClerkKitUI ? { includeClerkKitUI: true } : {}),
         ...(requiresAuthViewCompatibility ? { requirePrebuiltAuthCompatibility: true } : {}),
       })
