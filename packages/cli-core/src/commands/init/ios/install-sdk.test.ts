@@ -140,10 +140,14 @@ async function transformProject(
 
 function removeClerkSDK(graph: MutableGraph): void {
   graph.root.packageReferences = [];
+  removeClerkProductLinks(graph);
+  delete graph.objects[IOS_FIXTURE_IDS.clerkPackage];
+}
+
+function removeClerkProductLinks(graph: MutableGraph): void {
   graph.target.packageProductDependencies = [];
   graph.frameworks.files = [];
   for (const id of [
-    IOS_FIXTURE_IDS.clerkPackage,
     IOS_FIXTURE_IDS.clerkKit,
     IOS_FIXTURE_IDS.clerkKitUI,
     IOS_FIXTURE_IDS.clerkKitBuildFile,
@@ -295,7 +299,20 @@ describe("iOS Clerk SDK installer", () => {
     });
   });
 
-  test("raises an explicitly older requested version to the prebuilt AuthView floor", async () => {
+  test("raises an explicitly older requested version to the modern product floor", async () => {
+    const root = await fixture();
+    await transformProject(root, removeClerkSDK);
+
+    const plan = await planIOSSDKInstall({
+      ...installOptions(root),
+      minimumVersion: "0.70.0",
+    });
+
+    expect(plan.minimumVersion).toBe(DEFAULT_CLERK_IOS_MINIMUM_VERSION);
+    expect(plan.minimumVersion).not.toBe("0.70.0");
+  });
+
+  test("keeps the AuthView compatibility floor layered over the modern product floor", async () => {
     const root = await fixture();
     await transformProject(root, removeClerkSDK);
 
@@ -306,30 +323,47 @@ describe("iOS Clerk SDK installer", () => {
     });
 
     expect(plan.minimumVersion).toBe(PREBUILT_AUTH_CLERK_IOS_MINIMUM_VERSION);
-    expect(plan.minimumVersion).not.toBe("0.70.0");
+    expect(plan.requirePrebuiltAuthCompatibility).toBe(true);
   });
 
-  test("blocks a remote package pinned before the modern ClerkKitUI products", async () => {
-    const root = await fixture();
+  test("blocks old remote constraints before adding modern ClerkKit products", async () => {
+    for (const includeClerkKitUI of [false, true]) {
+      const root = await fixture();
+      await transformProject(root, (graph) => {
+        removeClerkProductLinks(graph);
+        graph.objects[IOS_FIXTURE_IDS.clerkPackage]!.requirement = {
+          kind: "versionRange",
+          minimumVersion: "0.70.0",
+          maximumVersion: "1.0.0",
+        };
+      });
+      const before = await treeDigest(root);
+
+      const plan = await planIOSSDKInstall(installOptions(root, includeClerkKitUI));
+
+      expect(plan.status).toBe("blocked");
+      expect(plan.actions).toEqual([]);
+      expect(plan.blockers[0]?.code).toBe("incompatible-sdk");
+      expect(plan.blockers[0]?.message).toContain(DEFAULT_CLERK_IOS_MINIMUM_VERSION);
+      expect((await applyIOSSDKInstall(plan)).status).toBe("blocked");
+      expect(await treeDigest(root)).toEqual(before);
+    }
+  });
+
+  test("rejects a package constraint downgraded after a modern plan", async () => {
+    const root = await fixture({ clerkSDK: "core-only" });
+    const plan = await planIOSSDKInstall(installOptions(root));
+    expect(plan.status).toBe("satisfied");
+    expect(await validateIOSSDKInstallPostcondition(plan)).toBe(true);
+
     await transformProject(root, (graph) => {
       graph.objects[IOS_FIXTURE_IDS.clerkPackage]!.requirement = {
         kind: "exactVersion",
         version: "0.70.0",
       };
     });
-    const before = await treeDigest(root);
 
-    const ordinaryPlan = await planIOSSDKInstall(installOptions(root, true));
-    const prebuiltPlan = await planIOSSDKInstall({
-      ...installOptions(root, true),
-      requirePrebuiltAuthCompatibility: true,
-    });
-
-    expect(ordinaryPlan.status).toBe("satisfied");
-    expect(prebuiltPlan.status).toBe("blocked");
-    expect(prebuiltPlan.blockers[0]?.code).toBe("incompatible-sdk");
-    expect(prebuiltPlan.blockers[0]?.message).toContain(PREBUILT_AUTH_CLERK_IOS_MINIMUM_VERSION);
-    expect(await treeDigest(root)).toEqual(before);
+    expect(await validateIOSSDKInstallPostcondition(plan)).toBe(false);
   });
 
   test("requires a compatible resolved pin when a remote range permits older SDKs", async () => {
@@ -342,10 +376,7 @@ describe("iOS Clerk SDK installer", () => {
       };
     });
     await writePackageResolution(oldRoot, "0.70.0");
-    const oldPlan = await planIOSSDKInstall({
-      ...installOptions(oldRoot, true),
-      requirePrebuiltAuthCompatibility: true,
-    });
+    const oldPlan = await planIOSSDKInstall(installOptions(oldRoot, true));
     expect(oldPlan.status).toBe("blocked");
     expect(oldPlan.blockers[0]?.code).toBe("incompatible-sdk");
 
@@ -358,10 +389,7 @@ describe("iOS Clerk SDK installer", () => {
       };
     });
     await writePackageResolution(compatibleRoot, PREBUILT_AUTH_CLERK_IOS_MINIMUM_VERSION);
-    const compatiblePlan = await planIOSSDKInstall({
-      ...installOptions(compatibleRoot, true),
-      requirePrebuiltAuthCompatibility: true,
-    });
+    const compatiblePlan = await planIOSSDKInstall(installOptions(compatibleRoot, true));
     expect(compatiblePlan.status).toBe("satisfied");
     expect(await validateIOSSDKInstallPostcondition(compatiblePlan)).toBe(true);
   });

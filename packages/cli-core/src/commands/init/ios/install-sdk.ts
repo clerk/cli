@@ -131,16 +131,23 @@ function validMinimumVersion(value: string): boolean {
   return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(value);
 }
 
+function requiredCompatibilityVersion(requirePrebuiltAuthCompatibility: boolean): string {
+  if (
+    requirePrebuiltAuthCompatibility &&
+    semver.gt(PREBUILT_AUTH_CLERK_IOS_MINIMUM_VERSION, DEFAULT_CLERK_IOS_MINIMUM_VERSION)
+  ) {
+    return PREBUILT_AUTH_CLERK_IOS_MINIMUM_VERSION;
+  }
+  return DEFAULT_CLERK_IOS_MINIMUM_VERSION;
+}
+
 function effectiveMinimumVersion(options: IOSSDKInstallOptions): string {
   const requested = options.minimumVersion ?? DEFAULT_CLERK_IOS_MINIMUM_VERSION;
-  if (
-    !options.requirePrebuiltAuthCompatibility ||
-    semver.valid(requested) == null ||
-    semver.gte(requested, PREBUILT_AUTH_CLERK_IOS_MINIMUM_VERSION)
-  ) {
+  const required = requiredCompatibilityVersion(options.requirePrebuiltAuthCompatibility === true);
+  if (semver.valid(requested) == null || semver.gte(requested, required)) {
     return requested;
   }
-  return PREBUILT_AUTH_CLERK_IOS_MINIMUM_VERSION;
+  return required;
 }
 
 function supportedRemoteRequirement(value: unknown): boolean {
@@ -449,16 +456,23 @@ async function resolvedClerkVersions(
   return { versions: [...new Set(versions)].sort(semver.compare), unreadable };
 }
 
-async function prebuiltAuthCompatibilityBlocker(
+async function sdkProductCompatibilityBlocker(
   root: string,
   projectPath: string,
   inspection: Awaited<ReturnType<typeof inspectIOSProject>>,
   selectedPackage: VerifiedPackage,
   objects: PbxObjects,
+  products: IOSSDKProduct[],
+  requirePrebuiltAuthCompatibility: boolean,
 ): Promise<IOSSDKInstallBlocker | undefined> {
-  const requiredVersion = PREBUILT_AUTH_CLERK_IOS_MINIMUM_VERSION;
-  const prefix = `ClerkKitUI's documented native components require clerk-ios ${requiredVersion} or newer.`;
+  const requiredVersion = requiredCompatibilityVersion(requirePrebuiltAuthCompatibility);
+  const prefix = requirePrebuiltAuthCompatibility
+    ? `ClerkKitUI's documented native components require clerk-ios ${requiredVersion} or newer.`
+    : `${products.join(" and ")} ${products.length === 1 ? "requires" : "require"} clerk-ios ${requiredVersion} or newer.`;
   if (selectedPackage.kind === "local") {
+    // Local package verification already proves the modern ClerkKit products
+    // structurally. AuthView retains its stricter API-compatibility policy.
+    if (!requirePrebuiltAuthCompatibility) return undefined;
     return {
       code: "incompatible-sdk",
       message: `${prefix} A local package's compiled target membership cannot be proven without executing its Package.swift manifest, so no source was changed. Use a compatible remote clerk-ios package or integrate AuthView manually.`,
@@ -1053,6 +1067,7 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
   }
 
   const actions: string[] = [];
+  const products = requestedProducts(options.includeClerkKitUI);
   let selectedPackage = packages[0];
   const packageWasPresent = selectedPackage != null;
   if (!selectedPackage) {
@@ -1082,13 +1097,15 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
     }
   }
 
-  if (options.requirePrebuiltAuthCompatibility && packageWasPresent) {
-    const compatibilityBlocker = await prebuiltAuthCompatibilityBlocker(
+  if (packageWasPresent) {
+    const compatibilityBlocker = await sdkProductCompatibilityBlocker(
       root,
       projectPath,
       inspection,
       selectedPackage,
       parts.objects,
+      products,
+      options.requirePrebuiltAuthCompatibility === true,
     );
     if (compatibilityBlocker) {
       return {
@@ -1106,7 +1123,6 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
     actions.push("Attach the verified clerk-ios package reference to the Xcode project.");
   }
 
-  const products = requestedProducts(options.includeClerkKitUI);
   const requiresFrameworkPhase = products.some(
     (productName) => !graphs.get(productName)?.buildFileId,
   );
@@ -1277,13 +1293,14 @@ export async function validateIOSSDKInstallPostcondition(
     return false;
   }
   if (
-    plan.requirePrebuiltAuthCompatibility &&
-    (await prebuiltAuthCompatibilityBlocker(
+    (await sdkProductCompatibilityBlocker(
       plan.root,
       plan.projectPath,
       inspection,
       selectedPackage,
       parts.objects,
+      plan.products,
+      plan.requirePrebuiltAuthCompatibility === true,
     )) != null
   ) {
     return false;
