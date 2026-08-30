@@ -413,6 +413,64 @@ describe("inspectIOSProject", () => {
     },
   );
 
+  test.each([
+    ["a scalar group exception", "717171717171717171717171", ["Excluded.swift"]],
+    ["partially malformed group exceptions", ["717171717171717171717171", {}], ["Excluded.swift"]],
+    ["a scalar membership exception", ["717171717171717171717171"], "Excluded.swift"],
+    [
+      "partially malformed membership exceptions",
+      ["717171717171717171717171"],
+      ["Excluded.swift", {}],
+    ],
+  ])(
+    "marks %s incomplete while preserving valid synchronized exclusions",
+    async (_description, groupExceptions, membershipExceptions) => {
+      const root = await fixture({ complete: true });
+      const synchronizedRootId = "616161616161616161616161";
+      const exceptionId = "717171717171717171717171";
+      await mkdir(join(root, "Synced"));
+      await Bun.write(
+        join(root, "Synced", "Included.swift"),
+        "import ClerkKit\nstruct Included {}\n",
+      );
+      await Bun.write(
+        join(root, "Synced", "Excluded.swift"),
+        "import ClerkKit\nstruct Excluded {}\n",
+      );
+      await transformProject(root, (objects) => {
+        objects[synchronizedRootId] = {
+          isa: "PBXFileSystemSynchronizedRootGroup",
+          exceptions: groupExceptions,
+          path: "Synced",
+          sourceTree: "<group>",
+        };
+        objects[exceptionId] = {
+          isa: "PBXFileSystemSynchronizedBuildFileExceptionSet",
+          membershipExceptions,
+          target: IOS_FIXTURE_IDS.appTarget,
+        };
+        objects[IOS_FIXTURE_IDS.appTarget]!.fileSystemSynchronizedGroups = [synchronizedRootId];
+      });
+
+      const inspection = await inspectIOSProject(root);
+      const memberships = await inspectIOSSourceMembership(root);
+      const target = inspection.appTargets[0];
+      const membership = memberships.find(
+        (candidate) => candidate.targetId === IOS_FIXTURE_IDS.appTarget,
+      );
+      const synchronizedSources = membership?.files
+        .map((file) => file.relativePath)
+        .filter((path) => path.startsWith("Synced/"));
+
+      expect(target?.swift.evidenceComplete).toBe(false);
+      expect(membership?.complete).toBe(false);
+      expect(synchronizedSources).toEqual(["Synced/Included.swift"]);
+      expect(inspection.diagnostics).toContainEqual(
+        expect.objectContaining({ code: "xcode.incomplete-source-membership" }),
+      );
+    },
+  );
+
   test("marks source membership incomplete when a group-relative file has multiple parents", async () => {
     const root = await fixture({ complete: true });
     const alternateGroupId = "565656565656565656565656";

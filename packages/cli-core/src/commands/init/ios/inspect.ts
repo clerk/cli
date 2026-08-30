@@ -545,14 +545,33 @@ function normalizeSynchronizedPath(path: string): string {
   return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
 }
 
+function synchronizedStringCollection(
+  object: PbxObject,
+  property: "exceptions" | "membershipExceptions",
+  state: { complete: boolean },
+): string[] {
+  if (!Object.hasOwn(object, property)) return [];
+
+  const value = object[property];
+  if (!Array.isArray(value)) {
+    state.complete = false;
+    return typeof value === "string" ? [value] : [];
+  }
+
+  const strings = value.filter((item): item is string => typeof item === "string");
+  if (strings.length !== value.length) state.complete = false;
+  return strings;
+}
+
 function synchronizedExclusions(
   group: PbxObject,
   targetId: string,
   relevantPhaseIds: Set<string>,
   objects: PbxObjects,
+  state: { complete: boolean },
 ): Set<string> {
   const excluded = new Set<string>();
-  for (const exceptionId of asStringArray(group.exceptions)) {
+  for (const exceptionId of synchronizedStringCollection(group, "exceptions", state)) {
     const exception = objects[exceptionId];
     const appliesToTarget =
       exception?.isa === "PBXFileSystemSynchronizedBuildFileExceptionSet" &&
@@ -562,7 +581,7 @@ function synchronizedExclusions(
       relevantPhaseIds.has(asString(exception.buildPhase) ?? "");
     if (!appliesToTarget && !appliesToPhase) continue;
 
-    for (const path of asStringArray(exception.membershipExceptions)) {
+    for (const path of synchronizedStringCollection(exception, "membershipExceptions", state)) {
       excluded.add(normalizeSynchronizedPath(path));
     }
     if (isRecord(exception.platformFiltersByRelativePath)) {
@@ -784,7 +803,7 @@ async function sourceFilesForTarget(options: {
       continue;
     }
 
-    const excluded = synchronizedExclusions(group, targetId, sourcePhaseIds, objects);
+    const excluded = synchronizedExclusions(group, targetId, sourcePhaseIds, objects, state);
     await collectSwiftFiles(root, groupPath, groupPath, excluded, files, state);
   }
 
