@@ -560,6 +560,24 @@ describe("inspectIOSProject", () => {
     });
   });
 
+  test("extracts the App ID Prefix when Bundle ID casing differs", async () => {
+    const root = await fixture({ complete: true });
+    const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
+    const entitlements = await readFile(entitlementsPath, "utf8");
+    await Bun.write(
+      entitlementsPath,
+      entitlements.replace("LEGACY1234.com.example.MyApp", "LEGACY1234.COM.EXAMPLE.MYAPP"),
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(
+      inspection.appTargets[0]?.configurations.map(
+        (configuration) => configuration.entitlements?.literalAppIdentifierPrefix,
+      ),
+    ).toEqual(["LEGACY1234", "LEGACY1234"]);
+  });
+
   test("does not attribute a Clerk product to an unrelated declared clerk-ios package", async () => {
     const root = await fixture({ clerkSDK: "core-only" });
     const wrongPackageId = "272727272727272727272727";
