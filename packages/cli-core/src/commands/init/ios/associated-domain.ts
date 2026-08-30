@@ -93,6 +93,8 @@ export interface IOSAssociatedDomainPlanOptions {
   deferToPublishableKey?: boolean;
   /** Allows the strict synchronized-root planner to create and attach a new file. */
   allowMissingEntitlementsCreation?: boolean;
+  /** Capability planners may allow one selected target to share a file across its platforms. */
+  allowSelectedTargetPlatformSharing?: boolean;
 }
 
 export type PreparedIOSAssociatedDomainMutation =
@@ -404,6 +406,7 @@ async function ownershipIsExclusive(
   selectedTargetId: string,
   selectedFiles: readonly EntitlementsFile[],
   selectedPlatform: IOSNativePlatform,
+  allowSelectedTargetPlatformSharing = false,
 ): Promise<boolean> {
   try {
     const selectedCanonical = new Set<string>();
@@ -516,7 +519,7 @@ async function ownershipIsExclusive(
           if (
             absoluteProject === selectedProject &&
             targetId === selectedTargetId &&
-            view.platform === selectedPlatform
+            (view.platform === selectedPlatform || allowSelectedTargetPlatformSharing)
           ) {
             continue;
           }
@@ -793,7 +796,16 @@ export async function planIOSAssociatedDomain(
   const files = [...filesByPath.values()].sort((a, b) =>
     a.relativePath.localeCompare(b.relativePath),
   );
-  if (!(await ownershipIsExclusive(root, options.projectPath, options.targetId, files, platform))) {
+  if (
+    !(await ownershipIsExclusive(
+      root,
+      options.projectPath,
+      options.targetId,
+      files,
+      platform,
+      options.allowSelectedTargetPlatformSharing,
+    ))
+  ) {
     return blockedPlan(
       options,
       [

@@ -304,6 +304,7 @@ export async function buildIOSLocalSetupProposal(
           projectPath: selection.projectPath,
           targetId: selection.targetId,
           platform: selectedTarget.platform,
+          supportedPlatforms: selectedTarget.supportedPlatforms,
           allowMissingEntitlementsCreation: true,
         })
       : undefined;

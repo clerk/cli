@@ -941,6 +941,7 @@ async function validateSatisfiedAppleEntitlement(plan: IOSAppleEntitlementPlan):
     projectPath: plan.projectPath,
     targetId: plan.targetId,
     platform: plan.platform,
+    supportedPlatforms: plan.supportedPlatforms,
   });
   return current.status === "satisfied";
 }

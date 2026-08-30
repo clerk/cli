@@ -305,6 +305,12 @@ function targetSupportsPrebuiltAuth(
   );
 }
 
+function prebuiltAuthDeploymentTargetGuidance(platform: IOSNativePlatform): string {
+  return platform === "macos"
+    ? "macOS 14.0 or newer. Set MACOSX_DEPLOYMENT_TARGET to 14.0 or newer for every selected-target build configuration, make architecture values consistent"
+    : "iOS 17.0 or newer. Set IPHONEOS_DEPLOYMENT_TARGET to 17.0 or newer for every selected-target iPhone and iPad build configuration, make device and simulator values consistent";
+}
+
 const PRISTINE_CONTENT_VIEW = `import SwiftUI
 
 struct ContentView: View {
@@ -509,18 +515,56 @@ async function preparePlan(options: IOSPrebuiltAuthPlanOptions): Promise<Prepare
       "The selected application target changed platforms during inspection.",
     );
   }
-  if (!targetSupportsPrebuiltAuth(target.configurations, target.platform)) {
-    const guidance =
-      target.platform === "macos"
-        ? "macOS 14.0 or newer. Set MACOSX_DEPLOYMENT_TARGET to 14.0 or newer for every selected-target build configuration, make architecture values consistent"
-        : "iOS 17.0 or newer. Set IPHONEOS_DEPLOYMENT_TARGET to 17.0 or newer for every selected-target iPhone and iPad build configuration, make device and simulator values consistent";
-    return blocked(
-      options,
-      root,
-      projectPath,
-      "incompatible-deployment-target",
-      `ClerkKitUI's native components require ${guidance}, then rerun clerk init.`,
-    );
+  for (const platform of target.supportedPlatforms) {
+    let platformTarget = target;
+    if (platform !== target.platform) {
+      const platformInspection = await inspectIOSProject(root, {
+        target: options.targetId,
+        platform,
+        exhaustiveContainerDiscovery: true,
+      });
+      if (
+        hasIncompleteIOSContainerDiscovery(platformInspection) ||
+        platformInspection.selection.state !== "selected" ||
+        platformInspection.selection.targetId !== options.targetId ||
+        platformInspection.selection.projectPath !== projectPath
+      ) {
+        return blocked(
+          options,
+          root,
+          projectPath,
+          "unresolved-platform",
+          "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently across every selected-target build configuration before changing authentication UI.",
+        );
+      }
+      const inspectedTarget = platformInspection.appTargets.find(
+        (candidate) => candidate.id === options.targetId && candidate.projectPath === projectPath,
+      );
+      if (
+        !inspectedTarget ||
+        !inspectedTarget.platformEvidenceComplete ||
+        inspectedTarget.platform !== platform ||
+        !inspectedTarget.supportedPlatforms.includes(platform)
+      ) {
+        return blocked(
+          options,
+          root,
+          projectPath,
+          "unresolved-platform",
+          "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently across every selected-target build configuration before changing authentication UI.",
+        );
+      }
+      platformTarget = inspectedTarget;
+    }
+    if (!targetSupportsPrebuiltAuth(platformTarget.configurations, platform)) {
+      return blocked(
+        options,
+        root,
+        projectPath,
+        "incompatible-deployment-target",
+        `ClerkKitUI's native components require ${prebuiltAuthDeploymentTargetGuidance(platform)}, then rerun clerk init.`,
+      );
+    }
   }
   if (!target.swift.evidenceComplete) {
     return blocked(

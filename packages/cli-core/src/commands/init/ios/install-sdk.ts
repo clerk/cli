@@ -28,6 +28,10 @@ const CLERK_REPOSITORY = "https://github.com/clerk/clerk-ios";
 const MAX_PBXPROJ_BYTES = 15_000_000;
 const MAX_PACKAGE_METADATA_BYTES = 2_000_000;
 const PRODUCT_NAMES = ["ClerkKit", "ClerkKitUI"] as const;
+const CLERK_SDK_MINIMUM_DEPLOYMENT_TARGET = {
+  ios: "17.0",
+  macos: "14.0",
+} as const satisfies Record<IOSNativePlatform, string>;
 
 export const DEFAULT_CLERK_IOS_MINIMUM_VERSION = "1.0.0";
 // These floors are equal today, but remain separate so AuthView can raise its
@@ -144,6 +148,32 @@ function canonicalPlatforms(platforms: readonly IOSNativePlatform[]): IOSNativeP
 
 function planPlatforms(options: IOSSDKInstallOptions): IOSNativePlatform[] {
   return canonicalPlatforms(options.supportedPlatforms ?? [options.platform ?? "ios"]);
+}
+
+function parsedDeploymentTarget(value: string): [number, number, number] | undefined {
+  const match = /^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(value.trim());
+  if (!match) return undefined;
+  const components = match.slice(1).map((component) => Number(component ?? "0")) as [
+    number,
+    number,
+    number,
+  ];
+  return components.every(Number.isSafeInteger) ? components : undefined;
+}
+
+function deploymentTargetMeetsClerkSDKFloor(value: string, platform: IOSNativePlatform): boolean {
+  const actual = parsedDeploymentTarget(value);
+  const minimum = parsedDeploymentTarget(CLERK_SDK_MINIMUM_DEPLOYMENT_TARGET[platform]);
+  if (!actual || !minimum) return false;
+  for (let index = 0; index < actual.length; index += 1) {
+    if (actual[index]! > minimum[index]!) return true;
+    if (actual[index]! < minimum[index]!) return false;
+  }
+  return true;
+}
+
+function platformLabel(platform: IOSNativePlatform): string {
+  return platform === "macos" ? "macOS" : "iOS";
 }
 
 function validMinimumVersion(value: string): boolean {
@@ -999,6 +1029,7 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
       source,
     );
   }
+  options = { ...options, platform, supportedPlatforms };
   for (const supportedPlatform of supportedPlatforms) {
     const platformInspection =
       supportedPlatform === platform
@@ -1030,8 +1061,31 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
         source,
       );
     }
+    if (
+      platformTarget.configurations.length === 0 ||
+      platformTarget.configurations.some(
+        (configuration) =>
+          configuration.deploymentTarget.state !== "resolved" ||
+          !deploymentTargetMeetsClerkSDKFloor(
+            configuration.deploymentTarget.value,
+            supportedPlatform,
+          ),
+      )
+    ) {
+      const label = platformLabel(supportedPlatform);
+      const minimum = CLERK_SDK_MINIMUM_DEPLOYMENT_TARGET[supportedPlatform];
+      const setting =
+        supportedPlatform === "macos" ? "MACOSX_DEPLOYMENT_TARGET" : "IPHONEOS_DEPLOYMENT_TARGET";
+      return blocked(
+        options,
+        root,
+        projectPath,
+        "incompatible-sdk",
+        `The Clerk Swift SDK requires ${label} ${minimum} or newer for every selected-target build configuration. Set ${setting} to ${minimum} or newer, make conditioned values consistent, then rerun clerk init.`,
+        source,
+      );
+    }
   }
-  options = { ...options, platform, supportedPlatforms };
 
   // Parse a second model instead of structured-cloning. pbxproj data literals
   // can be Buffers, which structuredClone turns into writer-incompatible
