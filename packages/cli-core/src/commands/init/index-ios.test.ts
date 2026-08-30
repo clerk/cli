@@ -184,6 +184,33 @@ describe("init iOS", () => {
     return () => stage.mock.calls.map((call) => call[0]);
   }
 
+  test("labels the selected macOS target before final scaffolding", async () => {
+    const { captured } = setup({ email: "test@test.com" });
+    const ctx = nativeIOSContext();
+    spyOn(context, "gatherContext").mockResolvedValue(ctx);
+    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(
+      iosSetupResult({
+        platform: "macos",
+        nativeReadiness: {
+          ...FAKE_IOS_NATIVE_READINESS,
+          target: selectedNativeTarget({ platform: "macos" }),
+        },
+      }),
+    );
+
+    await init({ yes: true });
+
+    expect(ctx.framework.name).toBe("macOS (Swift)");
+    expect(scaffoldMod.scaffold).toHaveBeenCalledWith(
+      expect.objectContaining({
+        framework: expect.objectContaining({ name: "macOS (Swift)" }),
+      }),
+    );
+    expect(captured.err).toContain("Detected");
+    expect(captured.err).toContain("macOS (Swift)");
+    expect(captured.err).not.toContain("iOS (Swift)");
+  });
+
   test("rejects iOS-only apply flags for a non-iOS project before authentication", async () => {
     setup({ email: "test@test.com" });
     spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);

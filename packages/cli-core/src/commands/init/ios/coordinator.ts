@@ -64,6 +64,7 @@ export type AppleNativeSetupCoordinator = {
   linkedProfile: LinkedProfile;
   validatedAgentAuthLabel?: string;
   preauthenticatedLabel?: string;
+  frameworkName: string;
   targetName: string;
   requiresLinkedApp: boolean;
   requiresExplicitApplication: boolean;
@@ -162,6 +163,7 @@ export async function prepareAppleNativeSetup(
     linkedProfile,
     validatedAgentAuthLabel: authLabel,
     preauthenticatedLabel: options.agent ? authLabel : undefined,
+    frameworkName: localSetup.platform === "macos" ? "macOS (Swift)" : "iOS (Swift)",
     targetName: localSetup.targetName,
     requiresLinkedApp: localSetup.requiresLinkedApp,
     requiresExplicitApplication: localSetup.requiresExplicitApplication,

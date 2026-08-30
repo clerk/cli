@@ -3,9 +3,9 @@ import { inspectIOSProject } from "../ios/inspect.ts";
 import { buildIOSLocalSetupProposal, createIOSLocalSetupContext } from "../ios/local-plan.ts";
 
 /**
- * iOS (Swift) support for `clerk init`.
+ * Native Apple (Swift) support for `clerk init`.
  *
- * The Clerk iOS SDK ships via Swift Package Manager and the publishable key is
+ * The Clerk Swift SDK ships via Swift Package Manager and the publishable key is
  * configured in Swift source (`Clerk.configure(publishableKey:)`), not an env
  * file. The dedicated iOS apply phase safely handles the selected target's SPM
  * product linkage before this scaffolder runs. For a safely inspectable fresh
@@ -16,7 +16,7 @@ import { buildIOSLocalSetupProposal, createIOSLocalSetupContext } from "../ios/l
  * Docs: https://clerk.com/docs/ios/getting-started/quickstart
  */
 export const ios: FrameworkScaffold = {
-  name: "iOS (Swift)",
+  name: "Native Apple (Swift)",
   dep: "ios",
 
   matches: (ctx) => ctx.framework.dep === "ios",
@@ -34,6 +34,16 @@ export const ios: FrameworkScaffold = {
     });
     const selection = inspection.selection;
     const target = proposal.selectedTarget;
+    const platform =
+      target?.platform ??
+      (ctx.framework.name === "macOS (Swift)"
+        ? "macos"
+        : ctx.framework.name === "iOS (Swift)"
+          ? "ios"
+          : undefined);
+    const platformLabel =
+      platform === "macos" ? "macOS" : platform === "ios" ? "iOS" : "native Apple";
+    const sdkLabel = platform === "ios" ? "Clerk iOS SDK" : "Clerk Swift SDK";
     const productDecision = proposal.productDecision ?? "prebuilt";
     const includeClerkKitUI = productDecision === "prebuilt";
     const hasCustomConfigure = proposal.hasSupportedCustomConfigure;
@@ -64,10 +74,10 @@ export const ios: FrameworkScaffold = {
               ]
             : includeClerkKitUI
               ? [
-                  "Add the Clerk iOS SDK via Swift Package Manager: https://github.com/clerk/clerk-ios (link ClerkKit and ClerkKitUI for the fastest prebuilt AuthView path)",
+                  `Add the ${sdkLabel} via Swift Package Manager: https://github.com/clerk/clerk-ios (link ClerkKit and ClerkKitUI for the fastest prebuilt AuthView path)`,
                 ]
               : [
-                  "Add the Clerk iOS SDK via Swift Package Manager: https://github.com/clerk/clerk-ios (link ClerkKit for this existing custom-flow path)",
+                  `Add the ${sdkLabel} via Swift Package Manager: https://github.com/clerk/clerk-ios (link ClerkKit for this existing custom-flow path)`,
                 ];
     const requiresSwiftUIEnvironment =
       target != null && (target.swift.environmentConsumers.length > 0 || includeClerkKitUI);
@@ -85,7 +95,7 @@ export const ios: FrameworkScaffold = {
     const registrationInstructions =
       !ctx.iosNativeRemoteReady && needsAttention("register-native-application")
         ? [
-            "Enable the Native API and register your iOS app (App ID Prefix + Bundle ID) on the Native Applications page: https://dashboard.clerk.com/~/native-applications",
+            `Enable the Native API and register your ${platformLabel} app (App ID Prefix + Bundle ID) on the Native Applications page: https://dashboard.clerk.com/~/native-applications`,
           ]
         : [];
     const domainInstructions = needsAttention("add-associated-domain")
@@ -122,6 +132,10 @@ export const ios: FrameworkScaffold = {
               : "Native Sign in with Apple is ready; AuthView displays Apple automatically, while custom flows can call `try await Clerk.shared.auth.signInWithApple()`",
         ]
       : [];
+    const setupGuideInstruction =
+      platform === "ios"
+        ? "Full setup guide: https://clerk.com/docs/ios/getting-started/quickstart"
+        : "Clerk Swift SDK guide: https://github.com/clerk/clerk-ios";
     return {
       actions: [],
       postInstructions: [
@@ -132,7 +146,7 @@ export const ios: FrameworkScaffold = {
         ...nativeAppleInstructions,
         ...authFlowInstructions,
         ...environmentInstructions,
-        "Full setup guide: https://clerk.com/docs/ios/getting-started/quickstart",
+        setupGuideInstruction,
       ],
     };
   },

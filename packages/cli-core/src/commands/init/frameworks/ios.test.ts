@@ -6,6 +6,7 @@ import { ios } from "./ios.ts";
 import type { ProjectContext } from "./types.ts";
 import { createIOSFixture } from "../ios/test-helpers.ts";
 import * as associatedDomain from "../ios/associated-domain.ts";
+import * as directConfig from "../ios/direct-config.ts";
 
 const temporaryRoots: string[] = [];
 const emptyRoot = await mkdtemp(join(tmpdir(), "clerk-ios-framework-empty-"));
@@ -47,6 +48,7 @@ function makeCtx(): ProjectContext {
 
 test("matches only the ios framework", () => {
   const ctx = makeCtx();
+  expect(ios.name).toBe("Native Apple (Swift)");
   expect(ios.matches(ctx)).toBe(true);
   expect(ios.matches({ ...ctx, framework: { ...ctx.framework, dep: "android" } })).toBe(false);
 });
@@ -112,6 +114,42 @@ test("defers the Associated Domain host to ready direct configuration", async ()
     expect(plan.postInstructions.join("\n")).not.toContain("unrelated-framework.clerk.example");
   } finally {
     planner.mockRestore();
+  }
+});
+
+test("uses the selected macOS platform for final planning and guidance", async () => {
+  const root = await mkdtemp(join(tmpdir(), "clerk-macos-framework-"));
+  temporaryRoots.push(root);
+  await createIOSFixture(root, { complete: false, clerkSDK: false, platform: "macos" });
+  const directPlanner = spyOn(directConfig, "planIOSDirectConfig");
+  const domainPlanner = spyOn(associatedDomain, "planIOSAssociatedDomain");
+
+  try {
+    const plan = await ios.scaffold({
+      ...makeCtx(),
+      cwd: root,
+      iosTarget: "MyApp",
+      framework: { ...makeCtx().framework, name: "macOS (Swift)" },
+    });
+
+    expect(directPlanner).toHaveBeenCalledWith(
+      expect.objectContaining({ root, platform: "macos" }),
+    );
+    expect(domainPlanner).toHaveBeenCalledWith(
+      expect.objectContaining({ root, platform: "macos" }),
+    );
+
+    const instructions = plan.postInstructions.join("\n");
+    expect(instructions).toContain("Clerk Swift SDK");
+    expect(instructions).toContain("register your macOS app");
+    expect(instructions).toContain("Clerk Swift SDK guide: https://github.com/clerk/clerk-ios");
+    expect(instructions).not.toContain("Clerk iOS SDK");
+    expect(instructions).not.toContain("register your iOS app");
+    expect(instructions).not.toContain("docs/ios/getting-started/quickstart");
+    expect(instructions).not.toContain("Associated Domains");
+  } finally {
+    directPlanner.mockRestore();
+    domainPlanner.mockRestore();
   }
 });
 
