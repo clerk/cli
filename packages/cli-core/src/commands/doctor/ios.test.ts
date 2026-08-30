@@ -1158,6 +1158,63 @@ struct MyApp: App {
     expect(apple?.detail).not.toContain("clerk init");
   });
 
+  test("audits Apple health with the registered Bundle ID spelling", async () => {
+    const root = await fixture();
+    await addAppleEntitlement(root);
+    const registeredBundleIdentifier = "COM.EXAMPLE.MYAPP";
+    let auditedBundleIdentifier: string | undefined;
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        listIOSApplications: async () => [
+          {
+            object: "ios_application",
+            id: "iosapp_test",
+            app_id_prefix: "LEGACY1234",
+            bundle_id: registeredBundleIdentifier,
+            created_at: 1,
+            updated_at: 1,
+          },
+        ],
+        planIOSAppleEntitlement: async (options) => {
+          const { planIOSAppleEntitlement } = await import("../init/ios/apple-entitlement.ts");
+          return planIOSAppleEntitlement(options);
+        },
+        auditIOSNativeAppleHealth: async ({ applicationId, instanceId, bundleIdentifier }) => {
+          auditedBundleIdentifier = bundleIdentifier;
+          return {
+            schemaVersion: 1,
+            kind: "clerk-ios-native-apple-health",
+            applicationId,
+            instanceId,
+            bundleIdentifier,
+            runtime: {
+              status: "satisfied",
+              connection: "satisfied",
+              bundleIdentifierConfiguration: "satisfied",
+              current: { enabled: true, authenticatable: true },
+              blockers: [],
+            },
+            automation: { status: "supported", blockers: [] },
+          };
+        },
+      }),
+    );
+
+    expect(audit.inspection.appTargets[0]?.configurations[0]?.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.MyApp",
+    });
+    expect(auditedBundleIdentifier).toBe(registeredBundleIdentifier);
+    expect(audit.results.find((result) => result.name === "iOS: Native Application")?.detail).toBe(
+      `Bundle ID: ${registeredBundleIdentifier}`,
+    );
+    expect(
+      audit.results.find((result) => result.name === "iOS: Clerk Sign in with Apple")?.status,
+    ).toBe("pass");
+  });
+
   test("fails the strict Apple check for a malformed present entitlement", async () => {
     const root = await fixture();
     await addAppleEntitlement(root, "<array></array>");
