@@ -1,17 +1,23 @@
-import { describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import { cp, mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parse as parsePbxProject } from "@bacons/xcode/json";
+import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
 import { ERROR_CODE } from "../../../lib/errors.ts";
+import { runIOSDoctorChecks, type IOSDoctorDependencies } from "../../doctor/ios.ts";
+import type { DoctorContext } from "../../doctor/types.ts";
 import { inspectIOSProject } from "./inspect.ts";
 import { applyIOSLocalSetup, applyIOSPlannedLocalSetup } from "./apply.ts";
 import {
+  convertIOSFixtureToMultiplatform,
   convertIOSFixtureToSynchronizedMissingEntitlements,
+  convertIOSFixtureToSynchronizedRoot,
   createIOSFixture,
   IOS_FIXTURE_IDS,
   treeDigest,
 } from "./test-helpers.ts";
+import { planIOSSDKInstall } from "./install-sdk.ts";
+import { planMacOSNetworkCapability } from "./macos-network.ts";
 import * as prompts from "../../../lib/prompts.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import type { PbxObjects } from "./pbx.ts";
@@ -19,10 +25,13 @@ import {
   addStarterContentViewToFixture,
   authFixtureKey,
   canonicalSwiftUIFixture,
+  cleanupApplyCLITestState,
   createCustomFlowWithStarterContent,
   createIsolatedCLIState,
   createUnconfiguredFixture,
   currentAppleConnection,
+  currentNativeRemoteState,
+  resetApplyCLITestRemoteState,
   resetAppleConfiguration,
   runCLI,
   runCommand,
@@ -30,6 +39,9 @@ import {
 } from "./apply-cli.test-helpers.ts";
 
 setDefaultTimeout(15_000);
+
+beforeEach(resetApplyCLITestRemoteState);
+afterEach(cleanupApplyCLITestState);
 
 async function convertFixtureToUnsandboxedMultiplatform(root: string): Promise<void> {
   const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
@@ -47,6 +59,119 @@ async function convertFixtureToUnsandboxedMultiplatform(root: string): Promise<v
         "IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; ENABLE_APP_SANDBOX = NO;",
       ),
   );
+}
+
+function doctorContext(): DoctorContext {
+  const noopFix = () => ({ label: "noop", run: async () => {} });
+  return {
+    hasPlatformAPIKey: () => true,
+    hasAccountCredentials: async () => true,
+    verifyAccountAccess: async () => {},
+    getToken: async () => "platform-token",
+    getValidToken: async () => "platform-token",
+    getProfile: async () => ({
+      path: "fixture",
+      resolvedVia: "directory",
+      profile: {
+        workspaceId: "org_fixture",
+        appId: "app_ios_apply",
+        instances: { development: "ins_ios_apply_development" },
+      },
+    }),
+    getApplication: async () => null,
+    getKeylessTarget: async () => undefined,
+    getKeylessInstance: async () => null,
+    getKeylessKeyError: async () => undefined,
+    hasClaimBreadcrumb: async () => false,
+    fixes: { login: noopFix, link: noopFix, envPull: noopFix },
+  };
+}
+
+async function auditCurrentNativeFixture(root: string) {
+  const remote = currentNativeRemoteState();
+  const dependencies: IOSDoctorDependencies = {
+    inspectIOSProject,
+    fetchApplication: async () => remote.application,
+    getNativeSettings: async () => ({
+      object: "native_settings",
+      api_enabled: remote.nativeAPIEnabled,
+    }),
+    listIOSApplications: async () => remote.iosApplications,
+    fetchUserSettings: async () => ({ social: {} }) as never,
+    auditIOSPrebuiltAuthEnvironment: () => {
+      throw new Error("AuthView environment inspection is not expected for this fixture");
+    },
+    planIOSAppleEntitlement: async () => {
+      throw new Error("Apple entitlement inspection is not expected for this fixture");
+    },
+    auditIOSNativeAppleHealth: async () => {
+      throw new Error("Native Apple inspection is not expected for this fixture");
+    },
+    planIOSSDKInstall,
+    planMacOSNetworkCapability,
+  };
+  return runIOSDoctorChecks(doctorContext(), { root, target: "MyApp" }, dependencies);
+}
+
+function expectAutomatedDoctorChecksToPass(
+  results: Awaited<ReturnType<typeof auditCurrentNativeFixture>>["results"],
+): void {
+  for (const expectedName of [
+    "iOS: Install Clerk's iOS SDK for the selected target",
+    "iOS: Configure Clerk with a publishable key",
+    "iOS: Inject Clerk into the SwiftUI environment",
+    "iOS: Add Clerk's associated domain",
+    "macOS: Allow outgoing network access",
+    "iOS: Linked development key",
+    "iOS: Native Application",
+  ]) {
+    expect(results.find((result) => result.name === expectedName)).toMatchObject({
+      status: "pass",
+    });
+  }
+  expect(
+    results.filter(
+      (result) => result.status === "fail" && !result.name.includes("authentication flow"),
+    ),
+  ).toEqual([]);
+  expect(results.find((result) => result.name.includes("authentication flow"))).toMatchObject({
+    status: "fail",
+  });
+}
+
+async function linkedProductFilters(root: string, productName: "ClerkKit" | "ClerkKitUI") {
+  const project = parsePbxProject(
+    await Bun.file(join(root, "MyApp.xcodeproj", "project.pbxproj")).text(),
+  ) as unknown as { objects: PbxObjects };
+  const target = project.objects[IOS_FIXTURE_IDS.appTarget]!;
+  const productIds = (target.packageProductDependencies as string[]).filter(
+    (id) => project.objects[id]?.productName === productName,
+  );
+  expect(productIds).toHaveLength(1);
+  const frameworkPhaseId = (target.buildPhases as string[]).find(
+    (id) => project.objects[id]?.isa === "PBXFrameworksBuildPhase",
+  );
+  expect(frameworkPhaseId).toBeDefined();
+  return ((project.objects[frameworkPhaseId!]!.files as string[]) ?? [])
+    .map((id) => project.objects[id]!)
+    .filter((object) => productIds.includes(String(object.productRef)))
+    .map((object) => object.platformFilter as string | undefined)
+    .sort((left, right) => String(left).localeCompare(String(right)));
+}
+
+async function expectSeparatePlatformEntitlements(root: string): Promise<void> {
+  const project = parsePbxProject(
+    await Bun.file(join(root, "MyApp.xcodeproj", "project.pbxproj")).text(),
+  ) as unknown as { objects: PbxObjects };
+  for (const id of [IOS_FIXTURE_IDS.targetDebug, IOS_FIXTURE_IDS.targetRelease]) {
+    const settings = project.objects[id]!.buildSettings as Record<string, unknown>;
+    expect(settings.CODE_SIGN_ENTITLEMENTS).toBeUndefined();
+    expect(settings["CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]"]).toBe("MyApp/MyApp.entitlements");
+    expect(settings["CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]"]).toBe(
+      "MyApp/MyApp.entitlements",
+    );
+    expect(settings["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"]).toBe("MyApp/MyApp.mac.entitlements");
+  }
 }
 
 describe("clerk init iOS SDK apply", () => {
@@ -101,6 +226,151 @@ describe("clerk init iOS SDK apply", () => {
       macOSNetworkCapabilityPlan: { status: "satisfied" },
     });
     expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test("keeps fresh multiplatform init, rerun, and Doctor in agreement", async () => {
+    const root = await createUnconfiguredFixture();
+    await convertIOSFixtureToSynchronizedMissingEntitlements(root);
+    await convertIOSFixtureToMultiplatform(root);
+    const configDir = await createIsolatedCLIState();
+    const args = [
+      "--mode",
+      "agent",
+      "init",
+      "--yes",
+      "--target",
+      "MyApp",
+      "--app",
+      "app_ios_apply",
+      "--app-id-prefix",
+      "LEGACY1234",
+    ];
+
+    const first = await runCLI(root, args, configDir);
+    if (first.exitCode !== 0) throw new Error(`${first.stdout}\n${first.stderr}`);
+    expect(first.exitCode).toBe(0);
+    expect(`${first.stdout}\n${first.stderr}`).not.toContain(authFixtureKey);
+
+    expect(await linkedProductFilters(root, "ClerkKit")).toEqual([undefined]);
+    expect(await linkedProductFilters(root, "ClerkKitUI")).toEqual([undefined]);
+    const appSource = await Bun.file(join(root, "MyApp", "MyAppApp.swift")).text();
+    expect(appSource.match(/Clerk\.configure\(publishableKey:/g)).toHaveLength(1);
+    expect(appSource).toContain(".environment(Clerk.shared)");
+
+    const iosEntitlements = await Bun.file(join(root, "MyApp", "MyApp.entitlements")).text();
+    expect(iosEntitlements).toContain("webcredentials:ios-apply.clerk.example");
+    expect(iosEntitlements).not.toContain("com.apple.security.app-sandbox");
+    const macOSEntitlements = await Bun.file(join(root, "MyApp", "MyApp.mac.entitlements")).text();
+    expect(macOSEntitlements).toContain("com.apple.security.app-sandbox");
+    expect(macOSEntitlements).toContain("com.apple.security.network.client");
+    expect(macOSEntitlements).not.toContain("com.apple.developer.associated-domains");
+    await expectSeparatePlatformEntitlements(root);
+
+    const remoteAfterFirst = currentNativeRemoteState();
+    expect(remoteAfterFirst).toMatchObject({
+      nativeAPIEnabled: true,
+      iosApplications: [{ app_id_prefix: "LEGACY1234", bundle_id: "com.example.MyApp" }],
+      mutations: {
+        nativeSettingsPatchCount: 1,
+        iosApplicationPostCount: 1,
+        appleConfigPatchCount: 0,
+      },
+    });
+    expectAutomatedDoctorChecksToPass((await auditCurrentNativeFixture(root)).results);
+
+    const digestAfterFirst = await treeDigest(root);
+    const second = await runCLI(root, args, configDir);
+    expect(second.exitCode).toBe(0);
+    expect(await treeDigest(root)).toEqual(digestAfterFirst);
+    expect(currentNativeRemoteState()).toEqual(remoteAfterFirst);
+    expectAutomatedDoctorChecksToPass((await auditCurrentNativeFixture(root)).results);
+  });
+
+  test("repairs only missing macOS pieces in a partial multiplatform setup", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-multiplatform-partial-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, {
+      clerkSDK: "core-only",
+      includeKey: false,
+    });
+    await convertIOSFixtureToSynchronizedRoot(root);
+    await convertIOSFixtureToMultiplatform(root);
+
+    const appSource = `import ClerkKit
+import SwiftUI
+
+@main
+struct MyApp: App {
+  init() {
+    Clerk.configure(publishableKey: "${authFixtureKey}")
+  }
+
+  var body: some Scene {
+    WindowGroup { Text("Custom auth").environment(Clerk.shared) }
+  }
+}
+`;
+    await Bun.write(join(root, "MyApp", "MyAppApp.swift"), appSource);
+    const iosEntitlementsPath = join(root, "MyApp", "MyApp.entitlements");
+    await Bun.write(
+      iosEntitlementsPath,
+      (await Bun.file(iosEntitlementsPath).text()).replace(
+        "webcredentials:clerk.example.test",
+        "webcredentials:ios-apply.clerk.example",
+      ),
+    );
+    const iosEntitlementsBefore = await Bun.file(iosEntitlementsPath).text();
+
+    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+    const project = parsePbxProject(await Bun.file(projectPath).text());
+    const objects = (project as unknown as { objects: PbxObjects }).objects;
+    objects[IOS_FIXTURE_IDS.clerkKitBuildFile]!.platformFilter = "ios";
+    await Bun.write(projectPath, buildPbxProject(project));
+
+    const configDir = await createIsolatedCLIState();
+    const args = [
+      "--mode",
+      "agent",
+      "init",
+      "--yes",
+      "--target",
+      "MyApp",
+      "--app",
+      "app_ios_apply",
+      "--app-id-prefix",
+      "LEGACY1234",
+    ];
+    const first = await runCLI(root, args, configDir);
+    if (first.exitCode !== 0) throw new Error(`${first.stdout}\n${first.stderr}`);
+
+    expect(first.exitCode).toBe(0);
+    expect(await Bun.file(join(root, "MyApp", "MyAppApp.swift")).text()).toBe(appSource);
+    expect(await Bun.file(iosEntitlementsPath).text()).toBe(iosEntitlementsBefore);
+    expect(await linkedProductFilters(root, "ClerkKit")).toEqual(["ios", "macos"]);
+    const macOSEntitlements = await Bun.file(join(root, "MyApp", "MyApp.mac.entitlements")).text();
+    expect(macOSEntitlements).toContain("com.apple.security.app-sandbox");
+    expect(macOSEntitlements).toContain("com.apple.security.network.client");
+    expect(macOSEntitlements).not.toContain("com.apple.developer.associated-domains");
+    await expectSeparatePlatformEntitlements(root);
+
+    const remoteAfterFirst = currentNativeRemoteState();
+    expect(remoteAfterFirst).toMatchObject({
+      nativeAPIEnabled: true,
+      iosApplications: [{ app_id_prefix: "LEGACY1234", bundle_id: "com.example.MyApp" }],
+      mutations: {
+        nativeSettingsPatchCount: 1,
+        iosApplicationPostCount: 1,
+        appleConfigPatchCount: 0,
+      },
+    });
+    expectAutomatedDoctorChecksToPass((await auditCurrentNativeFixture(root)).results);
+
+    const digestAfterFirst = await treeDigest(root);
+    const second = await runCLI(root, args, configDir);
+    expect(second.exitCode).toBe(0);
+    expect(await treeDigest(root)).toEqual(digestAfterFirst);
+    expect(currentNativeRemoteState()).toEqual(remoteAfterFirst);
+    expectAutomatedDoctorChecksToPass((await auditCurrentNativeFixture(root)).results);
   });
 
   test("makes no local or remote plan when a configuration platform is unresolved", async () => {
