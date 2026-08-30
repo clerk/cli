@@ -340,6 +340,63 @@ describe("runIOSDoctorChecks", () => {
     expect(appleHealthCalls).toBe(1);
   });
 
+  test("detects Apple entitlement intent present only in the secondary macOS view", async () => {
+    const root = await fixture({ complete: true });
+    await writeFile(
+      join(root, "MyApp", "MyApp.mac.entitlements"),
+      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>com.apple.security.network.client</key><true/><key>com.apple.developer.applesignin</key><array><string>Default</string></array></dict></plist>`,
+    );
+    await convertIOSFixtureToMultiplatform(root);
+    const plannerOptions: Array<Parameters<IOSDoctorDependencies["planIOSAppleEntitlement"]>[0]> =
+      [];
+    let appleHealthCalls = 0;
+
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        planIOSAppleEntitlement: async (options) => {
+          plannerOptions.push(options);
+          const { planIOSAppleEntitlement } = await import("../init/ios/apple-entitlement.ts");
+          return planIOSAppleEntitlement(options);
+        },
+        auditIOSNativeAppleHealth: async () => {
+          appleHealthCalls += 1;
+          return {
+            runtime: {
+              status: "satisfied",
+              connection: "satisfied",
+              bundleIdentifierConfiguration: "satisfied",
+              current: { enabled: true, authenticatable: true },
+              blockers: [],
+            },
+            automation: { status: "supported", blockers: [] },
+          } as never;
+        },
+      }),
+    );
+
+    expect(plannerOptions).toEqual([
+      {
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: IOS_FIXTURE_IDS.appTarget,
+        platform: "ios",
+        supportedPlatforms: ["ios", "macos"],
+      },
+    ]);
+    expect(
+      audit.results.find((result) => result.name === "iOS: Sign in with Apple entitlement"),
+    ).toMatchObject({
+      status: "fail",
+      message: "Sign in with Apple entitlement: incomplete",
+    });
+    expect(
+      audit.results.find((result) => result.name === "iOS: Clerk Sign in with Apple"),
+    ).toMatchObject({ status: "pass" });
+    expect(appleHealthCalls).toBe(1);
+  });
+
   test("fails SDK validation when a secondary supported platform is below its floor", async () => {
     const root = await fixture({ complete: true });
     await makeMultiplatform(root, "13.5");

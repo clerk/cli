@@ -201,6 +201,33 @@ describe("clerk init iOS SDK apply", () => {
     expect(output).toContain("Allow outgoing network access for macOS");
   });
 
+  test("dry-run detects Apple entitlement intent from the secondary macOS view", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-multiplatform-apple-dry-run-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, {
+      complete: true,
+      includeKey: false,
+      localSecrets: true,
+    });
+    await Bun.write(
+      join(root, "MyApp", "MyApp.mac.entitlements"),
+      `<?xml version="1.0"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>com.apple.security.network.client</key><true/><key>com.apple.developer.applesignin</key><array><string>Default</string></array></dict></plist>`,
+    );
+    await convertIOSFixtureToMultiplatform(root);
+    const configDir = await createIsolatedCLIState();
+
+    const result = await runCLI(
+      root,
+      ["--mode", "agent", "init", "--dry-run", "--target", "MyApp"],
+      configDir,
+    );
+    const output = `${result.stdout}\n${result.stderr}`;
+
+    expect(result.exitCode).toBe(0);
+    expect(output).toContain("Enable native Sign in with Apple");
+    expect(output).toContain("iOS");
+  });
+
   test("plans macOS network readiness for a primary-iOS multiplatform target", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-multiplatform-local-setup-"));
     temporaryDirectories.push(root);

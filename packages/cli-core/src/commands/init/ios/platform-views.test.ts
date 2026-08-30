@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { inspectIOSProject } from "./inspect.ts";
 import {
   inspectIOSPlatformViews,
+  iosPlatformViewsHaveAppleEntitlementIntent,
+  iosPlatformViewsHaveNativeAppleIntent,
   iosPlatformViewsSnapshotsEqual,
   type IOSPlatformViewInspector,
 } from "./platform-views.ts";
@@ -89,6 +91,31 @@ describe("native Apple platform-view audit", () => {
     const serialized = JSON.stringify(result.snapshot);
     expect(serialized).not.toContain(inlineKey);
     expect(JSON.parse(serialized)).toEqual(result.snapshot);
+  });
+
+  test("retains Apple entitlement intent from a secondary platform view", async () => {
+    const root = await fixture();
+    await Bun.write(
+      join(root, "MyApp", "MyApp.mac.entitlements"),
+      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>com.apple.security.network.client</key><true/><key>com.apple.developer.applesignin</key><array><string>Default</string></array></dict></plist>`,
+    );
+    await convertIOSFixtureToMultiplatform(root);
+
+    const result = await audit(root);
+
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") throw new Error("expected ready platform views");
+    expect(
+      result.snapshot.platforms.map((view) => ({
+        platform: view.platform,
+        hasAppleEntitlementIntent: view.hasAppleEntitlementIntent,
+      })),
+    ).toEqual([
+      { platform: "ios", hasAppleEntitlementIntent: false },
+      { platform: "macos", hasAppleEntitlementIntent: true },
+    ]);
+    expect(iosPlatformViewsHaveAppleEntitlementIntent(result.snapshot)).toBe(true);
+    expect(iosPlatformViewsHaveNativeAppleIntent(result.snapshot)).toBe(true);
   });
 
   test("ignores an unrelated platform-filtered Swift file in the revalidation snapshot", async () => {
