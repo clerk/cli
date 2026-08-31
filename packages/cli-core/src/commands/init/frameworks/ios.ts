@@ -1,13 +1,6 @@
 import type { FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
-import { planIOSDirectConfig } from "../ios/direct-config.ts";
 import { inspectIOSProject } from "../ios/inspect.ts";
-import { buildIOSSetupPlan } from "../ios/plan.ts";
-import {
-  clerkKitUIInstallDecision,
-  hasSupportedIOSCustomConfigure,
-  shouldPlanIOSDirectConfig,
-} from "../ios/products.ts";
-import { planIOSAssociatedDomain } from "../ios/associated-domain.ts";
+import { buildIOSLocalSetupProposal, createIOSLocalSetupContext } from "../ios/local-plan.ts";
 
 /**
  * iOS (Swift) support for `clerk init`.
@@ -29,46 +22,22 @@ export const ios: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "ios",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
-    const inspection = await inspectIOSProject(ctx.cwd, { target: ctx.iosTarget });
-    const selection = inspection.selection;
-    const target =
-      selection.state === "selected"
-        ? inspection.appTargets.find(
-            (candidate) =>
-              candidate.id === selection.targetId &&
-              candidate.projectPath === selection.projectPath,
-          )
-        : undefined;
-    const productDecision = target ? clerkKitUIInstallDecision(target) : "prebuilt";
-    const includeClerkKitUI = productDecision === "prebuilt";
-    const hasCustomConfigure = target != null && hasSupportedIOSCustomConfigure(target);
-    const shouldPlanDirectConfig =
-      selection.state === "selected" &&
-      target != null &&
-      shouldPlanIOSDirectConfig(inspection, target, productDecision);
-    const directConfigPlan =
-      shouldPlanDirectConfig && selection.state === "selected"
-        ? await planIOSDirectConfig({
-            root: ctx.cwd,
-            projectPath: selection.projectPath,
-            targetId: selection.targetId,
-          })
-        : undefined;
-    const associatedDomainPlan =
-      selection.state === "selected"
-        ? await planIOSAssociatedDomain({
-            root: ctx.cwd,
-            projectPath: selection.projectPath,
-            targetId: selection.targetId,
-            deferToPublishableKey:
-              directConfigPlan?.status === "ready" || hasCustomConfigure === true,
-            allowMissingEntitlementsCreation: true,
-          })
-        : undefined;
-    const setupPlan = buildIOSSetupPlan(inspection, {
-      directConfigPlan,
-      associatedDomainPlan,
+    const inspection = await inspectIOSProject(ctx.cwd, {
+      target: ctx.iosTarget,
+      exhaustiveContainerDiscovery: true,
     });
+    const proposal = await buildIOSLocalSetupProposal(createIOSLocalSetupContext(inspection), {
+      root: ctx.cwd,
+      allowDirty: true,
+      prebuiltAuthUI: false,
+      signInWithApple: false,
+    });
+    const selection = inspection.selection;
+    const target = proposal.selectedTarget;
+    const productDecision = proposal.productDecision ?? "prebuilt";
+    const includeClerkKitUI = productDecision === "prebuilt";
+    const hasCustomConfigure = proposal.hasSupportedCustomConfigure;
+    const setupPlan = proposal.setupPlan;
     const configureStep = setupPlan.steps.find((step) => step.id === "configure-publishable-key");
     const needsAttention = (id: string) => {
       const setupStep = setupPlan.steps.find((step) => step.id === id);
