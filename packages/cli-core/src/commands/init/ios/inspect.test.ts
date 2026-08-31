@@ -1040,10 +1040,15 @@ let package = Package(
         "<string>webcredentials:clerk.example.test</string><true/>",
       ),
     );
+    await addAppleEntitlement(root, "<array><string>Default</string></array>");
 
     const inspection = await inspectIOSProject(root);
 
-    expect(inspection.appTargets[0]?.configurations[0]?.entitlements).toBeUndefined();
+    expect(inspection.appTargets[0]?.configurations[0]?.entitlements).toMatchObject({
+      associatedDomains: [],
+      signInWithAppleState: "exact",
+      signInWithApple: true,
+    });
     expect(inspection.diagnostics).toContainEqual(
       expect.objectContaining({
         code: "xcode.invalid-associated-domains",
