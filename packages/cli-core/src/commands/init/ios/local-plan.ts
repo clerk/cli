@@ -47,8 +47,9 @@ export interface BuildIOSLocalSetupProposalOptions {
 }
 
 /**
- * One credential-free, mutation-free proposal shared by dry-run and apply.
- * Candidate bytes and prepared mutations never enter this structure.
+ * A credential-free, mutation-free aggregate proposal model rebuilt from the
+ * current inspection for dry-run, approval, and apply preparation. Candidate
+ * bytes and prepared mutations never enter this structure.
  */
 export interface IOSLocalSetupProposal {
   inspection: IOSProjectInspectionResult;

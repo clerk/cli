@@ -401,6 +401,19 @@ export async function convertIOSFixtureToMultiplatform(root: string): Promise<vo
   await writeFile(projectPath, buildPbxProject(project));
 }
 
+/** Adds the destinations used by Xcode's standard visionOS-capable Multiplatform template. */
+export async function addVisionOSDestinationsToFixture(root: string): Promise<void> {
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = parsePbxProject(await readFile(projectPath, "utf8"));
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
+  for (const id of [IDS.targetDebug, IDS.targetRelease]) {
+    const settings = objects[id]!.buildSettings as Record<string, unknown>;
+    settings.SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+    settings.XROS_DEPLOYMENT_TARGET = "2.0";
+  }
+  await writeFile(projectPath, buildPbxProject(project));
+}
+
 export interface IOSPlatformFilteredSourceFixture {
   platform: "ios" | "macos";
   relativePath: string;

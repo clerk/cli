@@ -18,7 +18,7 @@ import {
   type IOSSDKInstallPlan,
   type PreparedIOSSDKInstallMutation,
 } from "./install-sdk.ts";
-import { buildIOSSetupPlan } from "./plan.ts";
+import { buildIOSSetupPlan, selectedTargetPlatformBlockerDescription } from "./plan.ts";
 import {
   prepareIOSDirectConfigMutation,
   validatePreparedIOSDirectConfig,
@@ -305,7 +305,10 @@ export async function applyIOSLocalSetup(
   }
   if (!selectedTarget.platformEvidenceComplete) {
     throw iosSetupError(
-      "The selected target's iOS or macOS platform could not be proven consistently across every build configuration. No local or remote changes were made; resolve SDKROOT and SUPPORTED_PLATFORMS, then rerun clerk init.",
+      `${selectedTargetPlatformBlockerDescription(
+        inspection,
+        selectedTarget,
+      )} No local or remote changes were made.`,
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }

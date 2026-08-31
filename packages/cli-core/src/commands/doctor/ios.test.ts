@@ -531,7 +531,7 @@ describe("runIOSDoctorChecks", () => {
     expect(sdkPlanCalls).toBe(0);
     expect(remoteCalls).toBe(0);
     expect(audit.results.every((result) => result.status === "fail")).toBe(true);
-    expect(audit.results[0]?.detail).toContain("platform is not proven consistently");
+    expect(audit.results[0]?.detail).toContain("does not have one proven native platform");
   });
 
   test("reports missing macOS sandbox network access without changing the project", async () => {

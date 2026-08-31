@@ -7,7 +7,11 @@ import { planIOSAssociatedDomain } from "./associated-domain.ts";
 import { inspectIOSProject } from "./inspect.ts";
 import { formatIOSSetupPlan } from "./output.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
-import { createIOSFixture } from "./test-helpers.ts";
+import {
+  addVisionOSDestinationsToFixture,
+  convertIOSFixtureToMultiplatform,
+  createIOSFixture,
+} from "./test-helpers.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -97,10 +101,29 @@ describe("buildIOSSetupPlan", () => {
     expect(plan.selection).toMatchObject({ state: "selected", platform: "macos" });
     expect(plan.status).toBe("blocked");
     expect(plan.steps.every((item) => item.status === "blocked")).toBe(true);
-    expect(plan.steps[0]?.description).toContain("platform is not proven consistently");
+    expect(plan.steps[0]?.description).toContain("does not have one proven native platform");
     expect(output).toContain("native Apple setup plan (read-only)");
     expect(output).toContain("Native Apple readiness:");
     expect(output).not.toContain("Associated Domains:");
+  });
+
+  test("explains that a visionOS-bearing target was inspected but is not mutated", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-visionos-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true });
+    await convertIOSFixtureToMultiplatform(root);
+    await addVisionOSDestinationsToFixture(root);
+
+    const inspection = await inspectIOSProject(root);
+    const plan = buildIOSSetupPlan(inspection);
+    const output = formatIOSSetupPlan(inspection, plan);
+
+    expect(plan.status).toBe("blocked");
+    expect(plan.steps.every((item) => item.status === "blocked")).toBe(true);
+    expect(output).toContain("also ships visionOS");
+    expect(output).toContain("Read-only inspection completed");
+    expect(output).not.toContain("xros");
+    expect(output).not.toContain("Resolve SDKROOT and SUPPORTED_PLATFORMS");
   });
 
   test("returns stable ordered steps while preserving a custom project key source", async () => {
