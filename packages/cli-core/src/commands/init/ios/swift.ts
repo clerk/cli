@@ -18,6 +18,10 @@ const CLERK_ENVIRONMENT_INJECTION =
   /\.\s*environment\s*\(\s*(?:\\?\.\s*self\s*,\s*)?Clerk\s*\.\s*shared\s*\)/;
 const CLERK_ENVIRONMENT_CONSUMER = /@Environment\s*\(\s*Clerk\s*\.\s*self\s*\)/;
 const CLERK_AUTH_VIEW = /\bAuthView\s*\(/;
+const CLERK_KIT_IMPORT =
+  /\bimport\s+(?:(?:typealias|struct|class|enum|protocol|actor|let|var|func|macro)\s+)?ClerkKit\b/;
+const CLERK_KIT_UI_IMPORT =
+  /\bimport\s+(?:(?:typealias|struct|class|enum|protocol|actor|let|var|func|macro)\s+)?ClerkKitUI\b/;
 
 function blankRange(chars: string[], start: number, end: number): void {
   for (let i = start; i < end; i++) {
@@ -552,34 +556,63 @@ function withoutPreviewOnlyRegions(source: string): string {
 type SwiftTargetPlatform = "ios" | "macos";
 
 type PlatformCondition = boolean | "unknown";
+type ConditionalExecution = "active" | "inactive" | "unknown";
 
 interface ConditionalCompilationFrame {
-  parentCanExecute: boolean;
-  priorConditionIsAlwaysTrue: boolean;
+  parentExecution: ConditionalExecution;
+  priorCondition: PlatformCondition;
   sawElse: boolean;
+}
+
+interface PlatformSourceSanitization extends SwiftSourceSanitization {
+  uncertainSource: string;
 }
 
 function evaluatePlatformCondition(
   expression: string,
   platform: SwiftTargetPlatform,
 ): PlatformCondition {
-  const match = /^os\s*\(\s*(iOS|macOS)\s*\)$/.exec(expression.trim());
-  if (!match) return "unknown";
-  return match[1] === (platform === "ios" ? "iOS" : "macOS");
+  const normalized = expression.trim();
+  const osMatch = /^os\s*\(\s*(iOS|macOS)\s*\)$/.exec(normalized);
+  if (osMatch) return osMatch[1] === (platform === "ios" ? "iOS" : "macOS");
+
+  const importMatch = /^canImport\s*\(\s*(UIKit|AppKit)\s*\)$/.exec(normalized);
+  if (importMatch) return importMatch[1] === (platform === "ios" ? "UIKit" : "AppKit");
+
+  return "unknown";
+}
+
+function executionForCondition(
+  parent: ConditionalExecution,
+  condition: PlatformCondition,
+): ConditionalExecution {
+  if (parent === "inactive" || condition === false) return "inactive";
+  if (parent === "active" && condition === true) return "active";
+  return "unknown";
+}
+
+function combinedPriorCondition(
+  previous: PlatformCondition,
+  current: PlatformCondition,
+): PlatformCondition {
+  if (previous === true || current === true) return true;
+  if (previous === "unknown" || current === "unknown") return "unknown";
+  return false;
 }
 
 /**
- * Blanks only branches proven inactive for the selected Apple platform.
- * Unknown and compound conditions remain visible so inspection stays
- * conservative without trying to reproduce Swift's full compilation model.
+ * Keeps only branches proven active for the selected Apple platform. Unknown
+ * branches are returned separately so they can invalidate relevant evidence
+ * without making unrelated conditional logging block inspection.
  */
 function withoutInactivePlatformRegions(
   source: string,
   platform: SwiftTargetPlatform,
-): SwiftSourceSanitization {
+): PlatformSourceSanitization {
   const chars = source.split("");
+  const uncertainChars = source.split("");
   const stack: ConditionalCompilationFrame[] = [];
-  let currentCanExecute = true;
+  let currentExecution: ConditionalExecution = "active";
   let cursor = 0;
   let complete = true;
 
@@ -590,10 +623,13 @@ function withoutInactivePlatformRegions(
     const directive = /^[ \t]*#(if|elseif|else|endif)\b(.*)$/.exec(line);
 
     if (!directive) {
-      if (!currentCanExecute) blankRange(chars, cursor, lineEnd);
+      if (currentExecution !== "active") blankRange(chars, cursor, lineEnd);
+      if (currentExecution !== "unknown") blankRange(uncertainChars, cursor, lineEnd);
       cursor = newline === -1 ? source.length : newline + 1;
       continue;
     }
+
+    blankRange(uncertainChars, cursor, lineEnd);
 
     const kind = directive[1];
     const expression = directive[2]?.trim() ?? "";
@@ -604,11 +640,11 @@ function withoutInactivePlatformRegions(
       }
       const condition = evaluatePlatformCondition(expression, platform);
       stack.push({
-        parentCanExecute: currentCanExecute,
-        priorConditionIsAlwaysTrue: condition === true,
+        parentExecution: currentExecution,
+        priorCondition: condition,
         sawElse: false,
       });
-      currentCanExecute = currentCanExecute && condition !== false;
+      currentExecution = executionForCondition(currentExecution, condition);
     } else if (kind === "elseif") {
       const frame = stack.at(-1);
       if (!frame || frame.sawElse || !expression) {
@@ -616,9 +652,15 @@ function withoutInactivePlatformRegions(
         break;
       }
       const condition = evaluatePlatformCondition(expression, platform);
-      currentCanExecute =
-        frame.parentCanExecute && !frame.priorConditionIsAlwaysTrue && condition !== false;
-      frame.priorConditionIsAlwaysTrue ||= condition === true;
+      currentExecution =
+        frame.priorCondition === true
+          ? "inactive"
+          : frame.priorCondition === false
+            ? executionForCondition(frame.parentExecution, condition)
+            : condition === false || frame.parentExecution === "inactive"
+              ? "inactive"
+              : "unknown";
+      frame.priorCondition = combinedPriorCondition(frame.priorCondition, condition);
     } else if (kind === "else") {
       const frame = stack.at(-1);
       if (!frame || frame.sawElse || expression) {
@@ -626,15 +668,22 @@ function withoutInactivePlatformRegions(
         break;
       }
       frame.sawElse = true;
-      currentCanExecute = frame.parentCanExecute && !frame.priorConditionIsAlwaysTrue;
-      frame.priorConditionIsAlwaysTrue = true;
+      currentExecution =
+        frame.priorCondition === true
+          ? "inactive"
+          : frame.priorCondition === false
+            ? frame.parentExecution
+            : frame.parentExecution === "inactive"
+              ? "inactive"
+              : "unknown";
+      frame.priorCondition = true;
     } else {
       const frame = stack.pop();
       if (!frame || expression) {
         complete = false;
         break;
       }
-      currentCanExecute = frame.parentCanExecute;
+      currentExecution = frame.parentExecution;
     }
 
     // Keep directive lines intact. Besides preserving offsets, this lets
@@ -643,10 +692,31 @@ function withoutInactivePlatformRegions(
   }
 
   if (stack.length > 0) complete = false;
+  if (!complete) {
+    blankRange(chars, 0, chars.length);
+    blankRange(uncertainChars, 0, uncertainChars.length);
+  }
   return {
-    sanitizedSource: complete ? chars.join("") : source,
+    sanitizedSource: chars.join(""),
+    uncertainSource: uncertainChars.join(""),
     complete,
   };
+}
+
+const CONDITIONAL_SETUP_EVIDENCE = [
+  /@main\b/,
+  CLERK_KIT_IMPORT,
+  CLERK_KIT_UI_IMPORT,
+  /\bUserButton\s*\(/,
+  ...CLERK_EVIDENCE_PATTERNS,
+];
+
+function hasConditionalSetupEvidence(source: string, importsClerkModule: boolean): boolean {
+  if (CONDITIONAL_SETUP_EVIDENCE.some((pattern) => has(source, pattern))) return true;
+  return (
+    importsClerkModule &&
+    has(source, /\.\s*auth\s*\.\s*(?:signIn(?:With\w+)?|signUp(?:With\w+)?|startHostedAuth)\s*\(/)
+  );
 }
 
 function hasClerkOpenURLHandler(source: string): boolean {
@@ -716,19 +786,19 @@ export async function inspectSwiftSources(
     if (!structuralSource.complete) evidenceComplete = false;
     const platformSource = options.platform
       ? withoutInactivePlatformRegions(structuralSource.sanitizedSource, options.platform)
-      : structuralSource;
-    if (!platformSource.complete) evidenceComplete = false;
-    const sanitized = withoutPreviewOnlyRegions(platformSource.sanitizedSource);
+      : undefined;
+    if (platformSource && !platformSource.complete) evidenceComplete = false;
+    const sanitized = withoutPreviewOnlyRegions(
+      platformSource?.sanitizedSource ?? structuralSource.sanitizedSource,
+    );
+    const uncertain = platformSource
+      ? withoutPreviewOnlyRegions(platformSource.uncertainSource)
+      : "";
     const evidence = { path: file.relativePath };
-    const importsKit = has(
-      sanitized,
-      /\bimport\s+(?:(?:typealias|struct|class|enum|protocol|actor|let|var|func|macro)\s+)?ClerkKit\b/,
-    );
-    const importsUI = has(
-      sanitized,
-      /\bimport\s+(?:(?:typealias|struct|class|enum|protocol|actor|let|var|func|macro)\s+)?ClerkKitUI\b/,
-    );
+    const importsKit = has(sanitized, CLERK_KIT_IMPORT);
+    const importsUI = has(sanitized, CLERK_KIT_UI_IMPORT);
     const importsClerkModule = importsKit || importsUI;
+    if (hasConditionalSetupEvidence(uncertain, importsClerkModule)) evidenceComplete = false;
 
     if (has(sanitized, /@main\b/)) entryPoints.push(evidence);
     if (importsKit) importsClerkKit.push(evidence);
