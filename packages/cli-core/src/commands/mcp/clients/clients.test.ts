@@ -439,6 +439,50 @@ describe("client contracts (homedir redirected)", () => {
     }
   });
 
+  // Install stores `resolveUrl()`'s canonical `URL.href`; the raw override may
+  // differ in case or trailing slash and must still match.
+  test("fx matches a non-canonical but equivalent URL override", async () => {
+    const configPath = fxClient.configPath("/ignored");
+    await mkdir(join(configPath, ".."), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({ mcp: { local: { type: "http", url: "http://localhost:8787/mcp" } } }),
+    );
+    const origMcpUrl = process.env.CLERK_MCP_URL;
+    process.env.CLERK_MCP_URL = "HTTP://LOCALHOST:8787/mcp";
+    try {
+      const entries = await fxClient.list("/ignored");
+      expect(entries).toEqual([
+        expect.objectContaining({ client: "fx", name: "local", url: "http://localhost:8787/mcp" }),
+      ]);
+    } finally {
+      if (origMcpUrl === undefined) {
+        delete process.env.CLERK_MCP_URL;
+      } else {
+        process.env.CLERK_MCP_URL = origMcpUrl;
+      }
+    }
+  });
+
+  // Normalization migrates by key presence, not value shape, so a malformed
+  // profile still fails validation the way fx itself would reject it.
+  test.each([
+    ["invalid canonical key beside the alias", { mcp: null, mcpServers: { a: {} } }, "mcp"],
+    ["invalid alias key alone", { mcpServers: null }, "mcp"],
+  ])("fx rejects a profile with an %s", async (_label, profile) => {
+    const configPath = fxClient.configPath("/ignored");
+    await mkdir(join(configPath, ".."), { recursive: true });
+    await writeFile(configPath, JSON.stringify(profile));
+    await expect(
+      fxClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored"),
+    ).rejects.toMatchObject({
+      code: "mcp_client_config_invalid",
+    });
+    await expect(fxClient.list("/ignored")).rejects.toMatchObject({
+      code: "mcp_client_config_invalid",
+    });
+  });
+
   test("`copilot` resolves to the same client as `vscode`", async () => {
     const { resolveClients } = await import("../shared.ts");
     expect(resolveClients(["copilot"])).toEqual([vscodeClient]);

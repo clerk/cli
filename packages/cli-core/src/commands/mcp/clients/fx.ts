@@ -38,14 +38,32 @@ function extractFxUrl(descriptor: unknown): string | undefined {
  */
 function isOurFxEntry(descriptor: unknown): boolean {
   if (!isRecord(descriptor) || (descriptor as { type?: unknown }).type !== "http") return false;
-  return extractFxUrl(descriptor) === getMcpUrl();
+  const url = extractFxUrl(descriptor);
+  if (url === undefined) return false;
+  // Install stores `resolveUrl()`'s normalized `URL.href`, but `getMcpUrl()`
+  // returns the raw env/profile value — canonicalize both sides so an
+  // uppercase-host or otherwise equivalent override still matches.
+  const canonical = canonicalUrl(url);
+  return canonical !== undefined && canonical === canonicalUrl(getMcpUrl());
+}
+
+function canonicalUrl(url: string): string | undefined {
+  try {
+    return new URL(url).href;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeFxConfig(config: Record<string, unknown>): Record<string, unknown> {
+  // Presence decides, not shape — matching fx's own `mcp` orelse `mcpServers`
+  // precedence. A present canonical key of any shape stays put so the
+  // factory's validation sees it, and a present-but-malformed alias migrates
+  // so validation rejects it instead of installing alongside a profile fx
+  // itself refuses to load. (`mcp` present → fx ignores the alias entirely;
+  // leave it alone rather than merging servers fx won't read.)
+  if ("mcp" in config || !("mcpServers" in config)) return config;
   const { mcpServers, ...rest } = config;
-  // `mcp` present → fx ignores the alias entirely; leave the config alone
-  // rather than merging servers fx itself refuses to load.
-  if (isRecord(config.mcp) || !isRecord(mcpServers)) return config;
   return { ...rest, mcp: mcpServers };
 }
 
