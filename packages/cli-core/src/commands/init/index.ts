@@ -8,7 +8,6 @@ import { dim, bold } from "../../lib/color.js";
 import {
   throwUserAbort,
   throwUsageError,
-  ApiError,
   CliError,
   ERROR_CODE,
   errorMessage,
@@ -37,7 +36,6 @@ import {
 import { readSdkKeylessApp } from "../../lib/keyless-target.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { listApplications } from "../../lib/plapi.ts";
-import { decodePublishableKey, fetchUserSettings } from "../../lib/fapi.ts";
 import { printNextSteps } from "../../lib/next-steps.js";
 import { gatherContext, hasPackageJson } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
@@ -65,40 +63,12 @@ import {
 } from "./bootstrap.js";
 import type { ProjectContext } from "./frameworks/types.js";
 import { type PackageManager, PACKAGE_MANAGERS } from "../../lib/package-manager.ts";
-import { inspectIOSProject } from "./ios/inspect.ts";
-import { recoverIOSFileTransactions } from "./ios/file-transaction.ts";
-import { buildIOSSetupPlan } from "./ios/plan.ts";
-import { planIOSDirectConfig } from "./ios/direct-config.ts";
+import { validateAppIdPrefix } from "./ios/native-remote.ts";
 import {
-  clerkKitUIInstallDecision,
-  hasSupportedIOSCustomConfigure,
-  shouldPlanIOSDirectConfig,
-} from "./ios/products.ts";
-import { planIOSAssociatedDomain } from "./ios/associated-domain.ts";
-import { planIOSAppleEntitlement } from "./ios/apple-entitlement.ts";
-import { planIOSPrebuiltAuth } from "./ios/prebuilt-auth.ts";
-import { planIOSSDKInstall } from "./ios/install-sdk.ts";
-import { resolveIOSDevelopmentPublicKey } from "./ios/development-key.ts";
-import { createIOSDryRunOutput, formatIOSSetupPlan } from "./ios/output.ts";
-import {
-  applyIOSLocalSetup,
-  applyIOSPlannedLocalSetup,
-  normalizeIOSSDKInstallPlanForSetup,
-  planIOSPrebuiltAuthRuntimeBlockers,
-  type IOSLocalSetupResult,
-} from "./ios/apply.ts";
-import {
-  applyIOSNativeRemoteSetup,
-  assertIOSAppIdPrefixBeforeApplicationCreation,
-  prepareIOSNativeRemoteSetup,
-  validateAppIdPrefix,
-} from "./ios/native-remote.ts";
-import {
-  applyIOSNativeAppleConnection,
-  prepareIOSNativeAppleConnection,
-  type IOSNativeApplePlan,
-} from "./ios/native-apple.ts";
-import { auditIOSPrebuiltAuthEnvironment } from "./ios/prebuilt-auth-environment.ts";
+  prepareAppleNativeSetup,
+  runAppleNativeDryRun,
+  type AppleNativeSetupCoordinator,
+} from "./ios/coordinator.ts";
 
 type InitOptions = {
   /** Framework to set up (skips auto-detection). */
@@ -229,163 +199,20 @@ export async function init(options: InitOptions = {}) {
         `--dry-run currently supports native iOS projects only; detected ${ctx.framework.name}.`,
       );
     }
-    setTelemetryStage("ios_inspect");
-    const inspect = async () =>
-      inspectIOSProject(ctx.cwd, {
-        target: options.target,
-        exhaustiveContainerDiscovery: true,
-      });
-    const inspection = machineOutput
-      ? await inspect()
-      : await withSpinner("Inspecting Xcode project...", inspect);
-    const dryRunSelection = inspection.selection;
-    const selectedTarget =
-      dryRunSelection.state === "selected"
-        ? inspection.appTargets.find(
-            (target) =>
-              target.id === dryRunSelection.targetId &&
-              target.projectPath === dryRunSelection.projectPath,
-          )
-        : undefined;
-    const productDecision = selectedTarget ? clerkKitUIInstallDecision(selectedTarget) : undefined;
-    const hasSupportedCustomConfigure =
-      selectedTarget != null && hasSupportedIOSCustomConfigure(selectedTarget);
-    const inspectedPrebuiltAuthPlan =
-      dryRunSelection.state === "selected"
-        ? await planIOSPrebuiltAuth({
-            root: ctx.cwd,
-            projectPath: dryRunSelection.projectPath,
-            targetId: dryRunSelection.targetId,
-          })
-        : undefined;
-    const prebuiltAuthActive =
-      inspectedPrebuiltAuthPlan != null &&
-      inspectedPrebuiltAuthPlan.status !== "blocked" &&
-      (options.prebuiltAuthUI === true || inspectedPrebuiltAuthPlan.status === "satisfied");
-    const directConfigPlan =
-      dryRunSelection.state === "selected" &&
-      selectedTarget &&
-      productDecision &&
-      shouldPlanIOSDirectConfig(
-        inspection,
-        selectedTarget,
-        prebuiltAuthActive ? "prebuilt" : productDecision,
-      )
-        ? await planIOSDirectConfig({
-            root: ctx.cwd,
-            projectPath: dryRunSelection.projectPath,
-            targetId: dryRunSelection.targetId,
-          })
-        : undefined;
-    const prebuiltRuntimeBlockers = prebuiltAuthActive
-      ? planIOSPrebuiltAuthRuntimeBlockers(inspection, directConfigPlan)
-      : [];
-    const prebuiltAuthPlan =
-      inspectedPrebuiltAuthPlan && prebuiltRuntimeBlockers.length > 0
-        ? {
-            ...inspectedPrebuiltAuthPlan,
-            status: "blocked" as const,
-            actions: [],
-            blockers: [
-              ...inspectedPrebuiltAuthPlan.blockers,
-              {
-                code: "runtime-prerequisites" as const,
-                message: prebuiltRuntimeBlockers.join(" "),
-              },
-            ],
-          }
-        : inspectedPrebuiltAuthPlan;
-    const associatedDomainPlan =
-      dryRunSelection.state === "selected"
-        ? await planIOSAssociatedDomain({
-            root: ctx.cwd,
-            projectPath: dryRunSelection.projectPath,
-            targetId: dryRunSelection.targetId,
-            deferToPublishableKey:
-              directConfigPlan?.status === "ready" || hasSupportedCustomConfigure,
-            allowMissingEntitlementsCreation: true,
-          })
-        : undefined;
-    const hasLocalAppleIntent = selectedTarget?.configurations.some(
-      (configuration) =>
-        configuration.entitlements !== undefined &&
-        configuration.entitlements.signInWithAppleState !== "absent",
-    );
-    const appleEntitlementPlan =
-      dryRunSelection.state === "selected" &&
-      (options.signInWithApple === true || hasLocalAppleIntent === true)
-        ? await planIOSAppleEntitlement({
-            root: ctx.cwd,
-            projectPath: dryRunSelection.projectPath,
-            targetId: dryRunSelection.targetId,
-            allowMissingEntitlementsCreation: true,
-          })
-        : undefined;
-    const strictSDKInstallPlan =
-      dryRunSelection.state === "selected" && selectedTarget != null
-        ? await planIOSSDKInstall({
-            root: ctx.cwd,
-            projectPath: dryRunSelection.projectPath,
-            targetId: dryRunSelection.targetId,
-            includeClerkKitUI: productDecision === "prebuilt" || prebuiltAuthActive,
-            requirePrebuiltAuthCompatibility: prebuiltAuthActive,
-          })
-        : undefined;
-    const sdkInstallPlan =
-      strictSDKInstallPlan && selectedTarget
-        ? normalizeIOSSDKInstallPlanForSetup({
-            installPlan: strictSDKInstallPlan,
-            selectedTarget,
-            prebuiltAuthActive,
-          }).sdkInstallPlan
-        : undefined;
-    const plan = buildIOSSetupPlan(inspection, {
-      sdkInstallPlan,
-      directConfigPlan,
-      associatedDomainPlan,
-      appleEntitlementPlan,
-      prebuiltAuthPlan,
-      prebuiltAuthSelected: options.prebuiltAuthUI === true,
+    await runAppleNativeDryRun({
+      root: ctx.cwd,
+      target: options.target,
+      signInWithApple: options.signInWithApple,
+      prebuiltAuthUI: options.prebuiltAuthUI,
+      machineOutput,
     });
-    if (machineOutput) {
-      log.data(
-        JSON.stringify(createIOSDryRunOutput(inspection, plan, { associatedDomainPlan }), null, 2),
-      );
-    } else {
-      log.info(formatIOSSetupPlan(inspection, plan, { associatedDomainPlan }));
-      await outro(plan.status === "ready" ? "Setup looks ready" : "Setup incomplete");
-    }
-    setTelemetryStage("done");
     return;
   }
 
   setTelemetryStage("strategy");
-  let iosLocalSetup: IOSLocalSetupResult | undefined;
-  let iosProfile: Awaited<ReturnType<typeof resolveProfile>> | undefined;
-  let preauthenticatedIOSLabel: string | undefined;
+  let appleNativeSetup: AppleNativeSetupCoordinator | undefined;
   if (ctx.framework.dep === "ios") {
-    // A normal init is explicitly mutating and may finish a durable file
-    // transaction left by an interrupted earlier run. Dry-run returns above,
-    // so read-only inspection only reports recovery as required.
-    await recoverIOSFileTransactions(ctx.cwd);
-
-    // Resolve the local link before the redacted preview. No application key
-    // is fetched and no local file is written until the user has authorized
-    // the complete semantic plan.
-    iosProfile = await resolveProfile(ctx.cwd);
-    if (agent && validatedAgentAuthLabel === undefined) {
-      validatedAgentAuthLabel = await validateAgentAuthentication();
-    }
-    if (agent && validatedAgentAuthLabel === null) {
-      throwUsageError(
-        "Native iOS setup in agent mode requires valid Clerk authentication before any Xcode files can be changed. Ask the user to run `clerk auth login` or provide a valid Platform API key, then rerun `clerk init`.",
-      );
-    }
-
-    preauthenticatedIOSLabel = agent ? validatedAgentAuthLabel! : undefined;
-
-    setTelemetryStage("ios_inspect");
-    iosLocalSetup = await applyIOSLocalSetup({
+    appleNativeSetup = await prepareAppleNativeSetup({
       root: ctx.cwd,
       target: options.target,
       yes: options.yes === true,
@@ -393,12 +220,11 @@ export async function init(options: InitOptions = {}) {
       allowDirty: options.allowDirty === true,
       signInWithApple: options.signInWithApple,
       prebuiltAuthUI: options.prebuiltAuthUI,
+      requestedApplicationId: options.app,
+      validatedAgentAuthLabel,
+      validateAgentAuthentication,
     });
-    if (agent && iosLocalSetup.requiresExplicitApplication && !options.app) {
-      throwUsageError(
-        "This iOS target already contains a publishable-key configuration that requires explicit Clerk application selection. Ask the developer which existing application it belongs to, then rerun with --app <app_id>. No local files were changed.",
-      );
-    }
+    validatedAgentAuthLabel = appleNativeSetup.validatedAgentAuthLabel;
   }
 
   await enrichProjectContext(ctx);
@@ -422,12 +248,12 @@ export async function init(options: InitOptions = {}) {
       : await isAuthenticated();
   const linkedProfile =
     ctx.framework.dep === "ios"
-      ? iosProfile
+      ? appleNativeSetup?.linkedProfile
       : !optsKeyless && agent && authed && !options.app
         ? await resolveProfile(ctx.cwd)
         : undefined;
   const hasRealAppTarget = Boolean(
-    options.app || linkedProfile || iosLocalSetup?.requiresLinkedApp,
+    options.app || linkedProfile || appleNativeSetup?.requiresLinkedApp,
   );
 
   const strategy = pickStrategy({
@@ -443,282 +269,48 @@ export async function init(options: InitOptions = {}) {
   assertKeylessOnlyFlags(options, strategy);
 
   let authenticatedAppId: string | undefined;
-  let iosApplicationLinkChange: "created-and-linked" | "link-updated" | undefined;
+  let appleNativeApplicationLinkChange: "created-and-linked" | "link-updated" | undefined;
   if (strategy === "authenticate") {
     setTelemetryStage("link");
-    if (agent && iosLocalSetup?.requiresLinkedApp && !iosProfile && !options.app) {
-      assertIOSAppIdPrefixBeforeApplicationCreation({
-        target: iosLocalSetup.nativeReadiness.target,
-        appIdPrefix: options.appIdPrefix,
-        ...(iosLocalSetup.unverifiedAppIdPrefixSuggestion
-          ? {
-              unverifiedAppIdPrefixSuggestion: iosLocalSetup.unverifiedAppIdPrefixSuggestion,
-            }
-          : {}),
-      });
-    }
+    appleNativeSetup?.assertApplicationCreationReady({
+      requestedApplicationId: options.app,
+      appIdPrefix: options.appIdPrefix,
+    });
     bar();
     const mayCreateApplication =
-      agent && (ctx.framework.dep !== "ios" || (!iosProfile && !options.app));
+      agent &&
+      (ctx.framework.dep !== "ios" || appleNativeSetup?.shouldCreateApplication(options.app));
     const createIfMissing = mayCreateApplication
-      ? await deriveProjectName(ctx.cwd, bootstrap?.projectName ?? iosLocalSetup?.targetName)
+      ? await deriveProjectName(ctx.cwd, bootstrap?.projectName ?? appleNativeSetup?.targetName)
       : undefined;
     const authenticated = await authenticateAndLink(
       ctx.cwd,
       options.app,
       createIfMissing,
-      iosLocalSetup?.requiresLinkedApp === true,
-      iosLocalSetup?.requiresExplicitApplication === true,
-      preauthenticatedIOSLabel,
+      appleNativeSetup?.requiresLinkedApp === true,
+      appleNativeSetup?.requiresExplicitApplication === true,
+      appleNativeSetup?.preauthenticatedLabel,
     );
     authenticatedAppId = authenticated.applicationId;
     if (ctx.framework.dep === "ios") {
-      iosApplicationLinkChange = authenticated.applicationLinkChange;
+      appleNativeApplicationLinkChange = authenticated.applicationLinkChange;
     }
   }
 
-  let authenticatedKeysHandled = false;
-  if (iosLocalSetup?.requiresLinkedApp) {
-    if (strategy !== "authenticate") {
-      throw new CliError(
-        "The approved iOS configuration requires a linked Clerk application, but authentication did not complete. No local setup changes were written.",
-        { code: ERROR_CODE.NOT_LINKED },
-      );
-    }
-    if (!authenticatedAppId) {
-      throw new CliError(
-        "The Clerk application link could not be verified. No local setup changes were written.",
-        { code: ERROR_CODE.NOT_LINKED },
-      );
-    }
-    setTelemetryStage("keys");
-    const keys = await withSpinner("Fetching the development publishable key...", async () =>
-      resolveIOSDevelopmentPublicKey(authenticatedAppId),
-    );
-    if (keys.applicationId !== authenticatedAppId) {
-      throw new CliError(
-        "The linked Clerk application changed while its iOS publishable key was being resolved. No local setup changes were written; rerun clerk init.",
-        { code: ERROR_CODE.IOS_SETUP_STALE },
-      );
-    }
-    let iosSetupForCommit = iosLocalSetup;
-    let inspectedAuthViewAppleRequirement: "required" | "not-required" | undefined;
-    if (iosLocalSetup.prebuiltAuthActive) {
-      const authEnvironment = await withSpinner(
-        "Inspecting AuthView authentication methods...",
-        async () => {
-          try {
-            const { fapiHost } = decodePublishableKey(keys.publishableKey);
-            const settings = await fetchUserSettings(fapiHost, {});
-            return auditIOSPrebuiltAuthEnvironment(settings);
-          } catch (error) {
-            if (interruptedExitCode() !== null) throw error;
-            if (error instanceof ApiError || error instanceof CliError) throw error;
-            log.debug(
-              "Could not inspect AuthView authentication methods; underlying error details were omitted.",
-            );
-            throw new CliError(
-              "The linked Clerk application's AuthView methods could not be inspected safely. No local setup changes were written; rerun clerk init.",
-              { code: ERROR_CODE.IOS_REMOTE_VERIFY_FAILED },
-            );
-          }
-        },
-      );
-      if (authEnvironment.apple === "blocked") {
-        throw new CliError(`${authEnvironment.message} No local setup changes were written.`, {
-          code: ERROR_CODE.IOS_SETUP_BLOCKED,
-        });
-      }
-      inspectedAuthViewAppleRequirement = authEnvironment.apple;
-      if (authEnvironment.apple === "required") {
-        const conditionalPlan = iosLocalSetup.prebuiltAuthAppleEntitlementPlan;
-        if (!conditionalPlan || conditionalPlan.status === "blocked") {
-          const reasons = conditionalPlan?.blockers
-            .map((blocker) => `  • ${blocker.message}`)
-            .join("\n");
-          throw new CliError(
-            `AuthView exposes Sign in with Apple for the linked development instance, but the required selected-target entitlement could not be prepared safely. No local setup changes were written${
-              reasons ? `:\n${reasons}` : "."
-            }`,
-            { code: ERROR_CODE.IOS_SETUP_BLOCKED },
-          );
-        }
-      }
-    }
-    setTelemetryStage("ios_native_plan");
-    const nativeRemotePlan = await prepareIOSNativeRemoteSetup({
-      applicationId: keys.applicationId,
-      instanceId: keys.instanceId,
-      root: iosLocalSetup.nativeReadiness.root,
-      target: iosLocalSetup.nativeReadiness.target,
-      appIdPrefix: options.appIdPrefix,
-      ...(iosLocalSetup.unverifiedAppIdPrefixSuggestion
-        ? {
-            unverifiedAppIdPrefixSuggestion: iosLocalSetup.unverifiedAppIdPrefixSuggestion,
-          }
-        : {}),
-      ...(iosApplicationLinkChange ? { applicationLinkChange: iosApplicationLinkChange } : {}),
-      agent,
-      yes: options.yes === true,
-    });
-    let nativeApplePlan: IOSNativeApplePlan | undefined;
-    if (iosLocalSetup.nativeAppleRequested) {
-      if (!iosLocalSetup.appleEntitlementPlan) {
-        throw new CliError(
-          "Native Sign in with Apple was requested without a validated local entitlement plan. No local or Apple connection changes were written; rerun clerk init.",
-          { code: ERROR_CODE.IOS_SETUP_PLAN_INVALID },
-        );
-      }
-      const target = iosLocalSetup.nativeReadiness.target;
-      if (target.status !== "selected" || target.bundleIdentifier.status !== "resolved") {
-        throw new CliError(
-          "The selected iOS Bundle ID could not be revalidated for native Sign in with Apple. No local or Apple connection changes were written.",
-          { code: ERROR_CODE.IOS_TARGET_UNRESOLVED },
-        );
-      }
-      if (!nativeRemotePlan.bundleIdentifier) {
-        throw new CliError(
-          "The selected iOS Bundle ID could not be matched to its Clerk Native Application registration. No local or Apple connection changes were written.",
-          { code: ERROR_CODE.IOS_SETUP_PLAN_INVALID },
-        );
-      }
-      setTelemetryStage("ios_apple_plan");
-      const preparedApple = await prepareIOSNativeAppleConnection({
-        applicationId: keys.applicationId,
-        instanceId: keys.instanceId,
-        // Use the existing registration's stored spelling when its Bundle ID
-        // differs from Xcode only by case. The backend's native Apple lookup
-        // currently uses that authoritative value.
-        bundleIdentifier: nativeRemotePlan.bundleIdentifier,
-        nativeApplicationReady:
-          nativeRemotePlan.status !== "blocked" && nativeRemotePlan.registration !== "blocked",
-        requested: true,
-        agent,
-        yes: options.yes === true,
-      });
-      if (preparedApple.status === "skipped") {
-        throw new CliError(
-          "Native Sign in with Apple was selected locally but its Clerk connection plan was skipped. No local or Apple connection changes were written; rerun clerk init.",
-          { code: ERROR_CODE.IOS_SETUP_PLAN_INVALID },
-        );
-      }
-      nativeApplePlan = preparedApple;
-    }
-    const commitProfile = await resolveProfile(ctx.cwd);
-    if (commitProfile?.profile.appId !== authenticatedAppId) {
-      throw new CliError(
-        "The local Clerk application link changed before the approved iOS setup could be committed. No local or remote setup changes were written; rerun clerk init.",
-        { code: ERROR_CODE.IOS_SETUP_STALE },
-      );
-    }
-
-    if (iosLocalSetup.prebuiltAuthActive) {
-      const authEnvironment = await withSpinner(
-        "Revalidating AuthView authentication methods...",
-        async () => {
-          try {
-            const { fapiHost } = decodePublishableKey(keys.publishableKey);
-            const settings = await fetchUserSettings(fapiHost, {});
-            return auditIOSPrebuiltAuthEnvironment(settings);
-          } catch (error) {
-            if (interruptedExitCode() !== null) throw error;
-            if (error instanceof ApiError || error instanceof CliError) throw error;
-            log.debug(
-              "Could not revalidate AuthView authentication methods; underlying error details were omitted.",
-            );
-            throw new CliError(
-              "The linked Clerk application's AuthView methods could not be revalidated safely. No local or remote setup changes were written; rerun clerk init.",
-              { code: ERROR_CODE.IOS_REMOTE_VERIFY_FAILED },
-            );
-          }
-        },
-      );
-      if (authEnvironment.apple === "blocked") {
-        throw new CliError(
-          `${authEnvironment.message} No local or remote setup changes were written.`,
-          { code: ERROR_CODE.IOS_SETUP_BLOCKED },
-        );
-      }
-      if (authEnvironment.apple !== inspectedAuthViewAppleRequirement) {
-        throw new CliError(
-          "The linked Clerk application's AuthView methods changed while the approved iOS setup was being prepared. No local or remote setup changes were written; rerun clerk init.",
-          { code: ERROR_CODE.IOS_SETUP_STALE },
-        );
-      }
-
-      if (authEnvironment.apple === "required") {
-        const conditionalPlan = iosLocalSetup.prebuiltAuthAppleEntitlementPlan;
-        if (!conditionalPlan || conditionalPlan.status === "blocked") {
-          throw new CliError(
-            "AuthView exposes Sign in with Apple for the linked development instance, but the required selected-target entitlement could not be revalidated safely. No local or remote setup changes were written; rerun clerk init.",
-            { code: ERROR_CODE.IOS_SETUP_STALE },
-          );
-        }
-        iosSetupForCommit = {
-          ...iosLocalSetup,
-          appleEntitlementPlan: iosLocalSetup.appleEntitlementPlan ?? conditionalPlan,
-          prebuiltAuthAppleEntitlementPlan: undefined,
-        };
-      } else {
-        iosSetupForCommit = {
-          ...iosLocalSetup,
-          prebuiltAuthAppleEntitlementPlan: undefined,
-        };
-      }
-    }
-
-    setTelemetryStage("ios_local_setup");
-    await applyIOSPlannedLocalSetup(
-      iosSetupForCommit,
-      iosSetupForCommit.requiresDevelopmentKey ? keys.publishableKey : undefined,
-    );
-    await assertIOSApplicationLinkStillMatches({
-      cwd: ctx.cwd,
-      applicationId: nativeRemotePlan.applicationId,
-      phase: "native-application",
-    });
-    try {
-      setTelemetryStage("ios_native_setup");
-      await applyIOSNativeRemoteSetup(nativeRemotePlan);
-    } catch (error) {
-      if (interruptedExitCode() !== null) throw error;
-      if (error instanceof ApiError || error instanceof CliError) throw error;
-      log.debug(
-        "Could not reconcile Clerk Native Application settings; underlying error details were omitted.",
-      );
-      throw new CliError(
-        "The local iOS setup completed, but Clerk Native Application settings could not be completed remotely. Local changes remain intact; rerun clerk init to safely reconcile the additive remote steps.",
-        { code: ERROR_CODE.IOS_REMOTE_APPLY_FAILED },
-      );
-    }
-    log.success("Clerk Native API and iOS application registration verified");
+  const appleNativeResult = appleNativeSetup
+    ? await appleNativeSetup.complete({
+        authenticationCompleted: strategy === "authenticate",
+        applicationId: authenticatedAppId,
+        applicationLinkChange: appleNativeApplicationLinkChange,
+        appIdPrefix: options.appIdPrefix,
+      })
+    : undefined;
+  const authenticatedKeysHandled = appleNativeResult?.authenticatedKeysHandled ?? false;
+  if (appleNativeResult?.nativeRemoteReady) {
     ctx.iosNativeRemoteReady = true;
-    if (nativeApplePlan) {
-      await assertIOSApplicationLinkStillMatches({
-        cwd: ctx.cwd,
-        applicationId: nativeApplePlan.applicationId,
-        phase: "native-apple",
-      });
-      try {
-        setTelemetryStage("ios_apple_setup");
-        await applyIOSNativeAppleConnection(nativeApplePlan);
-      } catch (error) {
-        if (interruptedExitCode() !== null) throw error;
-        if (error instanceof ApiError || error instanceof CliError) throw error;
-        log.debug(
-          "Could not reconcile the native Apple connection; underlying error details were omitted.",
-        );
-        throw new CliError(
-          "The local iOS setup and Clerk Native Application registration completed, but the native Apple connection could not be completed. Those completed changes remain intact; rerun clerk init to reconcile Sign in with Apple safely.",
-          { code: ERROR_CODE.IOS_REMOTE_APPLY_FAILED },
-        );
-      }
-      ctx.iosNativeAppleReady = true;
-    }
-    authenticatedKeysHandled = true;
-  } else if (iosLocalSetup) {
-    setTelemetryStage("ios_local_setup");
-    await applyIOSPlannedLocalSetup(iosLocalSetup);
+  }
+  if (appleNativeResult?.nativeAppleReady) {
+    ctx.iosNativeAppleReady = true;
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
@@ -1201,21 +793,6 @@ async function authenticateAndLink(
     applicationId,
     ...(applicationLinkChange ? { applicationLinkChange } : {}),
   };
-}
-
-async function assertIOSApplicationLinkStillMatches(options: {
-  cwd: string;
-  applicationId: string;
-  phase: "native-application" | "native-apple";
-}): Promise<void> {
-  const linked = await resolveProfile(options.cwd);
-  if (linked?.profile.appId === options.applicationId) return;
-
-  const message =
-    options.phase === "native-application"
-      ? "The local Clerk application link changed after the approved iOS setup was committed. Local changes remain intact, but no Clerk Native Application changes were made; rerun clerk init."
-      : "The local Clerk application link changed after Clerk Native Application setup completed. The completed local and Clerk Native Application changes remain intact, but no native Apple connection changes were made; rerun clerk init.";
-  throw new CliError(message, { code: ERROR_CODE.IOS_SETUP_STALE });
 }
 
 // --- Keyless app setup ---
