@@ -18,6 +18,7 @@ interface BuildSettingsFixtureOptions {
   includedXCConfig?: string;
   projectDirPath?: string;
   projectBuildSettings?: Record<string, string>;
+  omitSupportedPlatforms?: boolean;
   targetBuildSettings?: Record<string, string>;
   projectConfigurationIds?: string[];
   targetConfigurationIds?: string[];
@@ -53,7 +54,9 @@ async function inspectFixture(options: BuildSettingsFixtureOptions = {}) {
         PRODUCT_BUNDLE_IDENTIFIER: "com.example.Example",
         DEVELOPMENT_TEAM: "ABCDE12345",
         IPHONEOS_DEPLOYMENT_TARGET: "17.0",
-        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+        ...(options.omitSupportedPlatforms
+          ? {}
+          : { SUPPORTED_PLATFORMS: "iphoneos iphonesimulator" }),
         ...options.targetBuildSettings,
       },
     },
@@ -823,6 +826,37 @@ describe("inspectTargetBuildConfigurations", () => {
       }),
     );
   });
+
+  test.each([
+    { name: "enabled", value: "YES", expectedPlatforms: ["maccatalyst"] },
+    {
+      name: "unresolved",
+      value: "$(UNKNOWN_CATALYST_SETTING)",
+      expectedPlatforms: [],
+    },
+  ])(
+    "blocks an SDKROOT-proven iOS target with $name Catalyst support when SUPPORTED_PLATFORMS is absent",
+    async ({ value, expectedPlatforms }) => {
+      const { configurations, diagnostics } = await inspectFixture({
+        omitSupportedPlatforms: true,
+        targetBuildSettings: { SUPPORTS_MACCATALYST: value },
+      });
+
+      expect(configurations[0]).toMatchObject({
+        platform: "ios",
+        supportedPlatforms: ["ios"],
+        unmodeledPlatforms: expectedPlatforms,
+        platformEvidenceComplete: false,
+      });
+      expect(
+        diagnostics.some(
+          (diagnostic) =>
+            diagnostic.code === "xcode.unresolved-build-setting" &&
+            diagnostic.message.includes("SUPPORTS_MACCATALYST"),
+        ),
+      ).toBe(value !== "YES");
+    },
+  );
 
   test.each([
     { name: "enabled", value: "YES" },

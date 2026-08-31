@@ -1002,18 +1002,6 @@ export async function inspectTargetBuildConfigurations(options: {
     const hasIOSPlatform =
       supportedPlatformTokens.has("iphoneos") || supportedPlatformTokens.has("iphonesimulator");
     const hasMacOSPlatform = supportedPlatformTokens.has("macosx");
-    const supportsMacCatalyst =
-      hasIOSPlatform &&
-      macCatalystResolution.state === "resolved" &&
-      normalizedMacCatalystValue === "YES";
-    const unmodeledPlatforms = [
-      ...new Set([
-        ...[...supportedPlatformTokens].filter(
-          (token) => !MODELED_SUPPORTED_PLATFORM_TOKENS.has(token),
-        ),
-        ...(supportsMacCatalyst ? ["maccatalyst"] : []),
-      ]),
-    ].sort();
     const declaredPlatforms: IOSNativePlatform[] = [
       ...(hasIOSPlatform ? (["ios"] as const) : []),
       ...(hasMacOSPlatform ? (["macos"] as const) : []),
@@ -1039,10 +1027,23 @@ export async function inspectTargetBuildConfigurations(options: {
     const sdkRootIsAuto = initialSDKRoot === "auto";
     const hasIOSSDK = /iphone(?:os|simulator)/.test(initialSDKRoot);
     const hasMacOSSDK = initialSDKRoot.includes("macosx");
+    const hasIOSCapabilityEvidence = hasIOSPlatform || hasIOSSDK;
+    const supportsMacCatalyst =
+      hasIOSCapabilityEvidence &&
+      macCatalystResolution.state === "resolved" &&
+      normalizedMacCatalystValue === "YES";
+    const unmodeledPlatforms = [
+      ...new Set([
+        ...[...supportedPlatformTokens].filter(
+          (token) => !MODELED_SUPPORTED_PLATFORM_TOKENS.has(token),
+        ),
+        ...(supportsMacCatalyst ? ["maccatalyst"] : []),
+      ]),
+    ].sort();
     const hasUnknownPlatformEvidence =
       initialSDKRootResolution.state === "unresolved" ||
       initialSupportedPlatformsResolution.state === "unresolved" ||
-      (hasIOSPlatform && macCatalystResolution.state === "unresolved");
+      (hasIOSCapabilityEvidence && macCatalystResolution.state === "unresolved");
     const hasResolvedUnsupportedEvidence =
       (initialSDKRootResolution.state === "resolved" &&
         initialSDKRoot !== "" &&
@@ -1078,7 +1079,7 @@ export async function inspectTargetBuildConfigurations(options: {
       ),
     );
     const hasMixedUnmodeledPlatforms =
-      declaredPlatforms.length > 0 && unmodeledPlatforms.length > 0;
+      (declaredPlatforms.length > 0 && unmodeledPlatforms.length > 0) || supportsMacCatalyst;
     const platformEvidenceComplete = requestedPlatform
       ? concreteClassifications.size === 1 &&
         concreteClassifications.has(requestedPlatform) &&
@@ -1196,7 +1197,7 @@ export async function inspectTargetBuildConfigurations(options: {
       ["SDKROOT", sdkRootResolution],
       ["SUPPORTED_PLATFORMS", supportedPlatformsResolution],
     ];
-    if (hasIOSPlatform) {
+    if (hasIOSCapabilityEvidence) {
       relevantSettings.push(["SUPPORTS_MACCATALYST", macCatalystResolution]);
     }
     if (platform === "macos") {
