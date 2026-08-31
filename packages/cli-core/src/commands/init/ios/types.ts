@@ -20,6 +20,7 @@ export interface IOSDiagnostic {
     | "xcode.conflicting-build-setting"
     | "xcode.missing-entitlements"
     | "xcode.unreadable-entitlements"
+    | "xcode.invalid-associated-domains"
     | "xcode.invalid-apple-entitlement"
     | "xcode.external-path"
     | "xcode.generated-project"

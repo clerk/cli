@@ -1029,6 +1029,29 @@ let package = Package(
     );
   });
 
+  test("rejects malformed Associated Domains entries instead of filtering them", async () => {
+    const root = await fixture({ complete: true });
+    const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
+    const entitlements = await Bun.file(entitlementsPath).text();
+    await Bun.write(
+      entitlementsPath,
+      entitlements.replace(
+        "<string>webcredentials:clerk.example.test</string>",
+        "<string>webcredentials:clerk.example.test</string><true/>",
+      ),
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.configurations[0]?.entitlements).toBeUndefined();
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.invalid-associated-domains",
+        message: expect.stringContaining("invalid Associated Domains"),
+      }),
+    );
+  });
+
   test("resolves matching associated-domain variables across device and simulator contexts", async () => {
     const root = await fixture({ complete: true });
     await addTargetBuildSettings(root, [
