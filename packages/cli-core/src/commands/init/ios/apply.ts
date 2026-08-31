@@ -308,7 +308,7 @@ export async function applyIOSLocalSetup(
       `${selectedTargetPlatformBlockerDescription(
         inspection,
         selectedTarget,
-      )} No local or remote changes were made.`,
+      )} No new Clerk setup changes were applied, and no remote state was changed.`,
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
