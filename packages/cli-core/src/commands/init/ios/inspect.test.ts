@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { discoverIOSContainers, inspectWorkspace } from "./discovery.ts";
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
 import { recoverIOSFileTransactions } from "./file-transaction.ts";
-import type { PbxObjects } from "./pbx.ts";
+import type { PbxObject, PbxObjects } from "./pbx.ts";
 import { createIOSFixture, IOS_FIXTURE_IDS, treeDigest } from "./test-helpers.ts";
 
 const temporaryDirectories: string[] = [];
@@ -470,6 +470,154 @@ describe("inspectIOSProject", () => {
       );
     },
   );
+
+  test.each([
+    ["a missing exception record", undefined],
+    ["an unknown exception record", { isa: "PBXFutureSynchronizedExceptionSet" }],
+    [
+      "an exception record with an unusable target selector",
+      {
+        isa: "PBXFileSystemSynchronizedBuildFileExceptionSet",
+        membershipExceptions: ["Excluded.swift"],
+        target: {},
+      },
+    ],
+    [
+      "an exception record with an unusable build-phase selector",
+      {
+        isa: "PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet",
+        buildPhase: {},
+        membershipExceptions: ["Excluded.swift"],
+      },
+    ],
+  ] as Array<[string, PbxObject | undefined]>)(
+    "marks %s incomplete",
+    async (_description, exceptionRecord) => {
+      const root = await fixture({ complete: true });
+      const synchronizedRootId = "616161616161616161616161";
+      const exceptionId = "717171717171717171717171";
+      await mkdir(join(root, "Synced"));
+      await Bun.write(
+        join(root, "Synced", "Included.swift"),
+        "import ClerkKit\nstruct Included {}\n",
+      );
+      await transformProject(root, (objects) => {
+        objects[synchronizedRootId] = {
+          isa: "PBXFileSystemSynchronizedRootGroup",
+          exceptions: [exceptionId],
+          path: "Synced",
+          sourceTree: "<group>",
+        };
+        if (exceptionRecord) objects[exceptionId] = exceptionRecord;
+        objects[IOS_FIXTURE_IDS.appTarget]!.fileSystemSynchronizedGroups = [synchronizedRootId];
+      });
+
+      const inspection = await inspectIOSProject(root);
+      const memberships = await inspectIOSSourceMembership(root);
+      const target = inspection.appTargets[0];
+      const membership = memberships.find(
+        (candidate) => candidate.targetId === IOS_FIXTURE_IDS.appTarget,
+      );
+
+      expect(target?.swift.evidenceComplete).toBe(false);
+      expect(membership?.complete).toBe(false);
+      expect(membership?.files).toContainEqual({
+        absolutePath: join(root, "Synced", "Included.swift"),
+        relativePath: "Synced/Included.swift",
+      });
+      expect(inspection.diagnostics).toContainEqual(
+        expect.objectContaining({ code: "xcode.incomplete-source-membership" }),
+      );
+    },
+  );
+
+  test.each([
+    ["a non-record synchronized platform-filter map", ["Included.swift"]],
+    [
+      "a synchronized platform-filter map with malformed entries",
+      { "Included.swift": ["macos", {}] },
+    ],
+  ])("marks %s incomplete", async (_description, filtersByPath) => {
+    const root = await fixture({ complete: true });
+    const synchronizedRootId = "616161616161616161616161";
+    const exceptionId = "717171717171717171717171";
+    await mkdir(join(root, "Synced"));
+    await Bun.write(
+      join(root, "Synced", "Included.swift"),
+      "import ClerkKit\nstruct Included {}\n",
+    );
+    await Bun.write(
+      join(root, "Synced", "Excluded.swift"),
+      "import ClerkKit\nstruct Excluded {}\n",
+    );
+    await transformProject(root, (objects) => {
+      objects[synchronizedRootId] = {
+        isa: "PBXFileSystemSynchronizedRootGroup",
+        exceptions: [exceptionId],
+        path: "Synced",
+        sourceTree: "<group>",
+      };
+      objects[exceptionId] = {
+        isa: "PBXFileSystemSynchronizedBuildFileExceptionSet",
+        membershipExceptions: ["Excluded.swift"],
+        platformFiltersByRelativePath: filtersByPath,
+        target: IOS_FIXTURE_IDS.appTarget,
+      };
+      objects[IOS_FIXTURE_IDS.appTarget]!.fileSystemSynchronizedGroups = [synchronizedRootId];
+    });
+
+    const inspection = await inspectIOSProject(root);
+    const memberships = await inspectIOSSourceMembership(root);
+    const target = inspection.appTargets[0];
+    const membership = memberships.find(
+      (candidate) => candidate.targetId === IOS_FIXTURE_IDS.appTarget,
+    );
+    const synchronizedSources = membership?.files
+      .map((file) => file.relativePath)
+      .filter((path) => path.startsWith("Synced/"));
+
+    expect(target?.swift.evidenceComplete).toBe(false);
+    expect(membership?.complete).toBe(false);
+    expect(synchronizedSources).toEqual(["Synced/Included.swift"]);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "xcode.incomplete-source-membership" }),
+    );
+  });
+
+  test("ignores a valid synchronized exception for another target", async () => {
+    const root = await fixture({ complete: true });
+    const synchronizedRootId = "616161616161616161616161";
+    const exceptionId = "717171717171717171717171";
+    await mkdir(join(root, "Synced"));
+    await Bun.write(
+      join(root, "Synced", "Included.swift"),
+      "import ClerkKit\nstruct Included {}\n",
+    );
+    await transformProject(root, (objects) => {
+      objects[synchronizedRootId] = {
+        isa: "PBXFileSystemSynchronizedRootGroup",
+        exceptions: [exceptionId],
+        path: "Synced",
+        sourceTree: "<group>",
+      };
+      objects[exceptionId] = {
+        isa: "PBXFileSystemSynchronizedBuildFileExceptionSet",
+        membershipExceptions: ["Included.swift"],
+        target: "818181818181818181818181",
+      };
+      objects[IOS_FIXTURE_IDS.appTarget]!.fileSystemSynchronizedGroups = [synchronizedRootId];
+    });
+
+    const inspection = await inspectIOSProject(root);
+    const target = inspection.appTargets[0];
+
+    expect(target?.swift.evidenceComplete).toBe(true);
+    expect(target?.swift.entryPoints).not.toEqual([]);
+    expect(target?.swift.sourceFilesScanned).toBe(2);
+    expect(inspection.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "xcode.incomplete-source-membership" }),
+    );
+  });
 
   test("marks source membership incomplete when a group-relative file has multiple parents", async () => {
     const root = await fixture({ complete: true });
