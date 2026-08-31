@@ -442,6 +442,30 @@ struct MyApp: App {
     expect(JSON.stringify(audit.results)).not.toContain(key);
   });
 
+  test("does not pass malformed Associated Domains entries", async () => {
+    const root = await fixture({ complete: true });
+    const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");
+    const entitlements = await readFile(entitlementsPath, "utf8");
+    await writeFile(
+      entitlementsPath,
+      entitlements.replace(
+        "<string>webcredentials:clerk.example.test</string>",
+        "<string>webcredentials:clerk.example.test</string><true/>",
+      ),
+    );
+
+    const audit = await runIOSDoctorChecks(context(), { root, target: "MyApp" }, dependencies());
+    const domain = audit.results.find(
+      (result) => result.name === "iOS: Add Clerk's associated domain",
+    );
+
+    expect(audit.inspection.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "xcode.invalid-associated-domains" }),
+    );
+    expect(domain?.status).not.toBe("pass");
+    expect(domain?.message).not.toContain("matches the linked application");
+  });
+
   test("reports missing Native API and registration as a fixable init requirement", async () => {
     const root = await fixture();
     const audit = await runIOSDoctorChecks(
