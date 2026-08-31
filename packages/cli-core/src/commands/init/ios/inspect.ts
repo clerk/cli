@@ -164,10 +164,16 @@ function describeUnmodeledApplePlatforms(platforms: string[]): string {
   const hasVisionOS = platforms.some((platform) =>
     /^(?:visionos|xros|xrsimulator)$/i.test(platform),
   );
+  const hasMacCatalyst = platforms.some((platform) => /^maccatalyst$/i.test(platform));
   const remaining = platforms.filter(
-    (platform) => !/^(?:visionos|xros|xrsimulator)$/i.test(platform),
+    (platform) =>
+      !/^(?:visionos|xros|xrsimulator)$/i.test(platform) && !/^maccatalyst$/i.test(platform),
   );
-  return [...(hasVisionOS ? ["visionOS"] : []), ...remaining].join(", ");
+  return [
+    ...(hasVisionOS ? ["visionOS"] : []),
+    ...(hasMacCatalyst ? ["Mac Catalyst"] : []),
+    ...remaining,
+  ].join(", ");
 }
 
 function inspectInlinePublishableKey(
@@ -1161,8 +1167,8 @@ async function parseProject(
             : `${targetName} does not have one proven native platform across every build configuration (${configurationSummary}).`,
         remedy:
           unmodeledPlatforms.length > 0
-            ? "Read-only inspection completed. Automatic setup requires every shipping platform to be iOS or macOS; use an iOS/macOS-only target or configure Clerk manually for this multiplatform target."
-            : "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently for every build configuration before running Clerk setup.",
+            ? "Read-only inspection completed. Automatic setup currently supports only non-Catalyst iOS and native macOS destinations; use a target limited to those destinations or configure Clerk manually for this target."
+            : "Resolve SDKROOT, SUPPORTED_PLATFORMS, and SUPPORTS_MACCATALYST consistently for every build configuration before running Clerk setup.",
         evidence: [
           {
             path: relativeIOSPath(root, resolve(projectPath, "project.pbxproj")),

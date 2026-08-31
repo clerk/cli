@@ -17,6 +17,7 @@ interface BuildSettingsFixtureOptions {
   xcconfig?: string;
   includedXCConfig?: string;
   projectDirPath?: string;
+  projectBuildSettings?: Record<string, string>;
   targetBuildSettings?: Record<string, string>;
   projectConfigurationIds?: string[];
   targetConfigurationIds?: string[];
@@ -38,7 +39,7 @@ async function inspectFixture(options: BuildSettingsFixtureOptions = {}) {
     "project-debug": {
       isa: "XCBuildConfiguration",
       name: "Debug",
-      buildSettings: { SDKROOT: "iphoneos" },
+      buildSettings: { SDKROOT: "iphoneos", ...options.projectBuildSettings },
     },
     "target-list": {
       isa: "XCConfigurationList",
@@ -774,6 +775,84 @@ describe("inspectTargetBuildConfigurations", () => {
       "iphonesimulator/x86_64",
     ]);
   });
+
+  test("marks an explicitly Catalyst-enabled target as unmodeled", async () => {
+    const { configurations } = await inspectFixture({
+      targetBuildSettings: { SUPPORTS_MACCATALYST: "YES" },
+    });
+
+    expect(configurations[0]).toMatchObject({
+      platform: "ios",
+      supportedPlatforms: ["ios"],
+      unmodeledPlatforms: ["maccatalyst"],
+      platformEvidenceComplete: false,
+    });
+  });
+
+  test.each([
+    { name: "absent", targetBuildSettings: {} },
+    { name: "disabled", targetBuildSettings: { SUPPORTS_MACCATALYST: "NO" } },
+  ] as Array<{ name: string; targetBuildSettings: Record<string, string> }>)(
+    "keeps Catalyst $name targets on the iOS automation path",
+    async ({ targetBuildSettings }) => {
+      const { configurations } = await inspectFixture({ targetBuildSettings });
+
+      expect(configurations[0]).toMatchObject({
+        platform: "ios",
+        supportedPlatforms: ["ios"],
+        unmodeledPlatforms: [],
+        platformEvidenceComplete: true,
+      });
+    },
+  );
+
+  test("fails platform evidence closed when Catalyst support is unresolved", async () => {
+    const { configurations, diagnostics } = await inspectFixture({
+      targetBuildSettings: { SUPPORTS_MACCATALYST: "$(UNKNOWN_CATALYST_SETTING)" },
+    });
+
+    expect(configurations[0]).toMatchObject({
+      platform: "ios",
+      unmodeledPlatforms: [],
+      platformEvidenceComplete: false,
+    });
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.unresolved-build-setting",
+        message: expect.stringContaining("SUPPORTS_MACCATALYST"),
+      }),
+    );
+  });
+
+  test.each([
+    { name: "enabled", value: "YES" },
+    { name: "unresolved", value: "$(UNKNOWN_CATALYST_SETTING)" },
+  ])(
+    "ignores an inherited $name Catalyst setting for a native macOS-only target",
+    async ({ value }) => {
+      const { configurations, diagnostics } = await inspectFixture({
+        projectBuildSettings: { SUPPORTS_MACCATALYST: value },
+        targetBuildSettings: {
+          SDKROOT: "macosx",
+          SUPPORTED_PLATFORMS: "macosx",
+          MACOSX_DEPLOYMENT_TARGET: "14.0",
+        },
+      });
+
+      expect(configurations[0]).toMatchObject({
+        platform: "macos",
+        supportedPlatforms: ["macos"],
+        unmodeledPlatforms: [],
+        platformEvidenceComplete: true,
+      });
+      expect(diagnostics).not.toContainEqual(
+        expect.objectContaining({
+          code: "xcode.unresolved-build-setting",
+          message: expect.stringContaining("SUPPORTS_MACCATALYST"),
+        }),
+      );
+    },
+  );
 
   test("inspects a proven macOS view without changing the multiplatform primary platform", async () => {
     const settings = {
