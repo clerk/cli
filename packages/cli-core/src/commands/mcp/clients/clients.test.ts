@@ -32,6 +32,7 @@ const { opencodeClient } = await import("./opencode.ts");
 const { openclawClient } = await import("./openclaw.ts");
 const { warpClient } = await import("./warp.ts");
 const { hermesClient } = await import("./hermes.ts");
+const { fxClient } = await import("./fx.ts");
 const { vscodeUserDir } = await import("./paths.ts");
 
 useCaptureLog();
@@ -88,6 +89,11 @@ const pathCases = [
     client: hermesClient,
     expectedPath: () => join(mockHome, ".hermes", "config.yaml"),
   },
+  {
+    name: "fx",
+    client: fxClient,
+    expectedPath: () => join(mockHome, ".fx", "mcp.json"),
+  },
 ];
 
 // File-backed clients: we write the entry ourselves (no usable registration
@@ -102,6 +108,14 @@ const fileCases = [
     topKey: "mcp",
     // opencode's stdio dialect: `type: "local"` and a single command array.
     shape: { type: "local", command: ["clerk", "mcp", "run"] },
+  },
+  {
+    name: "fx",
+    client: fxClient,
+    topKey: "mcp",
+    // fx loads servers only from `~/.fx/mcp.json` and connects over Streamable
+    // HTTP directly — no stdio bridge, so the URL is embedded at install time.
+    shape: { type: "http", url: DEFAULT_URL },
   },
 ];
 
@@ -327,6 +341,24 @@ describe("client contracts (homedir redirected)", () => {
     const entries = await opencodeClient.list("/ignored");
     expect(entries.map((e) => e.name).sort()).toEqual(["clerk", "hosted"]);
     expect(entries.every((e) => e.url === DEFAULT_URL)).toBe(true);
+  });
+
+  test("fx lists clerk-flavored direct-URL entries and ignores unrelated ones", async () => {
+    const configPath = fxClient.configPath("/ignored");
+    await mkdir(join(configPath, ".."), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        mcp: {
+          clerk: { type: "http", url: DEFAULT_URL },
+          unrelated: { type: "http", url: "https://example.com/mcp" },
+        },
+      }),
+    );
+    const entries = await fxClient.list("/ignored");
+    expect(entries).toEqual([
+      expect.objectContaining({ client: "fx", name: "clerk", url: DEFAULT_URL }),
+    ]);
   });
 
   test("`copilot` resolves to the same client as `vscode`", async () => {
