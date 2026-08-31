@@ -82,18 +82,25 @@ Per-client dialect notes:
 - **Warp** ships no registration CLI (its `oz` CLI only attaches servers to
   cloud-agent runs); `~/.warp/.mcp.json` is the documented file surface behind
   `Settings → Agents → MCP servers`, standard `mcpServers` dialect.
-- **fx** loads MCP servers **only** from the user-global trusted profile
-  `~/.fx/mcp.json` (repo-local MCP files are deliberately never loaded). fx
-  does ship a non-interactive registration CLI (`fx mcp add --transport http`,
-  verified in fx 0.0.7), but we write the file directly anyway: the command is
-  newer than fx's own docs (fx.sh documents only the in-session `/mcp` form),
-  so the direct write keeps registration working on fx binaries that predate
-  it, and the entry shape is trivial and version-stable. fx speaks Streamable
-  HTTP natively, so it is the one client that skips the stdio bridge: its
-  entry is `{ "type": "http", "url": "…" }` under top-level `mcp`, with the
-  resolved URL embedded at install time. fx applies hand-edited (or
-  CLI-written) config via `/mcp reload` inside an fx session, or on next
-  start; `/mcp list` verifies.
+- **fx** is registered in the user-global trusted profile `~/.fx/mcp.json` —
+  fx 0.0.7 also loads workspace `.mcp.json` servers, but those sit behind
+  per-workspace trust approval, while the profile needs none and follows the
+  user everywhere. fx does ship a non-interactive registration CLI
+  (`fx mcp add --transport http`, verified in fx 0.0.7), but we write the
+  file directly anyway: the command is newer than fx's own docs (fx.sh
+  documents only the in-session `/mcp` form), so the direct write keeps
+  registration working on fx binaries that predate it, and the entry shape is
+  trivial and version-stable. fx speaks Streamable HTTP natively, so it is
+  the one client that skips the stdio bridge: its entry is
+  `{ "type": "http", "url": "…" }` under top-level `mcp`, with the resolved
+  URL embedded at install time. Two consequences of that: fx accepts
+  `mcpServers` as a profile alias for `mcp` (ignored whenever `mcp` exists),
+  so the client migrates an alias-only profile to canonical `mcp` before any
+  read or write — otherwise our written `mcp` would shadow every aliased
+  server; and with no bridge argv to recognize, a `--name` entry pointing at
+  a `CLERK_MCP_URL` override is recognized as ours only while that override
+  is the resolved URL. fx applies hand-edited (or CLI-written) config via
+  `/mcp reload` inside an fx session, or on next start; `/mcp list` verifies.
 - **Hermes** `mcp add` probes the server and then ends in a confirm prompt
   ("Enable all tools?" on success, "Save config anyway?" on failure) — and
   cancelling on EOF exits **0** without saving. The CLI is therefore driven
