@@ -26,6 +26,17 @@ interface LinkOptions {
    * interactive end-to-end.
    */
   createIfMissing?: string;
+  /**
+   * Skip generic process-env/dotenv key discovery when those sources are not
+   * runtime inputs for the calling framework. Native iOS direct setup uses
+   * this so a web app's ambient key cannot silently choose the embedded app.
+   */
+  skipAutolink?: boolean;
+  /**
+   * Require the developer to affirm an existing application. Used when a
+   * native project contains an opaque custom key source that must be preserved.
+   */
+  requireExistingAppSelection?: boolean;
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
@@ -40,12 +51,17 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const existing = await resolveProfile(cwd);
   const targetsDifferentApp = options.app && existing && options.app !== existing.profile.appId;
 
-  if (existing && options.skipIfLinked && !targetsDifferentApp) {
+  if (
+    existing &&
+    options.skipIfLinked &&
+    !targetsDifferentApp &&
+    !options.requireExistingAppSelection
+  ) {
     printExistingStatus(existing, normalizedRemote);
     return;
   }
 
-  if (!existing && !options.app && (options.skipIfLinked || agent)) {
+  if (!existing && !options.app && !options.skipAutolink && (options.skipIfLinked || agent)) {
     const autolinked = await autolink(cwd);
     if (autolinked) return;
   }
@@ -75,13 +91,21 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   await ensureAuth();
 
   const app = options.app
-    ? await withApiContext(fetchApplication(options.app), "Failed to fetch application")
+    ? await withApiContext(
+        fetchApplication(options.app, { includeSecretKeys: false }),
+        "Failed to fetch application",
+      )
     : agent && options.createIfMissing
       ? await withApiContext(
           createApplication(options.createIfMissing),
           "Failed to create application",
         )
-      : await resolveApp(cwd, displayPath, !existing);
+      : await resolveApp(
+          cwd,
+          displayPath,
+          !existing && !options.skipAutolink,
+          options.requireExistingAppSelection !== true,
+        );
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
@@ -141,6 +165,10 @@ async function handleExistingProfile(
 ): Promise<boolean> {
   printExistingStatus(existing, normalizedRemote);
 
+  // Supplying the currently linked app is already an explicit selection.
+  // Do not ask the developer to confirm or relink it a second time.
+  if (options.app === existing.profile.appId) return false;
+
   if (existing.availableRemote) {
     log.info(
       `We detected this is now a git repository with remote ${dim(existing.availableRemote)}.`,
@@ -152,17 +180,28 @@ async function handleExistingProfile(
     if (upgrade) {
       await moveProfile(existing.path, existing.availableRemote);
       log.info(`\nLink updated to use git remote (${cyan(existing.availableRemote)})`);
-      return false;
+      if (!options.requireExistingAppSelection) return false;
     }
   }
 
   if (options.app) {
     await ensureAuth();
     const targetApp = await withApiContext(
-      fetchApplication(options.app),
+      fetchApplication(options.app, { includeSecretKeys: false }),
       "Failed to fetch application",
     );
     return confirm({ message: `Re-link to ${cyan(appLabel(targetApp))}?`, default: false });
+  }
+
+  if (options.requireExistingAppSelection) {
+    const label = existing.profile.appName
+      ? `${existing.profile.appName} (${existing.profile.appId})`
+      : existing.profile.appId;
+    const keepExisting = await confirm({
+      message: `Use ${cyan(label)} for this preserved iOS key configuration?`,
+      default: true,
+    });
+    return !keepExisting;
   }
 
   return confirm({ message: "Re-link to a different application?", default: false });
@@ -184,8 +223,9 @@ async function resolveApp(
   cwd: string,
   displayPath: string,
   detectKeys: boolean,
+  allowCreate = true,
 ): Promise<Application> {
-  const apps = await fetchAppsTolerantly();
+  const apps = await fetchAppsTolerantly({ allowCreate });
 
   if (apps.length > 0 && detectKeys) {
     const detected = await tryDetectApp(cwd, apps);
@@ -195,6 +235,7 @@ async function resolveApp(
   return pickOrCreateApp({
     apps,
     message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
+    allowCreate,
   });
 }
 

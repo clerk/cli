@@ -7,6 +7,7 @@ import type {
   IOSSourceEvidence,
   IOSSwiftInspection,
 } from "./types.ts";
+import { inspectSwiftUIAppRoot } from "./swift-app-root.ts";
 
 const MAX_SWIFT_FILE_BYTES = 1_000_000;
 
@@ -14,8 +15,9 @@ const CLERK_CONFIGURE_CALL = /\bClerk\s*\.\s*configure\s*\(/;
 const CLERK_URL_HANDLER = /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*handle\s*\(/;
 const CLERK_NATIVE_AUTH_FLOW =
   /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*(?:signIn(?:With(?:Password|EmailCode|EmailLink|PhoneCode|OAuth|IdToken|Apple|Passkey|EnterpriseSSO|Ticket))?|signUp(?:With(?:OAuth|Apple|IdToken|EnterpriseSSO|Ticket))?|startHostedAuth)\s*\(/;
-const CLERK_ENVIRONMENT_INJECTION =
-  /\.\s*environment\s*\(\s*(?:\\?\.\s*self\s*,\s*)?Clerk\s*\.\s*shared\s*\)/;
+const CLERK_EMAIL_LINK_AUTH_FLOW =
+  /(?:\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*signInWithEmailLink|\.\s*sendEmailLink)\s*\(/;
+const CLERK_ENVIRONMENT_INJECTION = /\.\s*environment\s*\(\s*Clerk\s*\.\s*shared\s*\)/;
 const CLERK_ENVIRONMENT_CONSUMER = /@Environment\s*\(\s*Clerk\s*\.\s*self\s*\)/;
 const CLERK_AUTH_VIEW = /\bAuthView\s*\(/;
 const CLERK_KIT_IMPORT =
@@ -96,6 +98,7 @@ const CLERK_EVIDENCE_PATTERNS = [
   CLERK_CONFIGURE_CALL,
   CLERK_URL_HANDLER,
   CLERK_NATIVE_AUTH_FLOW,
+  CLERK_EMAIL_LINK_AUTH_FLOW,
   CLERK_ENVIRONMENT_INJECTION,
   CLERK_ENVIRONMENT_CONSUMER,
   CLERK_AUTH_VIEW,
@@ -759,7 +762,9 @@ export async function inspectSwiftSources(
   const importsClerkKit: IOSSourceEvidence[] = [];
   const importsClerkKitUI: IOSSourceEvidence[] = [];
   const configureCalls: IOSConfigureCallEvidence[] = [];
+  const appRootEvidence: IOSSourceEvidence[] = [];
   const environmentInjections: IOSSourceEvidence[] = [];
+  const rootEnvironmentInjections: IOSSourceEvidence[] = [];
   const environmentConsumers: IOSSourceEvidence[] = [];
   const authFlowReferences: IOSSourceEvidence[] = [];
   const openURLHandlers: IOSSourceEvidence[] = [];
@@ -799,8 +804,10 @@ export async function inspectSwiftSources(
     const importsUI = has(sanitized, CLERK_KIT_UI_IMPORT);
     const importsClerkModule = importsKit || importsUI;
     if (hasConditionalSetupEvidence(uncertain, importsClerkModule)) evidenceComplete = false;
+    const appRoot = structuralSource.complete ? inspectSwiftUIAppRoot(sanitized) : undefined;
 
     if (has(sanitized, /@main\b/)) entryPoints.push(evidence);
+    if (appRoot) appRootEvidence.push(evidence);
     if (importsKit) importsClerkKit.push(evidence);
     if (importsUI) importsClerkKitUI.push(evidence);
     if (importsClerkModule) {
@@ -809,12 +816,20 @@ export async function inspectSwiftSources(
     if (importsClerkModule && has(sanitized, CLERK_ENVIRONMENT_INJECTION)) {
       environmentInjections.push(evidence);
     }
+    if (
+      importsClerkModule &&
+      appRoot?.clerkEnvironment.found &&
+      !appRoot.clerkEnvironment.conflicting
+    ) {
+      rootEnvironmentInjections.push(evidence);
+    }
     if (importsClerkModule && has(sanitized, CLERK_ENVIRONMENT_CONSUMER)) {
       environmentConsumers.push(evidence);
     }
     if (
       (importsUI && has(sanitized, CLERK_AUTH_VIEW)) ||
-      (importsClerkModule && has(sanitized, CLERK_NATIVE_AUTH_FLOW))
+      (importsClerkModule &&
+        (has(sanitized, CLERK_NATIVE_AUTH_FLOW) || has(sanitized, CLERK_EMAIL_LINK_AUTH_FLOW)))
     ) {
       authFlowReferences.push(evidence);
     }
@@ -822,6 +837,14 @@ export async function inspectSwiftSources(
       openURLHandlers.push(evidence);
     }
   }
+
+  const hasUniqueProvenAppRoot =
+    evidenceComplete &&
+    entryPoints.length === 1 &&
+    appRootEvidence.length === 1 &&
+    appRootEvidence[0]?.path === entryPoints[0]?.path;
+  const provenAppRootEvidence = hasUniqueProvenAppRoot ? appRootEvidence : [];
+  const provenRootEnvironmentInjections = hasUniqueProvenAppRoot ? rootEnvironmentInjections : [];
 
   const anyClerkEvidence =
     importsClerkKit.length +
@@ -834,7 +857,7 @@ export async function inspectSwiftSources(
   const status =
     entryPoints.length > 1
       ? "ambiguous"
-      : configureCalls.length > 0 && environmentInjections.length > 0
+      : configureCalls.length > 0 && provenRootEnvironmentInjections.length > 0
         ? "complete"
         : anyClerkEvidence
           ? "partial"
@@ -847,7 +870,9 @@ export async function inspectSwiftSources(
     importsClerkKit,
     importsClerkKitUI,
     configureCalls,
+    appRootEvidence: provenAppRootEvidence,
     environmentInjections,
+    rootEnvironmentInjections: provenRootEnvironmentInjections,
     environmentConsumers,
     authFlowReferences,
     openURLHandlers,

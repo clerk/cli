@@ -35,8 +35,20 @@ function stripAnsi(value: string): string {
 }
 
 function appWith(production: boolean) {
-  const instances = [{ instance_id: "ins_dev", environment_type: "development" }];
-  if (production) instances.push({ instance_id: "ins_prod", environment_type: "production" });
+  const instances = [
+    {
+      instance_id: "ins_dev",
+      environment_type: "development",
+      publishable_key: "pk_test_fixture",
+    },
+  ];
+  if (production) {
+    instances.push({
+      instance_id: "ins_prod",
+      environment_type: "production",
+      publishable_key: "pk_live_fixture",
+    });
+  }
   return { application_id: "app_1", name: "app", instances };
 }
 

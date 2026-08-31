@@ -25,6 +25,7 @@ export interface IOSDiagnostic {
     | "xcode.external-path"
     | "xcode.generated-project"
     | "xcode.incomplete-source-membership"
+    | "xcode.incomplete-container-discovery"
     | "xcode.interrupted-file-transaction"
     | "clerk.package-unattributed"
     | "clerk.invalid-publishable-key";
@@ -119,9 +120,15 @@ export interface IOSSwiftInspection {
   importsClerkKit: IOSSourceEvidence[];
   importsClerkKitUI: IOSSourceEvidence[];
   configureCalls: IOSConfigureCallEvidence[];
+  /** Unique selected-target @main SwiftUI App with a structurally proven WindowGroup root. */
+  appRootEvidence: IOSSourceEvidence[];
+  /** Broad lexical evidence retained for diagnostics and conflict detection only. */
   environmentInjections: IOSSourceEvidence[];
+  /** Clerk environment injection directly attached to the proven shipping WindowGroup root. */
+  rootEnvironmentInjections: IOSSourceEvidence[];
   environmentConsumers: IOSSourceEvidence[];
   authFlowReferences: IOSSourceEvidence[];
+  /** Broad lexical evidence retained for diagnostics and conflict detection only. */
   openURLHandlers: IOSSourceEvidence[];
   status: "complete" | "partial" | "absent" | "ambiguous";
 }
@@ -189,7 +196,6 @@ export type IOSSetupStepId =
   | "install-clerk-sdk"
   | "configure-publishable-key"
   | "inject-clerk-environment"
-  | "wire-auth-callbacks"
   | "register-native-application"
   | "enable-native-apple"
   | "add-associated-domain"

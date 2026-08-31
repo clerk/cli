@@ -18,6 +18,13 @@ clerk init --keyless --fresh
 clerk init -y
 clerk init --yes
 clerk init --no-skills
+clerk init --target MyApp
+clerk init --target MyApp --yes
+clerk init --target MyApp --prebuilt-auth-ui
+clerk init --target MyApp --sign-in-with-apple
+clerk init --dry-run
+clerk init --dry-run --target MyApp
+clerk init --dry-run --target MyApp --json
 ```
 
 ## Options
@@ -33,52 +40,101 @@ clerk init --no-skills
 | `--login`               | Force the authenticated flow: log in (interactively if needed) and link a real application instead of keyless keys. Errors in agent mode when unauthenticated (agents can't run OAuth)                                                                     |
 | `--template <name>`     | Pre-configure the keyless application at creation: `b2b-saas`, `b2c-saas`, `native`, `waitlist`. Only applies when the run resolves to keyless — errors otherwise (see [Application templates](#application-templates)); cannot be combined with `--login` |
 | `--fresh`               | Replace an existing unclaimed keyless application with a new one, instead of keeping it (see [Keyless breadcrumb](#keyless-breadcrumb)). Only applies when the run resolves to keyless — errors otherwise; cannot be combined with `--login`               |
+| `--dry-run`             | Inspect an existing native iOS project and print a semantic Clerk setup plan without changing local or remote state                                                                                                                                        |
+| `--json`                | Emit the `--dry-run` inspection and setup plan as structured JSON. Implied in agent mode; requires `--dry-run`                                                                                                                                             |
+| `--target <name-or-id>` | Select an iOS application target by target name or PBX object ID for either inspection or setup                                                                                                                                                            |
+| `--allow-dirty`         | Allow iOS setup to update a planned local file that already has changes. Existing bytes still participate in stale-plan and atomic-write validation                                                                                                        |
+| `--app-id-prefix <id>`  | Apple App ID Prefix to use if the selected iOS Bundle ID needs a new Clerk registration. Never inferred from `DEVELOPMENT_TEAM`; required in agent mode when local/remote evidence cannot supply it                                                        |
+| `--sign-in-with-apple`  | Opt into native Sign in with Apple for the selected iOS target. Adds the exact Apple entitlement and enables the matching native Clerk connection; never requests hosted/web Apple credentials                                                             |
+| `--prebuilt-auth-ui`    | Opt into ClerkKitUI's prebuilt authentication UI for an untouched, safely inspectable SwiftUI starter. Existing or customized application UI is preserved and returned for review instead of being rewritten                                               |
 | `-y, --yes`             | Skip y/n confirmation prompts only. It neither forces nor bypasses keyless — the strategy is picked by auth state, mode, and flags. It does **not** replace an existing unclaimed keyless app — that still requires `--fresh`                              |
 | `--no-skills`           | Skip the optional agent skills install prompt at the end of init                                                                                                                                                                                           |
+
+## Read-only iOS inspection
+
+`clerk init --dry-run` takes a separate, read-only path for existing native iOS projects. It inspects Xcode projects and workspaces, application targets and build configurations, Swift Package Manager linkage, target source membership, Swift Clerk setup, and entitlements. It then prints an ordered setup plan with a top-level status of `ready`, `action-required`, or `blocked`.
+
+Publishable-key inspection intentionally has a narrow boundary. One literal passed directly to `Clerk.configure(publishableKey:)` in the selected app's startup initializer can be validated with its value redacted. Every other expression is classified as custom: the CLI preserves it without reading its backing file, scheme, environment, or value.
+
+The command does not authenticate, call Clerk APIs, run Xcode, resolve packages, send command telemetry, check for CLI updates, or write project/global CLI files. Publishable key values are never included in output. Flags that imply project creation or already-known remote application state (`--starter`, `--app`, `--app-id-prefix`, `--keyless`, `--login`, `--template`, and `--fresh`) are rejected before inspection. `--sign-in-with-apple` is allowed because dry-run previews only the local entitlement; it reports the Clerk connection as not inspected until a regular authenticated run.
+
+When multiple iOS application targets are present, the plan is `blocked` until one is selected with `--target <name-or-id>`. A blocked plan still exits successfully because the inspection completed; automation should branch on the JSON `status` field.
+
+## Native iOS local setup
+
+For a native iOS project, normal `clerk init` re-runs the semantic inspection, builds the complete local plan, previews it with the publishable key redacted, and asks for consent before authentication or local writes. It reuses an existing verified local or remote clerk-ios package when possible; otherwise it adds the official `https://github.com/clerk/clerk-ios` Swift package. For an untouched Clerk integration, it links both `ClerkKit` and `ClerkKitUI` to the exact selected application target so the optional prebuilt `AuthView` path is available. Existing source-proven custom-flow projects remain `ClerkKit`-only unless their source or Xcode graph already requires `ClerkKitUI`.
+
+For a safely inspectable fresh SwiftUI target, the same command selects or creates a Clerk application, fetches only its development publishable key, adds `import ClerkKit`, configures Clerk directly in the single shipping `@main` initializer, and adds `.environment(Clerk.shared)` to the proven `WindowGroup` root. The key is public client configuration and is written directly to Swift source, matching the iOS Quickstart. It remains in memory until commit and is never printed, returned in JSON, sent to telemetry, or written through an intermediate `.env` or plist. Existing inline keys are compared with the selected application's key and never replaced on a mismatch.
+
+An existing custom `Clerk.configure(...)` source is never migrated or rewritten. The developer must explicitly select the existing Clerk application it belongs to; agents do this with `--app <app_id>`. That choice authorizes linked-app and Native Application setup, but the CLI does not inspect the custom value or claim that it matches the selected application.
+
+The CLI previews every planned local path and asks once before writing. Human users can pass `--yes` to skip that confirmation. Agent/non-TTY mode must pass `--yes` explicitly for iOS mutations; agent mode never implies consent here. A planned file with existing Git changes is refused unless `--allow-dirty` is also explicit, and `--yes` does not imply `--allow-dirty`.
+
+The package graph and direct Swift edits are prepared in memory, staged beside their destination files, committed together after exact app/key resolution, and re-inspected as one rollback-aware local transaction. Re-running an already-complete target is byte-for-byte a no-op. The command does not run Xcode, resolve package versions, build the app, edit `Package.resolved`, change signing, or request a secret key. XcodeGen and Tuist output is not edited; update the generator's source specification instead.
+
+When every selected-target build configuration already points to a readable, target-exclusive XML entitlements file, `clerk init` can add the exact bare `webcredentials:<frontend-api-host>` value to all of those files. When every configuration is missing entitlements and the selected target has exactly one exclusive filesystem-synchronized source root, it can instead create a minimal `<target>/<target>.entitlements` file and attach it with iPhone-device and iPhone-simulator-qualified build settings. Those qualified settings do not affect macOS, visionOS, or other platforms in a multiplatform target. Existing files preserve unrelated entitlements, comments, newline style, and file modes, and all eligible entitlement changes commit in the same stale-input and rollback-aware transaction as the SDK and direct Swift edits. A `?mode=developer` entry is preserved but does not replace the bare entry. Mixed or conflicting entitlements paths, classic or shared destination ambiguity, generated projects, unresolved build settings, malformed or binary plists, and paths outside the invocation root remain review steps.
+
+The read-only output also includes a native-readiness section for the Bundle ID, literal App ID Prefix evidence, and local Associated Domains coverage. Because `--dry-run` is strictly local-only, remote Native API and iOS registration state is reported as `not-inspected`. A regular authenticated run audits those resources through the Platform API after the local preview.
+
+If the linked development instance needs remote changes, `clerk init` prints a second, exact plan and asks separately before making them. Existing registrations are never updated or deleted. When a registration is missing, the CLI uses a consistently proven literal App ID Prefix, an explicit `--app-id-prefix`, or a human-entered value. If every selected-target configuration has the same valid `DEVELOPMENT_TEAM`, human mode offers it as a clearly labeled, unverified suggestion and lets the user enter a different prefix; it is never treated as proven evidence or selected non-interactively. Conflicting local evidence or an existing registration with a different prefix blocks before local files are committed. After consent, the guarded local transaction commits first, remote state is re-read, the exact iOS registration is created, Native API is enabled last, and both resources are verified. Remote retries are additive and idempotent: if a remote step fails after local commit, local changes remain and rerunning safely reconciles the remaining work.
+
+Native Sign in with Apple is an explicit opt-in, either through the human prompt or `--sign-in-with-apple`; `--yes` alone never enables it. The local transaction adds only `com.apple.developer.applesignin = ["Default"]` to every proven selected-target entitlements route. After the exact iOS registration and Native API are ready, the CLI enables the Apple connection for that exact Bundle ID and verifies the final config. It neither asks for nor changes an Apple Services ID, Team ID, Key ID, or private key. Existing hosted Apple fields are preserved. With ClerkKitUI, `AuthView` displays Apple automatically; a custom flow can call `try await Clerk.shared.auth.signInWithApple()`.
+
+The prebuilt authentication UI is also an explicit, independent opt-in. `--yes`, agent mode, ClerkKitUI linkage, and `--sign-in-with-apple` never select it by themselves. `--prebuilt-auth-ui` can rewrite only the exact untouched SwiftUI starter screen owned by the selected target; existing navigation, state, custom authentication, partial ClerkKitUI integrations, and established application content are preserved and reported as a review step. The generated screen matches the documented native-components quickstart: a `UserButton` signed-out entry presents `AuthView` in a sheet and prefetches Clerk images. It does not gate or replace established application content. Clerk's native components require iOS 17 and the modern ClerkKit/ClerkKitUI products available in clerk-ios 1.0.0 or newer. Before committing an opted-in UI, the authenticated run also inspects the linked Frontend API environment without printing its publishable key; when Apple is already enabled and authenticatable, the same pre-authorized local transaction verifies or adds the required Apple entitlement without changing the remote Apple strategy.
 
 ## Agent Mode
 
 When running in agent mode (`--mode agent` or non-TTY), the command runs the full init flow non-interactively:
 
-- All confirmation prompts are auto-skipped (as if `--yes` was passed)
+- Confirmation prompts are generally auto-skipped, but changing a native iOS Xcode project requires an explicit `--yes`
+- Native iOS remote mutations also require explicit `--yes`; when no existing registration or complete literal evidence supplies the App ID Prefix, pass `--app-id-prefix`
+- Native Sign in with Apple additionally requires `--sign-in-with-apple`; `--yes` grants mutation consent but never opts a project into an authentication strategy
+- The prebuilt iOS authentication UI additionally requires `--prebuilt-auth-ui`; `--yes` and agent mode never opt into replacing even an eligible starter screen
+- `init --dry-run` automatically emits structured JSON, even when `--json` is omitted
 - For **existing projects**: framework and package manager are auto-detected, no flags required
 - For **new projects** (`--starter` or blank directory): `--framework` is required (no way to auto-detect in an empty dir). Package manager is auto-selected by availability (bun → pnpm → yarn → npm) unless `--pm` is provided
 - Project name defaults to the framework's default (e.g. `my-clerk-next-app`) unless `--name` is provided
 - For keyless-capable frameworks with no `--app` and no linked profile:
   - When **authenticated**, init creates a real Clerk app named after the project (`package.json#name`, `--name`, or directory basename) and links it.
   - When **unauthenticated**, init uses keyless: the app runs on auto-generated dev keys, and init writes a `.clerk/keyless.json` breadcrumb so the next `clerk auth login` claims the app automatically.
-- For frameworks that require API keys, init will not pick or create an app in agent mode; pass `--app <id>` or link the project first to pull real keys
+- For frameworks that require API keys, agent mode normally requires `--app <id>` or an existing link. A safely inspectable fresh iOS target is the exception: with valid credentials and explicit `--yes`, init can create and link the development application needed by the approved direct-source plan
 - `--login` while unauthenticated exits with a usage error (agents can't complete the interactive browser login)
-- Agent mode never trusts the mere _presence_ of a stored credential the way human mode does — a stored session that turns out to be expired/broken (e.g. keyring holds a stale OAuth session) is validated before init decides it's "authenticated". A broken credential is treated as unauthenticated, which routes a keyless-capable framework to keyless instead of blocking on a browser OAuth round-trip an agent can never complete. If `--login` (or a real app target) forces the authenticated flow anyway and the credential turns out broken, init exits with a usage error instead of attempting an interactive login
+- Agent mode never trusts the mere _presence_ of a credential before native iOS mutation. A Platform API key is validated with a read-only application-list request, and a stored OAuth session must still resolve to a user. Invalid credentials stop native iOS setup before local apply. Elsewhere, a broken credential is treated as unauthenticated, which routes a keyless-capable framework to keyless instead of blocking on a browser OAuth round-trip an agent can never complete. If `--login` (or a real app target) forces the authenticated flow anyway and the credential turns out broken, init exits with a usage error instead of attempting an interactive login
 - Agent mode never mints a fresh keyless application over an existing unclaimed one on re-run — see [Keyless breadcrumb](#keyless-breadcrumb)
 
 ## Flow
 
+`--dry-run` first detects an existing native iOS project, performs the read-only inspection described above, prints its setup plan, and returns before authentication, linking, SDK installation, scaffolding, or any other setup work.
+
+The normal setup flow is:
+
 1. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
-2. Determines the strategy (in precedence order). In agent mode, "authenticated" here means a _validated_ credential (a real `CLERK_PLATFORM_API_KEY`, or a stored session that still exchanges for a valid token) — not just the presence of something in the keyring, since agent mode has no interactive fallback if a stale credential turns out to be unusable:
+2. **Native iOS only**: validates iOS-specific flags, resolves the current local Clerk profile, inspects the selected target, and previews the complete redacted SDK plus Swift/runtime configuration plan. It obtains one aggregate consent but writes nothing. Agent credentials may be validated with a read-only API call before this preview so an invalid non-interactive invocation cannot proceed; interactive login, application selection/creation, key fetching, and every local write remain after consent
+3. Determines the strategy (in precedence order). In agent mode, "authenticated" here means a _validated_ credential (a Platform API key accepted by a read-only PLAPI request, or a stored session that still exchanges for a valid token) — not just the presence of something in the keyring, since agent mode has no interactive fallback if a stale credential turns out to be unusable:
    - **`--keyless`**: forces keyless mode, even when logged in. Only valid on a keyless-capable framework, and cannot be combined with `--login` or `--app` (usage errors otherwise). The app runs on auto-generated dev keys; init writes a `.clerk/keyless.json` breadcrumb so the next `clerk auth login` claims the app automatically
    - **`--login`**: forces the authenticated flow. In agent mode while unauthenticated (or while stored credentials are broken) this exits with a usage error, since agents can't complete the interactive browser login
-   - **Real app target** (`--app` or linked profile): authenticates, links if needed, and pulls real API keys into `.env`
+   - **Real app target** (`--app`, linked profile, or an approved fresh iOS direct-source plan): authenticates and links if needed, then configures the native runtime directly or pulls API keys for frameworks that consume an env file
    - **Agent + non-keyless framework + no real app target**: scaffolds locally and prints manual setup instructions instead of selecting or creating an app
    - **Agent + keyless-capable framework + authenticated + no real app target**: creates a real Clerk app named after the project, links it, and pulls real API keys into `.env`
    - **Agent + keyless-capable framework + unauthenticated + no real app target**: uses keyless mode — the app runs on auto-generated dev keys and the breadcrumb lets the next `clerk auth login` claim it. A broken/stale stored credential (present in the keyring but no longer valid) is treated the same as unauthenticated, so this is also the fallback when the presence-only check would have wrongly said "authenticated"
    - **Human mode + bootstrap + keyless-capable framework + not authenticated**: uses keyless mode
    - **Human mode + existing project + not authenticated**: runs the authenticated flow, which triggers an interactive login so real keys can be pulled. `-y` does not bypass this — it only suppresses y/n confirmation prompts, not authentication
    - `--template` and `--fresh` are rejected with a usage error whenever the resolved strategy above isn't keyless — see [Application templates](#application-templates) and [Keyless breadcrumb](#keyless-breadcrumb)
-3. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
-4. Displays detected framework and variant
-5. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance
-6. Installs the appropriate Clerk SDK (skips if already present)
-7. Generates a scaffold plan for the detected framework
-8. Warns if the git working tree has uncommitted changes
-9. Previews planned file changes and asks for confirmation
-10. Writes scaffold files to disk
-11. Runs project formatters (Prettier/Biome) on generated files
-12. Scans for issues: hardcoded keys, leftover auth-library imports, stale API calls
-13. Prints a summary of created, modified, and skipped files with recommendations
-14. **Authenticated mode**: pulls development instance API keys via `clerk env pull`
-15. **Keyless mode** (unauthenticated runs whose resolved strategy in step 2 is keyless — an unauthenticated human-mode rerun on an existing project resolves to the authenticated flow instead): mints a keyless application and prints instructions for development without API keys and how to connect a Clerk account later — unless an unclaimed keyless app already exists for this project (see [Re-running init on an already-keyless project](#re-running-init-on-an-already-keyless-project)), in which case the existing keys are kept and reported instead
-16. Optionally installs Clerk agent skills (cli + core + features, plus a framework-specific skill) via the project's package runner (see [Agent skills install](#agent-skills-install))
+4. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links or creates/selects the project application via `clerk link`
+5. **Eligible native iOS only**: resolves the explicitly selected application by its exact ID, fetches only its public development key, and audits Native API, iOS registration, the selected prebuilt AuthView environment, and any explicitly requested native Apple connection before writing. It then prepares the approved PBX, Swift, and entitlements candidates again. A fresh target commits the eligible files through one rollback-aware transaction and re-inspects the result. This can include creating and attaching one entitlements file for an exclusive filesystem-synchronized target root, replacing only an explicitly selected pristine starter screen with the documented `UserButton` and `AuthView` sheet, and adding the exact native Apple entitlement when required by either explicit Apple setup or an already-enabled Apple button. Custom key sources are preserved without inspection. The key is never resolved through mutable current-directory profile state, printed, or copied through dotenv. Additive remote Native Application changes run after the local commit; native Apple is enabled last and final state is re-read
+6. Displays detected framework and variant
+7. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance
+8. Installs the appropriate Clerk SDK (skips if already present)
+9. Generates a scaffold plan for the detected framework
+10. Warns if the git working tree has uncommitted changes
+11. Previews planned file changes and asks for confirmation
+12. Writes scaffold files to disk
+13. Runs project formatters (Prettier/Biome) on generated files
+14. Scans for issues: hardcoded keys, leftover auth-library imports, stale API calls
+15. Prints a summary of created, modified, and skipped files with recommendations
+16. **Authenticated mode**: pulls development instance API keys via `clerk env pull` for frameworks that consume dotenv files. Native iOS leaves custom key storage unchanged
+17. **Keyless mode** (unauthenticated runs whose resolved strategy in step 3 is keyless — an unauthenticated human-mode rerun on an existing project resolves to the authenticated flow instead): mints a keyless application and prints instructions for development without API keys and how to connect a Clerk account later — unless an unclaimed keyless app already exists for this project (see [Re-running init on an already-keyless project](#re-running-init-on-an-already-keyless-project)), in which case the existing keys are kept and reported instead
+18. Optionally installs Clerk agent skills (cli + core + features, plus a framework-specific skill) via the project's package runner (see [Agent skills install](#agent-skills-install))
 
 ## Framework Detection
 
@@ -100,12 +156,12 @@ Detects the project's framework from `package.json` dependencies (checked top-to
 
 Native mobile platforms may not have a `package.json`, so they are detected from project marker files when no npm framework matches:
 
-| Marker files                                                        | Framework        | Clerk SDK                             | Publishable Key Env Var |
-| ------------------------------------------------------------------- | ---------------- | ------------------------------------- | ----------------------- |
-| `*.xcodeproj` / `*.xcworkspace`                                     | iOS (Swift)      | `ClerkKit` (Swift Package Manager)    | `CLERK_PUBLISHABLE_KEY` |
-| `app/src/main/AndroidManifest.xml` / `src/main/AndroidManifest.xml` | Android (Kotlin) | `com.clerk:clerk-android-ui` (Gradle) | `CLERK_PUBLISHABLE_KEY` |
+| Marker files                                                        | Framework        | Clerk SDK                                         | Publishable Key Env Var |
+| ------------------------------------------------------------------- | ---------------- | ------------------------------------------------- | ----------------------- |
+| `*.xcodeproj` / `*.xcworkspace`                                     | iOS (Swift)      | `ClerkKit` + `ClerkKitUI` (Swift Package Manager) | `CLERK_PUBLISHABLE_KEY` |
+| `app/src/main/AndroidManifest.xml` / `src/main/AndroidManifest.xml` | Android (Kotlin) | `com.clerk:clerk-android-ui` (Gradle)             | `CLERK_PUBLISHABLE_KEY` |
 
-A bare `Package.swift` or `build.gradle` is intentionally **not** enough — those also match server-side Swift packages and non-Android JVM projects. For native platforms the Clerk SDK cannot be installed by a JS package manager, so init skips the SDK install step and the scaffold plan prints Swift Package Manager / Gradle install steps instead. The publishable key is configured in source code (`Clerk.configure(...)` / `Clerk.initialize(...)`), so init still pulls keys into the env file and instructs the user to copy the key over.
+A bare `Package.swift` or `build.gradle` is intentionally **not** enough — those also match server-side Swift packages and non-Android JVM projects. Native SDKs are not installed by a JavaScript package manager. For iOS, init can edit the selected target's Swift Package Manager graph directly. New and source-blank core-only integrations receive both ClerkKit and ClerkKitUI for the prebuilt authentication path; a source-proven custom integration stays ClerkKit-only. A safely inspectable fresh SwiftUI target is configured directly in its shipping `@main` source. Existing custom `Clerk.configure(...)` sources are preserved without interpreting how they load a key. Android still prints the Gradle installation steps.
 
 The **Keyless** column indicates whether the framework's Clerk SDK supports keyless mode (auto-generated temporary dev keys). Keyless is the default for unauthenticated runs on Yes-row frameworks — during bootstrap (new projects) in human mode, and in all agent-mode runs. In human mode, an unauthenticated re-run in an existing project still triggers the authenticated flow. `--keyless` forces keyless anywhere a Yes-row framework is detected (existing projects included, even when logged in); passing it for a No-row framework exits with a usage error. In agent mode, an authenticated run on a keyless-capable framework creates a real app named after the project and links it.
 
@@ -113,7 +169,7 @@ Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `ya
 
 ## Scaffolding
 
-Scaffolding is supported for every detected framework. iOS and Android write no files (their SDKs are not npm packages and their build files are not safe to modify automatically) — instead they print the exact quickstart steps as post-instructions.
+Scaffolding is supported for every detected framework. The dedicated iOS preflight may safely update the selected Xcode target's Swift package graph and direct configuration before generic scaffolding; custom key sources are preserved and require explicit application selection. Remaining iOS work and all Android native setup are printed as post-instructions.
 
 All scaffolding is idempotent — files are skipped if they already contain Clerk setup.
 
@@ -232,7 +288,7 @@ Express and Fastify share the server-entry scaffolding in [`node-server.ts`](./f
 
 ### iOS (Swift) / Android (Kotlin)
 
-No files are written. The scaffold plan prints the quickstart steps: SDK install (Swift Package Manager for `ClerkKit`/`ClerkKitUI`, Gradle for `com.clerk:clerk-android-*`), enabling the Native API and registering the app on the Dashboard's Native Applications page, and configuring the publishable key in source (`Clerk.configure(...)` / `Clerk.initialize(...)`) by copying it from the pulled env file.
+For iOS, the dedicated setup phase links both `ClerkKit` and `ClerkKitUI` for a fresh target so the optional prebuilt authentication path is available. It also upgrades a source-blank target left ClerkKit-only by an earlier setup, while preserving a source-proven ClerkKit-only custom flow. A safely inspectable fresh SwiftUI target receives direct `@main` Clerk configuration and environment injection; custom configuration sources remain unchanged and require explicit application selection. With explicit `--prebuilt-auth-ui` consent, only an exact untouched SwiftUI starter screen can receive the quickstart `UserButton`, image prefetching, and `AuthView` sheet; established UI is never rewritten. Safe XML entitlements files can receive the selected application's exact Associated Domain transactionally, and a modern target with one exclusive filesystem-synchronized source root can receive a new iOS-only entitlements file. The authenticated phase then audits and, with separate consent, additively creates the exact iOS registration and enables Native API for the selected development instance. The optional `--sign-in-with-apple` path composes the native Apple entitlement into that transaction and enables only the exact Bundle ID's Clerk Apple connection. Android prints the Gradle SDK step for `com.clerk:clerk-android-*`.
 
 ## Agent skills install
 

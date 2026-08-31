@@ -93,7 +93,9 @@ function emptySwiftInspection() {
     importsClerkKit: [],
     importsClerkKitUI: [],
     configureCalls: [],
+    appRootEvidence: [],
     environmentInjections: [],
+    rootEnvironmentInjections: [],
     environmentConsumers: [],
     authFlowReferences: [],
     openURLHandlers: [],
@@ -1285,17 +1287,32 @@ export async function inspectIOSProject(
   const discovered = await discoverIOSContainers(invocationPath, {
     exhaustive: options.exhaustiveContainerDiscovery === true,
   });
+  let discoveryComplete = discovered.complete;
   const projectPaths = new Set(discovered.projectPaths);
   const workspaces = [];
 
   for (const workspacePath of discovered.workspacePaths) {
     const workspace = await inspectWorkspace(root, workspacePath);
+    discoveryComplete &&= workspace.complete;
     workspaces.push(workspace.inspection);
     for (const projectPath of workspace.localProjectPaths) projectPaths.add(projectPath);
   }
 
   const referencedProjects = await discoverReferencedIOSProjects(root, projectPaths);
   for (const projectPath of referencedProjects.projectPaths) projectPaths.add(projectPath);
+  discoveryComplete &&= referencedProjects.complete;
+
+  if (options.exhaustiveContainerDiscovery === true && !discoveryComplete) {
+    diagnostics.push({
+      code: "xcode.incomplete-container-discovery",
+      severity: "warning",
+      message:
+        "Xcode container discovery was incomplete, so Clerk could not prove that all local application targets were inspected.",
+      remedy:
+        "Run the command from the intended project's directory, make nested project directories readable, or reduce excessive project nesting or count.",
+      evidence: [{ path: "." }],
+    });
+  }
 
   if (projectPaths.size === 0) {
     diagnostics.push({
@@ -1319,7 +1336,7 @@ export async function inspectIOSProject(
     sourceMemberships.push(...(parsed.sourceMemberships ?? []));
     diagnostics.push(...parsed.diagnostics);
   }
-  if (options.exhaustiveContainerDiscovery === true && !discovered.complete) {
+  if (options.exhaustiveContainerDiscovery === true && !discoveryComplete) {
     for (const membership of sourceMemberships) membership.complete = false;
   }
   if (!referencedProjects.complete) {
@@ -1379,6 +1396,14 @@ export async function inspectIOSProject(
   };
   sourceMembershipByInspection.set(result, sourceMemberships);
   return result;
+}
+
+export function hasIncompleteIOSContainerDiscovery(
+  inspection: IOSProjectInspectionResult,
+): boolean {
+  return inspection.diagnostics.some(
+    (diagnostic) => diagnostic.code === "xcode.incomplete-container-discovery",
+  );
 }
 
 /**

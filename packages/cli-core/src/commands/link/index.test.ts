@@ -166,7 +166,9 @@ describe("link", () => {
 
       await runLink({ app: "app_123" });
 
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123", {
+        includeSecretKeys: false,
+      });
       expect(mockSetProfile).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({
@@ -220,7 +222,9 @@ describe("link", () => {
       await runLink({ app: "app_123" });
 
       expect(mockConfirm).not.toHaveBeenCalled();
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123", {
+        includeSecretKeys: false,
+      });
       expect(mockSetProfile).toHaveBeenCalled();
     });
 
@@ -263,6 +267,25 @@ describe("link", () => {
 
       expect(mockAutolink).toHaveBeenCalled();
       expect(mockCreateApplication).not.toHaveBeenCalled();
+    });
+
+    test("can skip ambient-key autolink for a native runtime plan", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockAutolink.mockResolvedValue({
+        path: "github.com/org/repo",
+        profile: { workspaceId: "", appId: "app_web", instances: { development: "ins_web" } },
+      });
+      mockCreateApplication.mockResolvedValue({ ...mockApp, application_id: "app_native" });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ createIfMissing: "native-project", skipAutolink: true });
+
+      expect(mockAutolink).not.toHaveBeenCalled();
+      expect(mockCreateApplication).toHaveBeenCalledWith("native-project");
+      expect(mockSetProfile).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ appId: "app_native" }),
+      );
     });
   });
 
@@ -351,7 +374,9 @@ describe("link", () => {
       await runLink({ skipIfLinked: true, app: "app_123" });
 
       expect(mockConfirm).toHaveBeenCalled();
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123", {
+        includeSecretKeys: false,
+      });
       expect(mockSetProfile).toHaveBeenCalled();
     });
   });
@@ -404,7 +429,9 @@ describe("link", () => {
 
       expect(mockListApplications).not.toHaveBeenCalled();
       expect(mockSearch).not.toHaveBeenCalled();
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123", {
+        includeSecretKeys: false,
+      });
     });
 
     test("shows interactive picker when no --app flag", async () => {
@@ -432,6 +459,137 @@ describe("link", () => {
       expect(mockListApplications).toHaveBeenCalled();
       expect(mockSearch).toHaveBeenCalled();
       expect(mockFetchApplication).not.toHaveBeenCalled();
+    });
+
+    test("skipAutolink bypasses ambient key detection and uses the interactive picker", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockFindClerkKeys.mockResolvedValue([
+        { key: "pk_test", source: "CLERK_PUBLISHABLE_KEY env var" },
+      ]);
+      mockMatchKeyToApp.mockReturnValue({
+        app: mockApp,
+        instance: mockApp.instances[0],
+        source: "CLERK_PUBLISHABLE_KEY env var",
+      });
+      mockSearch.mockResolvedValue("app_123");
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ skipAutolink: true });
+
+      expect(mockAutolink).not.toHaveBeenCalled();
+      expect(mockFindClerkKeys).not.toHaveBeenCalled();
+      expect(mockMatchKeyToApp).not.toHaveBeenCalled();
+      expect(mockSearch).toHaveBeenCalled();
+      expect(mockSetProfile).toHaveBeenCalledWith(
+        "github.com/org/repo",
+        expect.objectContaining({ appId: "app_123" }),
+      );
+    });
+
+    test("custom iOS setup offers only existing applications", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockImplementation(
+        async (config: {
+          source: (term: string | undefined) => { name: string; value: string }[];
+        }) => {
+          const results = config.source(undefined);
+          expect(results).toHaveLength(1);
+          expect(results[0]?.value).toBe("app_123");
+          expect(results.some((result) => result.value === "__create_new__")).toBe(false);
+          return "app_123";
+        },
+      );
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ skipAutolink: true, requireExistingAppSelection: true });
+
+      expect(mockCreateApplication).not.toHaveBeenCalled();
+      expect(mockSetProfile).toHaveBeenCalledWith(
+        "github.com/org/repo",
+        expect.objectContaining({ appId: "app_123" }),
+      );
+    });
+
+    test("custom iOS setup explicitly confirms an existing project link", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockResolveProfile.mockResolvedValue({
+        path: "/repo/.git",
+        profile: {
+          workspaceId: "",
+          appId: "app_existing",
+          appName: "Existing App",
+          instances: { development: "ins_1" },
+        },
+      });
+      mockConfirm.mockResolvedValue(true);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ skipIfLinked: true, requireExistingAppSelection: true });
+
+      expect(mockConfirm).toHaveBeenCalledWith({
+        message: expect.stringContaining("Use"),
+        default: true,
+      });
+      expect(mockSearch).not.toHaveBeenCalled();
+      expect(mockSetProfile).not.toHaveBeenCalled();
+    });
+
+    test("explicit --app accepts the same existing iOS link without another prompt", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockResolveProfile.mockResolvedValue({
+        path: "/repo/.git",
+        profile: {
+          workspaceId: "",
+          appId: "app_123",
+          appName: "Existing App",
+          instances: { development: "ins_1" },
+        },
+      });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({
+        app: "app_123",
+        skipIfLinked: true,
+        requireExistingAppSelection: true,
+      });
+
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockFetchApplication).not.toHaveBeenCalled();
+      expect(mockSetProfile).not.toHaveBeenCalled();
+    });
+
+    test("custom iOS setup never creates an application when none can be selected", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([]);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await expect(
+        runLink({ skipAutolink: true, requireExistingAppSelection: true }),
+      ).rejects.toThrow("No existing Clerk applications are available");
+
+      expect(mockSearch).not.toHaveBeenCalled();
+      expect(mockCreateApplication).not.toHaveBeenCalled();
+      expect(mockSetProfile).not.toHaveBeenCalled();
+    });
+
+    test("custom iOS setup surfaces application-list outages instead of offering creation", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockRejectedValue(PlapiError.fromBody(500, "Internal Server Error"));
+
+      await expect(
+        runLink({ skipAutolink: true, requireExistingAppSelection: true }),
+      ).rejects.toBeInstanceOf(PlapiError);
+
+      expect(mockSearch).not.toHaveBeenCalled();
+      expect(mockCreateApplication).not.toHaveBeenCalled();
+      expect(mockSetProfile).not.toHaveBeenCalled();
     });
 
     test("source returns create option first, then all choices, when term is empty", async () => {
@@ -1047,7 +1205,9 @@ describe("link", () => {
 
       expect(mockFindClerkKeys).not.toHaveBeenCalled();
       expect(mockSearch).not.toHaveBeenCalled();
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123", {
+        includeSecretKeys: false,
+      });
     });
 
     test("shows target app name in re-link prompt when --app is provided", async () => {

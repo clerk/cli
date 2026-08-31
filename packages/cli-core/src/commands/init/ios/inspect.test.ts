@@ -1368,9 +1368,16 @@ let package = Package(
     await Bun.write(join(workspace, "contents.xcworkspacedata"), "not an Xcode workspace\n");
 
     const result = await inspectWorkspace(root, workspace);
+    const inspection = await inspectIOSProject(root, { exhaustiveContainerDiscovery: true });
+    const memberships = await inspectIOSSourceMembership(root);
 
     expect(result.complete).toBe(false);
     expect(result.localProjectPaths).toEqual([]);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "xcode.incomplete-container-discovery" }),
+    );
+    expect(memberships.length).toBeGreaterThan(0);
+    expect(memberships.every((membership) => !membership.complete)).toBe(true);
   });
 
   test.each(["absolute", "parent-relative", "symlink-escape"] as const)(

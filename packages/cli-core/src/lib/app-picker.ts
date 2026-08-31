@@ -27,13 +27,15 @@ export function appLabel(app: Application): string {
  * Fetch the user's applications. Returns an empty list when PLAPI is degraded
  * (5xx) so the caller can still offer "create a new application".
  */
-export async function fetchAppsTolerantly(): Promise<Application[]> {
+export async function fetchAppsTolerantly(
+  options: { allowCreate?: boolean } = {},
+): Promise<Application[]> {
   try {
     return await withSpinner("Fetching applications...", async () =>
       withApiContext(listApplications(), "Failed to fetch applications"),
     );
   } catch (error) {
-    if (error instanceof PlapiError && error.status >= 500) {
+    if (error instanceof PlapiError && error.status >= 500 && options.allowCreate !== false) {
       log.info("Could not fetch your applications, you can still create a new one");
       return [];
     }
@@ -44,6 +46,7 @@ export async function fetchAppsTolerantly(): Promise<Application[]> {
 export async function pickOrCreateApp(opts: {
   apps: Application[];
   message: string;
+  allowCreate?: boolean;
 }): Promise<Application> {
   const appChoices = opts.apps.map((a) => ({ name: appLabel(a), value: a.application_id }));
   const createChoice = {
@@ -51,13 +54,20 @@ export async function pickOrCreateApp(opts: {
     value: CREATE_NEW_APP,
   };
 
+  if (opts.allowCreate === false && appChoices.length === 0) {
+    throw new CliError(
+      "No existing Clerk applications are available. Create the intended application first, then rerun with --app <app_id>.",
+      { code: ERROR_CODE.APP_NOT_FOUND },
+    );
+  }
+
   const selectedId = await search<string>({
     message: opts.message,
     source: (term) => {
       const filtered = term
         ? appChoices.filter((c) => c.name.toLowerCase().includes(term.toLowerCase()))
         : appChoices;
-      return [createChoice, ...filtered];
+      return opts.allowCreate === false ? filtered : [createChoice, ...filtered];
     },
   });
 

@@ -1,9 +1,15 @@
 import { OAUTH_PROVIDERS } from "@clerk/shared/oauth";
+import { bundleIdentifiersEqual } from "../../lib/apple-native-identity.ts";
 import { bold, cyan, dim, yellow } from "../../lib/color.ts";
 import { clerkSubdomains } from "./copy.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
-import type { ConfigSchemaProperty, InstanceConfigSchema } from "../../lib/plapi.ts";
+import type {
+  ConfigSchemaProperty,
+  IOSApplication,
+  InstanceConfigSchema,
+  NativeSettings,
+} from "../../lib/plapi.ts";
 
 const DEFAULT_DOCS_URL_PREFIX =
   "https://clerk.com/docs/guides/configure/auth-strategies/social-connections";
@@ -61,6 +67,20 @@ export type OAuthProviderDescriptorResult = {
   supported: OAuthProviderDescriptor[];
   unsupported: string[];
 };
+
+export type NativeAppleConfiguration =
+  | { status: "not-apple" | "hosted-or-unconfigured" }
+  | {
+      status:
+        | "ready"
+        | "authentication-disabled"
+        | "registration-missing"
+        | "registration-bundle-case-mismatch"
+        | "registration-ambiguous"
+        | "native-api-disabled"
+        | "verification-unavailable";
+      bundleId: string;
+    };
 
 type ProviderOverride = {
   credentialLabel?: string;
@@ -209,6 +229,62 @@ export function hasProviderRequiredCredentials(
   return descriptor.requiredCredentialKeys.every((key) => {
     const fieldValue = providerConfig[key];
     return typeof fieldValue === "string" && fieldValue.length > 0;
+  });
+}
+
+/**
+ * Distinguish native-only Apple configuration from hosted Apple OAuth without
+ * treating an unrelated iOS registration as proof. Native-only production
+ * setup is ready only when it is authenticatable, its explicit Bundle ID has
+ * an exact registration, and Native API is enabled on that production instance.
+ */
+export function inspectNativeAppleConfiguration(
+  config: Record<string, unknown>,
+  descriptor: OAuthProviderDescriptor,
+  iosApplications: readonly IOSApplication[],
+  nativeSettings?: NativeSettings,
+): NativeAppleConfiguration {
+  if (descriptor.provider !== "apple") return { status: "not-apple" };
+
+  const value = config[descriptor.configKey];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { status: "hosted-or-unconfigured" };
+  }
+  const providerConfig = value as Record<string, unknown>;
+  if (hasAppleHostedIdentifier(providerConfig)) {
+    return { status: "hosted-or-unconfigured" };
+  }
+
+  const rawBundleId = providerConfig.bundle_id;
+  const bundleId = typeof rawBundleId === "string" ? rawBundleId.trim() : "";
+  if (!bundleId) return { status: "hosted-or-unconfigured" };
+  if (providerConfig.enabled !== true || providerConfig.authenticatable !== true) {
+    return { status: "authentication-disabled", bundleId };
+  }
+
+  const registeredPrefixes = new Set(
+    iosApplications
+      .filter((application) => bundleIdentifiersEqual(application.bundle_id, bundleId))
+      .map((application) => application.app_id_prefix),
+  );
+  if (registeredPrefixes.size === 0) {
+    return { status: "registration-missing", bundleId };
+  }
+  if (registeredPrefixes.size > 1) {
+    return { status: "registration-ambiguous", bundleId };
+  }
+  if (!iosApplications.some((application) => application.bundle_id === bundleId)) {
+    return { status: "registration-bundle-case-mismatch", bundleId };
+  }
+  return nativeSettings?.api_enabled === true
+    ? { status: "ready", bundleId }
+    : { status: "native-api-disabled", bundleId };
+}
+
+function hasAppleHostedIdentifier(config: Record<string, unknown>): boolean {
+  return ["client_id", "client_secret", "team_id", "key_id"].some((key) => {
+    const value = config[key];
+    return typeof value === "string" && value.trim().length > 0;
   });
 }
 
