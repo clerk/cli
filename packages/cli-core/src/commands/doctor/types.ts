@@ -80,16 +80,4 @@ export interface DoctorOptions {
   fix?: boolean;
   /** Exact Xcode application target name or PBX object ID. */
   target?: string;
-  /** Explicit Xcode project or workspace used by opt-in execution checks. */
-  xcodeContainer?: string;
-  /** Explicit shared or automatically created Xcode scheme. */
-  scheme?: string;
-  /** Explicitly permit Xcode to resolve and update Swift package locks. */
-  resolvePackages?: boolean;
-  /** Compile the selected iOS scheme for the simulator. */
-  build?: boolean;
-  /** Install and launch the selected app in an iOS Simulator. */
-  simulator?: boolean;
-  /** Simulator UDID or exact device name. Valid only with --simulator. */
-  device?: string;
 }
