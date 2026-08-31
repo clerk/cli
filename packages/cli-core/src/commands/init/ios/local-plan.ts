@@ -10,10 +10,7 @@ import { planIOSDirectConfig, type IOSDirectConfigPlan } from "./direct-config.t
 import { planIOSAssociatedDomain, type IOSAssociatedDomainPlan } from "./associated-domain.ts";
 import { planIOSAppleEntitlement, type IOSAppleEntitlementPlan } from "./apple-entitlement.ts";
 import { planIOSSDKInstall, type IOSSDKInstallPlan } from "./install-sdk.ts";
-import {
-  planMacOSNetworkCapability,
-  type MacOSNetworkCapabilityPlan,
-} from "./macos-network.ts";
+import { planMacOSNetworkCapability, type MacOSNetworkCapabilityPlan } from "./macos-network.ts";
 import {
   inspectIOSPlatformViews,
   iosPlatformViewsHaveAppleEntitlementIntent,
@@ -174,9 +171,7 @@ export async function buildIOSLocalSetupProposal(
       selectedTarget,
       productDecision: contextProductDecision,
       ...(selectedTarget ? { platform: selectedTarget.platform } : {}),
-      ...(selectedTarget
-        ? { supportedPlatforms: [...selectedTarget.supportedPlatforms] }
-        : {}),
+      ...(selectedTarget ? { supportedPlatforms: [...selectedTarget.supportedPlatforms] } : {}),
       setupPlan,
       nativeReadiness: buildIOSNativeReadinessAudit(inspection),
       platformCompatibilityBlockers: [],
@@ -267,7 +262,7 @@ export async function buildIOSLocalSetupProposal(
     selectedTarget,
     prebuiltAuthActive ? "prebuilt" : productDecision,
   )
-      ? await planIOSDirectConfig({
+    ? await planIOSDirectConfig({
         root: options.root,
         projectPath: selection.projectPath,
         targetId: selection.targetId,
@@ -313,18 +308,16 @@ export async function buildIOSLocalSetupProposal(
     associatedDomainPlan: plannedAssociatedDomain,
     platformViews,
   });
-  const macOSNetworkCapabilityPlan =
-    selectedTarget.supportedPlatforms.includes("macos")
-      ? await planMacOSNetworkCapability({
-          root: options.root,
-          projectPath: selection.projectPath,
-          targetId: selection.targetId,
-          allowMissingEntitlementsCreation: true,
-        })
-      : undefined;
+  const macOSNetworkCapabilityPlan = selectedTarget.supportedPlatforms.includes("macos")
+    ? await planMacOSNetworkCapability({
+        root: options.root,
+        projectPath: selection.projectPath,
+        targetId: selection.targetId,
+        allowMissingEntitlementsCreation: true,
+      })
+    : undefined;
 
-  const hasLocalAppleEntitlement =
-    iosPlatformViewsHaveAppleEntitlementIntent(platformViews);
+  const hasLocalAppleEntitlement = iosPlatformViewsHaveAppleEntitlementIntent(platformViews);
   let nativeAppleRequested = options.signInWithApple === true;
   if (
     !nativeAppleRequested &&
@@ -356,6 +349,12 @@ export async function buildIOSLocalSetupProposal(
       : inspectedAppleEntitlementPlan?.status === "satisfied"
         ? inspectedAppleEntitlementPlan
         : undefined;
+  // Surface incomplete Apple capability state in previews without authorizing
+  // the mutating path to finish it unless this invocation explicitly opted in.
+  const appleEntitlementPlanForSetup =
+    nativeAppleRequested || hasLocalAppleEntitlement
+      ? inspectedAppleEntitlementPlan
+      : appleEntitlementPlan;
   const prebuiltAuthAppleEntitlementPlan = prebuiltAuthActive
     ? inspectedAppleEntitlementPlan
     : undefined;
@@ -371,7 +370,7 @@ export async function buildIOSLocalSetupProposal(
     directConfigPlan,
     associatedDomainPlan: plannedAssociatedDomain,
     macOSNetworkCapabilityPlan,
-    appleEntitlementPlan,
+    appleEntitlementPlan: appleEntitlementPlanForSetup,
     prebuiltAuthPlan: prebuiltAuthPlanForSetup,
     prebuiltAuthSelected: prebuiltAuthRequested,
   });

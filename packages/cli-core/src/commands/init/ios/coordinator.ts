@@ -23,10 +23,7 @@ import { inspectIOSProject } from "./inspect.ts";
 import { type IOSLocalSetupResult } from "./apply.ts";
 import { createIOSDryRunOutput, formatIOSSetupPlan } from "./output.ts";
 import { buildIOSLocalSetupProposal, createIOSLocalSetupContext } from "./local-plan.ts";
-import {
-  iosPlatformViewsIdentityMatches,
-  reinspectIOSPlatformViews,
-} from "./platform-views.ts";
+import { iosPlatformViewsIdentityMatches, reinspectIOSPlatformViews } from "./platform-views.ts";
 
 type LinkedProfile = Awaited<ReturnType<typeof resolveProfile>>;
 
