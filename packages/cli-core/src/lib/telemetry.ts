@@ -73,7 +73,6 @@ export type TelemetryStage =
   // `clerk doctor`
   | "doctor_checks"
   | "doctor_ios_audit"
-  | "doctor_xcode"
   | "doctor_fix"
   | "doctor_verify"
   // `clerk auth login`

@@ -3,12 +3,7 @@ import type { FrameworkInfo } from "../../lib/framework.ts";
 import * as telemetryMod from "../../lib/telemetry.ts";
 import type { IOSProjectInspectionResult } from "../init/ios/types.ts";
 import { checkEnvVars } from "./checks.ts";
-import {
-  getDoctorChecks,
-  runChecks,
-  validateDoctorOptions,
-  type DoctorRunDependencies,
-} from "./index.ts";
+import { getDoctorChecks, runChecks, type DoctorRunDependencies } from "./index.ts";
 import type { CheckResult, DoctorContext } from "./types.ts";
 
 const IOS_FRAMEWORK: FrameworkInfo = {
@@ -35,7 +30,6 @@ function runDependencies(overrides: Partial<DoctorRunDependencies> = {}): Doctor
       inspection: IOS_INSPECTION,
       results: [passingResult("iOS")],
     }),
-    runIOSXcodeVerification: async () => [passingResult("Xcode")],
     ...overrides,
   };
 }
@@ -47,36 +41,15 @@ describe("getDoctorChecks", () => {
   });
 });
 
-describe("validateDoctorOptions", () => {
-  test("rejects device selection without simulator launch", () => {
-    expect(() => validateDoctorOptions({ device: "SIM-UDID" })).toThrow(
-      "--device can only be used with --simulator",
-    );
-  });
-
-  test("rejects scheme selection when no Xcode phase was requested", () => {
-    expect(() => validateDoctorOptions({ scheme: "MyApp" })).toThrow(
-      "--xcode-container and --scheme require",
-    );
-  });
-
-  test("prevents auto-fix from executing Xcode twice", () => {
-    expect(() => validateDoctorOptions({ fix: true, build: true })).toThrow(
-      "--fix cannot be combined with Xcode execution flags",
-    );
-  });
-});
-
 describe("doctor telemetry stages", () => {
-  test("reports the ordered iOS and Xcode diagnostic boundaries", async () => {
+  test("reports the ordered native diagnostic boundaries", async () => {
     const stage = spyOn(telemetryMod, "setTelemetryStage");
     try {
-      await runChecks(DOCTOR_CONTEXT, { build: true }, { dependencies: runDependencies() });
+      await runChecks(DOCTOR_CONTEXT, { target: "MyApp" }, { dependencies: runDependencies() });
 
       expect(stage.mock.calls.map((call) => call[0])).toEqual([
         "doctor_checks",
         "doctor_ios_audit",
-        "doctor_xcode",
       ]);
     } finally {
       stage.mockRestore();
@@ -100,28 +73,6 @@ describe("doctor telemetry stages", () => {
 
       expect(results.at(-1)?.status).toBe("fail");
       expect(stage.mock.calls.map((call) => call[0]).at(-1)).toBe("doctor_ios_audit");
-    } finally {
-      stage.mockRestore();
-    }
-  });
-
-  test("stops at the Xcode stage when opt-in execution fails", async () => {
-    const stage = spyOn(telemetryMod, "setTelemetryStage");
-    try {
-      const results = await runChecks(
-        DOCTOR_CONTEXT,
-        { build: true },
-        {
-          dependencies: runDependencies({
-            runIOSXcodeVerification: async () => {
-              throw new Error("build failed");
-            },
-          }),
-        },
-      );
-
-      expect(results.at(-1)?.status).toBe("fail");
-      expect(stage.mock.calls.map((call) => call[0]).at(-1)).toBe("doctor_xcode");
     } finally {
       stage.mockRestore();
     }

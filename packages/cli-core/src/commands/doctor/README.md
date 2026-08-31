@@ -1,8 +1,8 @@
 # Doctor Command
 
 Runs a series of diagnostic checks on your Clerk CLI setup and reports
-the status of each check. The command is read-only by default. `--fix` and the
-explicit Xcode execution flags are the only modes which can change local state.
+the status of each check. The command is read-only and never modifies
+project or remote application state unless `--fix` is used.
 
 ## Usage
 
@@ -13,26 +13,17 @@ clerk doctor --json      # Output results as JSON
 clerk doctor --spotlight # Only show warnings and failures
 clerk doctor --fix       # Offer to auto-fix issues
 clerk doctor --target MyApp
-clerk doctor --target MyApp --build
-clerk doctor --target MyApp --resolve-packages --build
-clerk doctor --target MyApp --simulator --device <udid>
 ```
 
 ## Options
 
-| Flag                 | Description                                                                    |
-| -------------------- | ------------------------------------------------------------------------------ |
-| `--verbose`          | Show detailed diagnostic info for each check                                   |
-| `--json`             | Output results as machine-readable JSON                                        |
-| `--spotlight`        | Only show warnings and failures (hide passing checks)                          |
-| `--fix`              | Offer to auto-fix issues with known remedies                                   |
-| `--target`           | Select an iOS application target by name or object ID                          |
-| `--xcode-container`  | Select an inspected `.xcodeproj` or `.xcworkspace` for execution checks        |
-| `--scheme`           | Select an Xcode scheme for execution checks                                    |
-| `--resolve-packages` | Explicitly allow Xcode to resolve Swift packages and update `Package.resolved` |
-| `--build`            | Build the selected iOS app for Simulator in an isolated directory              |
-| `--simulator`        | Build, install, and launch the selected app in Simulator                       |
-| `--device`           | Simulator UDID or exact device name (requires `--simulator`)                   |
+| Flag          | Description                                           |
+| ------------- | ----------------------------------------------------- |
+| `--verbose`   | Show detailed diagnostic info for each check          |
+| `--json`      | Output results as machine-readable JSON               |
+| `--spotlight` | Only show warnings and failures (hide passing checks) |
+| `--fix`       | Offer to auto-fix issues with known remedies          |
+| `--target`    | Select an iOS application target by name or object ID |
 
 ## Checks
 
@@ -78,25 +69,9 @@ in human or JSON output. AuthView, Native Application, and Apple remote checks
 are GET-only. Their remedies point back to `clerk init`; `doctor --fix` never
 enables an auth strategy or changes Native Application state.
 
-Plain `clerk doctor` remains read-only and does not invoke Xcode. The execution
-flags are deliberately opt-in because Xcode can run package manifests, plugins,
-macros, and project build scripts:
-
-- `--resolve-packages` is the only mode allowed to create or update the
-  selected container's shared `Package.resolved`.
-- `--build` requires a locked remote package graph, verifies the chosen scheme
-  belongs to the selected target, disables signing, filters Clerk credentials
-  from the child environment, and uses isolated DerivedData and package
-  checkouts. Without `--resolve-packages`, it builds through a temporary
-  workspace with a private copy of `Package.resolved`.
-- `--simulator` additionally installs and launches that isolated build. It
-  never guesses among multiple devices; agent mode requires `--device`.
-
-A successful build or launch is not a successful authentication test. Doctor
-still asks the developer to verify sign-in, sign-out, relaunch, and any redirect
-methods in the app. Projects with a custom publishable-key source are built but
-must be launched from Xcode, because `simctl launch` cannot reproduce or verify
-arbitrary custom runtime inputs.
+`clerk doctor` inspects configuration and remote Clerk state without invoking
+Xcode package resolution, builds, or Simulator execution. Build and runtime
+verification remain with Xcode and the project's existing test workflow.
 
 ### Keyless applications
 
@@ -135,10 +110,6 @@ re-run to verify the results.
 `--fix` only works in human mode because the underlying fix actions are
 interactive (`clerk auth login` opens a browser, `clerk link` shows a
 picker). It is ignored in `--json` mode and agent mode.
-
-`--fix` cannot be combined with Xcode execution flags. This prevents the
-post-fix verification pass from resolving, building, or launching a project a
-second time.
 
 Fixable issues:
 

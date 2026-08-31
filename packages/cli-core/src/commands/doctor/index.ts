@@ -3,7 +3,7 @@ import { isAgent, isHuman } from "../../mode.ts";
 import { bold, green, red } from "../../lib/color.ts";
 import { detectFramework } from "../../lib/framework.ts";
 import { log } from "../../lib/log.ts";
-import { CliError, ERROR_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, errorMessage } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { setTelemetryStage } from "../../lib/telemetry.ts";
 import { createDoctorContext } from "./context.ts";
@@ -22,7 +22,6 @@ import {
 import { checkMcp } from "./check-mcp.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
 import { runIOSDoctorChecks } from "./ios.ts";
-import { runIOSXcodeVerification } from "./ios-xcode.ts";
 import type { CheckFn, CheckResult, DoctorContext, DoctorOptions } from "./types.ts";
 
 const ACCOUNT_CHECKS: CheckFn[] = [
@@ -45,14 +44,12 @@ export interface DoctorRunDependencies {
   detectFramework: typeof detectFramework;
   getDoctorChecks: typeof getDoctorChecks;
   runIOSDoctorChecks: typeof runIOSDoctorChecks;
-  runIOSXcodeVerification: typeof runIOSXcodeVerification;
 }
 
 const defaultDoctorRunDependencies: DoctorRunDependencies = {
   detectFramework,
   getDoctorChecks,
   runIOSDoctorChecks,
-  runIOSXcodeVerification,
 };
 
 interface RunChecksOptions {
@@ -67,12 +64,7 @@ export async function runChecks(
 ): Promise<CheckResult[]> {
   const dependencies = runOptions.dependencies ?? defaultDoctorRunDependencies;
   setTelemetryStage(runOptions.initialStage ?? "doctor_checks");
-  const explicitlyRequestsIOS =
-    options.target != null ||
-    options.xcodeContainer != null ||
-    options.resolvePackages === true ||
-    options.build === true ||
-    options.simulator === true;
+  const explicitlyRequestsIOS = options.target != null;
   const framework = explicitlyRequestsIOS
     ? { dep: "ios" }
     : await dependencies.detectFramework(process.cwd());
@@ -91,40 +83,14 @@ export async function runChecks(
     }),
   );
 
-  const executesXcode =
-    options.resolvePackages || options.build || options.simulator || options.device != null;
-  if (!ios) {
-    return executesXcode
-      ? [
-          ...common,
-          {
-            name: "Xcode verification",
-            status: "fail",
-            message: "Xcode verification requires an iOS project",
-            remedy: "Run from an Xcode project root, or remove the Xcode execution flags.",
-          },
-        ]
-      : common;
-  }
+  if (!ios) return common;
   try {
     setTelemetryStage("doctor_ios_audit");
     const iosChecks = await dependencies.runIOSDoctorChecks(ctx, {
       root: process.cwd(),
       ...(options.target ? { target: options.target } : {}),
     });
-    let xcodeChecks: CheckResult[] = [];
-    if (executesXcode) {
-      setTelemetryStage("doctor_xcode");
-      xcodeChecks = await dependencies.runIOSXcodeVerification(iosChecks.inspection, {
-        ...(options.xcodeContainer ? { container: options.xcodeContainer } : {}),
-        ...(options.scheme ? { scheme: options.scheme } : {}),
-        ...(options.resolvePackages ? { resolvePackages: true } : {}),
-        ...(options.build ? { build: true } : {}),
-        ...(options.simulator ? { simulator: true } : {}),
-        ...(options.device ? { device: options.device } : {}),
-      });
-    }
-    return [...common, ...iosChecks.results, ...xcodeChecks];
+    return [...common, ...iosChecks.results];
   } catch {
     return [
       ...common,
@@ -148,30 +114,7 @@ function printResults(results: CheckResult[], options: DoctorOptions): void {
   log.blank();
 }
 
-export function validateDoctorOptions(options: DoctorOptions): void {
-  if (options.device && !options.simulator) {
-    throwUsageError("--device can only be used with --simulator.");
-  }
-  const executesXcode =
-    options.resolvePackages || options.build || options.simulator || options.device != null;
-  if ((options.xcodeContainer || options.scheme) && !executesXcode) {
-    throwUsageError(
-      "--xcode-container and --scheme require --resolve-packages, --build, or --simulator.",
-    );
-  }
-  if (options.simulator && isAgent() && !options.device) {
-    throwUsageError("--simulator requires --device <udid-or-exact-name> in agent mode.");
-  }
-  if (options.fix && executesXcode) {
-    throwUsageError(
-      "--fix cannot be combined with Xcode execution flags. Run fixes first, then rerun doctor with the build option.",
-    );
-  }
-}
-
 export async function doctor(options: DoctorOptions = {}): Promise<void> {
-  validateDoctorOptions(options);
-
   if (!options.json) {
     intro("Running diagnostics");
   }
@@ -266,12 +209,6 @@ export function registerDoctor(program: Program): void {
     .option("--spotlight", "Only show warnings and failures")
     .option("--fix", "Attempt to auto-fix issues")
     .option("--target <name-or-id>", "Select an iOS application target")
-    .option("--xcode-container <path>", "Use an explicit Xcode project or workspace")
-    .option("--scheme <name>", "Use an explicit Xcode scheme for execution checks")
-    .option("--resolve-packages", "Allow Xcode to resolve Swift package dependencies")
-    .option("--build", "Build the selected iOS scheme for the simulator")
-    .option("--simulator", "Build, install, and launch in an iOS Simulator")
-    .option("--device <udid-or-name>", "Simulator UDID or exact device name")
     .setExamples([
       { command: "clerk doctor", description: "Run all health checks" },
       { command: "clerk doctor --verbose", description: "Show detailed output for each check" },
@@ -281,10 +218,6 @@ export function registerDoctor(program: Program): void {
       {
         command: "clerk doctor --target MyApp",
         description: "Audit a specific iOS application target",
-      },
-      {
-        command: "clerk doctor --target MyApp --build",
-        description: "Audit and compile an iOS application target",
       },
     ])
     .action(doctor);
