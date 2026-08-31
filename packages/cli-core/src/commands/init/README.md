@@ -54,7 +54,7 @@ clerk init --dry-run --target MyApp --json
 
 `clerk init --dry-run` takes a separate, read-only path for existing native iOS and macOS projects. It inspects Xcode projects and workspaces, application targets and build configurations, Swift Package Manager linkage, target source membership, Swift Clerk setup, and entitlements. It then prints an ordered setup plan with a top-level status of `ready`, `action-required`, or `blocked`.
 
-Automatic mutation currently supports targets whose shipping platforms are all iOS or macOS. A target that also ships visionOS—including Xcode's standard Multiplatform App template—is still inspected and receives a blocked plan explaining the boundary, but normal `clerk init` stops before changing local files or remote Clerk state. Use an iOS/macOS-only target for automatic setup or configure that multiplatform target manually.
+Automatic mutation currently supports targets whose shipping platforms are all iOS or macOS. A target that also ships visionOS—including Xcode's standard Multiplatform App template—is still inspected and receives a blocked plan explaining the boundary, but normal `clerk init` applies no new Clerk setup changes and performs no remote writes. Use an iOS/macOS-only target for automatic setup or configure that multiplatform target manually.
 
 Publishable-key inspection intentionally has a narrow boundary. One literal passed directly to `Clerk.configure(publishableKey:)` in the selected app's startup initializer can be validated with its value redacted. Every other expression is classified as custom: the CLI preserves it without reading its backing file, scheme, environment, or value.
 
