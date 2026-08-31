@@ -9,6 +9,7 @@ import type { DoctorContext } from "../../doctor/types.ts";
 import { inspectIOSProject } from "./inspect.ts";
 import { applyIOSLocalSetup, applyIOSPlannedLocalSetup } from "./apply.ts";
 import {
+  addVisionOSDestinationsToFixture,
   convertIOSFixtureToMultiplatform,
   convertIOSFixtureToPlatformFilteredAppRoots,
   convertIOSFixtureToSynchronizedMissingEntitlements,
@@ -550,7 +551,30 @@ struct MyApp: App {
       }),
     ).rejects.toMatchObject({
       code: ERROR_CODE.IOS_TARGET_UNRESOLVED,
-      message: expect.stringContaining("platform could not be proven consistently"),
+      message: expect.stringContaining("does not have one proven native platform"),
+    });
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test("blocks a visionOS-bearing target before local or remote mutation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-native-visionos-platform-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true });
+    await convertIOSFixtureToMultiplatform(root);
+    await addVisionOSDestinationsToFixture(root);
+    const before = await treeDigest(root);
+
+    await expect(
+      applyIOSLocalSetup({
+        root,
+        target: "MyApp",
+        yes: true,
+        agent: true,
+        allowDirty: false,
+      }),
+    ).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_TARGET_UNRESOLVED,
+      message: expect.stringContaining("also ships visionOS"),
     });
     expect(await treeDigest(root)).toEqual(before);
   });

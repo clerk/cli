@@ -160,6 +160,16 @@ function buildFilePlatformApplicability(
   return { applies, recognized: true };
 }
 
+function describeUnmodeledApplePlatforms(platforms: string[]): string {
+  const hasVisionOS = platforms.some((platform) =>
+    /^(?:visionos|xros|xrsimulator)$/i.test(platform),
+  );
+  const remaining = platforms.filter(
+    (platform) => !/^(?:visionos|xros|xrsimulator)$/i.test(platform),
+  );
+  return [...(hasVisionOS ? ["visionOS"] : []), ...remaining].join(", ");
+}
+
 function inspectInlinePublishableKey(
   target: IOSAppTarget | undefined,
   diagnostics: IOSDiagnostic[],
@@ -1145,13 +1155,13 @@ async function parseProject(
         severity: "error",
         message:
           unmodeledPlatforms.length > 0
-            ? `${targetName} also supports ${unmodeledPlatforms.join(
-                ", ",
-              )}, which Clerk CLI does not automate.`
+            ? `${targetName} also ships ${describeUnmodeledApplePlatforms(
+                unmodeledPlatforms,
+              )}, which Clerk CLI can inspect but does not automate.`
             : `${targetName} does not have one proven native platform across every build configuration (${configurationSummary}).`,
         remedy:
           unmodeledPlatforms.length > 0
-            ? "Use an iOS/macOS-only target for automatic setup, or configure Clerk manually for this multiplatform target."
+            ? "Read-only inspection completed. Automatic setup requires every shipping platform to be iOS or macOS; use an iOS/macOS-only target or configure Clerk manually for this multiplatform target."
             : "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently for every build configuration before running Clerk setup.",
         evidence: [
           {

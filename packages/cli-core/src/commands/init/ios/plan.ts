@@ -33,6 +33,26 @@ function selectedEvidence(target: IOSAppTarget | undefined): IOSSourceEvidence[]
   return target ? [{ path: target.projectPath, objectId: target.id }] : [];
 }
 
+export function selectedTargetPlatformBlockerDescription(
+  inspection: IOSProjectInspectionResult,
+  target: IOSAppTarget,
+): string {
+  const diagnostic = inspection.diagnostics.find(
+    (candidate) =>
+      candidate.code === "xcode.unresolved-target-platform" &&
+      candidate.evidence.some(
+        (evidence) =>
+          evidence.objectId === target.id &&
+          (evidence.path === target.projectPath ||
+            evidence.path.startsWith(`${target.projectPath}/`)),
+      ),
+  );
+  if (diagnostic) {
+    return `${diagnostic.message}${diagnostic.remedy ? ` ${diagnostic.remedy}` : ""}`;
+  }
+  return `${target.name} was found, but its platform is not proven consistently across every build configuration. Resolve SDKROOT and SUPPORTED_PLATFORMS before Clerk changes the project or remote application.`;
+}
+
 function distinctResolvedBundleIdentifiers(target: IOSAppTarget): string[] {
   const candidatesByIdentity = new Map<string, string>();
   for (const configuration of target.configurations) {
@@ -101,6 +121,10 @@ export function buildIOSSetupPlan(
 ): IOSSetupPlan {
   const target = selectedTarget(inspection);
   const targetEvidence = selectedEvidence(target);
+  const platformBlocker =
+    target && !target.platformEvidenceComplete
+      ? selectedTargetPlatformBlockerDescription(inspection, target)
+      : undefined;
   const steps: IOSSetupStep[] = [];
   const platform =
     target?.platform ??
@@ -120,7 +144,7 @@ export function buildIOSSetupPlan(
       selectTargetTitle,
       target?.platformEvidenceComplete ? "satisfied" : "blocked",
       target && !target.platformEvidenceComplete
-        ? `${target.name} was found, but its platform is not proven consistently across every build configuration. Resolve SDKROOT and SUPPORTED_PLATFORMS before Clerk changes the project or remote application.`
+        ? platformBlocker!
         : target
           ? `Using ${target.name} in ${target.projectPath}.`
           : inspection.selection.state === "ambiguous"
@@ -166,7 +190,7 @@ export function buildIOSSetupPlan(
           title,
           "blocked",
           target
-            ? "Resolve the selected target's platform consistently across every build configuration before planning this step."
+            ? "Clerk cannot safely automate this target. See the target-selection step and platform diagnostic above."
             : "Select a native Apple application target before planning this step.",
         ),
       );

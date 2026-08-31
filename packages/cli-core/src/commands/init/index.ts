@@ -992,7 +992,7 @@ export function registerInit(program: Program): void {
     )
     .option(
       "--dry-run",
-      "Inspect an existing native Apple project and print a setup plan without changing local or remote state",
+      "Inspect an existing Xcode project and print an iOS/macOS setup plan without changing local or remote state",
     )
     .option("--json", "Output the read-only native Apple inspection and setup plan as JSON")
     .option(

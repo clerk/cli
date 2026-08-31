@@ -44,7 +44,7 @@ describe("iOS local setup lifecycle", () => {
     expect(proposal.nativeAppleRequested).toBe(false);
   });
 
-  test("uses the same read-only proposal for preview and apply", async () => {
+  test("keeps the iOS setup plan equal between preview and apply and reruns byte-identically", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-local-plan-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, { clerkSDK: false, includeKey: false });
@@ -110,7 +110,7 @@ describe("iOS local setup lifecycle", () => {
     expect(await treeDigest(root)).toEqual(appliedBytes);
   });
 
-  test("uses the same proposal for pure macOS preview, apply, and rerun", async () => {
+  test("keeps the macOS setup plan equal between preview and apply and reruns byte-identically", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-macos-local-plan-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, {
@@ -180,7 +180,7 @@ describe("iOS local setup lifecycle", () => {
     expect(await treeDigest(root)).toEqual(appliedBytes);
   });
 
-  test("uses the same proposal for shared iOS and macOS preview, apply, and rerun", async () => {
+  test("keeps the shared setup plan equal between preview and apply and reruns byte-identically", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-multiplatform-local-plan-"));
     temporaryDirectories.push(root);
     await createIOSFixture(root, { clerkSDK: false, includeKey: false });

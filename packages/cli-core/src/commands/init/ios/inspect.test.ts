@@ -7,7 +7,13 @@ import { discoverIOSContainers, discoverLocalIOSProjects, inspectWorkspace } fro
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
 import { recoverIOSFileTransactions } from "./file-transaction.ts";
 import type { PbxObject, PbxObjects } from "./pbx.ts";
-import { createIOSFixture, IOS_FIXTURE_IDS, treeDigest } from "./test-helpers.ts";
+import {
+  addVisionOSDestinationsToFixture,
+  convertIOSFixtureToMultiplatform,
+  createIOSFixture,
+  IOS_FIXTURE_IDS,
+  treeDigest,
+} from "./test-helpers.ts";
 
 const temporaryDirectories: string[] = [];
 const FILE_TRANSACTION_MODULE = `${import.meta.dir}/file-transaction.ts`;
@@ -1577,6 +1583,27 @@ let package = Package(
         severity: "error",
         message: expect.stringContaining("Debug=macOS, Release=unresolved"),
       }),
+    );
+  });
+
+  test("names the visionOS boundary while preserving read-only inspection", async () => {
+    const root = await fixture({ complete: true });
+    await convertIOSFixtureToMultiplatform(root);
+    await addVisionOSDestinationsToFixture(root);
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.selection).toMatchObject({ state: "selected", targetName: "MyApp" });
+    expect(inspection.appTargets[0]?.platformEvidenceComplete).toBe(false);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.unresolved-target-platform",
+        message: "MyApp also ships visionOS, which Clerk CLI can inspect but does not automate.",
+        remedy: expect.stringContaining("Read-only inspection completed"),
+      }),
+    );
+    expect(inspection.diagnostics.map((diagnostic) => diagnostic.message).join("\n")).not.toContain(
+      "xros",
     );
   });
 
