@@ -22,6 +22,7 @@ export const ios: FrameworkScaffold = {
   matches: (ctx) => ctx.framework.dep === "ios",
 
   async scaffold(ctx: ProjectContext): Promise<ScaffoldPlan> {
+    // Rebuild the aggregate proposal from post-apply state so guidance describes remaining work.
     const inspection = await inspectIOSProject(ctx.cwd, {
       target: ctx.iosTarget,
       exhaustiveContainerDiscovery: true,

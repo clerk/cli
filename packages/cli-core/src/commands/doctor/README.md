@@ -58,6 +58,8 @@ reports separate results for:
 - the Clerk Apple connection when the selected target already declares the
   native Apple entitlement.
 
+Doctor can still inspect and diagnose an iOS or macOS target that also ships visionOS. It reports that platform boundary as a failure instead of treating the integration as ready for automatic setup; `clerk init` then leaves both the Xcode project and remote Clerk state unchanged. Doctor itself remains read-only.
+
 Native Apple diagnostics never require a secret key in the Xcode project or an env
 file. A direct literal publishable key is compared with the linked development
 application using only redacted Frontend API host metadata. For a single
