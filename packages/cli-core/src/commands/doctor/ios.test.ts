@@ -534,6 +534,42 @@ describe("runIOSDoctorChecks", () => {
     expect(audit.results[0]?.detail).toContain("does not have one proven native platform");
   });
 
+  test("fails locally without SDK or remote planning for a Catalyst-enabled target", async () => {
+    const root = await fixture({ complete: true });
+    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+    const project = await readFile(projectPath, "utf8");
+    await writeFile(
+      projectPath,
+      project.replaceAll(
+        'SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";',
+        'SUPPORTS_MACCATALYST = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";',
+      ),
+    );
+    let sdkPlanCalls = 0;
+    let remoteCalls = 0;
+
+    const audit = await runIOSDoctorChecks(
+      context(),
+      { root, target: "MyApp" },
+      dependencies({
+        planIOSSDKInstall: async (...args) => {
+          sdkPlanCalls += 1;
+          return planIOSSDKInstall(...args);
+        },
+        fetchApplication: async () => {
+          remoteCalls += 1;
+          throw new Error("remote inspection must not run");
+        },
+      }),
+    );
+
+    expect(audit.inspection.appTargets[0]?.platformEvidenceComplete).toBe(false);
+    expect(sdkPlanCalls).toBe(0);
+    expect(remoteCalls).toBe(0);
+    expect(audit.results.every((result) => result.status === "fail")).toBe(true);
+    expect(audit.results[0]?.detail).toContain("also ships Mac Catalyst");
+  });
+
   test("reports missing macOS sandbox network access without changing the project", async () => {
     const root = await fixture({
       complete: true,

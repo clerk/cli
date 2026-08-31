@@ -63,6 +63,18 @@ async function convertFixtureToUnsandboxedMultiplatform(root: string): Promise<v
   );
 }
 
+async function enableMacCatalystInFixture(root: string): Promise<void> {
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = parsePbxProject(await Bun.file(projectPath).text());
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
+  for (const id of [IOS_FIXTURE_IDS.targetDebug, IOS_FIXTURE_IDS.targetRelease]) {
+    const settings = objects[id]!.buildSettings as Record<string, unknown>;
+    settings.SUPPORTS_MACCATALYST = "YES";
+    settings["PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]"] = "com.example.MyApp.catalyst";
+  }
+  await Bun.write(projectPath, buildPbxProject(project));
+}
+
 function doctorContext(): DoctorContext {
   const noopFix = () => ({ label: "noop", run: async () => {} });
   return {
@@ -575,6 +587,28 @@ struct MyApp: App {
     ).rejects.toMatchObject({
       code: ERROR_CODE.IOS_TARGET_UNRESOLVED,
       message: expect.stringContaining("also ships visionOS"),
+    });
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test("blocks a Catalyst-enabled target before local or remote mutation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-native-catalyst-platform-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true });
+    await enableMacCatalystInFixture(root);
+    const before = await treeDigest(root);
+
+    await expect(
+      applyIOSLocalSetup({
+        root,
+        target: "MyApp",
+        yes: true,
+        agent: true,
+        allowDirty: false,
+      }),
+    ).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_TARGET_UNRESOLVED,
+      message: expect.stringContaining("also ships Mac Catalyst"),
     });
     expect(await treeDigest(root)).toEqual(before);
   });
