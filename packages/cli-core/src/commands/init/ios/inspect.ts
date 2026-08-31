@@ -366,6 +366,23 @@ async function inspectEntitlements(
     const parsed = parseIOSPlist(new TextDecoder().decode(bytes));
     if (!isRecord(parsed)) throw new Error("plist root is not a dictionary");
 
+    const associatedDomainsKey = "com.apple.developer.associated-domains";
+    const rawAssociatedDomains = parsed[associatedDomainsKey];
+    if (
+      Object.hasOwn(parsed, associatedDomainsKey) &&
+      (!Array.isArray(rawAssociatedDomains) ||
+        !rawAssociatedDomains.every((value): value is string => typeof value === "string"))
+    ) {
+      diagnostics.push({
+        code: "xcode.invalid-associated-domains",
+        severity: "warning",
+        message: `${relativePath} has an invalid Associated Domains entitlement value.`,
+        remedy: `Set ${associatedDomainsKey} to an array containing only strings, then rerun the inspector.`,
+        evidence: [{ path: relativePath, keyPath: associatedDomainsKey }],
+      });
+      return undefined;
+    }
+    const associatedDomains = Array.isArray(rawAssociatedDomains) ? rawAssociatedDomains : [];
     const applicationIdentifier = asString(parsed["application-identifier"]);
     const signInWithAppleState = appleEntitlementState(parsed);
     if (signInWithAppleState === "invalid") {
@@ -379,7 +396,7 @@ async function inspectEntitlements(
     }
     return {
       path: relativePath,
-      associatedDomains: stringArray(parsed["com.apple.developer.associated-domains"]).sort(),
+      associatedDomains: associatedDomains.sort((left, right) => left.localeCompare(right)),
       unresolvedAssociatedDomains: [],
       applicationIdentifier,
       teamIdentifier: asString(parsed["com.apple.developer.team-identifier"]),
