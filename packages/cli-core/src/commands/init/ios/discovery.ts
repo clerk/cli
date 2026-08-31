@@ -44,9 +44,15 @@ export interface IOSProjectReferenceDiscovery {
   complete: boolean;
 }
 
+export interface IOSLocalProjectInventory {
+  projectPaths: string[];
+  /** False when traversal or workspace inspection could have hidden another local project. */
+  complete: boolean;
+}
+
 export interface IOSContainerDiscoveryOptions {
   /**
-   * Traverse deeply enough for strict cross-target source-ownership proofs.
+   * Traverse deeply enough for strict cross-target ownership proofs.
    * Any traversal limit or read failure is returned as incomplete so callers
    * can fail closed instead of treating a partial inventory as exhaustive.
    */
@@ -564,7 +570,11 @@ export function xcodeSchemeRunnableReferenceAttributes(
 export async function inspectWorkspace(
   rootInput: string,
   workspacePath: string,
-): Promise<{ inspection: IOSWorkspaceInspection; localProjectPaths: string[] }> {
+): Promise<{
+  inspection: IOSWorkspaceInspection;
+  localProjectPaths: string[];
+  complete: boolean;
+}> {
   const root = resolve(rootInput);
   const contentsPath = resolve(workspacePath, "contents.xcworkspacedata");
   let xml = "";
@@ -579,6 +589,7 @@ export async function inspectWorkspace(
     return {
       inspection: { path: relativeIOSPath(root, workspacePath), projectPaths: [] },
       localProjectPaths: [],
+      complete: false,
     };
   }
 
@@ -586,26 +597,50 @@ export async function inspectWorkspace(
   const localProjectPaths = new Set<string>();
   const workspaceDirectory = dirname(workspacePath);
   const groupBases = [workspaceDirectory];
+  let complete = true;
+  let sawWorkspace = false;
+  let workspaceOpen = false;
   const elementPattern = /<(\/)?(Workspace|Group|FileRef)\b([^>]*)>/g;
   for (const match of xml.matchAll(elementPattern)) {
     const closing = match[1] === "/";
     const tag = match[2];
     const attributes = match[3] ?? "";
+    const selfClosing = attributes.trimEnd().endsWith("/");
+    if (tag === "Workspace") {
+      if (closing) {
+        if (!workspaceOpen) complete = false;
+        workspaceOpen = false;
+      } else {
+        if (sawWorkspace || workspaceOpen) complete = false;
+        sawWorkspace = true;
+        workspaceOpen = !selfClosing;
+      }
+      continue;
+    }
+    if (!workspaceOpen) complete = false;
     if (tag === "Group") {
       if (closing) {
-        if (groupBases.length > 1) groupBases.pop();
+        if (groupBases.length > 1) {
+          groupBases.pop();
+        } else {
+          complete = false;
+        }
       } else {
         const base = groupBases.at(-1) ?? workspaceDirectory;
         groupBases.push(
           resolveWorkspaceLocation(base, xmlAttribute(attributes, "location"), workspaceDirectory),
         );
-        if (attributes.trimEnd().endsWith("/")) groupBases.pop();
+        if (selfClosing) groupBases.pop();
       }
       continue;
     }
     if (closing || tag !== "FileRef") continue;
 
     const location = xmlAttribute(attributes, "location");
+    if (!location) {
+      complete = false;
+      continue;
+    }
     const base = groupBases.at(-1) ?? workspaceDirectory;
     const embeddedProject =
       location === "self:" && workspaceDirectory.endsWith(".xcodeproj")
@@ -616,7 +651,15 @@ export async function inspectWorkspace(
       embeddedProject ?? resolveWorkspaceLocation(base, location, workspaceDirectory);
     const safelyLocal = await pathIsSafelyWithinIOSRoot(root, absolutePath);
     projectPaths.add(safelyLocal ? relativeIOSPath(root, absolutePath) : absolutePath);
-    if (safelyLocal) localProjectPaths.add(absolutePath);
+    if (safelyLocal) {
+      localProjectPaths.add(absolutePath);
+    } else {
+      // Keep external references visible in the serializable workspace
+      // inventory, but do not treat the local project graph as exhaustive.
+      // Ownership-sensitive writers must fail closed because an external
+      // target could still reference the same file.
+      complete = false;
+    }
   }
 
   return {
@@ -625,7 +668,43 @@ export async function inspectWorkspace(
       projectPaths: [...projectPaths].sort(),
     },
     localProjectPaths: [...localProjectPaths].sort(),
+    complete: complete && sawWorkspace && !workspaceOpen && groupBases.length === 1,
   };
+}
+
+/**
+ * Builds the exhaustive local Xcode-project inventory required by mutation
+ * ownership proofs. Callers must fail closed when `complete` is false.
+ */
+export async function discoverLocalIOSProjects(
+  rootInput: string,
+  requiredProjectPaths: readonly string[] = [],
+): Promise<IOSLocalProjectInventory> {
+  const root = resolve(rootInput);
+  const containers = await discoverIOSContainers(root, { exhaustive: true });
+  const projectPaths = new Set(containers.projectPaths);
+  let complete = containers.complete;
+
+  for (const workspacePath of containers.workspacePaths) {
+    const workspace = await inspectWorkspace(root, workspacePath);
+    complete &&= workspace.complete;
+    for (const projectPath of workspace.localProjectPaths) projectPaths.add(projectPath);
+  }
+
+  for (const projectPath of requiredProjectPaths) {
+    const absoluteProjectPath = resolve(root, projectPath);
+    if (!(await pathIsSafelyWithinIOSRoot(root, absoluteProjectPath))) {
+      complete = false;
+      continue;
+    }
+    projectPaths.add(absoluteProjectPath);
+  }
+
+  const referencedProjects = await discoverReferencedIOSProjects(root, projectPaths);
+  complete &&= referencedProjects.complete;
+  for (const projectPath of referencedProjects.projectPaths) projectPaths.add(projectPath);
+
+  return { projectPaths: [...projectPaths].sort(), complete };
 }
 
 export function pathIsWithinIOSRoot(rootInput: string, candidate: string): boolean {

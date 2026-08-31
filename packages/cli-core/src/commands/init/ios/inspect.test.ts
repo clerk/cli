@@ -3,7 +3,7 @@ import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcod
 import { lstat, mkdtemp, mkdir, readFile, rm, symlink, truncate } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { discoverIOSContainers, inspectWorkspace } from "./discovery.ts";
+import { discoverIOSContainers, discoverLocalIOSProjects, inspectWorkspace } from "./discovery.ts";
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
 import { recoverIOSFileTransactions } from "./file-transaction.ts";
 import type { PbxObject, PbxObjects } from "./pbx.ts";
@@ -336,6 +336,38 @@ describe("discoverIOSContainers", () => {
       expect.objectContaining({ code: "xcode.incomplete-source-membership" }),
     );
   });
+
+  test.each(["required", "workspace"] as const)(
+    "follows project references discovered from a %s project seed",
+    async (seedKind) => {
+      const root = await mkdtemp(join(tmpdir(), "clerk-ios-local-projects-"));
+      temporaryDirectories.push(root);
+      const seedRoot = join(root, "Pods", "SeedProject");
+      const referencedRoot = join(root, "Pods", "ReferencedProject");
+      await createIOSFixture(seedRoot, { includeKey: false });
+      await createIOSFixture(referencedRoot, { includeKey: false });
+      const seedProject = join(seedRoot, "MyApp.xcodeproj");
+      const referencedProject = join(referencedRoot, "MyApp.xcodeproj");
+      await addProjectReference(seedProject, referencedProject, "555555555555555555555555");
+
+      let requiredProjectPaths: string[] = [];
+      if (seedKind === "required") {
+        requiredProjectPaths = [relative(root, seedProject)];
+      } else {
+        const workspace = join(root, "Seed.xcworkspace");
+        await mkdir(workspace, { recursive: true });
+        await Bun.write(
+          join(workspace, "contents.xcworkspacedata"),
+          '<Workspace version="1.0"><FileRef location="group:Pods/SeedProject/MyApp.xcodeproj" /></Workspace>',
+        );
+      }
+
+      const inventory = await discoverLocalIOSProjects(root, requiredProjectPaths);
+
+      expect(inventory.complete).toBe(true);
+      expect(inventory.projectPaths).toEqual([seedProject, referencedProject].sort());
+    },
+  );
 });
 
 describe("inspectIOSProject", () => {
@@ -1225,6 +1257,7 @@ let package = Package(
 
     const result = await inspectWorkspace(root, workspace);
 
+    expect(result.complete).toBe(true);
     expect(result.inspection.projectPaths).toEqual(["MyApp.xcodeproj"]);
     expect(result.localProjectPaths).toEqual([join(root, "MyApp.xcodeproj")]);
   });
@@ -1289,6 +1322,7 @@ let package = Package(
 
     const result = await inspectWorkspace(root, workspace);
 
+    expect(result.complete).toBe(true);
     expect(result.inspection.projectPaths).toEqual(["MyApp.xcodeproj"]);
     expect(result.localProjectPaths).toEqual([join(root, "MyApp.xcodeproj")]);
   });
@@ -1310,6 +1344,7 @@ let package = Package(
     expect(JSON.parse(output)).toEqual({
       inspection: { path: "MyApp.xcworkspace", projectPaths: [] },
       localProjectPaths: [],
+      complete: false,
     });
   }, 10_000);
 
@@ -1323,8 +1358,85 @@ let package = Package(
     expect(result).toEqual({
       inspection: { path: "MyApp.xcworkspace", projectPaths: [] },
       localProjectPaths: [],
+      complete: false,
     });
   });
+
+  test("reports malformed workspace inventory as incomplete", async () => {
+    const root = await fixture({ workspace: true });
+    const workspace = join(root, "MyApp.xcworkspace");
+    await Bun.write(join(workspace, "contents.xcworkspacedata"), "not an Xcode workspace\n");
+
+    const result = await inspectWorkspace(root, workspace);
+
+    expect(result.complete).toBe(false);
+    expect(result.localProjectPaths).toEqual([]);
+  });
+
+  test.each(["absolute", "parent-relative", "symlink-escape"] as const)(
+    "keeps an external %s workspace project visible while marking ownership incomplete",
+    async (kind) => {
+      const root = await fixture({ workspace: true });
+      const externalRoot = await fixture();
+      const workspace = join(root, "MyApp.xcworkspace");
+      const externalProject = join(externalRoot, "MyApp.xcodeproj");
+      let location: string;
+      let visiblePath = externalProject;
+      if (kind === "absolute") {
+        location = `absolute:${externalProject}`;
+      } else if (kind === "parent-relative") {
+        location = `group:${relative(root, externalProject)}`;
+      } else {
+        visiblePath = join(root, "External.xcodeproj");
+        await symlink(externalProject, visiblePath);
+        location = "group:External.xcodeproj";
+      }
+      await Bun.write(
+        join(workspace, "contents.xcworkspacedata"),
+        `<Workspace version="1.0"><FileRef location="${location}" /></Workspace>`,
+      );
+
+      const result = await inspectWorkspace(root, workspace);
+      const inventory = await discoverLocalIOSProjects(root);
+
+      expect(result.inspection.projectPaths).toContain(visiblePath);
+      expect(JSON.parse(JSON.stringify(result.inspection)).projectPaths).toContain(visiblePath);
+      expect(result.localProjectPaths).not.toContain(visiblePath);
+      expect(result.complete).toBe(false);
+      expect(inventory.projectPaths).not.toContain(visiblePath);
+      expect(inventory.complete).toBe(false);
+    },
+  );
+
+  test.each([
+    ["decimal", "&#46;"],
+    ["hexadecimal", "&#x2E;"],
+  ])(
+    "keeps an external workspace project with a %s numeric entity visible and incomplete",
+    async (_label, encodedDot) => {
+      const root = await fixture({ workspace: true });
+      const externalRoot = await fixture();
+      const workspace = join(root, "MyApp.xcworkspace");
+      const externalProject = join(externalRoot, "MyApp.xcodeproj");
+      const encodedExternalProject = externalProject.replace(
+        /\.xcodeproj$/,
+        `${encodedDot}xcodeproj`,
+      );
+      await Bun.write(
+        join(workspace, "contents.xcworkspacedata"),
+        `<Workspace version="1.0"><FileRef location="absolute:${encodedExternalProject}" /></Workspace>`,
+      );
+
+      const result = await inspectWorkspace(root, workspace);
+      const inventory = await discoverLocalIOSProjects(root);
+
+      expect(result.inspection.projectPaths).toContain(externalProject);
+      expect(result.localProjectPaths).not.toContain(externalProject);
+      expect(result.complete).toBe(false);
+      expect(inventory.projectPaths).not.toContain(externalProject);
+      expect(inventory.complete).toBe(false);
+    },
+  );
 
   test("does not guess when multiple application targets exist", async () => {
     const root = await fixture({ secondTarget: true });
