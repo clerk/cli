@@ -71,8 +71,8 @@ export async function runChecks(
 ): Promise<CheckResult[]> {
   const dependencies = runOptions.dependencies ?? defaultDoctorRunDependencies;
   setTelemetryStage(runOptions.initialStage ?? "doctor_checks");
-  const explicitlyRequestsIOS = options.target != null;
-  const framework = explicitlyRequestsIOS
+  const explicitlyRequestsAppleNative = options.target != null;
+  const framework = explicitlyRequestsAppleNative
     ? { dep: "ios" }
     : await dependencies.detectFramework(process.cwd());
   const appleNativeCandidate = framework?.dep === "ios";
