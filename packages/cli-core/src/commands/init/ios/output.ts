@@ -21,6 +21,8 @@ export interface IOSDryRunOutput {
 
 export interface IOSOutputOptions {
   associatedDomainPlan?: IOSAssociatedDomainPlan;
+  /** Exact readiness audit from the shared local setup proposal. */
+  nativeReadiness?: IOSNativeReadinessAudit;
 }
 
 export function createIOSDryRunOutput(
@@ -34,7 +36,7 @@ export function createIOSDryRunOutput(
     status: plan.status,
     inspection,
     plan,
-    nativeReadiness: buildIOSNativeReadinessAudit(inspection, options),
+    nativeReadiness: options.nativeReadiness ?? buildIOSNativeReadinessAudit(inspection, options),
   };
 }
 
@@ -114,7 +116,8 @@ export function formatIOSSetupPlan(
     }
   }
 
-  const nativeReadiness = buildIOSNativeReadinessAudit(inspection, options);
+  const nativeReadiness =
+    options.nativeReadiness ?? buildIOSNativeReadinessAudit(inspection, options);
   lines.push("", "  Native iOS readiness:");
   lines.push(
     `    - Associated Domains: ${nativeReadiness.associatedDomain.status}${nativeReadiness.associatedDomain.automatable ? " (clerk init can apply)" : ""}`,

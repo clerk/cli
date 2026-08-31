@@ -20,20 +20,9 @@ import { auditIOSPrebuiltAuthEnvironment } from "./prebuilt-auth-environment.ts"
 import { recoverIOSFileTransactions } from "./file-transaction.ts";
 import { resolveIOSDevelopmentPublicKey } from "./development-key.ts";
 import { inspectIOSProject } from "./inspect.ts";
-import { clerkKitUIInstallDecision, hasSupportedIOSCustomConfigure } from "./products.ts";
-import { planIOSPrebuiltAuth } from "./prebuilt-auth.ts";
-import { planIOSDirectConfig } from "./direct-config.ts";
-import { shouldPlanIOSDirectConfig } from "./products.ts";
-import { planIOSAssociatedDomain } from "./associated-domain.ts";
-import { planIOSAppleEntitlement } from "./apple-entitlement.ts";
-import { planIOSSDKInstall } from "./install-sdk.ts";
-import {
-  normalizeIOSSDKInstallPlanForSetup,
-  planIOSPrebuiltAuthRuntimeBlockers,
-  type IOSLocalSetupResult,
-} from "./apply.ts";
-import { buildIOSSetupPlan } from "./plan.ts";
+import { type IOSLocalSetupResult } from "./apply.ts";
 import { createIOSDryRunOutput, formatIOSSetupPlan } from "./output.ts";
+import { buildIOSLocalSetupProposal, createIOSLocalSetupContext } from "./local-plan.ts";
 
 type LinkedProfile = Awaited<ReturnType<typeof resolveProfile>>;
 
@@ -100,120 +89,32 @@ export async function runAppleNativeDryRun(options: AppleNativeDryRunOptions): P
   const inspection = options.machineOutput
     ? await inspect()
     : await withSpinner("Inspecting Xcode project...", inspect);
-  const selection = inspection.selection;
-  const selectedTarget =
-    selection.state === "selected"
-      ? inspection.appTargets.find(
-          (target) =>
-            target.id === selection.targetId && target.projectPath === selection.projectPath,
-        )
-      : undefined;
-  const productDecision = selectedTarget ? clerkKitUIInstallDecision(selectedTarget) : undefined;
-  const hasSupportedCustomConfigure =
-    selectedTarget != null && hasSupportedIOSCustomConfigure(selectedTarget);
-  const inspectedPrebuiltAuthPlan =
-    selection.state === "selected"
-      ? await planIOSPrebuiltAuth({
-          root: options.root,
-          projectPath: selection.projectPath,
-          targetId: selection.targetId,
-        })
-      : undefined;
-  const prebuiltAuthActive =
-    inspectedPrebuiltAuthPlan != null &&
-    inspectedPrebuiltAuthPlan.status !== "blocked" &&
-    (options.prebuiltAuthUI === true || inspectedPrebuiltAuthPlan.status === "satisfied");
-  const directConfigPlan =
-    selection.state === "selected" &&
-    selectedTarget &&
-    productDecision &&
-    shouldPlanIOSDirectConfig(
-      inspection,
-      selectedTarget,
-      prebuiltAuthActive ? "prebuilt" : productDecision,
-    )
-      ? await planIOSDirectConfig({
-          root: options.root,
-          projectPath: selection.projectPath,
-          targetId: selection.targetId,
-        })
-      : undefined;
-  const prebuiltRuntimeBlockers = prebuiltAuthActive
-    ? planIOSPrebuiltAuthRuntimeBlockers(inspection, directConfigPlan)
-    : [];
-  const prebuiltAuthPlan =
-    inspectedPrebuiltAuthPlan && prebuiltRuntimeBlockers.length > 0
-      ? {
-          ...inspectedPrebuiltAuthPlan,
-          status: "blocked" as const,
-          actions: [],
-          blockers: [
-            ...inspectedPrebuiltAuthPlan.blockers,
-            {
-              code: "runtime-prerequisites" as const,
-              message: prebuiltRuntimeBlockers.join(" "),
-            },
-          ],
-        }
-      : inspectedPrebuiltAuthPlan;
-  const associatedDomainPlan =
-    selection.state === "selected"
-      ? await planIOSAssociatedDomain({
-          root: options.root,
-          projectPath: selection.projectPath,
-          targetId: selection.targetId,
-          deferToPublishableKey:
-            directConfigPlan?.status === "ready" || hasSupportedCustomConfigure,
-          allowMissingEntitlementsCreation: true,
-        })
-      : undefined;
-  const hasLocalAppleIntent = selectedTarget?.configurations.some(
-    (configuration) =>
-      configuration.entitlements !== undefined &&
-      configuration.entitlements.signInWithAppleState !== "absent",
-  );
-  const appleEntitlementPlan =
-    selection.state === "selected" &&
-    (options.signInWithApple === true || hasLocalAppleIntent === true)
-      ? await planIOSAppleEntitlement({
-          root: options.root,
-          projectPath: selection.projectPath,
-          targetId: selection.targetId,
-          allowMissingEntitlementsCreation: true,
-        })
-      : undefined;
-  const strictSDKInstallPlan =
-    selection.state === "selected" && selectedTarget != null
-      ? await planIOSSDKInstall({
-          root: options.root,
-          projectPath: selection.projectPath,
-          targetId: selection.targetId,
-          includeClerkKitUI: productDecision === "prebuilt" || prebuiltAuthActive,
-          requirePrebuiltAuthCompatibility: prebuiltAuthActive,
-        })
-      : undefined;
-  const sdkInstallPlan =
-    strictSDKInstallPlan && selectedTarget
-      ? normalizeIOSSDKInstallPlanForSetup({
-          installPlan: strictSDKInstallPlan,
-          selectedTarget,
-          prebuiltAuthActive,
-        }).sdkInstallPlan
-      : undefined;
-  const plan = buildIOSSetupPlan(inspection, {
-    sdkInstallPlan,
-    directConfigPlan,
-    associatedDomainPlan,
-    appleEntitlementPlan,
-    prebuiltAuthPlan,
-    prebuiltAuthSelected: options.prebuiltAuthUI === true,
+  const proposal = await buildIOSLocalSetupProposal(createIOSLocalSetupContext(inspection), {
+    root: options.root,
+    allowDirty: false,
+    prebuiltAuthUI: options.prebuiltAuthUI,
+    signInWithApple: options.signInWithApple,
   });
+  const plan = proposal.setupPlan;
+  const associatedDomainPlan = proposal.plannedAssociatedDomain;
   if (options.machineOutput) {
     log.data(
-      JSON.stringify(createIOSDryRunOutput(inspection, plan, { associatedDomainPlan }), null, 2),
+      JSON.stringify(
+        createIOSDryRunOutput(inspection, plan, {
+          associatedDomainPlan,
+          nativeReadiness: proposal.nativeReadiness,
+        }),
+        null,
+        2,
+      ),
     );
   } else {
-    log.info(formatIOSSetupPlan(inspection, plan, { associatedDomainPlan }));
+    log.info(
+      formatIOSSetupPlan(inspection, plan, {
+        associatedDomainPlan,
+        nativeReadiness: proposal.nativeReadiness,
+      }),
+    );
     await outro(plan.status === "ready" ? "Setup looks ready" : "Setup incomplete");
   }
   setTelemetryStage("done");

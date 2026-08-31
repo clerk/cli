@@ -13,7 +13,6 @@ import { confirm } from "../../../lib/prompts.ts";
 import { withSpinner } from "../../../lib/spinner.ts";
 import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 import {
-  planIOSSDKInstall,
   prepareIOSSDKInstallMutation,
   validateIOSSDKInstallPostcondition,
   type IOSSDKInstallPlan,
@@ -21,12 +20,6 @@ import {
 } from "./install-sdk.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
 import {
-  clerkKitUIInstallDecision,
-  hasSupportedIOSCustomConfigure,
-  shouldPlanIOSDirectConfig,
-} from "./products.ts";
-import {
-  planIOSDirectConfig,
   prepareIOSDirectConfigMutation,
   validatePreparedIOSDirectConfig,
   type IOSDirectConfigPlan,
@@ -52,19 +45,18 @@ import {
   type PreparedIOSAppleEntitlementMutation,
 } from "./apple-entitlement.ts";
 import {
-  buildIOSNativeReadinessAudit,
-  suggestAppIdPrefixFromDevelopmentTeam,
-  type IOSNativeReadinessAudit,
-  type IOSUnverifiedAppIdPrefixSuggestion,
-} from "./native-readiness.ts";
-import {
   planIOSPrebuiltAuth,
   prepareIOSPrebuiltAuthMutation,
   validatePreparedIOSPrebuiltAuth,
   type IOSPrebuiltAuthPlan,
   type PreparedIOSPrebuiltAuthMutation,
 } from "./prebuilt-auth.ts";
-import type { IOSAppTarget } from "./types.ts";
+import {
+  buildIOSLocalSetupProposal,
+  createIOSLocalSetupContext,
+  planIOSPrebuiltAuthRuntimeBlockers,
+  type IOSLocalSetupProposal,
+} from "./local-plan.ts";
 
 function iosSetupError(message: string, code: ErrorCode = ERROR_CODE.IOS_SETUP_BLOCKED): CliError {
   return new CliError(message, { code });
@@ -82,66 +74,29 @@ export interface ApplyIOSLocalSetupOptions {
   prebuiltAuthUI?: boolean;
 }
 
-/** Keep legacy, fully linked product graphs review-only while preserving every other SDK blocker. */
-export function normalizeIOSSDKInstallPlanForSetup(options: {
-  installPlan: IOSSDKInstallPlan;
-  selectedTarget: IOSAppTarget;
-  prebuiltAuthActive: boolean;
-}): {
-  sdkInstallPlan?: IOSSDKInstallPlan;
-  reviewOnlyUnattributedInstall: boolean;
-} {
-  const { installPlan, selectedTarget, prebuiltAuthActive } = options;
-  const reviewOnlyUnattributedInstall =
-    !prebuiltAuthActive &&
-    installPlan.requirePrebuiltAuthCompatibility !== true &&
-    installPlan.status === "blocked" &&
-    installPlan.blockers.length > 0 &&
-    installPlan.blockers.every((blocker) => blocker.code === "unattributed-product") &&
-    installPlan.products.every((product) =>
-      product === "ClerkKit"
-        ? selectedTarget.packages.clerkKit === "linked"
-        : selectedTarget.packages.clerkKitUI === "linked",
-    );
-  return {
-    sdkInstallPlan: reviewOnlyUnattributedInstall ? undefined : installPlan,
-    reviewOnlyUnattributedInstall,
-  };
-}
-
-export interface IOSLocalSetupResult {
+export type IOSLocalSetupResult = Pick<
+  IOSLocalSetupProposal,
+  | "setupPlan"
+  | "nativeReadiness"
+  | "unverifiedAppIdPrefixSuggestion"
+  | "sdkInstallPlan"
+  | "directConfigPlan"
+  | "associatedDomainPlan"
+  | "appleEntitlementPlan"
+  | "prebuiltAuthPlan"
+  | "prebuiltAuthAppleEntitlementPlan"
+  | "prebuiltAuthRequested"
+  | "prebuiltAuthActive"
+  | "nativeAppleRequested"
+> & {
   targetName: string;
-  /** Redacted local identity used to audit the linked instance after authentication. */
-  nativeReadiness: IOSNativeReadinessAudit;
-  /** Human-only Xcode signing-team suggestion; never treated as proven prefix evidence. */
-  unverifiedAppIdPrefixSuggestion?: IOSUnverifiedAppIdPrefixSuggestion;
-  sdkInstallPlan?: IOSSDKInstallPlan;
-  /** Fresh/default direct Swift configuration or existing inline verification. */
-  directConfigPlan?: IOSDirectConfigPlan;
-  /** Existing entitlements files that can receive the exact linked webcredentials host. */
-  associatedDomainPlan?: IOSAssociatedDomainPlan;
-  /** Selected-target Sign in with Apple entitlement setup or verification. */
-  appleEntitlementPlan?: IOSAppleEntitlementPlan;
-  /** Optional prebuilt AuthView source setup or exact generated-flow verification. */
-  prebuiltAuthPlan?: IOSPrebuiltAuthPlan;
-  /**
-   * Pre-authorized local Apple capability candidate for the selected AuthView flow.
-   * It is applied only when a later environment audit proves Apple is enabled.
-   */
-  prebuiltAuthAppleEntitlementPlan?: IOSAppleEntitlementPlan;
-  /** Explicit flag or AuthView-specific human confirmation; never inferred from --yes. */
-  prebuiltAuthRequested: boolean;
-  /** Explicitly selected or byte-identical generated AuthView flow present on a rerun. */
-  prebuiltAuthActive: boolean;
-  /** Explicit flag or Apple-specific human confirmation; never inferred from --yes. */
-  nativeAppleRequested: boolean;
   /** Authentication must return an exact app ID and development key before commit. */
   requiresLinkedApp: boolean;
   /** The approved local transaction consumes the linked development publishable key. */
   requiresDevelopmentKey: boolean;
   /** A preserved runtime configuration requires the developer to choose its Clerk application. */
   requiresExplicitApplication: boolean;
-}
+};
 
 /** @internal Test-only hook used to prove aggregate post-write rollback. */
 export interface ApplyIOSPlannedLocalSetupOptions {
@@ -245,35 +200,6 @@ function blockerList(blockers: Array<{ message: string }>): string {
   return blockers.map((blocker) => `  • ${blocker.message}`).join("\n");
 }
 
-export function planIOSPrebuiltAuthRuntimeBlockers(
-  inspection: Awaited<ReturnType<typeof inspectIOSProject>>,
-  directConfigPlan: IOSDirectConfigPlan | undefined,
-): string[] {
-  const setupPlan = buildIOSSetupPlan(inspection, { directConfigPlan });
-  const configureStep = setupPlan.steps.find((step) => step.id === "configure-publishable-key");
-  const environmentStep = setupPlan.steps.find((step) => step.id === "inject-clerk-environment");
-  const directConfigurationReady =
-    directConfigPlan?.status === "ready" && configureStep?.automatable === true;
-  const directEnvironmentReady =
-    directConfigPlan?.status === "ready" &&
-    (directConfigPlan.changes?.environment === "insert" ||
-      directConfigPlan.changes?.environment === "satisfied");
-  const blockers: string[] = [];
-
-  if (configureStep?.status !== "satisfied" && !directConfigurationReady) {
-    blockers.push(
-      "Clerk.configure(publishableKey:) is neither proven at runtime nor included in the safe direct-configuration plan.",
-    );
-  }
-  if (environmentStep?.status !== "satisfied" && !directEnvironmentReady) {
-    blockers.push(
-      "Clerk.shared is not proven in the shipping SwiftUI root environment, and the existing runtime abstraction cannot be rewritten safely.",
-    );
-  }
-
-  return blockers;
-}
-
 async function validatePrebuiltAuthRuntimePostcondition(
   setup: IOSLocalSetupResult,
 ): Promise<boolean> {
@@ -312,6 +238,7 @@ export async function applyIOSLocalSetup(
       exhaustiveContainerDiscovery: true,
     }),
   );
+  const context = createIOSLocalSetupContext(inspection);
   if (hasIncompleteIOSContainerDiscovery(inspection)) {
     throw iosSetupError(
       "Xcode project discovery was incomplete, so Clerk cannot safely select an iOS application target. Run the command from the intended project's directory, make nested project directories readable, or reduce excessive project nesting or count.",
@@ -344,41 +271,70 @@ export async function applyIOSLocalSetup(
     );
   }
 
-  const selectedTarget = inspection.appTargets.find(
-    (target) => target.id === selection.targetId && target.projectPath === selection.projectPath,
-  );
+  const selectedTarget = context.selectedTarget;
   if (!selectedTarget) {
     throw iosSetupError(
       "The selected iOS target could not be resolved safely.",
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
-  const unverifiedAppIdPrefixSuggestion = suggestAppIdPrefixFromDevelopmentTeam(selectedTarget);
-  const productDecision = clerkKitUIInstallDecision(selectedTarget);
+  const productDecision = context.productDecision;
+  if (!productDecision) {
+    throw iosSetupError(
+      "The selected iOS target could not be planned safely.",
+      ERROR_CODE.IOS_TARGET_UNRESOLVED,
+    );
+  }
   if (productDecision === "unknown") {
     throw iosSetupError(
       "The selected target's Swift source membership could not be inspected completely, so Clerk cannot safely choose between the prebuilt ClerkKitUI path and a core-only custom flow. Resolve the Xcode source-membership diagnostics, then rerun clerk init.",
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
-  const inspectedPrebuiltAuthPlan = await planIOSPrebuiltAuth({
+
+  const proposal = await buildIOSLocalSetupProposal(context, {
     root: options.root,
-    projectPath: selection.projectPath,
-    targetId: selection.targetId,
     allowDirty: options.allowDirty,
+    prebuiltAuthUI: options.prebuiltAuthUI,
+    signInWithApple: options.signInWithApple,
+    ...(!options.agent && !options.yes
+      ? {
+          resolvePrebuiltAuthRequest: async ({ targetName }: { targetName: string }) =>
+            confirm({
+              message: `Add ClerkKitUI's prebuilt authentication UI to ${targetName}?`,
+              default: false,
+            }),
+          resolveNativeAppleRequest: async ({ bundleIdentifier }: { bundleIdentifier: string }) =>
+            confirm({
+              message: `Enable native Sign in with Apple for ${bundleIdentifier}?`,
+              default: false,
+            }),
+        }
+      : {}),
   });
-  let prebuiltAuthRequested = options.prebuiltAuthUI === true;
-  if (
-    !prebuiltAuthRequested &&
-    options.prebuiltAuthUI == null &&
-    inspectedPrebuiltAuthPlan.status === "ready" &&
-    !options.agent &&
-    !options.yes
-  ) {
-    prebuiltAuthRequested = await confirm({
-      message: `Add ClerkKitUI's prebuilt authentication UI to ${selection.targetName}?`,
-      default: false,
-    });
+  const {
+    inspectedPrebuiltAuthPlan,
+    prebuiltAuthPlan,
+    prebuiltAuthRequested,
+    prebuiltAuthActive,
+    installPlan,
+    reviewOnlyUnattributedInstall,
+    directConfigPlan,
+    plannedAssociatedDomain,
+    associatedDomainPlan,
+    appleEntitlementPlan,
+    prebuiltAuthAppleEntitlementPlan,
+    nativeAppleRequested,
+    nativeReadiness,
+    hasCustomConfigure,
+    hasSupportedCustomConfigure,
+    prebuiltRuntimeBlockers,
+  } = proposal;
+  if (!installPlan || !plannedAssociatedDomain || !inspectedPrebuiltAuthPlan) {
+    throw iosSetupError(
+      "The selected iOS target did not produce one complete local setup proposal.",
+      ERROR_CODE.IOS_SETUP_PLAN_INVALID,
+    );
   }
   if (prebuiltAuthRequested && inspectedPrebuiltAuthPlan.status === "blocked") {
     throw iosSetupError(
@@ -387,40 +343,6 @@ export async function applyIOSLocalSetup(
       )}`,
     );
   }
-  const prebuiltAuthActive =
-    prebuiltAuthRequested || inspectedPrebuiltAuthPlan.status === "satisfied";
-  const prebuiltAuthPlan = prebuiltAuthActive ? inspectedPrebuiltAuthPlan : undefined;
-
-  // A source-proven custom flow remains core-only by default, but an explicit
-  // or interactive AuthView selection must link the product that generated
-  // source imports before the aggregate transaction is authorized.
-  const includeClerkKitUI = productDecision === "prebuilt" || prebuiltAuthActive;
-
-  const installPlan = await planIOSSDKInstall({
-    root: options.root,
-    projectPath: selection.projectPath,
-    targetId: selection.targetId,
-    includeClerkKitUI,
-    requirePrebuiltAuthCompatibility: prebuiltAuthActive,
-  });
-
-  const hasCustomConfigure = selectedTarget.swift.configureCalls.some(
-    (call) => call.publishableKeyWiring === "custom",
-  );
-  const hasSupportedCustomConfigure = hasSupportedIOSCustomConfigure(selectedTarget);
-  const shouldPlanDirectConfig = shouldPlanIOSDirectConfig(
-    inspection,
-    selectedTarget,
-    prebuiltAuthActive ? "prebuilt" : productDecision,
-  );
-  const directConfigPlan = shouldPlanDirectConfig
-    ? await planIOSDirectConfig({
-        root: options.root,
-        projectPath: selection.projectPath,
-        targetId: selection.targetId,
-        allowDirty: options.allowDirty,
-      })
-    : undefined;
   if (
     directConfigNeedsWrite(directConfigPlan) &&
     prebuiltAuthPlan?.status === "ready" &&
@@ -431,21 +353,6 @@ export async function applyIOSLocalSetup(
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
-  const plannedAssociatedDomain = await planIOSAssociatedDomain({
-    root: options.root,
-    projectPath: selection.projectPath,
-    targetId: selection.targetId,
-    deferToPublishableKey: directConfigPlan?.status === "ready" || hasSupportedCustomConfigure,
-    allowMissingEntitlementsCreation: true,
-  });
-  // Associated Domains is an independent additive improvement. Unsupported
-  // or ambiguous entitlements must not prevent the already-proven SDK/source
-  // setup; those cases remain an actionable manual step in the final plan.
-  const associatedDomainPlan =
-    plannedAssociatedDomain.status === "blocked" ? undefined : plannedAssociatedDomain;
-  const nativeReadiness = buildIOSNativeReadinessAudit(inspection, {
-    associatedDomainPlan: plannedAssociatedDomain,
-  });
   if (
     nativeReadiness.target.status !== "selected" ||
     nativeReadiness.target.bundleIdentifier.status !== "resolved"
@@ -455,40 +362,6 @@ export async function applyIOSLocalSetup(
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
-  const hasLocalAppleEntitlement = selectedTarget.configurations.some(
-    (configuration) =>
-      configuration.entitlements !== undefined &&
-      configuration.entitlements.signInWithAppleState !== "absent",
-  );
-  let nativeAppleRequested = options.signInWithApple === true;
-  if (!nativeAppleRequested && options.signInWithApple == null && !options.agent && !options.yes) {
-    nativeAppleRequested = await confirm({
-      message: `Enable native Sign in with Apple for ${nativeReadiness.target.bundleIdentifier.value}?`,
-      default: false,
-    });
-  }
-  const inspectedAppleEntitlementPlan =
-    nativeAppleRequested || hasLocalAppleEntitlement || prebuiltAuthActive
-      ? await planIOSAppleEntitlement({
-          root: options.root,
-          projectPath: selection.projectPath,
-          targetId: selection.targetId,
-          allowMissingEntitlementsCreation: true,
-        })
-      : undefined;
-  // Existing entitlement evidence remains available for a read-only satisfied
-  // verification, but incomplete local Apple setup is never completed unless
-  // this invocation explicitly opted into the strategy.
-  const appleEntitlementPlan = nativeAppleRequested
-    ? inspectedAppleEntitlementPlan
-    : hasLocalAppleEntitlement && inspectedAppleEntitlementPlan?.status === "blocked"
-      ? inspectedAppleEntitlementPlan
-      : inspectedAppleEntitlementPlan?.status === "satisfied"
-        ? inspectedAppleEntitlementPlan
-        : undefined;
-  const prebuiltAuthAppleEntitlementPlan = prebuiltAuthActive
-    ? inspectedAppleEntitlementPlan
-    : undefined;
   if (appleEntitlementPlan?.status === "blocked") {
     throw iosSetupError(
       `Native Sign in with Apple could not be configured safely. No local files were changed:\n${blockerList(
@@ -496,12 +369,6 @@ export async function applyIOSLocalSetup(
       )}`,
     );
   }
-  const { sdkInstallPlan, reviewOnlyUnattributedInstall } = normalizeIOSSDKInstallPlanForSetup({
-    installPlan,
-    selectedTarget,
-    prebuiltAuthActive,
-  });
-
   if (directConfigPlan?.status === "blocked") {
     throw iosSetupError(
       `The selected SwiftUI app could not be configured automatically. No local files were changed:\n${blockerList(
@@ -524,10 +391,9 @@ export async function applyIOSLocalSetup(
     );
   }
   if (prebuiltAuthActive) {
-    const runtimeBlockers = planIOSPrebuiltAuthRuntimeBlockers(inspection, directConfigPlan);
-    if (runtimeBlockers.length > 0) {
+    if (prebuiltRuntimeBlockers.length > 0) {
       throw iosSetupError(
-        `The prebuilt AuthView flow requires a proven Clerk runtime and SwiftUI environment before its source can be added. No local files were changed:\n${runtimeBlockers
+        `The prebuilt AuthView flow requires a proven Clerk runtime and SwiftUI environment before its source can be added. No local files were changed:\n${prebuiltRuntimeBlockers
           .map((message) => `  • ${message}`)
           .join("\n")}`,
       );
@@ -788,18 +654,8 @@ export async function applyIOSLocalSetup(
   }
 
   return {
+    ...proposal,
     targetName: selection.targetName,
-    nativeReadiness,
-    ...(unverifiedAppIdPrefixSuggestion ? { unverifiedAppIdPrefixSuggestion } : {}),
-    sdkInstallPlan,
-    directConfigPlan,
-    associatedDomainPlan,
-    appleEntitlementPlan,
-    prebuiltAuthPlan,
-    prebuiltAuthAppleEntitlementPlan,
-    prebuiltAuthRequested,
-    prebuiltAuthActive,
-    nativeAppleRequested,
     requiresLinkedApp: true,
     requiresDevelopmentKey:
       directConfigPlan != null || associatedDomainPlan?.requiresPublishableKey === true,

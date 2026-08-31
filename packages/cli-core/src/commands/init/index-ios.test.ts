@@ -136,6 +136,21 @@ function iosPrebuiltAuthPlan(overrides: Partial<IOSPrebuiltAuthPlan> = {}): IOSP
 function iosSetupResult(overrides: Partial<IOSLocalSetupResult> = {}): IOSLocalSetupResult {
   return {
     targetName: "MyApp",
+    setupPlan: {
+      schemaVersion: 1,
+      kind: "clerk-ios-setup",
+      root: "/tmp/test",
+      status: "ready",
+      selection: {
+        state: "selected",
+        targetId: "TARGET",
+        targetName: "MyApp",
+        projectPath: "MyApp.xcodeproj",
+      },
+      summary: { satisfied: 0, required: 0, review: 0, blocked: 0 },
+      steps: [],
+      diagnostics: [],
+    },
     nativeReadiness: FAKE_IOS_NATIVE_READINESS,
     prebuiltAuthRequested: false,
     prebuiltAuthActive: false,
