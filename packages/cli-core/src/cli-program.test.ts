@@ -29,7 +29,8 @@ test("doctor help describes static iOS and macOS target audits", () => {
   const help = doctor.helpInformation();
 
   expect(help).toContain("Select an iOS or macOS application target");
-  expect(help).toContain("Audit a specific iOS or macOS application target");
+  expect(help).toContain("clerk doctor --target MyApp");
+  expect(help).toContain("Audit a specific iOS or macOS application");
   expect(help).not.toContain("--build");
   expect(help).not.toContain("--resolve-packages");
   expect(help).not.toContain("--simulator");
