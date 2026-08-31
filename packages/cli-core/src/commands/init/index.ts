@@ -153,7 +153,7 @@ export async function init(options: InitOptions = {}) {
     framework: ctx.framework,
   });
 
-  assertKeylessOnlyFlags(options, strategy);
+  assertKeylessOnlyFlags(options, strategy, Boolean(ctx.framework.supportsKeyless));
 
   if (strategy === "authenticate") {
     setTelemetryStage("link");
@@ -269,17 +269,25 @@ async function isAuthenticatedForAgent(): Promise<boolean> {
  * resolution because that's the earliest point the real strategy — not just
  * the flags that might influence it — is known.
  */
-function assertKeylessOnlyFlags(options: InitOptions, strategy: InitStrategy): void {
+function assertKeylessOnlyFlags(
+  options: InitOptions,
+  strategy: InitStrategy,
+  supportsAccountless: boolean,
+): void {
   if (strategy === "keyless") return;
 
   // "Add --accountless" is only valid remediation when accountless setup is
   // actually reachable from here — not when the framework doesn't support it
-  // (manual) or when --app/--login are what forced the authenticated flow
-  // (both conflict with --accountless in assertUsableFlags above).
+  // or when --app/--login are what forced the authenticated flow (both
+  // conflict with --accountless in assertUsableFlags above). Framework
+  // support is checked directly, not via strategy: an unsupported framework
+  // resolves to "manual" only in agent mode — in human mode it resolves to
+  // "authenticate", which would otherwise suggest an --accountless flag the
+  // framework rejects.
   let reason: string;
   // Null when dropping the offending flag is the only remediation.
   let remedy: string | null;
-  if (strategy === "manual") {
+  if (!supportsAccountless) {
     reason = "this framework does not support accountless setup";
     remedy = null;
   } else if (options.app) {

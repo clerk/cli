@@ -716,6 +716,30 @@ describe("init strategy", () => {
       );
     });
 
+    test("--template on a non-keyless framework in human mode names the missing keyless support", async () => {
+      setup({ email: null });
+      const nonKeylessCtx: FakeCtx = {
+        ...FAKE_CTX,
+        existingClerk: false,
+        framework: {
+          dep: "vue",
+          name: "Vue",
+          sdk: "@clerk/vue",
+          envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+          envFile: ".env.local",
+        },
+        envFile: ".env.local",
+      };
+      spyOn(context, "gatherContext").mockResolvedValue(nonKeylessCtx);
+
+      // Human mode resolves an unsupported framework to the authenticated
+      // flow, so the guard must not suggest --accountless here.
+      await expect(init({ template: "b2b-saas" })).rejects.toThrow(
+        /does not support accountless setup/,
+      );
+      expect(loginMod.login).not.toHaveBeenCalled();
+    });
+
     test("--template on a keyless-resolved run is still forwarded normally", async () => {
       setup();
       mockBootstrapTo(KEYLESS_CTX);
