@@ -380,9 +380,12 @@ async function inspectEntitlements(
         remedy: `Set ${associatedDomainsKey} to an array containing only strings, then rerun the inspector.`,
         evidence: [{ path: relativePath, keyPath: associatedDomainsKey }],
       });
-      return undefined;
     }
-    const associatedDomains = Array.isArray(rawAssociatedDomains) ? rawAssociatedDomains : [];
+    const associatedDomains =
+      Array.isArray(rawAssociatedDomains) &&
+      rawAssociatedDomains.every((value): value is string => typeof value === "string")
+        ? rawAssociatedDomains
+        : [];
     const applicationIdentifier = asString(parsed["application-identifier"]);
     const signInWithAppleState = appleEntitlementState(parsed);
     if (signInWithAppleState === "invalid") {
