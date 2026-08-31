@@ -1704,6 +1704,7 @@ struct MyApp: App {
     const swift = inspection.appTargets[0]?.swift;
 
     expect(swift?.sourceFilesScanned).toBe(2);
+    expect(swift?.authViewReferences).toEqual([{ path: "Synced/Included/Auth.swift" }]);
     expect(swift?.authFlowReferences).toEqual([{ path: "Synced/Included/Auth.swift" }]);
     expect(swift?.configureCalls).toEqual([]);
   });

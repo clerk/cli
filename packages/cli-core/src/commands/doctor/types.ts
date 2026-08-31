@@ -28,6 +28,16 @@ export interface KeylessInstanceInfo {
 }
 
 export interface DoctorContext {
+  /** PLAPI prefers this credential over any stored OAuth session. */
+  hasPlatformAPIKey(): boolean;
+  /** OAuth or Platform API-key presence; does not perform a network request. */
+  hasAccountCredentials(): Promise<boolean>;
+  /**
+   * Read-only, memoized, account-scoped Platform API request used to verify
+   * either the stored OAuth session or a configured Platform API key without
+   * depending on this project's link state.
+   */
+  verifyAccountAccess(): Promise<void>;
   getToken(): Promise<string | null>;
   getValidToken(): Promise<string | null>;
   getProfile(): Promise<ResolvedProfile | undefined>;
@@ -68,4 +78,6 @@ export interface DoctorOptions {
   json?: boolean;
   spotlight?: boolean;
   fix?: boolean;
+  /** Exact Xcode application target name or PBX object ID. */
+  target?: string;
 }

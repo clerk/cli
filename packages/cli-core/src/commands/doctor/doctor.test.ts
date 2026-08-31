@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ApiError, AuthError, CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { ApiError, AuthError, CliError, ERROR_CODE, PlapiError } from "../../lib/errors.ts";
 import { _setConfigDir } from "../../lib/config.ts";
 import {
   credentialStoreStubs,
@@ -105,13 +105,27 @@ function createMockContext(
     };
     application?: Application | null;
     applicationError?: Error;
+    accountAccess?: boolean;
+    accountAccessError?: Error;
     keylessTarget?: KeylessTarget;
     keylessInstance?: KeylessInstanceInfo | null;
     claimBreadcrumb?: boolean;
     keylessKeyError?: CliError;
+    accountCredentials?: boolean;
+    platformAPIKey?: boolean;
+    platformAPIKeyError?: Error;
   } = {},
 ): DoctorContext {
   return {
+    hasPlatformAPIKey: () => overrides.platformAPIKey ?? false,
+    hasAccountCredentials: async () => overrides.accountCredentials ?? overrides.token != null,
+    verifyAccountAccess: async () => {
+      if (overrides.accountAccessError) throw overrides.accountAccessError;
+      if (overrides.platformAPIKeyError) throw overrides.platformAPIKeyError;
+      if (!overrides.platformAPIKey && !overrides.accountAccess) {
+        throw new ApiError(401, "Unauthorized");
+      }
+    },
     getToken: async () => overrides.token ?? null,
     getValidToken: async () => {
       if (overrides.validToken instanceof Error) throw overrides.validToken;
@@ -210,6 +224,45 @@ describe("checkLoggedIn", () => {
     const ctx = createMockContext({ token: "test_token" });
     const result = await checkLoggedIn(ctx);
     expectCheck(result, { name: "Logged in", status: "pass", message: "Logged in" });
+  });
+
+  test("pass when a Platform API key is configured without an OAuth token", async () => {
+    const ctx = createMockContext({
+      token: null,
+      accountCredentials: true,
+      platformAPIKey: true,
+    });
+    const result = await checkLoggedIn(ctx);
+    expectCheck(result, {
+      name: "Logged in",
+      status: "pass",
+      message: "Platform API key configured",
+    });
+  });
+
+  test("does not read OAuth credentials when a Platform API key is configured", async () => {
+    const getToken = mock(async () => {
+      throw new Error("credential store is unavailable");
+    });
+    const ctx: DoctorContext = {
+      ...createMockContext({
+        platformAPIKey: true,
+        keylessKeyError: new CliError("not a secret key", {
+          code: ERROR_CODE.INVALID_KEY_FORMAT,
+        }),
+      }),
+      getToken,
+    };
+
+    const result = await checkLoggedIn(ctx);
+
+    expectCheck(result, {
+      name: "Logged in",
+      status: "warn",
+      message: ["Platform API key configured", "local secret key is unusable", "not a secret key"],
+      remedy: "Fix or remove the malformed secret key",
+    });
+    expect(getToken).not.toHaveBeenCalled();
   });
 
   test("fail when no token", async () => {
@@ -317,6 +370,89 @@ describe("checkHostExecution", () => {
 });
 
 describe("checkTokenValid", () => {
+  test("passes when a read-only request verifies the Platform API key", async () => {
+    const ctx = createMockContext({
+      token: null,
+      accountCredentials: true,
+      platformAPIKey: true,
+    });
+    const result = await checkTokenValid(ctx);
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "pass",
+      message: "Platform API key access verified",
+    });
+  });
+
+  test("does not validate stale OAuth when PLAPI will use a Platform API key", async () => {
+    const ctx = createMockContext({
+      token: "stale-oauth-token",
+      validToken: new AuthError({ reason: "session_expired" }),
+      accountCredentials: true,
+      platformAPIKey: true,
+    });
+    const result = await checkTokenValid(ctx);
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "pass",
+      message: "Platform API key access verified",
+    });
+  });
+
+  for (const status of [401, 403]) {
+    test(`fails when the Platform API rejects the key with ${status}`, async () => {
+      const ctx = createMockContext({
+        platformAPIKey: true,
+        platformAPIKeyError: new ApiError(status, "Unauthorized"),
+      });
+
+      const result = await checkTokenValid(ctx);
+
+      expectCheck(result, {
+        name: "Authentication valid",
+        status: "fail",
+        message: ["Platform API key", "invalid", "applications:read"],
+        remedy: "CLERK_PLATFORM_API_KEY",
+        fix: false,
+      });
+    });
+  }
+
+  test("warns when a network failure prevents Platform API key verification", async () => {
+    const ctx = createMockContext({
+      platformAPIKey: true,
+      platformAPIKeyError: new TypeError("fetch failed"),
+    });
+
+    const result = await checkTokenValid(ctx);
+
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "warn",
+      message: "Could not reach Clerk",
+      detail: "fetch failed",
+      remedy: "network connection",
+      fix: false,
+    });
+  });
+
+  test("warns when Clerk is unavailable during Platform API key verification", async () => {
+    const ctx = createMockContext({
+      platformAPIKey: true,
+      platformAPIKeyError: new ApiError(503, "Service unavailable"),
+    });
+
+    const result = await checkTokenValid(ctx);
+
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "warn",
+      message: "Could not reach Clerk",
+      detail: "Service unavailable",
+      fix: false,
+    });
+  });
+
   test("pass with valid token", async () => {
     mockUserInfo = { userId: "user_1", email: "dev@example.com" };
     const ctx = createMockContext({ token: "test_token" });
@@ -338,6 +474,94 @@ describe("checkTokenValid", () => {
       message: "expired or invalid",
       remedy: "clerk auth login",
       fix: true,
+    });
+  });
+
+  test("passes when userinfo rejects a credential that the account-scoped API accepts", async () => {
+    mockUserInfoError = new ApiError(401, "Unauthorized");
+    const ctx = createMockContext({ token: "local_token", accountAccess: true });
+    const result = await checkTokenValid(ctx);
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "pass",
+      message: "verified through the Clerk API",
+    });
+  });
+
+  for (const status of [401, 403]) {
+    test(`fails when both userinfo and the account-scoped API reject the credential with ${status}`, async () => {
+      mockUserInfoError = new ApiError(401, "Unauthorized");
+      const ctx = createMockContext({
+        token: "expired_token",
+        accountAccessError: new ApiError(status, "Unauthorized"),
+      });
+      const result = await checkTokenValid(ctx);
+      expectCheck(result, {
+        name: "Authentication valid",
+        status: "fail",
+        message: "expired or invalid",
+        remedy: "clerk auth login",
+        fix: true,
+      });
+    });
+  }
+
+  test("does not mislabel a missing account verification endpoint as an expired token", async () => {
+    mockUserInfoError = new ApiError(401, "Unauthorized");
+    const ctx = createMockContext({
+      token: "local_token",
+      accountAccessError: PlapiError.fromBody(404, "Not found"),
+    });
+
+    const result = await checkTokenValid(ctx);
+
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "warn",
+      message: ["Could not verify authentication", "endpoint unavailable"],
+      messageNot: "expired",
+      detail: "Not found",
+      remedy: "Clerk environment",
+      fix: false,
+    });
+  });
+
+  test("reports a Clerk API outage without mislabeling the token as expired", async () => {
+    mockUserInfoError = new ApiError(401, "Unauthorized");
+    const ctx = createMockContext({
+      token: "local_token",
+      accountAccessError: PlapiError.fromBody(503, "Service unavailable"),
+    });
+
+    const result = await checkTokenValid(ctx);
+
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "warn",
+      message: ["Could not verify authentication", "API unavailable"],
+      messageNot: "expired",
+      detail: "Service unavailable",
+      fix: false,
+    });
+  });
+
+  test("reports a fallback transport failure as a network issue", async () => {
+    mockUserInfoError = new ApiError(401, "Unauthorized");
+    const ctx = createMockContext({
+      token: "local_token",
+      accountAccessError: new TypeError("fetch failed"),
+    });
+
+    const result = await checkTokenValid(ctx);
+
+    expectCheck(result, {
+      name: "Authentication valid",
+      status: "warn",
+      message: ["Could not reach Clerk", "network issue"],
+      messageNot: "expired",
+      detail: "fetch failed",
+      remedy: "network connection",
+      fix: false,
     });
   });
 
@@ -440,9 +664,10 @@ describe("checkProjectLinked", () => {
   });
 
   test("warn (not fail) when signed in but unlinked, falling back to a keyless application", async () => {
-    // beforeEach sets CLERK_PLATFORM_API_KEY, so hasAccountCredentials() is true here —
-    // the directory *could* reach the full account configuration by linking.
+    // The directory has account credentials, so it could reach the full
+    // account configuration by linking.
     const ctx = createMockContext({
+      accountCredentials: true,
       keylessTarget: mockKeylessTarget,
       keylessInstance: mockKeylessInstance,
     });

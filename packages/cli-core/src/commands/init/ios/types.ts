@@ -127,7 +127,12 @@ export interface IOSSwiftInspection {
   /** Clerk environment injection directly attached to the proven shipping WindowGroup root. */
   rootEnvironmentInjections: IOSSourceEvidence[];
   environmentConsumers: IOSSourceEvidence[];
+  /** Selected-target sources that import ClerkKitUI and construct AuthView. */
+  authViewReferences: IOSSourceEvidence[];
+  /** Selected-target sources that reference AuthView or a custom native Clerk auth flow. */
   authFlowReferences: IOSSourceEvidence[];
+  /** Selected-target sources that call Clerk's native Sign in with Apple flow. */
+  appleAuthReferences: IOSSourceEvidence[];
   /** Broad lexical evidence retained for diagnostics and conflict detection only. */
   openURLHandlers: IOSSourceEvidence[];
   status: "complete" | "partial" | "absent" | "ambiguous";

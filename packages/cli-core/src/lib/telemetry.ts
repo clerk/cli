@@ -70,6 +70,11 @@ export type TelemetryStage =
   | "ios_local_setup"
   | "ios_native_setup"
   | "ios_apple_setup"
+  // `clerk doctor`
+  | "doctor_checks"
+  | "doctor_ios_audit"
+  | "doctor_fix"
+  | "doctor_verify"
   // `clerk auth login`
   | "session_check"
   | "awaiting_callback"

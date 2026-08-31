@@ -2,7 +2,7 @@
 
 Runs a series of diagnostic checks on your Clerk CLI setup and reports
 the status of each check. The command is read-only and never modifies
-any state (unless `--fix` is used).
+project or remote application state unless `--fix` is used.
 
 ## Usage
 
@@ -12,6 +12,7 @@ clerk doctor --verbose   # Show detailed output
 clerk doctor --json      # Output results as JSON
 clerk doctor --spotlight # Only show warnings and failures
 clerk doctor --fix       # Offer to auto-fix issues
+clerk doctor --target MyApp
 ```
 
 ## Options
@@ -22,20 +23,55 @@ clerk doctor --fix       # Offer to auto-fix issues
 | `--json`      | Output results as machine-readable JSON               |
 | `--spotlight` | Only show warnings and failures (hide passing checks) |
 | `--fix`       | Offer to auto-fix issues with known remedies          |
+| `--target`    | Select an iOS application target by name or object ID |
 
 ## Checks
 
 | Check                 | Category       | What it verifies                                                                                                                                                                                     |
 | --------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Authentication token  | Authentication | Credential store has a stored token                                                                                                                                                                  |
-| Token validity        | Authentication | Token is still valid (calls `/oauth/userinfo`)                                                                                                                                                       |
+| Account credentials   | Authentication | Credential store has a session or a Platform API key is configured                                                                                                                                   |
+| Token validity        | Authentication | OAuth access is verified through `/oauth/userinfo` or an account-scoped application-list fallback; Platform API-key access uses the same read-only application-list request                          |
 | Project linkage       | Project        | Current directory is linked to a Clerk app                                                                                                                                                           |
 | Linked application    | Project        | Linked application ID is accessible via the API                                                                                                                                                      |
 | Instances             | Project        | Configured dev/prod instance IDs match the application's instances                                                                                                                                   |
-| Environment variables | Environment    | .env.local or .env has Clerk keys                                                                                                                                                                    |
+| Environment variables | Environment    | Non-iOS projects have Clerk keys in `.env.local` or `.env`                                                                                                                                           |
 | CLI configuration     | Configuration  | CLI config file exists and parses                                                                                                                                                                    |
 | Shell completion      | Configuration  | Shell autocompletion is installed for the detected shell                                                                                                                                             |
 | MCP server            | Integration    | If a Clerk MCP entry is installed, every distinct configured server answers the `initialize` handshake; warns on an unreadable client config (skipped when nothing is installed; warns, never fails) |
+
+### iOS projects
+
+When the current directory contains an Xcode project or `--target` is provided,
+doctor replaces the web `.env` check with the same semantic Xcode, Swift, and
+entitlements inspection used by `clerk init`. It reports separate results for:
+
+- application-target selection;
+- ClerkKit and ClerkKitUI product linkage;
+- `Clerk.configure` and, for direct literal configuration, the selected target's effective development key;
+- SwiftUI environment injection and authentication-flow evidence;
+- AuthView's enabled methods and required local Apple capability;
+- Associated Domains and the optional Sign in with Apple entitlement;
+- Native API state and the exact Bundle ID registration on the linked
+  development instance; and
+- the Clerk Apple connection when the selected target already declares the
+  native Apple entitlement.
+
+iOS diagnostics never require a secret key in the Xcode project or an env
+file. A direct literal publishable key is compared with the linked development
+application using only redacted Frontend API host metadata. For a single
+startup `Clerk.configure` call that uses a custom publishable-key source,
+Doctor verifies that the call exists but does not inspect its value. Once the
+project is linked, Doctor uses the explicitly selected development application
+for read-only AuthView, Native Application, Associated Domains, and Apple
+checks; this does not prove that the custom publishable key belongs to that
+application. Keys, provider credentials, and raw remote config are not included
+in human or JSON output. AuthView, Native Application, and Apple remote checks
+are GET-only. Their remedies point back to `clerk init`; `doctor --fix` never
+enables an auth strategy or changes Native Application state.
+
+`clerk doctor` inspects configuration and remote Clerk state without invoking
+Xcode package resolution, builds, or Simulator execution. Build and runtime
+verification remain with Xcode and the project's existing test workflow.
 
 ### Keyless applications
 
@@ -117,8 +153,13 @@ Exit code 1 signals one or more checks failed.
 
 ## API Endpoints
 
-| Method | Endpoint                            | Description                                                     |
-| ------ | ----------------------------------- | --------------------------------------------------------------- |
-| `GET`  | `/oauth/userinfo`                   | Validates the stored auth token                                 |
-| `GET`  | `/v1/platform/applications/{appId}` | Verifies the linked app and its instances exist                 |
-| `GET`  | `/v1/instance`                      | Names the keyless application (best-effort, via its secret key) |
+| Method | Endpoint                                                                           | Description                                                                       |
+| ------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `GET`  | `/oauth/userinfo`                                                                  | Validates the stored auth token                                                   |
+| `GET`  | `/v1/platform/applications/{appId}`                                                | Verifies the linked app and its instances exist                                   |
+| `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/native_settings`         | Verifies Native API state for iOS projects                                        |
+| `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/native_applications/ios` | Verifies the exact iOS Bundle ID registration                                     |
+| `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/config`                  | Audits the Apple connection when native Apple is relevant                         |
+| `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/config/schema`           | Determines whether an unhealthy Apple connection can be safely reconciled by init |
+| `GET`  | `https://{fapiHost}/v1/environment`                                                | Verifies whether AuthView currently offers native Apple sign-in                   |
+| `GET`  | `/v1/instance`                                                                     | Names the keyless application (best-effort, via its secret key)                   |
