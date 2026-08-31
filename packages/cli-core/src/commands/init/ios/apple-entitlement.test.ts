@@ -174,6 +174,21 @@ describe("iOS Sign in with Apple entitlement setup", () => {
     }
   });
 
+  test("blocks an oversized entitlements file without changing it", async () => {
+    const root = await fixture();
+    const path = join(root, "MyApp", "MyApp.entitlements");
+    const oversized = Buffer.alloc(1_000_001, 0x20);
+    await writeFile(path, oversized);
+
+    const plan = await planIOSAppleEntitlement(planOptions(root));
+    const result = await applyIOSAppleEntitlement(plan);
+
+    expect(plan.status).toBe("blocked");
+    expect(plan.blockers[0]?.code).toBe("unsupported-entitlements");
+    expect(result.status).toBe("blocked");
+    expect(await readFile(path)).toEqual(oversized);
+  });
+
   test("updates every distinct entitlements variant selected by target configurations", async () => {
     const root = await fixture();
     const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
@@ -259,6 +274,22 @@ describe("iOS Sign in with Apple entitlement setup", () => {
 
     expect(result.status).toBe("stale");
     expect(await readFile(path, "utf8")).toBe("newer user bytes\n");
+  });
+
+  test("returns stale without touching an entitlements file that grows beyond the limit", async () => {
+    const root = await fixture();
+    const path = join(root, "MyApp", "MyApp.entitlements");
+    const plan = await planIOSAppleEntitlement(planOptions(root));
+    const oversized = Buffer.alloc(1_000_001, 0x20);
+    await writeFile(path, oversized);
+
+    const prepared = await prepareIOSAppleEntitlementMutation(plan);
+    const result = await applyIOSAppleEntitlement(plan);
+
+    expect(plan.status).toBe("ready");
+    expect(prepared.status).toBe("stale");
+    expect(result.status).toBe("stale");
+    expect(await readFile(path)).toEqual(oversized);
   });
 
   test("creates and attaches a missing synchronized-root entitlements file", async () => {

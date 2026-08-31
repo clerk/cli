@@ -1,10 +1,11 @@
-import { lstat, readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   planIOSAssociatedDomain,
   type IOSAssociatedDomainBlockerCode,
 } from "./associated-domain.ts";
+import { readBoundedRegularFile } from "./bounded-file.ts";
 import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import {
   applyIOSFileTransaction,
@@ -302,24 +303,17 @@ async function inspectEntitlementsFile(
       ),
     };
   }
-  try {
-    const info = await lstat(absolutePath);
-    if (!info.isFile() || info.isSymbolicLink()) {
-      return {
-        status: "blocked",
-        blocker: blocker(
-          "unsupported-entitlements",
-          `${relativeIOSPath(root, absolutePath)} must be a regular, non-symlink XML plist.`,
-        ),
-      };
-    }
-    return inspectEntitlementsBytes(
-      root,
-      absolutePath,
-      new Uint8Array(await readFile(absolutePath)),
-      info.mode & 0o7777,
-    );
-  } catch {
+  const file = await readBoundedRegularFile(absolutePath, MAX_ENTITLEMENTS_BYTES);
+  if (file.status === "not-regular" || file.status === "too-large") {
+    return {
+      status: "blocked",
+      blocker: blocker(
+        "unsupported-entitlements",
+        `${relativeIOSPath(root, absolutePath)} must be a regular, non-symlink XML plist no larger than 1 MB.`,
+      ),
+    };
+  }
+  if (file.status !== "ok") {
     return {
       status: "blocked",
       blocker: blocker(
@@ -328,6 +322,7 @@ async function inspectEntitlementsFile(
       ),
     };
   }
+  return inspectEntitlementsBytes(root, absolutePath, file.bytes, file.mode);
 }
 
 function lineIndentAt(source: string, index: number): string {
@@ -583,18 +578,10 @@ export async function prepareIOSAppleEntitlementMutation(
       }
       continue;
     }
-    try {
-      if (!file.expectedHash)
-        return blockPrepared(plan, "invalid-plan", "A planned file hash is missing.");
-      const info = await lstat(absolutePath);
-      if (
-        !info.isFile() ||
-        info.isSymbolicLink() ||
-        hashIOSFileBytes(await readFile(absolutePath)) !== file.expectedHash
-      ) {
-        return { status: "stale", plan };
-      }
-    } catch {
+    if (!file.expectedHash)
+      return blockPrepared(plan, "invalid-plan", "A planned file hash is missing.");
+    const current = await readBoundedRegularFile(absolutePath, MAX_ENTITLEMENTS_BYTES);
+    if (current.status !== "ok" || hashIOSFileBytes(current.bytes) !== file.expectedHash) {
       return { status: "stale", plan };
     }
   }
