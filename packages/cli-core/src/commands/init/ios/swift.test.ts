@@ -76,6 +76,17 @@ describe("sanitizeSwiftSource", () => {
     expect(interpolated.sanitizedSource).not.toContain("Clerk.shared");
   });
 
+  test("does not parse division assignment as a regex literal", () => {
+    const source = `var value = 4
+value /= 2
+Clerk.configure(publishableKey: key)`;
+
+    const result = sanitizeSwiftSourceWithStatus(source);
+
+    expect(result.complete).toBe(true);
+    expect(result.sanitizedSource).toBe(source);
+  });
+
   test("keeps ordinary string interpolation complete without hiding later Clerk calls", () => {
     const source = String.raw`let message = "Hello \(user.name): \(format(value))"
 Clerk.configure(publishableKey: key)`;
@@ -115,6 +126,26 @@ let escaped = "say \"hello\""`;
 });
 
 describe("inspectSwiftSources", () => {
+  test("keeps source evidence complete across division assignment", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "App.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+var value = 4
+value /= 2
+Clerk.configure(publishableKey: key)`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "App.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.configureCalls).toHaveLength(1);
+  });
+
   test("uses the active macOS branch instead of iOS-only Clerk UI evidence", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
     temporaryDirectories.push(root);

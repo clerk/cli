@@ -43,6 +43,7 @@ function isBareRegexOpening(chars: string[], index: number): boolean {
   if (first == null || first === " " || first === "\t" || first === "\n" || first === "\r") {
     return false;
   }
+  if (first === "=") return false;
 
   if (index === 0) return true;
   const previous = chars[index - 1];
