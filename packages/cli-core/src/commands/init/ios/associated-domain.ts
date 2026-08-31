@@ -2,6 +2,7 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { parse as parsePbxProject } from "@bacons/xcode/json";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
+import { readBoundedRegularFile } from "./bounded-file.ts";
 import { inspectTargetBuildConfigurations } from "./build-settings.ts";
 import {
   discoverLocalIOSProjects,
@@ -249,20 +250,46 @@ async function inspectEntitlementsFile(
     };
   }
 
-  try {
-    const info = await lstat(absolutePath);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_ENTITLEMENTS_BYTES) {
-      return {
-        blocker: blocker(
-          "unsupported-entitlements",
-          `${relativeIOSPath(
-            root,
-            absolutePath,
-          )} must be a regular, non-symlink XML plist no larger than 1 MB.`,
-        ),
-      };
+  const file = await readBoundedRegularFile(absolutePath, MAX_ENTITLEMENTS_BYTES);
+  if (file.status === "not-regular" || file.status === "too-large") {
+    return {
+      blocker: blocker(
+        "unsupported-entitlements",
+        `${relativeIOSPath(
+          root,
+          absolutePath,
+        )} must be a regular, non-symlink XML plist no larger than 1 MB.`,
+      ),
+    };
+  }
+  if (file.status !== "ok") {
+    try {
+      const info = await lstat(absolutePath);
+      if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_ENTITLEMENTS_BYTES) {
+        return {
+          blocker: blocker(
+            "unsupported-entitlements",
+            `${relativeIOSPath(
+              root,
+              absolutePath,
+            )} must be a regular, non-symlink XML plist no larger than 1 MB.`,
+          ),
+        };
+      }
+    } catch {
+      // Preserve the unreadable classification below when the current path
+      // cannot explain the bounded reader's failure.
     }
-    const bytes = new Uint8Array(await readFile(absolutePath));
+    return {
+      blocker: blocker(
+        "unreadable-entitlements",
+        `${relativeIOSPath(root, absolutePath)} could not be read as a UTF-8 XML plist dictionary.`,
+      ),
+    };
+  }
+
+  try {
+    const bytes = file.bytes;
     if (new TextDecoder().decode(bytes.slice(0, 8)).startsWith("bplist")) {
       return {
         blocker: blocker(
@@ -330,7 +357,7 @@ async function inspectEntitlementsFile(
         relativePath: relativeIOSPath(root, absolutePath),
         bytes,
         hash: hashIOSFileBytes(bytes),
-        mode: info.mode & 0o7777,
+        mode: file.mode,
         source,
         bom,
         domains,
@@ -866,17 +893,9 @@ export async function prepareIOSAssociatedDomainMutation(
       }
       continue;
     }
-    try {
-      if (!plannedFile.expectedHash) return { status: "blocked", plan };
-      const info = await lstat(absolutePath);
-      if (
-        !info.isFile() ||
-        info.isSymbolicLink() ||
-        hashIOSFileBytes(await readFile(absolutePath)) !== plannedFile.expectedHash
-      ) {
-        return { status: "stale", plan };
-      }
-    } catch {
+    if (!plannedFile.expectedHash) return { status: "blocked", plan };
+    const current = await readBoundedRegularFile(absolutePath, MAX_ENTITLEMENTS_BYTES);
+    if (current.status !== "ok" || hashIOSFileBytes(current.bytes) !== plannedFile.expectedHash) {
       return { status: "stale", plan };
     }
   }

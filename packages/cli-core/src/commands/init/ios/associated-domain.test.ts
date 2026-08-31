@@ -606,6 +606,38 @@ struct MyApp: App {
     expect(await treeDigest(linked)).toEqual(before);
   });
 
+  test("blocks an oversized entitlements file without changing it", async () => {
+    const root = await directFixture();
+    const path = join(root, "MyApp", "MyApp.entitlements");
+    const oversized = Buffer.alloc(1_000_001, 0x20);
+    await writeFile(path, oversized);
+
+    const plan = await planIOSAssociatedDomain(planOptions(root));
+    const result = await applyIOSAssociatedDomain(plan);
+
+    expect(plan.status).toBe("blocked");
+    expect(plan.blockers[0]?.code).toBe("unsupported-entitlements");
+    expect(result.status).toBe("blocked");
+    expect(await readFile(path)).toEqual(oversized);
+  });
+
+  test("returns stale without touching an entitlements file that grows beyond the limit", async () => {
+    const root = await directFixture();
+    const path = join(root, "MyApp", "MyApp.entitlements");
+    await removeAssociatedDomains(root);
+    const plan = await planIOSAssociatedDomain(planOptions(root));
+    const oversized = Buffer.alloc(1_000_001, 0x20);
+    await writeFile(path, oversized);
+
+    const prepared = await prepareIOSAssociatedDomainMutation(plan);
+    const result = await applyIOSAssociatedDomain(plan);
+
+    expect(plan.status).toBe("ready");
+    expect(prepared.status).toBe("stale");
+    expect(result.status).toBe("stale");
+    expect(await readFile(path)).toEqual(oversized);
+  });
+
   test("blocks an entity-encoded Associated Domains key without rewriting it", async () => {
     const root = await directFixture();
     const path = join(root, "MyApp", "MyApp.entitlements");
