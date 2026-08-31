@@ -573,20 +573,48 @@ function synchronizedExclusions(
   const excluded = new Set<string>();
   for (const exceptionId of synchronizedStringCollection(group, "exceptions", state)) {
     const exception = objects[exceptionId];
-    const appliesToTarget =
-      exception?.isa === "PBXFileSystemSynchronizedBuildFileExceptionSet" &&
-      asString(exception.target) === targetId;
-    const appliesToPhase =
-      exception?.isa === "PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet" &&
-      relevantPhaseIds.has(asString(exception.buildPhase) ?? "");
+    if (!exception) {
+      state.complete = false;
+      continue;
+    }
+
+    let appliesToTarget = false;
+    let appliesToPhase = false;
+    if (exception.isa === "PBXFileSystemSynchronizedBuildFileExceptionSet") {
+      const exceptionTarget = exception.target;
+      if (typeof exceptionTarget !== "string" || exceptionTarget.length === 0) {
+        state.complete = false;
+        continue;
+      }
+      appliesToTarget = exceptionTarget === targetId;
+    } else if (exception.isa === "PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet") {
+      const buildPhase = exception.buildPhase;
+      if (typeof buildPhase !== "string" || buildPhase.length === 0) {
+        state.complete = false;
+        continue;
+      }
+      appliesToPhase = relevantPhaseIds.has(buildPhase);
+    } else {
+      state.complete = false;
+      continue;
+    }
     if (!appliesToTarget && !appliesToPhase) continue;
 
     for (const path of synchronizedStringCollection(exception, "membershipExceptions", state)) {
       excluded.add(normalizeSynchronizedPath(path));
     }
-    if (isRecord(exception.platformFiltersByRelativePath)) {
-      for (const [path, filters] of Object.entries(exception.platformFiltersByRelativePath)) {
+    if (Object.hasOwn(exception, "platformFiltersByRelativePath")) {
+      const filtersByPath = exception.platformFiltersByRelativePath;
+      if (!isRecord(filtersByPath)) {
+        state.complete = false;
+        continue;
+      }
+      for (const [path, filters] of Object.entries(filtersByPath)) {
         const platformFilters = stringArray(filters);
+        if (!Array.isArray(filters) || platformFilters.length !== filters.length) {
+          state.complete = false;
+          continue;
+        }
         if (
           platformFilters.length > 0 &&
           !platformFilters.some((filter) => /(?:^|[^a-z])(?:ios|iphone)/i.test(filter))
