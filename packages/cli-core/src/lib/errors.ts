@@ -52,8 +52,10 @@ export const ERROR_CODE = {
   PLAN_INSUFFICIENT: "plan_insufficient",
   /** Application already has a production instance; flow should re-derive state. */
   PRODUCTION_INSTANCE_EXISTS: "production_instance_exists",
-  /** `home_url` is a provider domain (e.g. *.vercel.app) and not allowed. */
+  /** The domain cannot host a production instance (shared hosting domain, or a provider domain on an API that refuses them). */
   PROVIDER_DOMAIN_NOT_ALLOWED: "provider_domain_not_allowed",
+  /** A provider domain (e.g. *.vercel.app) is missing the proxy URL Clerk serves it through. */
+  PROXY_URL_REQUIRED: "proxy_url_required",
   /** `home_url` is already claimed by another instance. */
   HOME_URL_TAKEN: "home_url_taken",
   /** PLAPI rejected a request parameter as malformed. */

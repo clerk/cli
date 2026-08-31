@@ -14,11 +14,14 @@ mock.module("../../../lib/listage.ts", () => ({
   select: (...args: unknown[]) => mockSelect(...args),
 }));
 
+mock.module("../../../lib/app-context.ts", () => ({
+  resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
+}));
+
 mock.module("../../../lib/config.ts", () => ({
   // fetch.ts (imported process-wide) reads these from config.ts.
   getTelemetryDisabled: async () => false,
   getTelemetryNoticeShown: async () => true,
-  resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
   resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
   resolveFetchedApplicationInstance: (
     _appId: string,
