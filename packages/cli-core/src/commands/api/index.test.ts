@@ -726,4 +726,95 @@ describe("api command", () => {
     await runApi("/users", { data: '{"from":"inline"}', file: bodyFile });
     expect(JSON.parse(capturedBody)).toEqual({ from: "inline" });
   });
+
+  // --- request body is parse-checked before it goes out ---
+
+  test("rejects invalid -d without making a request", async () => {
+    let requested = false;
+    stubFetch(async () => {
+      requested = true;
+      return new Response("{}", { status: 200 });
+    });
+
+    // What PowerShell before 7.3 leaves of -d '{"first_name":"Alice"}'.
+    await expect(runApi("/users", { data: "{first_name:Alice}" })).rejects.toThrow(
+      "Invalid JSON in --data",
+    );
+    expect(requested).toBe(false);
+  });
+
+  test("rejects an invalid --file body", async () => {
+    const bodyFile = join(tempDir, "broken.json");
+    await Bun.write(bodyFile, '{"first_name":"Alice"');
+
+    await expect(runApi("/users", { file: bodyFile })).rejects.toThrow(
+      `Invalid JSON in --file ${bodyFile}`,
+    );
+  });
+
+  test("rejects an invalid piped body", async () => {
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: false,
+      writable: true,
+      configurable: true,
+    });
+    // Replace the stdin async iterator with one chunk of non-JSON.
+    const original = process.stdin[Symbol.asyncIterator];
+    Object.defineProperty(process.stdin, Symbol.asyncIterator, {
+      value: async function* () {
+        yield Buffer.from("not json at all");
+      },
+      writable: true,
+      configurable: true,
+    });
+
+    try {
+      await expect(runApi("/users")).rejects.toThrow("Invalid JSON in the piped request body");
+    } finally {
+      Object.defineProperty(process.stdin, Symbol.asyncIterator, {
+        value: original,
+        writable: true,
+        configurable: true,
+      });
+    }
+  });
+
+  test("--dry-run rejects an invalid body too", async () => {
+    await expect(runApi("/users", { dryRun: true, data: "{first_name:Alice}" })).rejects.toThrow(
+      "Invalid JSON in --data",
+    );
+  });
+
+  test("forwards a valid body byte-for-byte", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      capturedBody = init?.body as string;
+      return new Response("{}", { status: 200 });
+    });
+
+    const raw = '{"first_name":  "Alice"}';
+    await runApi("/users", { data: raw });
+    expect(capturedBody).toBe(raw);
+  });
+
+  test("the suggested --file command repeats the caller's targeting flags", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", writable: true });
+    try {
+      const error = (await runApi("/environment", {
+        fapi: true,
+        app: "app_1",
+        instance: "dev",
+        method: "post",
+        data: "{a:b}",
+      }).catch((e: unknown) => e)) as CliError;
+      expect(error.code).toBe(ERROR_CODE.INVALID_JSON_SHELL_QUOTING);
+      expect(error.examples?.[0]?.command).toBe(
+        "clerk api --fapi /environment -X POST --app app_1 --instance dev --file body.json",
+      );
+      expect(error.examples?.[0]?.command).not.toContain("sk_");
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
+    }
+  });
 });

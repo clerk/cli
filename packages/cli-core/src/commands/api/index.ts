@@ -7,6 +7,7 @@ import { bapiRequest } from "../../lib/bapi.ts";
 import { fapiRequest } from "../../lib/fapi.ts";
 import { resolveFapiHost } from "./fapi.ts";
 import { ApiError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
+import { validateJsonBody } from "../../lib/json-body.ts";
 import { isHuman } from "../../mode.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
@@ -87,7 +88,7 @@ export async function api(
     }
 
     // 1. Resolve the request body
-    const body = await resolveBody(options);
+    const body = await resolveBody(options, endpoint);
 
     // 2. Determine HTTP method
     const method = (options.method ?? (body ? "POST" : "GET")).toUpperCase();
@@ -175,15 +176,30 @@ export async function api(
   }
 }
 
-async function resolveBody(options: { data?: string; file?: string }): Promise<string | null> {
-  if (options.data) return options.data;
+/**
+ * Resolve the request body from `-d`, `--file`, or piped stdin, and parse-check
+ * it before it can reach the API. The request's targeting flags ride along only
+ * so the error's suggested command hits the same endpoint; the secret key is
+ * deliberately not among them, since the suggestion is printed.
+ */
+async function resolveBody(options: ApiOptions, endpoint: string): Promise<string | null> {
+  const request = {
+    endpoint,
+    method: options.method,
+    fapi: options.fapi,
+    platform: options.platform,
+    app: options.app,
+    instance: options.instance,
+  };
+
+  if (options.data) return validateJsonBody(options.data, { kind: "data" }, request);
 
   if (options.file) {
     const file = Bun.file(options.file);
     if (!(await file.exists())) {
       throwUsageError(`File not found: ${options.file}`, undefined, ERROR_CODE.FILE_NOT_FOUND);
     }
-    return file.text();
+    return validateJsonBody(await file.text(), { kind: "file", path: options.file }, request);
   }
 
   // Read from stdin if piped
@@ -193,7 +209,7 @@ async function resolveBody(options: { data?: string; file?: string }): Promise<s
       chunks.push(Buffer.from(chunk));
     }
     const text = Buffer.concat(chunks).toString("utf-8").trim();
-    if (text) return text;
+    if (text) return validateJsonBody(text, { kind: "stdin" }, request);
   }
 
   return null;
@@ -276,6 +292,11 @@ export function registerApi(program: Program): void {
       {
         command: 'clerk api /users -d \'{"first_name":"Alice"}\'',
         description: "POST with a JSON body",
+      },
+      {
+        command: "clerk api /users --file body.json",
+        description:
+          "POST a body from a file — no shell quoting, so it works the same in PowerShell and cmd.exe",
       },
       {
         command: "clerk api --fapi /environment --app <id> --instance dev",
