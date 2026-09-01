@@ -1,5 +1,15 @@
 # clerk
 
+## 3.3.0
+
+### Minor Changes
+
+- Add `clerk init --accountless` as the canonical flag and keep `--keyless` as a deprecated compatibility alias. `open` and `whoami` agent JSON now emit the canonical `accountless` key alongside the deprecated `keyless` alias. ([#457](https://github.com/clerk/cli/pull/457)) by [@SarahSoutoul](https://github.com/SarahSoutoul)
+
+### Patch Changes
+
+- List commands and options alphabetically in `--help` output so they are easier to scan. ([#462](https://github.com/clerk/cli/pull/462)) by [@manovotny](https://github.com/manovotny)
+
 ## 3.2.0
 
 ### Minor Changes
