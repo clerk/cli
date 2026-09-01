@@ -5,7 +5,7 @@ Make authenticated HTTP requests to Clerk APIs directly from the command line.
 By default, targets the Clerk Backend API (`https://api.clerk.dev/v1/`) using
 the instance secret key. Use `--platform` to target the Platform API instead.
 
-Works with no login and no linked project on an **unclaimed keyless
+Works with no login and no linked project on an **unclaimed accountless
 application** — the one an SDK creates for itself the first time you run
 `next dev` (or similar) with no keys configured — by reading the secret key it
 already left on disk. See [Authentication](#authentication) below.
@@ -87,13 +87,13 @@ Secret key resolution order (Backend API, the default):
 
 1. `--secret-key` flag (explicit)
 2. Auto-resolve from `--app <id>` via the Platform API (see below)
-3. This project's own keyless secret key — from `CLERK_SECRET_KEY`, `.env.local`
+3. This project's own accountless secret key — from `CLERK_SECRET_KEY`, `.env.local`
    (or the framework's detected env var name), or the SDK's own `.clerk/.tmp/keyless.json`
 4. Auto-resolve from linked project profile via the Platform API (see below)
 
 Step 2 exchanges a Platform API token for the target instance's secret key and
 works from any directory (no `clerk link` required). Step 3 is what makes
-`clerk api` work out of the box against an **unclaimed keyless application** —
+`clerk api` work out of the box against an **unclaimed accountless application** —
 the one an SDK creates for itself on first `next dev` (or similar) with no keys
 configured — with no login and no Platform API auth at all; it only applies when
 the directory isn't linked and `--app` wasn't passed, since either of those names

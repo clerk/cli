@@ -74,13 +74,15 @@ type InitOptions = {
   starter?: boolean;
   /** Link to a specific Clerk application by ID (skips the interactive picker). */
   app?: string;
-  /** Force keyless mode (auto-generated dev keys, no login). Only valid on keyless-capable frameworks. */
+  /** Force accountless setup (auto-generated dev keys, no login). */
+  accountless?: boolean;
+  /** Deprecated alias for `accountless`. */
   keyless?: boolean;
-  /** Force the authenticated flow (log in and link a real app) instead of defaulting to keyless. */
+  /** Force the authenticated flow (log in and link a real app) instead of defaulting to accountless. */
   login?: boolean;
-  /** Pre-configure the keyless application from a Clerk application template. */
+  /** Pre-configure the accountless application from a Clerk application template. */
   template?: KeylessTemplate;
-  /** Replace an existing unclaimed keyless application instead of keeping it. */
+  /** Replace an existing unclaimed accountless application instead of keeping it. */
   fresh?: boolean;
 };
 
@@ -89,7 +91,11 @@ export async function init(options: InitOptions = {}) {
   const agent = isAgent();
 
   setTelemetryStage("flags");
-  await assertUsableFlags(options, agent);
+  const optsAccountless = options.accountless === true || options.keyless === true;
+  if (options.keyless) {
+    log.warn("`--keyless` is deprecated. Use `--accountless` instead.");
+  }
+  await assertUsableFlags(options, agent, optsAccountless);
 
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework) ?? undefined)
@@ -119,8 +125,7 @@ export async function init(options: InitOptions = {}) {
 
   await enrichProjectContext(ctx);
 
-  const optsKeyless = options.keyless === true;
-  // Skip auth-related I/O entirely when the user opted into keyless — those
+  // Skip auth-related I/O entirely when the user opted into accountless setup — those
   // values are not consumed once the strategy resolves to "keyless".
   //
   // Agent mode has no way to recover if this lies: a human who turns out to be
@@ -129,17 +134,17 @@ export async function init(options: InitOptions = {}) {
   // round-trip it can never complete. So agent mode validates the credential
   // (it can fall back to keyless) instead of trusting mere presence.
   setTelemetryStage("strategy");
-  const authed = optsKeyless
+  const authed = optsAccountless
     ? false
     : agent
       ? await isAuthenticatedForAgent()
       : await isAuthenticated();
   const linkedProfile =
-    !optsKeyless && agent && !options.app ? await resolveProfile(ctx.cwd) : undefined;
+    !optsAccountless && agent && !options.app ? await resolveProfile(ctx.cwd) : undefined;
   const hasRealAppTarget = Boolean(options.app || linkedProfile);
 
   const strategy = pickStrategy({
-    optsKeyless,
+    optsAccountless,
     optsLogin: options.login === true,
     agent,
     authed,
@@ -148,7 +153,7 @@ export async function init(options: InitOptions = {}) {
     framework: ctx.framework,
   });
 
-  assertKeylessOnlyFlags(options, strategy);
+  assertKeylessOnlyFlags(options, strategy, Boolean(ctx.framework.supportsKeyless));
 
   if (strategy === "authenticate") {
     setTelemetryStage("link");
@@ -203,26 +208,32 @@ export async function init(options: InitOptions = {}) {
 
 /**
  * Rejects flag combinations that can't both be honoured, before anything is
- * bootstrapped on disk. `--keyless`, `--template`, and `--fresh` describe an
+ * bootstrapped on disk. `--accountless`, `--template`, and `--fresh` describe an
  * application the CLI creates; `--login` and `--app` describe one that
  * already exists.
  */
-async function assertUsableFlags(options: InitOptions, agent: boolean): Promise<void> {
-  if (options.keyless && options.login) {
-    throwUsageError("--keyless and --login cannot be combined.");
+async function assertUsableFlags(
+  options: InitOptions,
+  agent: boolean,
+  accountless: boolean,
+): Promise<void> {
+  if (accountless && options.login) {
+    throwUsageError("--accountless and --login cannot be combined.");
   }
-  if (options.keyless && options.app) {
+  if (accountless && options.app) {
     throwUsageError(
-      "--keyless cannot be combined with --app. Drop --keyless to link the app, or drop --app to use temporary development keys.",
+      "--accountless cannot be combined with --app. Drop --accountless to link the app, or drop --app to use temporary development keys.",
     );
   }
   if (options.template && options.login) {
     throwUsageError(
-      "--template applies to keyless applications and cannot be combined with --login.",
+      "--template applies to accountless applications and cannot be combined with --login.",
     );
   }
   if (options.fresh && options.login) {
-    throwUsageError("--fresh applies to keyless applications and cannot be combined with --login.");
+    throwUsageError(
+      "--fresh applies to accountless applications and cannot be combined with --login.",
+    );
   }
   // Presence-only here would repeat the hang below: an agent can't complete an
   // interactive login, so a stored-but-broken credential must read as
@@ -250,30 +261,56 @@ async function isAuthenticatedForAgent(): Promise<boolean> {
 }
 
 /**
- * `--template` and `--fresh` only take effect when init creates a keyless
+ * `--template` and `--fresh` only take effect when init creates an accountless
  * application. Silently dropping them when the strategy resolves elsewhere
  * (the pre-fix behaviour for `--template`) leaves the user believing they got
  * a shaped or replaced app when they didn't — so fail loudly instead, the
- * same way `--keyless`+`--app` does above. This runs after strategy
+ * same way `--accountless`+`--app` does above. This runs after strategy
  * resolution because that's the earliest point the real strategy — not just
  * the flags that might influence it — is known.
  */
-function assertKeylessOnlyFlags(options: InitOptions, strategy: InitStrategy): void {
+function assertKeylessOnlyFlags(
+  options: InitOptions,
+  strategy: InitStrategy,
+  supportsAccountless: boolean,
+): void {
   if (strategy === "keyless") return;
 
-  const reason =
-    strategy === "manual"
-      ? "this framework does not support keyless mode"
-      : "this run resolved to the authenticated flow instead (already signed in, --app was set, or a project is already linked)";
+  // "Add --accountless" is only valid remediation when accountless setup is
+  // actually reachable from here — not when the framework doesn't support it
+  // or when --app/--login are what forced the authenticated flow (both
+  // conflict with --accountless in assertUsableFlags above). Framework
+  // support is checked directly, not via strategy: an unsupported framework
+  // resolves to "manual" only in agent mode — in human mode it resolves to
+  // "authenticate", which would otherwise suggest an --accountless flag the
+  // framework rejects.
+  let reason: string;
+  // Null when dropping the offending flag is the only remediation.
+  let remedy: string | null;
+  if (!supportsAccountless) {
+    reason = "this framework does not support accountless setup";
+    remedy = null;
+  } else if (options.app) {
+    reason = "--app was set, which cannot be combined with --accountless";
+    remedy = "drop --app to allow accountless setup";
+  } else if (options.login) {
+    reason = "--login was set, which cannot be combined with --accountless";
+    remedy = "drop --login to allow accountless setup";
+  } else {
+    reason =
+      "this run resolved to the authenticated flow instead (already signed in, or a project is already linked)";
+    remedy = "add --accountless to force an accountless app";
+  }
 
+  const tail = (flag: string): string => (remedy ? `${remedy}, or drop ${flag}.` : `drop ${flag}.`);
   if (options.template) {
     throwUsageError(
-      `--template only applies to keyless applications, but ${reason}. Add --keyless to force a keyless app, or drop --template.`,
+      `--template only applies to accountless applications, but ${reason}; ${tail("--template")}`,
     );
   }
   if (options.fresh) {
     throwUsageError(
-      `--fresh only applies to keyless applications, but ${reason}. Add --keyless to force a keyless app, or drop --fresh.`,
+      `--fresh only applies to accountless applications, but ${reason}; ${tail("--fresh")}`,
     );
   }
 }
@@ -357,17 +394,17 @@ function devCommand(pm: string): string {
 
 function printBootstrapNextSteps(
   { projectName, packageManager }: BootstrapResult,
-  keyless: boolean,
+  accountless: boolean,
 ): void {
   const steps = [`cd ${projectName}`, devCommand(packageManager)];
-  if (keyless) {
+  if (accountless) {
     steps.push("clerk auth login  (when you're ready to connect your Clerk account)");
   }
   printNextSteps(steps);
 }
 
 function printBootstrapManualSetupInfo(framework: FrameworkInfo): void {
-  // Only reachable for non-keyless frameworks: keyless-capable ones resolve to
+  // Only reachable for frameworks without accountless support: capable ones resolve to
   // the "keyless" or "authenticate" strategy in agent mode instead.
   const lines = [
     `\n  Set up Clerk for ${framework.name}:`,
@@ -383,16 +420,16 @@ function printBootstrapManualSetupInfo(framework: FrameworkInfo): void {
 type InitStrategy = "keyless" | "manual" | "authenticate";
 
 // Picks how `clerk init` will reach a working Clerk setup:
-// - "keyless"      → temporary development keys, no login. Forced via `--keyless`, or the default
+// - "keyless"      → temporary development keys, no login. Forced via `--accountless`, or the default
 //                    for unauthenticated runs on a keyless-capable framework (human bootstrap and
-//                    all agent runs). A `.clerk/keyless.json` breadcrumb lets the next
+//                    all agent runs). A legacy `.clerk/keyless.json` breadcrumb lets the next
 //                    `clerk auth login` claim the app automatically.
 // - "manual"       → agent mode on a non-keyless framework without a real app target — scaffold
 //                    locally and print guidance instead of running OAuth.
 // - "authenticate" → log in (interactively if needed) and link a real Clerk application. Forced
-//                    via `--login`, and the default whenever keyless doesn't apply.
+//                    via `--login`, and the default whenever accountless setup doesn't apply.
 function pickStrategy({
-  optsKeyless,
+  optsAccountless,
   optsLogin,
   agent,
   authed,
@@ -400,7 +437,7 @@ function pickStrategy({
   hasRealAppTarget,
   framework,
 }: {
-  optsKeyless: boolean;
+  optsAccountless: boolean;
   optsLogin: boolean;
   agent: boolean;
   authed: boolean;
@@ -408,10 +445,10 @@ function pickStrategy({
   hasRealAppTarget: boolean;
   framework: FrameworkInfo;
 }): InitStrategy {
-  if (optsKeyless) {
+  if (optsAccountless) {
     if (!framework.supportsKeyless) {
       throwUsageError(
-        `--keyless is not supported for ${framework.name}. Run \`clerk auth login\` and use \`clerk init --app <app_id>\` instead.`,
+        `--accountless is not supported for ${framework.name}. Run \`clerk auth login\` and use \`clerk init --app <app_id>\` instead.`,
       );
     }
     return "keyless";
@@ -486,8 +523,8 @@ async function authenticateAndLink(
 // --- Keyless app setup ---
 
 /**
- * A `.clerk/keyless.json` breadcrumb means an earlier run already minted an
- * unclaimed keyless application for this project — its claim token, and the
+ * A legacy `.clerk/keyless.json` breadcrumb means an earlier run already minted an
+ * unclaimed accountless application for this project — its claim token, and the
  * local means of claiming or reaching it, only exist as long as that
  * breadcrumb (and the env keys pointing at it) survive. The same is true of
  * an application a Clerk SDK minted for itself in `.clerk/.tmp/keyless.json`
@@ -513,8 +550,8 @@ async function shouldKeepExistingKeyless(
 
   const replace = await confirm({
     message: existing
-      ? `This project already has an unclaimed keyless application (created ${existing.createdAt}). Replace it with a new one?`
-      : "This project already has an unclaimed keyless application (minted by its Clerk SDK in `.clerk/.tmp/keyless.json`). Replace it with a new one?",
+      ? `This project already has an unclaimed accountless application (created ${existing.createdAt}). Replace it with a new one?`
+      : "This project already has an unclaimed accountless application (minted by its Clerk SDK in `.clerk/.tmp/keyless.json`). Replace it with a new one?",
     default: false,
   });
   return !replace;
@@ -656,22 +693,23 @@ export function registerInit(program: Program): void {
     .option("--app <id>", "Application ID to link (skips interactive picker)")
     .option("--starter", "Create a new project from a starter template")
     .option(
-      "--keyless",
-      "Force keyless development keys, even when logged in (only for keyless-capable frameworks)",
+      "--accountless",
+      "Force accountless development keys, even when logged in (only for supported frameworks)",
     )
+    .addOption(createOption("--keyless", "Deprecated alias for --accountless").hideHelp())
     .option(
       "--login",
-      "Force the authenticated flow: log in and link a real application instead of keyless keys",
+      "Force the authenticated flow: log in and link a real application instead of accountless keys",
     )
     .addOption(
       createOption(
         "--template <name>",
-        "Pre-configure the keyless application from a Clerk application template. Only applies when the strategy resolves to keyless — errors otherwise",
+        "Pre-configure the accountless application from a Clerk application template. Only applies when the strategy resolves to accountless — errors otherwise",
       ).choices(KEYLESS_TEMPLATES),
     )
     .option(
       "--fresh",
-      "Replace an existing unclaimed keyless application with a new one, instead of keeping it. Only applies when the strategy resolves to keyless — errors otherwise",
+      "Replace an existing unclaimed accountless application with a new one, instead of keeping it. Only applies when the strategy resolves to accountless — errors otherwise",
     )
     .option("-y, --yes", "Skip confirmation prompts")
     .option("--no-skills", "Skip the optional agent skills install prompt")
@@ -691,20 +729,20 @@ export function registerInit(program: Program): void {
         description: "Bootstrap with Bun",
       },
       {
-        command: "clerk init --starter --framework next --keyless",
+        command: "clerk init --starter --framework next --accountless",
         description: "Bootstrap with temporary dev keys, even when logged in",
       },
       {
         command: "clerk init --login",
-        description: "Log in and link a real application instead of keyless keys",
+        description: "Log in and link a real application instead of accountless keys",
       },
       {
         command: "clerk init --template b2b-saas",
-        description: "Bootstrap a keyless app pre-configured for B2B SaaS",
+        description: "Bootstrap an accountless app pre-configured for B2B SaaS",
       },
       {
-        command: "clerk init --keyless --fresh",
-        description: "Replace an existing unclaimed keyless app with a new one",
+        command: "clerk init --accountless --fresh",
+        description: "Replace an existing unclaimed accountless app with a new one",
       },
       { command: "clerk init -y", description: "Skip all confirmation prompts" },
       { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },

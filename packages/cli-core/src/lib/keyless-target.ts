@@ -123,7 +123,7 @@ export async function findLocalSecretKey(cwd: string): Promise<KeylessTarget | u
     ? { secretKey: located.value, source: located.source }
     : await sdkKeylessTarget(cwd);
 
-  if (found) log.debug(`keyless: secret key from ${found.source}`);
+  if (found) log.debug(`accountless: secret key from ${found.source}`);
   return found;
 }
 
@@ -229,7 +229,7 @@ export async function resolveKeylessTarget(options: {
   // instance to choose between.
   if (options.instance) {
     throwUsageError(
-      `--instance is not supported for an unclaimed keyless application: the secret key in ${target.source} already targets its own instance.\n` +
+      `--instance is not supported for an unclaimed accountless application: the secret key in ${target.source} already targets its own instance.\n` +
         "Run `clerk auth login` to claim the application, then target instances by name.",
     );
   }
@@ -302,7 +302,7 @@ export async function resolveInstanceTarget(options: {
     return {
       kind: "keyless",
       keyless,
-      label: `this keyless application (secret key from ${keyless.source})`,
+      label: `this accountless application (secret key from ${keyless.source})`,
     };
   }
 

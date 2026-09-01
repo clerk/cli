@@ -2,7 +2,7 @@
 
 Manage direct Clerk user resources with first-class commands. Use `clerk api` for unsupported or fully custom user requests.
 
-Works with no login and no linked project on an **unclaimed keyless
+Works with no login and no linked project on an **unclaimed accountless
 application** — the one an SDK creates for itself the first time you run
 `next dev` (or similar) with no keys configured. See
 [Shared Targeting And Auth](#shared-targeting-and-auth) below.
@@ -23,10 +23,10 @@ Authentication is resolved in this order:
 
 - `--secret-key <key>` (explicit)
 - `--app <id>` plus Platform API auth to resolve the instance secret key (explicit)
-- this project's own keyless secret key — `CLERK_SECRET_KEY`, `.env.local` (or the framework's detected env var name), or the SDK's own `.clerk/.tmp/keyless.json`
+- this project's own accountless secret key — `CLERK_SECRET_KEY`, `.env.local` (or the framework's detected env var name), or the SDK's own `.clerk/.tmp/keyless.json`
 - a linked project profile via `clerk link`
 
-The third step is what makes `clerk users` work with no login and no Platform API auth on an **unclaimed keyless application** — the one an SDK creates for itself on first `next dev` (or similar) with no keys configured. It only applies when the directory isn't linked and `--app` wasn't passed, since either of those names an explicit destination the on-disk key might not belong to.
+The third step is what makes `clerk users` work with no login and no Platform API auth on an **unclaimed accountless application** — the one an SDK creates for itself on first `next dev` (or similar) with no keys configured. It only applies when the directory isn't linked and `--app` wasn't passed, since either of those names an explicit destination the on-disk key might not belong to.
 
 The users commands talk to the instance's Backend API. Identifier and required-field rules are enforced by BAPI, so any BAPI secret key (via `CLERK_SECRET_KEY`, `.env.local`, `--secret-key`, or `--app`-resolved) is enough — no `applications:manage` Platform API scope is required.
 
@@ -124,11 +124,11 @@ In agent mode the user-id is required (no interactive picker) and output is a JS
 
 `--secret-key` chooses the Backend API key used for user lookup. `users open` still requires an app target to resolve the dashboard URL, either from `--app`, a linked project, or the human-mode app picker. Use `--instance` when you want something other than the default development instance.
 
-#### On an unclaimed keyless application
+#### On an unclaimed accountless application
 
-This is the one command in the family that an unclaimed keyless application cannot satisfy, and the reason is structural rather than a missing code path: a dashboard link is `/apps/{appId}/instances/{instanceId}/users/{userId}`, and an application has no `appId` until somebody claims it.
+This is the one command in the family that an unclaimed accountless application cannot satisfy, and the reason is structural rather than a missing code path: a dashboard link is `/apps/{appId}/instances/{instanceId}/users/{userId}`, and an application has no `appId` until somebody claims it.
 
-Rather than report the generic "no Clerk project linked", `users open` detects the keyless project and says so — because the two remedies that message implies, `clerk link` and `--app`, both want an application ID that does not exist yet. The error names `clerk auth login` to claim the application, and `clerk api /users/<id>` to read the user right now without claiming anything. Passing `--app` explicitly skips this check: naming an application says the request isn't about the keyless one in this directory.
+Rather than report the generic "no Clerk project linked", `users open` detects the accountless project and says so — because the two remedies that message implies, `clerk link` and `--app`, both want an application ID that does not exist yet. The error names `clerk auth login` to claim the application, and `clerk api /users/<id>` to read the user right now without claiming anything. Passing `--app` explicitly skips this check: naming an application says the request isn't about the accountless one in this directory.
 
 ## API Endpoints
 
