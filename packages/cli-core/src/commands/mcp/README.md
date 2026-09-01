@@ -182,6 +182,15 @@ once a session id exists, the same status is instead answered per-request as a
 JSON-RPC error (`-32001`, "requires authentication") and the bridge keeps
 running.
 
+Any other non-2xx response is relayed to the client as-is when its body is a
+well-formed JSON-RPC error (`jsonrpc: "2.0"`, an `id`, and an `error.code`) —
+this is what lets the MCP-reserved codes (`-32020` `HeaderMismatch`, `-32021`
+`MissingRequiredClientCapability`, `-32022` `UnsupportedProtocolVersion`) and
+their `data.supported` payload reach the client so it can drive the
+2026-07-28 negotiation-retry flow. A body that isn't valid JSON, or JSON that
+isn't a JSON-RPC error, falls back to a generic `-32000` ("Upstream returned
+HTTP `<status>`.").
+
 ### `clerk mcp uninstall`
 
 Remove the entry. For CLI-registered clients (claude, gemini, codex, openclaw,
