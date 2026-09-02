@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { stubFetch, useCaptureLog } from "../test/lib/stubs.ts";
@@ -166,6 +166,21 @@ describe("writeKeysToEnvFile", () => {
     const content = await Bun.file(join(tempDir, ".env.local")).text();
     expect(content).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_next");
     expect(content).toContain("CLERK_SECRET_KEY=sk_test_next");
+  });
+
+  test("native framework (iOS) gets only the publishable key, in .env", async () => {
+    // Native .gitignore templates don't cover .env, so the secret key must not
+    // land there — the same rule `clerk env pull` applies.
+    await mkdir(join(tempDir, "MyApp.xcodeproj"), { recursive: true });
+    await writeKeysToEnvFile(tempDir, {
+      publishableKey: "pk_test_ios",
+      secretKey: "sk_test_ios",
+    });
+
+    const content = await Bun.file(join(tempDir, ".env")).text();
+    expect(content).toContain("CLERK_PUBLISHABLE_KEY=pk_test_ios");
+    expect(content).not.toContain("sk_test_ios");
+    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
   });
 });
 
