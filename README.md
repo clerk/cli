@@ -2,6 +2,41 @@
 
 The Clerk command-line interface.
 
+## Add Clerk to an app
+
+```sh
+npx -y clerk@latest init
+```
+
+`clerk init` is the setup path for developers and coding agents. It detects the
+framework, installs the matching Clerk SDK for npm-based projects when it is
+missing, and scaffolds the Clerk wiring it can safely generate.
+
+For accountless-capable frameworks (Next.js, Astro, Nuxt, TanStack Start, and
+React Router), unauthenticated agent runs can start without a Clerk account or
+browser login. With no `--app` and no linked project, `clerk init` creates an
+unclaimed development application, writes local development keys, and stores a
+claim breadcrumb for a later `clerk auth login`. Frameworks without accountless
+support still need `--app <id>` or a linked project before keys can be pulled.
+
+What `clerk init` changes:
+
+- Installs missing Clerk SDK packages in npm-based projects.
+- Creates or updates supported framework files, such as provider wiring,
+  middleware or proxy files, and sign-in/sign-up routes.
+- Writes Clerk keys to the selected env file when a real or accountless app is
+  available.
+- In accountless mode, writes `.clerk/keyless.json` and adds `.clerk/` to
+  `.gitignore`.
+- In npm-based projects, offers to install Clerk agent skills; agent mode runs
+  that step non-interactively unless `--no-skills` is passed.
+
+After setup, run `clerk doctor` to verify the integration:
+
+```sh
+npx -y clerk@latest doctor
+```
+
 ## Installation
 
 ### Homebrew (macOS / Linux)
