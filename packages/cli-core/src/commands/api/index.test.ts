@@ -743,6 +743,19 @@ describe("api command", () => {
     expect(requested).toBe(false);
   });
 
+  test('rejects an explicit -d "" instead of sending a bodyless request', async () => {
+    let requested = false;
+    stubFetch(async () => {
+      requested = true;
+      return new Response("{}", { status: 200 });
+    });
+
+    await expect(runApi("/users", { data: "" })).rejects.toThrow(
+      "Invalid JSON in --data: the body is empty.",
+    );
+    expect(requested).toBe(false);
+  });
+
   test("rejects an invalid --file body", async () => {
     const bodyFile = join(tempDir, "broken.json");
     await Bun.write(bodyFile, '{"first_name":"Alice"');
@@ -752,31 +765,79 @@ describe("api command", () => {
     );
   });
 
-  test("rejects an invalid piped body", async () => {
+  /**
+   * Make stdin look like a pipe carrying `text`: not a TTY, and its async
+   * iterator yields that one chunk. Returns the restore function; isTTY itself
+   * is put back by afterEach.
+   */
+  function pipeStdin(text: string): () => void {
     Object.defineProperty(process.stdin, "isTTY", {
       value: false,
       writable: true,
       configurable: true,
     });
-    // Replace the stdin async iterator with one chunk of non-JSON.
     const original = process.stdin[Symbol.asyncIterator];
     Object.defineProperty(process.stdin, Symbol.asyncIterator, {
       value: async function* () {
-        yield Buffer.from("not json at all");
+        if (text) yield Buffer.from(text);
       },
       writable: true,
       configurable: true,
     });
-
-    try {
-      await expect(runApi("/users")).rejects.toThrow("Invalid JSON in the piped request body");
-    } finally {
+    return () => {
       Object.defineProperty(process.stdin, Symbol.asyncIterator, {
         value: original,
         writable: true,
         configurable: true,
       });
+    };
+  }
+
+  test("rejects an invalid piped body", async () => {
+    const restore = pipeStdin("not json at all");
+    try {
+      await expect(runApi("/users")).rejects.toThrow("Invalid JSON in the piped request body");
+    } finally {
+      restore();
     }
+  });
+
+  // CI jobs and cron have a non-TTY stdin with nothing on it; a plain GET must
+  // still go out rather than be rejected as an empty body.
+  test("treats an empty non-TTY stdin as no body, not an empty one", async () => {
+    let capturedMethod = "";
+    let capturedBody: unknown = "unset";
+    stubFetch(async (_input, init) => {
+      capturedMethod = init?.method as string;
+      capturedBody = init?.body;
+      return new Response(JSON.stringify(mockUsers), { status: 200 });
+    });
+
+    const restore = pipeStdin("");
+    try {
+      await runApi("/users");
+    } finally {
+      restore();
+    }
+    expect(capturedMethod).toBe("GET");
+    expect(capturedBody).toBeUndefined();
+  });
+
+  test("forwards a piped body untrimmed", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      capturedBody = init?.body as string;
+      return new Response("{}", { status: 200 });
+    });
+
+    const raw = '{"first_name": "Alice"}\n';
+    const restore = pipeStdin(raw);
+    try {
+      await runApi("/users");
+    } finally {
+      restore();
+    }
+    expect(capturedBody).toBe(raw);
   });
 
   test("--dry-run rejects an invalid body too", async () => {

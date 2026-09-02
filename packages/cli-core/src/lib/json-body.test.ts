@@ -209,5 +209,36 @@ describe("validateJsonBody", () => {
         "clerk api --platform /applications --file body.json",
       );
     });
+
+    // Unquoted, `&` backgrounds the command and `?` is a glob that zsh refuses
+    // to leave unmatched, so the suggestion would not hit the same endpoint.
+    test("quotes an endpoint with a query string for a POSIX shell", () => {
+      setPlatform("darwin");
+      const error = rejection("{a:b}", DATA, { endpoint: "/users?limit=1&offset=20" });
+      expect(error.examples?.map((e) => e.command)).toEqual([
+        `clerk api '/users?limit=1&offset=20' -d '{"key":"value"}'`,
+        "clerk api '/users?limit=1&offset=20' --file body.json",
+      ]);
+    });
+
+    test("quotes an endpoint with a query string for a Windows shell", () => {
+      setPlatform("win32");
+      const error = rejection("{a:b}", DATA, { endpoint: "/users?limit=1&offset=20" });
+      expect(error.examples?.[0]?.command).toBe(
+        'clerk api "/users?limit=1&offset=20" --file body.json',
+      );
+    });
+
+    test.each<[NodeJS.Platform, string]>([
+      ["linux", `clerk api /users --app 'o'\\''brien' --file body.json`],
+      ["win32", 'clerk api /users --app "o""brien" --file body.json'],
+    ])("escapes a quote inside a quoted argument on %s", (platform, command) => {
+      setPlatform(platform);
+      const error = rejection("{a:b}", DATA, {
+        endpoint: "/users",
+        app: platform === "win32" ? 'o"brien' : "o'brien",
+      });
+      expect(error.examples?.at(-1)?.command).toBe(command);
+    });
   });
 });

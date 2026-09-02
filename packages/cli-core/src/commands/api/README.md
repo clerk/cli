@@ -77,7 +77,8 @@ The `-d '{"key":"value"}'` form in the examples above is POSIX shell syntax: the
 single quotes keep bash and zsh from consuming the double quotes inside. Leave
 them off and the shell strips those quotes, so the CLI receives `{key:value}`.
 
-Even with the single quotes, that form does **not** survive Windows shells:
+Even with the single quotes, that form fails in PowerShell before 7.3 and in
+cmd.exe:
 
 - **PowerShell before 7.3** passes an argument's embedded double quotes to a
   native program unescaped, so the program's command-line parser consumes them:

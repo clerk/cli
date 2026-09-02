@@ -77,6 +77,21 @@ function preview(raw: string): string {
 }
 
 /**
+ * Quote one request-derived argument for the shell the suggestion will be
+ * pasted into, so an endpoint such as `/users?limit=1&offset=20` stays one
+ * word instead of a backgrounded command and a glob. Plain paths and
+ * identifiers stay bare, so the common case reads as typed. Windows gets
+ * double quotes, the one form cmd.exe and PowerShell both honor, with a
+ * literal `"` inside doubled; everywhere else single quotes pass the value
+ * through untouched.
+ */
+function quoteArg(value: string): string {
+  if (/^[A-Za-z0-9_\-./:@]+$/.test(value)) return value;
+  if (process.platform === "win32") return `"${value.replace(/"/g, '""')}"`;
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
  * `clerk api …` with the caller's own targeting flags and `body` in place of
  * the original `-d`, so the suggestion is runnable as printed. The method is
  * repeated explicitly; without one, a body makes `clerk api` default to POST.
@@ -85,10 +100,10 @@ function apiCommand(request: JsonBodyRequest, body: string): string {
   const parts = ["clerk api"];
   if (request.fapi) parts.push("--fapi");
   if (request.platform) parts.push("--platform");
-  parts.push(request.endpoint);
-  if (request.method) parts.push("-X", request.method.toUpperCase());
-  if (request.app) parts.push("--app", request.app);
-  if (request.instance) parts.push("--instance", request.instance);
+  parts.push(quoteArg(request.endpoint));
+  if (request.method) parts.push("-X", quoteArg(request.method.toUpperCase()));
+  if (request.app) parts.push("--app", quoteArg(request.app));
+  if (request.instance) parts.push("--instance", quoteArg(request.instance));
   parts.push(body);
   return parts.join(" ");
 }

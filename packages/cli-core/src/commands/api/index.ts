@@ -192,7 +192,11 @@ async function resolveBody(options: ApiOptions, endpoint: string): Promise<strin
     instance: options.instance,
   };
 
-  if (options.data) return validateJsonBody(options.data, { kind: "data" }, request);
+  // Presence, not truthiness: an explicit `-d ""` is an empty body to reject,
+  // not a request with no body.
+  if (options.data !== undefined) {
+    return validateJsonBody(options.data, { kind: "data" }, request);
+  }
 
   if (options.file) {
     const file = Bun.file(options.file);
@@ -202,14 +206,17 @@ async function resolveBody(options: ApiOptions, endpoint: string): Promise<strin
     return validateJsonBody(await file.text(), { kind: "file", path: options.file }, request);
   }
 
-  // Read from stdin if piped
+  // Read from stdin if piped. A non-TTY stdin is not proof of a pipe — CI
+  // jobs, cron, and `< /dev/null` look the same and yield nothing — so nothing
+  // (or only whitespace) on stdin means no body rather than an empty one. What
+  // does arrive is forwarded untrimmed, like a --file body.
   if (!process.stdin.isTTY) {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) {
       chunks.push(Buffer.from(chunk));
     }
-    const text = Buffer.concat(chunks).toString("utf-8").trim();
-    if (text) return validateJsonBody(text, { kind: "stdin" }, request);
+    const text = Buffer.concat(chunks).toString("utf-8");
+    if (text.trim()) return validateJsonBody(text, { kind: "stdin" }, request);
   }
 
   return null;
