@@ -42,6 +42,8 @@ export const ERROR_CODE = {
   INVALID_WEBHOOK_SIGNATURE: "invalid_webhook_signature",
   /** Input is not valid JSON or not an object. */
   INVALID_JSON: "invalid_json",
+  /** A `clerk api -d` body arrived visibly mangled by shell quoting — stripped or wrapped. */
+  INVALID_JSON_SHELL_QUOTING: "invalid_json_shell_quoting",
   /** Failed to fetch or parse the OpenAPI catalog. */
   CATALOG_ERROR: "catalog_error",
   /** Doctor checks found issues. */

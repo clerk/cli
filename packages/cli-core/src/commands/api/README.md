@@ -65,6 +65,36 @@ clerk api /v1/platform/applications --platform
 clerk api --fapi /environment --app app_123 --instance dev
 ```
 
+## Request bodies and shell quoting
+
+`-d` takes the body exactly as your shell hands it over, and the CLI parses it
+before sending — an unparseable payload fails locally with the reason, instead of
+costing a round trip and a server-side byte offset. When the value reached the
+CLI with its double quotes stripped, or wrapped in literal single quotes, the
+error names the shell quoting behind it.
+
+The `-d '{"key":"value"}'` form in the examples above is POSIX shell syntax: the
+single quotes keep bash and zsh from consuming the double quotes inside. Leave
+them off and the shell strips those quotes, so the CLI receives `{key:value}`.
+
+Even with the single quotes, that form fails in PowerShell before 7.3 and in
+cmd.exe:
+
+- **PowerShell before 7.3** passes an argument's embedded double quotes to a
+  native program unescaped, so the program's command-line parser consumes them:
+  `-d '{"user_id":"x"}'` arrives as `{user_id:x}`. PowerShell 7.3 fixed this.
+- **cmd.exe** gives `'` no special meaning, so the wrapping single quotes are
+  passed through as part of the value, and the double quotes inside are consumed
+  the same way: `'{user_id:x}'`.
+
+`--file` and piped stdin sidestep the shell entirely and behave the same
+everywhere, so prefer them for anything non-trivial and in scripts:
+
+```sh
+clerk api /users --file body.json
+cat body.json | clerk api /users
+```
+
 ## Options
 
 | Flag                    | Description                                                                     |

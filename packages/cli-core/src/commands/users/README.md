@@ -94,6 +94,11 @@ clerk users create --app app_123 --instance prod -d '{"email_address":["alice@ex
 clerk users create --file user.json --dry-run
 ```
 
+The `-d '{"…"}'` form is POSIX shell syntax. It fails in cmd.exe, which passes
+the wrapping single quotes through as part of the value, and in PowerShell
+before 7.3, which strips an argument's embedded double quotes. Prefer the
+curated flags, or `--file`, on Windows and in scripts.
+
 Supported curated flags:
 
 - `--email <email>`
