@@ -17,7 +17,9 @@ React Router), unauthenticated agent runs can start without a Clerk account or
 browser login. With no `--app` and no linked project, `clerk init` creates an
 unclaimed development application, writes local development keys, and stores a
 claim breadcrumb for a later `clerk auth login`. Frameworks without accountless
-support still need `--app <id>` or a linked project before keys can be pulled.
+support need an authenticated app target before keys can be pulled: pass
+`--app <id>`, use a linked project, or run `npx -y clerk@latest init --login`
+in an interactive terminal to log in and link one.
 
 What `clerk init` changes:
 
