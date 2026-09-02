@@ -23,13 +23,31 @@ import {
   keylessTargetMod,
 } from "../../test/lib/init-harness.ts";
 import * as promptsMod from "../../lib/prompts.ts";
+import { FRAMEWORK_MAP, NATIVE_FRAMEWORK_MAP } from "../../lib/framework.ts";
 import { init } from "./index.ts";
 
 const EXISTING_BREADCRUMB = { claimToken: "tok_existing", createdAt: "2024-01-01T00:00:00.000Z" };
 
+// Vue was gated off accountless while minting was going to be delegated to the
+// SDKs; it is the regression case for "every framework".
+const VUE_CTX: FakeCtx = {
+  ...FAKE_CTX,
+  existingClerk: false,
+  framework: {
+    dep: "vue",
+    name: "Vue",
+    sdk: "@clerk/vue",
+    envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+    envFile: ".env.local",
+  },
+  envFile: ".env.local",
+};
+
+const ALL_FRAMEWORKS = [...FRAMEWORK_MAP, ...NATIVE_FRAMEWORK_MAP];
+
 describe("init strategy", () => {
-  const { setup, setupBootstrapSuccess, track } = useInitHarness();
-  test("blank dir with keyless framework defaults to keyless when unauthenticated", async () => {
+  const { setup, track } = useInitHarness();
+  test("blank dir defaults to keyless when unauthenticated", async () => {
     setup();
     mockBootstrapTo(KEYLESS_CTX);
     mockMiddlewareScaffold();
@@ -102,7 +120,7 @@ describe("init strategy", () => {
     expect(linkMod.link).not.toHaveBeenCalled();
   });
 
-  test("--accountless on a supported framework uses accountless mode without logging in", async () => {
+  test("--accountless uses accountless mode without logging in", async () => {
     setup();
     mockBootstrapTo(KEYLESS_CTX);
     mockMiddlewareScaffold();
@@ -150,30 +168,26 @@ describe("init strategy", () => {
     expect(pullMod.pull).not.toHaveBeenCalled();
   });
 
-  test("--accountless on an unsupported framework throws a usage error", async () => {
-    setup();
-    const nonKeylessCtx: FakeCtx = {
-      ...FAKE_CTX,
-      existingClerk: false,
-      framework: {
-        dep: "vue",
-        name: "Vue",
-        sdk: "@clerk/vue",
-        envVar: "VITE_CLERK_PUBLISHABLE_KEY",
-        envFile: ".env.local",
-      },
-      envFile: ".env.local",
-    };
-    mockBootstrapTo(nonKeylessCtx);
+  // Every framework resolves to accountless the same way: the CLI mints the app
+  // itself and only needs the framework's env var names, so no SDK-level
+  // "keyless support" is involved.
+  test.each(ALL_FRAMEWORKS.map((fw) => [fw.dep, fw] as const))(
+    "unauthenticated agent init on %s goes accountless without logging in",
+    async (_dep, framework) => {
+      setup({ isAgent: true, email: null });
+      mockExistingProject({ ...FAKE_CTX, existingClerk: false, framework });
+      mockMiddlewareScaffold();
 
-    await expect(init({ accountless: true })).rejects.toThrow(
-      /--accountless is not supported for Vue/,
-    );
-    expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
-    expect(linkMod.link).not.toHaveBeenCalled();
-  });
+      await init({});
 
-  test("--accountless on an existing supported project uses accountless mode", async () => {
+      expect(keylessMod.createAccountlessApp).toHaveBeenCalledWith(framework.dep, undefined);
+      expect(keylessMod.writeKeylessBreadcrumb).toHaveBeenCalled();
+      expect(loginMod.login).not.toHaveBeenCalled();
+      expect(linkMod.link).not.toHaveBeenCalled();
+    },
+  );
+
+  test("--accountless on an existing project uses accountless mode", async () => {
     setup();
     mockExistingProject(KEYLESS_CTX);
     mockMiddlewareScaffold();
@@ -187,7 +201,7 @@ describe("init strategy", () => {
     expect(loginMod.login).not.toHaveBeenCalled();
   });
 
-  test("bootstrap with keyless framework goes authenticated when already signed in", async () => {
+  test("bootstrap goes authenticated when already signed in", async () => {
     setup({ email: "user@example.com" });
     mockBootstrapTo({ ...KEYLESS_CTX, existingClerk: true });
 
@@ -198,7 +212,7 @@ describe("init strategy", () => {
     expect(linkMod.link).toHaveBeenCalled();
   });
 
-  test("-y flag with keyless framework uses authenticated flow when signed in", async () => {
+  test("-y flag uses authenticated flow when signed in", async () => {
     setup({ email: "user@example.com" });
     mockBootstrapTo({ ...KEYLESS_CTX, existingClerk: true });
 
@@ -208,7 +222,7 @@ describe("init strategy", () => {
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
 
-  test("-y flag with keyless framework uses authenticated flow when CLERK_PLATFORM_API_KEY is set", async () => {
+  test("-y flag uses authenticated flow when CLERK_PLATFORM_API_KEY is set", async () => {
     setup({ apiKey: true });
     mockBootstrapTo({ ...KEYLESS_CTX, existingClerk: true });
 
@@ -219,7 +233,7 @@ describe("init strategy", () => {
     expect(linkMod.link).toHaveBeenCalled();
   });
 
-  test("-y flag with keyless framework stays keyless when unauthenticated", async () => {
+  test("-y flag stays keyless when unauthenticated", async () => {
     // `-y` only skips y/n confirmations — it neither forces nor bypasses the
     // keyless default for unauthenticated bootstrap.
     setup();
@@ -234,7 +248,7 @@ describe("init strategy", () => {
     expect(linkMod.link).not.toHaveBeenCalled();
   });
 
-  test("-y --accountless with a supported framework uses accountless mode", async () => {
+  test("-y --accountless uses accountless mode", async () => {
     setup();
     mockBootstrapTo(KEYLESS_CTX);
     mockMiddlewareScaffold();
@@ -246,7 +260,7 @@ describe("init strategy", () => {
     expect(loginMod.login).not.toHaveBeenCalled();
   });
 
-  test("agent mode with keyless framework uses keyless with breadcrumb when unauthenticated", async () => {
+  test("agent mode uses keyless with breadcrumb when unauthenticated", async () => {
     // Agents can't run interactive OAuth, so unauthenticated agent runs default
     // to keyless: the app works immediately and the breadcrumb lets the next
     // `clerk auth login` claim it.
@@ -299,7 +313,7 @@ describe("init strategy", () => {
     expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
   });
 
-  test("agent mode with keyless framework + authed creates and links a real app", async () => {
+  test("agent mode + authed creates and links a real app", async () => {
     setup({ isAgent: true, email: "user@example.com" });
     mockExistingProject(KEYLESS_CTX);
     // Override potential leakage from earlier tests that spy on resolveProfile
@@ -319,7 +333,7 @@ describe("init strategy", () => {
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
   });
 
-  test("agent mode with keyless framework uses linked profile as a real app target", async () => {
+  test("agent mode uses linked profile as a real app target", async () => {
     setup({ isAgent: true, email: "user@example.com" });
     mockExistingProject(KEYLESS_CTX);
     spyOn(config, "resolveProfile").mockResolvedValue({
@@ -334,7 +348,7 @@ describe("init strategy", () => {
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
   });
 
-  test("agent mode with keyless framework and --app uses real app flow", async () => {
+  test("agent mode with --app uses real app flow", async () => {
     setup({ isAgent: true, email: "user@example.com" });
     mockExistingProject(KEYLESS_CTX);
     mockMiddlewareScaffold();
@@ -349,35 +363,6 @@ describe("init strategy", () => {
       createIfMissing: expect.any(String),
     });
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
-  });
-
-  test("agent mode with non-keyless framework and no app target prints manual setup", async () => {
-    const { captured } = setup({ isAgent: true, email: "user@example.com" });
-
-    const noKeylessCtx = {
-      ...FAKE_CTX,
-      existingClerk: false,
-      framework: {
-        dep: "vue",
-        name: "Vue",
-        sdk: "@clerk/vue",
-        envVar: "VITE_CLERK_PUBLISHABLE_KEY",
-        envFile: ".env.local" as const,
-      },
-      envFile: ".env.local",
-    };
-    spyOn(context, "gatherContext").mockResolvedValue(noKeylessCtx);
-    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [{ type: "create", path: "src/main.ts", content: "", description: "" }],
-      postInstructions: [],
-    });
-
-    await init({});
-
-    expect(linkMod.link).not.toHaveBeenCalled();
-    expect(pullMod.pull).not.toHaveBeenCalled();
-    expect(loginMod.login).not.toHaveBeenCalled();
-    expect(captured.err).toContain("clerk init --app <app_id>");
   });
 
   test("agent mode with real app target and no auth launches login", async () => {
@@ -395,50 +380,22 @@ describe("init strategy", () => {
     });
   });
 
-  test("-y flag triggers login when unauthenticated", async () => {
+  test("-y on an unauthenticated bootstrap stays accountless on a formerly gated framework", async () => {
     setup();
-    setupBootstrapSuccess();
+    mockBootstrapTo(VUE_CTX);
+    mockMiddlewareScaffold();
 
     await init({ yes: true });
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
-    expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    // `-y` skips y/n confirmations but not authentication.
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(keylessMod.createAccountlessApp).toHaveBeenCalledWith("vue", undefined);
+    expect(heuristics.printKeylessInfo).toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
   });
 
-  test("-y flag triggers login for non-keyless frameworks in bootstrap", async () => {
-    setup();
-
-    const noKeylessCtx = {
-      ...FAKE_CTX,
-      framework: {
-        dep: "vue",
-        name: "Vue",
-        sdk: "@clerk/vue",
-        envVar: "VITE_CLERK_PUBLISHABLE_KEY",
-        envFile: ".env.local" as const,
-      },
-      existingClerk: false,
-    };
-
-    spyOn(context, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(noKeylessCtx);
-
-    await init({ yes: true });
-
-    expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
-    expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
-    expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
-  });
-  test("existing repo with keyless framework uses authenticated flow when signed in", async () => {
+  test("existing repo uses authenticated flow when signed in", async () => {
     setup({ email: "user@example.com" });
-
-    const keylessCtx = {
-      ...FAKE_CTX,
-      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
-    };
-    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
     spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
 
     await init({ yes: true });
@@ -448,19 +405,13 @@ describe("init strategy", () => {
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
 
-  test("existing repo with keyless framework uses authenticated flow when not signed in", async () => {
+  test("existing repo uses authenticated flow when not signed in", async () => {
     // Keyless auto-selection is scoped to bootstrap (new-project) flows. On an
     // existing repo, an unauthenticated re-run should fall through to the
     // authenticated flow (which prompts login) rather than silently skip
     // `env pull`.
     setup();
-
-    const keylessCtx = {
-      ...FAKE_CTX,
-      existingClerk: false,
-      framework: { ...FAKE_CTX.framework, supportsKeyless: true },
-    };
-    spyOn(context, "gatherContext").mockResolvedValue(keylessCtx);
+    spyOn(context, "gatherContext").mockResolvedValue(KEYLESS_CTX);
     spyOn(scaffoldMod, "scaffold").mockResolvedValue({
       actions: [{ type: "create", path: "middleware.ts", content: "", description: "" }],
       postInstructions: [],
@@ -695,47 +646,15 @@ describe("init strategy", () => {
       );
     });
 
-    test("--template on a non-keyless framework in agent mode names the missing keyless support", async () => {
-      setup({ isAgent: true, email: "user@example.com" });
-      const nonKeylessCtx: FakeCtx = {
-        ...FAKE_CTX,
-        existingClerk: false,
-        framework: {
-          dep: "vue",
-          name: "Vue",
-          sdk: "@clerk/vue",
-          envVar: "VITE_CLERK_PUBLISHABLE_KEY",
-          envFile: ".env.local",
-        },
-        envFile: ".env.local",
-      };
-      spyOn(context, "gatherContext").mockResolvedValue(nonKeylessCtx);
-
-      await expect(init({ template: "b2b-saas" })).rejects.toThrow(
-        /does not support accountless setup/,
-      );
-    });
-
-    test("--template on a non-keyless framework in human mode names the missing keyless support", async () => {
+    test("--template on an unauthenticated existing project in human mode points at --accountless", async () => {
+      // Human mode resolves an unauthenticated re-run on an existing project to
+      // the authenticated flow, so the guard fires before any login — and
+      // --accountless is valid remediation on every framework.
       setup({ email: null });
-      const nonKeylessCtx: FakeCtx = {
-        ...FAKE_CTX,
-        existingClerk: false,
-        framework: {
-          dep: "vue",
-          name: "Vue",
-          sdk: "@clerk/vue",
-          envVar: "VITE_CLERK_PUBLISHABLE_KEY",
-          envFile: ".env.local",
-        },
-        envFile: ".env.local",
-      };
-      spyOn(context, "gatherContext").mockResolvedValue(nonKeylessCtx);
+      mockExistingProject(VUE_CTX);
 
-      // Human mode resolves an unsupported framework to the authenticated
-      // flow, so the guard must not suggest --accountless here.
       await expect(init({ template: "b2b-saas" })).rejects.toThrow(
-        /does not support accountless setup/,
+        /add --accountless to force an accountless app/,
       );
       expect(loginMod.login).not.toHaveBeenCalled();
     });

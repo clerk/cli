@@ -267,7 +267,7 @@ export const expo: FrameworkScaffold = {
     }
 
     postInstructions.push(
-      `Ensure ${ctx.framework.envVar} is set in your ${ctx.envFile} (pulled via \`clerk env pull\`)`,
+      `Ensure ${ctx.framework.envVar} is set in your ${ctx.envFile}`,
       `Add sign-in and sign-up screens, and enable the Native API at https://dashboard.clerk.com/~/native-applications — see: ${EXPO_QUICKSTART_URL}`,
     );
 
