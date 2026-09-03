@@ -224,6 +224,14 @@ const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
     "Auto-claim failed due to a temporary error. It will be retried on your next `clerk auth login`.",
 };
 
+function claimWarning(result: AutoclaimResult): string | undefined {
+  if (result.status === "managed_workspace") {
+    // The API message already names the provider and says what to do.
+    return `Unable to claim - ${result.longMessage ?? "this workspace is managed by an integration provider."}`;
+  }
+  return CLAIM_WARNINGS[result.status];
+}
+
 async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
   const result = await attemptAutoclaim(cwd);
 
@@ -232,7 +240,7 @@ async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
     log.success(`Claimed and linked application: \`${label}\``);
   }
 
-  const warning = CLAIM_WARNINGS[result.status];
+  const warning = claimWarning(result);
   if (warning) log.warn(warning);
 
   return result;
@@ -243,6 +251,7 @@ async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[
     return result.envPulled ? NEXT_STEPS.AUTOCLAIMED : NEXT_STEPS.AUTOCLAIMED_NO_ENV;
   }
   if (result.status === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
+  if (result.status === "managed_workspace") return NEXT_STEPS.AUTOCLAIM_SWITCH_WORKSPACE;
   if (result.status === "not_found" || result.status === "no_organization") {
     return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   }
