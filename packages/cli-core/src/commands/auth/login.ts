@@ -224,6 +224,37 @@ const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
     "Auto-claim failed due to a temporary error. It will be retried on your next `clerk auth login`.",
 };
 
+const MANAGED_WORKSPACE_FALLBACK_REASON = "this workspace is managed by an integration provider.";
+
+/**
+ * The API's `long_message` reads "This workspace is managed by Vercel. Switch
+ * to a workspace you own and claim the application there." Only its first
+ * sentence is kept - it names the provider - and the CLI's own instruction
+ * replaces the second, so the user is not told to switch twice.
+ */
+function managedWorkspaceWarning(longMessage: string | null): string {
+  const reason = longMessage
+    ? lowercaseFirst(firstSentence(longMessage))
+    : MANAGED_WORKSPACE_FALLBACK_REASON;
+  return `Unable to claim - ${reason} Switch to a workspace you own in the Clerk Dashboard, then run \`clerk auth login\` again.`;
+}
+
+function firstSentence(text: string): string {
+  const trimmed = text.trim();
+  const end = trimmed.indexOf(". ");
+  const sentence = end === -1 ? trimmed : trimmed.slice(0, end + 1);
+  return sentence.endsWith(".") ? sentence : `${sentence}.`;
+}
+
+function lowercaseFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+function claimWarning(result: AutoclaimResult): string | undefined {
+  if (result.status === "managed_workspace") return managedWorkspaceWarning(result.longMessage);
+  return CLAIM_WARNINGS[result.status];
+}
+
 async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
   const result = await attemptAutoclaim(cwd);
 
@@ -232,7 +263,7 @@ async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
     log.success(`Claimed and linked application: \`${label}\``);
   }
 
-  const warning = CLAIM_WARNINGS[result.status];
+  const warning = claimWarning(result);
   if (warning) log.warn(warning);
 
   return result;
@@ -243,6 +274,7 @@ async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[
     return result.envPulled ? NEXT_STEPS.AUTOCLAIMED : NEXT_STEPS.AUTOCLAIMED_NO_ENV;
   }
   if (result.status === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
+  if (result.status === "managed_workspace") return NEXT_STEPS.AUTOCLAIM_SWITCH_WORKSPACE;
   if (result.status === "not_found" || result.status === "no_organization") {
     return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   }

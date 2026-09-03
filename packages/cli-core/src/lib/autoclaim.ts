@@ -7,13 +7,24 @@ import { pull } from "../commands/env/pull.ts";
 import { log } from "./log.ts";
 
 type Claimed = { status: "claimed"; app: Application; envPulled: boolean };
+/** The claim can never succeed with this token; the breadcrumb is cleared. */
 type Terminal = { status: "not_found" | "no_organization" };
+/**
+ * The token's workspace is provisioned by an integration (Vercel Marketplace,
+ * Stripe), so nothing can be claimed into it. The breadcrumb is kept: the user
+ * switches to a workspace they own and the next `clerk auth login` retries.
+ * `longMessage` is the API's `long_message`, which names the provider.
+ */
+type ManagedWorkspace = { status: "managed_workspace"; longMessage: string | null };
 type Failed = { status: "failed"; error: Error };
 type Skipped = { status: "not_keyless" };
 
-export type AutoclaimResult = Claimed | Terminal | Failed | Skipped;
+export type AutoclaimResult = Claimed | Terminal | ManagedWorkspace | Failed | Skipped;
 
-type ClaimAttempt = { status: "claimed"; app: Application } | Terminal | Failed;
+type ClaimAttempt = { status: "claimed"; app: Application } | Terminal | ManagedWorkspace | Failed;
+
+/** PLAPI error code for a claim into a provider-managed workspace. */
+const MANAGED_WORKSPACE_CODE = "accountless_application_managed_workspace";
 
 const TERMINAL_BY_STATUS: Record<number, Terminal["status"]> = {
   404: "not_found",
@@ -28,7 +39,7 @@ export async function attemptAutoclaim(cwd: string): Promise<AutoclaimResult> {
   const appName = await deriveProjectName(cwd);
   const result = await tryClaim(breadcrumb.claimToken, appName);
 
-  if (result.status === "failed") return result;
+  if (result.status === "failed" || result.status === "managed_workspace") return result;
 
   await clearKeylessBreadcrumb(cwd);
 
@@ -75,7 +86,16 @@ async function tryPullEnv(): Promise<boolean> {
   }
 }
 
-function classifyClaimError(error: unknown): Terminal | Failed {
+function classifyClaimError(error: unknown): Terminal | ManagedWorkspace | Failed {
+  if (
+    error instanceof PlapiError &&
+    error.status === 403 &&
+    error.code === MANAGED_WORKSPACE_CODE
+  ) {
+    log.debug(`Claim returned 403 ${MANAGED_WORKSPACE_CODE}: classified as managed_workspace`);
+    return { status: "managed_workspace", longMessage: error.longMessage };
+  }
+
   if (error instanceof PlapiError && error.status in TERMINAL_BY_STATUS) {
     const status = TERMINAL_BY_STATUS[error.status]!;
     log.debug(`Claim returned ${error.status}: classified as ${status}`);

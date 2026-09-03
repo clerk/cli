@@ -1,6 +1,7 @@
 import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import { AuthError } from "../../lib/errors.ts";
 import { useCaptureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
+import type { AutoclaimResult } from "../../lib/autoclaim.ts";
 
 const actualConstants = await import("../../lib/constants.ts");
 const actualEnvironment = await import("../../lib/environment.ts");
@@ -20,6 +21,9 @@ const mockIsHuman = mock();
 const mockConfirm = mock();
 const mockOpenBrowser = mock();
 const mockEnsureFirstApplication = mock<() => Promise<void>>(() => Promise.resolve());
+const mockAttemptAutoclaim = mock<() => Promise<AutoclaimResult>>(() =>
+  Promise.resolve({ status: "not_keyless" }),
+);
 
 mock.module("../../lib/credential-store.ts", () => ({
   ...credentialStoreStubs,
@@ -93,7 +97,7 @@ mock.module("../../lib/first-application.ts", () => ({
 }));
 
 mock.module("../../lib/autoclaim.ts", () => ({
-  attemptAutoclaim: async () => ({ status: "not_keyless" }),
+  attemptAutoclaim: () => mockAttemptAutoclaim(),
 }));
 
 const { setLogLevel } = await import("../../lib/log.ts");
@@ -127,6 +131,8 @@ describe("login", () => {
     mockOpenBrowser.mockReset();
     mockEnsureFirstApplication.mockReset();
     mockEnsureFirstApplication.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockReset();
+    mockAttemptAutoclaim.mockResolvedValue({ status: "not_keyless" });
     mockIsHuman.mockReturnValue(false);
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
     mockRevokeToken.mockResolvedValue("revoked");
@@ -586,6 +592,38 @@ describe("login", () => {
     await runLogin({ showNextSteps: false });
 
     expect(mockEnsureFirstApplication).toHaveBeenCalledTimes(1);
+  });
+
+  test("explains a managed-workspace claim rejection with the provider named by the API", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "managed_workspace",
+      longMessage:
+        "This workspace is managed by Vercel. Switch to a workspace you own and claim the application there.",
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Unable to claim - this workspace is managed by Vercel. Switch to a workspace you own in the Clerk Dashboard, then run `clerk auth login` again.",
+    );
+    expect(captured.err).not.toContain("claim the application there");
+    expect(captured.err).not.toContain("does not have an active organization");
+  });
+
+  test("falls back to a generic provider when the managed-workspace rejection has no long message", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    mockAttemptAutoclaim.mockResolvedValue({ status: "managed_workspace", longMessage: null });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Unable to claim - this workspace is managed by an integration provider. Switch to a workspace you own in the Clerk Dashboard, then run `clerk auth login` again.",
+    );
   });
 
   test("does not call ensureFirstApplication when existing session is reused", async () => {
