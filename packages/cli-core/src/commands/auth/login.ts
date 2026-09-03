@@ -224,34 +224,11 @@ const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
     "Auto-claim failed due to a temporary error. It will be retried on your next `clerk auth login`.",
 };
 
-const MANAGED_WORKSPACE_FALLBACK_REASON = "this workspace is managed by an integration provider.";
-
-/**
- * The API's `long_message` reads "This workspace is managed by Vercel. Switch
- * to a workspace you own and claim the application there." Only its first
- * sentence is kept - it names the provider - and the CLI's own instruction
- * replaces the second, so the user is not told to switch twice.
- */
-function managedWorkspaceWarning(longMessage: string | null): string {
-  const reason = longMessage
-    ? lowercaseFirst(firstSentence(longMessage))
-    : MANAGED_WORKSPACE_FALLBACK_REASON;
-  return `Unable to claim - ${reason} Switch to a workspace you own in the Clerk Dashboard, then run \`clerk auth login\` again.`;
-}
-
-function firstSentence(text: string): string {
-  const trimmed = text.trim();
-  const end = trimmed.indexOf(". ");
-  const sentence = end === -1 ? trimmed : trimmed.slice(0, end + 1);
-  return sentence.endsWith(".") ? sentence : `${sentence}.`;
-}
-
-function lowercaseFirst(text: string): string {
-  return text.charAt(0).toLowerCase() + text.slice(1);
-}
-
 function claimWarning(result: AutoclaimResult): string | undefined {
-  if (result.status === "managed_workspace") return managedWorkspaceWarning(result.longMessage);
+  if (result.status === "managed_workspace") {
+    // The API message already names the provider and says what to do.
+    return `Unable to claim - ${result.longMessage ?? "this workspace is managed by an integration provider."}`;
+  }
   return CLAIM_WARNINGS[result.status];
 }
 

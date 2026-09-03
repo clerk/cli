@@ -601,13 +601,13 @@ describe("login", () => {
     mockAttemptAutoclaim.mockResolvedValue({
       status: "managed_workspace",
       longMessage:
-        "This workspace is managed by Vercel. Switch to a workspace you own and claim the application there.",
+        "This workspace is managed by Vercel. Select a different workspace in the Clerk Dashboard and try again.",
     });
 
     await runLogin();
 
     expect(captured.err).toContain(
-      "Unable to claim - this workspace is managed by Vercel. Switch to a workspace you own in the Clerk Dashboard, then run `clerk auth login` again.",
+      "Unable to claim - This workspace is managed by Vercel. Select a different workspace in the Clerk Dashboard and try again.",
     );
     expect(captured.err).not.toContain("claim the application there");
     expect(captured.err).not.toContain("does not have an active organization");
@@ -622,7 +622,7 @@ describe("login", () => {
     await runLogin();
 
     expect(captured.err).toContain(
-      "Unable to claim - this workspace is managed by an integration provider. Switch to a workspace you own in the Clerk Dashboard, then run `clerk auth login` again.",
+      "Unable to claim - this workspace is managed by an integration provider.",
     );
   });
 
