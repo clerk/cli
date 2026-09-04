@@ -128,6 +128,7 @@ export function getOAuthConfig() {
   const env = getCurrentEnv();
   const baseUrl = process.env.CLERK_OAUTH_BASE_URL ?? env.oauthBaseUrl;
   return {
+    baseUrl,
     clientId: process.env.CLERK_OAUTH_CLIENT_ID ?? env.oauthClientId,
     // Unless scopes are explicitly set, use the default scopes
     scopes: process.env.CLERK_OAUTH_SCOPES ?? "",

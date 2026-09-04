@@ -68,6 +68,14 @@ export const ERROR_CODE = {
   ACTOR_TOKEN_ALREADY_ACCEPTED: "actor_token_already_accepted",
   /** No active impersonation session matched the operator's actor stamp. */
   IMPERSONATION_SESSION_NOT_FOUND: "impersonation_session_not_found",
+  /** Sign-in ticket passed to `auth login --ticket` has expired; do not retry it. */
+  TICKET_EXPIRED: "ticket_expired",
+  /** Sign-in ticket was already redeemed; each ticket works once. Do not retry it. */
+  TICKET_ALREADY_USED: "ticket_already_used",
+  /** Sign-in ticket is invalid, revoked, or otherwise unusable. */
+  TICKET_INVALID: "ticket_invalid",
+  /** Account requires a second factor, which a sign-in ticket cannot satisfy. */
+  MFA_REQUIRED: "mfa_required",
   /** No MCP client detected on the system. */
   MCP_NO_CLIENT_DETECTED: "mcp_no_client_detected",
   /** Requested MCP client is not in the supported registry. */
