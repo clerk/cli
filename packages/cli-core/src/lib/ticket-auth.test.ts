@@ -11,6 +11,7 @@ mock.module("./token-exchange.ts", () => ({
   exchangeCodeForToken: (...args: unknown[]) => mockExchangeCodeForToken(...args),
 }));
 mock.module("./environment.ts", () => ({
+  getDashboardUrl: () => "https://dashboard.example.com/",
   getOAuthConfig: () => ({
     baseUrl: "https://clerk.example.com",
     clientId: "test-client-id",
@@ -46,7 +47,7 @@ function redeemOk(): Response {
   return json(
     200,
     { response: { status: "complete", created_session_id: "sess_1" } },
-    { authorization: "client-jwt" },
+    { "set-cookie": "__client=client-jwt; Path=/; HttpOnly; Secure; SameSite=Lax" },
   );
 }
 
@@ -89,16 +90,18 @@ describe("loginWithTicket", () => {
 
     expect(result).toEqual(TOKEN_RESPONSE);
     const [redeem, consent, remove] = calls();
-    expect(redeem!.url.searchParams.get("_is_native")).toBe("1");
+    expect(redeem!.url.searchParams.has("_is_native")).toBe(false);
+    expect(new Headers(redeem!.init.headers).get("origin")).toBe("https://dashboard.example.com");
     expect(String(redeem!.init.body)).toBe("strategy=ticket&ticket=ticket-jwt");
-    expect(new Headers(consent!.init.headers).get("authorization")).toBe("client-jwt");
+    expect(new Headers(consent!.init.headers).get("cookie")).toBe("__client=client-jwt");
+    expect(new Headers(consent!.init.headers).get("origin")).toBe("https://dashboard.example.com");
     expect(new Headers(consent!.init.headers).get("clerk-session-id")).toBe("sess_1");
     expect(consent!.init.redirect).toBe("manual");
     const consentBody = new URLSearchParams(String(consent!.init.body));
     expect(consentBody.get("consented")).toBe("true");
     expect(consentBody.get("code_challenge")).toBe("test-code-challenge");
     expect(consentBody.get("redirect_uri")).toBe("http://127.0.0.1:1/callback");
-    expect(new Headers(remove!.init.headers).get("authorization")).toBe("client-jwt");
+    expect(new Headers(remove!.init.headers).get("cookie")).toBe("__client=client-jwt");
     expect(mockExchangeCodeForToken).toHaveBeenCalledWith({
       code: "auth-code",
       codeVerifier: "test-code-verifier",
@@ -133,7 +136,7 @@ describe("loginWithTicket", () => {
     expect((error as CliError).message).toContain("clerk auth login");
   });
 
-  test("fails when FAPI returns no client token (Native API disabled)", async () => {
+  test("fails when FAPI returns no client cookie", async () => {
     route({
       "/v1/client/sign_ins": () =>
         json(200, { response: { status: "complete", created_session_id: "sess_1" } }),
@@ -142,7 +145,7 @@ describe("loginWithTicket", () => {
     const error = await loginWithTicket("ticket-jwt").catch((e: unknown) => e);
 
     expect((error as CliError).code).toBe(ERROR_CODE.FAPI_ERROR);
-    expect((error as CliError).message).toContain("Native API");
+    expect((error as CliError).message).toContain("client cookie");
   });
 
   test("revokes the transient session when authorization fails", async () => {

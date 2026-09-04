@@ -7,13 +7,13 @@
  * holding exactly the credential the browser flow yields: the role-scoped
  * OAuth access token. The FAPI session exists only inside `loginWithTicket`.
  *
- * Requires Native API on the dashboard instance: a headless client has no
- * cookies, so FAPI hands the client credential back in the `Authorization`
- * response header only for native clients (`_is_native=1`).
+ * FAPI classifies a request as a browser when it carries an `Origin` header
+ * and then identifies the client with the `__client` cookie, so this keeps a
+ * cookie jar and sends the dashboard origin. No native-client mode is needed.
  */
 
 import { CALLBACK_PATH } from "./constants.ts";
-import { getOAuthConfig } from "./environment.ts";
+import { getDashboardUrl, getOAuthConfig } from "./environment.ts";
 import { CliError, ERROR_CODE, FapiError } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
@@ -57,14 +57,43 @@ const TICKET_ERROR_MESSAGES: Record<
 };
 
 interface TicketSession {
-  clientJwt: string;
+  jar: CookieJar;
   sessionId: string;
 }
 
+/** Minimal cookie jar: FAPI's `__client` cookie is the client credential. */
+class CookieJar {
+  private cookies = new Map<string, string>();
+
+  absorb(response: Response): void {
+    const lines =
+      typeof response.headers.getSetCookie === "function"
+        ? response.headers.getSetCookie()
+        : [response.headers.get("set-cookie")].filter((v): v is string => !!v);
+    for (const line of lines) {
+      const pair = line.split(";")[0] ?? "";
+      const eq = pair.indexOf("=");
+      if (eq > 0) this.cookies.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+    }
+  }
+
+  has(name: string): boolean {
+    return this.cookies.has(name);
+  }
+
+  header(): string {
+    return [...this.cookies].map(([k, v]) => `${k}=${v}`).join("; ");
+  }
+}
+
 function fapiUrl(path: string): URL {
-  const url = new URL(path, getOAuthConfig().baseUrl);
-  url.searchParams.set("_is_native", "1");
-  return url;
+  return new URL(path, getOAuthConfig().baseUrl);
+}
+
+function browserHeaders(jar?: CookieJar): Record<string, string> {
+  const headers: Record<string, string> = { Origin: new URL(getDashboardUrl()).origin };
+  if (jar) headers.Cookie = jar.header();
+  return headers;
 }
 
 async function throwTicketError(response: Response): Promise<never> {
@@ -81,13 +110,15 @@ async function throwTicketError(response: Response): Promise<never> {
 }
 
 async function redeemTicket(ticket: string): Promise<TicketSession> {
+  const jar = new CookieJar();
   const response = await loggedFetch(fapiUrl("/v1/client/sign_ins"), {
     tag: "fapi",
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { ...browserHeaders(), "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ strategy: "ticket", ticket }).toString(),
   });
   if (!response.ok) await throwTicketError(response);
+  jar.absorb(response);
 
   const body = (await response.json()) as {
     response?: { status?: string; created_session_id?: string };
@@ -108,14 +139,15 @@ async function redeemTicket(ticket: string): Promise<TicketSession> {
     );
   }
 
-  const clientJwt = response.headers.get("authorization");
-  if (!clientJwt) {
+  if (!jar.has("__client")) {
     throw new CliError(
-      "Frontend API did not return a client token; Native API must be enabled on the dashboard instance for headless login.",
-      { code: ERROR_CODE.FAPI_ERROR },
+      "Frontend API did not return a client cookie; cannot continue the sign-in.",
+      {
+        code: ERROR_CODE.FAPI_ERROR,
+      },
     );
   }
-  return { clientJwt, sessionId: body.response.created_session_id };
+  return { jar, sessionId: body.response.created_session_id };
 }
 
 async function authorizeWithSession(
@@ -141,8 +173,8 @@ async function authorizeWithSession(
       tag: "fapi",
       method: "POST",
       headers: {
+        ...browserHeaders(session.jar),
         "Content-Type": "application/x-www-form-urlencoded",
-        Authorization: session.clientJwt,
         "Clerk-Session-Id": session.sessionId,
       },
       body: params.toString(),
@@ -175,7 +207,7 @@ async function revokeSession(session: TicketSession): Promise<void> {
     const response = await loggedFetch(fapiUrl(`/v1/client/sessions/${session.sessionId}/remove`), {
       tag: "fapi",
       method: "POST",
-      headers: { Authorization: session.clientJwt },
+      headers: browserHeaders(session.jar),
     });
     if (!response.ok)
       log.warn(`Could not revoke the transient sign-in session (${response.status}).`);
