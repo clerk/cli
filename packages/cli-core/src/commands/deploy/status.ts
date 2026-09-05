@@ -18,6 +18,7 @@ import {
   deployComponentLabels,
   deployStatusRetryMessage,
   domainsDashboardUrl,
+  pendingDeployComponents,
   type DeployComponentStatus,
 } from "./copy.ts";
 import { mapDeployError } from "./errors.ts";
@@ -66,7 +67,13 @@ export interface DeployStatusReport {
   state: DeployStatusState;
   domain: string | null;
   productionInstanceId: string | null;
-  domainStatus: { dns: string; ssl: string; mail: string } | null;
+  domainStatus: { dns: string; ssl: string; mail: string; proxy: string } | null;
+  /**
+   * For provider domains, the path the deployed app must serve for the proxy
+   * check to pass. Pending DNS records are empty for these domains, so this is
+   * the one actionable datum an agent has when the proxy check is pending.
+   */
+  proxyUrl: string | null;
   pendingDnsRecords: { type: "CNAME"; host: string; value: string }[];
   oauth: { complete: boolean; configured: string[]; pending: string[]; unsupported: string[] };
   nextAction: string;
@@ -232,6 +239,8 @@ export async function resolveLiveDeploySnapshot(
     oauthProviderDescriptors,
     completedOAuthProviders,
     cnameTargets: domain.cname_targets ?? [],
+    proxyUrl: domain.proxy_url,
+    isProviderDomain: domain.is_provider_domain,
     componentStatus: deployComponentStatusFromDomainStatus(deployStatus),
     unsupportedOAuthProviderCount: unsupported.length,
     unsupportedOAuthProviders: unsupported,
@@ -300,6 +309,7 @@ export function pendingDomainStatus(): DomainStatusResponse {
     dns: { status: "not_started" },
     ssl: { status: "not_started", required: true },
     mail: { status: "not_started", required: true },
+    proxy: { status: "not_started", required: false },
   };
 }
 
@@ -318,6 +328,7 @@ export function buildDeployStatusReport(
       domain: null,
       productionInstanceId: null,
       domainStatus: null,
+      proxyUrl: null,
       pendingDnsRecords: [],
       oauth: { complete: false, configured: [], pending: [], unsupported: [] },
       nextAction:
@@ -336,6 +347,7 @@ export function buildDeployStatusReport(
       domain: null,
       productionInstanceId: state.productionInstanceId,
       domainStatus: null,
+      proxyUrl: null,
       pendingDnsRecords: [],
       oauth: { complete: false, configured: [], pending: [], unsupported: [] },
       nextAction:
@@ -370,7 +382,9 @@ export function buildDeployStatusReport(
       dns: domainComponentState(componentStatus.dns),
       ssl: domainComponentState(componentStatus.ssl),
       mail: domainComponentState(componentStatus.mail),
+      proxy: domainComponentState(componentStatus.proxy),
     },
+    proxyUrl: snapshot.proxyUrl ?? null,
     pendingDnsRecords,
     oauth: {
       complete: oauthComplete,
@@ -382,6 +396,7 @@ export function buildDeployStatusReport(
       reportState,
       snapshot.domain,
       componentStatus,
+      snapshot.proxyUrl ?? null,
       oauthPending,
       snapshot.productionInstanceId
         ? domainsDashboardUrl(snapshot.appId, snapshot.productionInstanceId)
@@ -406,6 +421,7 @@ export function buildInterruptedDeployStatusReport(): DeployStatusReport {
     domain: null,
     productionInstanceId: null,
     domainStatus: null,
+    proxyUrl: null,
     pendingDnsRecords: [],
     oauth: { complete: false, configured: [], pending: [], unsupported: [] },
     nextAction:
@@ -424,6 +440,7 @@ function deployNextAction(
   state: DeployStatusState,
   domain: string,
   componentStatus: DeployComponentStatus,
+  proxyUrl: string | null,
   oauthPending: string[],
   domainsUrl: string | null,
 ): string {
@@ -440,11 +457,20 @@ function deployNextAction(
     );
   }
 
-  const pendingComponents = [
-    !componentStatus.dns ? "DNS" : null,
-    !componentStatus.ssl ? "SSL" : null,
-    !componentStatus.mail ? "email DNS" : null,
-  ].filter((value): value is string => value !== null);
+  // A pending proxy never clears by waiting: the deployed app has to start
+  // serving Clerk's proxy path. Mirror deployStatusPendingFooter instead of
+  // the generic "re-run in a few minutes" tail.
+  if (!componentStatus.proxy) {
+    const proxyPath = proxyUrl ? `: ${proxyUrl}` : "";
+    return (
+      `Waiting for ${domain} to serve Clerk's proxy path${proxyPath}. Re-running does not ` +
+      `resolve this on its own — deploy the app so it forwards that path to Clerk's Frontend API ` +
+      `(https://clerk.com/docs/guides/dashboard/dns-domains/proxy-fapi), then run \`clerk deploy status\` again.` +
+      domainsAction
+    );
+  }
+
+  const pendingComponents = pendingDeployComponents(componentStatus);
 
   if (pendingComponents.length === 0) {
     return (
@@ -567,6 +593,9 @@ export function deployComponentStatusFromDomainStatus(
     dns: checkStatusComplete(response.dns),
     ssl: checkStatusComplete(response.ssl),
     mail: checkStatusComplete(response.mail),
+    // Unlike the other checks, an absent `proxy` means "not applicable" rather
+    // than "not started": the API omits it for domains that verify by CNAME.
+    proxy: response.proxy ? checkStatusComplete(response.proxy) : true,
   };
 }
 

@@ -9,7 +9,8 @@
 
 import { join } from "node:path";
 import { bapiRequest } from "./bapi.ts";
-import { resolveAppContext, resolveProfile } from "./config.ts";
+import { resolveAppContext } from "./app-context.ts";
+import { resolveProfile } from "./config.ts";
 import { getStoredSession, hasAccountCredentials, type OAuthSession } from "./credential-store.ts";
 import { parseEnvFile } from "./dotenv.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "./errors.ts";

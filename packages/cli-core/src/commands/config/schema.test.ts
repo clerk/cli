@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
 import { credentialStoreStubs, gitStubs, stubFetch, useCaptureLog } from "../../test/lib/stubs.ts";
+import { setMode } from "../../mode.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
@@ -251,16 +252,35 @@ describe("config schema", () => {
     expect(requestedUrl).not.toContain("keys=%20");
   });
 
-  test("errors when production instance not configured", async () => {
+  test("errors when neither the link nor the application has a production instance", async () => {
+    setMode("agent");
+    stubFetch(
+      async () =>
+        new Response(
+          JSON.stringify({
+            application_id: "app_1",
+            instances: [
+              {
+                instance_id: "ins_dev",
+                environment_type: "development",
+                publishable_key: "pk_test_1",
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
       appId: "app_1",
       instances: { development: "ins_dev" },
     });
 
-    await expect(runConfigSchema({ instance: "prod" })).rejects.toThrow(
-      "No production instance configured",
-    );
+    try {
+      await expect(runConfigSchema({ instance: "prod" })).rejects.toThrow("clerk deploy");
+    } finally {
+      setMode("human");
+    }
   });
 
   test("handles API errors gracefully", async () => {

@@ -107,6 +107,9 @@ mock.module("../../lib/config.ts", () => ({
       instanceLabel: flag,
     };
   },
+}));
+
+mock.module("../../lib/app-context.ts", () => ({
   resolveAppContext: async (options: { app?: string; instance?: string }) => {
     if (options.app) {
       const aliases: Record<string, string> = {

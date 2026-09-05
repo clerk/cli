@@ -59,15 +59,34 @@ function translatePlapiError(error: PlapiError): CliError | PlapiError {
     });
   }
 
-  if (status === 400 && code === "provider_domain_operation_not_allowed_for_api") {
+  // Matched on `code` alone. The same rejection carries different statuses
+  // depending on which API surface raised it — `provider_domain_operation_not_
+  // allowed` is 403 from BAPI/SAPI, the domain-validation codes are 422 — and
+  // the status is never what the CLI branches on.
+  if (code === "provider_domain_operation_not_allowed" || code === "known_hosting_domain") {
     return new CliError(
-      "The home URL points to a provider domain (e.g. *.vercel.app, *.replit.app). " +
+      "That domain cannot host a Clerk production instance. " +
         "Production instances require a domain you own — use a custom domain instead.",
       { code: ERROR_CODE.PROVIDER_DOMAIN_NOT_ALLOWED },
     );
   }
 
-  if (status === 400 && code === "home_url_taken") {
+  if (code === "proxy_url_required_for_provider_domain") {
+    return new CliError(
+      "That domain is served by a hosting provider, so Clerk reaches its Frontend API through a proxy " +
+        "rather than DNS records — and Clerk could not derive one. Run `clerk deploy` again, " +
+        "or set the domain up from the Clerk Dashboard.",
+      {
+        // Distinct from PROVIDER_DOMAIN_NOT_ALLOWED: the domain is fine, the
+        // proxy derivation is what failed, so the fix is to retry rather than
+        // to pick a different domain.
+        code: ERROR_CODE.PROXY_URL_REQUIRED,
+        docsUrl: "https://clerk.com/docs/guides/dashboard/dns-domains/proxy-fapi",
+      },
+    );
+  }
+
+  if (code === "home_url_taken") {
     return new CliError(
       "Another instance is already using that home URL. Pick a different domain and run `clerk deploy` again.",
       { code: ERROR_CODE.HOME_URL_TAKEN },

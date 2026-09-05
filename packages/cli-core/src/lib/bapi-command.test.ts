@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { BapiError, CliError, ERROR_CODE } from "./errors.ts";
 import { useCaptureLog } from "../test/lib/stubs.ts";
 
-const configModule = await import("./config.ts");
+const appContextModule = await import("./app-context.ts");
 const plapiModule = await import("./plapi.ts");
 const keylessTargetModule = await import("./keyless-target.ts");
 
@@ -18,7 +18,7 @@ describe("bapi-command", () => {
 
   beforeEach(() => {
     delete process.env.CLERK_SECRET_KEY;
-    resolveAppContextSpy = spyOn(configModule, "resolveAppContext");
+    resolveAppContextSpy = spyOn(appContextModule, "resolveAppContext");
     fetchApplicationSpy = spyOn(plapiModule, "fetchApplication");
     validateKeyPrefixSpy = spyOn(plapiModule, "validateKeyPrefix");
     // Defaults to "no keyless project here" so existing account-path tests are

@@ -1,4 +1,5 @@
-import { resolveAppContext, resolveFetchedApplicationInstance } from "./config.ts";
+import { resolveAppContext } from "./app-context.ts";
+import { resolveFetchedApplicationInstance } from "./config.ts";
 import { BapiError, CliError, ERROR_CODE, throwUsageError, withApiContext } from "./errors.ts";
 import { resolveKeylessTarget } from "./keyless-target.ts";
 import { log } from "./log.ts";

@@ -140,9 +140,16 @@ export type DeployComponentStatus = {
   dns: boolean;
   ssl: boolean;
   mail: boolean;
+  /**
+   * Provider domains (`*.vercel.app`, `*.replit.app`) verify through a proxy
+   * rather than CNAMEs: the API reports their DNS records as optional and
+   * their SSL and email checks as not required, leaving the proxy check as the
+   * only thing between the instance and a working Frontend API.
+   */
+  proxy: boolean;
 };
 
-export type DeployComponent = "mail" | "dns" | "ssl";
+export type DeployComponent = "mail" | "dns" | "ssl" | "proxy";
 
 export function deployComponentLabels(
   component: DeployComponent,
@@ -164,7 +171,30 @@ export function deployComponentLabels(
         progress: `Issuing SSL certificate for ${domain}...`,
         done: `SSL certificate issued for ${domain}`,
       };
+    case "proxy":
+      return {
+        progress: `Verifying the Clerk proxy for ${domain}...`,
+        done: `Clerk proxy verified for ${domain}`,
+      };
   }
+}
+
+/**
+ * Replaces the CNAME handoff for provider domains, which cannot carry Clerk's
+ * DNS records. The proxy URL is derived by the API, not the CLI.
+ */
+export function proxyDomainHandoff(domain: string, proxyUrl: string): string[] {
+  return [
+    `Configure the Clerk proxy for ${cyan(domain)}`,
+    "",
+    `${domain} is hosted by a provider, so Clerk reaches its Frontend API through`,
+    "your app instead of DNS records. Your app must forward this path to Clerk:",
+    "",
+    `  ${cyan(proxyUrl)}`,
+    "",
+    `${yellow("NOTE")}  Until your app serves that path, the production instance stays unverified.`,
+    dim("Reference: https://clerk.com/docs/guides/dashboard/dns-domains/proxy-fapi"),
+  ];
 }
 
 /**
@@ -172,9 +202,19 @@ export function deployComponentLabels(
  * instance is created: DNS propagation, SSL issuance via Let's Encrypt, and
  * email DNS records. Each value comes from the same domain status response.
  */
-export function deployComponentStatus(status: DeployComponentStatus): string {
+export function deployComponentStatus(
+  status: DeployComponentStatus,
+  options: { proxied?: boolean } = {},
+): string {
   const mark = (ok: boolean) => (ok ? green("✓") : yellow("pending"));
-  return `DNS: ${mark(status.dns)}  SSL: ${mark(status.ssl)}  Email DNS: ${mark(status.mail)}`;
+  const line = `DNS: ${mark(status.dns)}  SSL: ${mark(status.ssl)}  Email DNS: ${mark(status.mail)}`;
+  // Only proxied domains have a proxy check; elsewhere the API reports it as
+  // not required and a permanent "Proxy: ✓" would be noise. For proxied
+  // domains the segment stays visible after it passes — it's the one check
+  // standing between the user and a working Frontend API, so it must be seen
+  // turning green rather than silently disappearing.
+  const showProxy = options.proxied || !status.proxy;
+  return showProxy ? `${line}  Proxy: ${mark(status.proxy)}` : line;
 }
 
 export function deployStatusRetryMessage(
@@ -187,26 +227,35 @@ export function deployStatusRetryMessage(
 }
 
 /**
- * Footer printed when domain status polling times out before all three
- * components are complete. The user keeps the deploy state; rerunning
- * `clerk deploy` resumes from whichever component is still pending.
+ * Footer printed when domain status polling times out before every component
+ * is complete. The user keeps the deploy state; rerunning `clerk deploy`
+ * resumes from whichever component is still pending.
  */
 export function deployStatusPendingFooter(domain: string, status: DeployComponentStatus): string[] {
-  const pending: string[] = [];
-  if (!status.dns) pending.push("DNS");
-  if (!status.ssl) pending.push("SSL");
-  if (!status.mail) pending.push("email DNS");
+  const pending = pendingDeployComponents(status);
 
   const lead =
     pending.length === 0
       ? `Production setup for ${domain} is still finalizing.`
       : `${pending.join(", ")} still pending for ${domain}.`;
 
+  const proxyPending = !status.proxy;
   return [
     lead,
-    "DNS propagation can take several hours depending on your provider.",
+    proxyPending
+      ? `Waiting for ${domain} to serve Clerk's proxy path: https://clerk.com/docs/guides/dashboard/dns-domains/proxy-fapi`
+      : "DNS propagation can take several hours depending on your provider.",
     "Run `clerk deploy` again to resume. The production instance is already created.",
   ];
+}
+
+export function pendingDeployComponents(status: DeployComponentStatus): string[] {
+  return [
+    !status.dns ? "DNS" : null,
+    !status.ssl ? "SSL" : null,
+    !status.mail ? "email DNS" : null,
+    !status.proxy ? "proxy" : null,
+  ].filter((value): value is string => value !== null);
 }
 
 export const OAUTH_SECTION_INTRO = `${bold("Configure OAuth credentials for production")}

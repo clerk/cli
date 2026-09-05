@@ -7,15 +7,44 @@ import { type OAuthPromptField, type OAuthProviderDescriptor } from "./providers
 type OAuthCredentialAction = "have-credentials" | "walkthrough" | "google-json" | "skip";
 type DnsVerificationAction = "check" | "skip";
 
-const PROVIDER_DOMAIN_SUFFIXES = [
-  ".clerk.app",
-  ".vercel.app",
+/**
+ * Mirrors `hostingDomainNames` in clerk_go (`pkg/validators/domain.go`). Every
+ * other domain-creating path runs `validators.DomainName` and refuses these
+ * with `known_hosting_domain`, but `POST /v1/platform/applications/{id}/
+ * instances` — the endpoint `clerk deploy` uses — runs no domain validation at
+ * all, and PLAPI exposes no way to delete a production instance afterwards.
+ * Until that endpoint validates, this prompt is the last exit before an
+ * unusable, undeletable instance.
+ *
+ * Provider domains (*.vercel.app, *.replit.app) are deliberately absent:
+ * Clerk supports them as production domains, served through a proxy rather
+ * than CNAME records. See `configureProviderDomainProxy` in ./proxy.ts.
+ */
+const KNOWN_HOSTING_DOMAIN_SUFFIXES = [
+  ".web.app",
+  ".onrender.com",
   ".netlify.app",
-  ".pages.dev",
-  ".fly.dev",
-  ".render.com",
   ".herokuapp.com",
+  ".fly.dev",
+  ".railway.app",
 ];
+
+/**
+ * Domains the API accepts but that can never verify: they are not provider
+ * domains (`constants` lists only vercel.app and replit.app, so no proxy is
+ * derived), and the user cannot create the `clerk.<domain>` CNAME records
+ * because the suffix belongs to the hosting provider. `pages.dev` sits on the
+ * PSL's private section, so `validators.DomainName` passes it too — this
+ * prompt is the only surface that can catch these before an instance exists.
+ */
+const UNVERIFIABLE_HOSTING_DOMAIN_SUFFIXES = [
+  ".pages.dev",
+  ".workers.dev",
+  ".clerk.app",
+  ".github.io",
+];
+
+const VERCEL_APP_SUFFIX = ".vercel.app";
 
 export async function confirmProceed(): Promise<boolean> {
   return confirm({ message: "Proceed?", default: true });
@@ -38,10 +67,24 @@ export function validateDomain(value: string | undefined): true | string {
   if (!/^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i.test(domain)) {
     return "Enter a valid domain, such as example.com (without https://).";
   }
-  if (PROVIDER_DOMAIN_SUFFIXES.some((suffix) => domain.toLowerCase().endsWith(suffix))) {
-    return `${domain} looks like a provider domain (e.g. *.vercel.app, *.clerk.app). Production needs a domain you own. See https://clerk.com/docs/guides/development/deployment/production`;
+  const lowercased = domain.toLowerCase();
+  if (KNOWN_HOSTING_DOMAIN_SUFFIXES.some((suffix) => lowercased.endsWith(suffix))) {
+    return `${domain} is a shared hosting domain, which Clerk refuses for production instances. Use a domain you own. See https://clerk.com/docs/guides/development/deployment/production`;
+  }
+  if (UNVERIFIABLE_HOSTING_DOMAIN_SUFFIXES.some((suffix) => lowercased.endsWith(suffix))) {
+    return `${domain} can never verify: Clerk needs CNAME records under it, and its DNS belongs to the hosting provider. Use a domain you own. See https://clerk.com/docs/guides/development/deployment/production`;
+  }
+  const vercelAppHost = readVercelAppHost(lowercased);
+  if (vercelAppHost && vercelAppHost.includes(".")) {
+    return `Clerk supports vercel.app production domains, but only the project domain itself. Use ${vercelAppHost.split(".").pop()}${VERCEL_APP_SUFFIX} rather than ${domain}.`;
   }
   return true;
+}
+
+/** The labels before `.vercel.app`, or undefined when this isn't one. */
+function readVercelAppHost(lowercasedDomain: string): string | undefined {
+  if (!lowercasedDomain.endsWith(VERCEL_APP_SUFFIX)) return undefined;
+  return lowercasedDomain.slice(0, -VERCEL_APP_SUFFIX.length);
 }
 
 export async function confirmCreateProductionInstance(): Promise<boolean> {

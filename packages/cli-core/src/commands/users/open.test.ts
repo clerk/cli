@@ -10,9 +10,12 @@ const mockResolveInstanceId = mock();
 // nothing else in the import graph reaches for the exports it left out.
 mock.module("../../lib/config.ts", () => ({
   ...configStubs,
-  resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
   resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
   resolveInstanceId: (...args: unknown[]) => mockResolveInstanceId(...args),
+}));
+
+mock.module("../../lib/app-context.ts", () => ({
+  resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
 }));
 
 const mockResolveUsersInstanceContext = mock();
