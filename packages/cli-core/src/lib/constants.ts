@@ -20,7 +20,7 @@ export const CREDENTIALS_FILE = join(clerkConfigDir ?? paths.data, "credentials"
 // ── Auth server ─────────────────────────────────────────────────────────────
 
 export const CALLBACK_PATH = "/callback";
-export const AUTH_TIMEOUT_MS = Number(process.env.CLERK_AUTH_TIMEOUT_MS) || 2 * 60 * 1000;
+export const AUTH_TIMEOUT_MS = Number(process.env.CLERK_AUTH_TIMEOUT_MS) || 15 * 60 * 1000;
 
 // ── OAuth client identification ─────────────────────────────────────────────
 

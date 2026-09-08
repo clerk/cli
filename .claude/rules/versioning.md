@@ -16,10 +16,13 @@ import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
   including CLI help, user-agent headers, and MCP client info.
 - Read `IS_DEV_BUILD` when behavior depends on whether the binary is a
   development build.
-- Keep checkout-derived version generation and dev classification in
-  `version.macro.ts`; the compiled CLI must not execute Git or classify its
-  version at runtime.
+- Keep checkout-derived version generation in `version.macro.ts`; the compiled
+  CLI must not execute Git at runtime.
+- Keep the `CLI_VERSION` define check and dev classification in `version.ts`
+  module scope, NOT in the macro: since Bun 1.4, macros run in a sealed
+  transpiler context that `--define` globals do not reach, while defines still
+  substitute identifiers in transpiled modules.
 
-The constants are evaluated while Bun transpiles or compiles the module, so
+The macro fallback is inlined while Bun transpiles or compiles the module, so
 release builds can use the injected `CLI_VERSION` while local builds retain
 their checkout metadata.

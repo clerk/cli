@@ -34,7 +34,7 @@ export function registerImpersonate(program: Program): void {
       },
       { command: "clerk imp revoke act_29w9...", description: "Revoke a pending actor token" },
     ])
-    .action((user, _opts, cmd) =>
+    .action(async (user, _opts, cmd) =>
       impersonate({
         ...(cmd.optsWithGlobals() as Parameters<typeof impersonate>[0]),
         user,
@@ -59,7 +59,7 @@ export function registerImpersonate(program: Program): void {
         description: "Also end the live impersonation session if the token was already accepted",
       },
     ])
-    .action((actorTokenId, _opts, cmd) =>
+    .action(async (actorTokenId, _opts, cmd) =>
       revoke({
         ...(cmd.optsWithGlobals() as Parameters<typeof revoke>[0]),
         actorTokenId,

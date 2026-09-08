@@ -4,8 +4,10 @@
  */
 
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH } from "./constants.ts";
+import { CliError, ERROR_CODE, errorMessage } from "./errors.ts";
 import { observeHostCapabilityFailure } from "./host-execution.ts";
 import { log } from "./log.ts";
+import { whileAwaitingUser } from "./signals.ts";
 
 function escapeHtml(str: string): string {
   return str
@@ -187,11 +189,15 @@ export function startAuthServer(expectedState: string): AuthServerResult {
   const timeout = setTimeout(() => {
     log.debug(`auth-server: timed out after ${AUTH_TIMEOUT_MS}ms`);
     rejectCallback(
-      new Error(
+      new CliError(
         "Authentication timed out. Run `clerk auth login` to try again — if your browser did not open, copy the printed URL into any browser on this machine.",
+        { code: ERROR_CODE.AUTH_TIMEOUT },
       ),
     );
-    server?.stop();
+    // `stop()` is a promise nothing can wait on: the login flow has already
+    // settled by every point we close from, and these are timer and request
+    // callbacks with nowhere to return it. Dropped explicitly, here and below.
+    void server?.stop();
   }, AUTH_TIMEOUT_MS);
 
   try {
@@ -209,9 +215,13 @@ export function startAuthServer(expectedState: string): AuthServerResult {
             if (error) {
               const description = url.searchParams.get("error_description") || error;
               log.debug(`auth-server: OAuth error in callback — ${error}: ${description}`);
-              rejectCallback(new Error(`OAuth error: ${description}`));
+              rejectCallback(
+                new CliError(`OAuth error: ${description}`, {
+                  code: ERROR_CODE.OAUTH_PROVIDER_ERROR,
+                }),
+              );
               clearTimeout(timeout);
-              setTimeout(() => server?.stop(), 100);
+              setTimeout(() => void server?.stop(), 100);
               return new Response(ERROR_HTML(description), {
                 headers: { "Content-Type": "text/html; charset=utf-8" },
               });
@@ -219,9 +229,13 @@ export function startAuthServer(expectedState: string): AuthServerResult {
 
             if (state !== expectedState) {
               log.debug(`auth-server: state mismatch (expected=${expectedState}, got=${state})`);
-              rejectCallback(new Error("Invalid state parameter. Possible CSRF attack."));
+              rejectCallback(
+                new CliError("Invalid state parameter. Possible CSRF attack.", {
+                  code: ERROR_CODE.OAUTH_STATE_MISMATCH,
+                }),
+              );
               clearTimeout(timeout);
-              setTimeout(() => server?.stop(), 100);
+              setTimeout(() => void server?.stop(), 100);
               return new Response(ERROR_HTML("Invalid state parameter."), {
                 status: 400,
                 headers: { "Content-Type": "text/html; charset=utf-8" },
@@ -230,9 +244,13 @@ export function startAuthServer(expectedState: string): AuthServerResult {
 
             if (!code) {
               log.debug("auth-server: callback received with no authorization code");
-              rejectCallback(new Error("No authorization code received."));
+              rejectCallback(
+                new CliError("No authorization code received.", {
+                  code: ERROR_CODE.OAUTH_NO_CODE,
+                }),
+              );
               clearTimeout(timeout);
-              setTimeout(() => server?.stop(), 100);
+              setTimeout(() => void server?.stop(), 100);
               return new Response(ERROR_HTML("No authorization code received."), {
                 status: 400,
                 headers: { "Content-Type": "text/html; charset=utf-8" },
@@ -242,7 +260,7 @@ export function startAuthServer(expectedState: string): AuthServerResult {
             log.debug("auth-server: callback received with valid code and state");
             resolveCallback({ code });
             clearTimeout(timeout);
-            setTimeout(() => server?.stop(), 100);
+            setTimeout(() => void server?.stop(), 100);
             return new Response(SUCCESS_HTML, {
               headers: { "Content-Type": "text/html; charset=utf-8" },
             });
@@ -262,7 +280,17 @@ export function startAuthServer(expectedState: string): AuthServerResult {
       target: "127.0.0.1:0",
       label: CALLBACK_PATH,
     });
-    throw error;
+    // A sandbox or firewall that forbids binding loopback fails every login on
+    // the machine; it is a distinct condition from anything the user did.
+    log.debug(
+      `auth-server: bind failed — ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+    );
+    throw new CliError(
+      `Could not start the local sign-in callback server: ${errorMessage(error)}`,
+      {
+        code: ERROR_CODE.CALLBACK_BIND_FAILED,
+      },
+    );
   }
 
   const activeServer = server;
@@ -270,10 +298,12 @@ export function startAuthServer(expectedState: string): AuthServerResult {
 
   return {
     port: activeServer.port!,
-    waitForCallback: () => callbackPromise,
+    // The CLI is idle here while the user signs in through their browser, so
+    // Ctrl-C is them abandoning the login rather than an interrupted operation.
+    waitForCallback: async () => whileAwaitingUser(callbackPromise),
     stop: () => {
       clearTimeout(timeout);
-      activeServer.stop();
+      void activeServer.stop();
     },
   };
 }

@@ -6,12 +6,15 @@ import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from ".
 import {
   finalizeAndSendTelemetry,
   getTelemetryStatus,
+  setTelemetryStage,
   startCommandTelemetry,
   telemetryEnabled,
   telemetryResultForError,
   type TelemetryCommand,
+  type TelemetryResult,
 } from "./telemetry.ts";
-import { ApiError, CliError, EXIT_CODE, UserAbortError } from "./errors.ts";
+import { ApiError, CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "./errors.ts";
+import { abortInFlight, beginInterrupt, _resetInterruptState } from "./signals.ts";
 import { setLogLevel } from "./log.ts";
 import { useCaptureLog } from "../test/lib/stubs.ts";
 
@@ -219,6 +222,111 @@ describe("finalizeAndSendTelemetry", () => {
     expect(called).toBe(0);
   });
 
+  // A run gets one event across both flushes: the normal end-of-command one and
+  // the shutdown one the SIGINT handler starts.
+  describe("interrupted runs", () => {
+    afterEach(() => {
+      _resetInterruptState();
+    });
+
+    /** Lands the abort event; the success event only ever settles by aborting. */
+    function fetchThatOnlyLandsAborts(landed: string[]): typeof fetch {
+      return (async (_url: string, init?: RequestInit) => {
+        const body = String(init?.body ?? "");
+        if (body.includes('"outcome":"abort"')) {
+          landed.push(body);
+          return new Response("{}");
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          const fail = () => reject(new DOMException("The operation was aborted.", "AbortError"));
+          const signal = init?.signal;
+          if (!signal) return;
+          if (signal.aborted) return fail();
+          signal.addEventListener("abort", fail, { once: true });
+        });
+      }) as unknown as typeof fetch;
+    }
+
+    test("an aborted normal flush leaves the run for the shutdown flush to report", async () => {
+      await markTelemetryNoticeShown();
+      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+      const landed: string[] = [];
+      globalThis.fetch = fetchThatOnlyLandsAborts(landed);
+      startCommandTelemetry(fakeCommand());
+
+      beginInterrupt();
+      abortInFlight();
+      await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 }, 1000);
+      expect(landed).toEqual([]);
+
+      await finalizeAndSendTelemetry({ outcome: "abort", exitCode: EXIT_CODE.SIGINT }, 250, true);
+
+      expect(landed).toHaveLength(1);
+      expect(landed[0]).toContain('"outcome":"abort"');
+    });
+
+    test("a flush still in flight when the interrupt lands still yields one event", async () => {
+      await markTelemetryNoticeShown();
+      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+      const landed: string[] = [];
+      globalThis.fetch = fetchThatOnlyLandsAborts(landed);
+      startCommandTelemetry(fakeCommand());
+
+      const normal = finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 }, 1000);
+      beginInterrupt();
+      abortInFlight();
+      await finalizeAndSendTelemetry({ outcome: "abort", exitCode: EXIT_CODE.SIGINT }, 250, true);
+      await normal;
+
+      expect(landed).toHaveLength(1);
+      expect(landed[0]).toContain('"outcome":"abort"');
+    });
+
+    test("the shutdown flush is not held up by a normal flush that ignores the interrupt", async () => {
+      await markTelemetryNoticeShown();
+      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+      const landed: string[] = [];
+      globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+        const body = String(init?.body ?? "");
+        if (body.includes('"outcome":"abort"')) {
+          landed.push(body);
+          return new Response("{}");
+        }
+        // Stands in for the config, Git, and user-agent reads a normal flush
+        // does around its POST: slow, and blind to the interrupt signal.
+        return new Promise<Response>(() => {});
+      }) as unknown as typeof fetch;
+      startCommandTelemetry(fakeCommand());
+
+      const normal = finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 }, 300);
+      beginInterrupt();
+      abortInFlight();
+      await finalizeAndSendTelemetry({ outcome: "abort", exitCode: EXIT_CODE.SIGINT }, 250, true);
+
+      // Landed inside the shutdown budget rather than being starved by work
+      // the interrupt cannot cancel.
+      expect(landed).toHaveLength(1);
+      await normal;
+    });
+
+    test("a landed normal flush is not reported a second time", async () => {
+      await markTelemetryNoticeShown();
+      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+      const bodies: string[] = [];
+      globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+        bodies.push(String(init?.body ?? ""));
+        return new Response("{}");
+      }) as unknown as typeof fetch;
+      startCommandTelemetry(fakeCommand());
+
+      await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 });
+      await finalizeAndSendTelemetry({ outcome: "abort", exitCode: EXIT_CODE.SIGINT }, 250, true);
+
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]).toContain('"outcome":"success"');
+    });
+  });
+
   describe("sandbox-looking failures", () => {
     const captured = useCaptureLog();
 
@@ -349,6 +457,76 @@ describe("finalizeAndSendTelemetry", () => {
       await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 });
       expect(called).toBe(1);
       expect(captured.err).not.toContain("usage telemetry");
+    });
+  });
+
+  describe("stage", () => {
+    /** Captures the payload of the single event a finalize call sends. */
+    async function sendAndCapturePayload(
+      run: () => void | Promise<void>,
+      result: TelemetryResult,
+    ): Promise<Record<string, unknown>> {
+      await markTelemetryNoticeShown(); // past the grace run — reach the send path
+      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+      let sent: string | undefined;
+      globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
+        sent = init.body;
+        return new Response("{}");
+      }) as unknown as typeof fetch;
+
+      startCommandTelemetry(fakeCommand());
+      await run();
+      await finalizeAndSendTelemetry(result);
+
+      expect(sent).toBeDefined();
+      const parsed = JSON.parse(sent as string) as {
+        events: { payload: Record<string, unknown> }[];
+      };
+      return parsed.events[0]!.payload;
+    }
+
+    test("reports the furthest stage reached on success", async () => {
+      const payload = await sendAndCapturePayload(
+        () => {
+          setTelemetryStage("detect");
+          setTelemetryStage("scaffold");
+          setTelemetryStage("done");
+        },
+        { outcome: "success", exitCode: 0 },
+      );
+      expect(payload.stage).toBe("done");
+    });
+
+    test("reports where an error stopped the command", async () => {
+      const payload = await sendAndCapturePayload(
+        () => {
+          setTelemetryStage("detect");
+          setTelemetryStage("bootstrap");
+        },
+        telemetryResultForError(new CliError("boom", { code: ERROR_CODE.GENERATOR_FAILED })),
+      );
+      expect(payload.stage).toBe("bootstrap");
+      expect(payload.error_code).toBe("generator_failed");
+    });
+
+    // The whole point of stage: an abort is a drop-off, and drop-offs are only
+    // legible if you can see which step the user backed out of.
+    test("reports the stage on abort", async () => {
+      const payload = await sendAndCapturePayload(
+        () => setTelemetryStage("scaffold"),
+        telemetryResultForError(new UserAbortError()),
+      );
+      expect(payload.outcome).toBe("abort");
+      expect(payload.stage).toBe("scaffold");
+    });
+
+    test("stage is null when the command never sets one", async () => {
+      const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
+      expect(payload.stage).toBeNull();
+    });
+
+    test("setting a stage with no active context is a no-op", () => {
+      expect(() => setTelemetryStage("flags")).not.toThrow();
     });
   });
 });

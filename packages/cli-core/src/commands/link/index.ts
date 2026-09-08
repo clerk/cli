@@ -61,13 +61,13 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   if (existing && agent) {
     printExistingStatus(existing, normalizedRemote);
     if (!targetsDifferentApp) {
-      outro();
+      await outro();
       return;
     }
   } else if (existing) {
     const shouldRelink = await handleExistingProfile(existing, normalizedRemote, options);
     if (!shouldRelink) {
-      outro();
+      await outro();
       return;
     }
   }

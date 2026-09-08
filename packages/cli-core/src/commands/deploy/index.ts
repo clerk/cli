@@ -5,13 +5,8 @@ import { applyPrefix, isInsideGutter, log } from "../../lib/log.ts";
 import { bold, dim } from "../../lib/color.ts";
 import { animateHeader } from "../../lib/gradient.ts";
 import { bar, intro, outro, pausedOutro, withSpinner } from "../../lib/spinner.ts";
-import {
-  CliError,
-  ERROR_CODE,
-  UserAbortError,
-  isPromptExitError,
-  throwUsageError,
-} from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, UserAbortError, throwUsageError } from "../../lib/errors.ts";
+import { interruptedExitCode } from "../../lib/signals.ts";
 import { setProfile } from "../../lib/config.ts";
 import {
   createProductionInstance as apiCreateProductionInstance,
@@ -87,10 +82,19 @@ export async function deploy(_options: DeployOptions = {}) {
     const ctx = await resolveDeployContext();
     await runDeploy(ctx);
   } catch (error) {
-    if (error instanceof DeployPausedError && isInsideGutter()) {
-      outro("Paused");
+    // Ctrl-C during a request or a DNS poll rejects with an `AbortError`, not a
+    // `UserAbortError`, and `runProgram` hands rendering to the signal handler
+    // the moment an interrupt is latched — so nothing below would ever print.
+    // A half-finished deploy is exactly when the resume hint matters, so emit it
+    // here as a side effect rather than relying on the thrown error's message.
+    if (interruptedExitCode() !== null && isInsideGutter()) {
+      pausedOutro(pausedOperationNotice());
+      throw error;
     }
-    if (isPromptExitError(error) && isInsideGutter()) {
+    if (error instanceof DeployPausedError && isInsideGutter()) {
+      await outro("Paused");
+    }
+    if (error instanceof UserAbortError && isInsideGutter()) {
       pausedOutro(pausedOperationNotice());
       throw new UserAbortError();
     }
@@ -99,7 +103,7 @@ export async function deploy(_options: DeployOptions = {}) {
     // Successful and paused paths call outro themselves. This balances the
     // intro gutter if an unexpected error escapes.
     if (isInsideGutter()) {
-      outro("Failed");
+      await outro("Failed");
     }
   }
 }
@@ -150,7 +154,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   const proceed = await confirmProceed();
   if (!proceed) {
     log.info("No changes were made.");
-    outro("Cancelled");
+    await outro("Cancelled");
     return;
   }
 
@@ -166,7 +170,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
       "A production instance already exists for this application. Resuming the existing deploy.",
     );
     log.blank();
-    const refreshed = await withSpinner("Refreshing application state...", () =>
+    const refreshed = await withSpinner("Refreshing application state...", async () =>
       resolveLiveApplicationContext(ctx.profile),
     );
     ctx.productionInstanceId = refreshed.productionInstanceId;
@@ -183,6 +187,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     throw new CliError(
       "Production instance was created but Clerk did not return a domain. " +
         "Run `clerk deploy` again to retry domain provisioning.",
+      { code: ERROR_CODE.DEPLOY_DOMAIN_MISSING },
     );
   }
 
@@ -229,7 +234,7 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
     log.blank();
     log.info("A production instance exists, but Clerk did not return a production domain yet.");
     log.info("Run `clerk deploy` again after the domain is available from the API.");
-    outro("No deploy actions available");
+    await outro("No deploy actions available");
     return;
   }
 
@@ -357,7 +362,7 @@ async function confirmProductionInstanceCreation(domain: string): Promise<boolea
 
   log.blank();
   log.info("No production instance was created.");
-  outro("Cancelled");
+  await outro("Cancelled");
   return false;
 }
 
@@ -378,7 +383,7 @@ async function runDnsRecordHandoff(
     await offerBindZoneExport(state.domain, cnameTargets);
     log.blank();
   } catch (error) {
-    if (isPromptExitError(error)) {
+    if (error instanceof UserAbortError) {
       throw deployPausedError(state, { interrupted: true });
     }
     throw error;
@@ -406,7 +411,7 @@ async function runDnsVerificationPrompt(
     }
     return await runDnsVerification(ctx, state);
   } catch (error) {
-    if (isPromptExitError(error)) {
+    if (error instanceof UserAbortError) {
       throw deployPausedError(state, { interrupted: true });
     }
     throw error;
@@ -453,7 +458,7 @@ async function runDnsVerification(
     try {
       action = await chooseDnsVerificationRetryAction();
     } catch (error) {
-      if (isPromptExitError(error)) {
+      if (error instanceof UserAbortError) {
         throw deployPausedError(state, { interrupted: true });
       }
       throw error;
@@ -472,7 +477,7 @@ async function pollDeployStatus(
   domain: string,
 ): Promise<DeployStatusOutcome> {
   return waitForDeployStatus(appId, domainIdOrName, domain, {
-    runVerification: (progressLabel, work) => withSpinner(progressLabel, work),
+    runVerification: async (progressLabel, work) => withSpinner(progressLabel, work),
     onVerified: () => log.success(deployComponentLabels("dns", domain).done),
   });
 }
@@ -534,7 +539,7 @@ async function runOAuthSetup(
         });
       }
     } catch (error) {
-      if (isPromptExitError(error)) {
+      if (error instanceof UserAbortError) {
         throw deployPausedError(
           {
             ...state,
@@ -635,7 +640,7 @@ async function finishDeploy(
     fallback: bold,
     body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId))}\n`,
   });
-  outro("Success");
+  await outro("Success");
 }
 
 export function registerDeploy(program: Program): void {

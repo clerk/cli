@@ -70,6 +70,7 @@ export async function linkProject(projectDir: string, configDir: string): Promis
     .env({
       CLERK_CONFIG_DIR: configDir,
       CLERK_PLATFORM_API_KEY: platformAPIKey,
+      CLERK_TELEMETRY_DISABLED: "1",
     })
     .quiet()
     .nothrow();
@@ -107,6 +108,7 @@ async function runClerkInit(projectDir: string, configDir: string): Promise<void
     .env({
       CLERK_CONFIG_DIR: configDir,
       CLERK_PLATFORM_API_KEY: platformAPIKey,
+      CLERK_TELEMETRY_DISABLED: "1",
     })
     .quiet()
     .nothrow();

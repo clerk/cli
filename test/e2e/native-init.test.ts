@@ -52,6 +52,7 @@ test.each([...PLATFORMS])(
         .env({
           CLERK_CONFIG_DIR: configDir,
           CLERK_PLATFORM_API_KEY: platformAPIKey,
+          CLERK_TELEMETRY_DISABLED: "1",
         })
         .quiet()
         .nothrow();

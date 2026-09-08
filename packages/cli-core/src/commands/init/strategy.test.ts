@@ -75,39 +75,39 @@ describe("init strategy", () => {
     setup();
 
     await expect(init({ template: "b2b-saas", login: true })).rejects.toThrow(
-      /--template applies to keyless applications/,
+      /--template applies to accountless applications/,
     );
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
   });
 
-  test("--keyless with --login throws a usage error before bootstrapping", async () => {
+  test("--accountless with --login throws a usage error before bootstrapping", async () => {
     setup();
 
-    await expect(init({ keyless: true, login: true })).rejects.toThrow(
-      /--keyless and --login cannot be combined/,
+    await expect(init({ accountless: true, login: true })).rejects.toThrow(
+      /--accountless and --login cannot be combined/,
     );
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
     expect(loginMod.login).not.toHaveBeenCalled();
   });
 
-  test("--keyless with --app throws a usage error before bootstrapping", async () => {
+  test("--accountless with --app throws a usage error before bootstrapping", async () => {
     setup();
 
-    await expect(init({ keyless: true, app: "app_abc" })).rejects.toThrow(
-      /--keyless cannot be combined with --app/,
+    await expect(init({ accountless: true, app: "app_abc" })).rejects.toThrow(
+      /--accountless cannot be combined with --app/,
     );
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
   });
 
-  test("--keyless on a keyless-capable framework uses keyless mode without logging in", async () => {
+  test("--accountless on a supported framework uses accountless mode without logging in", async () => {
     setup();
     mockBootstrapTo(KEYLESS_CTX);
     mockMiddlewareScaffold();
 
-    await init({ keyless: true });
+    await init({ accountless: true });
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).toHaveBeenCalled();
@@ -116,19 +116,41 @@ describe("init strategy", () => {
     expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
   });
 
-  test("--keyless takes precedence over an authed user", async () => {
-    setup({ email: "user@example.com" });
+  test("deprecated --keyless behaves as --accountless and warns", async () => {
+    const { captured } = setup();
     mockBootstrapTo(KEYLESS_CTX);
     mockMiddlewareScaffold();
 
     await init({ keyless: true });
+
+    expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(captured.err).toContain("`--keyless` is deprecated. Use `--accountless` instead.");
+  });
+
+  test("deprecated --keyless with --login throws the same usage error as --accountless", async () => {
+    setup();
+
+    await expect(init({ keyless: true, login: true })).rejects.toThrow(
+      /--accountless and --login cannot be combined/,
+    );
+    expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+  });
+
+  test("--accountless takes precedence over an authed user", async () => {
+    setup({ email: "user@example.com" });
+    mockBootstrapTo(KEYLESS_CTX);
+    mockMiddlewareScaffold();
+
+    await init({ accountless: true });
 
     expect(heuristics.printKeylessInfo).toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
     expect(pullMod.pull).not.toHaveBeenCalled();
   });
 
-  test("--keyless on a non-keyless framework throws a usage error", async () => {
+  test("--accountless on an unsupported framework throws a usage error", async () => {
     setup();
     const nonKeylessCtx: FakeCtx = {
       ...FAKE_CTX,
@@ -144,17 +166,19 @@ describe("init strategy", () => {
     };
     mockBootstrapTo(nonKeylessCtx);
 
-    await expect(init({ keyless: true })).rejects.toThrow(/--keyless is not supported for Vue/);
+    await expect(init({ accountless: true })).rejects.toThrow(
+      /--accountless is not supported for Vue/,
+    );
     expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
   });
 
-  test("--keyless on an existing keyless-capable project uses keyless mode", async () => {
+  test("--accountless on an existing supported project uses accountless mode", async () => {
     setup();
     mockExistingProject(KEYLESS_CTX);
     mockMiddlewareScaffold();
 
-    await init({ keyless: true });
+    await init({ accountless: true });
 
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
@@ -210,12 +234,12 @@ describe("init strategy", () => {
     expect(linkMod.link).not.toHaveBeenCalled();
   });
 
-  test("-y --keyless with keyless framework uses keyless mode", async () => {
+  test("-y --accountless with a supported framework uses accountless mode", async () => {
     setup();
     mockBootstrapTo(KEYLESS_CTX);
     mockMiddlewareScaffold();
 
-    await init({ yes: true, keyless: true });
+    await init({ yes: true, accountless: true });
 
     expect(heuristics.printKeylessInfo).toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
@@ -262,12 +286,12 @@ describe("init strategy", () => {
     expect(pullMod.pull).toHaveBeenCalled();
   });
 
-  test("agent mode with --keyless uses keyless mode without authentication", async () => {
+  test("agent mode with --accountless uses accountless mode without authentication", async () => {
     setup({ isAgent: true, email: null });
     mockExistingProject(KEYLESS_CTX);
     mockMiddlewareScaffold();
 
-    await init({ keyless: true });
+    await init({ accountless: true });
 
     expect(heuristics.printKeylessInfo).toHaveBeenCalled();
     expect(linkMod.link).not.toHaveBeenCalled();
@@ -521,7 +545,7 @@ describe("init strategy", () => {
 
       expect(confirmSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.stringContaining("already has an unclaimed keyless application"),
+          message: expect.stringContaining("already has an unclaimed accountless application"),
           default: false,
         }),
       );
@@ -621,7 +645,7 @@ describe("init strategy", () => {
       setup();
 
       await expect(init({ fresh: true, login: true })).rejects.toThrow(
-        /--fresh applies to keyless applications/,
+        /--fresh applies to accountless applications/,
       );
       expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     });
@@ -648,7 +672,7 @@ describe("init strategy", () => {
       mockExistingProject(KEYLESS_CTX);
 
       await expect(init({ template: "b2b-saas", yes: true })).rejects.toThrow(
-        /--template only applies to keyless applications/,
+        /--template only applies to accountless applications/,
       );
       expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
     });
@@ -658,7 +682,7 @@ describe("init strategy", () => {
       mockExistingProject(KEYLESS_CTX);
 
       await expect(init({ fresh: true, yes: true })).rejects.toThrow(
-        /--fresh only applies to keyless applications/,
+        /--fresh only applies to accountless applications/,
       );
     });
 
@@ -667,7 +691,7 @@ describe("init strategy", () => {
       spyOn(context, "gatherContext").mockResolvedValue(KEYLESS_CTX);
 
       await expect(init({ template: "b2b-saas", app: "app_abc", yes: true })).rejects.toThrow(
-        /--template only applies to keyless applications/,
+        /--template only applies to accountless applications/,
       );
     });
 
@@ -687,7 +711,33 @@ describe("init strategy", () => {
       };
       spyOn(context, "gatherContext").mockResolvedValue(nonKeylessCtx);
 
-      await expect(init({ template: "b2b-saas" })).rejects.toThrow(/does not support keyless mode/);
+      await expect(init({ template: "b2b-saas" })).rejects.toThrow(
+        /does not support accountless setup/,
+      );
+    });
+
+    test("--template on a non-keyless framework in human mode names the missing keyless support", async () => {
+      setup({ email: null });
+      const nonKeylessCtx: FakeCtx = {
+        ...FAKE_CTX,
+        existingClerk: false,
+        framework: {
+          dep: "vue",
+          name: "Vue",
+          sdk: "@clerk/vue",
+          envVar: "VITE_CLERK_PUBLISHABLE_KEY",
+          envFile: ".env.local",
+        },
+        envFile: ".env.local",
+      };
+      spyOn(context, "gatherContext").mockResolvedValue(nonKeylessCtx);
+
+      // Human mode resolves an unsupported framework to the authenticated
+      // flow, so the guard must not suggest --accountless here.
+      await expect(init({ template: "b2b-saas" })).rejects.toThrow(
+        /does not support accountless setup/,
+      );
+      expect(loginMod.login).not.toHaveBeenCalled();
     });
 
     test("--template on a keyless-resolved run is still forwarded normally", async () => {

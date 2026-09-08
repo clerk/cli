@@ -1,9 +1,10 @@
 import { resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { dim, cyan } from "../../lib/color.ts";
-import { CliError, ERROR_CODE, UserAbortError, isPromptExitError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
+import { closeStatusForError } from "../../lib/signals.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import { resolveUsersInstanceContext } from "./interactive/instance-context.ts";
 import { registerUsersAction } from "./registry.ts";
@@ -174,7 +175,7 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
     // Request one extra row so we can detect whether more pages exist without
     // a separate /users/count round-trip. The CLI's --limit caps at 250, so
     // pageSize + 1 always fits under BAPI's MaxLimit of 500.
-    const response = await withSpinner("Fetching users...", () =>
+    const response = await withSpinner("Fetching users...", async () =>
       bapiRequest({
         method: "GET",
         path: buildUsersListPath(options, limit + 1),
@@ -208,16 +209,16 @@ export async function list(options: UsersListOptions = {}): Promise<void> {
     }
     closeStatus = "success";
   } catch (error) {
-    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    closeStatus = closeStatusForError(error);
     throw error;
   } finally {
     if (shouldWrap) {
       if (closeStatus === "paused") {
         pausedOutro();
       } else if (closeStatus === "failed") {
-        outro("Failed");
+        await outro("Failed");
       } else if (closeStatus === "success") {
-        outro();
+        await outro();
       }
     }
   }

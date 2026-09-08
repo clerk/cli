@@ -27,7 +27,7 @@ export interface CollectResult {
 }
 
 export async function collectEntries(cwd: string): Promise<CollectResult> {
-  const settled = await Promise.allSettled(CLIENTS.map((c) => c.list(cwd)));
+  const settled = await Promise.allSettled(CLIENTS.map(async (c) => c.list(cwd)));
   const entries: ListEntry[] = [];
   const failures: CollectFailure[] = [];
   for (const [i, outcome] of settled.entries()) {

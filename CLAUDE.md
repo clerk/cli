@@ -41,7 +41,7 @@ After modifying files, run these commands to match what CI enforces on pull requ
 
 ```sh
 bun run format       # Format with oxfmt (writes changes)
-bun run lint         # Lint with oxlint
+bun run lint         # Lint with oxlint (type-aware; see .claude/rules/promises.md)
 bun run typecheck    # Type-check all packages and scripts
 bun run test         # Run unit tests
 bun run test:e2e:op  # Run E2E tests with secrets resolved from 1Password (preferred locally)
@@ -62,4 +62,4 @@ The same floor also covers `Bun.sql`'s MySQL adapter used by the DB-backed expor
 
 The `CLI_VERSION` global is injected at compile time via `bun build --compile --define "CLI_VERSION=..."`. The CI release workflow injects the real version.
 
-Builds without that define (`bun run dev`, a `bun link`ed checkout, or `packages/cli-core`'s own `build:compile`) use the Bun macro in `src/lib/version.macro.ts` to derive and inline a version from the checkout during transpilation: `<version in packages/cli/package.json>-dev.<YYYYMMDD>.<short sha>`, plus `.dirty` when the working tree has uncommitted changes (e.g. `3.0.0-dev.20260803.f51f1e4.dirty`). The commit segment moves on every pull, so `clerk --version` tells you whether the linked binary is the code you just fetched. It degrades to `<version>-dev` when git isn't available. The compiled CLI never runs Git or classifies the version at runtime. Code that needs the current version should read `CURRENT_VERSION`; code that needs the dev-build distinction should read `IS_DEV_BUILD`.
+Builds without that define (`bun run dev`, a `bun link`ed checkout, or `packages/cli-core`'s own `build:compile`) use the Bun macro in `src/lib/version.macro.ts` to derive and inline a version from the checkout during transpilation: `<version in packages/cli/package.json>-dev.<YYYYMMDD>.<short sha>`, plus `.dirty` when the working tree has uncommitted changes (e.g. `3.0.0-dev.20260803.f51f1e4.dirty`). The commit segment moves on every pull, so `clerk --version` tells you whether the linked binary is the code you just fetched. It degrades to `<version>-dev` when git isn't available. The compiled CLI never runs Git at runtime; the injected-vs-fallback choice and dev classification happen in `version.ts` module scope (macros stopped seeing `--define` globals in Bun 1.4). Code that needs the current version should read `CURRENT_VERSION`; code that needs the dev-build distinction should read `IS_DEV_BUILD`.

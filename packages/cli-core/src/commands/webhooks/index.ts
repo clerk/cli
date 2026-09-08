@@ -40,7 +40,7 @@ export function registerWebhooks(program: Program): void {
         description: "Generate and pin a token in one step",
       },
     ])
-    .action((_opts, cmd) =>
+    .action(async (_opts, cmd) =>
       webhooksToken(cmd.optsWithGlobals() as Parameters<typeof webhooksToken>[0]),
     );
 
@@ -70,7 +70,7 @@ export function registerWebhooks(program: Program): void {
         description: "Emit NDJSON event lines (pipe into a file for `webhooks verify --delivery`)",
       },
     ])
-    .action((_opts, cmd) =>
+    .action(async (_opts, cmd) =>
       webhooksListen(cmd.optsWithGlobals() as Parameters<typeof webhooksListen>[0]),
     );
 
@@ -98,7 +98,7 @@ export function registerWebhooks(program: Program): void {
         description: "Verify from the four header values",
       },
     ])
-    .action((_opts, cmd) =>
+    .action(async (_opts, cmd) =>
       webhooksVerify(cmd.optsWithGlobals() as Parameters<typeof webhooksVerify>[0]),
     );
 }

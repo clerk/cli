@@ -95,21 +95,21 @@ beforeEach(() => {
   stderrChunks = [];
 });
 
-test("intro forwards the title to clack and pushes the gutter prefix", () => {
+test("intro forwards the title to clack and pushes the gutter prefix", async () => {
   expect(isInsideGutter()).toBe(false);
   intro("Welcome");
   expect(introCalls).toBe(1);
   expect(lastIntroTitle).toBe("Welcome");
   expect(isInsideGutter()).toBe(true);
   // Cleanup so other tests don't see prefix leak
-  outro("Done");
+  await outro("Done");
   expect(isInsideGutter()).toBe(false);
 });
 
-test("outro forwards the label to clack and pops the gutter prefix", () => {
+test("outro forwards the label to clack and pops the gutter prefix", async () => {
   intro("Hello");
   expect(isInsideGutter()).toBe(true);
-  outro("All done");
+  await outro("All done");
   expect(outroCalls).toBe(1);
   expect(lastOutroLabel).toBe("All done");
   expect(isInsideGutter()).toBe(false);

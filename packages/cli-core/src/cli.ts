@@ -14,4 +14,4 @@ if (args[0] === "__complete") {
   process.exit(0);
 }
 
-runProgram(createProgram());
+await runProgram(createProgram());

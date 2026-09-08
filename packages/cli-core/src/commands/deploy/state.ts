@@ -35,6 +35,12 @@ export function pausedStepDescription(state: DeployOperationState): string {
 
 export class DeployPausedError extends CliError {}
 
+/**
+ * Either way the deploy is unfinished, so both codes are nonzero: a production
+ * instance exists but DNS or OAuth is incomplete, and `clerk deploy && cutover`
+ * must not proceed. `interrupted` (the user stopped it) reports 130 to match
+ * every other Ctrl-C; otherwise it is an ordinary failure and reports 1.
+ */
 export function deployPausedError(
   state: DeployOperationState,
   options?: { interrupted?: boolean },

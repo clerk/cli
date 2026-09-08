@@ -49,7 +49,7 @@ export async function mcpRun(options: McpOptions = {}, streams: RunStreams = {})
   // Serialize stdout writes: concurrent SSE drains and the server→client stream
   // all emit, and a frame must never interleave with another.
   let writeTail: Promise<void> = Promise.resolve();
-  const emit: Emit = (message) => {
+  const emit: Emit = async (message) => {
     captureProtocolVersion(message, session);
     const line = JSON.stringify(message) + "\n";
     // Swallow write errors (e.g. EPIPE) so one failed frame doesn't wedge the chain.
@@ -73,7 +73,7 @@ export async function mcpRun(options: McpOptions = {}, streams: RunStreams = {})
   const abort = new AbortController();
   // A drain that ends because we're shutting down is expected; anything else is
   // a real (non-fatal) error worth surfacing under --verbose.
-  const suppress = (work: Promise<void>): Promise<void> =>
+  const suppress = async (work: Promise<void>): Promise<void> =>
     work.catch((error: unknown) => {
       if (!abort.signal.aborted)
         log.debug(`mcp run: response drain error — ${errorMessage(error)}`);

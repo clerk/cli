@@ -77,7 +77,7 @@ export async function orgsDisable(options: OrgsOptions): Promise<void> {
     // applyConfigPatch reads the group it needs on its own.
     const current =
       target.kind === "account"
-        ? await withSpinner("Fetching current config...", () =>
+        ? await withSpinner("Fetching current config...", async () =>
             withApiContext(
               fetchInstanceConfig(target.ctx.appId, target.ctx.instanceId, [
                 "billing",

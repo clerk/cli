@@ -61,12 +61,16 @@ async function fetchCurrentBapiInstance(secretKey: string): Promise<CurrentBapiI
   try {
     body = JSON.parse(rawBody);
   } catch {
-    throw new CliError("BAPI returned non-JSON response from /v1/instance.");
+    throw new CliError("BAPI returned non-JSON response from /v1/instance.", {
+      code: ERROR_CODE.BAPI_UNEXPECTED_RESPONSE,
+    });
   }
 
   const instance = body as { id?: unknown; publishable_key?: unknown };
   if (typeof instance.id !== "string" || instance.id.length === 0) {
-    throw new CliError("BAPI /v1/instance response did not include an instance id.");
+    throw new CliError("BAPI /v1/instance response did not include an instance id.", {
+      code: ERROR_CODE.BAPI_UNEXPECTED_RESPONSE,
+    });
   }
 
   let instanceLabel = secretKey.startsWith("sk_live_") ? "production" : "development";

@@ -1,7 +1,8 @@
 import type { Program } from "../../cli-program.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { green, cyan, yellow, dim } from "../../lib/color.ts";
-import { CliError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE } from "../../lib/errors.ts";
+import { isCancelled } from "../../lib/signals.ts";
 import {
   asdfPluginFromPath,
   asdfReshim,
@@ -51,7 +52,7 @@ async function resolveTargets(
     safeRealpath(runningPath),
   ]);
 
-  const resolved = await Promise.all(onPath.map((p) => resolveAsdfShim(p)));
+  const resolved = await Promise.all(onPath.map(async (p) => resolveAsdfShim(p)));
   const candidates = onPath.map((displayPath, i) => ({
     displayPath,
     resolvedPath: resolved[i]!,
@@ -134,12 +135,18 @@ async function runGlobalInstall(
     const stderr = result.stderr.toString();
     const hint = globalInstallCommand(installer, packageSpec);
     if (stderr.includes("EACCES") || stderr.includes("permission denied")) {
-      throw new CliError(`Permission denied. Try: sudo ${hint}`);
+      throw new CliError(`Permission denied. Try: sudo ${hint}`, {
+        code: ERROR_CODE.UPDATE_PERMISSION_DENIED,
+      });
     }
     if (result.exitCode === 127 || stderr.includes("not found")) {
-      throw new CliError(`${installer} not found on PATH.`);
+      throw new CliError(`${installer} not found on PATH.`, {
+        code: ERROR_CODE.INSTALLER_NOT_FOUND,
+      });
     }
-    throw new CliError(`Update failed: ${stderr.trim() || "unknown error"}`);
+    throw new CliError(`Update failed: ${stderr.trim() || "unknown error"}`, {
+      code: ERROR_CODE.UPDATE_FAILED,
+    });
   }
 
   // Homebrew installs whatever version its tap currently publishes, ignoring
@@ -154,6 +161,7 @@ async function runGlobalInstall(
         `Homebrew tap is stale: installed ${installed}, expected ${targetVersion}. ` +
           `Update via another installer (e.g. \`npm install -g ${packageSpec}\`) ` +
           `or wait for the tap to catch up.`,
+        { code: ERROR_CODE.UPDATE_FAILED },
       );
     }
   }
@@ -262,9 +270,18 @@ export async function update(options: UpdateOptions): Promise<void> {
   if (isHuman()) intro("Checking for updates");
 
   const [latest, installDirs] = await Promise.all([
-    withSpinner("Checking for updates...", () => fetchLatestVersion(channel)).catch(() => {
-      throw new CliError("Could not reach npm registry. Check your network connection.");
-    }),
+    withSpinner("Checking for updates...", async () => fetchLatestVersion(channel)).catch(
+      (error: unknown) => {
+        // A registry that answered — badly, or without the requested channel —
+        // already carries its own code, and a Ctrl-C is the user's decision,
+        // not the network's. Only transport and timeout failures are genuinely
+        // "unreachable", and retrying is only right for those.
+        if (error instanceof CliError || isCancelled(error)) throw error;
+        throw new CliError("Could not reach npm registry. Check your network connection.", {
+          code: ERROR_CODE.REGISTRY_UNREACHABLE,
+        });
+      },
+    ),
     getInstallerPackageDirs(),
   ]);
 
@@ -273,7 +290,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   if (compareSemver(latest, CURRENT_VERSION) <= 0) {
     log.info(`${green("✓")} Already on latest (${CURRENT_VERSION})`);
     reportOtherInstalls(others, channel);
-    if (isHuman()) outro("Up to date");
+    if (isHuman()) await outro("Up to date");
     return;
   }
 
@@ -320,7 +337,7 @@ export async function update(options: UpdateOptions): Promise<void> {
       }
     }
     reportOtherInstalls(others, channel);
-    if (isHuman()) outro("Update required manual action");
+    if (isHuman()) await outro("Update required manual action");
     return;
   }
 
@@ -347,7 +364,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   const shouldInstall = options.yes || (await confirmUpdate(CURRENT_VERSION, latest));
 
   if (!shouldInstall) {
-    if (isHuman()) outro("Update cancelled");
+    if (isHuman()) await outro("Update cancelled");
     return;
   }
 
@@ -360,7 +377,7 @@ export async function update(options: UpdateOptions): Promise<void> {
     try {
       await withSpinner(
         `Installing ${packageSpec} via ${owner} (${t.displayPath})...`,
-        () => runGlobalInstall(owner, packageSpec, latest),
+        async () => runGlobalInstall(owner, packageSpec, latest),
         `Updated ${owner}: ${t.displayPath}`,
       );
       results.push({ target: t, ok: true });
@@ -424,7 +441,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   }
 
   if (isHuman()) {
-    outro(anyFailed ? "Update completed with errors" : `Successfully updated to ${latest}`);
+    await outro(anyFailed ? "Update completed with errors" : `Successfully updated to ${latest}`);
   }
 }
 

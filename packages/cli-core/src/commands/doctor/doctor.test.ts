@@ -235,7 +235,7 @@ describe("checkLoggedIn", () => {
       status: "pass",
       // The claim hint has to ride in the message: `detail` only renders
       // under --verbose, and guidance nobody sees by default isn't guidance.
-      message: ["unclaimed keyless application", "ins_keyless_1", "Claim it"],
+      message: ["unclaimed accountless application", "ins_keyless_1", "Claim it"],
     });
   });
 
@@ -392,7 +392,7 @@ describe("checkTokenValid", () => {
     expectCheck(result, {
       name: "Authentication valid",
       status: "warn",
-      message: ["Stored session is expired", "keyless application"],
+      message: ["Stored session is expired", "accountless application"],
       remedy: "clerk auth login",
       fix: false,
     });
@@ -435,7 +435,7 @@ describe("checkProjectLinked", () => {
       status: "pass",
       // The claim hint has to ride in the message: `detail` only renders
       // under --verbose, and guidance nobody sees by default isn't guidance.
-      message: ["unclaimed keyless application", "ins_keyless_1", "Claim it"],
+      message: ["unclaimed accountless application", "ins_keyless_1", "Claim it"],
     });
   });
 
@@ -450,7 +450,7 @@ describe("checkProjectLinked", () => {
     expectCheck(result, {
       name: "Project linked",
       status: "warn",
-      message: ["keyless application", "fewer settings"],
+      message: ["accountless application", "fewer settings"],
       remedy: "clerk link",
       fix: true,
     });
@@ -522,7 +522,7 @@ describe("checkLinkedAppExists", () => {
     expectCheck(result, {
       name: "Application reachable",
       status: "warn",
-      message: ["Skipped", "keyless application"],
+      message: ["Skipped", "accountless application"],
     });
   });
 });
@@ -601,7 +601,7 @@ describe("checkInstances", () => {
     expectCheck(result, {
       name: "Instance IDs",
       status: "warn",
-      message: ["Skipped", "keyless application"],
+      message: ["Skipped", "accountless application"],
     });
   });
 });

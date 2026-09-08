@@ -146,6 +146,35 @@ test("users parent command exposes targeting flags inherited by subcommands", ()
   expect(optionNames).toEqual(expect.arrayContaining(["--secret-key", "--app", "--instance"]));
 });
 
+describe("help output ordering", () => {
+  type AnyCommand = ReturnType<typeof createProgram>["commands"][number];
+
+  function collectCommands(cmd: AnyCommand, path: string): { path: string; cmd: AnyCommand }[] {
+    return [
+      { path, cmd },
+      ...cmd.commands.flatMap((sub) => collectCommands(sub, `${path} ${sub.name()}`)),
+    ];
+  }
+
+  const allCommands = collectCommands(createProgram() as AnyCommand, "clerk");
+
+  // Commander's option sort key: short flag if present, else long flag.
+  const optionSortKey = (option: { short?: string; long?: string }): string =>
+    option.short ? option.short.replace(/^-/, "") : (option.long ?? "").replace(/^--/, "");
+
+  test.each(allCommands)("$path lists subcommands alphabetically in help", ({ cmd }) => {
+    const helper = cmd.createHelp();
+    const names = helper.visibleCommands(cmd).map((sub) => sub.name());
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+  });
+
+  test.each(allCommands)("$path lists options alphabetically in help", ({ cmd }) => {
+    const helper = cmd.createHelp();
+    const keys = helper.visibleOptions(cmd).map(optionSortKey);
+    expect(keys).toEqual([...keys].sort((a, b) => a.localeCompare(b)));
+  });
+});
+
 test("users create documents -d and --file for raw BAPI request bodies", () => {
   const program = createProgram();
   const users = program.commands.find((command) => command.name() === "users")!;
@@ -405,13 +434,6 @@ describe("reportError", () => {
 
   const json = () => JSON.parse(captured.err.trim()) as { error: Record<string, any> };
 
-  /** Matches what `@inquirer/prompts` throws on Ctrl+C. */
-  const promptExitError = () => {
-    const error = new Error("User force closed the prompt with SIGINT");
-    error.name = "ExitPromptError";
-    return error;
-  };
-
   describe("aborts", () => {
     test("UserAbortError exits clean and prints nothing", () => {
       expect(reportError(new UserAbortError(), false)).toBe(EXIT_CODE.SUCCESS);
@@ -419,16 +441,8 @@ describe("reportError", () => {
       expect(captured.out).toBe("");
     });
 
-    test("a force-closed prompt exits clean and prints nothing", () => {
-      expect(reportError(promptExitError(), false)).toBe(EXIT_CODE.SUCCESS);
-      expect(captured.err).toBe("");
-      expect(captured.out).toBe("");
-    });
-
-    test("an ExitPromptError with a different message is not treated as an abort", () => {
-      const error = new Error("something else");
-      error.name = "ExitPromptError";
-      expect(reportError(error, false)).toBe(EXIT_CODE.GENERAL);
+    test("an unrelated error is not treated as an abort", () => {
+      expect(reportError(new Error("something else"), false)).toBe(EXIT_CODE.GENERAL);
       expect(captured.err).toContain("something else");
     });
   });
@@ -563,7 +577,6 @@ describe("reportError", () => {
   describe("agrees with telemetryResultForError on the exit code", () => {
     const fixtures: [string, unknown][] = [
       ["UserAbortError", new UserAbortError()],
-      ["prompt exit", promptExitError()],
       ["CliError (default code)", new CliError("boom")],
       [
         "CliError (usage code)",

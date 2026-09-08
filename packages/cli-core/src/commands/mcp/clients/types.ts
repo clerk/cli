@@ -2,7 +2,7 @@
  * Shared types for MCP client integrations.
  *
  * Each supported MCP client (Claude Code, Cursor, GitHub Copilot, Windsurf,
- * Gemini, Codex, opencode, OpenClaw, Warp, Hermes) exposes an
+ * Gemini, Codex, opencode, OpenClaw, Warp, Hermes, fx) exposes an
  * {@link McpClient} that knows how to read, upsert, and remove the `clerk`
  * server entry in its own config file format.
  */
@@ -17,7 +17,8 @@ export type ClientId =
   | "opencode"
   | "openclaw"
   | "warp"
-  | "hermes";
+  | "hermes"
+  | "fx";
 
 /**
  * Per-client manual setup instructions for the Clerk MCP server. Attached as

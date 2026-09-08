@@ -6,8 +6,9 @@ These subcommands register, list, and remove the Clerk entry per client, and
 probe the server via `clerk doctor`. Clients that ship a **non-interactive** MCP
 registration CLI (Claude Code, Gemini, Codex, VS Code, OpenClaw, Hermes) are
 registered by shelling out to it — the client owns its config format and write
-safety; for the rest (Cursor, Windsurf, Warp, opencode) we write the config
-file directly. Reads (`list`, `doctor`, the uninstall picker) always parse the
+safety; for the others (Cursor, Windsurf, Warp, opencode, fx) we write the
+config file directly (fx has a registration CLI but is deliberately
+file-written — see its dialect note). Reads (`list`, `doctor`, the uninstall picker) always parse the
 config files directly. The server URL defaults to Clerk's hosted server
 (`https://mcp.clerk.com/mcp`), so `clerk mcp install` works out of the box with
 no flags or profile setup (see [Development](#development) for the override
@@ -35,6 +36,7 @@ directory you run the CLI from).
 | `openclaw`           | OpenClaw                 | `openclaw mcp add --no-probe`               | `openclaw mcp unset` | `~/.openclaw/openclaw.json` (`mcp.servers`)   |
 | `warp`               | Warp                     | direct file write (no CLI exists)           | direct file write    | `~/.warp/.mcp.json`                           |
 | `hermes`             | Hermes Agent             | `hermes mcp add`                            | `hermes mcp remove`  | `~/.hermes/config.yaml` (`mcp_servers`)       |
+| `fx`                 | fx                       | direct file write (note below)              | direct file write    | `~/.fx/mcp.json` (`mcp`)                      |
 
 For CLI-registered clients there is **no file-write fallback**: if the client's
 binary isn't on PATH (e.g. VS Code without the `code` shell command installed),
@@ -55,8 +57,8 @@ edits its `mcp.json` directly. Its user config dir is OS-specific:
 **Configs owned by a client's CLI are read-only to us.** The file layer exists
 for two different jobs: _reads_ (every client — `list`, `doctor`, and the
 presence checks parse the config files, because no client CLI offers a stable
-machine-readable listing) and _writes_ (only the clients with no usable
-registration CLI: Cursor, Windsurf, Warp, opencode — plus VS Code's
+machine-readable listing) and _writes_ (only the direct-write
+clients: Cursor, Windsurf, Warp, opencode, fx — plus VS Code's
 removal, since its CLI is add-only). For every CLI-delegated client
 (Claude Code, Gemini, Codex, OpenClaw, Hermes) the file base is built
 read-only and a write reaching it throws — Codex is the one TOML-backed
@@ -80,6 +82,25 @@ Per-client dialect notes:
 - **Warp** ships no registration CLI (its `oz` CLI only attaches servers to
   cloud-agent runs); `~/.warp/.mcp.json` is the documented file surface behind
   `Settings → Agents → MCP servers`, standard `mcpServers` dialect.
+- **fx** is registered in the user-global trusted profile `~/.fx/mcp.json` —
+  fx 0.0.7 also loads workspace `.mcp.json` servers, but those sit behind
+  per-workspace trust approval, while the profile needs none and follows the
+  user everywhere. fx does ship a non-interactive registration CLI
+  (`fx mcp add --transport http`, verified in fx 0.0.7), but we write the
+  file directly anyway: the command is newer than fx's own docs (fx.sh
+  documents only the in-session `/mcp` form), so the direct write keeps
+  registration working on fx binaries that predate it, and the entry shape is
+  trivial and version-stable. fx speaks Streamable HTTP natively, so it is
+  the one client that skips the stdio bridge: its entry is
+  `{ "type": "http", "url": "…" }` under top-level `mcp`, with the resolved
+  URL embedded at install time. Two consequences of that: fx accepts
+  `mcpServers` as a profile alias for `mcp` (ignored whenever `mcp` exists),
+  so the client migrates an alias-only profile to canonical `mcp` before any
+  read or write — otherwise our written `mcp` would shadow every aliased
+  server; and with no bridge argv to recognize, a `--name` entry pointing at
+  a `CLERK_MCP_URL` override is recognized as ours only while that override
+  is the resolved URL. fx applies hand-edited (or CLI-written) config via
+  `/mcp reload` inside an fx session, or on next start; `/mcp list` verifies.
 - **Hermes** `mcp add` probes the server and then ends in a confirm prompt
   ("Enable all tools?" on success, "Save config anyway?" on failure) — and
   cancelling on EOF exits **0** without saving. The CLI is therefore driven
@@ -90,8 +111,10 @@ Per-client dialect notes:
 
 ## How clients connect (the stdio bridge)
 
-Every client installs the same stdio descriptor — it launches `clerk mcp run`
-rather than pointing the editor at the remote URL directly:
+Every client except fx installs the same stdio descriptor — it launches
+`clerk mcp run` rather than pointing the editor at the remote URL directly (fx
+connects over Streamable HTTP natively, so its entry carries the URL itself —
+see the dialect note above):
 
 ```jsonc
 { "command": "clerk", "args": ["mcp", "run"] }
@@ -144,11 +167,13 @@ output.
 **After install:** registering the entry does not connect the server on its
 own. In human mode, `install` prints per-client next steps — the server only
 goes live once you **reload the editor**, which then spawns `clerk mcp run`
-(so `clerk` must be on the editor's `PATH`).
+(so `clerk` must be on the editor's `PATH`). fx instead applies the config via
+`/mcp reload` inside a session (or on next start) and needs no `clerk` binary
+at connect time.
 
 > **Concurrent writes:** for CLI-registered clients, write safety is the
 > client's own responsibility — its CLI owns the config. The file-backed
-> clients (Cursor, Windsurf, VS Code removal) are written atomically (temp
+> clients (Cursor, Windsurf, fx, VS Code removal) are written atomically (temp
 > file + rename), which prevents a torn read but not a lost update if the
 > editor rewrites its own config concurrently — those writes are safest with
 > the target client closed.
@@ -157,8 +182,8 @@ goes live once you **reload the editor**, which then spawns `clerk mcp run`
 
 Print every Clerk MCP entry across all supported clients: any `clerk mcp run`
 bridge entry, matched by its descriptor shape regardless of its name or
-currently-resolved URL (plus, for opencode's remote dialect, entries named
-`clerk` or pointing at a `*.clerk.com` host). Entries this CLI never wrote —
+currently-resolved URL (plus, for the direct-URL dialects — opencode's remote
+entries and fx — entries named `clerk` or pointing at a `*.clerk.com` host). Entries this CLI never wrote —
 e.g. a hand-added direct-URL entry — are left alone. The `--json` (and
 agent-mode) output is `{ entries, failures }`: a client whose config exists but
 can't be read or parsed appears in `failures` (`{ client, error }`) rather than
@@ -191,7 +216,7 @@ and when the entry is present but the client's binary is missing, that client
 fails with `mcp_client_cli_not_found`. After the remove command reports
 success, the config is re-read — if the entry is somehow still present, the
 client fails with `mcp_client_cli_failed` rather than reporting a removal that
-didn't happen (the mirror of the add-side `verifyAdd` check). Cursor, Windsurf, Warp, opencode, and
+didn't happen (the mirror of the add-side `verifyAdd` check). Cursor, Windsurf, Warp, opencode, fx, and
 VS Code (add-only CLI) are removed by editing the config file directly.
 
 In human mode with no `--client`/`--all`, it prompts with a

@@ -33,7 +33,7 @@ export async function revoke(options: RevokeOptions): Promise<void> {
   let body;
   try {
     body = await withApiContext(
-      withSpinner(`Revoking actor token ${options.actorTokenId}...`, () =>
+      withSpinner(`Revoking actor token ${options.actorTokenId}...`, async () =>
         revokeActorToken(ctx.secretKey, options.actorTokenId),
       ),
       `Failed to revoke actor token ${options.actorTokenId}`,
@@ -83,7 +83,7 @@ async function revokeImpersonationSessions(
   log.warn("Token already accepted — an active impersonation session exists.");
 
   const sessions = await withApiContext(
-    withSpinner(`Looking up active sessions for ${userId}...`, () =>
+    withSpinner(`Looking up active sessions for ${userId}...`, async () =>
       listUserSessions(secretKey, { userId, status: "active" }),
     ),
     `Failed to list sessions for ${userId}`,

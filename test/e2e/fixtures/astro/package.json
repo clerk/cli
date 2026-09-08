@@ -12,7 +12,10 @@
     "astro": "astro"
   },
   "dependencies": {
-    "astro": "7.1.3",
+    "astro": "7.2.6",
     "@clerk/astro": "latest"
+  },
+  "allowScripts": {
+    "esbuild": true
   }
 }

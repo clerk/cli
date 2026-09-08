@@ -1,15 +1,9 @@
 import { isHuman } from "../../mode.ts";
-import {
-  CliError,
-  UserAbortError,
-  isPromptExitError,
-  throwUsageError,
-  throwUserAbort,
-  ERROR_CODE,
-} from "../../lib/errors.ts";
+import { CliError, throwUsageError, throwUserAbort, ERROR_CODE } from "../../lib/errors.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { dim, bold, red, green } from "../../lib/color.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
+import { closeStatusForError } from "../../lib/signals.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { keylessCopy } from "../../lib/copy.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
@@ -79,7 +73,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   let closeStatus: "success" | "failed" | "paused" | undefined;
 
   try {
-    const currentConfig = await withSpinner("Fetching current config...", () =>
+    const currentConfig = await withSpinner("Fetching current config...", async () =>
       readInstanceConfig(target, configPayload),
     );
     delete currentConfig.config_version;
@@ -116,7 +110,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     const spinnerMsg = options.dryRun
       ? `[dry-run] Validating config on ${target.label}...`
       : `${op.verb} config on ${target.label}...`;
-    const result = await withSpinner(spinnerMsg, () =>
+    const result = await withSpinner(spinnerMsg, async () =>
       writeInstanceConfig(target, configPayload, {
         method: op.method,
         destructive: options.destructive,
@@ -136,16 +130,16 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
     }
     closeStatus = "success";
   } catch (error) {
-    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    closeStatus = closeStatusForError(error);
     throw error;
   } finally {
     if (shouldWrap) {
       if (closeStatus === "paused") {
         pausedOutro();
       } else if (closeStatus === "failed") {
-        outro("Failed");
+        await outro("Failed");
       } else if (closeStatus === "success") {
-        outro();
+        await outro();
       }
     }
   }

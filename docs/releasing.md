@@ -53,7 +53,7 @@ Install via npm: `npm install -g clerk@canary`
 
 ### Snapshot (`@snapshot`)
 
-Published on-demand from PR branches by commenting `!snapshot` (or `!snapshot <name>`) on a pull request. The commenter must be a member or owner of the repository's organization. `scripts/snapshot.ts` uses Changesets snapshot mode to produce versions in the format `x.y.z-<name>.v<YYYYMMDDHHmmss>` (e.g., `0.0.1-snapshot.v20260313145959` or `0.0.1-my-feature.v20260313145959`). The datetime format ensures multiple snapshots from the same PR sort monotonically in semver.
+Published on-demand from PR branches by commenting `!snapshot` (or `!snapshot <name>`) on a pull request. The commenter must be a member or owner of the repository's organization, the PR branch must live in `clerk/cli` (fork PRs are rejected before any code is checked out), and the PR's head commit must predate the `!snapshot` comment — if the branch moves after you comment, the run fails and you comment again once you've reviewed the new code. `scripts/snapshot.ts` uses Changesets snapshot mode to produce versions in the format `x.y.z-<name>.v<YYYYMMDDHHmmss>` (e.g., `0.0.1-snapshot.v20260313145959` or `0.0.1-my-feature.v20260313145959`). The datetime format ensures multiple snapshots from the same PR sort monotonically in semver.
 
 Install: `npm install -g clerk@<version>` (version is posted as a PR comment after publishing)
 

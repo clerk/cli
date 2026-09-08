@@ -98,5 +98,5 @@ export async function runWithOpSecrets(
     env: { ...process.env, OP_ACCOUNT, ...references },
   });
 
-  return await proc.exited;
+  return proc.exited;
 }

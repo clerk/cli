@@ -192,17 +192,17 @@ async function queryNpmPackageDir(): Promise<string | null> {
   // (POSIX: `<prefix>/lib/node_modules`; Windows: `<prefix>\node_modules`, no
   // `lib` segment). Constructing the path manually breaks on Windows.
   const dir = await probePmDir(["npm", "root", "-g"]);
-  return dir ? await safeRealpath(dir) : null;
+  return dir ? safeRealpath(dir) : null;
 }
 
 async function queryPnpmPackageDir(): Promise<string | null> {
   const dir = await probePmDir(["pnpm", "root", "-g"]);
-  return dir ? await safeRealpath(dir) : null;
+  return dir ? safeRealpath(dir) : null;
 }
 
 async function queryYarnPackageDir(): Promise<string | null> {
   const dir = await probePmDir(["yarn", "global", "dir"]);
-  return dir ? await safeRealpath(join(dir, "node_modules")) : null;
+  return dir ? safeRealpath(join(dir, "node_modules")) : null;
 }
 
 async function queryBunPackageDir(): Promise<string | null> {
@@ -214,7 +214,7 @@ async function queryBunPackageDir(): Promise<string | null> {
   } catch {
     return null;
   }
-  return await safeRealpath(dir);
+  return safeRealpath(dir);
 }
 
 // ── asdf shim handling ───────────────────────────────────────────────────────

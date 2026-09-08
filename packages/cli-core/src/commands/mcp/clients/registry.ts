@@ -6,6 +6,7 @@
 import { claudeClient } from "./claude.ts";
 import { codexClient } from "./codex.ts";
 import { cursorClient } from "./cursor.ts";
+import { fxClient } from "./fx.ts";
 import { geminiClient } from "./gemini.ts";
 import { hermesClient } from "./hermes.ts";
 import { openclawClient } from "./openclaw.ts";
@@ -26,6 +27,7 @@ export const CLIENTS: readonly McpClient[] = [
   openclawClient,
   warpClient,
   hermesClient,
+  fxClient,
 ];
 
 export const CLIENT_IDS: readonly ClientId[] = CLIENTS.map((c) => c.id);
@@ -40,6 +42,6 @@ export const CLIENT_ALIASES: Readonly<Record<string, ClientId>> = { copilot: "vs
 export const CLIENT_ID_CHOICES: readonly string[] = [...CLIENT_IDS, ...Object.keys(CLIENT_ALIASES)];
 
 export async function detectInstalledClients(cwd: string): Promise<McpClient[]> {
-  const flags = await Promise.all(CLIENTS.map((c) => c.detect(cwd)));
+  const flags = await Promise.all(CLIENTS.map(async (c) => c.detect(cwd)));
   return CLIENTS.filter((_, i) => flags[i]);
 }

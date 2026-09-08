@@ -40,6 +40,12 @@ export interface DeployProgressHandlers {
     work: (controls: SpinnerControls) => Promise<T>,
   ): Promise<T>;
   onVerified?(): void;
+  /**
+   * Fires every time a poll resolves a fresh status. Ctrl-C rejects out of the
+   * next poll or its countdown, discarding the loop's local status, so a caller
+   * that wants to report partial progress on interrupt has to capture it here.
+   */
+  onStatus?(status: DeployComponentStatus): void;
 }
 
 export type DeployStatusOutcome = { verified: boolean; status: DeployComponentStatus };
@@ -49,7 +55,11 @@ export type DeployStatusState =
   | "domain_pending"
   | "oauth_pending"
   | "domain_provisioning"
-  | "not_started";
+  | "not_started"
+  // Ctrl-C landed before the live state could be read, so nothing about the
+  // deploy is known. Never means "no production instance" — see
+  // buildInterruptedDeployStatusReport.
+  | "interrupted";
 
 export interface DeployStatusReport {
   complete: boolean;
@@ -97,7 +107,7 @@ export type DiscoveredOAuthProviders = {
 };
 
 export async function resolveDeployContext(): Promise<DeployContext> {
-  const resolved = await withSpinner("Resolving linked Clerk application...", () =>
+  const resolved = await withSpinner("Resolving linked Clerk application...", async () =>
     resolveProfile(process.cwd()),
   );
   if (!resolved) {
@@ -117,7 +127,7 @@ export async function resolveDeployContext(): Promise<DeployContext> {
   return {
     profileKey: resolved.path,
     profile: resolved.profile,
-    ...(await withSpinner("Checking for production instance...", () =>
+    ...(await withSpinner("Checking for production instance...", async () =>
       resolveLiveApplicationContext(resolved.profile),
     )),
   };
@@ -380,6 +390,30 @@ export function buildDeployStatusReport(
   };
 }
 
+/**
+ * The report for a Ctrl-C that arrived before {@link resolveDeployState} could
+ * answer — during the preflight DNS check, or during the state read itself.
+ *
+ * `not_started` would be a lie here: it asserts there is no production
+ * instance, which is exactly the question that never got answered. This says
+ * "unknown" instead, so an agent parsing stdout gets a well-formed document
+ * rather than the empty output this path used to produce.
+ */
+export function buildInterruptedDeployStatusReport(): DeployStatusReport {
+  return {
+    complete: false,
+    state: "interrupted",
+    domain: null,
+    productionInstanceId: null,
+    domainStatus: null,
+    pendingDnsRecords: [],
+    oauth: { complete: false, configured: [], pending: [], unsupported: [] },
+    nextAction:
+      "Interrupted before the deploy status could be read, so nothing is known about this " +
+      "deploy. Run `clerk deploy status` again to check it.",
+  };
+}
+
 function resolveActiveReportState(domainComplete: boolean, complete: boolean): DeployStatusState {
   if (complete) return "complete";
   if (!domainComplete) return "domain_pending";
@@ -460,6 +494,7 @@ export async function waitForDeployStatus(
   }
   let response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
   let status = deployComponentStatusFromDomainStatus(response);
+  handlers.onStatus?.(status);
 
   const labels = deployComponentLabels("dns", domain);
   const verified = await handlers.runVerification(labels.progress, async (spinner) => {
@@ -479,6 +514,7 @@ export async function waitForDeployStatus(
       nextRetryDelay *= DEPLOY_STATUS_BACKOFF_FACTOR;
       response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
       status = deployComponentStatusFromDomainStatus(response);
+      handlers.onStatus?.(status);
       if (response.status === "complete") return true;
     }
     return false;

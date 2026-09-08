@@ -107,9 +107,12 @@ export function createFixtureHarness(name: FixtureName): FixtureHarness {
     log("beforeAll finished");
   }, 300_000);
 
+  // Each delete shells out to a cold `bun src/cli.ts` and hits BAPI, which
+  // routinely takes longer than bun's 5s default hook timeout when the suite
+  // runs 8 files in parallel. A slow teardown must not fail a test that passed.
   afterEach(async () => {
     await users?.cleanup();
-  });
+  }, 60_000);
 
   afterAll(async () => {
     log("afterAll started");

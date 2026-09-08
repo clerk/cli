@@ -212,7 +212,7 @@ async function matchesMarker(cwd: string, marker: string): Promise<boolean> {
 
 async function detectNativeFramework(cwd: string): Promise<FrameworkInfo | null> {
   for (const fw of NATIVE_FRAMEWORK_MAP) {
-    const results = await Promise.all(fw.markers.map((marker) => matchesMarker(cwd, marker)));
+    const results = await Promise.all(fw.markers.map(async (marker) => matchesMarker(cwd, marker)));
     const matched = fw.markers.find((_, i) => results[i]);
     if (matched !== undefined) {
       log.debug(`framework: detected "${fw.name}" via marker "${matched}"`);

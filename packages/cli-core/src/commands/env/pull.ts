@@ -117,7 +117,7 @@ async function mergeKeysIntoEnvFile(
 }
 
 /**
- * Writes a keyless application's local keys into the project's env file. The
+ * Writes an accountless application's local keys into the project's env file. The
  * publishable key can be missing when an SDK holds only part of the pair; the
  * secret key is always present because it's what identified the target.
  */
@@ -141,12 +141,13 @@ async function pullKeylessKeys(
   if (publishableKey) {
     const mismatch = await withApiContext(
       hasKeyPairMismatch(keyless, publishableKey),
-      `Failed to verify the keyless secret key from \`${keyless.source}\``,
+      `Failed to verify the accountless secret key from \`${keyless.source}\``,
     );
     if (mismatch) {
       throw new CliError(
         `The publishable key found locally doesn't belong to the application the secret key from \`${keyless.source}\` addresses. Writing this pair would leave the server trusting one app while the browser talks to another.\n` +
           `Remove the mismatched ${publishableKeyName} from your env files, or run \`clerk auth login\` to claim the intended application, then pull again.`,
+        { code: ERROR_CODE.KEY_PAIR_MISMATCH },
       );
     }
   }
@@ -159,7 +160,7 @@ async function pullKeylessKeys(
     ...(publishableKey && { [publishableKeyName]: publishableKey }),
   });
 
-  log.info(`Keyless application keys from \`${keyless.source}\` written to ${displayPath}`);
+  log.info(`Accountless application keys from \`${keyless.source}\` written to ${displayPath}`);
   if (!publishableKey) {
     log.warn(
       `No publishable key found locally — set ${publishableKeyName} manually, or run \`clerk auth login\` to claim the application.`,

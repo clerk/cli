@@ -133,7 +133,7 @@ export async function impersonate(options: ImpersonateOptions = {}): Promise<voi
   let token;
   try {
     token = await withApiContext(
-      withSpinner("Creating impersonation session...", () =>
+      withSpinner("Creating impersonation session...", async () =>
         createActorToken(ctx.secretKey, {
           userId,
           actor: { sub: actor.sub, iss: actor.iss },

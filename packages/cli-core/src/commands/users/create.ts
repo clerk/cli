@@ -1,10 +1,5 @@
 import { handleBapiError, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
-import {
-  UserAbortError,
-  isPromptExitError,
-  throwUsageError,
-  throwUserAbort,
-} from "../../lib/errors.ts";
+import { UserAbortError, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import {
   buildCreateUserPayload,
@@ -55,7 +50,7 @@ export async function create(options: CreateUserOptions): Promise<void> {
     log.info("[dry-run] POST /v1/users");
     log.blank();
     log.info(JSON.stringify(redactUsersDisplayPayload(payload), null, 2));
-    if (shouldWrap) outro();
+    if (shouldWrap) await outro();
     return;
   }
 
@@ -78,7 +73,7 @@ export async function create(options: CreateUserOptions): Promise<void> {
       }
     }
 
-    const response = await withSpinner("Creating user...", () =>
+    const response = await withSpinner("Creating user...", async () =>
       bapiRequest({
         method: "POST",
         path: "/users",
@@ -91,24 +86,24 @@ export async function create(options: CreateUserOptions): Promise<void> {
     if (shouldWrap) {
       const userId = extractUserId(response.body);
       if (userId) {
-        outro([`Run \`clerk users open ${userId}\` to view this user in the dashboard`]);
+        await outro([`Run \`clerk users open ${userId}\` to view this user in the dashboard`]);
       } else {
-        outro();
+        await outro();
       }
     }
   } catch (error) {
     if (handleUsersBapiError(error, "Failed to create user", resolved)) {
-      if (shouldWrap) outro("Failed");
+      if (shouldWrap) await outro("Failed");
       return;
     }
     if (handleBapiError(error)) {
-      if (shouldWrap) outro("Failed");
+      if (shouldWrap) await outro("Failed");
       return;
     }
-    if (shouldWrap && (error instanceof UserAbortError || isPromptExitError(error))) {
+    if (shouldWrap && error instanceof UserAbortError) {
       pausedOutro();
     } else if (shouldWrap) {
-      outro("Failed");
+      await outro("Failed");
     }
     throw error;
   }
