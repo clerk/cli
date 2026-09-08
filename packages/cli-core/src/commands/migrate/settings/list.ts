@@ -6,13 +6,20 @@
  * environment, two of the app's env files and the CLI's config; when a run uses
  * a stale value, the question is never "what is it" but "which of those is
  * winning". Credentials are redacted, so this is safe to paste into an issue.
+ *
+ * Laid out like the CLI's other listings — `migrate logs list` and `migrate
+ * transformers list`: a line or two of orientation, the table, then a count.
+ * It closes with next steps, the way `mcp list` and `whoami` do, because a
+ * listing is where someone lands before they know what to type. Those are for
+ * humans; the full command surface stays in `--help`.
  */
 
 import { cyan, dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
+import { NEXT_STEPS, printNextSteps } from "../../../lib/next-steps.ts";
 import { findMigrateEnvValue } from "../lib/env-file.ts";
 import { loadSettings } from "../lib/settings.ts";
-import { displayValue, SETTINGS, type SettingDef } from "./registry.ts";
+import { displayValue, envNames, SETTINGS, type SettingDef } from "./registry.ts";
 
 export type SettingsListOptions = {
   json?: boolean;
@@ -22,6 +29,21 @@ interface ResolvedSetting {
   setting: SettingDef;
   value?: string;
   source?: string;
+}
+
+/**
+ * Names the variable as well as the file when an alias supplied the value.
+ *
+ * `.env.local` alone would be a half-answer for a setting that has four
+ * accepted spellings: the reader has to know *which* line in that file the run
+ * is reading before they can change it. An exported variable already carries
+ * its name in `source`.
+ */
+function describeSource(setting: SettingDef, located: { name: string; source: string }): string {
+  if (located.name === setting.envVar || located.source.startsWith(located.name)) {
+    return located.source;
+  }
+  return `${located.source} (${located.name})`;
 }
 
 async function resolveAll(): Promise<ResolvedSetting[]> {
@@ -36,8 +58,10 @@ async function resolveAll(): Promise<ResolvedSetting[]> {
           : { setting, value: String(value), source: "clerk config" };
       }
 
-      const located = await findMigrateEnvValue([setting.envVar as string]);
-      return located ? { setting, value: located.value, source: located.source } : { setting };
+      const located = await findMigrateEnvValue(envNames(setting));
+      return located
+        ? { setting, value: located.value, source: describeSource(setting, located) }
+        : { setting };
     }),
   );
 }
@@ -73,10 +97,13 @@ export async function list(options: SettingsListOptions = {}): Promise<void> {
     return;
   }
 
+  // An unset value leaves the column empty rather than filling it with a
+  // placeholder: the source column already reads "not set" on the same row, and
+  // an empty cell is what makes the settings that do have a value stand out.
   const cells = resolved.map(({ setting, value, source }) => ({
     setting,
     name: setting.name,
-    value: value === undefined ? "—" : displayValue(setting, value),
+    value: value === undefined ? "" : displayValue(setting, value),
     unset: value === undefined,
     source: source ?? "not set",
   }));
@@ -88,6 +115,10 @@ export async function list(options: SettingsListOptions = {}): Promise<void> {
   const valueWidth = width("VALUE", (c) => c.value);
   const sourceWidth = width("SOURCE", (c) => c.source);
 
+  log.info("A migration run in this directory picks these up unless a flag overrides them.");
+  log.info("Each setting is named after the `clerk migrate import` flag it stands in for.");
+  log.blank();
+
   log.info(
     column("SETTING", nameWidth, dim) +
       column("VALUE", valueWidth, dim) +
@@ -98,12 +129,16 @@ export async function list(options: SettingsListOptions = {}): Promise<void> {
   for (const cell of cells) {
     log.info(
       column(cell.name, nameWidth, cyan) +
-        column(cell.value, valueWidth, cell.unset ? dim : (value) => value) +
+        column(cell.value, valueWidth, (value) => value) +
         column(cell.source, sourceWidth, dim) +
         dim(cell.setting.description),
     );
   }
 
+  const set = cells.filter((cell) => !cell.unset).length;
   log.blank();
-  log.info(dim("Credentials are shown redacted. `clerk migrate settings set <name> <value>`."));
+  log.info(`${set} of ${cells.length} settings set. Credentials are shown redacted.`);
+  log.blank();
+
+  printNextSteps(NEXT_STEPS.MIGRATE_SETTINGS);
 }

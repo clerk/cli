@@ -540,36 +540,65 @@ transformer maps to `userId`.
 ### `clerk migrate settings`
 
 What a run in this directory would pick up, and where each value comes from.
+Listing is the default, because it is the read-only one: a bare `clerk migrate
+settings` shows, never changes.
 
 ```sh
 clerk migrate settings                                     # list
+clerk migrate settings list --json
 clerk migrate settings set transformer firebase
-clerk migrate settings set firebase-signer-key abc123…
+clerk migrate settings set firebase-signer-key abc123
 clerk migrate settings clear -y
 ```
 
-```
-SETTING                     VALUE      SOURCE              DESCRIPTION
-transformer                 firebase   clerk config        Source platform the export came from
-file                        users.json clerk config        Export file to import users from
-firebase-signer-key         aVer…3456  .env.clerk-migrate  Firebase base64 signer key
-firebase-rounds             —          not set             Firebase scrypt rounds
-```
+| Subcommand                    | Takes            | Description                                               |
+| ----------------------------- | ---------------- | --------------------------------------------------------- |
+| `settings list`               | `--json`         | Every setting, its value and the source it resolved from  |
+| `settings set <name> <value>` | `<name> <value>` | Change one setting                                        |
+| `settings clear`              | `-y, --yes`      | Forget this project's settings and delete its credentials |
 
-Setting names are kebab-case and identical to the `clerk migrate import` flag each one
-backs, so `firebase-signer-key` here is `--firebase-signer-key` there rather
-than a second spelling to learn. The description column carries the prose.
+Setting names are kebab-case and identical to the `clerk migrate import` flag
+each one backs, so `firebase-signer-key` here is `--firebase-signer-key` there
+rather than a second spelling to learn. The description column carries the
+prose.
 
 The source column is the point. A migration reads from flags, the environment,
 two of the app's env files and the CLI's config, so when a run picks up a stale
-value the question is never "what is it" but "which of those won".
+value the question is never "what is it" but "which of those won". A value that
+arrived under one of the accepted aliases names the variable alongside the file.
 
-| Command                       | Description                                           |
-| ----------------------------- | ----------------------------------------------------- |
-| `settings` / `settings list`  | Show every setting, its value and its source          |
-| `settings list --json`        | The same, machine-readable                            |
-| `settings set <name> <value>` | Change one setting                                    |
-| `settings clear [-y]`         | Forget this project's settings and delete its secrets |
+It names a **file** wherever there is one to name. Bun loads `.env`/`.env.local`
+into the environment before the CLI runs, so a value a developer typed into
+`.env.local` would otherwise be reported as "`ROUNDS` env var" — true, and no
+help to someone asking which file to edit. Attribution is by value: a file
+holding the same key with a _different_ value lost to something exported in the
+shell, and that row keeps saying `ROUNDS env var`, because that is exactly the
+case this column exists to catch.
+
+A setting with no value leaves the column empty rather than filling it with a
+placeholder — the source column already reads `not set` on that row, and the
+blank is what makes the settings that do have a value stand out.
+
+It closes on next steps naming the two commands that change what it just
+showed — the same block `clerk mcp list` and `clerk whoami` end on, and human
+only. The full command surface stays in `--help`.
+
+```
+A migration run in this directory picks these up unless a flag overrides them.
+Each setting is named after the `clerk migrate import` flag it stands in for.
+
+SETTING                     VALUE       SOURCE               DESCRIPTION
+transformer                 firebase    clerk config         Source platform the export came from
+file                        users.json  clerk config         Export file to import users from
+firebase-signer-key         [REDACTED]  .env.clerk-migrate   Firebase base64 signer key
+firebase-rounds             8           .env.local (ROUNDS)  Firebase scrypt rounds
+firebase-mem-cost           14          MEM_COST env var     Firebase scrypt memory cost
+
+4 of 7 settings set. Credentials are shown redacted.
+
+   → Run `clerk migrate settings set <name> <value>` to change one
+   → Run `clerk migrate settings clear` to forget them all, credentials included
+```
 
 #### Where each setting is kept
 
@@ -586,8 +615,11 @@ being migrated and does not belong in the file its developers read daily. The
 CLI adds it to `.gitignore` the first time it writes it, and deletes it when
 `settings clear` removes the last value.
 
-Credentials are redacted wherever they are displayed, including under `--json`,
-so the output is safe to paste into an issue.
+Credentials are withheld wherever they are displayed, including under `--json`,
+so the output is safe to paste into an issue. They display as `[REDACTED]` —
+the same thing `clerk users create --dry-run` prints for a password — rather
+than a truncation like `aVer…3456`: the source column already says which value
+is in play, and a partial secret is one the reader has to recognise as partial.
 
 ### Custom transformers (`--transformer-file`)
 
@@ -681,12 +713,23 @@ that file is not a secret store. To avoid re-passing all four on every run, set
 them once with [`clerk migrate settings`](#clerk-migrate-settings), or export
 them yourself:
 
-| Variable                        | Flag                        |
-| ------------------------------- | --------------------------- |
-| `CLERK_FIREBASE_SIGNER_KEY`     | `--firebase-signer-key`     |
-| `CLERK_FIREBASE_SALT_SEPARATOR` | `--firebase-salt-separator` |
-| `CLERK_FIREBASE_ROUNDS`         | `--firebase-rounds`         |
-| `CLERK_FIREBASE_MEM_COST`       | `--firebase-mem-cost`       |
+| Flag                        | Variable                        | Also accepted                                             |
+| --------------------------- | ------------------------------- | --------------------------------------------------------- |
+| `--firebase-signer-key`     | `CLERK_FIREBASE_SIGNER_KEY`     | `FIREBASE_BASE64_SIGNER_KEY`, `BASE64_SIGNER_KEY`         |
+| `--firebase-salt-separator` | `CLERK_FIREBASE_SALT_SEPARATOR` | `FIREBASE_BASE64_SALT_SEPARATOR`, `BASE64_SALT_SEPARATOR` |
+| `--firebase-rounds`         | `CLERK_FIREBASE_ROUNDS`         | `FIREBASE_ROUNDS`, `ROUNDS`                               |
+| `--firebase-mem-cost`       | `CLERK_FIREBASE_MEM_COST`       | `FIREBASE_MEM_COST`, `MEM_COST`                           |
+
+The unprefixed names are what Firebase itself calls these (`base64_signer_key`,
+`rounds`) and what every guide, Clerk's own standalone migration script
+included, tells you to paste into `.env`. Someone who followed one has the
+values the import needs, spelled the way the source platform spells them, so
+they are read rather than reported as missing.
+
+They are a fallback, not a synonym: a `CLERK_FIREBASE_*` variable wins wherever
+both exist, and `clerk migrate settings` names the variable it read alongside
+the file — `ROUNDS` is generic enough to mean something else in an app that was
+never a Firebase project, and that should be visible rather than silent.
 
 Resolution order is flag, then exported variable, then `.env.clerk-migrate`,
 then the app's `.env.local`/`.env`. The sources can be mixed as long as all four

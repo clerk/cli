@@ -32,9 +32,16 @@ function documentedCommands(markdown: string): string[] {
     // Line continuations first: the Firebase example spans three lines.
     for (const line of block.replace(/\\\n\s*/g, " ").split("\n")) {
       const start = line.indexOf("clerk migrate");
-      // A command never contains a backtick or a `#`; the sample error output
-      // that quotes `clerk migrate` mid-sentence does.
-      if (start !== -1) found.add(line.slice(start).split(/[`#]/)[0]!.trim());
+      // A command never contains a backtick, a `#`, or a run of two spaces;
+      // the sample error output that quotes `clerk migrate` mid-sentence does,
+      // and so does a pasted listing whose descriptions sit in a padded column.
+      if (start !== -1)
+        found.add(
+          line
+            .slice(start)
+            .split(/[`#]|\s{2,}/)[0]!
+            .trim(),
+        );
     }
   }
 

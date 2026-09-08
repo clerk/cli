@@ -14,6 +14,8 @@
  * this table rather than each keeping their own idea of what exists.
  */
 
+import { REDACTED } from "../../../lib/constants.ts";
+
 export type SettingStore = "config" | "env";
 
 export interface SettingDef {
@@ -31,6 +33,22 @@ export interface SettingDef {
   description: string;
   /** For `env` settings, the variable read at run time. */
   envVar?: string;
+  /**
+   * Other variables accepted for the same setting, read only when
+   * {@link envVar} is absent.
+   *
+   * Firebase hands its four scrypt parameters over as `base64_signer_key`,
+   * `rounds` and friends, and every guide — including Clerk's own standalone
+   * migration script — tells the reader to paste them into `.env` under those
+   * names. Someone who did that has the values the CLI needs, spelled the way
+   * the source platform spells them, and a listing that reports "not set" is
+   * wrong about the project rather than strict about it.
+   *
+   * Prefixed names still win, and the listing names the variable it read, so a
+   * generic `ROUNDS` that means something else in the app is visible rather
+   * than silent.
+   */
+  envAliases?: string[];
   /** For `config` settings, the key on the saved migration entry. */
   configKey?: "transformer" | "file" | "skipUnsupportedProviders";
   /** Redact when displaying — the value is a credential. */
@@ -71,6 +89,7 @@ export const SETTINGS: SettingDef[] = [
     name: "firebase-signer-key",
     store: "env",
     envVar: "CLERK_FIREBASE_SIGNER_KEY",
+    envAliases: ["FIREBASE_BASE64_SIGNER_KEY", "BASE64_SIGNER_KEY"],
     description: "Firebase base64 signer key",
     secret: true,
   },
@@ -78,12 +97,14 @@ export const SETTINGS: SettingDef[] = [
     name: "firebase-salt-separator",
     store: "env",
     envVar: "CLERK_FIREBASE_SALT_SEPARATOR",
+    envAliases: ["FIREBASE_BASE64_SALT_SEPARATOR", "BASE64_SALT_SEPARATOR"],
     description: "Firebase base64 salt separator",
   },
   {
     name: "firebase-rounds",
     store: "env",
     envVar: "CLERK_FIREBASE_ROUNDS",
+    envAliases: ["FIREBASE_ROUNDS", "ROUNDS"],
     description: "Firebase scrypt rounds",
     validate: positiveInteger,
   },
@@ -91,6 +112,7 @@ export const SETTINGS: SettingDef[] = [
     name: "firebase-mem-cost",
     store: "env",
     envVar: "CLERK_FIREBASE_MEM_COST",
+    envAliases: ["FIREBASE_MEM_COST", "MEM_COST"],
     description: "Firebase scrypt memory cost",
     validate: positiveInteger,
   },
@@ -103,17 +125,24 @@ export function findSetting(name: string): SettingDef | undefined {
 }
 
 /**
- * Shows enough of a credential to recognise it, never enough to use it.
+ * Every variable an `env` setting answers to, highest priority first.
  *
- * Anything short enough that head-and-tail would leak most of it is masked
- * whole: a 10-character key shown as `abcd…wxyz` has given away 8 of them.
+ * One list, read by both the listing and the run, so `clerk migrate settings`
+ * can never show a value the import would ignore.
  */
-export function redact(value: string): string {
-  if (value.length < 16) return "•".repeat(8);
-  return `${value.slice(0, 4)}…${value.slice(-4)}`;
+export function envNames(setting: SettingDef): string[] {
+  return [setting.envVar as string, ...(setting.envAliases ?? [])];
 }
 
-/** The display value for a setting: redacted when it is a credential. */
+/**
+ * The display value for a setting: withheld entirely when it is a credential.
+ *
+ * {@link REDACTED} is what `clerk users create --dry-run` already prints for a
+ * password, so a credential reads the same wherever the CLI declines to show
+ * one. Head-and-tail (`aVer…3456`) would say *which* key is set, but the source
+ * column answers that, and a partial value is one the reader has to recognise
+ * as partial.
+ */
 export function displayValue(setting: SettingDef, value: string): string {
-  return setting.secret ? redact(value) : value;
+  return setting.secret ? REDACTED : value;
 }

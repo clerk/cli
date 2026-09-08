@@ -71,7 +71,11 @@ describe("findMigrateEnvValue", () => {
     await writeMigrateEnvValues({ CLERK_FIREBASE_SIGNER_KEY: "from-file" }, workDir);
 
     const located = await findMigrateEnvValue(["CLERK_FIREBASE_SIGNER_KEY"], workDir, {});
-    expect(located).toEqual({ value: "from-file", source: MIGRATE_ENV_FILE });
+    expect(located).toEqual({
+      value: "from-file",
+      name: "CLERK_FIREBASE_SIGNER_KEY",
+      source: MIGRATE_ENV_FILE,
+    });
   });
 
   test("beats the app's own .env.local", async () => {
@@ -89,11 +93,57 @@ describe("findMigrateEnvValue", () => {
     const located = await findMigrateEnvValue(["CLERK_FIREBASE_ROUNDS"], workDir, {
       CLERK_FIREBASE_ROUNDS: "99",
     });
-    expect(located).toEqual({ value: "99", source: "CLERK_FIREBASE_ROUNDS env var" });
+    expect(located).toEqual({
+      value: "99",
+      name: "CLERK_FIREBASE_ROUNDS",
+      source: "CLERK_FIREBASE_ROUNDS env var",
+    });
   });
 
   test("returns nothing when the setting is absent everywhere", async () => {
     expect(await findMigrateEnvValue(["CLERK_FIREBASE_ROUNDS"], workDir, {})).toBeUndefined();
+  });
+
+  // Bun loads `.env.local` into process.env before the CLI runs, so a value a
+  // developer put in a file arrives looking like an exported variable. Naming
+  // the variable answers nothing — the question is which file to edit.
+  describe("attributing an environment value to the file it came from", () => {
+    test("names the file when it holds the same value", async () => {
+      fs.writeFileSync(path.join(workDir, ".env.local"), "CLERK_FIREBASE_ROUNDS=8\n");
+
+      const located = await findMigrateEnvValue(["CLERK_FIREBASE_ROUNDS"], workDir, {
+        CLERK_FIREBASE_ROUNDS: "8",
+      });
+      expect(located?.source).toBe(".env.local");
+    });
+
+    // The one case the source column exists for: the file lost, so naming it
+    // would point at the value that is not being used.
+    test("keeps the variable when the file holds a different value", async () => {
+      fs.writeFileSync(path.join(workDir, ".env.local"), "CLERK_FIREBASE_ROUNDS=8\n");
+
+      const located = await findMigrateEnvValue(["CLERK_FIREBASE_ROUNDS"], workDir, {
+        CLERK_FIREBASE_ROUNDS: "99",
+      });
+      expect(located?.source).toBe("CLERK_FIREBASE_ROUNDS env var");
+    });
+
+    test("prefers the file the runtime would have loaded last", async () => {
+      fs.writeFileSync(path.join(workDir, ".env"), "CLERK_FIREBASE_ROUNDS=8\n");
+      fs.writeFileSync(path.join(workDir, ".env.local"), "CLERK_FIREBASE_ROUNDS=8\n");
+
+      const located = await findMigrateEnvValue(["CLERK_FIREBASE_ROUNDS"], workDir, {
+        CLERK_FIREBASE_ROUNDS: "8",
+      });
+      expect(located?.source).toBe(".env.local");
+    });
+
+    test("keeps the variable when no file holds it at all", async () => {
+      const located = await findMigrateEnvValue(["CLERK_FIREBASE_ROUNDS"], workDir, {
+        CLERK_FIREBASE_ROUNDS: "8",
+      });
+      expect(located?.source).toBe("CLERK_FIREBASE_ROUNDS env var");
+    });
   });
 });
 

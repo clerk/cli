@@ -76,6 +76,10 @@ export const NEXT_STEPS = {
     "Run `clerk migrate delete` to undo this migration",
   ],
   MIGRATE_DELETE: ["Run `clerk migrate logs list` to inspect the deletion log"],
+  MIGRATE_SETTINGS: [
+    "Run `clerk migrate settings set <name> <value>` to change one",
+    "Run `clerk migrate settings clear` to forget them all, credentials included",
+  ],
   // The only parameterized entry: a suggested import is worthless unless it
   // names the transformer that reads this export and the file just written.
   MIGRATE_EXPORT: (transformerKey: string, file: string) => [

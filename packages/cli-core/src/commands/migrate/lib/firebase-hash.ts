@@ -18,15 +18,16 @@
 
 import { throwUsageError } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
+import { envNames, findSetting } from "../settings/registry.ts";
 import { findMigrateEnvValue } from "./env-file.ts";
 import type { FirebaseHashConfig } from "../types.ts";
 
-/** The `--firebase-*` flags, and the variable each falls back to. */
+/** The `--firebase-*` flags, and the setting each falls back to. */
 export const FIREBASE_FLAGS = [
-  ["firebaseSignerKey", "--firebase-signer-key", "CLERK_FIREBASE_SIGNER_KEY"],
-  ["firebaseSaltSeparator", "--firebase-salt-separator", "CLERK_FIREBASE_SALT_SEPARATOR"],
-  ["firebaseRounds", "--firebase-rounds", "CLERK_FIREBASE_ROUNDS"],
-  ["firebaseMemCost", "--firebase-mem-cost", "CLERK_FIREBASE_MEM_COST"],
+  ["firebaseSignerKey", "--firebase-signer-key", "firebase-signer-key"],
+  ["firebaseSaltSeparator", "--firebase-salt-separator", "firebase-salt-separator"],
+  ["firebaseRounds", "--firebase-rounds", "firebase-rounds"],
+  ["firebaseMemCost", "--firebase-mem-cost", "firebase-mem-cost"],
 ] as const;
 
 const FIREBASE_NUMERIC: ReadonlySet<string> = new Set(["firebaseRounds", "firebaseMemCost"]);
@@ -39,18 +40,22 @@ export type FirebaseHashFlags = {
 };
 
 /**
- * Overlays the `CLERK_FIREBASE_*` values onto whichever flags were not passed.
+ * Overlays the saved environment values onto whichever flags were not passed.
  *
- * Resolved through {@link findMigrateEnvValue}: the environment first, then
+ * The variables come from the settings registry — `CLERK_FIREBASE_*` and the
+ * unprefixed names Firebase itself uses — so `clerk migrate settings` and the
+ * import read exactly the same set. Resolved through
+ * {@link findMigrateEnvValue}: the environment first, then
  * `.env.clerk-migrate`, then the app's own `.env` files. The signer key is a
  * Firebase secret, so it is never written to the CLI's config —
  * `.env.clerk-migrate` is gitignored on creation.
  */
 async function withFirebaseEnv(flags: FirebaseHashFlags): Promise<FirebaseHashFlags> {
   const merged: FirebaseHashFlags = { ...flags };
-  for (const [key, , envVar] of FIREBASE_FLAGS) {
+  for (const [key, , settingName] of FIREBASE_FLAGS) {
     if (merged[key] !== undefined) continue;
-    const located = await findMigrateEnvValue([envVar]);
+    const setting = findSetting(settingName);
+    const located = setting && (await findMigrateEnvValue(envNames(setting)));
     if (!located || located.value.trim() === "") continue;
     // A non-numeric round count is left to fail the flag's own validation
     // rather than silently becoming NaN.

@@ -3,12 +3,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _setConfigDir } from "../../../lib/config.ts";
+import { setMode } from "../../../mode.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { MIGRATE_ENV_FILE } from "../lib/env-file.ts";
 import { loadSettings, saveSettings } from "../lib/settings.ts";
 import { clear } from "./clear.ts";
 import { list } from "./list.ts";
-import { redact } from "./registry.ts";
+import { displayValue, findSetting } from "./registry.ts";
 import { set } from "./set.ts";
 
 const captured = useCaptureLog();
@@ -44,14 +45,20 @@ afterEach(() => {
   process.exitCode = 0;
 });
 
-describe("redact", () => {
-  test("shows head and tail of a long value", () => {
-    expect(redact("aVeryLongSignerKeyValue123456")).toBe("aVer…3456");
-  });
+describe("displayValue", () => {
+  const signerKey = findSetting("firebase-signer-key")!;
 
-  // Head-and-tail on a short value gives away most of it.
-  test.each([["short"], ["0123456789"], ["123456789012345"]])("masks %p whole", (value) => {
-    expect(redact(value)).toBe("••••••••");
+  // No part of the value, at any length — the same `[REDACTED]` that
+  // `clerk users create --dry-run` prints for a password.
+  test.each([["short"], ["0123456789"], ["aVeryLongSignerKeyValue123456"]])(
+    "withholds the credential %p entirely",
+    (value) => {
+      expect(displayValue(signerKey, value)).toBe("[REDACTED]");
+    },
+  );
+
+  test("shows a setting that is not a credential", () => {
+    expect(displayValue(findSetting("transformer")!, "firebase")).toBe("firebase");
   });
 });
 
@@ -121,7 +128,7 @@ describe("list", () => {
 
     await list();
 
-    expect(captured.err).toContain("aVer…3456");
+    expect(captured.err).toContain("[REDACTED]");
     expect(captured.err).not.toContain("aVeryLongSignerKeyValue123456");
     expect(captured.err).toContain("firebase");
   });
@@ -135,7 +142,7 @@ describe("list", () => {
 
     expect(captured.out).not.toContain("aVeryLongSignerKeyValue123456");
     expect(JSON.parse(captured.out)).toContainEqual(
-      expect.objectContaining({ name: "firebase-signer-key", value: "aVer…3456", secret: true }),
+      expect.objectContaining({ name: "firebase-signer-key", value: "[REDACTED]", secret: true }),
     );
   });
 
@@ -180,6 +187,41 @@ describe("list", () => {
   test("marks everything as unset in a fresh project", async () => {
     await list({ json: true });
     expect(JSON.parse(captured.out).every((entry: { set: boolean }) => !entry.set)).toBe(true);
+  });
+
+  // A listing is where someone lands before they know what to type, so it
+  // closes by naming the two commands that change what it just showed —
+  // the same next-steps block `mcp list` and `whoami` end on.
+  test("closes with next steps", async () => {
+    setMode("human");
+    await list();
+    setMode("agent");
+
+    expect(captured.err).toContain("clerk migrate settings set <name> <value>");
+    expect(captured.err).toContain("clerk migrate settings clear");
+  });
+
+  test("counts how many are set", async () => {
+    await set("transformer", "firebase");
+    captured.clear();
+
+    await list();
+
+    expect(captured.err).toContain("1 of 7 settings set");
+  });
+
+  // Firebase's own names for these, and what every guide tells you to paste
+  // into `.env`. Reporting "not set" for a value the import would read is the
+  // listing being wrong about the project rather than strict about it.
+  test("reads a credential written under the name Firebase uses", async () => {
+    fs.writeFileSync(path.join(workDir, ".env.local"), "ROUNDS=8\n");
+    captured.clear();
+
+    await list();
+
+    fs.rmSync(path.join(workDir, ".env.local"));
+    // Named alongside the file: `ROUNDS` may mean something else in this app.
+    expect(captured.err).toContain(".env.local (ROUNDS)");
   });
 });
 

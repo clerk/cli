@@ -170,3 +170,42 @@ describe("on a firebase run", () => {
     expect(await resolveFirebaseHashConfig({}, "firebase")).toBeUndefined();
   });
 });
+
+// Firebase names these `base64_signer_key`, `rounds` and friends, and that is
+// how every guide — Clerk's own standalone script included — tells you to write
+// them into `.env`. A project that followed one has the values already.
+describe("the names Firebase itself uses", () => {
+  const writeEnvLocal = (contents: string) =>
+    fs.writeFileSync(path.join(workDir, ".env.local"), contents);
+
+  test("reads a set written under the unprefixed names", async () => {
+    writeEnvLocal("BASE64_SIGNER_KEY=SIGNER\nBASE64_SALT_SEPARATOR=Bw==\nROUNDS=8\nMEM_COST=14\n");
+
+    expect(await resolveFirebaseHashConfig({}, "firebase")).toEqual({
+      base64_signer_key: "SIGNER",
+      base64_salt_separator: "Bw==",
+      rounds: 8,
+      mem_cost: 14,
+    });
+  });
+
+  test("reads a set written under the FIREBASE_ prefix", async () => {
+    writeEnvLocal(
+      "FIREBASE_BASE64_SIGNER_KEY=SIGNER\nFIREBASE_BASE64_SALT_SEPARATOR=Bw==\n" +
+        "FIREBASE_ROUNDS=8\nFIREBASE_MEM_COST=14\n",
+    );
+
+    expect((await resolveFirebaseHashConfig({}, "firebase"))?.rounds).toBe(8);
+  });
+
+  // The alias is a fallback, not a synonym: `ROUNDS` in an app's own env file
+  // is not necessarily about Firebase at all.
+  test("prefers the prefixed variable in the same file", async () => {
+    writeEnvLocal(
+      "ROUNDS=99\nCLERK_FIREBASE_ROUNDS=8\nBASE64_SIGNER_KEY=SIGNER\n" +
+        "BASE64_SALT_SEPARATOR=Bw==\nMEM_COST=14\n",
+    );
+
+    expect((await resolveFirebaseHashConfig({}, "firebase"))?.rounds).toBe(8);
+  });
+});

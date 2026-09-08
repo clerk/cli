@@ -48,6 +48,8 @@ export interface FindEnvValueOptions {
 
 export interface LocatedEnvValue {
   value: string;
+  /** Which of `names` supplied it — the caller may have passed several aliases. */
+  name: string;
   /** Where it came from, for `--verbose` (`CLERK_SECRET_KEY env var`, `.env.local`). */
   source: string;
 }
@@ -70,7 +72,7 @@ export async function findEnvValue(
 
   for (const name of new Set(names)) {
     const value = env[name];
-    if (value) return { value, source: `${name} env var` };
+    if (value) return { value, name, source: `${name} env var` };
   }
 
   // Priority is by name, not by position: the framework-specific name beats
@@ -84,7 +86,7 @@ export async function findEnvValue(
     for (const line of parseEnvFile(await file.text())) {
       if (line.type !== "entry" || !line.value) continue;
       if (names.includes(line.key)) {
-        foundByName.set(line.key, { value: line.value, source: envFile });
+        foundByName.set(line.key, { value: line.value, name: line.key, source: envFile });
       }
     }
   }

@@ -31,6 +31,36 @@ export const MIGRATE_ENV_FILE = ".env.clerk-migrate";
 /** Lowest priority first: the migration's own file overrides the app's. */
 const MIGRATE_ENV_FILES = [".env", ".env.local", MIGRATE_ENV_FILE] as const;
 
+/**
+ * The project env file a value in the environment actually came from, if any.
+ *
+ * Bun loads `.env`, `.env.local` and friends into `process.env` before the CLI
+ * runs, so a variable a developer wrote into `.env.local` reaches
+ * {@link findEnvValue} as an environment variable and gets reported as one.
+ * That is true but useless: "`ROUNDS` env var" does not tell anyone which of
+ * their files to edit.
+ *
+ * Attribution is by value, not by presence. A file that holds the same key with
+ * a *different* value lost to something exported in the shell, and saying
+ * `.env.local` there would name the file that is not winning — the one case
+ * this column exists to catch. Highest-priority file first, matching the order
+ * the runtime loaded them in.
+ */
+async function fileHolding(
+  cwd: string,
+  { name, value }: LocatedEnvValue,
+): Promise<string | undefined> {
+  for (const envFile of [...MIGRATE_ENV_FILES].reverse()) {
+    const file = Bun.file(join(cwd, envFile));
+    if (!(await file.exists())) continue;
+
+    for (const line of parseEnvFile(await file.text())) {
+      if (line.type === "entry" && line.key === name && line.value === value) return envFile;
+    }
+  }
+  return undefined;
+}
+
 /** Resolves a migration setting: environment first, then the project's env files. */
 export async function findMigrateEnvValue(
   names: string[],
@@ -38,8 +68,17 @@ export async function findMigrateEnvValue(
   env: Record<string, string | undefined> = process.env,
 ): Promise<LocatedEnvValue | undefined> {
   const located = await findEnvValue(cwd, names, { env, files: MIGRATE_ENV_FILES });
-  if (located) log.debug(`migrate: ${names[0]} from ${located.source}`);
-  return located;
+  if (!located) return undefined;
+
+  // `findEnvValue` reports the environment before it reads a file, so a value
+  // the runtime loaded out of `.env.local` is credited to the variable rather
+  // than to the file the user would edit. Put the file back.
+  const source = located.source.endsWith(" env var")
+    ? ((await fileHolding(cwd, located)) ?? located.source)
+    : located.source;
+
+  log.debug(`migrate: ${names[0]} from ${source}`);
+  return { ...located, source };
 }
 
 /**
