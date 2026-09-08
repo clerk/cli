@@ -204,7 +204,7 @@ describe("importUsers", () => {
 
   const logEntries = () =>
     fs
-      .readFileSync(getLogFilePath("migration", DATE_TIME), "utf-8")
+      .readFileSync(getLogFilePath("import", DATE_TIME), "utf-8")
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);

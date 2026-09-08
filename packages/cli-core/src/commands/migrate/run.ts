@@ -484,7 +484,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
     const secretKey = await resolveBapiSecretKey({ ...options, secretKey: options.secretKey });
     const limits = resolveLimits(secretKey);
     const dateTime = getDateTimeStamp();
-    const logFile = getLogFilePath("migration", dateTime);
+    const logFile = getLogFilePath("import", dateTime);
 
     const { users: loaded, validationFailed } = await withSpinner(
       `Loading users from ${file}...`,

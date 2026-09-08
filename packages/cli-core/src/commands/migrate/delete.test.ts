@@ -373,7 +373,7 @@ describe("deleteMigration", () => {
 
     const logs = fs.readdirSync(getLogDir());
     expect(logs).toHaveLength(1);
-    expect(logs[0]).toMatch(/^user-deletion-\d{4}-\d{2}-\d{2}T[\d-]+\.log$/);
+    expect(logs[0]).toMatch(/^delete-\d{4}-\d{2}-\d{2}T[\d-]+\.log$/);
   });
 
   test("leaves users the migration did not create alone", async () => {

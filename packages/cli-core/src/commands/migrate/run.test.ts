@@ -144,7 +144,7 @@ describe("run", () => {
 
     const logs = fs.readdirSync(getLogDir());
     expect(logs).toHaveLength(1);
-    expect(logs[0]).toMatch(/^migration-\d{4}-\d{2}-\d{2}T[\d-]+\.log$/);
+    expect(logs[0]).toMatch(/^import-\d{4}-\d{2}-\d{2}T[\d-]+\.log$/);
 
     const entries = fs
       .readFileSync(path.join(getLogDir(), logs[0] as string), "utf-8")

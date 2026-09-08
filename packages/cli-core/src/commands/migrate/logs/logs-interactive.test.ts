@@ -44,8 +44,8 @@ const captured = useCaptureLog();
 let workDir: string;
 let originalCwd: string;
 
-const MIGRATION = "migration-2026-01-01T12-00-00.log";
-const DELETION = "user-deletion-2026-02-01T12-00-00.log";
+const IMPORT = "import-2026-01-01T12-00-00.log";
+const DELETE = "delete-2026-02-01T12-00-00.log";
 
 beforeAll(() => {
   originalMode = getMode();
@@ -80,8 +80,8 @@ function writeLog(name: string, entries: unknown[]): void {
 
 describe("logs clean", () => {
   test("prompts before deleting anything", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
-    writeLog(DELETION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
+    writeLog(DELETE, [{ a: 1 }]);
 
     await clean();
 
@@ -93,7 +93,7 @@ describe("logs clean", () => {
   // Deleting on a stray enter would be the wrong default for a destructive
   // command sitting next to `clerk migrate delete`.
   test("defaults the prompt to no", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
 
     await clean();
 
@@ -101,16 +101,16 @@ describe("logs clean", () => {
   });
 
   test("declining leaves every file in place", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
     mockConfirm.mockResolvedValue(false);
 
     await expect(clean()).rejects.toThrow(UserAbortError);
 
-    expect(fs.readdirSync(getLogDir())).toEqual([MIGRATION]);
+    expect(fs.readdirSync(getLogDir())).toEqual([IMPORT]);
   });
 
   test("-y skips the prompt entirely", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
 
     await clean({ yes: true });
 
@@ -126,40 +126,40 @@ describe("logs clean", () => {
 
 describe("logs convert", () => {
   test("offers a multiselect when given neither files nor --all", async () => {
-    writeLog(MIGRATION, [{ a: 1 }, { b: 2 }]);
-    writeLog(DELETION, [{ a: 1 }]);
-    mockMultiselect.mockResolvedValue([MIGRATION]);
+    writeLog(IMPORT, [{ a: 1 }, { b: 2 }]);
+    writeLog(DELETE, [{ a: 1 }]);
+    mockMultiselect.mockResolvedValue([IMPORT]);
 
     await convert();
 
     const options = mockMultiselect.mock.calls[0]?.[0]?.options;
-    expect(options?.map((option) => option.value)).toEqual([DELETION, MIGRATION]);
+    expect(options?.map((option) => option.value)).toEqual([DELETE, IMPORT]);
     expect(options?.[1]?.hint).toBe("2 entries");
   });
 
   test("converts only what was selected", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
-    writeLog(DELETION, [{ a: 1 }]);
-    mockMultiselect.mockResolvedValue([MIGRATION]);
+    writeLog(IMPORT, [{ a: 1 }]);
+    writeLog(DELETE, [{ a: 1 }]);
+    mockMultiselect.mockResolvedValue([IMPORT]);
 
     await convert();
 
     expect(fs.readdirSync(getLogDir()).filter((name) => name.endsWith(".json"))).toEqual([
-      "migration-2026-01-01T12-00-00.json",
+      "import-2026-01-01T12-00-00.json",
     ]);
   });
 
   test("selecting nothing aborts without writing", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
     mockMultiselect.mockResolvedValue([]);
 
     await expect(convert()).rejects.toThrow(UserAbortError);
 
-    expect(fs.readdirSync(getLogDir())).toEqual([MIGRATION]);
+    expect(fs.readdirSync(getLogDir())).toEqual([IMPORT]);
   });
 
   test("does not prompt when --all was passed", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
 
     await convert({ all: true });
 
@@ -168,9 +168,9 @@ describe("logs convert", () => {
   });
 
   test("does not prompt when files were named", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
 
-    await convert({ files: [MIGRATION] });
+    await convert({ files: [IMPORT] });
 
     expect(mockMultiselect).not.toHaveBeenCalled();
   });
@@ -180,7 +180,7 @@ describe("logs convert", () => {
 // with `└ Failed`. Declining a prompt is not a failure, so the two must not swap.
 describe("cancelling inside the gutter", () => {
   test("declining the logs clean confirm closes with Paused, not Failed", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
     mockConfirm.mockResolvedValue(false);
 
     await expect(clean()).rejects.toThrow(UserAbortError);
@@ -190,7 +190,7 @@ describe("cancelling inside the gutter", () => {
   });
 
   test("selecting nothing in the logs convert multiselect closes with Paused", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
     mockMultiselect.mockResolvedValue([]);
 
     await expect(convert()).rejects.toThrow(UserAbortError);

@@ -10,15 +10,27 @@ import fs from "node:fs";
 import path from "node:path";
 import { getLogDir } from "./logger.ts";
 
-/** The run that produced a log file, read from its filename prefix. */
-export type LogKind = "migration" | "deletion" | "export" | "unknown";
+/**
+ * The run that produced a log file, read from its filename prefix.
+ *
+ * The kinds are the command names — `migrate import` writes `import-*.log` —
+ * so a listing points straight at the command that produced each line.
+ */
+export type LogKind = "export" | "import" | "delete" | "unknown";
 
-const FILENAME_PATTERN = /^(migration|user-deletion|export)-(.+)\.log$/;
+const FILENAME_PATTERN = /^(export|import|delete|migration|user-deletion)-(.+)\.log$/;
 
+/**
+ * `migration-` and `user-deletion-` are the names the standalone tool and
+ * earlier CLI builds wrote. They still classify, so a directory of older logs
+ * lists and converts rather than reading as "unknown".
+ */
 const KIND_BY_PREFIX: Record<string, LogKind> = {
-  migration: "migration",
-  "user-deletion": "deletion",
   export: "export",
+  import: "import",
+  delete: "delete",
+  migration: "import",
+  "user-deletion": "delete",
 };
 
 export type LogFile = {
@@ -84,7 +96,7 @@ export function listLogFiles(): LogFile[] {
 
   // Sort on the timestamp, not the filename: the kind prefix sorts first in a
   // filename comparison, which would interleave a run from January ahead of one
-  // from March purely because "user-deletion" > "migration". Timestamps are
+  // from March purely because "import" > "export". Timestamps are
   // ISO-ish and zero-padded, so lexical order is chronological. Names without
   // one sort last, then alphabetically.
   return files.sort(

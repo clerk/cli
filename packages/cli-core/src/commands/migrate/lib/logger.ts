@@ -28,6 +28,20 @@ export function getLogDir(): string {
   return path.join(process.cwd(), "logs");
 }
 
+/**
+ * The log directory the way the user would type it from here.
+ *
+ * Relative (`./logs`) when it sits under the current directory, absolute when
+ * it does not — a path the reader can paste either way, without a home
+ * directory's worth of prefix on the common case.
+ */
+export function displayLogDir(): string {
+  const dir = getLogDir();
+  const relative = path.relative(process.cwd(), dir);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return dir;
+  return `.${path.sep}${relative}`;
+}
+
 /** Absolute path of the log file a run with this timestamp writes to. */
 export function getLogFilePath(logFile: string, dateTime: string): string {
   // Colons are illegal in Windows filenames, and the timestamp is an ISO string.
@@ -59,13 +73,13 @@ export function errorLogger(payload: ErrorPayload, dateTime: string): void {
       status: payload.status,
       error: err.longMessage ?? err.message,
     };
-    appendToLogFile(getLogFilePath("migration", dateTime), entry);
+    appendToLogFile(getLogFilePath("import", dateTime), entry);
   }
 }
 
 /** Writes a user that failed schema validation before any API call. */
 export function validationLogger(payload: ValidationErrorPayload, dateTime: string): void {
-  appendToLogFile(getLogFilePath("migration", dateTime), {
+  appendToLogFile(getLogFilePath("import", dateTime), {
     userId: payload.userId,
     status: "fail" as const,
     error: payload.error,
@@ -76,25 +90,25 @@ export function validationLogger(payload: ValidationErrorPayload, dateTime: stri
 
 /** Writes the outcome of one import attempt. */
 export function importLogger(entry: ImportLogEntry, dateTime: string): void {
-  appendToLogFile(getLogFilePath("migration", dateTime), entry);
+  appendToLogFile(getLogFilePath("import", dateTime), entry);
 }
 
 /**
  * Writes the outcome of one deletion attempt.
  *
- * A separate `user-deletion-` file rather than another line in the migration
- * log: undoing a migration is its own run, and mixing the two would make
- * "what did this import do" unanswerable after an undo.
+ * A separate `delete-` file rather than another line in the import log: undoing
+ * a migration is its own run, and mixing the two would make "what did this
+ * import do" unanswerable after an undo.
  */
 export function deleteLogger(entry: DeleteLogEntry, dateTime: string): void {
-  appendToLogFile(getLogFilePath("user-deletion", dateTime), entry);
+  appendToLogFile(getLogFilePath("delete", dateTime), entry);
 }
 
 /**
  * Writes the outcome of exporting one user.
  *
- * Its own `export-` file for the same reason deletions get theirs: an export
- * is a distinct run, and `migrate logs list` reports each kind separately.
+ * Its own `export-` file for the same reason deletes get theirs: an export is a
+ * distinct run, and `migrate logs list` reports each kind separately.
  */
 export function exportLogger(entry: ExportLogEntry, dateTime: string): void {
   appendToLogFile(getLogFilePath("export", dateTime), entry);
@@ -109,6 +123,6 @@ export function deleteErrorLogger(payload: ErrorPayload, dateTime: string): void
       status: payload.status,
       error: err.longMessage ?? err.message,
     };
-    appendToLogFile(getLogFilePath("user-deletion", dateTime), entry);
+    appendToLogFile(getLogFilePath("delete", dateTime), entry);
   }
 }

@@ -264,7 +264,7 @@ export async function deleteMigration(options: MigrateDeleteOptions): Promise<vo
     const secretKey = await resolveBapiSecretKey({ ...options, secretKey: options.secretKey });
     const limits = resolveLimits(secretKey);
     const dateTime = getDateTimeStamp();
-    const logFile = getLogFilePath("user-deletion", dateTime);
+    const logFile = getLogFilePath("delete", dateTime);
 
     const externalIds = await readMigratedExternalIds(file, key);
     if (externalIds.length === 0) {

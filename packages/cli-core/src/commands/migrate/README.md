@@ -380,7 +380,7 @@ Rate limiting and 429 retries are literally the same code path as the import
 
 A failure on one user is logged and the rest continue: a half-undone migration
 with no record of which half is far worse than a reported failure. Every
-attempt lands in a timestamped `logs/user-deletion-<timestamp>.log`, carrying
+attempt lands in a timestamped `logs/delete-<timestamp>.log`, carrying
 both the source ID and the Clerk ID. The command exits non-zero if any deletion
 failed.
 
@@ -399,12 +399,12 @@ clerk migrate logs                  # defaults to list
 clerk migrate logs list --json
 clerk migrate logs clean -y
 clerk migrate logs convert --all
-clerk migrate logs convert migration-2026-01-01T12-00-00.log
+clerk migrate logs convert import-2026-01-01T12-00-00.log
 ```
 
 | Subcommand     | Takes              | Description                                     |
 | -------------- | ------------------ | ----------------------------------------------- |
-| `logs list`    | `--json`           | Type, timestamp, size and entry count per file  |
+| `logs list`    | `--json`           | File, type, date, size and entry count per file |
 | `logs clean`   | `-y, --yes`        | Delete the `.log` files in `./logs/`            |
 | `logs convert` | `[file…]`, `--all` | NDJSON → a JSON array, written as `<name>.json` |
 
@@ -414,14 +414,41 @@ All three read the directory through one shared enumerator, which is what makes
 #### `logs list`
 
 The default, because listing is read-only and therefore safe to run by
-accident. Reports each file's type, timestamp, size and entry count, newest
+accident. Reports each file's name, type, date, size and entry count, newest
 first; `--json` gives an agent the same data without parsing NDJSON.
 
 ```
-TYPE       TIMESTAMP            SIZE      ENTRIES
-migration  2026-02-01T09-14-22  4.1 KB    120
-deletion   2026-01-30T17-02-51  612 B     18
+Each log represents a user export, user import, or a user delete run.
+Each log consists of a single NDJSON entry per user.
+
+FILE                            TYPE    DATE                      SIZE    ENTRIES
+import-2026-02-01T09-14-22.log  import  Feb 1, 2026 at 4:14 AM    4.1 KB  120
+delete-2026-01-30T17-02-51.log  delete  Jan 30, 2026 at 12:02 PM  612 B   18
+
+2 log files in ./logs
+
+Log types:
+  export  One entry per user pulled from the source platform.
+  import  One entry per user created in Clerk, with any error.
+  delete  One entry per user removed from Clerk, with any error.
 ```
+
+A kind is the name of the command that wrote it — `migrate import` writes
+`import-<timestamp>.log` — so a listing points straight at the run behind each
+line. The legend is fixed rather than derived from what happens to be present,
+because "what else could be here" is the other half of the question.
+
+The older `migration-` and `user-deletion-` names, written by the standalone
+tool and by earlier CLI builds, still classify as `import` and `delete`, so a
+directory of old logs lists and converts unchanged.
+
+The filename leads, because it is what `logs convert` and `logs clean` talk
+about. The date column renders the filename's UTC stamp in the reader's own
+zone — "which run was that" is a question about local time; `--json` keeps the
+raw stamp.
+
+The directory is printed relative (`./logs`) when it sits under the current
+directory and absolute when it does not, so the path can be pasted either way.
 
 Says so plainly when `./logs/` is empty or absent.
 
@@ -444,7 +471,7 @@ A malformed line is reported with its line number and skipped, and the
 remaining entries still convert:
 
 ```
-migration-2026-01-01T12-00-00.log:2 is not valid JSON and was skipped — …
+import-2026-01-01T12-00-00.log:2 is not valid JSON and was skipped — …
 1 malformed line skipped.
 ```
 
@@ -928,9 +955,9 @@ rather than "which project is linked here".
 
 | Path                                       | Contents                                                              |
 | ------------------------------------------ | --------------------------------------------------------------------- |
-| `./logs/migration-<timestamp>.log`         | NDJSON: one line per user, plus validation failures and retry notices |
-| `./logs/user-deletion-<timestamp>.log`     | NDJSON: one line per `migrate delete` attempt                         |
 | `./logs/export-<timestamp>.log`            | NDJSON: one line per exported user                                    |
+| `./logs/import-<timestamp>.log`            | NDJSON: one line per user, plus validation failures and retry notices |
+| `./logs/delete-<timestamp>.log`            | NDJSON: one line per `migrate delete` attempt                         |
 | `./exports/<platform>-export-<stamp>.json` | The export itself, unless `--output` says otherwise                   |
 | `./.env.clerk-migrate`                     | Migration credentials, written by `settings set` and gitignored       |
 
@@ -959,8 +986,8 @@ long append-only stream, and that format is the one that survives it:
 Which is also why it greps usefully without any tooling:
 
 ```sh
-grep '"status":"success"' logs/migration-2026-01-01T12-00-00.log | wc -l
-grep '"userId":"user_123"' logs/migration-2026-01-01T12-00-00.log
+grep '"status":"success"' logs/import-2026-01-01T12-00-00.log | wc -l
+grep '"userId":"user_123"' logs/import-2026-01-01T12-00-00.log
 ```
 
 The trade-off is that spreadsheets, databases and most JSON tooling want an

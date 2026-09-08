@@ -35,7 +35,7 @@ beforeEach(() => {
 
 function readEntries(): Record<string, unknown>[] {
   return fs
-    .readFileSync(getLogFilePath("migration", DATE_TIME), "utf-8")
+    .readFileSync(getLogFilePath("import", DATE_TIME), "utf-8")
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as Record<string, unknown>);
@@ -47,8 +47,8 @@ describe("log file paths", () => {
   });
 
   test("replaces the timestamp's colons so the name is valid on Windows", () => {
-    expect(path.basename(getLogFilePath("migration", DATE_TIME))).toBe(
-      "migration-2026-01-01T12-00-00.log",
+    expect(path.basename(getLogFilePath("import", DATE_TIME))).toBe(
+      "import-2026-01-01T12-00-00.log",
     );
   });
 

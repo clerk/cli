@@ -33,14 +33,17 @@ function writeLog(name: string, entries: unknown[]): string {
 
 describe("classifyLogFile", () => {
   test.each([
-    ["migration-2026-01-01T12-00-00.log", "migration", "2026-01-01T12-00-00"],
-    ["user-deletion-2026-01-01T12-00-00.log", "deletion", "2026-01-01T12-00-00"],
+    ["import-2026-01-01T12-00-00.log", "import", "2026-01-01T12-00-00"],
+    ["delete-2026-01-01T12-00-00.log", "delete", "2026-01-01T12-00-00"],
     ["export-2026-01-01T12-00-00.log", "export", "2026-01-01T12-00-00"],
+    // Written by the standalone tool and by earlier CLI builds.
+    ["migration-2026-01-01T12-00-00.log", "import", "2026-01-01T12-00-00"],
+    ["user-deletion-2026-01-01T12-00-00.log", "delete", "2026-01-01T12-00-00"],
   ])("%s is a %s log from %s", (name, kind, timestamp) => {
     expect(classifyLogFile(name)).toEqual({ kind: kind as never, timestamp });
   });
 
-  test.each([["random.log"], ["migration.log"], ["notes.txt"]])(
+  test.each([["random.log"], ["import.log"], ["notes.txt"]])(
     "%s is unrecognized rather than a parse failure",
     (name) => {
       expect(classifyLogFile(name)).toEqual({ kind: "unknown", timestamp: "" });
@@ -60,12 +63,12 @@ describe("listLogFiles", () => {
   });
 
   test("reports kind, timestamp, size and entry count per file", () => {
-    writeLog("migration-2026-01-01T12-00-00.log", [{ userId: "u1" }, { userId: "u2" }]);
+    writeLog("import-2026-01-01T12-00-00.log", [{ userId: "u1" }, { userId: "u2" }]);
 
     const [file] = listLogFiles();
     expect(file).toMatchObject({
-      name: "migration-2026-01-01T12-00-00.log",
-      kind: "migration",
+      name: "import-2026-01-01T12-00-00.log",
+      kind: "import",
       timestamp: "2026-01-01T12-00-00",
       entryCount: 2,
     });
@@ -73,11 +76,11 @@ describe("listLogFiles", () => {
   });
 
   test("ignores files that are not logs", () => {
-    writeLog("migration-2026-01-01T12-00-00.log", [{ a: 1 }]);
-    fs.writeFileSync(path.join(getLogDir(), "migration-2026-01-01T12-00-00.json"), "[]");
+    writeLog("import-2026-01-01T12-00-00.log", [{ a: 1 }]);
+    fs.writeFileSync(path.join(getLogDir(), "import-2026-01-01T12-00-00.json"), "[]");
     fs.writeFileSync(path.join(getLogDir(), "notes.txt"), "hi");
 
-    expect(listLogFiles().map((file) => file.name)).toEqual(["migration-2026-01-01T12-00-00.log"]);
+    expect(listLogFiles().map((file) => file.name)).toEqual(["import-2026-01-01T12-00-00.log"]);
   });
 
   test("ignores subdirectories", () => {
@@ -86,9 +89,9 @@ describe("listLogFiles", () => {
   });
 
   test("returns the newest run first", () => {
-    writeLog("migration-2026-01-01T12-00-00.log", [{ a: 1 }]);
-    writeLog("migration-2026-03-01T12-00-00.log", [{ a: 1 }]);
-    writeLog("migration-2026-02-01T12-00-00.log", [{ a: 1 }]);
+    writeLog("import-2026-01-01T12-00-00.log", [{ a: 1 }]);
+    writeLog("import-2026-03-01T12-00-00.log", [{ a: 1 }]);
+    writeLog("import-2026-02-01T12-00-00.log", [{ a: 1 }]);
 
     expect(listLogFiles().map((file) => file.timestamp)).toEqual([
       "2026-03-01T12-00-00",
@@ -97,21 +100,21 @@ describe("listLogFiles", () => {
     ]);
   });
 
-  // Sorting on the filename would put every "user-deletion-" ahead of every
+  // Sorting on the filename would put every "import-" ahead of every
   // "migration-", regardless of when the runs actually happened.
   test("orders by timestamp across log kinds, not by the name's prefix", () => {
-    writeLog("user-deletion-2026-01-30T17-02-51.log", [{ a: 1 }]);
-    writeLog("migration-2026-02-01T09-14-22.log", [{ a: 1 }]);
+    writeLog("import-2026-01-30T17-02-51.log", [{ a: 1 }]);
+    writeLog("export-2026-02-01T09-14-22.log", [{ a: 1 }]);
 
-    expect(listLogFiles().map((file) => file.kind)).toEqual(["migration", "deletion"]);
+    expect(listLogFiles().map((file) => file.kind)).toEqual(["export", "import"]);
   });
 
   test("sorts unrecognized names last", () => {
     writeLog("something-else.log", [{ a: 1 }]);
-    writeLog("migration-2026-01-01T12-00-00.log", [{ a: 1 }]);
+    writeLog("import-2026-01-01T12-00-00.log", [{ a: 1 }]);
 
     expect(listLogFiles().map((file) => file.name)).toEqual([
-      "migration-2026-01-01T12-00-00.log",
+      "import-2026-01-01T12-00-00.log",
       "something-else.log",
     ]);
   });
@@ -130,15 +133,15 @@ describe("listLogFiles", () => {
 
 describe("findLogFile", () => {
   beforeEach(() => {
-    writeLog("migration-2026-01-01T12-00-00.log", [{ a: 1 }]);
+    writeLog("import-2026-01-01T12-00-00.log", [{ a: 1 }]);
   });
 
   test("finds a log by name", () => {
-    expect(findLogFile("migration-2026-01-01T12-00-00.log")?.entryCount).toBe(1);
+    expect(findLogFile("import-2026-01-01T12-00-00.log")?.entryCount).toBe(1);
   });
 
   test("accepts a path and matches on the basename", () => {
-    expect(findLogFile("./logs/migration-2026-01-01T12-00-00.log")?.entryCount).toBe(1);
+    expect(findLogFile("./logs/import-2026-01-01T12-00-00.log")?.entryCount).toBe(1);
   });
 
   test("returns nothing for a name that is not there", () => {

@@ -8,9 +8,12 @@ import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { getLogDir } from "../lib/logger.ts";
 import { clean } from "./clean.ts";
 import { convert } from "./convert.ts";
-import { list } from "./list.ts";
+import { formatTimestamp, list } from "./list.ts";
 
 const captured = useCaptureLog();
+
+const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\u001b\[[0-9;]*m`, "g");
+const stripAnsi = (value: string) => value.replace(ANSI_ESCAPE_PATTERN, "");
 
 let workDir: string;
 let originalCwd: string;
@@ -39,8 +42,8 @@ function writeLog(name: string, entries: unknown[]): void {
   );
 }
 
-const MIGRATION = "migration-2026-01-01T12-00-00.log";
-const DELETION = "user-deletion-2026-02-01T12-00-00.log";
+const IMPORT = "import-2026-01-01T12-00-00.log";
+const DELETE = "delete-2026-02-01T12-00-00.log";
 
 describe("logs list", () => {
   test("says so plainly when there is no logs directory", async () => {
@@ -54,42 +57,66 @@ describe("logs list", () => {
     expect(captured.err).toContain("No migration logs in");
   });
 
-  test("reports type, timestamp, size and entry count", async () => {
-    writeLog(MIGRATION, [{ userId: "u1" }, { userId: "u2" }, { userId: "u3" }]);
+  test("reports file, type, date, size and entry count", async () => {
+    writeLog(IMPORT, [{ userId: "u1" }, { userId: "u2" }, { userId: "u3" }]);
 
     await list();
 
+    expect(captured.err).toContain("FILE");
     expect(captured.err).toContain("TYPE");
-    expect(captured.err).toContain("TIMESTAMP");
+    expect(captured.err).toContain("DATE");
     expect(captured.err).toContain("SIZE");
     expect(captured.err).toContain("ENTRIES");
-    expect(captured.err).toContain("migration");
-    expect(captured.err).toContain("2026-01-01T12-00-00");
+    expect(captured.err).toContain(IMPORT);
+    expect(captured.err).toContain("import");
+    expect(captured.err).toContain(formatTimestamp("2026-01-01T12-00-00"));
     expect(captured.err).toMatch(/\bB\b/);
     expect(captured.err).toContain("3");
   });
 
-  test("lists every log kind", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
-    writeLog(DELETION, [{ a: 1 }]);
+  // The filename stamp is for sorting and for `logs convert`; the column a
+  // human scans should read like a date.
+  test("shows the date rendered, not the raw filename stamp", async () => {
+    writeLog(IMPORT, [{ userId: "u1" }]);
 
     await list();
 
-    expect(captured.err).toContain("migration");
-    expect(captured.err).toContain("deletion");
+    const dateColumn = stripAnsi(captured.err)
+      .split("\n")
+      .find((line) => line.includes(IMPORT));
+    expect(dateColumn?.replace(IMPORT, "")).not.toContain("2026-01-01T12-00-00");
+  });
+
+  test("reports the log directory relative to the current directory", async () => {
+    writeLog(IMPORT, [{ userId: "u1" }]);
+
+    await list();
+
+    expect(stripAnsi(captured.err)).toContain(`1 log file in .${path.sep}logs`);
+    expect(captured.err).not.toContain(getLogDir());
+  });
+
+  test("lists every log kind", async () => {
+    writeLog(IMPORT, [{ a: 1 }]);
+    writeLog(DELETE, [{ a: 1 }]);
+
+    await list();
+
+    expect(captured.err).toContain("import");
+    expect(captured.err).toContain("delete");
     expect(captured.err).toContain("2 log files");
   });
 
   test("--json emits a machine-readable listing on stdout", async () => {
-    writeLog(MIGRATION, [{ userId: "u1" }]);
+    writeLog(IMPORT, [{ userId: "u1" }]);
 
     await list({ json: true });
 
     const parsed = JSON.parse(captured.out) as Record<string, unknown>[];
     expect(parsed).toHaveLength(1);
     expect(parsed[0]).toMatchObject({
-      name: MIGRATION,
-      kind: "migration",
+      name: IMPORT,
+      kind: "import",
       timestamp: "2026-01-01T12-00-00",
       entry_count: 1,
     });
@@ -109,22 +136,22 @@ describe("logs clean", () => {
 
   // Tests run non-TTY, which is the same signal an agent gives.
   test("refuses without -y when it cannot prompt, and explains", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
 
     await expect(clean()).rejects.toThrow(/cannot prompt here.*Pass -y/s);
-    expect(fs.existsSync(path.join(getLogDir(), MIGRATION))).toBe(true);
+    expect(fs.existsSync(path.join(getLogDir(), IMPORT))).toBe(true);
   });
 
   test("names how many files are at stake when it refuses", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
-    writeLog(DELETION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
+    writeLog(DELETE, [{ a: 1 }]);
 
     await expect(clean()).rejects.toThrow(/2 log files/);
   });
 
   test("-y deletes the log files and reports the count", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
-    writeLog(DELETION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
+    writeLog(DELETE, [{ a: 1 }]);
 
     await clean({ yes: true });
 
@@ -133,12 +160,12 @@ describe("logs clean", () => {
   });
 
   test("leaves converted JSON output alone", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
-    fs.writeFileSync(path.join(getLogDir(), "migration-2026-01-01T12-00-00.json"), "[]");
+    writeLog(IMPORT, [{ a: 1 }]);
+    fs.writeFileSync(path.join(getLogDir(), "import-2026-01-01T12-00-00.json"), "[]");
 
     await clean({ yes: true });
 
-    expect(fs.readdirSync(getLogDir())).toEqual(["migration-2026-01-01T12-00-00.json"]);
+    expect(fs.readdirSync(getLogDir())).toEqual(["import-2026-01-01T12-00-00.json"]);
   });
 });
 
@@ -149,42 +176,42 @@ describe("logs convert", () => {
   });
 
   test("writes a JSON array alongside the original, leaving it intact", async () => {
-    writeLog(MIGRATION, [{ userId: "u1" }, { userId: "u2" }]);
+    writeLog(IMPORT, [{ userId: "u1" }, { userId: "u2" }]);
 
-    await convert({ files: [MIGRATION] });
+    await convert({ files: [IMPORT] });
 
-    const output = path.join(getLogDir(), "migration-2026-01-01T12-00-00.json");
+    const output = path.join(getLogDir(), "import-2026-01-01T12-00-00.json");
     expect(JSON.parse(fs.readFileSync(output, "utf-8"))).toEqual([
       { userId: "u1" },
       { userId: "u2" },
     ]);
-    expect(fs.existsSync(path.join(getLogDir(), MIGRATION))).toBe(true);
+    expect(fs.existsSync(path.join(getLogDir(), IMPORT))).toBe(true);
     expect(captured.err).toContain("Originals left in place");
   });
 
   test("--all converts every log file", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
-    writeLog(DELETION, [{ b: 2 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
+    writeLog(DELETE, [{ b: 2 }]);
 
     await convert({ all: true });
 
     const written = fs.readdirSync(getLogDir()).filter((name) => name.endsWith(".json"));
     expect(written.sort()).toEqual([
-      "migration-2026-01-01T12-00-00.json",
-      "user-deletion-2026-02-01T12-00-00.json",
+      "delete-2026-02-01T12-00-00.json",
+      "import-2026-01-01T12-00-00.json",
     ]);
   });
 
   test("accepts a path and resolves it against ./logs/", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
 
-    await convert({ files: [`./logs/${MIGRATION}`] });
+    await convert({ files: [`./logs/${IMPORT}`] });
 
-    expect(fs.existsSync(path.join(getLogDir(), "migration-2026-01-01T12-00-00.json"))).toBe(true);
+    expect(fs.existsSync(path.join(getLogDir(), "import-2026-01-01T12-00-00.json"))).toBe(true);
   });
 
   test("fails clearly on a file that is not there", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
 
     await expect(convert({ files: ["migration-nope.log"] })).rejects.toThrow(CliError);
   });
@@ -192,26 +219,26 @@ describe("logs convert", () => {
   // Silently dropping the line would leave a JSON array that looks complete.
   test("reports a malformed line by number and converts the rest", async () => {
     fs.mkdirSync(getLogDir(), { recursive: true });
-    fs.writeFileSync(path.join(getLogDir(), MIGRATION), '{"a":1}\n{"b":\n{"c":3}\n');
+    fs.writeFileSync(path.join(getLogDir(), IMPORT), '{"a":1}\n{"b":\n{"c":3}\n');
 
-    await convert({ files: [MIGRATION] });
+    await convert({ files: [IMPORT] });
 
-    expect(captured.err).toContain(`${MIGRATION}:2`);
+    expect(captured.err).toContain(`${IMPORT}:2`);
     expect(captured.err).toContain("1 malformed line skipped");
 
-    const output = path.join(getLogDir(), "migration-2026-01-01T12-00-00.json");
+    const output = path.join(getLogDir(), "import-2026-01-01T12-00-00.json");
     expect(JSON.parse(fs.readFileSync(output, "utf-8"))).toEqual([{ a: 1 }, { c: 3 }]);
   });
 
   test("refuses without a target when it cannot prompt, naming the alternatives", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
 
     await expect(convert()).rejects.toThrow(/cannot prompt here/);
-    expect(fs.readdirSync(getLogDir())).toEqual([MIGRATION]);
+    expect(fs.readdirSync(getLogDir())).toEqual([IMPORT]);
   });
 
   test("reports the entry count per converted file", async () => {
-    writeLog(MIGRATION, [{ a: 1 }, { b: 2 }, { c: 3 }]);
+    writeLog(IMPORT, [{ a: 1 }, { b: 2 }, { c: 3 }]);
 
     await convert({ all: true });
 
@@ -232,7 +259,7 @@ describe("human-mode frame", () => {
   });
 
   test("logs list wraps its output in an intro/outro gutter", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
 
     await list();
 
@@ -243,7 +270,7 @@ describe("human-mode frame", () => {
   });
 
   test("--json stays outside the gutter, on stdout only", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
 
     await list({ json: true });
 
@@ -252,7 +279,7 @@ describe("human-mode frame", () => {
   });
 
   test("a failure inside logs convert closes with Failed and still throws", async () => {
-    writeLog(MIGRATION, [{ a: 1 }]);
+    writeLog(IMPORT, [{ a: 1 }]);
 
     await expect(convert({ files: ["nope.log"] })).rejects.toThrow(CliError);
 
