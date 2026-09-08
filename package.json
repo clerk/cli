@@ -44,6 +44,9 @@
     "semver": "^7.8.5",
     "typescript": "^7"
   },
+  "overrides": {
+    "tmp": "^0.2.6"
+  },
   "nano-staged": {
     "*.{ts,tsx,js,jsx}": [
       "oxfmt --write --no-error-on-unmatched-pattern",

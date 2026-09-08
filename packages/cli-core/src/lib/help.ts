@@ -40,14 +40,17 @@ Command.prototype.setExamples = function (examples: Example[]) {
 };
 
 /**
- * Custom help formatter with three improvements over Commander defaults:
+ * Custom help formatter with four improvements over Commander defaults:
  *
- * 1. Commands display in three aligned columns: name | args | description
- * 2. Each section (Arguments, Options, Commands) computes its own column width
- * 3. Examples are a first-class section with auto `$ ` prefix and aligned columns
+ * 1. Commands and options list alphabetically so users can scan for a name
+ * 2. Commands display in three aligned columns: name | args | description
+ * 3. Each section (Arguments, Options, Commands) computes its own column width
+ * 4. Examples are a first-class section with auto `$ ` prefix and aligned columns
  */
 export function clerkHelpConfig(): Partial<Help> {
   return {
+    sortSubcommands: true,
+    sortOptions: true,
     formatHelp(cmd, helper) {
       const helpWidth = helper.helpWidth ?? 80;
 

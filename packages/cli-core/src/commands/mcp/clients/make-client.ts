@@ -47,10 +47,18 @@ interface FileClientSpec {
   /**
    * Recognize a `clerk mcp run` bridge descriptor in this client's dialect.
    * Only needed by clients whose encoding diverges from the standard
-   * `{ command, args }` shape (opencode's single argv array); the default is
-   * {@link isClerkRunEntry}.
+   * `{ command, args }` shape (opencode's single argv array, fx's direct-URL
+   * entries); the default is {@link isClerkRunEntry}.
    */
   isOurs?: (descriptor: unknown) => boolean;
+  /**
+   * Normalize a freshly-read config before the server map is walked. Lets a
+   * client fold a legacy or alias form into its canonical shape (fx accepts
+   * `mcpServers` as an alias for `mcp`) so reads see every entry and writes
+   * persist the canonical form. Must return a new object when it changes
+   * anything.
+   */
+  normalizeConfig?: (config: ConfigRecord) => ConfigRecord;
   configPath: (cwd: string) => string;
   /**
    * Omit for bases wrapped by `makeCliClient`, which replaces detection with
@@ -117,6 +125,7 @@ function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
     typeof spec.topKey === "string" ? [spec.topKey] : spec.topKey;
 
   const isOurs = spec.isOurs ?? isClerkRunEntry;
+  const normalize = spec.normalizeConfig ?? ((config: ConfigRecord) => config);
 
   /** Walk the key path, validating each level is an object (or absent → `{}`). */
   function serversIn(config: ConfigRecord, configPath: string): Record<string, unknown> {
@@ -137,7 +146,7 @@ function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
 
     async upsert(entry: McpServerEntry, cwd: string): Promise<UpsertResult> {
       const configPath = spec.configPath(cwd);
-      const config = await codec.read(configPath);
+      const config = normalize(await codec.read(configPath));
       const servers = serversIn(config, configPath);
 
       // Install always converges: whatever descriptor sits under this name
@@ -155,7 +164,7 @@ function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
 
     async remove(name: string, cwd: string): Promise<RemoveResult> {
       const configPath = spec.configPath(cwd);
-      const config = await codec.read(configPath);
+      const config = normalize(await codec.read(configPath));
       const servers = serversIn(config, configPath);
       if (!Object.prototype.hasOwnProperty.call(servers, name)) {
         return { client: spec.id, configPath, removed: false };
@@ -176,7 +185,7 @@ function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
       // uninstall's picker) settle per client, so one bad config warns there
       // without sinking the other clients — and `doctor` can tell "unreadable
       // config" apart from "no entries" instead of reporting a clean pass.
-      const config = await codec.read(configPath);
+      const config = normalize(await codec.read(configPath));
       const servers = serversIn(config, configPath);
       const entries: ListEntry[] = [];
       for (const [name, descriptor] of Object.entries(servers)) {

@@ -146,6 +146,35 @@ test("users parent command exposes targeting flags inherited by subcommands", ()
   expect(optionNames).toEqual(expect.arrayContaining(["--secret-key", "--app", "--instance"]));
 });
 
+describe("help output ordering", () => {
+  type AnyCommand = ReturnType<typeof createProgram>["commands"][number];
+
+  function collectCommands(cmd: AnyCommand, path: string): { path: string; cmd: AnyCommand }[] {
+    return [
+      { path, cmd },
+      ...cmd.commands.flatMap((sub) => collectCommands(sub, `${path} ${sub.name()}`)),
+    ];
+  }
+
+  const allCommands = collectCommands(createProgram() as AnyCommand, "clerk");
+
+  // Commander's option sort key: short flag if present, else long flag.
+  const optionSortKey = (option: { short?: string; long?: string }): string =>
+    option.short ? option.short.replace(/^-/, "") : (option.long ?? "").replace(/^--/, "");
+
+  test.each(allCommands)("$path lists subcommands alphabetically in help", ({ cmd }) => {
+    const helper = cmd.createHelp();
+    const names = helper.visibleCommands(cmd).map((sub) => sub.name());
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+  });
+
+  test.each(allCommands)("$path lists options alphabetically in help", ({ cmd }) => {
+    const helper = cmd.createHelp();
+    const keys = helper.visibleOptions(cmd).map(optionSortKey);
+    expect(keys).toEqual([...keys].sort((a, b) => a.localeCompare(b)));
+  });
+});
+
 test("users create documents -d and --file for raw BAPI request bodies", () => {
   const program = createProgram();
   const users = program.commands.find((command) => command.name() === "users")!;

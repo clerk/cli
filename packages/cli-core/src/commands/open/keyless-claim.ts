@@ -68,7 +68,8 @@ async function readSdkClaimUrl(cwd: string): Promise<string | undefined> {
  * Finds the claim link for an unclaimed keyless application, checking both
  * places one can turn up depending on how keyless mode was entered:
  *
- *  - `clerk init --keyless` writes only the claim TOKEN to `.clerk/keyless.json`
+ *  - `clerk init --accountless` writes only the claim TOKEN to the legacy-named
+ *    `.clerk/keyless.json`
  *    (see `writeKeylessBreadcrumb`); the URL is rebuilt against whichever
  *    dashboard host the CLI is currently pointed at.
  *  - An SDK that self-provisions (e.g. `next dev` with no keys configured)
@@ -110,7 +111,9 @@ export async function describeKeylessInstance(secretKey: string): Promise<Keyles
     const body = response.body as { id?: string; environment_type?: string };
     return { instanceId: body.id ?? null, environmentType: body.environment_type ?? null };
   } catch (error) {
-    log.debug(`open: could not fetch instance info for keyless app (${(error as Error).message})`);
+    log.debug(
+      `open: could not fetch instance info for accountless app (${(error as Error).message})`,
+    );
     return { instanceId: null, environmentType: null };
   }
 }

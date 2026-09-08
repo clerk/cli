@@ -623,7 +623,7 @@ describe("init", () => {
       setup({ email: "test@test.com" });
       const stages = trackStages();
 
-      await expect(init({ keyless: true, login: true })).rejects.toThrow();
+      await expect(init({ accountless: true, login: true })).rejects.toThrow();
 
       expect(stages()).toEqual(["flags"]);
     });
