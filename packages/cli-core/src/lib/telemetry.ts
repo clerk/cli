@@ -73,6 +73,13 @@ export type TelemetryStage =
   // shared terminal marker
   | "done";
 
+/**
+ * How the optional agent-skills install at the end of `clerk init` ended.
+ * A closed union for the same reason as [TelemetryStage]: a renamed call site
+ * fails to compile rather than quietly splitting the funnel.
+ */
+export type TelemetrySkillsOutcome = "installed" | "declined" | "runner_missing" | "failed";
+
 /** Structural slice of Commander's Command — avoids its generic types. */
 export type TelemetryCommand = {
   name(): string;
@@ -87,6 +94,9 @@ type TelemetryContext = {
   startedAt: number;
   /** Last stage set — see setTelemetryStage. */
   stage: TelemetryStage | null;
+  /** Skills actually installed, comma-joined — see setTelemetrySkills. */
+  skills: string;
+  skillsOutcome: TelemetrySkillsOutcome | null;
 };
 
 let context: TelemetryContext | null = null;
@@ -186,6 +196,8 @@ export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
       flags: collectSetFlagNames(actionCommand).join(","),
       startedAt: Date.now(),
       stage: null,
+      skills: "",
+      skillsOutcome: null,
     };
   } catch (error) {
     log.debug(`telemetry: failed to start context: ${error}`);
@@ -206,6 +218,26 @@ export function setTelemetryStage(stage: TelemetryStage): void {
 /** Read the stage a caller had set, so a nested flow can hand it back. */
 export function currentTelemetryStage(): TelemetryStage | null {
   return context?.stage ?? null;
+}
+
+/**
+ * Record the agent skills `clerk init` installed, and how the attempt ended.
+ *
+ * Only a successful install populates `skills`, so a warehouse filter like
+ * `skills LIKE '%clerk-orgs%'` means "this project has that skill" rather than
+ * "it was offered one". The names come from the CLI's own constants, never
+ * from user input, so nothing unbounded reaches the payload.
+ *
+ * `skillsOutcome` is what separates "the user said no" from "init never got
+ * that far" — before this, both looked identical from the warehouse.
+ */
+export function setTelemetrySkills(
+  names: readonly string[],
+  outcome: TelemetrySkillsOutcome,
+): void {
+  if (!context) return;
+  context.skills = outcome === "installed" ? names.join(",") : "";
+  context.skillsOutcome = outcome;
 }
 
 export function telemetryResultForError(error: unknown): TelemetryResult {
@@ -297,6 +329,8 @@ async function buildAndSend(
       exit_code: result.exitCode,
       error_code: result.errorCode ?? null,
       stage: current.stage,
+      skills: current.skills,
+      skills_outcome: current.skillsOutcome,
       duration_ms: Date.now() - current.startedAt,
       machine_uuid: machineUuid,
       install_method: detectInstallMethod(process.env, process.execPath),
@@ -348,9 +382,11 @@ async function maybeShowTelemetryNotice(): Promise<boolean> {
     "The Clerk CLI collects usage telemetry to help improve the CLI: command name, flag names,",
   );
   log.info(
-    "duration, outcome, the step a multi-step command reached, a random machine identifier —",
+    "duration, outcome, the step a multi-step command reached, the agent skills init installed,",
   );
-  log.info("and your workspace and app IDs when a project is linked.");
+  log.info(
+    "a random machine identifier — and your workspace and app IDs when a project is linked.",
+  );
   log.info("Nothing has been sent during this run.");
   log.info("Opt out: `clerk telemetry disable` — details: https://clerk.com/docs/telemetry");
   log.blank();

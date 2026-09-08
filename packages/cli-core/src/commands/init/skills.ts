@@ -16,6 +16,7 @@ import { isHuman } from "../../mode.js";
 import { log } from "../../lib/log.js";
 import { confirm } from "../../lib/prompts.js";
 import { resolveSkillsRunner, runSkillsAdd } from "../../lib/skills.js";
+import { setTelemetrySkills } from "../../lib/telemetry.js";
 import type { ProjectContext } from "./frameworks/types.js";
 
 /** Upstream skills from clerk/skills — installed on every project. */
@@ -94,14 +95,20 @@ export async function installSkills(
       message: formatSkillsPromptMessage(frameworkSkills),
       default: true,
     });
-    if (!install) return;
+    if (!install) {
+      setTelemetrySkills(upstreamSkills, "declined");
+      return;
+    }
   }
 
   const interactive = isHuman() && !skipPrompt;
 
   // Detect runner after the user accepts — no point probing PATH if they decline.
   const runner = await resolveSkillsRunner(packageManager, interactive);
-  if (!runner) return;
+  if (!runner) {
+    setTelemetrySkills(upstreamSkills, "runner_missing");
+    return;
+  }
 
   log.debug(`skills: upstream install — ${upstreamSkills.join(", ")}`);
   const upstreamOk = await runSkillsAdd(
@@ -112,6 +119,8 @@ export async function installSkills(
     interactive,
     formatSkillsSummary(frameworkSkills),
   );
+
+  setTelemetrySkills(upstreamSkills, upstreamOk ? "installed" : "failed");
 
   if (upstreamOk) {
     log.blank();

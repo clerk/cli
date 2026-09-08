@@ -6,6 +6,7 @@ import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from ".
 import {
   finalizeAndSendTelemetry,
   getTelemetryStatus,
+  setTelemetrySkills,
   setTelemetryStage,
   startCommandTelemetry,
   telemetryEnabled,
@@ -460,31 +461,31 @@ describe("finalizeAndSendTelemetry", () => {
     });
   });
 
+  /** Captures the payload of the single event a finalize call sends. */
+  async function sendAndCapturePayload(
+    run: () => void | Promise<void>,
+    result: TelemetryResult,
+  ): Promise<Record<string, unknown>> {
+    await markTelemetryNoticeShown(); // past the grace run — reach the send path
+    process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+    let sent: string | undefined;
+    globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
+      sent = init.body;
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+
+    startCommandTelemetry(fakeCommand());
+    await run();
+    await finalizeAndSendTelemetry(result);
+
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent as string) as {
+      events: { payload: Record<string, unknown> }[];
+    };
+    return parsed.events[0]!.payload;
+  }
+
   describe("stage", () => {
-    /** Captures the payload of the single event a finalize call sends. */
-    async function sendAndCapturePayload(
-      run: () => void | Promise<void>,
-      result: TelemetryResult,
-    ): Promise<Record<string, unknown>> {
-      await markTelemetryNoticeShown(); // past the grace run — reach the send path
-      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
-      let sent: string | undefined;
-      globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
-        sent = init.body;
-        return new Response("{}");
-      }) as unknown as typeof fetch;
-
-      startCommandTelemetry(fakeCommand());
-      await run();
-      await finalizeAndSendTelemetry(result);
-
-      expect(sent).toBeDefined();
-      const parsed = JSON.parse(sent as string) as {
-        events: { payload: Record<string, unknown> }[];
-      };
-      return parsed.events[0]!.payload;
-    }
-
     test("reports the furthest stage reached on success", async () => {
       const payload = await sendAndCapturePayload(
         () => {
@@ -527,6 +528,43 @@ describe("finalizeAndSendTelemetry", () => {
 
     test("setting a stage with no active context is a no-op", () => {
       expect(() => setTelemetryStage("flags")).not.toThrow();
+    });
+  });
+
+  describe("skills", () => {
+    test("reports the skills an install actually landed", async () => {
+      const payload = await sendAndCapturePayload(
+        () => setTelemetrySkills(["clerk-cli", "clerk-orgs"], "installed"),
+        { outcome: "success", exitCode: 0 },
+      );
+      expect(payload.skills).toBe("clerk-cli,clerk-orgs");
+      expect(payload.skills_outcome).toBe("installed");
+    });
+
+    // `skills` must mean "this project has them", not "it was offered them",
+    // or a `skills LIKE '%clerk-orgs%'` filter silently counts declines.
+    test.each([["declined"], ["runner_missing"], ["failed"]] as const)(
+      "leaves skills empty when the install ended as %s",
+      async (outcome) => {
+        const payload = await sendAndCapturePayload(
+          () => setTelemetrySkills(["clerk-cli", "clerk-orgs"], outcome),
+          { outcome: "success", exitCode: 0 },
+        );
+        expect(payload.skills).toBe("");
+        expect(payload.skills_outcome).toBe(outcome);
+      },
+    );
+
+    // A command that never reaches the skills step is distinguishable from one
+    // whose user declined — that difference is the whole point of the field.
+    test("outcome is null when the command never reaches the skills step", async () => {
+      const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
+      expect(payload.skills).toBe("");
+      expect(payload.skills_outcome).toBeNull();
+    });
+
+    test("recording skills with no active context is a no-op", () => {
+      expect(() => setTelemetrySkills(["clerk-orgs"], "installed")).not.toThrow();
     });
   });
 });
