@@ -1,5 +1,15 @@
 # clerk
 
+## 3.4.0
+
+### Minor Changes
+
+- Add fx (https://fx.sh) as a supported client for `clerk mcp install`, `list`, and `uninstall`. The Clerk MCP server is written to fx's user-global `~/.fx/mcp.json` as a direct Streamable HTTP entry (`{ "type": "http", "url": … }` under top-level `mcp`) — fx connects to the URL natively, so no `clerk mcp run` bridge is involved. Detected via the presence of `~/.fx/`; target it explicitly with `--client fx`. ([#460](https://github.com/clerk/cli/pull/460)) by [@manovotny](https://github.com/manovotny)
+
+### Patch Changes
+
+- Reject an invalid `clerk api` request body on your machine instead of sending it. The error echoes what arrived and, when a `-d` value reached the CLI with its double quotes stripped or wrapped in literal single quotes, names the shell quoting behind it — an unquoted body in a POSIX shell, or PowerShell before 7.3 and cmd.exe on Windows — and suggests the same request with `--file`, which no shell can mangle. Those shell-quoting rejections carry the error code `invalid_json_shell_quoting`; other parse failures keep `invalid_json`. ([#464](https://github.com/clerk/cli/pull/464)) by [@dmoerner](https://github.com/dmoerner)
+
 ## 3.3.0
 
 ### Minor Changes
