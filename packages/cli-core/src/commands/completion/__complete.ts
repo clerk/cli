@@ -1,5 +1,6 @@
 import type { CommandUnknownOpts, Option } from "@commander-js/extra-typings";
 import { sources } from "../migrate/sources/registry.ts";
+import { CHECKS } from "../security/catalog.ts";
 import { KNOWN_DASHBOARD_PATHS } from "../open/dashboard-paths.ts";
 
 const DIRECTIVE = {
@@ -60,6 +61,12 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
     { name: "canary", description: "Latest canary (pre-release) build" },
   ],
   "--source": SOURCE_COMPLETIONS,
+  "--factors": [
+    { name: "authenticator", description: "Authenticator app (TOTP)" },
+    { name: "backup-code", description: "Backup codes" },
+    { name: "sms", description: "SMS code" },
+    { name: "authenticator,backup-code", description: "Authenticator app and backup codes" },
+  ],
   "--for": [
     { name: "orgs", description: "Organizations only" },
     { name: "users", description: "Users only" },
@@ -78,6 +85,7 @@ const KNOWN_POSITIONAL_COMPLETIONS: Record<string, Completion[]> = {
     name: path,
     description: "Dashboard subpath",
   })),
+  "security fix": CHECKS.map((check) => ({ name: check.id, description: check.title })),
 };
 
 /**
