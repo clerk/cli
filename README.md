@@ -14,9 +14,11 @@ missing, and scaffolds the Clerk wiring it can safely generate.
 
 For accountless-capable frameworks (Next.js, Astro, Nuxt, TanStack Start, and
 React Router), unauthenticated agent runs can start without a Clerk account or
-browser login. With no `--app` and no linked project, `clerk init` creates an
-unclaimed development application, writes local development keys, and stores a
-claim breadcrumb for a later `clerk auth login`. Frameworks without accountless
+browser login. With no `--app` and no linked project, a first `clerk init` run
+creates an unclaimed development application, writes local development keys, and
+stores a claim breadcrumb for a later `clerk auth login`. Later runs keep an
+existing unclaimed application instead of replacing it, unless you pass
+`--fresh`. Frameworks without accountless
 support need an authenticated app target before keys can be pulled: pass
 `--app <id>`, use a linked project, or run `npx -y clerk@latest init --login`
 in an interactive terminal to log in and link one.
@@ -26,10 +28,9 @@ What `clerk init` changes:
 - Installs missing Clerk SDK packages in npm-based projects.
 - Creates or updates supported framework files, such as provider wiring,
   middleware or proxy files, and sign-in/sign-up routes.
-- Writes Clerk keys to the selected env file when a real or accountless app is
-  available.
-- In accountless mode, writes `.clerk/keyless.json` and adds `.clerk/` to
-  `.gitignore`.
+- Writes Clerk keys to an env file when a real or accountless app is available.
+- When it creates a new accountless application, writes `.clerk/keyless.json`
+  and adds `.clerk/` to `.gitignore`.
 - In npm-based projects, offers to install Clerk agent skills; agent mode runs
   that step non-interactively unless `--no-skills` is passed.
 
