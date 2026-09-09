@@ -1,3 +1,4 @@
+import { stripAnsi } from "../../lib/color.ts";
 import { resolveProfile } from "../../lib/config.ts";
 import { PlapiError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
@@ -25,6 +26,7 @@ import {
   OAUTH_KEY_PREFIX,
   buildOAuthProviderDescriptors,
   hasProviderRequiredCredentials,
+  oauthWalkthroughUrls,
   type OAuthProvider,
   type OAuthProviderDescriptor,
 } from "./providers.ts";
@@ -61,14 +63,44 @@ export type DeployStatusState =
   // buildInterruptedDeployStatusReport.
   | "interrupted";
 
+/**
+ * Everything an agent needs to get one pending OAuth provider working in
+ * production: what the provider's OAuth app must be configured with, which
+ * credential fields Clerk expects, and the exact write command.
+ */
+export type OAuthSetupGuide = {
+  provider: string;
+  label: string;
+  configKey: string;
+  fields: {
+    key: string;
+    label: string;
+    secret: boolean;
+    options?: string[];
+    /** The value is the full contents of a file (for example Apple's `.p8` key). */
+    fileContents?: true;
+  }[];
+  redirectUri: string;
+  authorizedOrigins: string[];
+  docsUrl: string;
+  note: string | null;
+  command: string;
+};
+
 export interface DeployStatusReport {
   complete: boolean;
   state: DeployStatusState;
   domain: string | null;
   productionInstanceId: string | null;
   domainStatus: { dns: string; ssl: string; mail: string } | null;
-  pendingDnsRecords: { type: "CNAME"; host: string; value: string }[];
-  oauth: { complete: boolean; configured: string[]; pending: string[]; unsupported: string[] };
+  pendingDnsRecords: { type: "CNAME"; host: string; value: string; required: boolean }[];
+  oauth: {
+    complete: boolean;
+    configured: string[];
+    pending: string[];
+    unsupported: string[];
+    setup: OAuthSetupGuide[];
+  };
   nextAction: string;
 }
 
@@ -319,10 +351,12 @@ export function buildDeployStatusReport(
       productionInstanceId: null,
       domainStatus: null,
       pendingDnsRecords: [],
-      oauth: { complete: false, configured: [], pending: [], unsupported: [] },
+      oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
       nextAction:
-        "No production instance yet. `clerk deploy` configures production interactively and " +
-        "needs a human terminal, ask the user to run `clerk deploy`, then run `clerk deploy status` to verify.",
+        "No production instance yet. Ask the user which domain they own for production " +
+        "(for example example.com; *.vercel.app and other hosting-provider domains are not accepted), " +
+        "then run `clerk deploy --domain <domain>`. Add `--no-clone` if creation fails with " +
+        "`plan_insufficient`. Verify afterwards with `clerk deploy status`.",
     };
   }
 
@@ -337,10 +371,10 @@ export function buildDeployStatusReport(
       productionInstanceId: state.productionInstanceId,
       domainStatus: null,
       pendingDnsRecords: [],
-      oauth: { complete: false, configured: [], pending: [], unsupported: [] },
+      oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
       nextAction:
         "A production instance exists but its domain is still provisioning. " +
-        "Run `clerk deploy status` again shortly, or ask the user to finish `clerk deploy`. " +
+        "Re-run `clerk deploy status` in a minute. " +
         domainsAction,
     };
   }
@@ -358,7 +392,12 @@ export function buildDeployStatusReport(
   const pendingDnsRecords: DeployStatusReport["pendingDnsRecords"] = !domainComplete
     ? (snapshot.cnameTargets ?? [])
         .filter((target) => cnameTargetPending(target, componentStatus))
-        .map((target) => ({ type: "CNAME" as const, host: target.host, value: target.value }))
+        .map((target) => ({
+          type: "CNAME" as const,
+          host: target.host,
+          value: target.value,
+          required: target.required,
+        }))
     : [];
 
   return {
@@ -377,6 +416,7 @@ export function buildDeployStatusReport(
       configured: [...snapshot.completedOAuthProviders],
       pending: oauthPending,
       unsupported: [...snapshot.unsupportedOAuthProviders],
+      setup: buildOAuthSetupGuides(snapshot, oauthPending),
     },
     nextAction: deployNextAction(
       reportState,
@@ -386,6 +426,7 @@ export function buildDeployStatusReport(
       snapshot.productionInstanceId
         ? domainsDashboardUrl(snapshot.appId, snapshot.productionInstanceId)
         : null,
+      pendingDnsRecords.length,
     ),
   };
 }
@@ -407,11 +448,49 @@ export function buildInterruptedDeployStatusReport(): DeployStatusReport {
     productionInstanceId: null,
     domainStatus: null,
     pendingDnsRecords: [],
-    oauth: { complete: false, configured: [], pending: [], unsupported: [] },
+    oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
     nextAction:
       "Interrupted before the deploy status could be read, so nothing is known about this " +
       "deploy. Run `clerk deploy status` again to check it.",
   };
+}
+
+function buildOAuthSetupGuides(
+  snapshot: LiveDeploySnapshot,
+  pending: readonly string[],
+): OAuthSetupGuide[] {
+  const { authorizedOrigins, redirectUri } = oauthWalkthroughUrls(
+    snapshot.domain,
+    snapshot.frontendApiUrl,
+  );
+  return snapshot.oauthProviderDescriptors
+    .filter((descriptor) => pending.includes(descriptor.provider))
+    .map((descriptor) => {
+      const fields = descriptor.fields.map((field) => ({
+        key: field.key,
+        label: field.label,
+        secret: field.secret,
+        ...(field.options && { options: field.options }),
+        ...(field.filePath && { fileContents: true as const }),
+      }));
+      const payload = {
+        [descriptor.configKey]: {
+          enabled: true,
+          ...Object.fromEntries(fields.map((field) => [field.key, `<${field.key}>`])),
+        },
+      };
+      return {
+        provider: descriptor.provider,
+        label: descriptor.label,
+        configKey: descriptor.configKey,
+        fields,
+        redirectUri,
+        authorizedOrigins,
+        docsUrl: descriptor.docsUrl,
+        note: descriptor.gotcha ? stripAnsi(descriptor.gotcha) : null,
+        command: `clerk config patch --instance prod --json '${JSON.stringify(payload)}' --yes`,
+      };
+    });
 }
 
 function resolveActiveReportState(domainComplete: boolean, complete: boolean): DeployStatusState {
@@ -426,17 +505,26 @@ function deployNextAction(
   componentStatus: DeployComponentStatus,
   oauthPending: string[],
   domainsUrl: string | null,
+  pendingDnsRecordCount: number,
 ): string {
   const domainsAction = domainsUrl ? ` ${domainSettingsNextAction(domainsUrl)}` : "";
 
   if (state === "complete") {
-    return `Production is deployed and verified at https://${domain}. No action needed.${domainsAction}`;
+    return (
+      `Production is deployed and verified at https://${domain}. ` +
+      "Put the production keys on the hosting provider: run `clerk env pull --instance prod --print` " +
+      "and add each line as a production environment variable (for Vercel: " +
+      "`printf '%s' \"$VALUE\" | vercel env add NAME production`), then redeploy the app. " +
+      `Keep development keys in local env files.${domainsAction}`
+    );
   }
   if (state === "oauth_pending") {
     return (
-      `Domain verified, but these OAuth providers are missing production credentials: ` +
-      `${oauthPending.join(", ")}. Ask the user to finish \`clerk deploy\`, then run \`clerk deploy status\`.` +
-      domainsAction
+      `Domain verified, but these OAuth providers have no production credentials: ${oauthPending.join(", ")}. ` +
+      "For each entry in `oauth.setup`, have the user create the provider's OAuth app with its `redirectUri` " +
+      "and `authorizedOrigins`, then run that entry's `command` with real values. To leave a provider out of " +
+      `production instead, run \`clerk config patch --instance prod --json '{"<configKey>":{"enabled":false}}' --yes\`. ` +
+      `Then run \`clerk deploy status\`.${domainsAction}`
     );
   }
 
@@ -453,15 +541,24 @@ function deployNextAction(
     );
   }
 
+  if (pendingDnsRecordCount === 0) {
+    return (
+      `${pendingComponents.join(", ")} still provisioning for ${domain}. ` +
+      `Nothing to add at the DNS provider; re-run \`clerk deploy status --wait\` in a few minutes.${domainsAction}`
+    );
+  }
+
   return (
     `${pendingComponents.join(", ")} still provisioning for ${domain}. ` +
-    `Re-run \`clerk deploy status\` in a few minutes, DNS propagation can take time.` +
-    domainsAction
+    "Add every record in `pendingDnsRecords` at the domain's DNS provider as an unproxied CNAME " +
+    "(records that already verified are omitted), then re-run `clerk deploy status --wait`. " +
+    `DNS propagation can take time.${domainsAction}`
   );
 }
 
+// Ends with the URL and no period so the human-mode rewrite captures it cleanly.
 function domainSettingsNextAction(domainsUrl: string): string {
-  return `Ask the user to visit the Clerk Dashboard domains page, or offer to open it: ${domainsUrl}`;
+  return `Dashboard fallback, only if the user asks to watch DNS and SSL there: ${domainsUrl}`;
 }
 
 export async function loadProductionDomain(

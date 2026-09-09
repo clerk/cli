@@ -434,7 +434,8 @@ export function providerSetupIntro(provider: OAuthProvider | OAuthProviderDescri
   return [bold(`Configure ${label} OAuth for production`), setupCopy, dim(`Reference: ${docsUrl}`)];
 }
 
-function oauthWalkthroughUrls(
+/** The values a provider's OAuth app needs for Clerk's production sign-in on `domain`. */
+export function oauthWalkthroughUrls(
   domain: string,
   frontendApiUrl?: string,
 ): { authorizedOrigins: string[]; redirectUri: string } {

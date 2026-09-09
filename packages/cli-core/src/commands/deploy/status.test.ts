@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { PlapiError } from "../../lib/errors.ts";
+import { buildOAuthProviderDescriptors } from "./providers.ts";
 import type { LiveDeploySnapshot } from "./status.ts";
 
 const mockFetchApplication = mock();
@@ -242,15 +243,15 @@ describe("buildDeployStatusReport", () => {
     expect(report.state).toBe("domain_pending");
     expect(report.complete).toBe(false);
     expect(report.nextAction).toContain(
-      "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+      "Dashboard fallback, only if the user asks to watch DNS and SSL there: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
     );
-    expect(report.nextAction).toContain("Ask the user to visit");
-    expect(report.nextAction).toContain("offer to open it");
+    expect(report.nextAction).toContain("Add every record in `pendingDnsRecords`");
     expect(report.domainStatus).toEqual({ dns: "pending", ssl: "complete", mail: "complete" });
     expect(report.pendingDnsRecords).toContainEqual({
       type: "CNAME",
       host: "clerk.example.com",
       value: "frontend-api.clerk.services",
+      required: true,
     });
     expect(report.oauth.pending).toEqual(["github"]);
   });
@@ -266,6 +267,7 @@ describe("buildDeployStatusReport", () => {
         type: "CNAME",
         host: "clkmail.example.com",
         value: "mail.clerk.services",
+        required: true,
       },
     ]);
   });
@@ -302,6 +304,7 @@ describe("buildDeployStatusReport", () => {
     expect(report.complete).toBe(true);
     expect(report.domainStatus).toEqual({ dns: "complete", ssl: "complete", mail: "complete" });
     expect(report.nextAction).toContain("https://example.com");
+    expect(report.nextAction).toContain("clerk env pull --instance prod --print");
     expect(report.nextAction).toContain(
       "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
     );
@@ -321,5 +324,73 @@ describe("buildDeployStatusReport", () => {
 
     expect(report.complete).toBe(true);
     expect(report.oauth.unsupported).toEqual(["discord"]);
+  });
+
+  test("oauth_pending includes a setup guide with fields, redirect URI, and a config patch command", () => {
+    const [github] = buildOAuthProviderDescriptors(["github"], {
+      type: "object",
+      properties: {
+        connection_oauth_github: {
+          type: "object",
+          properties: {
+            enabled: { type: "boolean" },
+            client_id: { type: "string" },
+            client_secret: { type: "string", "x-clerk-sensitive": true },
+          },
+        },
+      },
+    }).supported;
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: {
+          ...activeSnapshot,
+          oauthProviderDescriptors: [github!],
+          frontendApiUrl: "https://clerk.example.com",
+        },
+      },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.state).toBe("oauth_pending");
+    expect(report.oauth.setup).toHaveLength(1);
+    expect(report.oauth.setup[0]).toMatchObject({
+      provider: "github",
+      configKey: "connection_oauth_github",
+      redirectUri: "https://clerk.example.com/v1/oauth_callback",
+      authorizedOrigins: ["https://example.com", "https://www.example.com"],
+      fields: [
+        { key: "client_id", label: "Client ID", secret: false },
+        { key: "client_secret", label: "Client Secret", secret: true },
+      ],
+    });
+    expect(report.oauth.setup[0]!.command).toBe(
+      `clerk config patch --instance prod --json '{"connection_oauth_github":{"enabled":true,"client_id":"<client_id>","client_secret":"<client_secret>"}}' --yes`,
+    );
+    expect(report.nextAction).toContain("oauth.setup");
+  });
+
+  test("not_started next action tells the agent to run clerk deploy --domain", () => {
+    const report = buildDeployStatusReport({ kind: "not_started" }, null);
+
+    expect(report.nextAction).toContain("clerk deploy --domain <domain>");
+    expect(report.nextAction).toContain("clerk deploy status");
+    expect(report.nextAction).not.toContain("human terminal");
+  });
+
+  test("domain_pending with only SSL pending does not ask for DNS records", () => {
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: { ...activeSnapshot, completedOAuthProviders: ["google", "github"] },
+      },
+      { verified: false, status: { dns: true, ssl: false, mail: true } },
+    );
+
+    expect(report.pendingDnsRecords).toEqual([]);
+    expect(report.nextAction).toContain(
+      "SSL still provisioning for example.com. Nothing to add at the DNS provider",
+    );
+    expect(report.nextAction).not.toContain("pendingDnsRecords");
   });
 });

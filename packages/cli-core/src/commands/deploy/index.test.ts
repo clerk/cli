@@ -469,7 +469,7 @@ describe("deploy", () => {
   });
 
   describe("agent mode", () => {
-    test("not_started emits JSON handoff telling human to run wizard", async () => {
+    test("not_started tells the agent to run clerk deploy --domain", async () => {
       mockIsAgent.mockReturnValue(true);
       await linkedProject();
 
@@ -477,7 +477,7 @@ describe("deploy", () => {
 
       const payload = JSON.parse(captured.out);
       expect(payload.state).toBe("not_started");
-      expect(payload.nextAction).toContain("clerk deploy");
+      expect(payload.nextAction).toContain("clerk deploy --domain");
       expect(payload.nextAction).toContain("clerk deploy status");
     });
 

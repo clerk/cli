@@ -222,6 +222,7 @@ describe("deploy status", () => {
       type: "CNAME",
       host: "clerk.example.com",
       value: "frontend-api.clerk.services",
+      required: true,
     });
   });
 
@@ -351,7 +352,7 @@ describe("deploy status", () => {
 
     const output = stripAnsi(captured.err);
     expect(output).toContain(
-      "SSL still provisioning for example.com. Re-run `clerk deploy status` in a few minutes, DNS propagation can take time. Visit the Clerk Dashboard domains page to monitor its status there: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+      "SSL still provisioning for example.com. Nothing to add at the DNS provider; re-run `clerk deploy status --wait` in a few minutes. Watch DNS and SSL in the Clerk Dashboard: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
     );
     expect(output).not.toContain("Ask the user to visit");
     expect(output).not.toContain("offer to open it");

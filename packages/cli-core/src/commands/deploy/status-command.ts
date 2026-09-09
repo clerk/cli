@@ -175,7 +175,7 @@ function renderHuman(report: DeployStatusReport): void {
 
 function formatHumanNextAction(nextAction: string): string {
   return nextAction.replace(
-    /Ask the user to visit the Clerk Dashboard domains page, or offer to open it: (https:\/\/\S+)/,
-    "Visit the Clerk Dashboard domains page to monitor its status there: $1",
+    /Dashboard fallback, only if the user asks to watch DNS and SSL there: (https:\/\/\S+)/,
+    "Watch DNS and SSL in the Clerk Dashboard: $1",
   );
 }
