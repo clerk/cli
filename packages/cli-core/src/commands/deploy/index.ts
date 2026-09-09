@@ -157,7 +157,8 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
   log.blank();
   log.info(INTRO_PREAMBLE);
   log.blank();
-  for (const line of printPlan(ctx.appLabel, buildNewDeployPlan(oauthProviders))) {
+  const clone = options.clone !== false;
+  for (const line of printPlan(ctx.appLabel, buildNewDeployPlan(oauthProviders, clone))) {
     log.info(line);
   }
   log.blank();
@@ -178,7 +179,7 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
   );
   if (!shouldCreateProductionInstance) return;
 
-  const productionOrExists = await createProductionInstance(ctx, domain);
+  const productionOrExists = await createProductionInstance(ctx, domain, { clone });
   if (productionOrExists === "exists") {
     log.blank();
     log.info(
@@ -326,9 +327,17 @@ function warnUnsupportedOAuthProviders(count: number): void {
   log.blank();
 }
 
-function buildNewDeployPlan(oauthProviders: readonly OAuthProviderDescriptor[]): DeployPlanStep[] {
+function buildNewDeployPlan(
+  oauthProviders: readonly OAuthProviderDescriptor[],
+  clone: boolean,
+): DeployPlanStep[] {
   return [
-    { label: "Create production instance", status: "pending" },
+    {
+      label: clone
+        ? "Create production instance"
+        : "Create a blank production instance (development settings are not copied)",
+      status: "pending",
+    },
     { label: "Choose a production domain you own", status: "pending" },
     ...oauthProviders.map((descriptor) => ({
       label: `Configure ${descriptor.label} OAuth credentials`,
@@ -360,17 +369,48 @@ function buildLiveDeployPlan(snapshot: LiveDeploySnapshot): DeployPlanStep[] {
 async function createProductionInstance(
   ctx: DeployContext,
   domain: string,
+  options: { clone: boolean },
 ): Promise<ProductionInstanceResponse | "exists"> {
   return withSpinner("Creating production instance...", async () => {
-    return mapDeployError<ProductionInstanceResponse | "exists">(
-      apiCreateProductionInstance(ctx.appId, {
-        domain,
-        environment_type: "production",
-        clone_instance_id: ctx.developmentInstanceId,
-      }),
-      { onProductionInstanceExists: async () => "exists" },
-    );
+    try {
+      return await mapDeployError<ProductionInstanceResponse | "exists">(
+        apiCreateProductionInstance(ctx.appId, {
+          domain,
+          environment_type: "production",
+          ...(options.clone && { clone_instance_id: ctx.developmentInstanceId }),
+        }),
+        { onProductionInstanceExists: async () => "exists" },
+      );
+    } catch (error) {
+      if (
+        error instanceof CliError &&
+        error.code === ERROR_CODE.PLAN_INSUFFICIENT &&
+        options.clone
+      ) {
+        throw attachNoCloneExamples(error, domain);
+      }
+      throw error;
+    }
   });
+}
+
+/**
+ * The plan's clone feature gate only fires when development settings are
+ * copied, so retrying without cloning is the one fix the CLI itself can offer.
+ */
+function attachNoCloneExamples(error: CliError, domain: string): CliError {
+  error.examples = [
+    {
+      command: `clerk deploy --domain ${domain} --no-clone`,
+      description: "Create a blank production instance without copying development settings",
+    },
+    {
+      command: "clerk config pull --instance dev",
+      description:
+        "See which development settings enable the listed features, disable them with `clerk config patch --instance dev`, then retry",
+    },
+  ];
+  return error;
 }
 
 async function confirmProductionInstanceCreation(

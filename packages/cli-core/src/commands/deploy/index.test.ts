@@ -2279,5 +2279,47 @@ describe("deploy", () => {
       expect(mockCreateProductionInstance).not.toHaveBeenCalled();
       expect(stripAnsi(captured.err)).toContain("--domain other.com was ignored");
     });
+
+    test("--no-clone omits clone_instance_id and names the blank instance in the plan", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockSelect.mockRejectedValueOnce(promptExitError());
+
+      await runDeployUntilPause({ domain: "example.com", yes: true, clone: false });
+
+      expect(mockCreateProductionInstance).toHaveBeenCalledTimes(1);
+      expect(mockCreateProductionInstance).toHaveBeenCalledWith("app_xyz789", {
+        domain: "example.com",
+        environment_type: "production",
+      });
+      expect(stripAnsi(captured.err)).toContain(
+        "Create a blank production instance (development settings are not copied)",
+      );
+    });
+
+    test("plan-insufficient errors carry a --no-clone example", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockCreateProductionInstance.mockRejectedValueOnce(
+        new PlapiError(
+          402,
+          JSON.stringify({
+            errors: [
+              {
+                code: "unsupported_subscription_plan_features",
+                message: "Unsupported plan features",
+                meta: { unsupported_features: ["app:allowlist"] },
+              },
+            ],
+          }),
+        ),
+      );
+
+      const error = await runDeploy({ domain: "example.com", yes: true }).catch((e) => e);
+
+      expect(error).toBeInstanceOf(CliError);
+      expect(error.code).toBe(ERROR_CODE.PLAN_INSUFFICIENT);
+      expect(error.examples?.[0]?.command).toBe("clerk deploy --domain example.com --no-clone");
+    });
   });
 });
