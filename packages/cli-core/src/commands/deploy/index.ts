@@ -238,7 +238,13 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
     completedOAuthProviders,
   });
 
-  await finishDeploy(ctx, productionDomain, completedOAuthProviders, dnsStatus);
+  await finishDeploy(
+    ctx,
+    productionDomain,
+    completedOAuthProviders,
+    pendingOAuthProviders(operationState.oauthProviders, completedOAuthProviders),
+    dnsStatus,
+  );
 }
 
 async function reconcileExistingDeploy(ctx: DeployContext, options: DeployOptions): Promise<void> {
@@ -271,7 +277,7 @@ async function reconcileExistingDeploy(ctx: DeployContext, options: DeployOption
 
   if (!snapshot.pending) {
     log.info("No deploy actions remain.");
-    await finishDeploy(ctx, snapshot.domain, snapshot.completedOAuthProviders, "verified");
+    await finishDeploy(ctx, snapshot.domain, snapshot.completedOAuthProviders, [], "verified");
     return;
   }
 
@@ -309,7 +315,13 @@ async function reconcileExistingDeploy(ctx: DeployContext, options: DeployOption
     );
   }
 
-  await finishDeploy(ctx, snapshot.domain, snapshot.completedOAuthProviders, dnsStatus);
+  await finishDeploy(
+    ctx,
+    snapshot.domain,
+    snapshot.completedOAuthProviders,
+    pendingOAuthProviders(snapshot.oauthProviders, snapshot.completedOAuthProviders),
+    dnsStatus,
+  );
 }
 
 type DnsVerificationResult = "verified" | "pending";
@@ -582,10 +594,10 @@ export async function writeZoneFile(
 }
 
 /**
- * Configures every provider in `descriptors`, returning the full set of
- * completed providers. If the user skips a provider or interrupts the prompt,
- * this pauses by throwing `DeployPausedError` rather than returning a partial
- * list, so a successful return always means OAuth is fully complete.
+ * Configures every provider in `descriptors` and returns the completed set.
+ * Skipping a provider leaves it pending: the deploy carries on to DNS
+ * verification and reports it. Only an interrupted prompt pauses the deploy by
+ * throwing `DeployPausedError`.
  */
 async function runOAuthSetup(
   ctx: DeployContext,
@@ -599,7 +611,7 @@ async function runOAuthSetup(
     log.blank();
   }
 
-  for (const descriptor of descriptors) {
+  for (const [index, descriptor] of descriptors.entries()) {
     if (completed.has(descriptor.provider)) continue;
     try {
       const productionInstanceId =
@@ -617,12 +629,12 @@ async function runOAuthSetup(
         productionInstanceId,
         state.frontendApiUrl,
       );
-      if (!saved) {
-        throw deployPausedError({
-          ...state,
-          pending: { type: "oauth", provider: descriptor.provider },
-          completedOAuthProviders: [...completed],
-        });
+      if (saved) {
+        completed.add(descriptor.provider);
+      } else {
+        log.info(
+          `Skipped ${descriptor.label}. Add credentials later with \`clerk deploy\` or \`clerk config patch --instance prod\`.`,
+        );
       }
     } catch (error) {
       if (error instanceof UserAbortError) {
@@ -637,13 +649,16 @@ async function runOAuthSetup(
       }
       throw error;
     }
-    completed.add(descriptor.provider);
-    if (descriptors.some((nextDescriptor) => !completed.has(nextDescriptor.provider))) {
+    if (descriptors.slice(index + 1).some((next) => !completed.has(next.provider))) {
       log.blank();
     }
   }
 
   return [...completed];
+}
+
+function pendingOAuthProviders(all: readonly string[], completed: readonly string[]): string[] {
+  return all.filter((provider) => !completed.includes(provider));
 }
 
 async function collectAndSaveOAuthCredentials(
@@ -703,6 +718,7 @@ async function finishDeploy(
   ctx: DeployContext,
   domain: string,
   completedOAuthProviders: readonly string[],
+  pendingProviders: readonly string[],
   dnsStatus: DnsVerificationResult,
 ): Promise<void> {
   log.blank();
@@ -710,6 +726,7 @@ async function finishDeploy(
     domain,
     completedOAuthProviders.map((provider) => providerLabel(provider)),
     dnsStatus,
+    pendingProviders.map((provider) => providerLabel(provider)),
   )) {
     log.info(line);
   }

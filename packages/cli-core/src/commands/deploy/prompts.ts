@@ -103,7 +103,7 @@ export async function chooseOAuthCredentialAction(
     });
   }
   choices.push({
-    name: "Skip for now and run `clerk deploy` again later",
+    name: "Skip for now (add credentials later)",
     value: "skip",
   });
 

@@ -549,9 +549,10 @@ describe("deploy", () => {
   describe("human mode", () => {
     function mockHumanFlow() {
       mockIsAgent.mockReturnValue(false);
-      // Proceed → create instance → show DNS records → pause at OAuth.
+      // Proceed → create instance → show DNS records → pause at OAuth. Skipping a
+      // provider no longer pauses, so the pause comes from an interrupted prompt.
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-      mockSelect.mockResolvedValueOnce("skip");
+      mockSelect.mockRejectedValueOnce(promptExitError());
       mockInput.mockResolvedValueOnce("example.com");
     }
 
@@ -992,7 +993,7 @@ describe("deploy", () => {
         .mockResolvedValueOnce(true) // Proceed?
         .mockResolvedValueOnce(true) // Create production instance?
         .mockResolvedValueOnce(false); // Export DNS records as a BIND zone file?
-      mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("skip");
+      mockSelect.mockRejectedValueOnce(promptExitError()); // pause at the OAuth prompt
       mockInput.mockResolvedValueOnce("example.com");
 
       await runDeployUntilPause();
@@ -1931,23 +1932,20 @@ describe("deploy", () => {
       expect(err).toContain("Production ready at https://example.com");
     });
 
-    test("OAuth setup can pause and resume at the pending provider", async () => {
+    test("skipping OAuth continues to DNS verification and reports the provider as pending", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       await runDnsHandoff();
+      // Only the OAuth prompt fires: the resume fixture's domain status is already
+      // complete, so no DNS verification prompt follows.
       mockSelect.mockResolvedValueOnce("skip");
 
-      let pauseError: CliError | undefined;
-      try {
-        await runDeploy({});
-      } catch (caught) {
-        pauseError = caught as CliError;
-      }
-      expect(pauseError?.message).toContain("Deploy paused at: Google OAuth credential setup");
-      expect(pauseError?.message).toContain("Run `clerk deploy` again");
-      expect(pauseError?.exitCode).toBe(EXIT_CODE.GENERAL);
-      const pausedErr = stripAnsi(captured.err);
-      expect(pausedErr).toContain("Paused");
+      await runDeploy({});
+
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+      const skippedErr = stripAnsi(captured.err);
+      expect(skippedErr).toContain("Production ready at https://example.com");
+      expect(skippedErr).toContain("Pending     Google");
 
       captured.clear();
       mockConfirm.mockReset();
@@ -1967,7 +1965,7 @@ describe("deploy", () => {
       expect(err).toContain("Production ready at https://example.com");
     });
 
-    test("Pausing OAuth mid-loop infers earlier completed providers from production config", async () => {
+    test("skipping one provider mid-loop saves the others and resumes at the skipped one", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockFetchInstanceConfig.mockResolvedValue({
@@ -1980,23 +1978,22 @@ describe("deploy", () => {
           connection_oauth_github: basicOAuthSchema,
         }),
       );
-      // Proceed → create prod → enter google creds → skip github before DNS verification.
+      // Proceed → create prod → enter google creds → skip github → skip DNS verification.
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
       mockInput
         .mockResolvedValueOnce("example.com")
         .mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
-      mockSelect.mockResolvedValueOnce("have-credentials").mockResolvedValueOnce("skip");
+      mockSelect
+        .mockResolvedValueOnce("have-credentials")
+        .mockResolvedValueOnce("skip")
+        .mockResolvedValueOnce("skip");
       mockPassword.mockResolvedValueOnce("google-secret");
       mockPatchInstanceConfig.mockResolvedValueOnce({});
 
-      let pauseError: CliError | undefined;
-      try {
-        await runDeploy({});
-      } catch (caught) {
-        pauseError = caught as CliError;
-      }
-      expect(pauseError?.message).toContain("Deploy paused at: GitHub OAuth credential setup");
-      expect(pauseError?.exitCode).toBe(EXIT_CODE.GENERAL);
+      await runDeploy({});
+
+      expect(mockPatchInstanceConfig).toHaveBeenCalledTimes(1);
+      expect(stripAnsi(captured.err)).toContain("Pending     GitHub");
       mockLiveProduction({
         developmentConfig: {
           connection_oauth_google: { enabled: true },
