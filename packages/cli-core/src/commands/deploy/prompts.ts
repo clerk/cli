@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { throwUsageError } from "../../lib/errors.ts";
 import { select } from "../../lib/listage.ts";
 import { confirm, password, text } from "../../lib/prompts.ts";
 import { type OAuthPromptField, type OAuthProviderDescriptor } from "./providers.ts";
@@ -42,6 +43,13 @@ export function validateDomain(value: string | undefined): true | string {
     return `${domain} looks like a provider domain (e.g. *.vercel.app, *.clerk.app). Production needs a domain you own. See https://clerk.com/docs/guides/development/deployment/production`;
   }
   return true;
+}
+
+/** Validates a `--domain` flag value with the same rules as the prompt, as a usage error. */
+export function assertValidDomain(value: string): string {
+  const verdict = validateDomain(value);
+  if (verdict !== true) throwUsageError(verdict);
+  return value.trim();
 }
 
 export async function confirmCreateProductionInstance(): Promise<boolean> {

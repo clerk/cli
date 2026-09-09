@@ -2230,5 +2230,54 @@ describe("deploy", () => {
       const config = await readConfig();
       expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_recovered");
     });
+
+    test("--domain skips the domain prompt and creates the instance for that domain", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockSelect.mockRejectedValueOnce(promptExitError());
+
+      await runDeployUntilPause({ domain: "example.com" });
+
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockCreateProductionInstance).toHaveBeenCalledWith("app_xyz789", {
+        domain: "example.com",
+        environment_type: "production",
+        clone_instance_id: "ins_dev_123",
+      });
+    });
+
+    test("--yes skips the proceed, create, and zone-file confirmations", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockSelect.mockRejectedValueOnce(promptExitError());
+
+      await runDeployUntilPause({ domain: "example.com", yes: true });
+
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockCreateProductionInstance).toHaveBeenCalledTimes(1);
+    });
+
+    test("--domain rejects a provider domain with a usage error", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+
+      await expect(runDeploy({ domain: "my-app.vercel.app" })).rejects.toMatchObject({
+        exitCode: EXIT_CODE.USAGE,
+      });
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+    });
+
+    test("--domain is ignored with a warning when production already exists", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockIsAgent.mockReturnValue(false);
+
+      await runDeploy({ domain: "other.com" });
+
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect(stripAnsi(captured.err)).toContain("--domain other.com was ignored");
+    });
   });
 });
