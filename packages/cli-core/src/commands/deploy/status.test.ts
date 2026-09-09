@@ -201,6 +201,7 @@ describe("buildDeployStatusReport", () => {
     cnameTargets: [
       { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
       { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
+      { host: "accounts.example.com", value: "accounts.clerk.services", required: false },
     ],
     domainComplete: false,
     componentStatus: { dns: false, ssl: false, mail: false },
@@ -252,6 +253,12 @@ describe("buildDeployStatusReport", () => {
       host: "clerk.example.com",
       value: "frontend-api.clerk.services",
       required: true,
+    });
+    expect(report.pendingDnsRecords).toContainEqual({
+      type: "CNAME",
+      host: "accounts.example.com",
+      value: "accounts.clerk.services",
+      required: false,
     });
     expect(report.oauth.pending).toEqual(["github"]);
   });
@@ -392,5 +399,36 @@ describe("buildDeployStatusReport", () => {
       "SSL still provisioning for example.com. Nothing to add at the DNS provider",
     );
     expect(report.nextAction).not.toContain("pendingDnsRecords");
+  });
+
+  test("oauth_pending setup guide carries the provider note as plain text", () => {
+    const [google] = buildOAuthProviderDescriptors(["google"], {
+      type: "object",
+      properties: {
+        connection_oauth_google: {
+          type: "object",
+          properties: {
+            enabled: { type: "boolean" },
+            client_id: { type: "string" },
+            client_secret: { type: "string", "x-clerk-sensitive": true },
+          },
+        },
+      },
+    }).supported;
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: {
+          ...activeSnapshot,
+          oauthProviders: ["google"],
+          oauthProviderDescriptors: [google!],
+          completedOAuthProviders: [],
+        },
+      },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.oauth.setup[0]!.note).toContain("Set the OAuth consent screen");
+    expect(report.oauth.setup[0]!.note).not.toContain(String.fromCharCode(27));
   });
 });

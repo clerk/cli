@@ -709,7 +709,7 @@ describe("env pull", () => {
     expect(await Bun.file(join(tempDir, ".env")).exists()).toBe(false);
   });
 
-  test("--print cannot be combined with --file", async () => {
+  test("--print and --file cannot be combined", async () => {
     await setProfile(tempDir, {
       workspaceId: "org_1",
       appId: "app_1",
@@ -717,7 +717,7 @@ describe("env pull", () => {
     });
 
     await expect(runEnvPull({ file: ".env", print: true })).rejects.toThrow(
-      "--print cannot be combined with --file",
+      "--print and --file cannot be combined",
     );
   });
 

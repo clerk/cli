@@ -1,4 +1,3 @@
-import { stripAnsi } from "../../lib/color.ts";
 import { resolveProfile } from "../../lib/config.ts";
 import { PlapiError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
@@ -487,7 +486,7 @@ function buildOAuthSetupGuides(
         redirectUri,
         authorizedOrigins,
         docsUrl: descriptor.docsUrl,
-        note: descriptor.gotcha ? stripAnsi(descriptor.gotcha) : null,
+        note: descriptor.gotcha ?? null,
         command: `clerk config patch --instance prod --json '${JSON.stringify(payload)}' --yes`,
       };
     });
@@ -512,9 +511,11 @@ function deployNextAction(
   if (state === "complete") {
     return (
       `Production is deployed and verified at https://${domain}. ` +
-      "Put the production keys on the hosting provider: run `clerk env pull --instance prod --print` " +
-      "and add each line as a production environment variable (for Vercel: " +
-      "`printf '%s' \"$VALUE\" | vercel env add NAME production`), then redeploy the app. " +
+      "Put the production keys on the hosting provider without reading them: " +
+      "`clerk env pull --instance prod --print | while IFS='=' read -r key value; do " +
+      'printf \'%s\' "$value" | vercel env add "$key" production; done` ' +
+      "(for a provider without a CLI, run `clerk env pull --instance prod --print` and add each " +
+      "line as a production environment variable), then redeploy the app. " +
       `Keep development keys in local env files.${domainsAction}`
     );
   }
@@ -542,9 +543,16 @@ function deployNextAction(
   }
 
   if (pendingDnsRecordCount === 0) {
+    if (componentStatus.dns && componentStatus.mail) {
+      return (
+        `${pendingComponents.join(", ")} still provisioning for ${domain}. ` +
+        `Nothing to add at the DNS provider; re-run \`clerk deploy status --wait\` in a few minutes.${domainsAction}`
+      );
+    }
+    // DNS-backed checks are pending but the API returned no CNAME targets.
     return (
-      `${pendingComponents.join(", ")} still provisioning for ${domain}. ` +
-      `Nothing to add at the DNS provider; re-run \`clerk deploy status --wait\` in a few minutes.${domainsAction}`
+      `${pendingComponents.join(", ")} still provisioning for ${domain}, but Clerk returned no CNAME records to add. ` +
+      `Read them from the Clerk Dashboard domains page, then re-run \`clerk deploy status --wait\`.${domainsAction}`
     );
   }
 

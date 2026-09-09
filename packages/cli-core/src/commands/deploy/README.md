@@ -37,7 +37,7 @@ clerk deploy status --mode agent --wait         # Agent verification with retryi
 In agent mode (`--mode agent`, `CLERK_MODE=agent`, or a non-TTY context) `clerk deploy` never prompts and emits one JSON report via `log.data` on stdout.
 
 - **Without `--domain`** the run is read-only: it resolves the linked app, production instance, domain, domain status snapshot, and OAuth completeness, but does not mutate config, trigger a DNS check, or poll.
-- **With `--domain <domain>`** the run creates the production instance (cloning development unless `--no-clone` is set), persists `instances.production` in the profile, and then emits the same report. If a production instance already exists nothing is created, and a differing `--domain` is reported under `warnings`. Hosting-provider domains such as `*.vercel.app` are rejected with a usage error before any API call. `--no-clone` without `--domain` is a usage error.
+- **With `--domain <domain>`** the run creates the production instance (cloning development unless `--no-clone` is set), persists `instances.production` in the profile, and then emits the same report. If a production instance already exists nothing is created, and a differing `--domain` or an unused `--no-clone` is reported under `warnings`. Hosting-provider domains such as `*.vercel.app` are rejected with a usage error before any API call. `--no-clone` without `--domain` is a usage error.
 - **`--zone-file <path>`** writes the DNS records as a BIND zone file when the domain has records; otherwise it is ignored with an entry in `warnings`.
 
 The report is the `clerk deploy status` report plus:

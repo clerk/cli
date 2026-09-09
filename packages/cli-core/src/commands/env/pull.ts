@@ -59,7 +59,7 @@ async function resolveTargetFile(
 
 export async function pull(options: EnvPullOptions): Promise<void> {
   if (options.print && options.file) {
-    throwUsageError("--print cannot be combined with --file.");
+    throwUsageError("--print and --file cannot be combined.");
   }
 
   await withGutter("Pulling environment variables", async () => {
@@ -99,8 +99,8 @@ export async function pull(options: EnvPullOptions): Promise<void> {
         // .gitignore templates don't cover .env, so skip writing it entirely
         // rather than leaving a live credential in a tracked file. --print
         // writes nothing, so it always includes the key.
-        const framework = await detectFramework(cwd);
-        const includeSecretKey = options.print || isNpmFramework(framework ?? {});
+        const includeSecretKey =
+          options.print || isNpmFramework((await detectFramework(cwd)) ?? {});
 
         return {
           [publishableKeyName]: matched.publishable_key,

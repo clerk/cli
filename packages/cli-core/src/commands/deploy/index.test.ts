@@ -1,4 +1,8 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { Command } from "@commander-js/extra-typings";
+// Installs Command.prototype.setExamples, which registerDeploy relies on.
+import "../../lib/help.ts";
+import type { Program } from "../../cli-program.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
@@ -69,7 +73,7 @@ mock.module("../../lib/open.ts", () => ({
 }));
 
 const { _setConfigDir, readConfig, setProfile } = await import("../../lib/config.ts");
-const { deploy } = await import("./index.ts");
+const { deploy, registerDeploy } = await import("./index.ts");
 const { providerSetupIntro } = await import("./providers.ts");
 const { collectCustomDomain } = await import("./prompts.ts");
 
@@ -693,13 +697,130 @@ describe("deploy", () => {
       expect(captured.out).toBe("");
       expect(mockSelect).not.toHaveBeenCalled();
     });
+
+    test("--domain with an empty value is a usage error", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+
+      await expect(runDeploy({ domain: "" })).rejects.toMatchObject({ exitCode: EXIT_CODE.USAGE });
+      expect(captured.out).toBe("");
+    });
+
+    test("--domain recovers from 409 production_instance_exists and resumes", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockCreateProductionInstance.mockReset();
+      mockCreateProductionInstance.mockRejectedValueOnce(
+        new PlapiError(
+          409,
+          JSON.stringify({ errors: [{ code: "production_instance_exists", message: "exists" }] }),
+        ),
+      );
+      // The first application read (resolveDeployContext) sees no production
+      // instance, so the create is attempted and hits the 409.
+      mockFetchApplication.mockResolvedValueOnce({
+        application_id: "app_xyz789",
+        name: "my-saas-app",
+        instances: [
+          {
+            instance_id: "ins_dev_123",
+            environment_type: "development",
+            publishable_key: "pk_test_123",
+          },
+        ],
+      });
+      mockLiveProduction({ instanceId: "ins_prod_recovered", domain: "example.com" });
+
+      await runDeploy({ domain: "example.com" });
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.created).toBe(false);
+      expect(payload.productionInstanceId).toBe("ins_prod_recovered");
+      expect(payload.state).not.toBe("not_started");
+      expect(payload.warnings).toContainEqual(
+        expect.stringContaining("already existed; resumed it"),
+      );
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_recovered");
+    });
+
+    test("--domain and --no-clone are reported as ignored while the domain is still provisioning", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+
+      await runDeploy({ domain: "other.com", clone: false });
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.state).toBe("domain_provisioning");
+      expect(payload.created).toBe(false);
+      expect(payload.warnings).toContainEqual(
+        expect.stringContaining("--domain other.com was ignored"),
+      );
+      expect(payload.warnings).toContainEqual(expect.stringContaining("--no-clone was ignored"));
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+    });
+
+    test("--zone-file is reported as ignored when the domain has no records yet", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockLiveProduction({ instanceId: "ins_prod_mock", domain: "example.com", cnameTargets: [] });
+
+      await runDeploy({ domain: "example.com", zoneFile: "records.zone" });
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.zoneFile).toBeUndefined();
+      expect(payload.warnings).toContainEqual(expect.stringContaining("--zone-file was ignored"));
+      expect(
+        writeSpy.mock.calls.some(([destination]: unknown[]) =>
+          String(destination).endsWith("records.zone"),
+        ),
+      ).toBe(false);
+    });
+
+    test("flags on `clerk deploy` reach the default run action through the parser", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      stubAgentCreate();
+      const program = new Command()
+        .name("clerk")
+        .option("--input-json <json>")
+        .option("--mode <mode>")
+        .option("--verbose");
+      registerDeploy(program as unknown as Program);
+
+      await program.parseAsync(
+        ["deploy", "--domain", "example.com", "--no-clone", "--zone-file", "records.zone"],
+        { from: "user" },
+      );
+
+      expect(mockCreateProductionInstance).toHaveBeenCalledWith("app_xyz789", {
+        domain: "example.com",
+        environment_type: "production",
+      });
+      expect(JSON.parse(captured.out).zoneFile).toMatch(/records\.zone$/);
+    });
+
+    test("deploy-only flags after `status` are a usage error", async () => {
+      mockIsAgent.mockReturnValue(true);
+      const program = new Command().name("clerk").option("--mode <mode>");
+      registerDeploy(program as unknown as Program);
+
+      await expect(
+        program.parseAsync(["deploy", "status", "--domain", "example.com"], { from: "user" }),
+      ).rejects.toMatchObject({ exitCode: EXIT_CODE.USAGE });
+    });
   });
 
   describe("human mode", () => {
     function mockHumanFlow() {
       mockIsAgent.mockReturnValue(false);
-      // Proceed → create instance → show DNS records → pause at OAuth. Skipping a
-      // provider no longer pauses, so the pause comes from an interrupted prompt.
+      // Proceed → create instance → show DNS records → the interrupted OAuth prompt
+      // pauses the deploy (skipping a provider does not pause).
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
       mockSelect.mockRejectedValueOnce(promptExitError());
       mockInput.mockResolvedValueOnce("example.com");
@@ -2483,6 +2604,21 @@ describe("deploy", () => {
       expect(String(zoneWrite?.[1])).toContain(
         "clerk.example.com.\tIN\tCNAME\tfrontend-api.clerk.services.",
       );
+      expect(stripAnsi(captured.err)).toContain("Wrote ");
+    });
+
+    test("--zone-file writes the zone file on a resumed deploy whose DNS is already verified", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockIsAgent.mockReturnValue(false);
+
+      await runDeploy({ zoneFile: "records.zone" });
+
+      const zoneWrite = writeSpy.mock.calls.find(([destination]: unknown[]) =>
+        String(destination).endsWith("records.zone"),
+      );
+      expect(zoneWrite).toBeDefined();
       expect(stripAnsi(captured.err)).toContain("Wrote ");
     });
   });

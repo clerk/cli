@@ -72,7 +72,7 @@ import {
   type LiveDeploySnapshot,
 } from "./status.ts";
 
-export type DeployOptions = {
+type DeployOptions = {
   /** Production domain; skips the prompt and, in agent mode, authorizes creation. */
   domain?: string;
   /** Commander sets `clone: false` for `--no-clone`; absent means clone development. */
@@ -82,9 +82,12 @@ export type DeployOptions = {
 };
 
 export async function deploy(options: DeployOptions = {}) {
-  const resolved = options.domain
-    ? { ...options, domain: assertValidDomain(options.domain) }
-    : options;
+  // Validate whenever the flag was passed: `--domain ""` must fail, not fall
+  // back to the prompt (human) or a read-only report (agent).
+  const resolved =
+    options.domain !== undefined
+      ? { ...options, domain: assertValidDomain(options.domain) }
+      : options;
 
   if (isAgent()) {
     await runAgentDeploy(resolved);
@@ -122,7 +125,7 @@ export async function deploy(options: DeployOptions = {}) {
   }
 }
 
-export type DeployRunReport = DeployStatusReport & {
+type DeployRunReport = DeployStatusReport & {
   /** True when this run created the production instance. */
   created: boolean;
   zoneFile?: string;
@@ -169,10 +172,12 @@ async function runAgentDeploy(options: DeployOptions): Promise<void> {
   }
 
   const state = await resolveDeployState(ctx);
-  if (domain && !created && state.kind === "active" && state.snapshot.domain !== domain) {
-    warnings.push(
-      `A production instance already exists for ${state.snapshot.domain}; --domain ${domain} was ignored.`,
-    );
+  if (domain && !created && ctx.productionInstanceId) {
+    const liveDomain = state.kind === "active" ? state.snapshot.domain : undefined;
+    if (liveDomain !== domain) warnings.push(domainIgnoredWarning(liveDomain, domain));
+    if (options.clone === false) {
+      warnings.push("A production instance already exists; --no-clone was ignored.");
+    }
   }
 
   let zoneFile: string | undefined;
@@ -181,7 +186,7 @@ async function runAgentDeploy(options: DeployOptions): Promise<void> {
     if (state.kind === "active" && targets.length > 0) {
       zoneFile = await writeZoneFile(options.zoneFile, state.snapshot.domain, targets);
     } else {
-      warnings.push("No DNS records to export yet; --zone-file was ignored.");
+      warnings.push(ZONE_FILE_NO_RECORDS);
     }
   }
 
@@ -321,9 +326,7 @@ async function reconcileExistingDeploy(ctx: DeployContext, options: DeployOption
   }
 
   if (options.domain && options.domain !== snapshot.domain) {
-    log.warn(
-      `A production instance already exists for ${snapshot.domain}; --domain ${options.domain} was ignored.`,
-    );
+    log.warn(domainIgnoredWarning(snapshot.domain, options.domain));
   }
 
   log.blank();
@@ -333,6 +336,12 @@ async function reconcileExistingDeploy(ctx: DeployContext, options: DeployOption
   log.blank();
 
   warnUnsupportedOAuthProviders(snapshot.unsupportedOAuthProviderCount);
+
+  // A verified domain skips the DNS handoff, so honor --zone-file here.
+  if (snapshot.domainComplete && options.zoneFile) {
+    await exportZoneFile(options.zoneFile, snapshot.domain, snapshot.cnameTargets ?? []);
+    log.blank();
+  }
 
   if (!snapshot.pending) {
     log.info("No deploy actions remain.");
@@ -626,23 +635,33 @@ async function offerBindZoneExport(
   cnameTargets: readonly CnameTarget[] | undefined,
   options: Pick<DeployOptions, "zoneFile" | "yes">,
 ): Promise<void> {
-  if (!cnameTargets || cnameTargets.length === 0) {
-    if (options.zoneFile) log.warn("No DNS records to export yet; --zone-file was ignored.");
-    return;
-  }
+  const targets = cnameTargets ?? [];
   if (options.zoneFile) {
-    log.success(`Wrote ${await writeZoneFile(options.zoneFile, domain, cnameTargets)}`);
+    await exportZoneFile(options.zoneFile, domain, targets);
     return;
   }
   // The prompt's default answer is "no", so --yes keeps that answer.
-  if (options.yes) return;
+  if (targets.length === 0 || options.yes) return;
   const accepted = await confirmExportBindZone();
   if (!accepted) return;
-  log.success(`Wrote ${await writeZoneFile(`clerk-${domain}.zone`, domain, cnameTargets)}`);
+  log.success(`Wrote ${await writeZoneFile(`clerk-${domain}.zone`, domain, targets)}`);
+}
+
+/** Human-mode `--zone-file`: write when there are records, say so when there are none. */
+async function exportZoneFile(
+  filePath: string,
+  domain: string,
+  targets: readonly CnameTarget[],
+): Promise<void> {
+  if (targets.length === 0) {
+    log.warn(ZONE_FILE_NO_RECORDS);
+    return;
+  }
+  log.success(`Wrote ${await writeZoneFile(filePath, domain, targets)}`);
 }
 
 /** Writes the BIND zone fragment for `targets` and returns the absolute path. */
-export async function writeZoneFile(
+async function writeZoneFile(
   filePath: string,
   domain: string,
   targets: readonly CnameTarget[],
@@ -718,6 +737,13 @@ async function runOAuthSetup(
 
 function pendingOAuthProviders(all: readonly string[], completed: readonly string[]): string[] {
   return all.filter((provider) => !completed.includes(provider));
+}
+
+const ZONE_FILE_NO_RECORDS = "No DNS records to export yet; --zone-file was ignored.";
+
+function domainIgnoredWarning(existing: string | undefined, requested: string): string {
+  const where = existing ? ` for ${existing}` : "";
+  return `A production instance already exists${where}; --domain ${requested} was ignored.`;
 }
 
 async function collectAndSaveOAuthCredentials(
@@ -823,7 +849,7 @@ export function registerDeploy(program: Program): void {
       { command: "clerk deploy", description: "Interactive production deploy wizard" },
       {
         command: "clerk deploy --domain example.com --yes",
-        description: "Create the production instance for a domain you own without prompts",
+        description: "Skip the domain prompt and the proceed/create confirmations",
       },
       {
         command: "clerk deploy --domain example.com --mode agent",
@@ -845,5 +871,15 @@ export function registerDeploy(program: Program): void {
     .command("status")
     .description("Show production deploy status (read-only)")
     .option("--wait", "Wait for DNS, SSL, and email DNS verification with retries")
-    .action(deployStatus);
+    .action(async (options, cmd) => {
+      // Commander also accepts the parent's flags after `status`; refuse them
+      // instead of silently dropping them.
+      const { domain, zoneFile, yes, clone } = cmd.optsWithGlobals() as DeployOptions;
+      if (domain !== undefined || zoneFile !== undefined || yes || clone === false) {
+        throwUsageError(
+          "--domain, --no-clone, --zone-file, and --yes apply to `clerk deploy`, not `clerk deploy status`.",
+        );
+      }
+      await deployStatus(options);
+    });
 }

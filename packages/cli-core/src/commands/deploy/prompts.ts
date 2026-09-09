@@ -48,7 +48,7 @@ export function validateDomain(value: string | undefined): true | string {
 /** Validates a `--domain` flag value with the same rules as the prompt, as a usage error. */
 export function assertValidDomain(value: string): string {
   const verdict = validateDomain(value);
-  if (verdict !== true) throwUsageError(verdict);
+  if (verdict !== true) throwUsageError(`Invalid --domain "${value}": ${verdict}`);
   return value.trim();
 }
 
