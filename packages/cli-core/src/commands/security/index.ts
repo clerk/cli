@@ -93,7 +93,7 @@ export function registerSecurity(program: Program): void {
     .setExamples([
       { command: "clerk security fix", description: "Pick the recommendations to apply" },
       {
-        command: "clerk security fix user-lockout client-trust",
+        command: "clerk security fix user-lockout device-trust",
         description: "Fix two recommendations by id",
       },
       {

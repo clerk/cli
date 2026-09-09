@@ -15,7 +15,13 @@ export interface LoadedAudit {
 async function resolveEnvironmentType(appId: string, instanceId: string, label: string) {
   if (label === "development" || label === "production") return label;
   const app = await fetchApplication(appId);
-  return app.instances.find((i) => i.instance_id === instanceId)?.environment_type ?? "unknown";
+  const instance = app.instances.find((i) => i.instance_id === instanceId);
+  if (!instance) {
+    throw new CliError(`Instance ${instanceId} does not belong to application ${appId}.`, {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
+    });
+  }
+  return instance.environment_type;
 }
 
 export async function loadAudit(options: {

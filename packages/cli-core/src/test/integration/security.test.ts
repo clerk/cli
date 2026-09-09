@@ -114,13 +114,13 @@ test("security fix applies the patch and reports it as JSON in agent mode", asyn
     "security",
     "fix",
     "user-lockout",
-    "client-trust",
+    "device-trust",
     "--yes",
   );
   const summary = JSON.parse(stdout);
   expect(summary).toMatchObject({
     changed: true,
-    applied: ["user-lockout", "client-trust"],
+    applied: ["user-lockout", "device-trust"],
     skipped: [],
     dryRun: false,
   });
