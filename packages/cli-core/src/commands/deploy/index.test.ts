@@ -2321,5 +2321,23 @@ describe("deploy", () => {
       expect(error.code).toBe(ERROR_CODE.PLAN_INSUFFICIENT);
       expect(error.examples?.[0]?.command).toBe("clerk deploy --domain example.com --no-clone");
     });
+
+    test("--zone-file writes the zone file without prompting", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockSelect.mockRejectedValueOnce(promptExitError());
+
+      await runDeployUntilPause({ domain: "example.com", yes: true, zoneFile: "./records.zone" });
+
+      expect(mockConfirm).not.toHaveBeenCalled();
+      const zoneWrite = writeSpy.mock.calls.find(([destination]: unknown[]) =>
+        String(destination).endsWith("records.zone"),
+      );
+      expect(zoneWrite).toBeDefined();
+      expect(String(zoneWrite?.[1])).toContain(
+        "clerk.example.com.\tIN\tCNAME\tfrontend-api.clerk.services.",
+      );
+      expect(stripAnsi(captured.err)).toContain("Wrote ");
+    });
   });
 });

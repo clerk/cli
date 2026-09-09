@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { Program } from "../../cli-program.ts";
 import { deployStatus } from "./status-command.ts";
 import { isAgent } from "../../mode.ts";
@@ -554,15 +555,30 @@ async function offerBindZoneExport(
   cnameTargets: readonly CnameTarget[] | undefined,
   options: Pick<DeployOptions, "zoneFile" | "yes">,
 ): Promise<void> {
-  if (!cnameTargets || cnameTargets.length === 0) return;
+  if (!cnameTargets || cnameTargets.length === 0) {
+    if (options.zoneFile) log.warn("No DNS records to export yet; --zone-file was ignored.");
+    return;
+  }
+  if (options.zoneFile) {
+    log.success(`Wrote ${await writeZoneFile(options.zoneFile, domain, cnameTargets)}`);
+    return;
+  }
   // The prompt's default answer is "no", so --yes keeps that answer.
   if (options.yes) return;
   const accepted = await confirmExportBindZone();
   if (!accepted) return;
-  const contents = bindZoneFile(domain, cnameTargets, new Date());
-  const filePath = `${process.cwd()}/clerk-${domain}.zone`;
-  await Bun.write(filePath, contents);
-  log.success(`Wrote ${filePath}`);
+  log.success(`Wrote ${await writeZoneFile(`clerk-${domain}.zone`, domain, cnameTargets)}`);
+}
+
+/** Writes the BIND zone fragment for `targets` and returns the absolute path. */
+export async function writeZoneFile(
+  filePath: string,
+  domain: string,
+  targets: readonly CnameTarget[],
+): Promise<string> {
+  const absolute = resolve(process.cwd(), filePath);
+  await Bun.write(absolute, bindZoneFile(domain, targets, new Date()));
+  return absolute;
 }
 
 /**
