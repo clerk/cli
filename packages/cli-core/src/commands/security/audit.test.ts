@@ -227,6 +227,13 @@ describe("security audit", () => {
     expect(parsed.findings.some((f) => f.id === "oauth-custom-credentials")).toBe(true);
   });
 
+  test("rejects a literal instance id the application does not own", async () => {
+    await link();
+    await expect(run({ json: true, instance: "ins_other", failOn: "none" })).rejects.toThrow(
+      "does not belong to application app_1",
+    );
+  });
+
   test("targets an app directly with --app", async () => {
     await run({ json: true, app: "app_1", instance: "prod", failOn: "none" });
     expect(report().instance.instanceId).toBe("ins_prod");

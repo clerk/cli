@@ -85,7 +85,7 @@ describe("not applicable checks", () => {
     for (const id of [
       "breach-detection",
       "breach-detection-sign-in",
-      "client-trust",
+      "device-trust",
       "password-min-length",
     ]) {
       expect(result).not.toContain(id);
@@ -160,6 +160,16 @@ describe("patch details", () => {
     expect(findCheck("session-lifetime")!.patch!(production(config))).toEqual({
       session_settings: { maximum_lifetime: { enabled: true, duration_seconds: 86400 } },
     });
+  });
+
+  test("lockout-threshold treats a missing max_attempts as unmet, not zero", () => {
+    const config = withSection(INSECURE_CONFIG, "auth_attack_protection", {
+      user_lockout: { enabled: true, max_attempts: undefined },
+    });
+    const result = findCheck("lockout-threshold")!.evaluate(production(config));
+    expect(result.met).toBe(false);
+    expect(result.current).toBe("Threshold unknown");
+    expect(result.currentValue).toBeNull();
   });
 
   test("lockout-threshold reports the disabled state", () => {
