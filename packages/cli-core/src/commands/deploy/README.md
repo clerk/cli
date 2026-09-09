@@ -68,7 +68,7 @@ In agent mode, `clerk deploy status` emits JSON on stdout with:
 - `state`: `complete`, `domain_pending`, `oauth_pending`, `domain_provisioning`, `not_started`, or `interrupted`.
 - `domainStatus`: per-component DNS, SSL, and email DNS status when a domain exists.
 - `pendingDnsRecords`: CNAME records still tied to pending DNS-backed checks, each with `type`, `host`, `value`, and `required`.
-- `oauth`: `configured`, `pending`, and `unsupported` provider slugs, plus `setup`: one entry per pending provider with `configKey`, `fields` (`key`, `label`, `secret`, optional `options` and `fileContents`), `redirectUri`, `authorizedOrigins`, `docsUrl`, `note`, and `command`, the `clerk config patch --instance prod --json '…' --yes` call with `<field>` placeholders.
+- `oauth`: `configured`, `pending`, and `unsupported` provider slugs, plus `setup`: one entry per pending provider with `configKey`, `fields` (`key`, `label`, `secret`, optional `options` and `fileContents`), `redirectUri`, `authorizedOrigins`, `docsUrl`, `note`, `payload` (the `clerk config patch` document with `<field>` placeholders), and `command` (`clerk config patch --instance prod --file <path-to-json> --yes`). Agents write `payload` with real values to a temporary file and pass it with `--file`, so secrets and Apple's multi-line `.p8` key never land on a command line.
 - `nextAction`: the command or user request that moves the deploy forward. The Clerk Dashboard domains URL appears only as a trailing fallback sentence.
 
 A `setup` entry looks like:
@@ -86,7 +86,14 @@ A `setup` entry looks like:
   "authorizedOrigins": ["https://example.com", "https://www.example.com"],
   "docsUrl": "https://clerk.com/docs/guides/configure/auth-strategies/social-connections/github",
   "note": null,
-  "command": "clerk config patch --instance prod --json '{\"connection_oauth_github\":{\"enabled\":true,\"client_id\":\"<client_id>\",\"client_secret\":\"<client_secret>\"}}' --yes"
+  "payload": {
+    "connection_oauth_github": {
+      "enabled": true,
+      "client_id": "<client_id>",
+      "client_secret": "<client_secret>"
+    }
+  },
+  "command": "clerk config patch --instance prod --file <path-to-json> --yes"
 }
 ```
 
@@ -211,7 +218,7 @@ PATCH /v1/platform/applications/{appID}/instances/production/config
 
 Most providers ask for `client_id` and `client_secret`. Provider-specific schema fields are prompted when they are safe for deploy setup, such as Linear `actor`.
 
-Skipping a provider ("Skip for now") does not pause the deploy: the wizard continues to DNS verification and the final summary lists the provider under `Pending`. Credentials can be added later by rerunning `clerk deploy` or with `clerk config patch --instance prod --json '{"connection_oauth_<provider>":{"enabled":true,…}}' --yes`; `clerk deploy status` keeps reporting `oauth_pending` until then. Interrupting a prompt with Ctrl-C still pauses.
+Skipping a provider ("Skip for now") does not pause the deploy: the wizard continues to DNS verification and the final summary lists the provider under `Pending`. Credentials can be added later by rerunning `clerk deploy` or with `clerk config patch --instance prod --file <credentials.json> --yes` (a `{"connection_oauth_<provider>":{"enabled":true,…}}` document; use `--file`, not `--json`, so secrets stay out of shell history); `clerk deploy status` keeps reporting `oauth_pending` until then. Interrupting a prompt with Ctrl-C still pauses.
 
 The CLI keeps small local overrides for provider setup details that schema does not fully describe:
 

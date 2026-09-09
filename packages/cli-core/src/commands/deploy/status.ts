@@ -83,6 +83,11 @@ export type OAuthSetupGuide = {
   authorizedOrigins: string[];
   docsUrl: string;
   note: string | null;
+  /**
+   * The `clerk config patch` document with `<field>` placeholders. Agents fill
+   * it in and pass it via `--file`: secrets never belong on a command line.
+   */
+  payload: Record<string, unknown>;
   command: string;
 };
 
@@ -487,7 +492,10 @@ function buildOAuthSetupGuides(
         authorizedOrigins,
         docsUrl: descriptor.docsUrl,
         note: descriptor.gotcha ?? null,
-        command: `clerk config patch --instance prod --json '${JSON.stringify(payload)}' --yes`,
+        payload,
+        // File-based on purpose: inline `--json` would put client secrets (and
+        // Apple's multi-line PEM key) into shell history and process listings.
+        command: "clerk config patch --instance prod --file <path-to-json> --yes",
       };
     });
 }
@@ -523,7 +531,8 @@ function deployNextAction(
     return (
       `Domain verified, but these OAuth providers have no production credentials: ${oauthPending.join(", ")}. ` +
       "For each entry in `oauth.setup`, have the user create the provider's OAuth app with its `redirectUri` " +
-      "and `authorizedOrigins`, then run that entry's `command` with real values. To leave a provider out of " +
+      "and `authorizedOrigins`, write that entry's `payload` with real values to a temporary JSON file, run its " +
+      "`command` with that file's path, then delete the file. To leave a provider out of " +
       `production instead, run \`clerk config patch --instance prod --json '{"<configKey>":{"enabled":false}}' --yes\`. ` +
       `Then run \`clerk deploy status\`.${domainsAction}`
     );

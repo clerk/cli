@@ -371,10 +371,20 @@ describe("buildDeployStatusReport", () => {
         { key: "client_secret", label: "Client Secret", secret: true },
       ],
     });
+    expect(report.oauth.setup[0]!.payload).toEqual({
+      connection_oauth_github: {
+        enabled: true,
+        client_id: "<client_id>",
+        client_secret: "<client_secret>",
+      },
+    });
+    // Secrets go through a file, never through argv.
     expect(report.oauth.setup[0]!.command).toBe(
-      `clerk config patch --instance prod --json '{"connection_oauth_github":{"enabled":true,"client_id":"<client_id>","client_secret":"<client_secret>"}}' --yes`,
+      "clerk config patch --instance prod --file <path-to-json> --yes",
     );
+    expect(report.oauth.setup[0]!.command).not.toContain("--json");
     expect(report.nextAction).toContain("oauth.setup");
+    expect(report.nextAction).toContain("`payload`");
   });
 
   test("not_started next action tells the agent to run clerk deploy --domain", () => {
