@@ -67,6 +67,7 @@ import {
   resolveLiveDeploySnapshot,
   waitForDeployStatus,
   type DeployStatusOutcome,
+  type DeployStatusReport,
   type DiscoveredOAuthProviders,
   type LiveDeploySnapshot,
 } from "./status.ts";
@@ -86,7 +87,7 @@ export async function deploy(options: DeployOptions = {}) {
     : options;
 
   if (isAgent()) {
-    await emitAgentDeployHandoff();
+    await runAgentDeploy(resolved);
     return;
   }
 
@@ -121,7 +122,20 @@ export async function deploy(options: DeployOptions = {}) {
   }
 }
 
-async function emitAgentDeployHandoff(): Promise<void> {
+export type DeployRunReport = DeployStatusReport & {
+  /** True when this run created the production instance. */
+  created: boolean;
+  zoneFile?: string;
+  warnings?: string[];
+};
+
+/**
+ * Agent-mode deploy. `--domain` creates (or resumes) the production instance
+ * without prompts; without it the run is a read-only report. The exit code
+ * stays 0 whenever the command's own action succeeded, `clerk deploy status`
+ * is the pass/fail gate.
+ */
+async function runAgentDeploy(options: DeployOptions): Promise<void> {
   const ctx = await resolveDeployContext();
   if (!ctx.appId || !ctx.developmentInstanceId) {
     throw new CliError(
@@ -129,9 +143,54 @@ async function emitAgentDeployHandoff(): Promise<void> {
       { code: ERROR_CODE.NOT_LINKED },
     );
   }
+  if (options.clone === false && !options.domain) {
+    throwUsageError("--no-clone requires --domain.");
+  }
+
+  const warnings: string[] = [];
+  let created = false;
+  const domain = options.domain;
+
+  if (domain && !ctx.productionInstanceId) {
+    const result = await createProductionInstance(ctx, domain, {
+      clone: options.clone !== false,
+    });
+    if (result === "exists") {
+      const refreshed = await resolveLiveApplicationContext(ctx.profile);
+      ctx.productionInstanceId = refreshed.productionInstanceId;
+      warnings.push("A production instance already existed; resumed it.");
+    } else {
+      created = true;
+      await persistProductionInstance(ctx, result.id);
+    }
+  }
+  if (ctx.productionInstanceId && ctx.profile.instances.production !== ctx.productionInstanceId) {
+    await persistProductionInstance(ctx, ctx.productionInstanceId);
+  }
 
   const state = await resolveDeployState(ctx);
-  const report = buildDeployStatusReport(state, null);
+  if (domain && !created && state.kind === "active" && state.snapshot.domain !== domain) {
+    warnings.push(
+      `A production instance already exists for ${state.snapshot.domain}; --domain ${domain} was ignored.`,
+    );
+  }
+
+  let zoneFile: string | undefined;
+  if (options.zoneFile) {
+    const targets = state.kind === "active" ? (state.snapshot.cnameTargets ?? []) : [];
+    if (state.kind === "active" && targets.length > 0) {
+      zoneFile = await writeZoneFile(options.zoneFile, state.snapshot.domain, targets);
+    } else {
+      warnings.push("No DNS records to export yet; --zone-file was ignored.");
+    }
+  }
+
+  const report: DeployRunReport = {
+    ...buildDeployStatusReport(state, null),
+    created,
+    ...(zoneFile && { zoneFile }),
+    ...(warnings.length > 0 && { warnings }),
+  };
   log.data(JSON.stringify(report, null, 2));
 }
 

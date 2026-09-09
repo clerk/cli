@@ -544,6 +544,155 @@ describe("deploy", () => {
       expect(mockConfirm).not.toHaveBeenCalled();
       expect(mockPassword).not.toHaveBeenCalled();
     });
+
+    function stubAgentCreate() {
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+      mockCreateProductionInstance.mockImplementationOnce(
+        async (_appId: string, params: { domain: string }) => {
+          // After creation the live application must show the new instance.
+          mockLiveProduction({
+            domain: params.domain,
+            productionConfig: {
+              connection_oauth_google: { enabled: true, client_id: "", client_secret: "" },
+            },
+          });
+          return {
+            object: "instance",
+            id: "ins_prod_mock",
+            environment_type: "production" as const,
+            active_domain: {
+              object: "domain",
+              id: "dmn_prod_mock",
+              name: params.domain,
+              is_satellite: false,
+              is_provider_domain: false,
+              frontend_api_url: `https://clerk.${params.domain}`,
+              development_origin: "",
+              cname_targets: [
+                {
+                  host: `clerk.${params.domain}`,
+                  value: "frontend-api.clerk.services",
+                  required: true,
+                },
+              ],
+              created_at: "2026-05-06T00:00:00Z",
+              updated_at: "2026-05-06T00:00:00Z",
+            },
+            publishable_key: "pk_live_test",
+            secret_key: "sk_live_test",
+            created_at: 1770000000000,
+            updated_at: 1770000000000,
+          };
+        },
+      );
+    }
+
+    test("--domain creates the production instance and reports created: true with DNS records", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      stubAgentCreate();
+
+      await runDeploy({ domain: "example.com" });
+
+      const payload = JSON.parse(captured.out);
+      expect(mockCreateProductionInstance).toHaveBeenCalledWith("app_xyz789", {
+        domain: "example.com",
+        environment_type: "production",
+        clone_instance_id: "ins_dev_123",
+      });
+      expect(payload.created).toBe(true);
+      expect(payload.state).toBe("domain_pending");
+      expect(payload.pendingDnsRecords[0]).toMatchObject({
+        type: "CNAME",
+        host: "clerk.example.com",
+        required: true,
+      });
+      expect(payload.oauth.setup[0].provider).toBe("google");
+      expect(payload.warnings).toBeUndefined();
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockTriggerApplicationDomainDNSCheck).not.toHaveBeenCalled();
+    });
+
+    test("--domain resumes an existing deploy with created: false and a mismatch warning", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+
+      await runDeploy({ domain: "other.com" });
+
+      const payload = JSON.parse(captured.out);
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect(payload.created).toBe(false);
+      expect(payload.state).toBe("complete");
+      expect(payload.warnings?.[0]).toContain("--domain other.com was ignored");
+    });
+
+    test("--no-clone without --domain is a usage error in agent mode", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+
+      await expect(runDeploy({ clone: false })).rejects.toMatchObject({
+        exitCode: EXIT_CODE.USAGE,
+      });
+      expect(captured.out).toBe("");
+    });
+
+    test("--zone-file writes the zone file and reports its path", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      stubAgentCreate();
+
+      await runDeploy({ domain: "example.com", zoneFile: "records.zone" });
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.zoneFile).toMatch(/records\.zone$/);
+      const zoneWrite = writeSpy.mock.calls.find(([destination]: unknown[]) =>
+        String(destination).endsWith("records.zone"),
+      );
+      expect(zoneWrite).toBeDefined();
+    });
+
+    test("--domain rejects provider domains before calling the API", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+
+      await expect(runDeploy({ domain: "my-app.vercel.app" })).rejects.toMatchObject({
+        exitCode: EXIT_CODE.USAGE,
+      });
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+    });
+
+    test("--domain surfaces a plan-insufficient error with the --no-clone example", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockCreateProductionInstance.mockRejectedValueOnce(
+        new PlapiError(
+          402,
+          JSON.stringify({
+            errors: [
+              {
+                code: "unsupported_subscription_plan_features",
+                message: "Unsupported plan features",
+                meta: { unsupported_features: ["app:allowlist"] },
+              },
+            ],
+          }),
+        ),
+      );
+
+      const error = await runDeploy({ domain: "example.com" }).catch((e) => e);
+
+      expect(error.code).toBe(ERROR_CODE.PLAN_INSUFFICIENT);
+      expect(error.examples?.[0]?.command).toBe("clerk deploy --domain example.com --no-clone");
+      expect(captured.out).toBe("");
+      expect(mockSelect).not.toHaveBeenCalled();
+    });
   });
 
   describe("human mode", () => {
