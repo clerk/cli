@@ -38,7 +38,7 @@ Commands:
   auth                                            Manage authentication
   completion       [shell]                        Generate shell autocompletion script
   config                                          Manage instance configuration
-  deploy                                          Deploy a Clerk application to production
+  deploy           [options]                      Deploy a Clerk application to production
   disable                                         Disable Clerk features on the linked instance
   doctor           [options]                      Check your project's Clerk integration health
   enable                                          Enable Clerk features on the linked instance

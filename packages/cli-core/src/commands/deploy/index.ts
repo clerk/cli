@@ -840,7 +840,7 @@ export function registerDeploy(program: Program): void {
     ]);
   deployCmd
     .command("run", { isDefault: true, hidden: true })
-    .action((_options, cmd) => deploy(cmd.optsWithGlobals() as DeployOptions));
+    .action(async (_options, cmd) => deploy(cmd.optsWithGlobals() as DeployOptions));
   deployCmd
     .command("status")
     .description("Show production deploy status (read-only)")

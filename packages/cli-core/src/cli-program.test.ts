@@ -56,12 +56,12 @@ test("users list exposes common filters and pagination options", () => {
   );
 });
 
-test("deploy relies on global options", () => {
+test("deploy exposes its create-time options", () => {
   const program = createProgram();
   const deploy = program.commands.find((command) => command.name() === "deploy")!;
   const optionNames = deploy.options.map((option) => option.long);
 
-  expect(optionNames).toEqual([]);
+  expect(optionNames).toEqual(["--domain", "--no-clone", "--zone-file", "--yes"]);
 });
 
 test("deploy status exposes wait option", () => {
