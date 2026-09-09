@@ -57,6 +57,10 @@ export const keylessCopy = {
     "Replacing the entire configuration is only available for a claimed application — an unclaimed accountless application has no full config document to replace.\n" +
     "Use `clerk config patch` to update individual settings, or run `clerk auth login` to claim the application first.",
 
+  securityNeedsClaimedApplication: (): string =>
+    "Security recommendations are only available for a claimed application — the checks read the account-level config document (attack protection, passwords, sessions), which Clerk's Backend API does not expose to an unclaimed accountless application.\n" +
+    "Run `clerk auth login` to claim this application, then re-run `clerk security audit`.",
+
   userDashboardNeedsClaim: (keySource: string, userId: string): string =>
     `This directory holds an unclaimed accountless application (secret key from ${keySource}), which has no Dashboard page — a dashboard link needs an application ID, and one is only assigned when the application is claimed.\n` +
     `Run \`clerk auth login\` to claim it, then \`clerk users open ${userId}\` will work.\n` +

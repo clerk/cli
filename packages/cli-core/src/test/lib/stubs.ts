@@ -225,6 +225,9 @@ export const libPromptsStubs = {
   text: async () => "",
   password: async () => "",
   editor: async () => "{}",
+  /** Accepts whatever the caller preselected. */
+  multiselect: async <T>(config: { initialValues?: T[] }): Promise<T[]> =>
+    config.initialValues ?? [],
 };
 
 export const promptsStubs = libPromptsStubs;
