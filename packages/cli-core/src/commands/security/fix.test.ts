@@ -148,18 +148,18 @@ describe("security fix", () => {
   });
 
   test("applies one merged patch for several ids", async () => {
-    await run(["user-lockout", "lockout-threshold", "client-trust"], { yes: true });
+    await run(["user-lockout", "lockout-threshold", "device-trust"], { yes: true });
     expect(patches()).toHaveLength(1);
     expect(patches()[0]!.body).toEqual({
       auth_attack_protection: { user_lockout: { enabled: true, max_attempts: 10 } },
       auth_password: { device_trust: { enabled: true } },
     });
     // Catalog order: prerequisites and critical checks first.
-    expect(captured.err).toContain("Applied: user-lockout, client-trust, lockout-threshold");
+    expect(captured.err).toContain("Applied: user-lockout, device-trust, lockout-threshold");
   });
 
   test("--check unions with positional ids", async () => {
-    await run(["user-lockout"], { check: ["client-trust", "user-lockout"], yes: true });
+    await run(["user-lockout"], { check: ["device-trust", "user-lockout"], yes: true });
     expect(Object.keys(patches()[0]!.body!)).toEqual(["auth_attack_protection", "auth_password"]);
   });
 
@@ -229,7 +229,7 @@ describe("security fix", () => {
     });
     expect(summary.score.after.met).toBe(summary.score.before.met + 2);
     expect(summary.remaining).not.toContain("user-lockout");
-    expect(summary.remaining).toContain("client-trust");
+    expect(summary.remaining).toContain("device-trust");
     expect(captured.err).toContain("Grade");
   });
 
@@ -286,7 +286,7 @@ describe("security fix", () => {
           : INSECURE_CONFIG;
       return new Response(JSON.stringify(doc), { status: 200 });
     });
-    await run(["client-trust"], { yes: true, json: true });
+    await run(["device-trust"], { yes: true, json: true });
     const summary = JSON.parse(captured.out) as FixSummary;
     expect(summary.score.after.total).toBe(summary.score.before.total);
     expect(summary.score.after.met).toBe(summary.score.before.met + 1);
@@ -318,12 +318,12 @@ describe("security fix", () => {
 
   test("a manual id in the selection points at the fixable subset", async () => {
     let error: unknown;
-    await run(["mfa-required", "user-lockout", "client-trust"], { yes: true }).catch(
+    await run(["mfa-required", "user-lockout", "device-trust"], { yes: true }).catch(
       (e) => (error = e),
     );
     const { examples } = error as { examples: Array<{ command: string }> };
     expect(examples[0]!.command).toBe(
-      "clerk security fix user-lockout client-trust --app app_1 --instance ins_dev",
+      "clerk security fix user-lockout device-trust --app app_1 --instance ins_dev",
     );
   });
 

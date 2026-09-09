@@ -99,7 +99,7 @@ agent mode it prints a summary:
 {
   "changed": true,
   "dryRun": false,
-  "applied": ["user-lockout", "client-trust"],
+  "applied": ["user-lockout", "device-trust"],
   "decisions": {},
   "skipped": [{ "id": "bot-protection", "reason": "met" }],
   "score": { "before": { "grade": "F", "…": "…" }, "after": { "grade": "C", "…": "…" } },
@@ -142,7 +142,7 @@ and breach detection are what count.
 | `bot-protection`           | critical     | `auth_attack_protection.bot_protection.captcha_enabled`                                                        | patch                             |
 | `breach-detection`         | critical     | `auth_password.disable_hibp` is false                                                                          | patch                             |
 | `user-lockout`             | critical     | `auth_attack_protection.user_lockout.enabled`                                                                  | patch                             |
-| `client-trust`             | critical     | `auth_password.device_trust.enabled`                                                                           | patch                             |
+| `device-trust`             | critical     | `auth_password.device_trust.enabled`                                                                           | patch                             |
 | `mfa`                      | critical     | authenticator app, backup codes, or SMS second factor enabled                                                  | asks `--factors`                  |
 | `passwordless-auth`        | critical     | email/SMS code, passkey, web3, or a social connection is a first factor                                        | asks `--strategy`                 |
 | `email-verification`       | critical     | `auth_email.verify_at_sign_up` (only when email is a sign-up identifier)                                       | patch                             |
@@ -159,9 +159,9 @@ and breach detection are what count.
 | `block-disposable-email`   | good-to-have | `auth_access_control.block_disposable_email_domains` (email only)                                              | patch                             |
 | `block-email-subaddresses` | good-to-have | `auth_access_control.block_email_subaddresses` (email only)                                                    | patch                             |
 
-The first sixteen mirror the Dashboard's security recommendations; the last
-three (`password-min-length`, `allowlist-on-sign-in`, `oauth-custom-credentials`)
-are CLI-only.
+Every check except `password-min-length`, `allowlist-on-sign-in`, and
+`oauth-custom-credentials` mirrors the Dashboard's security recommendations;
+those three are CLI-only.
 
 Three states per finding:
 
@@ -181,7 +181,7 @@ Checks that have no meaning for the instance are **not applicable** and are
 left out of the report and the score entirely: the email checks when email is
 not a sign-up identifier, the phone check when phone is not, the four
 password checks (`breach-detection`, `breach-detection-sign-in`,
-`client-trust`, `password-min-length`) when
+`device-trust`, `password-min-length`) when
 `auth_password.enabled` is false, and the OAuth check outside production.
 
 Three controls depend on a Clerk billing feature and carry a `feature` key in
@@ -219,7 +219,7 @@ The report:
     "label": "My App (development)"
   },
   "score": { "grade": "C", "percent": 71, "met": 14, "total": 20, "hasCriticalGap": true },
-  "fixCommand": "clerk security fix user-lockout client-trust --app app_… --instance ins_… --yes",
+  "fixCommand": "clerk security fix user-lockout device-trust --app app_… --instance ins_… --yes",
   "findings": [
     {
       "id": "user-lockout",

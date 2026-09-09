@@ -24,7 +24,7 @@ import type {
 } from "./types.ts";
 
 const EXAMPLES: Example[] = [
-  { command: "clerk security fix user-lockout client-trust --yes", description: "Apply two fixes" },
+  { command: "clerk security fix user-lockout device-trust --yes", description: "Apply two fixes" },
   {
     command: "clerk security fix mfa --factors authenticator,backup-code --yes",
     description: "Enable two-factor authentication",

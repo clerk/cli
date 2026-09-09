@@ -283,6 +283,12 @@ describe("generateCompletions", () => {
       );
     });
 
+    test("security fix: keeps completing ids after the first one", () => {
+      const names = completionNames("security", "fix", "user-lockout", "");
+      expect(names).toContain("device-trust");
+      expect(names).toContain("--all");
+    });
+
     test("security fix: suggests check ids", () => {
       const names = completionNames("security", "fix", "");
       expect(names).toContain("user-lockout");

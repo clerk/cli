@@ -219,11 +219,14 @@ function completeArguments(
   consumedCount: number,
 ): CompletionResult {
   const registeredArgs = cmd.registeredArguments;
-  if (consumedCount >= registeredArgs.length) {
-    return EMPTY_NO_FILE;
-  }
-
-  const arg = registeredArgs[consumedCount];
+  const last = registeredArgs.at(-1);
+  const arg =
+    consumedCount < registeredArgs.length
+      ? registeredArgs[consumedCount]
+      : last?.variadic
+        ? last
+        : undefined;
+  if (!arg) return EMPTY_NO_FILE;
 
   // Prefer strict Commander choices when available.
   if (arg?.argChoices) {
