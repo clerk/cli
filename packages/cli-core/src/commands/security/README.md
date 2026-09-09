@@ -159,10 +159,6 @@ and breach detection are what count.
 | `block-disposable-email`   | good-to-have | `auth_access_control.block_disposable_email_domains` (email only)                                              | patch                             |
 | `block-email-subaddresses` | good-to-have | `auth_access_control.block_email_subaddresses` (email only)                                                    | patch                             |
 
-Every check except `password-min-length`, `allowlist-on-sign-in`, and
-`oauth-custom-credentials` mirrors the Dashboard's security recommendations;
-those three are CLI-only.
-
 Three states per finding:
 
 The **good-to-have** tier is hardening that costs users some convenience:
