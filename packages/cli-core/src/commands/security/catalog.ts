@@ -212,7 +212,7 @@ export const CHECKS: CheckDef[] = [
     patch: () => ({ auth_attack_protection: { user_lockout: { enabled: true } } }),
   },
   {
-    id: "client-trust",
+    id: "device-trust",
     title: "Device trust",
     description:
       "Challenge sign-ins from unrecognized devices, a key defense against credential stuffing.",
@@ -311,12 +311,17 @@ export const CHECKS: CheckDef[] = [
     docsUrl: DOCS_LOCKOUT,
     evaluate({ config }) {
       const enabled = flag(config, "auth_attack_protection.user_lockout.enabled");
-      const attempts = num(config, "auth_attack_protection.user_lockout.max_attempts");
+      const raw = at(config, "auth_attack_protection.user_lockout.max_attempts");
+      const attempts = typeof raw === "number" ? raw : undefined;
       return {
-        met: enabled && attempts <= 10,
-        currentValue: enabled ? attempts : null,
+        met: enabled && attempts !== undefined && attempts <= 10,
+        currentValue: enabled ? (attempts ?? null) : null,
         recommendedValue: 10,
-        current: enabled ? `${attempts} attempts` : "Lockout disabled",
+        current: !enabled
+          ? "Lockout disabled"
+          : attempts === undefined
+            ? "Threshold unknown"
+            : `${attempts} attempts`,
         recommended: "10 or fewer",
       };
     },

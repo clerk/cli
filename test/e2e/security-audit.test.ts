@@ -25,7 +25,7 @@ import { CHECK_IDS } from "../../packages/cli-core/src/commands/security/catalog
 const CLI_PATH = join(import.meta.dir, "../../packages/cli-core/src/cli.ts");
 
 let APP_ID: string;
-let configDir: string;
+let configDir: string | undefined;
 
 beforeAll(() => {
   const appId = process.env.CLERK_CLI_TEST_APP_ID;
@@ -41,8 +41,8 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  rmSync(configDir, { recursive: true, force: true });
-});
+  if (configDir) rmSync(configDir, { recursive: true, force: true });
+}, 60_000);
 
 test("security audit --json returns a graded report over the live config document", async () => {
   const result = await Bun.$`bun ${CLI_PATH} security audit --json --fail-on none --app ${APP_ID}`
@@ -67,7 +67,7 @@ test("security audit --json returns a graded report over the live config documen
   for (const finding of report.findings.filter((f) => f.status === "unmet")) {
     expect(finding.patch !== null || finding.remedy.length > 0).toBe(true);
   }
-});
+}, 60_000);
 
 test("security fix --all --dry-run validates every fixable patch server-side", async () => {
   const result = await Bun.$`bun ${CLI_PATH} security fix --all --dry-run --json --app ${APP_ID}`
@@ -82,4 +82,4 @@ test("security fix --all --dry-run validates every fixable patch server-side", a
     expect(summary.applied.length).toBeGreaterThan(0);
     for (const id of summary.applied) expect(summary.remaining).not.toContain(id);
   }
-});
+}, 60_000);
