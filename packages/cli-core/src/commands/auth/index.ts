@@ -16,11 +16,19 @@ export function registerAuth(program: Program): void {
     .aliases(["signup", "signin", "sign-in"])
     .description("Log in to your Clerk account")
     .option("-y, --yes", "Proceed with OAuth without prompting when already logged in")
+    .option(
+      "--ticket",
+      "Log in headlessly with a single-use Dashboard sign-in ticket read from stdin (never as an argument)",
+    )
     .setExamples([
       { command: "clerk auth login", description: "Log in via browser (OAuth)" },
       {
         command: "clerk auth login -y",
         description: "Re-authenticate via OAuth without confirmation when already signed in",
+      },
+      {
+        command: "clerk auth login --ticket < ticket.txt",
+        description: "Log in without a browser using a sign-in ticket piped on stdin",
       },
     ])
     .action(async (opts) => {
@@ -38,6 +46,10 @@ export function registerAuth(program: Program): void {
     .command("login", { hidden: true })
     .description("Log in to your Clerk account")
     .option("-y, --yes", "Proceed with OAuth without prompting when already logged in")
+    .option(
+      "--ticket",
+      "Log in headlessly with a single-use Dashboard sign-in ticket read from stdin",
+    )
     .action(async (opts) => {
       await login(opts);
     });
