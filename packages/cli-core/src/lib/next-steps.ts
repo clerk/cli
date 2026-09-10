@@ -59,6 +59,11 @@ export const NEXT_STEPS = {
   ],
   CONFIG_DRY_RUN_PATCH: ["Run `clerk config patch` without `--dry-run` to apply these changes"],
   CONFIG_DRY_RUN_PUT: ["Run `clerk config put` without `--dry-run` to apply these changes"],
+  SECURITY_AUDIT: [
+    "Run `clerk security audit --instance prod` to audit production",
+    "Run `clerk security checks` to read what each recommendation means",
+  ],
+  SECURITY_FIX_REMAINING: ["Run `clerk security audit --spotlight` to see what is still open"],
   LOGOUT: ["Run `clerk auth login` to sign in again"],
   WHOAMI: ["Run `clerk link` to connect this directory to an application"],
   // An unclaimed keyless app can't be `clerk link`ed — nothing in any account
