@@ -70,10 +70,7 @@ export function registerSecurity(program: Program): void {
       collectOptionValues,
     )
     .option("--all", "Fix every unmet critical and recommended check that has an inline patch")
-    .option(
-      "--good-to-have",
-      "With --all, also apply the good-to-have tier (hardening that costs users some convenience)",
-    )
+    .option("--good-to-have", "With --all, also apply the good-to-have tier")
     .option(
       "--factors <list>",
       "Second factors for `mfa`: authenticator, backup-code, sms (comma-separated; asked interactively when omitted)",
