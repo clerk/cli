@@ -65,30 +65,25 @@ const PAGE_STYLE = `
   .auth-page > p { margin-top: 0.75rem; }
   @keyframes roll-in { from { transform: rotateX(90deg); opacity: 0; } to { transform: rotateX(0deg); opacity: 1; } }
   @keyframes fade-in { from { opacity: 0; filter: blur(2px); } to { opacity: 1; filter: blur(0px); } }
-  @keyframes sparkle-pulse { 0%, 100% { opacity: 0.7; transform: scale(1); } 50% { opacity: 1; transform: scale(1.12); } }
-  .ai-section { margin-top: 2rem; display: flex; justify-content: center; opacity: 0; animation: fade-in 0.4s ease-out 0.85s forwards; }
-  .ai-installer-wrap { display: flex; flex-direction: column; align-items: center; width: 24rem; max-width: 100%; }
-  .ai-installer { display: flex; flex-direction: column; width: 100%; border: 1px solid var(--cli-border); border-radius: 12px; overflow: hidden; text-align: left; }
-  .ai-header { display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 1rem; border-bottom: 1px solid var(--cli-border); background: var(--cli-tab-bg); font-size: 12.5px; color: var(--cli-fg-muted); }
-  .ai-header span { color: var(--cli-fg-muted); }
-  .ai-learn { display: inline-flex; align-items: center; gap: 0.3rem; margin-top: 0.75rem; font-size: 12px; color: var(--cli-fg-faint); text-decoration: none; transition: color 0.15s; }
-  .ai-learn:hover { color: var(--cli-accent); }
-  .ai-learn:hover .ai-external { transform: translate(1px, -1px); }
-  .ai-external { width: 11px; height: 11px; flex: none; color: currentColor; transition: transform 0.2s; }
-  .ai-sparkle { width: 14px; height: 14px; display: inline-block; flex: none; color: var(--cli-accent); animation: sparkle-pulse 2s ease-in-out infinite; transform-origin: 50% 50%; }
-  .ai-code-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.7rem 0.5rem 0.7rem 1rem; background: var(--cli-code-bg); }
-  .ai-cmd-wrap { flex: 1; min-width: 0; overflow: hidden; -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 1.875rem), transparent 100%); mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 1.875rem), transparent 100%); }
-  .ai-cmd { display: block; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.1; letter-spacing: -0.02em; color: var(--cli-fg-muted); user-select: text; }
-  .ai-bin { color: var(--cli-fg-muted); }
-  .ai-mid { color: var(--cli-syntax-mid); }
-  .ai-target { color: var(--cli-syntax-target); font-weight: 500; }
-  .ai-copy { background: transparent; border: 0; width: 1.75rem; height: 1.75rem; cursor: pointer; color: var(--cli-fg-dim); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; flex: none; transition: color 0.3s cubic-bezier(0.4,0.36,0,1), background 0.15s, transform 0.15s; }
-  .ai-copy:hover { color: var(--cli-fg); background: var(--cli-hover-bg); }
-  .ai-copy:active { transform: scale(0.92); }
-  .ai-copy .icon-check { display: none; color: #16a34a; }
-  .ai-copy.copied .icon-copy { display: none; }
-  .ai-copy.copied .icon-check { display: inline; }
-  .ai-copy.copied, .ai-copy.copied:hover { color: #16a34a; }
+  .cli-cards { margin-top: 2.5rem; opacity: 0; animation: fade-in 0.4s ease-out 0.85s forwards; }
+  .cli-cards-intro { color: var(--cli-fg-muted); }
+  .cli-cards-grid { margin-top: 1rem; margin-inline: auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; width: 52rem; max-width: 100%; }
+  @media (max-width: 860px) { .cli-cards-grid { grid-template-columns: 1fr; width: 24rem; } }
+  .cli-card { display: flex; flex-direction: column; gap: 0.5rem; border: 1px solid var(--cli-border); border-radius: 12px; padding: 1rem; text-align: left; }
+  .cli-card-title { display: flex; align-items: center; gap: 0.45rem; font-size: 13.5px; font-weight: 600; }
+  .cli-card-icon { width: 14px; height: 14px; flex: none; color: var(--cli-fg-dim); }
+  .cli-card-desc { flex: 1; font-size: 12.5px; line-height: 1.45; color: var(--cli-fg-muted); }
+  .cli-card-code { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem; padding: 0.45rem 0.35rem 0.45rem 0.75rem; border: 1px solid var(--cli-border); border-radius: 8px; background: var(--cli-code-bg); }
+  .cli-card-code code { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; letter-spacing: -0.02em; color: var(--cli-fg); user-select: text; }
+  .cli-prompt { color: var(--cli-fg-faint); user-select: none; }
+  .cli-bin { color: var(--cli-syntax-mid); }
+  .copy-btn { background: transparent; border: 0; width: 1.75rem; height: 1.75rem; cursor: pointer; color: var(--cli-fg-dim); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; flex: none; transition: color 0.3s cubic-bezier(0.4,0.36,0,1), background 0.15s, transform 0.15s; }
+  .copy-btn:hover { color: var(--cli-fg); background: var(--cli-hover-bg); }
+  .copy-btn:active { transform: scale(0.92); }
+  .copy-btn .icon-check { display: none; color: #16a34a; }
+  .copy-btn.copied .icon-copy { display: none; }
+  .copy-btn.copied .icon-check { display: inline; }
+  .copy-btn.copied, .copy-btn.copied:hover { color: #16a34a; }
 `;
 
 function animatedText(text: string): string {
@@ -107,29 +102,44 @@ animation:roll-in 0.15s ease-out ${delay}s both;">${char}</span></span>`;
   );
 }
 
-const SPARKLE_ICON_SVG = `<svg class="ai-sparkle" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M9 4.5a.75.75 0 01.721.544l.813 2.846a3.75 3.75 0 002.576 2.576l2.846.813a.75.75 0 010 1.442l-2.846.813a3.75 3.75 0 00-2.576 2.576l-.813 2.846a.75.75 0 01-1.442 0l-.813-2.846a3.75 3.75 0 00-2.576-2.576L3.515 12.72a.75.75 0 010-1.442l2.846-.813A3.75 3.75 0 008.937 7.89l.813-2.846A.75.75 0 019 4.5zM18 1.5a.75.75 0 01.728.568l.258 1.036a2.625 2.625 0 001.91 1.91l1.036.258a.75.75 0 010 1.456l-1.036.258a2.625 2.625 0 00-1.91 1.91l-.258 1.036a.75.75 0 01-1.456 0l-.258-1.036a2.625 2.625 0 00-1.91-1.91l-1.036-.258a.75.75 0 010-1.456l1.036-.258a2.625 2.625 0 001.91-1.91l.258-1.036A.75.75 0 0118 1.5zM16.5 15a.75.75 0 01.712.513l.394 1.183c.15.447.5.799.948.948l1.183.395a.75.75 0 010 1.422l-1.183.395a1.5 1.5 0 00-.948.948l-.395 1.183a.75.75 0 01-1.422 0l-.395-1.183a1.5 1.5 0 00-.948-.948l-1.183-.395a.75.75 0 010-1.422l1.183-.395a1.5 1.5 0 00.948-.948l.395-1.183A.75.75 0 0116.5 15z" clip-rule="evenodd"/></svg>`;
-
-const EXTERNAL_ICON_SVG = `<svg class="ai-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7"></path><path d="M8 7h9v9"></path></svg>`;
+const TERMINAL_ICON_SVG = `<svg class="cli-card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>`;
 
 const COPY_ICON_SVG = `<svg class="icon-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
 
 const CHECK_ICON_SVG = `<svg class="icon-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 
 const COPY_SCRIPT = `
-  function copyClerkSkill(btn) {
-    const cmd = document.querySelector('.ai-cmd').textContent.replace(/\\s+/g, ' ').trim();
-    const reset = function () { setTimeout(function () { btn.classList.remove('copied'); }, 1500); };
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(cmd).then(function () { btn.classList.add('copied'); reset(); });
-    } else {
+  function copyCmd(btn) {
+    const cmd = btn.parentElement.querySelector('.cli-cmd-text').textContent.replace(/\\s+/g, ' ').trim();
+    const done = function () {
+      btn.classList.add('copied');
+      setTimeout(function () { btn.classList.remove('copied'); }, 1500);
+    };
+    const fallback = function () {
       const ta = document.createElement('textarea');
       ta.value = cmd; ta.style.position = 'fixed'; ta.style.opacity = '0';
       document.body.appendChild(ta); ta.select();
-      try { document.execCommand('copy'); btn.classList.add('copied'); reset(); } catch (e) {}
+      try { document.execCommand('copy'); done(); } catch (e) {}
       document.body.removeChild(ta);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(cmd).then(done).catch(fallback);
+    } else {
+      fallback();
     }
   }
 `;
+
+function commandCard(title: string, description: string, commandHtml: string): string {
+  return `<div class="cli-card">
+          <div class="cli-card-title">${TERMINAL_ICON_SVG}<span>${escapeHtml(title)}</span></div>
+          <p class="cli-card-desc">${escapeHtml(description)}</p>
+          <div class="cli-card-code">
+            <code><span class="cli-prompt">$ </span><span class="cli-cmd-text">${commandHtml}</span></code>
+            <button class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">${COPY_ICON_SVG}${CHECK_ICON_SVG}</button>
+          </div>
+        </div>`;
+}
 
 const SUCCESS_HTML = `<!DOCTYPE html>
 <html>
@@ -138,19 +148,25 @@ const SUCCESS_HTML = `<!DOCTYPE html>
   <div class="auth-page">
     ${CLERK_LOGO}
     <h1>${animatedText("Authentication successful")}</h1>
-    <p style="color: var(--cli-fg-muted); opacity:0;animation:fade-in 0.4s ease-out 0.5s forwards;">You can close this window and return to your terminal.</p>
-    <div class="ai-section">
-      <div class="ai-installer-wrap">
-        <div class="ai-installer">
-          <div class="ai-header">${SPARKLE_ICON_SVG}<span>Using an AI coding agent? Add Clerk Skills</span></div>
-          <div class="ai-code-row">
-            <div class="ai-cmd-wrap">
-              <code class="ai-cmd"><span class="ai-bin">npx</span> <span class="ai-mid">skills add</span> <span class="ai-target">clerk/skills</span></code>
-            </div>
-            <button class="ai-copy" onclick="copyClerkSkill(this)" aria-label="Copy install command">${COPY_ICON_SVG}${CHECK_ICON_SVG}</button>
-          </div>
-        </div>
-        <a class="ai-learn" href="https://clerk.com/docs/guides/ai/overview" target="_blank" rel="noopener noreferrer">Learn more about building with AI${EXTERNAL_ICON_SVG}</a>
+    <p style="color: var(--cli-fg-muted); opacity:0;animation:fade-in 0.4s ease-out 0.5s forwards;">You may close this window.</p>
+    <div class="cli-cards">
+      <p class="cli-cards-intro">Set up, configure, and ship Clerk from your agent or terminal.</p>
+      <div class="cli-cards-grid">
+        ${commandCard(
+          "Install",
+          "Detects your framework and sets up API keys automatically.",
+          `<span class="cli-bin">npx</span> clerk@latest init`,
+        )}
+        ${commandCard(
+          "Customize",
+          "Turn on features like B2B Authentication with one command.",
+          `clerk enable orgs`,
+        )}
+        ${commandCard(
+          "Deploy to production",
+          "Register your domain, configure DNS, and go live with your app.",
+          `clerk deploy`,
+        )}
       </div>
     </div>
   </div>
