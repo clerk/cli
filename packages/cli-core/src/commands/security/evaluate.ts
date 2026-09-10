@@ -113,7 +113,7 @@ export function fixableIds(findings: Finding[], goodToHave = true): string[] {
 
 export function buildReport(input: CheckInput, ref: InstanceRef): AuditReport {
   const findings = evaluate(input, ref);
-  // Good-to-have costs users convenience; never suggested by default.
+  // Good-to-have is opt-in.
   const fixable = fixableIds(findings, false);
   return {
     instance: ref,
