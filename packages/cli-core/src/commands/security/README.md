@@ -161,17 +161,21 @@ and breach detection are what count.
 
 Three states per finding:
 
-The **good-to-have** tier is hardening that costs users some convenience:
-magic links that must open on the requesting device, and the two email
-blocks. It counts toward the score like anything else, but `fix --all` and
-the interactive picker leave it out unless asked (`--good-to-have`, or
-ticking the rows), so a blanket `fix --all` never changes what end users
-experience beyond a CAPTCHA and verification.
-
 - **met**: nothing to do.
 - **unmet**: a real gap. Has a `patch` when the fix is a pure config change.
 - **blocked**: a real gap that cannot be applied until a prerequisite is met
   (`mfa-required` needs `mfa`). Still counts against the score.
+
+`fix --all` applies the unmet critical and recommended checks that have a
+patch: bot protection (CAPTCHA on sign-up), breached-password detection on
+sign-up and sign-in, brute-force lockout and its threshold, device trust (a
+second-factor challenge for password sign-ins from new devices), email and
+phone verification at sign-up, passkey sign-in, an 8-character password
+minimum, and allowlist enforcement on sign-in. Several of these change how
+users sign in; preview with `--dry-run` first. The **good-to-have** tier
+(same-device magic links, the two email blocks, and a bounded session
+lifetime) counts toward the score but is left out of `--all` and unticked in
+the picker; opt in with `--good-to-have` or by naming ids.
 
 Checks that have no meaning for the instance are **not applicable** and are
 left out of the report and the score entirely: the email checks when email is
