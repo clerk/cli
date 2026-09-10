@@ -143,7 +143,7 @@ and breach detection are what count.
 | `breach-detection`         | critical     | `auth_password.disable_hibp` is false                                                                          | patch                             |
 | `user-lockout`             | critical     | `auth_attack_protection.user_lockout.enabled`                                                                  | patch                             |
 | `device-trust`             | critical     | `auth_password.device_trust.enabled`                                                                           | patch                             |
-| `mfa`                      | critical     | authenticator app, backup codes, or SMS second factor enabled                                                  | asks `--factors`                  |
+| `mfa`                      | critical     | authenticator app or SMS second factor enabled (backup codes alone do not count)                               | asks `--factors`                  |
 | `passwordless-auth`        | critical     | email/SMS code, passkey, web3, or a social connection is a first factor                                        | asks `--strategy`                 |
 | `email-verification`       | critical     | `auth_email.verify_at_sign_up` (only when email is a sign-up identifier)                                       | patch                             |
 | `breach-detection-sign-in` | recommended  | `auth_password.enforce_hibp_on_sign_in` and `disable_hibp`                                                     | patch                             |
