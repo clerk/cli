@@ -142,6 +142,51 @@ export function findSetting(name: string): SettingDef | undefined {
   return SETTINGS.find((setting) => setting.name === name);
 }
 
+/** Levenshtein distance, iterative over a single row. */
+function distance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+
+  for (let i = 1; i <= a.length; i++) {
+    let diagonal = row[0] as number;
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const above = row[j] as number;
+      row[j] = Math.min(
+        above + 1,
+        (row[j - 1] as number) + 1,
+        diagonal + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+      diagonal = above;
+    }
+  }
+
+  return row[b.length] as number;
+}
+
+/**
+ * The setting a misspelling was probably reaching for.
+ *
+ * Every setting name is a compound of short words — `log-dir`, `firebase-mem-cost`
+ * — so the misses that matter are a pluralised segment or a transposed pair,
+ * not a different word entirely. One edit per three characters keeps
+ * `logs-dir` pointing at `log-dir` without letting an unrelated name match
+ * something and send the reader off after it.
+ *
+ * @returns The closest name within that budget, or `undefined` when nothing is
+ *   close enough to be worth naming.
+ */
+export function suggestSettingName(name: string): string | undefined {
+  const budget = Math.max(1, Math.floor(name.length / 3));
+
+  let best: { name: string; distance: number } | undefined;
+  for (const candidate of SETTING_NAMES) {
+    const gap = distance(name, candidate);
+    if (gap <= budget && (!best || gap < best.distance)) best = { name: candidate, distance: gap };
+  }
+
+  return best?.name;
+}
+
 /**
  * Every variable an `env` setting answers to, highest priority first.
  *

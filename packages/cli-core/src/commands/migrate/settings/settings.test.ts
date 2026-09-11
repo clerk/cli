@@ -9,7 +9,7 @@ import { MIGRATE_ENV_FILE } from "../lib/env-file.ts";
 import { loadSettings, saveSettings } from "../lib/settings.ts";
 import { clear } from "./clear.ts";
 import { list } from "./list.ts";
-import { displayValue, findSetting } from "./registry.ts";
+import { displayValue, findSetting, suggestSettingName } from "./registry.ts";
 import { set } from "./set.ts";
 
 const captured = useCaptureLog();
@@ -248,5 +248,80 @@ describe("clear", () => {
     await clear({ yes: true });
 
     expect(envFileContent()).toBe("OTHER=keep\n");
+  });
+});
+
+describe("clear <name>", () => {
+  test("drops one config setting and keeps the rest", async () => {
+    await set("transformer", "firebase");
+    await set("file", "users.json");
+
+    await clear({ yes: true }, "file");
+
+    expect(await loadSettings()).toEqual({ transformer: "firebase" });
+  });
+
+  test("drops one credential and keeps the rest of the env file", async () => {
+    await set("firebase-signer-key", "aVeryLongSignerKeyValue123456");
+    await set("firebase-rounds", "8");
+
+    await clear({ yes: true }, "firebase-signer-key");
+
+    expect(envFileContent()).toContain("CLERK_FIREBASE_ROUNDS=8");
+    expect(envFileContent()).not.toContain("CLERK_FIREBASE_SIGNER_KEY");
+  });
+
+  // Clearing only the prefixed name would report success and leave the next run
+  // reading the alias.
+  test("drops every spelling the setting answers to", async () => {
+    fs.writeFileSync(path.join(workDir, MIGRATE_ENV_FILE), "ROUNDS=8\nOTHER=keep\n");
+
+    await clear({ yes: true }, "firebase-rounds");
+
+    expect(envFileContent()).toBe("OTHER=keep\n");
+  });
+
+  test("says so when the setting was not set here", async () => {
+    await clear({ yes: true }, "firebase-rounds");
+    expect(captured.err).toContain("firebase-rounds");
+    expect(captured.err).toContain("is not set here");
+
+    captured.clear();
+    await clear({ yes: true }, "transformer");
+    expect(captured.err).toContain("transformer");
+    expect(captured.err).toContain("is not set here");
+  });
+
+  // `log-dir` is remembered in the config but yields to an env var, so half a
+  // clear would report success and leave the run reading the same directory.
+  test("clears a setting that lives in both stores", async () => {
+    fs.writeFileSync(path.join(workDir, MIGRATE_ENV_FILE), "CLERK_MIGRATE_LOG_DIR=./env-logs\n");
+    await saveSettings({ logDir: "./saved-logs", transformer: "firebase" });
+
+    await clear({ yes: true }, "log-dir");
+
+    expect(fs.existsSync(path.join(workDir, MIGRATE_ENV_FILE))).toBe(false);
+    expect(await loadSettings()).toEqual({ transformer: "firebase" });
+  });
+
+  test("rejects a name that is not a setting", async () => {
+    await expect(clear({ yes: true }, "nope")).rejects.toThrow(/Unknown setting "nope"/);
+  });
+});
+
+describe("suggestSettingName", () => {
+  // `.choices()` rejects before the action runs, so this is the only thing
+  // standing between a one-character miss and a bare list of eight names.
+  test.each([
+    ["logs-dir", "log-dir"],
+    ["log_dir", "log-dir"],
+    ["firebase-round", "firebase-rounds"],
+    ["transfomer", "transformer"],
+  ])("%s -> %s", (typo, expected) => {
+    expect(suggestSettingName(typo)).toBe(expected);
+  });
+
+  test.each(["banana", "secret", ""])("says nothing for %p", (unrelated) => {
+    expect(suggestSettingName(unrelated)).toBeUndefined();
   });
 });

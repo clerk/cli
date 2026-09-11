@@ -78,6 +78,7 @@ export const NEXT_STEPS = {
   MIGRATE_DELETE: ["Run `clerk migrate logs list` to inspect the deletion log"],
   MIGRATE_SETTINGS: [
     "Run `clerk migrate settings set <name> <value>` to change one",
+    "Run `clerk migrate settings clear <name>` to forget one",
     "Run `clerk migrate settings clear` to forget them all, credentials included",
   ],
   // The only parameterized entry: a suggested import is worthless unless it

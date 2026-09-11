@@ -574,14 +574,31 @@ clerk migrate settings                                     # list
 clerk migrate settings list --json
 clerk migrate settings set transformer firebase
 clerk migrate settings set firebase-signer-key abc123
-clerk migrate settings clear -y
+clerk migrate settings clear firebase-signer-key             # forget one
+clerk migrate settings clear -y                              # forget them all
 ```
 
-| Subcommand                    | Takes            | Description                                               |
-| ----------------------------- | ---------------- | --------------------------------------------------------- |
-| `settings list`               | `--json`         | Every setting, its value and the source it resolved from  |
-| `settings set <name> <value>` | `<name> <value>` | Change one setting                                        |
-| `settings clear`              | `-y, --yes`      | Forget this project's settings and delete its credentials |
+| Subcommand                    | Takes                 | Description                                              |
+| ----------------------------- | --------------------- | -------------------------------------------------------- |
+| `settings list`               | `--json`              | Every setting, its value and the source it resolved from |
+| `settings set <name> <value>` | `<name> <value>`      | Change one setting                                       |
+| `settings clear [name]`       | `[name]`, `-y, --yes` | Forget one setting, or every setting and its credentials |
+
+`settings clear <name>` leaves the rest of the project's settings alone. For a
+credential it drops every variable the setting answers to, aliases included —
+clearing `firebase-rounds` while a bare `ROUNDS` stayed behind in the same file
+would report the setting cleared and leave the next run reading the old value.
+It only ever edits `.env.clerk-migrate`; a value coming from the app's own env
+file or the shell is named in the listing's source column and has to be removed
+there.
+
+A misspelled name gets the closest match back, not just the list:
+
+```
+$ clerk migrate settings clear logs-dir
+error: command-argument value 'logs-dir' is invalid for argument 'name'.
+       Did you mean "log-dir"? Allowed choices are transformer, file, …
+```
 
 Setting names are kebab-case and identical to the `clerk migrate import` flag
 each one backs, so `firebase-signer-key` here is `--firebase-signer-key` there
@@ -623,6 +640,7 @@ firebase-mem-cost           14          MEM_COST env var     Firebase scrypt mem
 4 of 7 settings set. Credentials are shown redacted.
 
    → Run `clerk migrate settings set <name> <value>` to change one
+   → Run `clerk migrate settings clear <name>` to forget one
    → Run `clerk migrate settings clear` to forget them all, credentials included
 ```
 
