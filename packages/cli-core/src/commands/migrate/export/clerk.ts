@@ -17,7 +17,7 @@
 import { bapiRequest } from "../../../lib/bapi.ts";
 import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
-import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
+import { exportLogger, startLogging } from "../lib/logger.ts";
 import { retryOn429 } from "../lib/retry.ts";
 import { resolveClerkSource } from "./clerk-source.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
@@ -235,7 +235,7 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
   const destination = await resolveOutputPath("clerk", options.output);
 
   await withGutter("Exporting users from Clerk", async ({ setNextSteps }) => {
-    const dateTime = getDateTimeStamp();
+    const dateTime = await startLogging();
 
     log.info(`Exporting from ${source.target ?? "the resolved instance"}.`);
 

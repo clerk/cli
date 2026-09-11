@@ -43,7 +43,7 @@ import {
   type SettingChange,
 } from "./lib/modify-settings.ts";
 import { DEV_USER_LIMIT, resolveLimits } from "./lib/instance.ts";
-import { getDateTimeStamp, getLogFilePath } from "./lib/logger.ts";
+import { startLogging, getLogFilePath } from "./lib/logger.ts";
 import { saveSettings } from "./lib/settings.ts";
 import {
   countSocialProviders,
@@ -483,7 +483,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
     const target = await describeBapiTarget({ ...options, secretKey: options.secretKey });
     const secretKey = await resolveBapiSecretKey({ ...options, secretKey: options.secretKey });
     const limits = resolveLimits(secretKey);
-    const dateTime = getDateTimeStamp();
+    const dateTime = await startLogging();
     const logFile = getLogFilePath("import", dateTime);
 
     const { users: loaded, validationFailed } = await withSpinner(

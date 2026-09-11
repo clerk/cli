@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
-import { useCaptureLog } from "../../../test/lib/stubs.ts";
+import { useCaptureLog, useMigrateLogDir } from "../../../test/lib/stubs.ts";
 import { getLogDir } from "../lib/logger.ts";
 import {
   buildFirebaseExport,
@@ -21,6 +21,7 @@ import {
 } from "./firebase.ts";
 
 const captured = useCaptureLog();
+useMigrateLogDir();
 
 let workDir: string;
 let originalCwd: string;

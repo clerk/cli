@@ -52,6 +52,17 @@ async function resolveAll(): Promise<ResolvedSetting[]> {
   return Promise.all(
     SETTINGS.map(async (setting): Promise<ResolvedSetting> => {
       if (setting.store === "config") {
+        // `log-dir` is remembered in the config but yields to an environment
+        // value, so the environment has to be checked first here too — a
+        // listing that shows the remembered path while the run reads another
+        // is the one thing the source column exists to prevent.
+        if (setting.envVar) {
+          const located = await findMigrateEnvValue(envNames(setting));
+          if (located) {
+            return { setting, value: located.value, source: describeSource(setting, located) };
+          }
+        }
+
         const value = saved[setting.configKey as keyof typeof saved];
         return value === undefined
           ? { setting }

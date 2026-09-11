@@ -32,7 +32,7 @@ export function registerMigrateLogs(migrateCommand: Command<[], Record<string, u
   // `clerk migrate logs`.
   logsCommand
     .command("list", { isDefault: true })
-    .description("List the log files in ./logs/")
+    .description("List the migration log files")
     .option("--json", "Output as JSON")
     .setExamples([
       { command: "clerk migrate logs list", description: "Show type, timestamp, size and entries" },
@@ -42,7 +42,7 @@ export function registerMigrateLogs(migrateCommand: Command<[], Record<string, u
 
   logsCommand
     .command("clean")
-    .description("Delete the log files in ./logs/")
+    .description("Delete the migration log files")
     .option("-y, --yes", "Skip the confirmation prompt")
     .setExamples([
       { command: "clerk migrate logs clean", description: "Delete after confirming" },

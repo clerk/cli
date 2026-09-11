@@ -31,7 +31,14 @@ export interface SettingDef {
   name: string;
   store: SettingStore;
   description: string;
-  /** For `env` settings, the variable read at run time. */
+  /**
+   * The environment variable this setting is read from at run time.
+   *
+   * Required for an `env` setting, which lives nowhere else. A `config`
+   * setting may also declare one, meaning "remembered here, but an environment
+   * value wins" — `log-dir` is that shape, so an operator can pin a directory
+   * per shell without disturbing what the project remembers.
+   */
   envVar?: string;
   /**
    * Other variables accepted for the same setting, read only when
@@ -50,7 +57,7 @@ export interface SettingDef {
    */
   envAliases?: string[];
   /** For `config` settings, the key on the saved migration entry. */
-  configKey?: "transformer" | "file" | "skipUnsupportedProviders";
+  configKey?: "transformer" | "file" | "skipUnsupportedProviders" | "logDir";
   /** Redact when displaying — the value is a credential. */
   secret?: boolean;
   /** Reject a value the run would only fail on later. */
@@ -64,6 +71,9 @@ const positiveInteger = (value: string): string | undefined => {
 
 const boolean = (value: string): string | undefined =>
   ["true", "false"].includes(value) ? undefined : "Expected true or false";
+
+const path = (value: string): string | undefined =>
+  value.trim().length > 0 ? undefined : "Expected a directory path";
 
 export const SETTINGS: SettingDef[] = [
   {
@@ -84,6 +94,14 @@ export const SETTINGS: SettingDef[] = [
     configKey: "skipUnsupportedProviders",
     description: "Skip users with no provider enabled in Clerk (Supabase)",
     validate: boolean,
+  },
+  {
+    name: "log-dir",
+    store: "config",
+    configKey: "logDir",
+    envVar: "CLERK_MIGRATE_LOG_DIR",
+    description: "Directory migration logs are written to",
+    validate: path,
   },
   {
     name: "firebase-signer-key",

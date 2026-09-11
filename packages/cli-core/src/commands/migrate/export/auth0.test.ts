@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
-import { useCaptureLog } from "../../../test/lib/stubs.ts";
+import { useCaptureLog, useMigrateLogDir } from "../../../test/lib/stubs.ts";
 import { getLogDir } from "../lib/logger.ts";
 import {
   buildAuth0Export,
@@ -20,6 +20,7 @@ import {
 const NO_ENV_FILES = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-no-env-"));
 
 const captured = useCaptureLog();
+useMigrateLogDir();
 
 const CREDENTIALS = { domain: "t.auth0.com", clientId: "cid", clientSecret: "csec" };
 

@@ -15,7 +15,7 @@ import { multiselect } from "../../../lib/prompts.ts";
 import { withGutter } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import { findLogFile, listLogFiles, readNdjson, type LogFile } from "../lib/log-files.ts";
-import { getLogDir } from "../lib/logger.ts";
+import { getLogDir, resolveLogDir } from "../lib/logger.ts";
 
 export type LogsConvertOptions = {
   all?: boolean;
@@ -85,6 +85,7 @@ export async function convert(options: LogsConvertOptions = {}): Promise<void> {
   // The multiselect lives inside the gutter so cancelling it closes with
   // `└ Paused` rather than leaving a half-drawn frame.
   await withGutter("Converting migration logs", async () => {
+    await resolveLogDir();
     const targets = await resolveTargets(options);
     if (targets.length === 0) return;
 

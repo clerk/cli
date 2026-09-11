@@ -13,7 +13,7 @@
 
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import { log } from "../../../lib/log.ts";
-import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
+import { exportLogger, startLogging } from "../lib/logger.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 import { resolveDbUrl, type DbExportOptions } from "./db-options.ts";
@@ -116,7 +116,7 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
   const destination = await resolveOutputPath("authjs", options.output);
 
   await withGutter("Exporting users from Auth.js", async ({ setNextSteps }) => {
-    const dateTime = getDateTimeStamp();
+    const dateTime = await startLogging();
 
     const { rows, table } = await withSpinner("Reading the user table...", () =>
       withDbClient(dbUrl, "authjs", fetchAuthJsUsers),

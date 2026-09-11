@@ -14,7 +14,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getMode, setMode, type Mode } from "../../mode.ts";
-import { keylessTargetStubs, listageStubs, useCaptureLog } from "../../test/lib/stubs.ts";
+import {
+  keylessTargetStubs,
+  listageStubs,
+  useCaptureLog,
+  useMigrateLogDir,
+} from "../../test/lib/stubs.ts";
 import type { InstanceTarget } from "../../lib/keyless-target.ts";
 
 const mockSelect = mock(async () => "clerk" as unknown);
@@ -22,6 +27,8 @@ const mockText = mock(async () => "export.json" as unknown);
 type MultiselectConfig = { options: { value: string; label: string; hint?: string }[] };
 const mockMultiselect = mock(async (_config: MultiselectConfig) => [] as unknown[]);
 let confirmAnswer = true;
+/** Every confirmation the run put up, in order — the wording is the assertion. */
+let confirmMessages: string[] = [];
 let originalMode: Mode;
 
 const ACCOUNT_TARGET: InstanceTarget = {
@@ -66,6 +73,7 @@ const { loadSettings, saveSettings } = await import("./lib/settings.ts");
 const { _setConfigDir } = await import("../../lib/config.ts");
 
 const captured = useCaptureLog();
+useMigrateLogDir();
 
 let workDir: string;
 let configDir: string;

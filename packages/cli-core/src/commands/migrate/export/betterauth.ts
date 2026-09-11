@@ -17,7 +17,7 @@
 
 import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
-import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
+import { exportLogger, startLogging } from "../lib/logger.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 import { resolveDbUrl, type DbExportOptions } from "./db-options.ts";
@@ -163,7 +163,7 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
   const destination = await resolveOutputPath("betterauth", options.output);
 
   await withGutter("Exporting users from Better Auth", async ({ setNextSteps }) => {
-    const dateTime = getDateTimeStamp();
+    const dateTime = await startLogging();
 
     const { rows, plugins } = await withSpinner("Reading the user table...", () =>
       withDbClient(dbUrl, "betterauth", async (client) => {

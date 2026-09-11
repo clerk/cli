@@ -55,6 +55,8 @@ interface MigrationEntry {
   transformer?: string;
   file?: string;
   skipUnsupportedProviders?: boolean;
+  /** Where this project's migration logs are written. Absent until chosen. */
+  logDir?: string;
 }
 
 interface ClerkConfig {

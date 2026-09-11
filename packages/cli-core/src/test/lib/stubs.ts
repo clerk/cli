@@ -1,7 +1,8 @@
 import { Writable } from "node:stream";
-import { afterEach, beforeEach, type spyOn } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, type spyOn } from "bun:test";
 import { type CapturedLogs, setActiveCapture } from "../../lib/log.ts";
 import { setUiOutput } from "../../lib/ui.ts";
+import { _resetLogDir } from "../../commands/migrate/lib/logger.ts";
 
 export function capturedOutput(spy: ReturnType<typeof spyOn>): string {
   return spy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
@@ -250,4 +251,33 @@ type FetchImpl = (input: string | URL | Request, init?: RequestInit) => Promise<
 
 export function stubFetch(impl: FetchImpl): void {
   globalThis.fetch = impl as typeof fetch;
+}
+
+/**
+ * Settles the migration log directory for a whole test file.
+ *
+ * `migrate import`, `export` and `delete` ask a human where logs should go the
+ * first time a project runs one. A test that flips to human mode to exercise
+ * something else — next steps, a wizard — would stop on that question and,
+ * where `prompts.ts` is mocked, silently eat the answer meant for another
+ * prompt. Pinning the environment variable answers it before it is asked, the
+ * same way an operator who exported one never sees it.
+ */
+export function useMigrateLogDir(dir = "./logs"): void {
+  let original: string | undefined;
+
+  beforeAll(() => {
+    original = process.env.CLERK_MIGRATE_LOG_DIR;
+    process.env.CLERK_MIGRATE_LOG_DIR = dir;
+  });
+
+  // Resolution is cached per process, and each test file runs under its own
+  // temporary cwd, so the cached absolute path has to go with it.
+  beforeEach(() => _resetLogDir());
+
+  afterAll(() => {
+    if (original === undefined) delete process.env.CLERK_MIGRATE_LOG_DIR;
+    else process.env.CLERK_MIGRATE_LOG_DIR = original;
+    _resetLogDir();
+  });
 }

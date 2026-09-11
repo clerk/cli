@@ -10,7 +10,7 @@ import { bold, cyan, dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
 import { withGutter } from "../../../lib/spinner.ts";
 import { formatSize, listLogFiles, type LogFile, type LogKind } from "../lib/log-files.ts";
-import { displayLogDir } from "../lib/logger.ts";
+import { displayLogDir, resolveLogDir } from "../lib/logger.ts";
 
 /** Every kind a log file can be, and what one entry in it records. */
 const KIND_LEGEND: Record<Exclude<LogKind, "unknown">, string> = {
@@ -53,6 +53,9 @@ export function formatTimestamp(stamp: string): string {
 }
 
 export async function list(options: LogsListOptions = {}): Promise<void> {
+  // Resolve, never ask: listing is read-only, and "where should logs go?" is
+  // not a question to answer before showing someone the ones they have.
+  await resolveLogDir();
   const files = listLogFiles();
 
   if (options.json) {

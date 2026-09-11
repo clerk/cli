@@ -37,7 +37,7 @@ import { withGutter, withSpinner, type SpinnerControls } from "../../lib/spinner
 import { isAgent, isHuman } from "../../mode.ts";
 import { normalizeErrorMessage } from "./import-users.ts";
 import { resolveLimits, type ResolvedLimits } from "./lib/instance.ts";
-import { deleteErrorLogger, deleteLogger, getDateTimeStamp, getLogFilePath } from "./lib/logger.ts";
+import { deleteErrorLogger, deleteLogger, startLogging, getLogFilePath } from "./lib/logger.ts";
 import { RateLimitExceededError, retryOn429 } from "./lib/retry.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
 import { loadSettings } from "./lib/settings.ts";
@@ -263,7 +263,7 @@ export async function deleteMigration(options: MigrateDeleteOptions): Promise<vo
     const target = await describeBapiTarget({ ...options, secretKey: options.secretKey });
     const secretKey = await resolveBapiSecretKey({ ...options, secretKey: options.secretKey });
     const limits = resolveLimits(secretKey);
-    const dateTime = getDateTimeStamp();
+    const dateTime = await startLogging();
     const logFile = getLogFilePath("delete", dateTime);
 
     const externalIds = await readMigratedExternalIds(file, key);

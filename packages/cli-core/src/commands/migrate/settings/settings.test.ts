@@ -207,7 +207,7 @@ describe("list", () => {
 
     await list();
 
-    expect(captured.err).toContain("1 of 7 settings set");
+    expect(captured.err).toContain("1 of 8 settings set");
   });
 
   // Firebase's own names for these, and what every guide tells you to paste

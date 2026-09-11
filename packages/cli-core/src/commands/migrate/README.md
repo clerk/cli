@@ -386,7 +386,8 @@ failed.
 
 ### `clerk migrate logs`
 
-Everything that touches the local `./logs/` directory. Noun-verb like every
+Everything that touches the local log directory — `./logs` unless the project
+says otherwise; see [Where logs go](#where-logs-go). Noun-verb like every
 other group in the CLI (`config pull`, `users list`), rather than the standalone
 tool's `clean-logs`/`convert-logs`, which were npm script names.
 
@@ -405,11 +406,36 @@ clerk migrate logs convert import-2026-01-01T12-00-00.log
 | Subcommand     | Takes              | Description                                     |
 | -------------- | ------------------ | ----------------------------------------------- |
 | `logs list`    | `--json`           | File, type, date, size and entry count per file |
-| `logs clean`   | `-y, --yes`        | Delete the `.log` files in `./logs/`            |
+| `logs clean`   | `-y, --yes`        | Delete the `.log` files in the log directory    |
 | `logs convert` | `[file…]`, `--all` | NDJSON → a JSON array, written as `<name>.json` |
 
 All three read the directory through one shared enumerator, which is what makes
-`logs list` nearly free.
+`logs list` nearly free. All three **resolve** the directory without ever asking
+for one: they are read-only, and "where should logs go?" is not a question to
+put in front of someone who asked to see the logs they already have.
+
+#### Where logs go
+
+`./logs`, relative to the current directory, until the project says otherwise.
+Resolution order, highest first:
+
+| Source                      | Set by                                                |
+| --------------------------- | ----------------------------------------------------- |
+| `CLERK_MIGRATE_LOG_DIR`     | The shell, `.env`, `.env.local`, `.env.clerk-migrate` |
+| `log-dir` in the CLI config | The first-run prompt, or `settings set`               |
+| `./logs`                    | The fallback                                          |
+
+The first time `migrate import`, `migrate export` or `migrate delete` runs
+interactively in a project with none of those set, it asks where logs should be
+saved and offers `./logs`. The answer is saved under `log-dir`, so it is asked
+once per project and never again. `-y`, agent mode and a non-TTY take `./logs`
+without asking **and without saving it** — landing on a default is not a choice,
+and recording one would retire the question for a human who never saw it.
+
+Logs are the only record of which users landed and which failed, and
+`migrate delete` reads them to undo a run, so where they go is worth the one
+question. Change it later with `clerk migrate settings set log-dir <path>`, or
+clear it with `clerk migrate settings clear log-dir` to be asked again.
 
 #### `logs list`
 
@@ -450,7 +476,7 @@ raw stamp.
 The directory is printed relative (`./logs`) when it sits under the current
 directory and absolute when it does not, so the path can be pasted either way.
 
-Says so plainly when `./logs/` is empty or absent.
+Says so plainly when the log directory is empty or absent.
 
 #### `logs clean`
 
@@ -604,10 +630,16 @@ firebase-mem-cost           14          MEM_COST env var     Firebase scrypt mem
 
 Two stores, split by what the value **is** rather than by which command wrote it:
 
-| Store                | Holds                                               | Why                                                              |
-| -------------------- | --------------------------------------------------- | ---------------------------------------------------------------- |
-| CLI config           | `transformer`, `file`, `skip-unsupported-providers` | Project state, not secret, useless outside the CLI               |
-| `.env.clerk-migrate` | `firebase-*`                                        | Credentials: gitignored on write, and hand-editable for rotation |
+| Store                | Holds                                                          | Why                                                              |
+| -------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------- |
+| CLI config           | `transformer`, `file`, `skip-unsupported-providers`, `log-dir` | Project state, not secret, useless outside the CLI               |
+| `.env.clerk-migrate` | `firebase-*`                                                   | Credentials: gitignored on write, and hand-editable for rotation |
+
+`log-dir` is the one setting that answers to both: it is remembered in the CLI
+config, and `CLERK_MIGRATE_LOG_DIR` outranks what is remembered, so a directory
+can be pinned for one shell without disturbing the project. The listing's source
+column says which is winning, and `settings clear log-dir` clears both — half a
+clear would report the setting gone while the next run still read it.
 
 `.env.clerk-migrate` is the migration's own file rather than the app's
 `.env.local`, because a Firebase signer key is of no use to the application

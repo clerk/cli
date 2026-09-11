@@ -31,7 +31,7 @@ import { log } from "../../../lib/log.ts";
 import { password as passwordPrompt } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
-import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
+import { exportLogger, startLogging } from "../lib/logger.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 
 /** Identity Toolkit's maximum for `accounts:batchGet`. */
@@ -487,7 +487,7 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
   const destination = await resolveOutputPath("firebase", options.output);
 
   await withGutter("Exporting users from Firebase", async ({ setNextSteps }) => {
-    const dateTime = getDateTimeStamp();
+    const dateTime = await startLogging();
     log.info(`Exporting from the ${account.project_id} project.`);
 
     const token = await withSpinner("Authenticating with Google...", () =>

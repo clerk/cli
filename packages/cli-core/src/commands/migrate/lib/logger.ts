@@ -14,6 +14,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { log } from "../../../lib/log.ts";
+import { text } from "../../../lib/prompts.ts";
+import { isAgent, isHuman } from "../../../mode.ts";
+import { envNames, findSetting } from "../settings/registry.ts";
+import { findMigrateEnvValue } from "./env-file.ts";
+import { loadSettings, saveSettings } from "./settings.ts";
 import type {
   DeleteLogEntry,
   ErrorLog,
@@ -23,9 +28,110 @@ import type {
   ValidationErrorPayload,
 } from "../types.ts";
 
-/** Absolute path of the cwd-relative `logs/` directory. */
+/** Where logs go when nobody has said otherwise. */
+export const DEFAULT_LOG_DIR = "./logs";
+
+/**
+ * The directory settled for this process, once something has settled it.
+ *
+ * The log writers are synchronous — a run interrupted with Ctrl-C has to leave
+ * a complete record of what it already processed — but resolving the directory
+ * reads the config, the env files and possibly the operator. So resolution
+ * happens once, up front, and every synchronous write reads the answer from
+ * here. {@link resolveLogDir} and {@link ensureLogDir} are the only writers.
+ */
+let settled: string | undefined;
+
+function remember(dir: string): string {
+  settled = path.resolve(process.cwd(), dir);
+  return settled;
+}
+
+/** Forgets the settled directory. Tests only — each one resolves its own. */
+export function _resetLogDir(): void {
+  settled = undefined;
+}
+
+/**
+ * Absolute path of the log directory.
+ *
+ * Falls back to `./logs` when nothing has resolved yet, so a caller that
+ * forgets to is wrong about *where*, never broken.
+ */
 export function getLogDir(): string {
-  return path.join(process.cwd(), "logs");
+  return settled ?? path.resolve(process.cwd(), DEFAULT_LOG_DIR);
+}
+
+/** The `log-dir` setting, which owns both the env var and the config key. */
+const LOG_DIR = findSetting("log-dir") as NonNullable<ReturnType<typeof findSetting>>;
+
+/**
+ * The directory the operator has already chosen, by either route.
+ *
+ * The environment wins over the remembered value, matching every other setting
+ * the CLI resolves: a variable exported for one shell is the narrower, more
+ * deliberate statement of the two.
+ */
+async function chosenLogDir(): Promise<string | undefined> {
+  const located = await findMigrateEnvValue(envNames(LOG_DIR));
+  if (located?.value) return located.value;
+  return (await loadSettings()).logDir;
+}
+
+/**
+ * Settles the log directory without asking: environment, then the saved
+ * setting, then `./logs`.
+ *
+ * For the read-only log commands. Landing on the default here does not save it
+ * — an operator who has only ever *listed* logs has still made no choice, and
+ * recording one on their behalf would skip the question forever.
+ */
+export async function resolveLogDir(): Promise<string> {
+  return remember((await chosenLogDir()) ?? DEFAULT_LOG_DIR);
+}
+
+/**
+ * Settles the log directory, asking a human who has not chosen yet.
+ *
+ * Migration logs are the only record of which users landed and which failed,
+ * and `migrate delete` reads them to undo a run — so where they go is worth one
+ * question, once per project, before the first thing is written. The answer is
+ * saved, so it is asked once and never again.
+ *
+ * `-y`, agent mode and a non-TTY take the default rather than a prompt they
+ * cannot answer, and save nothing: the question stays open for the first
+ * interactive run.
+ */
+export async function ensureLogDir(): Promise<string> {
+  const chosen = await chosenLogDir();
+  if (chosen) return remember(chosen);
+  if (!isHuman() || isAgent()) return remember(DEFAULT_LOG_DIR);
+
+  const answer = await text({
+    message: "Where should migration logs be saved?",
+    default: DEFAULT_LOG_DIR,
+    placeholder: DEFAULT_LOG_DIR,
+  });
+  const dir = answer.trim() || DEFAULT_LOG_DIR;
+
+  await saveSettings({ ...(await loadSettings()), logDir: dir });
+  log.info(
+    `Saving migration logs to ${dir}. Change it with \`clerk migrate settings set log-dir <path>\`.`,
+  );
+
+  return remember(dir);
+}
+
+/**
+ * Settles where this run's logs go, and stamps it.
+ *
+ * Every command that writes a log starts here rather than calling
+ * {@link getDateTimeStamp} directly, so there is no path on which a log file is
+ * named before its directory has been resolved.
+ */
+export async function startLogging(): Promise<string> {
+  await ensureLogDir();
+  return getDateTimeStamp();
 }
 
 /**

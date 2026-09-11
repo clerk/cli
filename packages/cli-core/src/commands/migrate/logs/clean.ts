@@ -16,7 +16,7 @@ import { confirm } from "../../../lib/prompts.ts";
 import { withGutter } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import { listLogFiles } from "../lib/log-files.ts";
-import { getLogDir } from "../lib/logger.ts";
+import { getLogDir, resolveLogDir } from "../lib/logger.ts";
 
 export type LogsCleanOptions = {
   yes?: boolean;
@@ -24,6 +24,7 @@ export type LogsCleanOptions = {
 
 export async function clean(options: LogsCleanOptions = {}): Promise<void> {
   await withGutter("Cleaning migration logs", async () => {
+    await resolveLogDir();
     const files = listLogFiles();
 
     if (files.length === 0) {

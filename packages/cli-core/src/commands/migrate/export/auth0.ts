@@ -22,7 +22,7 @@ import { password as passwordPrompt, text } from "../../../lib/prompts.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import { findMigrateEnvValue } from "../lib/env-file.ts";
-import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
+import { exportLogger, startLogging } from "../lib/logger.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 
 const PAGE_SIZE = 100;
@@ -319,7 +319,7 @@ export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
   const destination = await resolveOutputPath("auth0", options.output);
 
   await withGutter("Exporting users from Auth0", async ({ setNextSteps }) => {
-    const dateTime = getDateTimeStamp();
+    const dateTime = await startLogging();
     log.info(`Exporting from ${credentials.domain}.`);
 
     const token = await withSpinner("Authenticating with Auth0...", () =>
