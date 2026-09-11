@@ -8,7 +8,7 @@ import { useCaptureLog } from "../../test/lib/stubs.ts";
 import { getLogDir } from "./lib/logger.ts";
 import { __resetCustomTransformersForTesting } from "./transformers/registry.ts";
 import { loadSettings } from "./lib/settings.ts";
-import { applyResumeAfter, run, validateRunOptions } from "./run.ts";
+import { applyResumeAfter, explainErrors, run, validateRunOptions } from "./run.ts";
 import type { User } from "./types.ts";
 
 let workDir: string;
@@ -183,19 +183,35 @@ describe("run", () => {
     expect(captured.err).toContain("1 user failed validation");
   });
 
-  test("refuses to exceed the development-instance user limit", async () => {
-    fs.writeFileSync(
-      path.join(workDir, "export.json"),
-      JSON.stringify(
-        Array.from({ length: 501 }, (_, i) => ({
-          id: `u${i}`,
-          primary_email_address: `u${i}@x.dev`,
-        })),
-      ),
-    );
+  /** Makes `GET /v1/users/count` report an instance that already holds users. */
+  function stubUserCount(total: number): void {
+    const inner = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (input.toString().includes("/v1/users/count")) {
+        return Response.json({ object: "total_count", total_count: total });
+      }
+      return inner(input, init);
+    }) as typeof fetch;
+  }
 
-    await expect(run(baseOptions)).rejects.toThrow(/development instance/);
-    expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+  // `baseOptions` passes -y, which has nobody to answer the prompt this warning
+  // otherwise raises — see run-interactive.test.ts for the prompt itself.
+  test("warns under -y when an import may exceed the development-instance user limit", async () => {
+    stubUserCount(99);
+
+    await run(baseOptions);
+
+    expect(captured.err).toContain("100-user limit");
+    expect(captured.err).toContain("already holds 99");
+    expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+  });
+
+  test("stays quiet when the instance has room for the whole file", async () => {
+    stubUserCount(10);
+
+    await run(baseOptions);
+
+    expect(captured.err).not.toContain("100-user limit");
   });
 
   test("aborts before any API call when the hasher is unrecognized", async () => {
@@ -683,5 +699,35 @@ describe("run", () => {
 
       expect((await loadSettings()).skipUnsupportedProviders).toBe(true);
     });
+  });
+});
+
+describe("explainErrors", () => {
+  const COUNTRY =
+    "Phone numbers from this country (France) are currently not supported. For more information, please contact support.";
+  const QUOTA =
+    "You have reached your limit of 100 users. If you need more users, please use a Production instance.";
+
+  test("names the development instance as the reason countries are blocked", () => {
+    const [note] = explainErrors([COUNTRY], "dev");
+    expect(note).toContain("Development instances block SMS to most countries");
+    expect(note).toContain("test-emails-and-phones");
+  });
+
+  test("sends a production operator to the Dashboard instead of support", () => {
+    const [note] = explainErrors([COUNTRY], "prod");
+    expect(note).toContain("customization/sms/settings");
+    expect(note).not.toContain("Development instances");
+  });
+
+  test("explains the user quota only where one applies", () => {
+    expect(explainErrors([QUOTA], "dev").join(" ")).toContain("development-instance quota");
+    // Production has no such quota, and the API's message already names the
+    // plan upgrade in the one case it does.
+    expect(explainErrors([QUOTA], "prod")).toEqual([]);
+  });
+
+  test("says nothing about errors it does not recognize", () => {
+    expect(explainErrors(["Something else went wrong."], "dev")).toEqual([]);
   });
 });

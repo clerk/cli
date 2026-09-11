@@ -59,7 +59,10 @@ mock.module("../../lib/keyless-target.ts", () => ({
 // Every export of the real module must appear here — a missing one is a link
 // error at import time, which takes down the whole file rather than one prompt.
 mock.module("../../lib/prompts.ts", () => ({
-  confirm: async () => confirmAnswer,
+  confirm: async ({ message }: { message: string }) => {
+    confirmMessages.push(message);
+    return confirmAnswer;
+  },
   multiselect: (...args: unknown[]) => mockMultiselect(...(args as [MultiselectConfig])),
   text: (...args: unknown[]) => mockText(...(args as [])),
   password: async () => "",
@@ -119,6 +122,7 @@ afterAll(() => {
 beforeEach(() => {
   requests = [];
   confirmAnswer = true;
+  confirmMessages = [];
   instanceTarget = ACCOUNT_TARGET;
   mockSelect.mockReset();
   mockText.mockReset();
@@ -471,18 +475,51 @@ describe("fixing the instance's settings from the report", () => {
 });
 
 describe("guards that still apply interactively", () => {
-  test("the dev-instance 500-user cap", async () => {
-    fs.writeFileSync(
-      path.join(workDir, "export.json"),
-      JSON.stringify(
-        Array.from({ length: 501 }, (_, i) => ({
-          id: `u${i}`,
-          primary_email_address: `u${i}@x.dev`,
-        })),
-      ),
-    );
+  /** Makes `GET /v1/users/count` report an instance with one seat left. */
+  function stubNearlyFullInstance(): void {
+    const inner = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (input.toString().includes("/v1/users/count")) {
+        return Response.json({ object: "total_count", total_count: 99 });
+      }
+      return inner(input, init);
+    }) as typeof fetch;
+  }
 
-    await expect(run(baseOptions)).rejects.toThrow(/development instance/);
+  test("the dev-instance user limit, which the operator can agree to import past", async () => {
+    stubNearlyFullInstance();
+    confirmAnswer = true;
+
+    await run(baseOptions);
+
+    expect(captured.err).toContain("100-user limit");
+    expect(created()).toHaveLength(2);
+  });
+
+  // Asking "Import 2 users?" after warning that one of them cannot fit is the
+  // report and the quota disagreeing in the same run.
+  test("the final prompt restates the quota split rather than the file size", async () => {
+    stubNearlyFullInstance();
+
+    await run(baseOptions);
+
+    expect(confirmMessages).toContain("Import 1 user and expect 1 to fail?");
+  });
+
+  test("the final prompt names the whole file when the quota is not in play", async () => {
+    await run(baseOptions);
+
+    expect(confirmMessages).toContain("Import 2 users?");
+  });
+
+  test("declining the user-limit prompt writes nothing to Clerk", async () => {
+    stubNearlyFullInstance();
+    confirmAnswer = false;
+
+    await expect(run(baseOptions)).rejects.toThrow(UserAbortError);
+
+    // Aborted before the readiness report, so nothing was read from FAPI either.
+    expect(captured.err).not.toContain("Migration readiness");
     expect(created()).toHaveLength(0);
   });
 

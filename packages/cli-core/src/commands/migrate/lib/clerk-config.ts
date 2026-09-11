@@ -117,3 +117,28 @@ export async function fetchEnabledSocialProviders(secretKey: string): Promise<st
   const settings = await fetchInstanceSettings(secretKey);
   return settings ? enabledSocialProviders(settings) : null;
 }
+
+/**
+ * How many users the destination instance already holds.
+ *
+ * The closest thing to a live quota check the CLI has: `max_allowed_users` is
+ * not exposed by any public API, so headroom on a development instance can
+ * only be estimated from the count and {@link DEV_USER_LIMIT}.
+ *
+ * @returns `null` when the count could not be read — an unknown count must not
+ *   be reported as zero.
+ */
+export async function fetchUserCount(secretKey: string): Promise<number | null> {
+  try {
+    const response = await bapiRequest({ method: "GET", path: "/v1/users/count", secretKey });
+    const total = (response.body as { total_count?: unknown })?.total_count;
+    return typeof total === "number" ? total : null;
+  } catch (error) {
+    log.debug(
+      `migrate: could not read the instance's user count: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
+}

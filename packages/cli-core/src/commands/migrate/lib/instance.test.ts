@@ -35,8 +35,8 @@ describe("default limits", () => {
     expect(getDefaultConcurrencyLimit(rateLimit)).toBe(expected);
   });
 
-  test("development instances are capped at 500 users", () => {
-    expect(DEV_USER_LIMIT).toBe(500);
+  test("development instances default to 100 users", () => {
+    expect(DEV_USER_LIMIT).toBe(100);
   });
 });
 

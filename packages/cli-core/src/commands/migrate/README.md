@@ -119,8 +119,21 @@ that, assuming ~100ms of API latency. Both are overridable:
 
 A non-numeric or non-positive value is ignored in favour of the default.
 
-**Development instances refuse imports over 500 users**, matching Clerk's own
-limit — the run fails before any request is sent.
+**Development instances warn when an import may exceed their user limit.** New
+development instances are created with a 100-user limit; production instances
+have none. Before importing, the run reads the instance's current user count
+(`GET /v1/users/count`) and warns when the file would take it past 100.
+
+The run then stops and asks before going ahead. It is a prompt rather than a
+hard refusal because the number checked against may not be this instance's:
+Clerk raises a development instance's limit on request, and the raised value
+(`max_allowed_users`) is not served by BAPI, DAPI or FAPI — so the CLI can show
+the live count but never the live limit. Declining aborts before anything is
+written to Clerk; `-y` and agent mode proceed on the warning alone.
+
+Users that do exceed the limit come back in the error breakdown as
+`You have reached your limit of N users`, annotated with what a development
+instance can do about it.
 
 ### `clerk migrate export`
 
@@ -1097,6 +1110,7 @@ NDJSON is. The original `.log` stays put.
 | `POST`   | `/v1/phone_numbers`        | `migrate import` — attaches additional phones                                        |
 | `GET`    | `/v1/users?external_id=…`  | `migrate delete` — finds this migration's users, 100 IDs a call                      |
 | `GET`    | `/v1/users?limit=&offset=` | `migrate export clerk` — pages the whole instance, 500 at a time                     |
+| `GET`    | `/v1/users/count`          | `migrate import` — headroom against a development instance's user limit              |
 | `DELETE` | `/v1/users/{user_id}`      | `migrate delete` — removes one user                                                  |
 | `GET`    | `/v1/domains`              | Readiness report and `--skip-unsupported-providers` — resolves the Frontend API host |
 

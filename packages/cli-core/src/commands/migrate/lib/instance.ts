@@ -6,8 +6,16 @@
  * `resolveBapiSecretKey`, and only the two override knobs read the environment.
  */
 
-/** Development instances are capped at this many users by Clerk. */
-export const DEV_USER_LIMIT = 500;
+/**
+ * The user limit a development instance is created with.
+ *
+ * Only a default: Clerk raises it per instance on request, and the real value
+ * (`max_allowed_users`) is not served by BAPI, DAPI or FAPI — only by Clerk's
+ * internal staff API. So this is a number to warn against, never one to refuse
+ * an import over; the instance in front of you may be allowed far more.
+ * Production instances have no limit at all.
+ */
+export const DEV_USER_LIMIT = 100;
 
 /** How many times a 429 is retried before the user is recorded as failed. */
 export const MAX_RETRIES = 5;

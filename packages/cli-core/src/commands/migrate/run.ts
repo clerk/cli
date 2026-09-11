@@ -28,6 +28,7 @@ import { resolveFirebaseHashConfig, type FirebaseHashFlags } from "./lib/firebas
 import {
   enabledSocialProviders,
   fetchInstanceSettings,
+  fetchUserCount,
   toClerkStrategy,
 } from "./lib/clerk-config.ts";
 import {
@@ -42,7 +43,7 @@ import {
   buildSettingChanges,
   type SettingChange,
 } from "./lib/modify-settings.ts";
-import { DEV_USER_LIMIT, resolveLimits } from "./lib/instance.ts";
+import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
 import { startLogging, getLogFilePath } from "./lib/logger.ts";
 import { saveSettings } from "./lib/settings.ts";
 import {
@@ -168,7 +169,59 @@ export function applyResumeAfter(users: User[], resumeAfter: string | undefined)
   return users.slice(index + 1);
 }
 
-function formatSummary(summary: ImportSummary, logFile: string): string {
+/** Where a production instance's operator changes the SMS country blocklist. */
+const SMS_SETTINGS_URL = "https://dashboard.clerk.com/~/customization/sms/settings";
+
+/** Clerk's fictional email addresses and phone numbers, for development. */
+const TEST_NUMBERS_URL = "https://clerk.com/docs/guides/development/testing/test-emails-and-phones";
+
+/**
+ * What the API's error messages leave out: whether the operator can do
+ * something about them, and where.
+ *
+ * Both of these read as account-level restrictions and are not. Blocked
+ * countries are a per-instance SMS blocklist that development instances are
+ * created with far more of, and the user limit is a development-instance quota
+ * that production does not have at all — so "contact support", which both
+ * messages point at, is the wrong first move for most readers.
+ *
+ * @returns One note per recognized error family, empty when none apply.
+ */
+export function explainErrors(errors: Iterable<string>, instanceType: InstanceType): string[] {
+  const all = [...errors];
+  const notes: string[] = [];
+
+  if (all.some((error) => error.includes("Phone numbers from this country"))) {
+    notes.push(
+      instanceType === "dev"
+        ? `Development instances block SMS to most countries by default — this is not a limit on your account. ` +
+            `Use Clerk's test phone numbers while developing (${TEST_NUMBERS_URL}), and contact support only if ` +
+            `you need real numbers in a specific country before going to production.`
+        : `Unblock the countries you need under SMS settings in the Dashboard (${SMS_SETTINGS_URL}). ` +
+            `Plans without SMS support cannot remove them; contact support if the setting is refused.`,
+    );
+  }
+
+  // Production has no user limit unless a plan imposes one, and the API's own
+  // message already names the fix ("upgrade to a paid plan") in that case.
+  if (
+    instanceType === "dev" &&
+    all.some((error) => /You have reached your limit of \d+ users/.test(error))
+  ) {
+    notes.push(
+      `The user limit is a development-instance quota (${DEV_USER_LIMIT} by default). Import into a production ` +
+        `instance to bring everyone across, or contact support to raise this instance's limit.`,
+    );
+  }
+
+  return notes;
+}
+
+function formatSummary(
+  summary: ImportSummary,
+  logFile: string,
+  instanceType: InstanceType,
+): string {
   const inFile = summary.totalProcessed + summary.validationFailed;
   const lines = [
     `${bold("Total users in file:")} ${inFile}`,
@@ -184,10 +237,64 @@ function formatSummary(summary: ImportSummary, logFile: string): string {
     for (const [error, count] of summary.errorBreakdown) {
       lines.push(`  ${count} user${count === 1 ? "" : "s"}: ${error}`);
     }
+    for (const note of explainErrors(summary.errorBreakdown.keys(), instanceType)) {
+      lines.push("", note);
+    }
   }
   lines.push("", dim(`Log: ${logFile}`));
 
   return lines.join("\n");
+}
+
+/**
+ * Stops an import that looks likely to exhaust a development instance's user
+ * quota, and asks before letting it through anyway.
+ *
+ * A prompt rather than a hard refusal, because the number it checks against
+ * cannot be trusted to be this instance's: {@link DEV_USER_LIMIT} is only what
+ * an instance is *created* with, Clerk raises it per instance on request, and
+ * no public endpoint serves the real value. The existing user count is live;
+ * the limit it is measured against is not. Refusing outright would block
+ * imports the destination would happily accept, so the operator — who can ask
+ * Clerk what their limit is — gets the last word.
+ *
+ * `-y` and agent mode proceed on the warning alone, matching the import
+ * confirmation below: neither has anyone to answer the question.
+ *
+ * @returns How many of `incoming` the quota is expected to reject, or `0` when
+ *   the whole file fits. The final import prompt reports the same split, so
+ *   that "yes" is never a bigger number than the instance will accept.
+ * @throws UserAbortError when the operator declines.
+ */
+async function confirmDevUserLimit(
+  incoming: number,
+  secretKey: string,
+  yes: boolean,
+): Promise<number> {
+  const existing = await withSpinner("Checking the instance's user count...", async () =>
+    fetchUserCount(secretKey),
+  );
+  const headroom = Math.max(0, DEV_USER_LIMIT - (existing ?? 0));
+  if (incoming <= headroom) return 0;
+
+  const rejected = incoming - headroom;
+  const held = existing === null ? "" : `, and this one already holds ${existing}`;
+  log.warn(
+    `Development instances default to a ${DEV_USER_LIMIT}-user limit${held}. About ${rejected} of the ` +
+      `${incoming} user${incoming === 1 ? "" : "s"} in this file will be rejected with a quota error unless ` +
+      `Clerk has raised this instance's limit — the limit itself is not readable from the API.\n` +
+      `Import into a production instance to bring everyone across, or contact support to raise the limit.`,
+  );
+
+  if (yes || !isHuman() || isAgent()) return rejected;
+
+  const proceed = await confirm({
+    message: `Continue anyway, expecting about ${rejected} user${rejected === 1 ? "" : "s"} to be rejected?`,
+    default: false,
+  });
+  if (!proceed) throwUserAbort();
+
+  return rejected;
 }
 
 /**
@@ -522,13 +629,10 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       return;
     }
 
-    if (limits.instanceType === "dev" && users.length > DEV_USER_LIMIT) {
-      throw new CliError(
-        `Cannot import ${users.length} users into a development instance — the limit is ${DEV_USER_LIMIT}.\n` +
-          "Target a production instance, or reduce the import file.",
-        { code: ERROR_CODE.USAGE_ERROR },
-      );
-    }
+    const quotaRejections =
+      limits.instanceType === "dev"
+        ? await confirmDevUserLimit(users.length, secretKey, Boolean(options.yes))
+        : 0;
 
     // `target` already carries the instance's environment ("My App
     // (development)"), so the detected type is only worth spelling out when
@@ -549,8 +653,15 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
     });
 
     if (!options.yes && isHuman() && !isAgent()) {
+      // The readiness report counts the whole file, because settings decide
+      // what Clerk *accepts*. The quota decides how much of it gets in at all,
+      // so the last prompt — the one that starts writing — restates that split
+      // rather than asking about a number the instance will not take.
+      const importable = users.length - quotaRejections;
       const proceed = await confirm({
-        message: `Import ${users.length} user${users.length === 1 ? "" : "s"}?`,
+        message: quotaRejections
+          ? `Import ${importable} user${importable === 1 ? "" : "s"} and expect ${quotaRejections} to fail?`
+          : `Import ${users.length} user${users.length === 1 ? "" : "s"}?`,
         default: false,
       });
       if (!proceed) throwUserAbort();
@@ -576,11 +687,15 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       }),
     );
 
-    log.info(formatSummary(summary, logFile));
+    log.info(formatSummary(summary, logFile, limits.instanceType));
 
     // Offered even when some users failed: a partial import is exactly when
-    // reading the log and knowing how to undo it matters most.
-    setNextSteps(NEXT_STEPS.MIGRATE_DONE);
+    // reading the log and knowing how to undo it matters most. When users did
+    // fail, the per-user record of *why* leads, since the breakdown above only
+    // counts each error and never names who hit it.
+    setNextSteps(
+      summary.failed > 0 ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(logFile) : NEXT_STEPS.MIGRATE_DONE,
+    );
 
     if (summary.failed > 0) process.exitCode = 1;
   });
