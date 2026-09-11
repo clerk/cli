@@ -39,6 +39,7 @@ describe("detectDbType", () => {
     ["mysql://u:p@h/db", "mysql"],
     ["mysql2://u:p@h/db", "mysql"],
     ["./db.sqlite", "sqlite"],
+    ["libsql://app-org.turso.io", "sqlite"],
     ["file:./db.sqlite", "sqlite"],
     ["/abs/path.db", "sqlite"],
     ["  postgres://u:p@h/db  ", "postgres"],
@@ -52,6 +53,7 @@ describe("redactConnectionString", () => {
     ["postgres://user:secret@host:5432/db", "postgres://***@host:5432/db"],
     ["mysql://root:hunter2@127.0.0.1:3306/app", "mysql://***@127.0.0.1:3306/app"],
     ["postgres://host/db", "postgres://host/db"],
+    ["libsql://app.turso.io?authToken=secret", "libsql://app.turso.io?authToken=***"],
   ])("%s -> %s", (input, expected) => {
     expect(redactConnectionString(input)).toBe(expected);
   });
@@ -86,6 +88,75 @@ describe("sqlitePath", () => {
     ["  ./db.sqlite  ", "./db.sqlite"],
   ])("%s -> %s", (input, expected) => {
     expect(sqlitePath(input)).toBe(expected);
+  });
+});
+
+describe("a libsql client", () => {
+  const originalFetch = globalThis.fetch;
+  let requests: { url: string; token?: string; body: any }[] = [];
+
+  function stubFetch(result: unknown) {
+    requests = [];
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      requests.push({
+        url: String(url),
+        token: (init.headers as Record<string, string>).authorization,
+        body: JSON.parse(String(init.body)),
+      });
+      return new Response(JSON.stringify({ results: [result, { type: "ok" }] }), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+  }
+
+  const okRows = (cols: string[], rows: unknown[][]) => ({
+    type: "ok",
+    response: { type: "execute", result: { cols: cols.map((name) => ({ name })), rows } },
+  });
+
+  afterAll(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("posts to the pipeline endpoint with the URL's token and decodes rows", async () => {
+    stubFetch(
+      okRows(
+        ["id", "count", "verified", "missing", "hash"],
+        [
+          [
+            { type: "text", value: "u1" },
+            { type: "integer", value: "12" },
+            { type: "float", value: 1.5 },
+            { type: "null" },
+            { type: "blob", base64: Buffer.from("hash").toString("base64") },
+          ],
+        ],
+      ),
+    );
+
+    const client = await createDbClient("libsql://app-org.turso.io?authToken=t0ken");
+    const rows = await client.query('SELECT * FROM "user" WHERE id = ?', ["u1"]);
+    await client.close();
+
+    expect(requests[0]?.url).toBe("https://app-org.turso.io/v2/pipeline");
+    expect(requests[0]?.token).toBe("Bearer t0ken");
+    expect(requests.at(-1)?.body.requests[0].stmt.args).toEqual([{ type: "text", value: "u1" }]);
+    expect(rows).toEqual([
+      {
+        id: "u1",
+        count: 12,
+        verified: 1.5,
+        missing: null,
+        hash: Buffer.from("hash"),
+      },
+    ] as never);
+    expect(client.dbType).toBe("sqlite");
+  });
+
+  test("reports a server-side error", async () => {
+    stubFetch({ type: "error", error: { message: "no such table: user" } });
+
+    await expect(createDbClient("libsql://app-org.turso.io")).rejects.toThrow(CliError);
   });
 });
 

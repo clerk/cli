@@ -36,13 +36,19 @@ export interface DbClient {
  *
  * Anything that is not a recognized URL scheme is treated as a SQLite path,
  * matching how the standalone tool behaved and how users actually pass
- * `./db.sqlite`.
+ * `./db.sqlite`. `libsql://` (Turso) is SQLite too — it only differs in how
+ * the rows are fetched, so callers that branch on the dialect want "sqlite".
  */
 export function detectDbType(connectionString: string): DbType {
   const lower = connectionString.trim().toLowerCase();
   if (lower.startsWith("postgresql://") || lower.startsWith("postgres://")) return "postgres";
   if (lower.startsWith("mysql://") || lower.startsWith("mysql2://")) return "mysql";
   return "sqlite";
+}
+
+/** True for a remote libsql/Turso URL, which is read over HTTP rather than opened. */
+export function isLibsqlUrl(connectionString: string): boolean {
+  return /^libsql:\/\//i.test(connectionString.trim());
 }
 
 /**
@@ -58,7 +64,10 @@ export function redactConnectionString(connectionString: string): string {
   // the rest of the password in the message. Everything before the final `@`
   // is userinfo, so redacting all of it is always safe.
   // Non-URL forms (SQLite paths) have no `://` and are left alone.
-  return connectionString.replace(/^([a-z0-9+]+:\/\/)(.*)@/i, "$1***@");
+  // Turso carries its credential as `?authToken=`, not as userinfo.
+  return connectionString
+    .replace(/^([a-z0-9+]+:\/\/)(.*)@/i, "$1***@")
+    .replace(/([?&]authToken=)[^&]*/gi, "$1***");
 }
 
 /** Strips a `file:` prefix and any URL query, leaving a filesystem path. */
@@ -89,6 +98,120 @@ function bunSqlClient(connectionString: string, dbType: "postgres" | "mysql"): D
     quote: QUOTING[dbType],
     async close() {
       await sql.close();
+    },
+  };
+}
+
+/**
+ * One value in Hrana's wire format, the protocol libsql servers speak.
+ *
+ * Integers arrive as strings so 64-bit values survive JSON.
+ */
+type HranaValue = { type: string; value?: string | number; base64?: string };
+
+function decodeHrana(value: HranaValue): unknown {
+  switch (value.type) {
+    case "null":
+      return null;
+    case "integer": {
+      const raw = String(value.value ?? "0");
+      const asNumber = Number(raw);
+      // Past 2^53 a number would silently lose digits; ids can get that big.
+      return Number.isSafeInteger(asNumber) ? asNumber : BigInt(raw);
+    }
+    case "float":
+      return Number(value.value);
+    case "blob":
+      // bun:sqlite hands back bytes for a BLOB, so this does too.
+      return Buffer.from(value.base64 ?? "", "base64");
+    default:
+      return value.value ?? null;
+  }
+}
+
+function encodeHrana(param: unknown): HranaValue {
+  if (param === null || param === undefined) return { type: "null" };
+  if (typeof param === "bigint") return { type: "integer", value: param.toString() };
+  if (typeof param === "boolean") return { type: "integer", value: param ? "1" : "0" };
+  if (typeof param === "number") {
+    return Number.isInteger(param)
+      ? { type: "integer", value: String(param) }
+      : { type: "float", value: param };
+  }
+  if (param instanceof Uint8Array) {
+    return { type: "blob", base64: Buffer.from(param).toString("base64") };
+  }
+  return { type: "text", value: String(param) };
+}
+
+/**
+ * Talks to a libsql server (Turso) over its HTTP pipeline endpoint.
+ *
+ * `bun:sqlite` opens local files and cannot reach a remote database, and
+ * `@libsql/client` ships native optional dependencies that do not survive
+ * `bun build --compile`. The protocol is one POST per statement, so it is
+ * fewer lines to speak it directly than to carry the dependency.
+ *
+ * The token comes from `?authToken=` on the URL — the form the Turso CLI
+ * prints — or from `TURSO_AUTH_TOKEN`/`LIBSQL_AUTH_TOKEN`. A self-hosted sqld
+ * with auth disabled needs neither, so a missing token is not an error here.
+ */
+function libsqlClient(
+  connectionString: string,
+  env: Record<string, string | undefined> = process.env,
+): DbClient {
+  const url = new URL(connectionString.trim());
+  const token = url.searchParams.get("authToken") || env.TURSO_AUTH_TOKEN || env.LIBSQL_AUTH_TOKEN;
+  const endpoint = `https://${url.host}/v2/pipeline`;
+
+  return {
+    dbType: "sqlite",
+    async query<T extends Record<string, unknown>>(query: string, params: unknown[] = []) {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        // `close` keeps every request stateless: no baton to carry forward.
+        body: JSON.stringify({
+          requests: [
+            { type: "execute", stmt: { sql: query, args: params.map(encodeHrana) } },
+            { type: "close" },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`libsql request failed: ${response.status} ${response.statusText}`.trim());
+      }
+
+      const body = (await response.json()) as {
+        results?: {
+          type: string;
+          error?: { message?: string };
+          response?: { result?: { cols?: { name?: string }[]; rows?: HranaValue[][] } };
+        }[];
+      };
+
+      const first = body.results?.[0];
+      if (!first || first.type === "error") {
+        throw new Error(first?.error?.message ?? "libsql returned no result");
+      }
+
+      const cols = first.response?.result?.cols ?? [];
+      const rows = first.response?.result?.rows ?? [];
+      return rows.map(
+        (row) =>
+          Object.fromEntries(
+            row.map((value, index) => [cols[index]?.name ?? String(index), decodeHrana(value)]),
+          ) as T,
+      );
+    },
+    placeholder: () => "?",
+    quote: QUOTING.sqlite,
+    close() {
+      return Promise.resolve();
     },
   };
 }
@@ -124,6 +247,12 @@ export async function createDbClient(
   const dbType = detectDbType(connectionString);
 
   try {
+    if (isLibsqlUrl(connectionString)) {
+      const client = libsqlClient(connectionString);
+      await client.query("SELECT 1");
+      return client;
+    }
+
     if (dbType === "sqlite") {
       const client = sqliteClient(connectionString);
       // bun:sqlite opens lazily, so a missing file would not surface until the
@@ -164,6 +293,13 @@ export function describeDbError(error: unknown, platform?: DbPlatform): string {
       );
     }
     return "Could not reach the database. Check the host and port, and that the server accepts connections from here.";
+  }
+
+  if (/\b401\b|unauthorized|not authorized/i.test(message)) {
+    return (
+      "The libsql server rejected that token.\n" +
+      "Append ?authToken=… to the URL, or set TURSO_AUTH_TOKEN (`turso db tokens create <db>`)."
+    );
   }
 
   if (/password authentication failed|access denied/i.test(message)) {

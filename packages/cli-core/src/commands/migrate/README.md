@@ -177,14 +177,14 @@ like every other path flag here.
 The question comes before any users are fetched, so a long export can be left
 unattended rather than stalling on a prompt with everything held in memory.
 
-| Flag                       | Platforms                          | Description                                  |
-| -------------------------- | ---------------------------------- | -------------------------------------------- |
-| `-o, --output <path>`      | all                                | Where to write the export                    |
-| `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Postgres, MySQL or SQLite connection string  |
-| `--service-account <path>` | `firebase`                         | Path to a service account key JSON file      |
-| `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com` |
-| `--client-id <id>`         | `auth0`                            | Machine-to-machine application client ID     |
-| `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret |
+| Flag                       | Platforms                          | Description                                               |
+| -------------------------- | ---------------------------------- | --------------------------------------------------------- |
+| `-o, --output <path>`      | all                                | Where to write the export                                 |
+| `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Postgres, MySQL, libsql/Turso or SQLite connection string |
+| `--service-account <path>` | `firebase`                         | Path to a service account key JSON file                   |
+| `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com`              |
+| `--client-id <id>`         | `auth0`                            | Machine-to-machine application client ID                  |
+| `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret              |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
 so it resolves a key the same way `clerk migrate import` does, with one extra
@@ -249,13 +249,17 @@ These three read the database directly, over **`--db-url`**:
 clerk migrate export supabase   --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
 clerk migrate export authjs     --db-url "mysql://user:...@127.0.0.1:3306/authjs"
 clerk migrate export betterauth --db-url "./db.sqlite"
+clerk migrate export betterauth --db-url "libsql://app-org.turso.io?authToken=..."   # or set TURSO_AUTH_TOKEN
 ```
 
-Postgres and MySQL go through `Bun.sql`; SQLite through `bun:sqlite`. Both are
-built into the runtime, so nothing native ships in the binary — that is the
-whole reason the `engines.bun` floor exists. Resolution is `--db-url`, then
-`SUPABASE_DB_URL` / `AUTHJS_DB_URL` / `BETTERAUTH_DB_URL`, then a masked prompt,
-since a connection string carries the password inline.
+Postgres and MySQL go through `Bun.sql`; SQLite through `bun:sqlite`;
+`libsql://` (Turso) over the server's HTTP pipeline endpoint, since `bun:sqlite`
+only opens local files and `@libsql/client` ships native optional dependencies.
+Nothing native ships in the binary — that is the whole reason the `engines.bun`
+floor exists. Resolution is `--db-url`, then `SUPABASE_DB_URL` / `AUTHJS_DB_URL`
+/ `BETTERAUTH_DB_URL`, then a masked prompt, since a connection string carries
+the password inline. A libsql token comes from `?authToken=` on the URL, or from
+`TURSO_AUTH_TOKEN` / `LIBSQL_AUTH_TOKEN`, and is redacted like a password.
 
 **Connection strings are redacted everywhere.** Errors show
 `postgres://***@host/db`, including when the password itself contains an

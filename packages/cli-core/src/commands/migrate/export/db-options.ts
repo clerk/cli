@@ -10,7 +10,7 @@ import { dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
 import { password as passwordPrompt } from "../../../lib/prompts.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
-import { detectDbType, redactConnectionString, type DbPlatform } from "../lib/db.ts";
+import { detectDbType, isLibsqlUrl, redactConnectionString, type DbPlatform } from "../lib/db.ts";
 import { findMigrateEnvValue } from "../lib/env-file.ts";
 
 export type DbExportOptions = {
@@ -27,7 +27,7 @@ type ResolveConfig = {
   hint?: string;
 };
 
-const URL_SCHEME = /^(postgresql|postgres|mysql|mysql2):\/\//i;
+const URL_SCHEME = /^(postgresql|postgres|mysql|mysql2|libsql):\/\//i;
 
 /**
  * True when the string parses as a URL with a host.
@@ -103,7 +103,7 @@ export async function resolveDbUrl(
   if (fromFlag) {
     if (!looksLikeConnectionString(fromFlag)) {
       throwUsageError(
-        `--db-url does not look like a connection string. Expected postgres://…, mysql://… or a SQLite file path.\n` +
+        `--db-url does not look like a connection string. Expected postgres://…, mysql://…, libsql://… or a SQLite file path.\n` +
           "If the password contains @, # or /, URL-encode it.",
       );
     }
@@ -140,7 +140,7 @@ export async function resolveDbUrl(
     validate: (value) =>
       looksLikeConnectionString(normalizeConnectionString(value ?? ""))
         ? undefined
-        : "Expected postgres://…, mysql://… or a SQLite file path",
+        : "Expected postgres://…, mysql://…, libsql://… or a SQLite file path",
   });
 
   return normalizeConnectionString(answer);
@@ -148,5 +148,6 @@ export async function resolveDbUrl(
 
 /** Describes the target for the run's opening line, credentials removed. */
 export function describeTarget(connectionString: string): string {
-  return `${detectDbType(connectionString)} at ${redactConnectionString(connectionString)}`;
+  const label = isLibsqlUrl(connectionString) ? "libsql" : detectDbType(connectionString);
+  return `${label} at ${redactConnectionString(connectionString)}`;
 }

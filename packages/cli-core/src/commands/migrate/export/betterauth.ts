@@ -157,7 +157,7 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
     platform: "betterauth",
     envVar: "BETTERAUTH_DB_URL",
     prompt: "Better Auth database connection string",
-    hint: "Postgres, MySQL or a SQLite file — whichever your Better Auth install uses.",
+    hint: "Postgres, MySQL, libsql://… or a SQLite file — whichever your Better Auth install uses.",
   });
 
   const destination = await resolveOutputPath("betterauth", options.output);

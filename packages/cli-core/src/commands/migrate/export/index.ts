@@ -171,7 +171,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       .description(
         `${platform.summary} (default: ./exports/${platform.key}-export-<timestamp>.json)`,
       )
-      .option("--db-url <url>", "Postgres, MySQL or SQLite connection string")
+      .option("--db-url <url>", "Postgres, MySQL, libsql/Turso or SQLite connection string")
       .option("-o, --output <path>", "Where to write the export, relative to the current directory")
       .setExamples([
         {

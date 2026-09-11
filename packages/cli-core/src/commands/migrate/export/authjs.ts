@@ -110,7 +110,7 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
     platform: "authjs",
     envVar: "AUTHJS_DB_URL",
     prompt: "Auth.js database connection string",
-    hint: "Postgres, MySQL or a SQLite file — whichever your Auth.js adapter uses.",
+    hint: "Postgres, MySQL, libsql://… or a SQLite file — whichever your Auth.js adapter uses.",
   });
 
   const destination = await resolveOutputPath("authjs", options.output);
