@@ -40,6 +40,67 @@ scheduled for shutdown 2026-06-08.
 GitHub code search counts files, not repositories, and AI-scaffolded populations contain `.bak`
 duplicates. Treat absolutes as +/-20%; ratios within a population are solid.
 
+## What the 66% agent-selection figure actually measures
+
+The most-cited evidence for "agents pick Neon" is Armature's study (16,893 runs attempted,
+5,292 published as valid). It is not in conflict with the cross-tabs above — it measures a
+different arena, at a different layer of the stack, under a scoring rule that does most of the
+work. The cross-tabs measure what app builders *ship*, where a BD contract decided in advance.
+Armature measures Claude Code, Codex and Cursor, where no default exists and the model chooses.
+Both are true; Armature is measuring the only arena where retrieval and training presence
+operate at all.
+
+**The scoring rule is the finding.** A run counts as a pick only when the agent *installs the
+product and wires it into the repository*, not when it recommends it. In an unattended sandbox
+the binding constraint is whether the agent can finish. Hence the study's most robust result —
+brand recall and selection are decoupled, massively:
+
+| Tool | Mentioned | Wired in |
+| --- | ---: | ---: |
+| PayPal | 139 | 0 |
+| LangChain | 194 | 4 |
+| Netlify | 152 | 6 |
+| Supabase | 242 (most in category) | **withheld** |
+
+The agents' stated reason for Neon is purely operational — it "has a free tier, is simple to
+install and won't pause your app like Supabase does if you don't use it too often." Supabase
+free projects pause after a week and need a human to unpause. So **66% measures
+agent-provisionability, not agent preference.**
+
+**The independent replication finds a different winner.** An open-data study (2,430
+recommendations, 3 Claude models, 20 categories) puts the database result at PostgreSQL 58%,
+Supabase 24%, SQLite 16% — Neon never the category winner. Its modal raw answer is literally
+"PostgreSQL (via Neon, Supabase, or Vercel Postgres) — which combination do you prefer?" That is
+the same behaviour coded at a different level: one records the *engine*, the other the *host*.
+
+**Is 66% anomalous? No, but concentration is the wrong frame.** Leader shares: payments ~90%
+(Stripe), database 66% (Neon), package manager 56% (pnpm), file storage 45% (S3), email 36%
+(Resend), voice agents ~33% (no winner). Median ~45-56%. Armature's own headline is
+*fragmentation*: the three agents agree in only 42% of cells. The real pattern is that agent
+selection is **near-deterministic inside a context cell and fragmented across cells** — email
+aggregates to 36% while within-language leaders run 62-96%; Vercel wins 100% of Next.js repos
+and 0% of Python ones. Aggregate shares are mostly a statement about the repo panel, and context
+is movable at near-zero cost.
+
+**What the study cannot bear:** the database denominator is unpublished and is roughly ~300
+sessions, not the ~5,300 often quoted (that is the whole corpus across 18 sectors); ~69% of runs
+were discarded with no exclusion breakdown; the repos are synthetic and agent-generated; Gemini
+3.7 Flash plays both simulated buyer and judge against an undisclosed sector rubric; one
+published prompt is pre-loaded on the exact axis Supabase loses on ("predictable costs", "fully
+managed"). Armature is a YC company selling "we get your product picked by coding agents" and
+its leaderboard page offers to optimise your ranking — it does disclose the conflict and publish
+full traces, but has no neutrality or paid-placement policy. Report the result as "Neon led,
+somewhere in the 50s-70s"; the two significant figures are unearned.
+
+**The number that matters most for Clerk:** in the independent study, custom/DIY is the single
+most common recommendation overall, and in the auth category it reaches **48%**. Agents build
+more auth than they buy. One observer's explanation is blunt: AI tools cannot scaffold a working
+Clerk integration without credentials. That is exactly the wall keyless mode removes, and
+exactly why its five-framework limit is the most expensive gap on the list. Armature has an auth
+run open but publishes no auth results, and no cross-vendor measurement of what agents pick for
+auth exists from anyone — the only auth-adjacent benchmarks are vendor-run and score the
+vendor's own product, Clerk's LLM Leaderboard among them.
+
 ## Causal model, ranked by explanatory power
 
 1. **~45% — Two OEM contracts, both won before the agent wave.** Replit shipped Neon-powered
@@ -195,6 +256,13 @@ confidence and load-bearingness. Two limitations materially affect the above:
   exhausted. Neon's primary sources were recoverable only because `neondatabase/website` is a
   public repository containing its entire blog, docs and changelog as markdown. No npm download
   figures were obtainable.
+
+**Revision 2** added five probes covering the Armature study, which did have search available.
+`armature.tech` remained egress-blocked, so every figure attributed to it comes from search
+summaries and third-party recaps, never the source page. Two claims in revision 1 were wrong and
+are corrected above: the database category is ~300 sessions, not ~5,300 (that is the whole
+published corpus across 18 sectors), and agent selection does not uniformly concentrate —
+Armature's own headline is 42% cross-agent agreement.
 
 Consequences: nothing here observes what an answer engine actually returns today — that probe
 could not execute. The Clerk-side facts are read from the `clerk/cli` working tree and are solid.
