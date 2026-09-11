@@ -14,8 +14,21 @@
 
 import { describeBapiTarget, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { bold, dim, green, red, yellow } from "../../lib/color.ts";
-import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
-import { resolveInstanceTarget, type InstanceTarget } from "../../lib/keyless-target.ts";
+import { resolveProfile } from "../../lib/config.ts";
+import { hasAccountCredentials } from "../../lib/credential-store.ts";
+import {
+  AUTH_ERROR_REASON,
+  AuthError,
+  CliError,
+  ERROR_CODE,
+  throwUsageError,
+  throwUserAbort,
+} from "../../lib/errors.ts";
+import {
+  resolveInstanceTarget,
+  resolveKeylessTarget,
+  type InstanceTarget,
+} from "../../lib/keyless-target.ts";
 import { log } from "../../lib/log.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { confirm, multiselect } from "../../lib/prompts.ts";
@@ -57,6 +70,8 @@ import { loadCustomTransformer } from "./transformers/load-custom.ts";
 import { registerCustomTransformer, transformerKeys } from "./transformers/registry.ts";
 import type { ImportSummary, User } from "./types.ts";
 import { runWizard, throwAgentFlagsRequired } from "./wizard.ts";
+import { login } from "../auth/login.ts";
+import { link } from "../link/index.ts";
 
 export type MigrateRunOptions = {
   transformer?: string;
@@ -579,7 +594,59 @@ async function applyCustomTransformer(options: MigrateRunOptions): Promise<Migra
   return { ...options, transformer: custom.key };
 }
 
+/**
+ * Makes sure there is somewhere to import *into* before anything else happens.
+ *
+ * Without this the first complaint comes from deep inside the secret-key chain,
+ * which resolves the linked profile before it ever asks for a token — so a
+ * signed-out operator in an unlinked directory is told to `clerk link`, a
+ * command that will only turn around and ask them to sign in. Worse, both
+ * failures land after the wizard has already walked them through picking a
+ * platform and a file.
+ *
+ * A human gets the same sign-in-then-link flow `clerk link` already runs. An
+ * agent cannot answer a browser login or an application picker, so it gets the
+ * error naming whichever half is missing.
+ */
+async function ensureImportTarget(options: MigrateRunOptions): Promise<void> {
+  // Each of these names the destination instance on its own, with no account
+  // and no linked directory involved — mirroring resolveBapiSecretKey.
+  if (options.secretKey || options.app || process.env.CLERK_SECRET_KEY) return;
+  // An unclaimed accountless application keeps its only secret key on disk.
+  if (await resolveKeylessTarget({ instance: options.instance })) return;
+
+  const interactive = isHuman() && !isAgent();
+
+  if (!(await hasAccountCredentials())) {
+    if (!interactive) {
+      throw new AuthError({
+        reason: AUTH_ERROR_REASON.NOT_LOGGED_IN,
+        message:
+          "Not logged in, so there is no Clerk instance to import into. Run `clerk auth login`, then `clerk link`.",
+        examples: [
+          { command: "clerk auth login", description: "Sign in, then re-run the import" },
+          {
+            command:
+              "clerk migrate import -y --secret-key sk_test_... --transformer clerk --file users.json",
+            description: "Import without signing in",
+          },
+        ],
+      });
+    }
+    log.info("Not logged in. Signing in first...");
+    await login({ showNextSteps: false });
+  }
+
+  // Left to the secret-key chain when non-interactive: its `not_linked` error
+  // is the one every other command raises, and there is nothing to add to it.
+  if (interactive && !(await resolveProfile(process.cwd()))) {
+    log.info("This directory isn't linked to a Clerk application. Linking one first...");
+    await link({ skipIfLinked: true });
+  }
+}
+
 export async function run(rawOptions: MigrateRunOptions): Promise<void> {
+  await ensureImportTarget(rawOptions);
   rawOptions = await applyCustomTransformer(rawOptions);
   const options = await resolveMissingOptions(rawOptions);
 

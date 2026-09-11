@@ -1,10 +1,14 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _setConfigDir } from "../../lib/config.ts";
 import { CliError } from "../../lib/errors.ts";
-import { useCaptureLog } from "../../test/lib/stubs.ts";
+import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
+
+// Every test below names its own `--secret-key`, which short-circuits the
+// signed-in check — except the one that asserts what happens without it.
+mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 import { getLogDir } from "./lib/logger.ts";
 import { __resetCustomTransformersForTesting } from "./transformers/registry.ts";
 import { loadSettings } from "./lib/settings.ts";
@@ -125,6 +129,19 @@ describe("run", () => {
     yes: true,
     secretKey: "sk_test_x",
   };
+
+  test("refuses before the wizard when nobody is signed in", async () => {
+    const previous = process.env.CLERK_SECRET_KEY;
+    delete process.env.CLERK_SECRET_KEY;
+    try {
+      await expect(run({ transformer: "clerk", file: "export.json", yes: true })).rejects.toThrow(
+        /Not logged in/,
+      );
+      expect(requests).toHaveLength(0);
+    } finally {
+      if (previous !== undefined) process.env.CLERK_SECRET_KEY = previous;
+    }
+  });
 
   test("imports every user in the file end to end", async () => {
     await run(baseOptions);
