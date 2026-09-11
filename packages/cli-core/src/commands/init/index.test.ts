@@ -302,7 +302,6 @@ describe("init", () => {
       sdk: "@clerk/nextjs",
       envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
       envFile: ".env.local" as const,
-      supportsKeyless: true,
     };
     setup();
     spyOn(context, "hasPackageJson").mockResolvedValue(false);
@@ -338,7 +337,6 @@ describe("init", () => {
       sdk: "@clerk/nextjs",
       envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
       envFile: ".env.local" as const,
-      supportsKeyless: true,
     };
     setup();
     spyOn(context, "hasPackageJson").mockResolvedValue(false);
