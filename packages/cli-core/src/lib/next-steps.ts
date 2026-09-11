@@ -71,6 +71,27 @@ export const NEXT_STEPS = {
     "Run `clerk apps list` to see your other applications",
     "Run `clerk config pull` to inspect the live configuration of this instance",
   ],
+  MIGRATE_DONE: [
+    "Run `clerk migrate logs list` to inspect the import log",
+    "Run `clerk migrate delete` to undo this migration",
+  ],
+  // `logs list` only names the file; after a partial import the operator needs
+  // the failures themselves, which live one line per user in that file.
+  MIGRATE_DONE_WITH_ERRORS: (logFile: string) => [
+    `Run \`grep '"status":"error"' ${logFile}\` to see every user that failed and why`,
+    "Run `clerk migrate delete` to undo this migration",
+  ],
+  MIGRATE_DELETE: ["Run `clerk migrate logs list` to inspect the deletion log"],
+  MIGRATE_SETTINGS: [
+    "Run `clerk migrate settings set <name> <value>` to change one",
+    "Run `clerk migrate settings clear <name>` to forget one",
+    "Run `clerk migrate settings clear` to forget them all, credentials included",
+  ],
+  // A suggested import is worthless unless it names the transformer that reads
+  // this export and the file just written.
+  MIGRATE_EXPORT: (transformerKey: string, file: string) => [
+    `Run \`clerk migrate import --transformer ${transformerKey} --file ${file}\` to import them`,
+  ],
 } as const;
 
 /**

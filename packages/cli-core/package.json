@@ -22,11 +22,13 @@
     "@commander-js/extra-typings": "^15.0.0",
     "@napi-rs/keyring": "^1.3.0",
     "commander": "^15.0.0",
+    "csv-parser": "^3.2.1",
     "env-paths": "^4.0.0",
     "external-editor": "^3.1.0",
     "magicast": "^0.5.3",
     "semver": "^7.8.5",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@clerk/shared": "^4.29.1",

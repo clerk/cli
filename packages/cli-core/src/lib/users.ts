@@ -1,8 +1,8 @@
 import { bapiRequest } from "./bapi.ts";
+import { REDACTED } from "./constants.ts";
 import { ERROR_CODE, throwUsageError } from "./errors.ts";
 
 const USERS_INVALID_JSON_MESSAGE = "User payload must be a JSON object.";
-const REDACTED = "[REDACTED]";
 const DIRECT_REDACT_KEYS = new Set(["password", "code"]);
 const OBJECT_REDACT_KEYS = new Set(["private_metadata", "unsafe_metadata"]);
 

@@ -86,6 +86,7 @@ Commands:
   init             [options]                      Initialize Clerk in your project
   link             [options]                      Link this project to a Clerk application
   mcp                                             Manage the Clerk remote MCP server connection for AI editors and CLIs
+  migrate                                         Migrate users into Clerk from another auth provider
   open                                            Open Clerk resources in your browser
   telemetry                                       Control CLI usage telemetry (status, disable, enable)
   unlink           [options]                      Unlink this project from its Clerk application
