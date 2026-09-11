@@ -96,6 +96,8 @@ export const ERROR_CODE = {
   INSTALLER_NOT_FOUND: "installer_not_found",
   /** The npm registry was unreachable. */
   REGISTRY_UNREACHABLE: "registry_unreachable",
+  /** A request never reached the server — DNS, refused connection, no route. */
+  NETWORK_UNREACHABLE: "network_unreachable",
   /** Production instance was created but came back without a domain. */
   DEPLOY_DOMAIN_MISSING: "deploy_domain_missing",
   /** Local publishable key and secret key address different applications. */
