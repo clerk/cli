@@ -332,10 +332,15 @@ prints the exact import command:
 ```
 Password hash parameters
 Read from the project. Import with:
-  clerk migrate import -y --transformer firebase --file exports/firebase-export.json \
-    --firebase-signer-key "…" --firebase-salt-separator "…" \
-    --firebase-rounds 8 --firebase-mem-cost 14
+  clerk migrate import -y --transformer firebase --file exports/firebase-export.json --firebase-signer-key "…" --firebase-salt-separator "…" --firebase-rounds 8 --firebase-mem-cost 14
 ```
+
+On one line however long it gets: this prints inside the gutter, which prefixes
+every line given to it with `│`. Split over lines with backslash continuations,
+that character lands in the middle of the command and is copied along with it —
+the shell then reads each one as another argument and rejects the import. A line
+that wraps on screen carries no such character and pastes back as what was
+printed.
 
 Reading the config needs a broader role than listing users, so if it is denied
 the export still succeeds and points at **Authentication → Users → (⋮) →

@@ -484,11 +484,16 @@ export function formatHashConfigGuidance(
   return [
     bold("Password hash parameters"),
     "Read from the project. Import with:",
+    // One line, however long. Inside the gutter every line printed here is
+    // prefixed with `│`, and backslash continuations put that character in the
+    // middle of the command — copied along with it, and rejected by the shell
+    // as three extra arguments. A line that wraps on screen has no such
+    // character in it and pastes back as what was printed.
     dim(
-      `  clerk migrate import -y --transformer firebase --file ${outputPath} \\\n` +
-        `    --firebase-signer-key "${config.signerKey}" \\\n` +
-        `    --firebase-salt-separator "${config.saltSeparator}" \\\n` +
-        `    --firebase-rounds ${config.rounds} --firebase-mem-cost ${config.memoryCost}`,
+      `  clerk migrate import -y --transformer firebase --file ${outputPath}` +
+        ` --firebase-signer-key "${config.signerKey}"` +
+        ` --firebase-salt-separator "${config.saltSeparator}"` +
+        ` --firebase-rounds ${config.rounds} --firebase-mem-cost ${config.memoryCost}`,
     ),
   ];
 }

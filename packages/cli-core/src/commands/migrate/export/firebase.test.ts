@@ -410,6 +410,16 @@ describe("formatHashConfigGuidance", () => {
     expect(text).toContain("--firebase-rounds 8 --firebase-mem-cost 14");
   });
 
+  // The command is printed inside the gutter, which prefixes every line it is
+  // given with `│`. Split over lines, that character lands mid-command and is
+  // copied with it — the shell then reads each one as another argument and
+  // rejects the import.
+  test("keeps the command on one line, so it can be copied out of the gutter", () => {
+    const [command] = formatHashConfigGuidance(config, "out.json", 3).slice(-1);
+    expect(command).not.toContain("\n");
+    expect(command).not.toContain("\\");
+  });
+
   test("says where to find them when the project would not say", () => {
     const text = formatHashConfigGuidance(null, "out.json", 3).join("\n");
     expect(text).toContain("Password hash parameters");
