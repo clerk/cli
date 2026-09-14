@@ -17,11 +17,12 @@ import { exportLogger, startLogging } from "../lib/logger.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 import {
+  promptDbUrl,
   resolveDbUrl,
-  withDbRetry,
   type DbExportOptions,
   type ResolveConfig,
 } from "./db-options.ts";
+import { withInputRetry } from "../lib/input-retry.ts";
 
 /** Table names to try, in order. Prisma capitalizes; Drizzle does not. */
 const TABLE_CANDIDATES = ["User", "user", "users"] as const;
@@ -125,10 +126,15 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
   await withGutter("Exporting users from Auth.js", async ({ setNextSteps }) => {
     const dateTime = await startLogging();
 
-    const { rows, table } = await withDbRetry(dbUrl, AUTHJS_DB, async (connectionString) =>
-      withSpinner("Reading the user table...", () =>
-        withDbClient(connectionString, "authjs", fetchAuthJsUsers),
-      ),
+    const {
+      value: { rows, table },
+    } = await withInputRetry(
+      dbUrl,
+      () => promptDbUrl(AUTHJS_DB),
+      async (connectionString) =>
+        withSpinner("Reading the user table...", () =>
+          withDbClient(connectionString, "authjs", fetchAuthJsUsers),
+        ),
     );
     log.info(`Read ${rows.length} row${rows.length === 1 ? "" : "s"} from ${table}.`);
 

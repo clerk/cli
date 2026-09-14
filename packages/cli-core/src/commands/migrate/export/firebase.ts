@@ -32,6 +32,7 @@ import { password as passwordPrompt } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { exportLogger, startLogging } from "../lib/logger.ts";
+import { withInputRetry } from "../lib/input-retry.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 
 /** Identity Toolkit's maximum for `accounts:batchGet`. */
@@ -166,6 +167,19 @@ async function resolveServiceAccount(options: ExportFirebaseOptions): Promise<Se
     dim("Firebase console → Project settings → Service accounts → Generate new private key."),
   );
 
+  return promptServiceAccount();
+}
+
+/**
+ * Asks for the key, masked.
+ *
+ * Masked because the JSON carries a private key, and a path typed blind is
+ * short enough to survive it. What the file cannot tell us — whether Google
+ * still accepts the key — is left to the token exchange, which is why this is
+ * separate from {@link resolveServiceAccount}: a revoked key has to be asked
+ * for again after that call fails, not before it is made.
+ */
+async function promptServiceAccount(): Promise<ServiceAccount> {
   const answer = await passwordPrompt({
     message: "Path to the service account key file, or paste the key JSON",
     validate: (value) => {
@@ -482,16 +496,22 @@ export function formatHashConfigGuidance(
 export async function exportFirebase(options: ExportFirebaseOptions): Promise<void> {
   // Read and validate before anything reaches the network, so a wrong file
   // fails in a second rather than after an auth round-trip.
-  const account = await resolveServiceAccount(options);
+  const resolved = await resolveServiceAccount(options);
 
   const destination = await resolveOutputPath("firebase", options.output);
 
   await withGutter("Exporting users from Firebase", async ({ setNextSteps }) => {
     const dateTime = await startLogging();
-    log.info(`Exporting from the ${account.project_id} project.`);
 
-    const token = await withSpinner("Authenticating with Google...", () =>
-      fetchAccessToken(account),
+    // Only Google can say whether a well-formed key is still a valid one, so a
+    // revoked or deleted key fails here and is asked for again.
+    const { value: token, input: account } = await withInputRetry(
+      resolved,
+      promptServiceAccount,
+      async (candidate) => {
+        log.info(`Exporting from the ${candidate.project_id} project.`);
+        return withSpinner("Authenticating with Google...", () => fetchAccessToken(candidate));
+      },
     );
 
     const users = await withSpinner("Fetching users from Firebase...", (spinner) =>

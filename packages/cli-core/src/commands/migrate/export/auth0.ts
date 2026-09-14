@@ -23,6 +23,7 @@ import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spin
 import { isAgent, isHuman } from "../../../mode.ts";
 import { findMigrateEnvValue } from "../lib/env-file.ts";
 import { exportLogger, startLogging } from "../lib/logger.ts";
+import { withInputRetry } from "../lib/input-retry.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 
 const PAGE_SIZE = 100;
@@ -113,20 +114,33 @@ export async function resolveAuth0Credentials(
     "Auth0 needs a machine-to-machine application with the `read:users` scope. Create one under Applications → APIs → Auth0 Management API → Machine to Machine Applications.",
   );
 
+  return promptAuth0Credentials(resolved);
+}
+
+/**
+ * Asks for whichever of the three are still missing.
+ *
+ * Called with nothing known after Auth0 has rejected a set: its error names no
+ * field, and the operator may have mistyped any of them — so all three are
+ * asked again rather than guessing which one to keep.
+ */
+export async function promptAuth0Credentials(
+  known: Partial<Auth0Credentials> = {},
+): Promise<Auth0Credentials> {
   const domain =
-    resolved.domain ??
+    known.domain ??
     (await text({
       message: "Auth0 tenant domain (e.g. my-tenant.us.auth0.com)",
       validate: (value) => (value?.trim() ? undefined : "A domain is required"),
     }));
   const clientId =
-    resolved.clientId ??
+    known.clientId ??
     (await text({
       message: "Machine-to-machine client ID",
       validate: (value) => (value?.trim() ? undefined : "A client ID is required"),
     }));
   const clientSecret =
-    resolved.clientSecret ??
+    known.clientSecret ??
     (await passwordPrompt({
       message: "Machine-to-machine client secret",
       validate: (value) => (value?.trim() ? undefined : "A client secret is required"),
@@ -314,16 +328,23 @@ export function buildAuth0Export(users: Auth0User[], dateTime: string): Auth0Exp
 }
 
 export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
-  const credentials = await resolveAuth0Credentials(options);
+  const resolved = await resolveAuth0Credentials(options);
 
   const destination = await resolveOutputPath("auth0", options.output);
 
   await withGutter("Exporting users from Auth0", async ({ setNextSteps }) => {
     const dateTime = await startLogging();
-    log.info(`Exporting from ${credentials.domain}.`);
 
-    const token = await withSpinner("Authenticating with Auth0...", () =>
-      fetchAuth0Token(credentials),
+    // Only Auth0 can say whether these three go together, and whether the
+    // application carries the `read:users` scope, so a rejected set is asked
+    // for again here.
+    const { value: token, input: credentials } = await withInputRetry(
+      resolved,
+      () => promptAuth0Credentials(),
+      async (candidate) => {
+        log.info(`Exporting from ${candidate.domain}.`);
+        return withSpinner("Authenticating with Auth0...", () => fetchAuth0Token(candidate));
+      },
     );
 
     const users = await withSpinner("Fetching users from Auth0...", (spinner) =>

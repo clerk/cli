@@ -21,11 +21,12 @@ import { exportLogger, startLogging } from "../lib/logger.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 import {
+  promptDbUrl,
   resolveDbUrl,
-  withDbRetry,
   type DbExportOptions,
   type ResolveConfig,
 } from "./db-options.ts";
+import { withInputRetry } from "../lib/input-retry.ts";
 
 /** Columns a Better Auth plugin adds to the user table. */
 export const PLUGIN_COLUMNS = [
@@ -172,14 +173,19 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
   await withGutter("Exporting users from Better Auth", async ({ setNextSteps }) => {
     const dateTime = await startLogging();
 
-    const { rows, plugins } = await withDbRetry(dbUrl, BETTERAUTH_DB, async (connectionString) =>
-      withSpinner("Reading the user table...", () =>
-        withDbClient(connectionString, "betterauth", async (client) => {
-          const plugins = await detectPluginColumns(client);
-          const rows = await client.query<BetterAuthRow>(buildBetterAuthQuery(client, plugins));
-          return { rows, plugins };
-        }),
-      ),
+    const {
+      value: { rows, plugins },
+    } = await withInputRetry(
+      dbUrl,
+      () => promptDbUrl(BETTERAUTH_DB),
+      async (connectionString) =>
+        withSpinner("Reading the user table...", () =>
+          withDbClient(connectionString, "betterauth", async (client) => {
+            const plugins = await detectPluginColumns(client);
+            const rows = await client.query<BetterAuthRow>(buildBetterAuthQuery(client, plugins));
+            return { rows, plugins };
+          }),
+        ),
     );
 
     log.info(

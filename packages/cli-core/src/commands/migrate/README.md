@@ -152,6 +152,17 @@ the registry; given, it runs directly. Each platform resolves its own flags —
 what Auth0 needs (a tenant domain and M2M credentials) has nothing in common
 with what a database export needs.
 
+**A credential the far end rejects is asked for again.** Connection strings,
+Firebase service account keys and Auth0 client secrets are all long, pasted by
+hand, masked as they are typed, and wrong in ways nothing local can check: a
+typo'd host, a revoked key, an expired token, the right server but the wrong
+database. Only the connection or the token exchange can say, and by then the
+operator has answered every other question the command asked. So that step —
+and only that step, never a fetch already under way or a file already written —
+runs inside a retry: the failure is explained, the prompt comes back, and the
+rest of the export continues against whichever credential worked. `-y`, agent
+mode and a non-TTY fail outright instead, having nobody to ask.
+
 | Platform     | Source                           | Feeds                      |
 | ------------ | -------------------------------- | -------------------------- |
 | `clerk`      | Clerk Backend API                | `--transformer clerk`      |
@@ -251,14 +262,6 @@ clerk migrate export authjs     --db-url "mysql://user:...@127.0.0.1:3306/authjs
 clerk migrate export betterauth --db-url "./db.sqlite"
 clerk migrate export betterauth --db-url "libsql://app-org.turso.io?authToken=..."   # or set TURSO_AUTH_TOKEN
 ```
-
-**A connection that fails is asked for again.** The string is long, pasted by
-hand, masked as it is typed, and wrong in ways nothing can check until
-something connects — a typo'd host, an expired token, the pooler URL where the
-direct one was needed, the right server but the wrong database. The failure is
-explained and the prompt comes back, so a mistyped line costs one line rather
-than a re-run of the platform, log directory and output path already answered.
-`-y`, agent mode and a non-TTY still fail outright: there is nobody to ask.
 
 Postgres and MySQL go through `Bun.sql`; SQLite through `bun:sqlite`;
 `libsql://` (Turso) over the server's HTTP pipeline endpoint, since `bun:sqlite`

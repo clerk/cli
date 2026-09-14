@@ -16,11 +16,12 @@ import { exportLogger, startLogging } from "../lib/logger.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 import {
+  promptDbUrl,
   resolveDbUrl,
-  withDbRetry,
   type DbExportOptions,
   type ResolveConfig,
 } from "./db-options.ts";
+import { withInputRetry } from "../lib/input-retry.ts";
 
 /**
  * `display_name` is coalesced into `first_name` here rather than in the
@@ -123,10 +124,13 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
   await withGutter("Exporting users from Supabase", async ({ setNextSteps }) => {
     const dateTime = await startLogging();
 
-    const rows = await withDbRetry(dbUrl, SUPABASE_DB, async (connectionString) =>
-      withSpinner("Reading auth.users...", () =>
-        withDbClient(connectionString, "supabase", fetchSupabaseUsers),
-      ),
+    const { value: rows } = await withInputRetry(
+      dbUrl,
+      () => promptDbUrl(SUPABASE_DB),
+      async (connectionString) =>
+        withSpinner("Reading auth.users...", () =>
+          withDbClient(connectionString, "supabase", fetchSupabaseUsers),
+        ),
     );
 
     const { users, coverage } = buildSupabaseExport(rows, dateTime);
