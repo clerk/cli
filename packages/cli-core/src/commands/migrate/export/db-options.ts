@@ -5,7 +5,7 @@
  * string, from a flag, an environment variable, or a prompt.
  */
 
-import { throwUsageError } from "../../../lib/errors.ts";
+import { CliError, throwUsageError } from "../../../lib/errors.ts";
 import { dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
 import { password as passwordPrompt } from "../../../lib/prompts.ts";
@@ -18,7 +18,7 @@ export type DbExportOptions = {
   output?: string;
 };
 
-type ResolveConfig = {
+export type ResolveConfig = {
   platform: DbPlatform;
   /** Environment variable checked when `--db-url` is absent. */
   envVar: string;
@@ -135,6 +135,17 @@ export async function resolveDbUrl(
 
   if (config.hint) log.info(dim(config.hint));
 
+  return promptDbUrl(config);
+}
+
+/**
+ * Asks for a connection string, masked.
+ *
+ * Masked because a connection string carries the database password inline. The
+ * validator runs on the normalized value, so a password that needed encoding is
+ * judged as the driver will see it, not as it was typed.
+ */
+async function promptDbUrl(config: ResolveConfig): Promise<string> {
   const answer = await passwordPrompt({
     message: config.prompt,
     validate: (value) =>
@@ -144,6 +155,44 @@ export async function resolveDbUrl(
   });
 
   return normalizeConnectionString(answer);
+}
+
+/**
+ * Runs `work` against the database, asking for another connection string each
+ * time it fails.
+ *
+ * A connection string is long, pasted by hand, and wrong in ways nothing can
+ * check until something connects: a typo'd host, an expired token, the pooler
+ * URL where the direct one was needed, the right server but the wrong database.
+ * Ending the command there charges the operator a full re-run — platform, log
+ * directory, output path and all — for a single mistyped line, and the string
+ * is masked as they type it, so they cannot even see what to correct.
+ *
+ * Only the database work belongs in `work`: everything retried here is retried
+ * whole, and an export that has already written its file must not run twice.
+ *
+ * `-y`, agent mode and a non-TTY get the failure as before — there is nobody to
+ * ask, and a loop that cannot prompt is a loop that cannot end.
+ */
+export async function withDbRetry<T>(
+  dbUrl: string,
+  config: ResolveConfig,
+  work: (connectionString: string) => Promise<T>,
+): Promise<T> {
+  let connectionString = dbUrl;
+
+  for (;;) {
+    try {
+      return await work(connectionString);
+    } catch (error) {
+      // Everything the database layer raises is a CliError carrying its own
+      // explanation; anything else (an interrupt, a bug) is not ours to retry.
+      if (!(error instanceof CliError) || !isHuman() || isAgent()) throw error;
+
+      log.error(error.message);
+      connectionString = await promptDbUrl(config);
+    }
+  }
 }
 
 /** Describes the target for the run's opening line, credentials removed. */

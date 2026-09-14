@@ -15,7 +15,12 @@ import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import { exportLogger, startLogging } from "../lib/logger.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
-import { resolveDbUrl, type DbExportOptions } from "./db-options.ts";
+import {
+  resolveDbUrl,
+  withDbRetry,
+  type DbExportOptions,
+  type ResolveConfig,
+} from "./db-options.ts";
 
 /**
  * `display_name` is coalesced into `first_name` here rather than in the
@@ -103,21 +108,25 @@ export function buildSupabaseExport(rows: SupabaseRow[], dateTime: string) {
   };
 }
 
+const SUPABASE_DB = {
+  platform: "supabase",
+  envVar: "SUPABASE_DB_URL",
+  prompt: "Supabase Postgres connection string",
+  hint: "Dashboard → Connect → Session pooler. Direct connections need the IPv4 add-on.",
+} as const satisfies ResolveConfig;
+
 export async function exportSupabase(options: DbExportOptions): Promise<void> {
-  const dbUrl = await resolveDbUrl(options, {
-    platform: "supabase",
-    envVar: "SUPABASE_DB_URL",
-    prompt: "Supabase Postgres connection string",
-    hint: "Dashboard → Connect → Session pooler. Direct connections need the IPv4 add-on.",
-  });
+  const dbUrl = await resolveDbUrl(options, SUPABASE_DB);
 
   const destination = await resolveOutputPath("supabase", options.output);
 
   await withGutter("Exporting users from Supabase", async ({ setNextSteps }) => {
     const dateTime = await startLogging();
 
-    const rows = await withSpinner("Reading auth.users...", () =>
-      withDbClient(dbUrl, "supabase", fetchSupabaseUsers),
+    const rows = await withDbRetry(dbUrl, SUPABASE_DB, async (connectionString) =>
+      withSpinner("Reading auth.users...", () =>
+        withDbClient(connectionString, "supabase", fetchSupabaseUsers),
+      ),
     );
 
     const { users, coverage } = buildSupabaseExport(rows, dateTime);

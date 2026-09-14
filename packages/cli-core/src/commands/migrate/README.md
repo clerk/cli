@@ -252,6 +252,14 @@ clerk migrate export betterauth --db-url "./db.sqlite"
 clerk migrate export betterauth --db-url "libsql://app-org.turso.io?authToken=..."   # or set TURSO_AUTH_TOKEN
 ```
 
+**A connection that fails is asked for again.** The string is long, pasted by
+hand, masked as it is typed, and wrong in ways nothing can check until
+something connects — a typo'd host, an expired token, the pooler URL where the
+direct one was needed, the right server but the wrong database. The failure is
+explained and the prompt comes back, so a mistyped line costs one line rather
+than a re-run of the platform, log directory and output path already answered.
+`-y`, agent mode and a non-TTY still fail outright: there is nobody to ask.
+
 Postgres and MySQL go through `Bun.sql`; SQLite through `bun:sqlite`;
 `libsql://` (Turso) over the server's HTTP pipeline endpoint, since `bun:sqlite`
 only opens local files and `@libsql/client` ships native optional dependencies.

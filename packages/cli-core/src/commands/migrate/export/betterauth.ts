@@ -20,7 +20,12 @@ import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import { exportLogger, startLogging } from "../lib/logger.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
-import { resolveDbUrl, type DbExportOptions } from "./db-options.ts";
+import {
+  resolveDbUrl,
+  withDbRetry,
+  type DbExportOptions,
+  type ResolveConfig,
+} from "./db-options.ts";
 
 /** Columns a Better Auth plugin adds to the user table. */
 export const PLUGIN_COLUMNS = [
@@ -152,25 +157,29 @@ export function buildBetterAuthExport(rows: BetterAuthRow[], dateTime: string) {
   };
 }
 
+const BETTERAUTH_DB = {
+  platform: "betterauth",
+  envVar: "BETTERAUTH_DB_URL",
+  prompt: "Better Auth database connection string",
+  hint: "Postgres, MySQL, libsql://… or a SQLite file — whichever your Better Auth install uses.",
+} as const satisfies ResolveConfig;
+
 export async function exportBetterAuth(options: DbExportOptions): Promise<void> {
-  const dbUrl = await resolveDbUrl(options, {
-    platform: "betterauth",
-    envVar: "BETTERAUTH_DB_URL",
-    prompt: "Better Auth database connection string",
-    hint: "Postgres, MySQL, libsql://… or a SQLite file — whichever your Better Auth install uses.",
-  });
+  const dbUrl = await resolveDbUrl(options, BETTERAUTH_DB);
 
   const destination = await resolveOutputPath("betterauth", options.output);
 
   await withGutter("Exporting users from Better Auth", async ({ setNextSteps }) => {
     const dateTime = await startLogging();
 
-    const { rows, plugins } = await withSpinner("Reading the user table...", () =>
-      withDbClient(dbUrl, "betterauth", async (client) => {
-        const plugins = await detectPluginColumns(client);
-        const rows = await client.query<BetterAuthRow>(buildBetterAuthQuery(client, plugins));
-        return { rows, plugins };
-      }),
+    const { rows, plugins } = await withDbRetry(dbUrl, BETTERAUTH_DB, async (connectionString) =>
+      withSpinner("Reading the user table...", () =>
+        withDbClient(connectionString, "betterauth", async (client) => {
+          const plugins = await detectPluginColumns(client);
+          const rows = await client.query<BetterAuthRow>(buildBetterAuthQuery(client, plugins));
+          return { rows, plugins };
+        }),
+      ),
     );
 
     log.info(

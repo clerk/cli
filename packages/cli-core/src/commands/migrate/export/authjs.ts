@@ -16,7 +16,12 @@ import { log } from "../../../lib/log.ts";
 import { exportLogger, startLogging } from "../lib/logger.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
-import { resolveDbUrl, type DbExportOptions } from "./db-options.ts";
+import {
+  resolveDbUrl,
+  withDbRetry,
+  type DbExportOptions,
+  type ResolveConfig,
+} from "./db-options.ts";
 
 /** Table names to try, in order. Prisma capitalizes; Drizzle does not. */
 const TABLE_CANDIDATES = ["User", "user", "users"] as const;
@@ -105,21 +110,25 @@ export function buildAuthJsExport(rows: AuthJsRow[], dateTime: string) {
   };
 }
 
+const AUTHJS_DB = {
+  platform: "authjs",
+  envVar: "AUTHJS_DB_URL",
+  prompt: "Auth.js database connection string",
+  hint: "Postgres, MySQL, libsql://… or a SQLite file — whichever your Auth.js adapter uses.",
+} as const satisfies ResolveConfig;
+
 export async function exportAuthJs(options: DbExportOptions): Promise<void> {
-  const dbUrl = await resolveDbUrl(options, {
-    platform: "authjs",
-    envVar: "AUTHJS_DB_URL",
-    prompt: "Auth.js database connection string",
-    hint: "Postgres, MySQL, libsql://… or a SQLite file — whichever your Auth.js adapter uses.",
-  });
+  const dbUrl = await resolveDbUrl(options, AUTHJS_DB);
 
   const destination = await resolveOutputPath("authjs", options.output);
 
   await withGutter("Exporting users from Auth.js", async ({ setNextSteps }) => {
     const dateTime = await startLogging();
 
-    const { rows, table } = await withSpinner("Reading the user table...", () =>
-      withDbClient(dbUrl, "authjs", fetchAuthJsUsers),
+    const { rows, table } = await withDbRetry(dbUrl, AUTHJS_DB, async (connectionString) =>
+      withSpinner("Reading the user table...", () =>
+        withDbClient(connectionString, "authjs", fetchAuthJsUsers),
+      ),
     );
     log.info(`Read ${rows.length} row${rows.length === 1 ? "" : "s"} from ${table}.`);
 

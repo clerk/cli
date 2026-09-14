@@ -295,6 +295,16 @@ export function describeDbError(error: unknown, platform?: DbPlatform): string {
     return "Could not reach the database. Check the host and port, and that the server accepts connections from here.";
   }
 
+  // Turso resolves every `*.turso.io` name, so a typo'd database does not fail
+  // to connect — it answers 404. "Check the host" would send the reader after
+  // the half that is right.
+  if (/\b404\b/.test(message)) {
+    return (
+      "No database at that libsql host. Check the database name in the URL —\n" +
+      "`turso db show <name>` prints the URL to use."
+    );
+  }
+
   if (/\b401\b|unauthorized|not authorized/i.test(message)) {
     return (
       "The libsql server rejected that token.\n" +
