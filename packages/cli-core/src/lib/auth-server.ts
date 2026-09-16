@@ -18,15 +18,15 @@ function escapeHtml(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
-const CLERK_LOGO = `<svg width="48" height="48" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="160" height="160" rx="80" fill="#6C47FF"/>
-<path d="M111.125 33.4395C112.875 34.6113 113.024 37.0763 111.535 38.5652L98.7464 51.3541C97.5905 52.5099 95.7974 52.6925 94.3426 51.9472C90.0408 49.7434 85.1656 48.5 80 48.5C62.603 48.5 48.5 62.603 48.5 80C48.5 85.1656 49.7434 90.0408 51.9472 94.3426C52.6925 95.7974 52.5099 97.5905 51.3541 98.7464L38.5652 111.535C37.0763 113.024 34.6113 112.875 33.4395 111.125C27.4773 102.224 24 91.5181 24 80C24 49.0721 49.0721 24 80 24C91.5181 24 102.224 27.4773 111.125 33.4395Z" fill="white" fill-opacity="0.4"/>
-<path d="M97.5 80C97.5 89.665 89.665 97.5 80 97.5C70.335 97.5 62.5 89.665 62.5 80C62.5 70.335 70.335 62.5 80 62.5C89.665 62.5 97.5 70.335 97.5 80Z" fill="white"/>
-<path d="M111.535 121.435C113.024 122.924 112.875 125.389 111.125 126.56C102.224 132.523 91.5181 136 80 136C68.4819 136 57.7759 132.523 48.8747 126.56C47.1253 125.389 46.9758 122.924 48.4647 121.435L61.2535 108.646C62.4094 107.49 64.2025 107.307 65.6573 108.053C69.9592 110.257 74.8344 111.5 80 111.5C85.1656 111.5 90.0408 110.257 94.3427 108.053C95.7975 107.307 97.5906 107.49 98.7465 108.646L111.535 121.435Z" fill="white"/>
-</svg>
+const CLERK_LOGO = `<span class="clerk-logo-frame"><svg class="clerk-logo" width="48" height="48" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+<path d="M111.125 33.4395C112.875 34.6113 113.024 37.0763 111.535 38.5652L98.7464 51.3541C97.5905 52.5099 95.7974 52.6925 94.3426 51.9472C90.0408 49.7434 85.1656 48.5 80 48.5C62.603 48.5 48.5 62.603 48.5 80C48.5 85.1656 49.7434 90.0408 51.9472 94.3426C52.6925 95.7974 52.5099 97.5905 51.3541 98.7464L38.5652 111.535C37.0763 113.024 34.6113 112.875 33.4395 111.125C27.4773 102.224 24 91.5181 24 80C24 49.0721 49.0721 24 80 24C91.5181 24 102.224 27.4773 111.125 33.4395Z" fill="currentColor" fill-opacity="0.4"/>
+<path d="M97.5 80C97.5 89.665 89.665 97.5 80 97.5C70.335 97.5 62.5 89.665 62.5 80C62.5 70.335 70.335 62.5 80 62.5C89.665 62.5 97.5 70.335 97.5 80Z" fill="currentColor"/>
+<path d="M111.535 121.435C113.024 122.924 112.875 125.389 111.125 126.56C102.224 132.523 91.5181 136 80 136C68.4819 136 57.7759 132.523 48.8747 126.56C47.1253 125.389 46.9758 122.924 48.4647 121.435L61.2535 108.646C62.4094 107.49 64.2025 107.307 65.6573 108.053C69.9592 110.257 74.8344 111.5 80 111.5C85.1656 111.5 90.0408 110.257 94.3427 108.053C95.7975 107.307 97.5906 107.49 98.7465 108.646L111.535 121.435Z" fill="currentColor"/>
+</svg></span>
 `;
 
 const PAGE_STYLE = `
+  @property --glow-angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   :root {
     color-scheme: light dark;
@@ -42,6 +42,14 @@ const PAGE_STYLE = `
     --cli-syntax-mid: #7c3aed;
     --cli-syntax-target: #2563eb;
     --cli-accent: #6c47ff;
+    --cli-logo-bg: linear-gradient(180deg, rgba(10,10,10,0) 0%, rgba(10,10,10,0.02) 100%);
+    --cli-logo-shadow: 0px 11px 28px -10px #00000026, 0px 4px 14px -10px #0000001a, 0px 1px 2px 0px #0000000a, 0px 0px 0px 0.5px #1313161a, inset 0px -4px 16px 0px #fff, inset 0px -4px 4px 0px #ffffff80, inset 0px 3px 5px 0px #fff, inset 0px 4px 35px -6px #0000000f;
+    --cli-cards-bg: rgb(246, 246, 247);
+    --cli-brand-purple: #6c47ff;
+    --cli-brand-purple-soft: #9785ff;
+    --cli-brand-sky: #00aee3;
+    --cli-brand-sky-soft: #3ad4fd;
+    --cli-glow-opacity: 0.7;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -57,24 +65,51 @@ const PAGE_STYLE = `
       --cli-syntax-mid: #c4baff;
       --cli-syntax-target: #70b8ff;
       --cli-accent: #9c87ff;
+      --cli-logo-bg: linear-gradient(180deg, rgba(245,245,247,0.08) 0%, rgba(245,245,247,0) 100%);
+      --cli-logo-shadow: 0px 11px 28px -10px #00000080, 0px 4px 14px -10px #00000059, 0px 1px 2px 0px #00000059, inset 0 0 0 1px rgba(255 255 255 / 0.04), inset 0 1px 0 0 rgba(255 255 255 / 0.04), 0 0 0 1px rgba(0 0 0 / 1);
+      --cli-cards-bg: #17171a;
+      --cli-glow-opacity: 0.22;
     }
   }
-  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: var(--cli-bg); color: var(--cli-fg); }
-  .auth-page { text-align: center; padding-block: 4rem; padding-inline: 1rem; }
-  .auth-page h1 { margin-top: 1.25rem; font-size: clamp(1.875rem, 4vw, 2.5rem); }
-  .auth-page > p { margin-top: 0.75rem; }
-  @keyframes roll-in { from { transform: rotateX(90deg); opacity: 0; } to { transform: rotateX(0deg); opacity: 1; } }
+  .page-glow { position: fixed; z-index: 0; inset: -1.5rem; pointer-events: none; border: solid 0; border-image: conic-gradient(from var(--glow-angle), var(--cli-brand-purple), var(--cli-brand-purple-soft), var(--cli-brand-sky-soft), var(--cli-brand-sky), var(--cli-brand-sky-soft), var(--cli-brand-purple-soft), var(--cli-brand-purple)) 1; opacity: var(--cli-glow-opacity); filter: blur(3rem); animation: glow-sweep 2.8s cubic-bezier(0.4, 0.36, 0, 1) both, glow-spin 2.8s linear both; }
+  @keyframes glow-sweep { 0% { border-width: 0; } 40% { border-width: 2.5rem; } 100% { border-width: 0; } }
+  @keyframes glow-spin { to { --glow-angle: 1turn; } }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; min-height: 100vh; background: var(--cli-bg); color: var(--cli-fg); }
+  .auth-page { position: relative; z-index: 1; min-height: 100dvh; text-align: center; padding-inline: 1rem; }
+  .auth-hero { min-height: 100dvh; display: grid; place-content: center; }
+  .auth-headline { position: relative; }
+  .intro { --intro-drop: 2rem; }
+  .intro h1 { animation: settle-up 0.7s cubic-bezier(0.4, 0.36, 0, 1) 1.87s both; }
+  .intro > p { color: var(--cli-fg-muted); animation: sub-in 0.7s cubic-bezier(0.4, 0.36, 0, 1) 1.94s both; }
+  .intro .clerk-logo-frame { animation: logo-in 0.6s cubic-bezier(0.4, 0.36, 0, 1) both, settle-up-logo 0.7s cubic-bezier(0.4, 0.36, 0, 1) 1.8s both; }
+  .clerk-logo-frame { position: absolute; left: 50%; bottom: 100%; translate: -50% 0; margin-bottom: 1.25rem; display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: var(--cli-logo-bg); box-shadow: var(--cli-logo-shadow); }
+  .clerk-logo { color: var(--cli-fg); }
+  .auth-page h1 { font-size: clamp(1.875rem, 4vw, 2.5rem); }
+  .auth-headline > p { margin-top: 0.75rem; }
+  @keyframes word-in { from { opacity: 0; filter: blur(14px); transform: scale(1.12); } to { opacity: 1; filter: blur(0px); transform: scale(1); } }
+  .word-in { display: inline-block; animation: word-in 0.9s cubic-bezier(0.4, 0.36, 0, 1) both; }
   @keyframes fade-in { from { opacity: 0; filter: blur(2px); } to { opacity: 1; filter: blur(0px); } }
-  .cli-cards { margin-top: 2.5rem; opacity: 0; animation: fade-in 0.4s ease-out 0.85s forwards; }
-  .cli-cards-intro { color: var(--cli-fg-muted); }
-  .cli-cards-grid { margin-top: 1rem; margin-inline: auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; width: 52rem; max-width: 100%; }
-  @media (max-width: 860px) { .cli-cards-grid { grid-template-columns: 1fr; width: 24rem; } }
-  .cli-card { display: flex; flex-direction: column; gap: 0.5rem; border: 1px solid var(--cli-border); border-radius: 12px; padding: 1rem; text-align: left; }
-  .cli-card-title { display: flex; align-items: center; gap: 0.45rem; font-size: 13.5px; font-weight: 600; }
+  @keyframes cards-in { from { opacity: 0; filter: blur(14px); transform: scale(1.05); } to { opacity: 1; filter: blur(0px); transform: scale(1); } }
+  @keyframes settle-up { from { transform: translateY(var(--intro-drop)); } to { transform: translateY(0); } }
+  @keyframes settle-up-logo { from { translate: -50% var(--intro-drop); } to { translate: -50% 0; } }
+  @keyframes logo-in { from { opacity: 0; scale: 1.12; } to { opacity: 1; scale: 1; } }
+  @keyframes sub-in { from { opacity: 0; filter: blur(6px); transform: translateY(var(--intro-drop)); } to { opacity: 1; filter: blur(0px); transform: translateY(0); } }
+  .cli-cards { --cli-cards-width: 68rem; margin-top: 2rem; margin-bottom: 1.5rem; opacity: 0; transform-origin: 50% -20rem; animation: cards-in 0.9s cubic-bezier(0.4, 0.36, 0, 1) 0.22s both; }
+  .cli-cards-intro { align-self: center; padding-left: 1.5rem; text-align: left; }
+  .cli-cards-intro h2 { text-wrap: balance; font-size: 1.25rem; line-height: 1.75rem; font-weight: 600; color: var(--cli-fg); }
+  .cli-cards-intro p { max-width: 30ch; text-wrap: balance; margin-top: 0.75rem; font-size: 0.8125rem; line-height: 1.25rem; color: var(--cli-fg-muted); }
+  .cli-cards-grid { margin-inline: auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem; padding: 0.5rem; width: var(--cli-cards-width); max-width: 100%; background: var(--cli-cards-bg); border-radius: 24px; }
+  @media (max-width: 1100px) { .cli-cards { --cli-cards-width: 52rem; } .cli-cards-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .cli-cards-intro { grid-column: 1 / -1; padding-block: 1.5rem 1rem; } }
+  @media (max-width: 860px) { .auth-hero { min-height: 72dvh; } .auth-page { padding-bottom: 2rem; } .cli-cards { --cli-cards-width: 100%; margin-top: 1.5rem; } .cli-cards-grid { grid-template-columns: 1fr; } .cli-cards-intro { padding-inline: 1rem; } .cli-card-desc { max-width: 36ch; } }
+  @media (min-width: 861px) and (min-height: 700px) { .cli-cards { position: absolute; left: 1rem; right: 1rem; bottom: 1.5rem; margin: 0; } }
+  @media (min-width: 861px) and (min-height: 700px) { body { overflow: clip; } }
+  .cli-card { display: flex; flex-direction: column; gap: 0.5rem; border: 1px solid var(--cli-border); border-radius: 1rem; padding: 1rem; text-align: left; background: var(--cli-bg); }
+  .cli-card-head { display: flex; align-items: center; }
+  .cli-card-title { margin-top: 0.25rem; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 500; }
   .cli-card-icon { width: 14px; height: 14px; flex: none; color: var(--cli-fg-dim); }
-  .cli-card-desc { flex: 1; font-size: 12.5px; line-height: 1.45; color: var(--cli-fg-muted); }
-  .cli-card-code { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem; padding: 0.45rem 0.35rem 0.45rem 0.75rem; border: 1px solid var(--cli-border); border-radius: 8px; background: var(--cli-code-bg); }
-  .cli-card-code code { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; letter-spacing: -0.02em; color: var(--cli-fg); user-select: text; }
+  .cli-card-desc { flex: 1; font-size: 0.8125rem; line-height: 1.25rem; color: var(--cli-fg-muted); }
+  .cli-card-code { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; padding: 0.35rem 0.35rem 0.35rem 0.75rem; border: 1px solid var(--cli-border); border-radius: 8px; background: var(--cli-code-bg); }
+  .cli-card-code code { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78125rem; letter-spacing: -0.02em; color: var(--cli-fg); user-select: text; }
   .cli-prompt { color: var(--cli-fg-faint); user-select: none; }
   .cli-bin { color: var(--cli-syntax-mid); }
   .copy-btn { background: transparent; border: 0; width: 1.75rem; height: 1.75rem; cursor: pointer; color: var(--cli-fg-dim); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; flex: none; transition: color 0.3s cubic-bezier(0.4,0.36,0,1), background 0.15s, transform 0.15s; }
@@ -87,19 +122,15 @@ const PAGE_STYLE = `
 `;
 
 function animatedText(text: string): string {
-  return (
-    text
-      .split("")
-      .map((letter, i) => {
-        const delay = (i * 0.015).toFixed(3);
-        const char = letter === " " ? "&nbsp;" : escapeHtml(letter);
-        return `<span style="display:inline-block;perspective:800px;">\
-<span style="display:inline-block;backface-visibility:hidden;transform-origin:50% 100%;\
-animation:roll-in 0.15s ease-out ${delay}s both;">${char}</span></span>`;
-      })
-      .join("") +
-    `<span style="clip-path:inset(50%);white-space:nowrap;border-width:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden;">${escapeHtml(text)}</span>`
-  );
+  // Split on words, not characters: the words stay real text for a screen
+  // reader, so the headline needs no duplicate hidden copy.
+  return text
+    .split(" ")
+    .map((word, i) => {
+      const delay = (0.15 + i * 0.14).toFixed(3);
+      return `<span class="word-in" style="animation-delay:${delay}s;">${escapeHtml(word)}</span>`;
+    })
+    .join(" ");
 }
 
 const TERMINAL_ICON_SVG = `<svg class="cli-card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>`;
@@ -132,7 +163,8 @@ const COPY_SCRIPT = `
 
 function commandCard(title: string, description: string, commandHtml: string): string {
   return `<div class="cli-card">
-          <div class="cli-card-title">${TERMINAL_ICON_SVG}<span>${escapeHtml(title)}</span></div>
+          <div class="cli-card-head">${TERMINAL_ICON_SVG}</div>
+          <h3 class="cli-card-title">${escapeHtml(title)}</h3>
           <p class="cli-card-desc">${escapeHtml(description)}</p>
           <div class="cli-card-code">
             <code><span class="cli-prompt">$ </span><span class="cli-cmd-text">${commandHtml}</span></code>
@@ -145,13 +177,21 @@ const SUCCESS_HTML = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Clerk CLI</title><style>${PAGE_STYLE}</style></head>
 <body>
+  <div class="page-glow"></div>
   <div class="auth-page">
-    ${CLERK_LOGO}
-    <h1>${animatedText("Authentication successful")}</h1>
-    <p style="color: var(--cli-fg-muted); opacity:0;animation:fade-in 0.4s ease-out 0.5s forwards;">You may close this window.</p>
+    <div class="auth-hero">
+      <div class="auth-headline intro">
+        ${CLERK_LOGO}
+        <h1>${animatedText("Authentication successful")}</h1>
+        <p>You may close this window.</p>
+      </div>
+    </div>
     <div class="cli-cards">
-      <p class="cli-cards-intro">Set up, configure, and ship Clerk from your agent or terminal.</p>
       <div class="cli-cards-grid">
+        <div class="cli-cards-intro">
+          <h2>One CLI, from setup to production.</h2>
+          <p>Install Clerk, configure it, and deploy from your agent or your terminal.</p>
+        </div>
         ${commandCard(
           "Install",
           "Detects your framework and sets up API keys automatically.",
@@ -179,9 +219,13 @@ const ERROR_HTML = (message: string) => `<!DOCTYPE html>
 <head><meta charset="utf-8"><title>Clerk CLI</title><style>${PAGE_STYLE}</style></head>
 <body>
   <div class="auth-page">
-    ${CLERK_LOGO}
-    <h1>Authentication failed</h1>
-    <p>${escapeHtml(message)}</p>
+    <div class="auth-hero">
+      <div class="auth-headline">
+        ${CLERK_LOGO}
+        <h1>Authentication failed</h1>
+        <p>${escapeHtml(message)}</p>
+      </div>
+    </div>
   </div>
 </body>
 </html>`;
