@@ -48,7 +48,7 @@ const one = (key: string, record: Record<string, unknown>, context = {}) =>
     | undefined;
 
 describe("registry", () => {
-  test("registers all six platforms", () => {
+  test("registers all seven platforms", () => {
     expect(transformerKeys()).toEqual([
       "clerk",
       "auth0",
@@ -56,6 +56,7 @@ describe("registry", () => {
       "betterauth",
       "firebase",
       "supabase",
+      "workos",
     ]);
   });
 
@@ -160,6 +161,55 @@ describe("auth0", () => {
     ]);
     expect(users[0]?.publicMetadata).toEqual({ theme: "dark" });
     expect(users[0]?.privateMetadata).toEqual({ plan: "pro" });
+  });
+});
+
+describe("workos", () => {
+  const base = { id: "user_01ABC", email: "a@x.dev" };
+
+  test("maps identity, name and metadata onto the Clerk schema", async () => {
+    const { users } = await load("workos", [
+      { ...base, email_verified: true, first_name: "Ada", last_name: "Lovelace" },
+    ]);
+    expect(users[0]).toMatchObject({
+      userId: "user_01ABC",
+      email: "a@x.dev",
+      firstName: "Ada",
+      lastName: "Lovelace",
+    });
+  });
+
+  test.each([
+    [true, "email", undefined],
+    [false, undefined, "a@x.dev"],
+    [undefined, undefined, "a@x.dev"],
+  ])("email_verified=%p routes the address correctly", (verified, kept, unverified) => {
+    const user = one("workos", { ...base, email_verified: verified });
+    expect(user?.email).toBe(kept ? "a@x.dev" : undefined);
+    expect(user?.unverifiedEmailAddresses).toBe(unverified);
+  });
+
+  test("keeps metadata public", async () => {
+    const { users } = await load("workos", [
+      { ...base, email_verified: true, metadata: { plan: "pro" } },
+    ]);
+    expect(users[0]?.publicMetadata).toEqual({ plan: "pro" });
+  });
+
+  // No other transformer omits it. WorkOS never returns a digest, so naming a
+  // hasher would imply a password column that cannot exist.
+  test("names no password hasher, because WorkOS returns no hashes", () => {
+    expect(getTransformer("workos").defaults).toBeUndefined();
+  });
+
+  // The export carries these so whoever runs the migration can see who used
+  // social sign-in; Clerk's import has no field for them.
+  test("drops OAuth identities carried through from the export", async () => {
+    const { users } = await load("workos", [
+      { ...base, email_verified: true, identities: [{ provider: "GoogleOAuth", idp_id: "1" }] },
+    ]);
+    expect(users[0]?.userId).toBe("user_01ABC");
+    expect("identities" in (users[0] ?? {})).toBe(false);
   });
 });
 

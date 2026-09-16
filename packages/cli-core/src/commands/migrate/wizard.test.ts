@@ -75,6 +75,7 @@ describe("transformer picker", () => {
       "betterauth",
       "firebase",
       "supabase",
+      "workos",
     ]);
   });
 

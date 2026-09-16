@@ -96,11 +96,23 @@ export function formatFieldCoverage(fields: CoverageField[], total: number): str
   });
 }
 
+/**
+ * An extra block printed under the coverage table.
+ *
+ * For a breakdown that is not "how many users have this field" — WorkOS's
+ * OAuth providers, where one user can appear in two rows and the denominator
+ * is not the user count. Folding that into the coverage table would put rows
+ * of two different kinds under one heading.
+ */
+export type ExportSection = { title: string; rows: string[] };
+
 export type ExportSummary = {
   platform: string;
   userCount: number;
   outputPath: string;
   coverage: CoverageField[];
+  /** Extra blocks, printed under the coverage table in order. */
+  sections?: ExportSection[];
   /** The transformer that reads this file, for the "what next" line. */
   transformerKey: string;
 };
@@ -122,6 +134,12 @@ export function reportExport(summary: ExportSummary): readonly string[] {
   log.info("Field coverage");
   for (const line of formatFieldCoverage(summary.coverage, summary.userCount)) {
     log.info(line);
+  }
+
+  for (const section of summary.sections ?? []) {
+    log.blank();
+    log.info(section.title);
+    for (const row of section.rows) log.info(row);
   }
 
   log.blank();

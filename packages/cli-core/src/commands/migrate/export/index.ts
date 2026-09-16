@@ -8,6 +8,7 @@ import { exportBetterAuth } from "./betterauth.ts";
 import { exportClerk } from "./clerk.ts";
 import { exportFirebase } from "./firebase.ts";
 import { exportSupabase } from "./supabase.ts";
+import { exportWorkOs } from "./workos.ts";
 import type { DbExportOptions } from "./db-options.ts";
 import { exportPlatformKeys, exportPlatforms, getExportPlatform } from "./registry.ts";
 
@@ -56,6 +57,7 @@ const handlers = {
   authjs: exportAuthJs,
   betterauth: exportBetterAuth,
   firebase: exportFirebase,
+  workos: exportWorkOs,
 };
 
 /** The three platforms that read a database, which share `--db-url`. */
@@ -97,7 +99,9 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
         description: "Export from an Auth0 tenant",
       },
     ])
-    .action((_opts, cmd) => handlers.picker(cmd.optsWithGlobals() as Record<string, unknown>));
+    .action(async (_opts, cmd) =>
+      handlers.picker(cmd.optsWithGlobals() as Record<string, unknown>),
+    );
 
   exportCommand
     .command("clerk")
@@ -118,7 +122,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
         description: "Export a specific instance to a chosen path",
       },
     ])
-    .action((_opts, cmd) =>
+    .action(async (_opts, cmd) =>
       handlers.clerk(cmd.optsWithGlobals() as Parameters<typeof handlers.clerk>[0]),
     );
 
@@ -142,7 +146,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
         description: "Read AUTH0_DOMAIN, AUTH0_CLIENT_ID and AUTH0_CLIENT_SECRET, or prompt",
       },
     ])
-    .action((_opts, cmd) =>
+    .action(async (_opts, cmd) =>
       handlers.auth0(cmd.optsWithGlobals() as Parameters<typeof handlers.auth0>[0]),
     );
 
@@ -159,8 +163,33 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
         description: "Export using a downloaded service account key",
       },
     ])
-    .action((_opts, cmd) =>
+    .action(async (_opts, cmd) =>
       handlers.firebase(cmd.optsWithGlobals() as Parameters<typeof handlers.firebase>[0]),
+    );
+
+  exportCommand
+    .command("workos")
+    .description(
+      "Export users from a WorkOS tenant (default: ./exports/workos-export-<timestamp>.json)",
+    )
+    .option("--api-key <key>", "WorkOS secret API key, the one starting `sk_`")
+    .option(
+      "--with-identities",
+      "Also record each user's OAuth providers — one extra request per user",
+    )
+    .option("-o, --output <path>", "Where to write the export, relative to the current directory")
+    .setExamples([
+      {
+        command: "clerk migrate export workos --api-key sk_…",
+        description: "Export with an explicit API key",
+      },
+      {
+        command: "clerk migrate export workos",
+        description: "Read WORKOS_API_KEY, or prompt",
+      },
+    ])
+    .action(async (_opts, cmd) =>
+      handlers.workos(cmd.optsWithGlobals() as Parameters<typeof handlers.workos>[0]),
     );
 
   // All three take exactly one connection string, so they are registered from
@@ -183,6 +212,8 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
           description: `Read ${platform.envVar}, or prompt`,
         },
       ])
-      .action((_opts, cmd) => handlers[platform.key](cmd.optsWithGlobals() as DbExportOptions));
+      .action(async (_opts, cmd) =>
+        handlers[platform.key](cmd.optsWithGlobals() as DbExportOptions),
+      );
   }
 }

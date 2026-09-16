@@ -16,6 +16,7 @@ import { exportBetterAuth } from "./betterauth.ts";
 import { exportClerk } from "./clerk.ts";
 import { exportFirebase } from "./firebase.ts";
 import { exportSupabase } from "./supabase.ts";
+import { exportWorkOs } from "./workos.ts";
 
 export type ExportRegistryEntry = {
   key: string;
@@ -32,42 +33,49 @@ export const exportPlatforms: ExportRegistryEntry[] = [
     label: "Clerk",
     description: "Another Clerk instance, e.g. development → production",
     transformerKey: "clerk",
-    run: (options) => exportClerk(options),
+    run: async (options) => exportClerk(options),
   },
   {
     key: "auth0",
     label: "Auth0",
     description: "An Auth0 tenant, via the Management API",
     transformerKey: "auth0",
-    run: (options) => exportAuth0(options),
+    run: async (options) => exportAuth0(options),
   },
   {
     key: "supabase",
     label: "Supabase",
     description: "A Supabase Postgres database — includes password hashes",
     transformerKey: "supabase",
-    run: (options) => exportSupabase(options),
+    run: async (options) => exportSupabase(options),
   },
   {
     key: "authjs",
     label: "Auth.js (NextAuth)",
     description: "An Auth.js database — Postgres, MySQL or SQLite",
     transformerKey: "authjs",
-    run: (options) => exportAuthJs(options),
+    run: async (options) => exportAuthJs(options),
   },
   {
     key: "firebase",
     label: "Firebase",
     description: "A Firebase project, via Identity Toolkit",
     transformerKey: "firebase",
-    run: (options) => exportFirebase(options),
+    run: async (options) => exportFirebase(options),
   },
   {
     key: "betterauth",
     label: "Better Auth",
     description: "A Better Auth database — plugin columns detected automatically",
     transformerKey: "betterauth",
-    run: (options) => exportBetterAuth(options),
+    run: async (options) => exportBetterAuth(options),
+  },
+  {
+    key: "workos",
+    label: "WorkOS",
+    description: "A WorkOS tenant, via the User Management API — no password hashes",
+    transformerKey: "workos",
+    run: async (options) => exportWorkOs(options),
   },
 ];
 

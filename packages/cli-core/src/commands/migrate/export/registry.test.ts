@@ -11,6 +11,7 @@ describe("export registry", () => {
       "authjs",
       "firebase",
       "betterauth",
+      "workos",
     ]);
   });
 

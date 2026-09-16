@@ -145,6 +145,7 @@ clerk migrate export                                    # pick a platform
 clerk migrate export clerk --output users.json
 clerk migrate export auth0 --domain my-tenant.us.auth0.com \
   --client-id … --client-secret …
+clerk migrate export workos --api-key sk_…
 ```
 
 The platform is an optional positional. Omitted, you get a picker built from
@@ -171,6 +172,7 @@ mode and a non-TTY fail outright instead, having nobody to ask.
 | `authjs`     | Auth.js database                 | `--transformer authjs`     |
 | `betterauth` | Better Auth database             | `--transformer betterauth` |
 | `firebase`   | Firebase Identity Toolkit        | `--transformer firebase`   |
+| `workos`     | WorkOS User Management API       | `--transformer workos`     |
 
 Every export asks where to save the file before it starts, proposing
 `./exports/<platform>-export-<YYYYMMDD-HHmm>.json`. Press enter to take it,
@@ -196,6 +198,8 @@ unattended rather than stalling on a prompt with everything held in memory.
 | `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com`              |
 | `--client-id <id>`         | `auth0`                            | Machine-to-machine application client ID                  |
 | `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret              |
+| `--api-key <key>`          | `workos`                           | WorkOS secret API key, the one starting `sk_`             |
+| `--with-identities`        | `workos`                           | Also record each user's OAuth providers                   |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
 so it resolves a key the same way `clerk migrate import` does, with one extra
@@ -240,7 +244,7 @@ Exported 3 users to /project/exports/clerk-export-20260817-1432.json
 Every export also writes `logs/export-<timestamp>.log`, so `migrate logs list`
 sees it alongside imports and deletions.
 
-#### Neither platform exports passwords
+#### Three platforms export no passwords
 
 - **Clerk** never returns password digests, TOTP secrets or backup codes over
   the API — only the `*_enabled` booleans. Migrated users must reset their
@@ -248,9 +252,13 @@ sees it alongside imports and deletions.
 - **Auth0**'s Management API does not return password hashes either; they come
   only from a support request. Add a `passwordHash` field to each user before
   importing, or migrate without passwords.
+- **WorkOS** returns neither password hashes nor TOTP secrets, and has no
+  support-request escape hatch: hashes go in on import and never come back, and
+  `totp.secret` is returned on enrol only. There is nothing to add to the file.
 
-Both say so on every run. The coverage row counts users who _have_ a password,
-so the size of the gap is visible up front.
+All three say so on every run. The coverage row counts users who _have_ a
+password, so the size of the gap is visible up front — `workos` prints that row
+at zero unconditionally, because zero is the only value it can take.
 
 #### Database-backed exports (`supabase`, `authjs`, `betterauth`)
 
@@ -372,6 +380,59 @@ it exits naming **every** missing credential at once rather than one per run.
 Auth0 pages this endpoint only through the first **1000** users. Past that the
 export stops and says so, pointing at Auth0's bulk export job — silently
 returning the first thousand would read as "that is everyone".
+
+#### WorkOS credentials
+
+Needs a secret API key — the one starting `sk_`, from the WorkOS dashboard
+under API Keys. Resolved from `--api-key`, then `WORKOS_API_KEY`, then a
+prompt; agent mode exits naming both instead.
+
+There is no `--db-url` sibling because there is no database to point it at.
+WorkOS is API-only: apps commonly mirror users into their own store through
+webhooks, but that mirror is a derived copy holding no credentials, so the
+User Management API is the only source. Pagination is cursor-based, so unlike
+Auth0 there is no record ceiling — `after` runs to the end of the tenant.
+
+**`--with-identities` is off by default, and it is not free.** WorkOS has no
+bulk endpoint for OAuth identities, so it is one request per user: ten requests
+becomes 1,010 for a thousand users. Nothing it returns can be imported —
+`POST /v1/users` has no external-accounts field — so it buys a provider
+breakdown in the coverage report, and an `identities` array kept in the export
+file for whoever runs the migration. The interactive path asks once, after the
+user count is known, defaulting to no; agent mode takes the flag's answer and
+asks nothing.
+
+The breakdown prints as its own **OAuth providers** block under the coverage
+table, not as extra coverage rows:
+
+```
+Field coverage
+  ✓ 6/6 have an email address
+  ✗ 0/6 have a password (WorkOS returns none)
+
+OAuth providers
+  GoogleOAuth        2 users
+  MicrosoftOAuth     1 user
+  no OAuth provider  2 users
+  not readable       1 user
+  Those users have no `identities` field in the export, rather than an empty one.
+```
+
+Separate because the two kinds of row do not mean the same thing. A coverage
+row is "N of the M users have this field"; a provider row has no such
+denominator — one user holding two providers is counted under both, so the
+counts can sum past the user count, and `not readable` is not a property of the
+user at all.
+
+A lookup that fails is counted on its own row rather than folded into
+`no OAuth provider`. "Lookup failed" and "has no providers" are different
+facts, and flattening the first into the second would understate social
+sign-in.
+
+Non-interactive runs get progress on stderr every 500 users during the fan-out,
+and every 10 pages during the user fetch. `withSpinner` hands a no-op to
+anything that is not a TTY, so without this an agent exporting a large tenant
+would see nothing at all until the run finished.
 
 ### `clerk migrate delete`
 
@@ -553,6 +614,7 @@ platform is one file in `transformers/` plus one line in `transformers/registry.
 | `betterauth` | Better Auth export            | `bcrypt`          | Reads the credential account's `password_hash`                   |
 | `firebase`   | `firebase auth:export`        | `scrypt_firebase` | CSV or JSON; needs the four hash parameters below                |
 | `supabase`   | Supabase `auth.users` export  | `bcrypt`          | Supports `--skip-unsupported-providers`                          |
+| `workos`     | WorkOS User Management API    | none              | No hasher default: WorkOS returns no digest to name one for      |
 
 ### `clerk migrate transformers list`
 
@@ -1142,18 +1204,21 @@ instances), and its settings-change offer writes through the Platform API:
 | ------- | ----------------------------------------------------------------- | ------------------------------------------------------ |
 | `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config` | Applying the settings changes selected from the report |
 
-Two exports talk to their own platform rather than to Clerk:
+Three exports talk to their own platform rather than to Clerk:
 
-| Method | Path                                           | Used by                                              |
-| ------ | ---------------------------------------------- | ---------------------------------------------------- |
-| `POST` | `https://<tenant>/oauth/token`                 | `export auth0` — Management API access token         |
-| `GET`  | `https://<tenant>/api/v2/users`                | `export auth0` — 100 per page, 1000 users maximum    |
-| `POST` | `https://oauth2.googleapis.com/token`          | `export firebase` — RS256 assertion → access token   |
-| `GET`  | `…/v1/projects/{project_id}/accounts:batchGet` | `export firebase` — pages users, 1000 at a time      |
-| `GET`  | `…/admin/v2/projects/{project_id}/config`      | `export firebase` — reads the scrypt hash parameters |
+| Method | Path                                           | Used by                                                  |
+| ------ | ---------------------------------------------- | -------------------------------------------------------- |
+| `POST` | `https://<tenant>/oauth/token`                 | `export auth0` — Management API access token             |
+| `GET`  | `https://<tenant>/api/v2/users`                | `export auth0` — 100 per page, 1000 users maximum        |
+| `POST` | `https://oauth2.googleapis.com/token`          | `export firebase` — RS256 assertion → access token       |
+| `GET`  | `…/v1/projects/{project_id}/accounts:batchGet` | `export firebase` — pages users, 1000 at a time          |
+| `GET`  | `…/admin/v2/projects/{project_id}/config`      | `export firebase` — reads the scrypt hash parameters     |
+| `GET`  | `…/user_management/users`                      | `export workos` — 100 per page, cursor-paginated         |
+| `GET`  | `…/user_management/users/{id}/identities`      | `export workos` — `--with-identities` only, one per user |
 
 The two Identity Toolkit paths are on `identitytoolkit.googleapis.com`, or on
-`FIREBASE_AUTH_EMULATOR_HOST` when that is set.
+`FIREBASE_AUTH_EMULATOR_HOST` when that is set. The two WorkOS paths are on
+`api.workos.com`.
 
 The three database exports (`supabase`, `authjs`, `betterauth`) make no HTTP
 calls at all — they connect over `--db-url`.

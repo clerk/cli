@@ -15,6 +15,7 @@ import betterAuthTransformer from "./betterauth.ts";
 import clerkTransformer from "./clerk.ts";
 import firebaseTransformer from "./firebase.ts";
 import supabaseTransformer from "./supabase.ts";
+import workosTransformer from "./workos.ts";
 
 export const transformers: TransformerRegistryEntry[] = [
   clerkTransformer,
@@ -23,6 +24,7 @@ export const transformers: TransformerRegistryEntry[] = [
   betterAuthTransformer,
   firebaseTransformer,
   supabaseTransformer,
+  workosTransformer,
 ];
 
 /**
