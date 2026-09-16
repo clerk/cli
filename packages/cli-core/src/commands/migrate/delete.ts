@@ -136,7 +136,7 @@ export async function findMigratedUsers(options: {
     params.set("limit", String(EXTERNAL_ID_BATCH));
     for (const id of ids) params.append("external_id", id);
 
-    const response = await retryOn429(() =>
+    const response = await retryOn429(async () =>
       bapiRequest({
         method: "GET",
         path: `/v1/users?${params.toString()}`,
@@ -201,8 +201,8 @@ export async function deleteMigratedUsers(options: {
   const deleteOne = async (user: MigratedUser): Promise<void> => {
     try {
       await retryOn429(
-        () =>
-          schedule(() =>
+        async () =>
+          schedule(async () =>
             bapiRequest({ method: "DELETE", path: `/v1/users/${user.id}`, secretKey }),
           ),
         {
@@ -272,7 +272,7 @@ export async function deleteMigration(options: MigrateDeleteOptions): Promise<vo
       return;
     }
 
-    const users = await withSpinner("Finding migrated users...", (spinner) =>
+    const users = await withSpinner("Finding migrated users...", async (spinner) =>
       findMigratedUsers({ externalIds, secretKey, spinner }),
     );
 
@@ -317,7 +317,7 @@ export async function deleteMigration(options: MigrateDeleteOptions): Promise<vo
       if (!proceed) throwUserAbort();
     }
 
-    const summary = await withSpinner(`Deleting users: [0/${users.length}]...`, (spinner) =>
+    const summary = await withSpinner(`Deleting users: [0/${users.length}]...`, async (spinner) =>
       deleteMigratedUsers({ users, secretKey, limits, dateTime, spinner }),
     );
 

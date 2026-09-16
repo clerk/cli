@@ -332,7 +332,7 @@ async function skipDisabledProviderUsers(
     return users;
   }
 
-  const settings = await withSpinner("Checking enabled providers...", () =>
+  const settings = await withSpinner("Checking enabled providers...", async () =>
     fetchInstanceSettings(secretKey),
   );
   const enabled = settings ? enabledSocialProviders(settings) : null;
@@ -463,7 +463,7 @@ async function offerSettingChanges(
     return [];
   }
 
-  await withSpinner(`Updating settings on ${target.label}...`, () =>
+  await withSpinner(`Updating settings on ${target.label}...`, async () =>
     writeInstanceConfig(target, buildChangePayload(applied), {
       method: "PATCH",
       failureContext: "Failed to update instance settings",
@@ -491,7 +491,7 @@ async function showReadinessReport(
 ): Promise<void> {
   if (input.skipReport) return;
 
-  let settings = await withSpinner("Checking instance settings...", () =>
+  let settings = await withSpinner("Checking instance settings...", async () =>
     fetchInstanceSettings(input.secretKey),
   );
   const fileSide = { ...(await readFileSide(input)), users: input.users };
@@ -662,7 +662,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
     const { users: loaded, validationFailed } = await withSpinner(
       `Loading users from ${file}...`,
-      () => loadUsersFromFile(file, transformer, dateTime, { context: { firebaseHashConfig } }),
+      async () =>
+        loadUsersFromFile(file, transformer, dateTime, { context: { firebaseHashConfig } }),
     );
 
     let users = applyResumeAfter(loaded, options.resumeAfter);
@@ -742,7 +743,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       ...(options.skipUnsupportedProviders ? { skipUnsupportedProviders: true } : {}),
     });
 
-    const summary = await withSpinner(`Importing users: [0/${users.length}]...`, (spinner) =>
+    const summary = await withSpinner(`Importing users: [0/${users.length}]...`, async (spinner) =>
       importUsers({
         users,
         secretKey,

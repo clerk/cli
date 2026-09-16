@@ -97,7 +97,7 @@ export function registerMigrate(program: Program): void {
         description: "Skip Supabase users whose only provider is not enabled in Clerk",
       },
     ])
-    .action((_opts, cmd) =>
+    .action(async (_opts, cmd) =>
       migrate.run(cmd.optsWithGlobals() as Parameters<typeof migrate.run>[0]),
     );
 
@@ -117,7 +117,7 @@ export function registerMigrate(program: Program): void {
       },
       { command: "clerk migrate delete -y", description: "Undo without prompting" },
     ])
-    .action((_opts, cmd) =>
+    .action(async (_opts, cmd) =>
       migrate.delete(cmd.optsWithGlobals() as Parameters<typeof migrate.delete>[0]),
     );
 
@@ -152,7 +152,7 @@ export function registerMigrate(program: Program): void {
         description: "Include one you wrote",
       },
     ])
-    .action((_opts, cmd) =>
+    .action(async (_opts, cmd) =>
       migrate.transformersList(
         cmd.optsWithGlobals() as Parameters<typeof migrate.transformersList>[0],
       ),

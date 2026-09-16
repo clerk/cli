@@ -130,9 +130,9 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
       value: { rows, table },
     } = await withInputRetry(
       dbUrl,
-      () => promptDbUrl(AUTHJS_DB),
+      async () => promptDbUrl(AUTHJS_DB),
       async (connectionString) =>
-        withSpinner("Reading the user table...", () =>
+        withSpinner("Reading the user table...", async () =>
           withDbClient(connectionString, "authjs", fetchAuthJsUsers),
         ),
     );

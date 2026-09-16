@@ -340,14 +340,14 @@ export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
     // for again here.
     const { value: token, input: credentials } = await withInputRetry(
       resolved,
-      () => promptAuth0Credentials(),
+      async () => promptAuth0Credentials(),
       async (candidate) => {
         log.info(`Exporting from ${candidate.domain}.`);
-        return withSpinner("Authenticating with Auth0...", () => fetchAuth0Token(candidate));
+        return withSpinner("Authenticating with Auth0...", async () => fetchAuth0Token(candidate));
       },
     );
 
-    const users = await withSpinner("Fetching users from Auth0...", (spinner) =>
+    const users = await withSpinner("Fetching users from Auth0...", async (spinner) =>
       fetchAllAuth0Users({ credentials, token, spinner }),
     );
 

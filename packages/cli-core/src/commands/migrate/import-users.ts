@@ -190,7 +190,7 @@ async function attachIdentifier(
       : { user_id: clerkUserId, phone_number: value, primary: false, verified };
 
   try {
-    await ctx.schedule(() =>
+    await ctx.schedule(async () =>
       bapiRequest({
         method: "POST",
         path,
@@ -225,7 +225,7 @@ async function createUser(
 ): Promise<string> {
   const identifiers = splitIdentifiers(user);
 
-  const response = await ctx.schedule(() =>
+  const response = await ctx.schedule(async () =>
     bapiRequest({
       method: "POST",
       path: "/v1/users",
@@ -239,16 +239,16 @@ async function createUser(
   // Extra identifiers are best-effort: a duplicate secondary email should not
   // undo a user who was otherwise imported successfully.
   await Promise.all([
-    ...identifiers.additionalEmails.map((email) =>
+    ...identifiers.additionalEmails.map(async (email) =>
       attachIdentifier(ctx, user.userId, clerkUserId, "email", email, true),
     ),
-    ...identifiers.unverifiedEmails.map((email) =>
+    ...identifiers.unverifiedEmails.map(async (email) =>
       attachIdentifier(ctx, user.userId, clerkUserId, "email", email, false),
     ),
-    ...identifiers.additionalPhones.map((phone) =>
+    ...identifiers.additionalPhones.map(async (phone) =>
       attachIdentifier(ctx, user.userId, clerkUserId, "phone", phone, true),
     ),
-    ...identifiers.unverifiedPhones.map((phone) =>
+    ...identifiers.unverifiedPhones.map(async (phone) =>
       attachIdentifier(ctx, user.userId, clerkUserId, "phone", phone, false),
     ),
   ]);
@@ -313,17 +313,20 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
 
   const processUser = async (user: User): Promise<void> => {
     try {
-      const clerkUserId = await retryOn429(() => createUser(ctx, user, skipPasswordRequirement), {
-        onRetry: ({ message }) =>
-          errorLogger(
-            {
-              userId: user.userId,
-              status: "429_retry",
-              errors: [{ code: "rate_limit_retry", message, longMessage: message }],
-            },
-            dateTime,
-          ),
-      });
+      const clerkUserId = await retryOn429(
+        async () => createUser(ctx, user, skipPasswordRequirement),
+        {
+          onRetry: ({ message }) =>
+            errorLogger(
+              {
+                userId: user.userId,
+                status: "429_retry",
+                errors: [{ code: "rate_limit_retry", message, longMessage: message }],
+              },
+              dateTime,
+            ),
+        },
+      );
       successful++;
       processed++;
       importLogger({ userId: user.userId, status: "success", clerkUserId }, dateTime);
@@ -341,7 +344,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   };
 
   progress();
-  await Promise.all(users.map((user) => processUser(user)));
+  await Promise.all(users.map(async (user) => processUser(user)));
 
   return { totalProcessed: total, successful, failed, validationFailed, errorBreakdown };
 }

@@ -10,7 +10,6 @@ import { transformers } from "./registry.ts";
 
 const captured = useCaptureLog();
 
-// eslint-disable-next-line no-control-regex
 const stripAnsi = (value: string) => value.replace(/\[[0-9;]*m/g, "");
 
 let workDir: string;

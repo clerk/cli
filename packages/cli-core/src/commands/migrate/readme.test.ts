@@ -82,7 +82,6 @@ function flagsOf(command: Command): string[] {
 
   const defaultChild = command.commands.find(
     // Commander records the default subcommand on the parent, not the child.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (child) => child.name() === (command as any)._defaultCommandName,
   );
 

@@ -161,7 +161,7 @@ export async function fetchAllClerkUsers(options: {
   const all: BapiUser[] = [];
 
   for (let offset = 0; ; offset += PAGE_SIZE) {
-    const response = await retryOn429(() =>
+    const response = await retryOn429(async () =>
       bapiRequest({
         method: "GET",
         path: `/v1/users?limit=${PAGE_SIZE}&offset=${offset}`,
@@ -239,7 +239,7 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
 
     log.info(`Exporting from ${source.target ?? "the resolved instance"}.`);
 
-    const users = await withSpinner("Fetching users from Clerk...", (spinner) =>
+    const users = await withSpinner("Fetching users from Clerk...", async (spinner) =>
       fetchAllClerkUsers({ secretKey: source.secretKey, spinner }),
     );
 

@@ -210,7 +210,7 @@ function libsqlClient(
     },
     placeholder: () => "?",
     quote: QUOTING.sqlite,
-    close() {
+    async close() {
       return Promise.resolve();
     },
   };
@@ -221,13 +221,13 @@ function sqliteClient(connectionString: string): DbClient {
 
   return {
     dbType: "sqlite",
-    query<T extends Record<string, unknown>>(query: string, params: unknown[] = []) {
+    async query<T extends Record<string, unknown>>(query: string, params: unknown[] = []) {
       // bun:sqlite is synchronous; the Promise keeps one interface for callers.
       return Promise.resolve(database.query(query).all(...(params as never[])) as T[]);
     },
     placeholder: () => "?",
     quote: QUOTING.sqlite,
-    close() {
+    async close() {
       database.close();
       return Promise.resolve();
     },

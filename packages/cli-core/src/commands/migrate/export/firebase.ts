@@ -515,11 +515,13 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
       promptServiceAccount,
       async (candidate) => {
         log.info(`Exporting from the ${candidate.project_id} project.`);
-        return withSpinner("Authenticating with Google...", () => fetchAccessToken(candidate));
+        return withSpinner("Authenticating with Google...", async () =>
+          fetchAccessToken(candidate),
+        );
       },
     );
 
-    const users = await withSpinner("Fetching users from Firebase...", (spinner) =>
+    const users = await withSpinner("Fetching users from Firebase...", async (spinner) =>
       fetchAllFirebaseUsers({ account, token, spinner }),
     );
 

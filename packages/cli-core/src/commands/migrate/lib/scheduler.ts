@@ -18,7 +18,7 @@ export function createApiScheduler(concurrencyLimit: number, rateLimit: number):
   let active = 0;
   let nextRequestAt = 0;
 
-  function acquire(): Promise<void> {
+  async function acquire(): Promise<void> {
     if (active < maxConcurrent) {
       active++;
       return Promise.resolve();

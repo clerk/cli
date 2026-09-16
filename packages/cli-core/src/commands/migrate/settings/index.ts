@@ -80,7 +80,7 @@ export function registerMigrateSettings(
       { command: "clerk migrate settings list", description: "Credentials shown redacted" },
       { command: "clerk migrate settings list --json", description: "Machine-readable listing" },
     ])
-    .action((_opts, cmd) =>
+    .action(async (_opts, cmd) =>
       settings.list(cmd.optsWithGlobals() as Parameters<typeof settings.list>[0]),
     );
 
@@ -99,7 +99,7 @@ export function registerMigrateSettings(
         description: "Write a credential to .env.clerk-migrate",
       },
     ])
-    .action((name, value) => settings.set(name, value));
+    .action(async (name, value) => settings.set(name, value));
 
   settingsCommand
     .command("clear")
@@ -114,7 +114,7 @@ export function registerMigrateSettings(
       },
       { command: "clerk migrate settings clear -y", description: "Clear without prompting" },
     ])
-    .action((name, _opts, cmd) =>
+    .action(async (name, _opts, cmd) =>
       settings.clear(cmd.optsWithGlobals() as Parameters<typeof settings.clear>[0], name),
     );
 }

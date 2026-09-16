@@ -38,7 +38,9 @@ export function registerMigrateLogs(migrateCommand: Command<[], Record<string, u
       { command: "clerk migrate logs list", description: "Show type, timestamp, size and entries" },
       { command: "clerk migrate logs list --json", description: "Machine-readable listing" },
     ])
-    .action((_opts, cmd) => logs.list(cmd.optsWithGlobals() as Parameters<typeof logs.list>[0]));
+    .action(async (_opts, cmd) =>
+      logs.list(cmd.optsWithGlobals() as Parameters<typeof logs.list>[0]),
+    );
 
   logsCommand
     .command("clean")
@@ -48,7 +50,9 @@ export function registerMigrateLogs(migrateCommand: Command<[], Record<string, u
       { command: "clerk migrate logs clean", description: "Delete after confirming" },
       { command: "clerk migrate logs clean -y", description: "Delete without prompting" },
     ])
-    .action((_opts, cmd) => logs.clean(cmd.optsWithGlobals() as Parameters<typeof logs.clean>[0]));
+    .action(async (_opts, cmd) =>
+      logs.clean(cmd.optsWithGlobals() as Parameters<typeof logs.clean>[0]),
+    );
 
   logsCommand
     .command("convert")
@@ -63,7 +67,7 @@ export function registerMigrateLogs(migrateCommand: Command<[], Record<string, u
       },
       { command: "clerk migrate logs convert", description: "Pick files interactively" },
     ])
-    .action((files, _opts, cmd) =>
+    .action(async (files, _opts, cmd) =>
       logs.convert({
         ...(cmd.optsWithGlobals() as Parameters<typeof logs.convert>[0]),
         files,

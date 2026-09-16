@@ -177,9 +177,9 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
       value: { rows, plugins },
     } = await withInputRetry(
       dbUrl,
-      () => promptDbUrl(BETTERAUTH_DB),
+      async () => promptDbUrl(BETTERAUTH_DB),
       async (connectionString) =>
-        withSpinner("Reading the user table...", () =>
+        withSpinner("Reading the user table...", async () =>
           withDbClient(connectionString, "betterauth", async (client) => {
             const plugins = await detectPluginColumns(client);
             const rows = await client.query<BetterAuthRow>(buildBetterAuthQuery(client, plugins));

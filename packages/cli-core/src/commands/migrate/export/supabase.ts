@@ -126,9 +126,9 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
 
     const { value: rows } = await withInputRetry(
       dbUrl,
-      () => promptDbUrl(SUPABASE_DB),
+      async () => promptDbUrl(SUPABASE_DB),
       async (connectionString) =>
-        withSpinner("Reading auth.users...", () =>
+        withSpinner("Reading auth.users...", async () =>
           withDbClient(connectionString, "supabase", fetchSupabaseUsers),
         ),
     );
