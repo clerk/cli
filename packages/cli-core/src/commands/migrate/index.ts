@@ -2,6 +2,7 @@ import { createOption } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
 import { parseIntegerOption } from "../../lib/option-parsers.ts";
 import { deleteMigration } from "./delete.ts";
+import { setAssumeYes } from "./lib/assume-yes.ts";
 import { registerMigrateExport } from "./export/index.ts";
 import { registerMigrateLogs } from "./logs/index.ts";
 import { registerMigrateSettings } from "./settings/index.ts";
@@ -38,6 +39,14 @@ export function registerMigrate(program: Program): void {
       { command: "clerk migrate transformers list", description: "Show the built-in transformers" },
       { command: "clerk migrate delete", description: "Undo the last migration" },
     ]);
+
+  // `-y` is read three layers down — by the log-directory question and by the
+  // credential-retry loop — so it is resolved once here rather than threaded
+  // through every export handler. Hooks are inherited, so this fires for every
+  // subcommand under `migrate`; one that declares no `-y` resolves to false.
+  migrateCommand.hook("preAction", (_thisCommand, actionCommand) => {
+    setAssumeYes(Boolean(actionCommand.opts().yes));
+  });
 
   // Named, not `isDefault`. `import` and `export` are the two directions this
   // group moves users in, and neither is implied by the bare group name — a

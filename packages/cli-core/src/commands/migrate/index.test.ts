@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createProgram } from "../../cli-program.ts";
 import { exportPlatformKeys } from "./export/registry.ts";
+import { isAssumeYes, setAssumeYes } from "./lib/assume-yes.ts";
 import { transformerKeys } from "./transformers/registry.ts";
 
 function findCommand(names: string[]) {
@@ -196,5 +197,45 @@ describe("registerMigrate", () => {
   ])("exposes %s as the short form of %s", (short, long) => {
     const option = findCommand(["migrate", "import"])?.options.find((o) => o.long === long);
     expect(option?.short).toBe(short);
+  });
+
+  // Every export takes `-y`: it is what turns the credential-retry loop off,
+  // and the loop is on every one of them.
+  test.each(exportPlatformKeys())("migrate export %s accepts --yes", (platform) => {
+    const flags = findCommand(["migrate", "export", platform])?.options.map((o) => o.long);
+    expect(flags).toContain("--yes");
+  });
+});
+
+/**
+ * The hook is the only link between the parsed flag and the two places that
+ * read it, three layers down. If it stopped firing — a Commander upgrade that
+ * dropped hook inheritance, an action registered outside the group — both
+ * behaviours would silently revert and every unit test around them would still
+ * pass, because they set the flag directly.
+ */
+describe("the migrate group's -y hook", () => {
+  async function parse(argv: string[]) {
+    const program = createProgram();
+    // `exitOverride` so a usage error inside the action throws here instead of
+    // taking the test runner down with it; the hook has already run by then.
+    program.exitOverride();
+    try {
+      await program.parseAsync(["node", "clerk", ...argv]);
+    } catch {
+      // The action is allowed to fail — only the hook's effect is under test.
+    }
+    return isAssumeYes();
+  }
+
+  test("records -y on an export", async () => {
+    expect(await parse(["migrate", "export", "supabase", "-y", "--db-url", "./none.sqlite"])).toBe(
+      true,
+    );
+  });
+
+  test("records its absence, so a previous run cannot leak into this one", async () => {
+    setAssumeYes(true);
+    expect(await parse(["migrate", "export", "supabase", "--db-url", "./none.sqlite"])).toBe(false);
   });
 });

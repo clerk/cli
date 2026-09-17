@@ -33,6 +33,7 @@ mock.module("../../../lib/prompts.ts", () => ({
 
 const { withInputRetry } = await import("./input-retry.ts");
 const { promptDbUrl } = await import("../export/db-options.ts");
+const { setAssumeYes } = await import("./assume-yes.ts");
 
 const captured = useCaptureLog();
 
@@ -59,6 +60,7 @@ afterAll(() => {
 
 beforeEach(() => {
   setMode("human");
+  setAssumeYes(false);
   answers = [];
   cancelPrompt = false;
 });
@@ -153,6 +155,27 @@ describe("withInputRetry", () => {
 
   test("throws without prompting when there is nobody to ask", async () => {
     setMode("agent");
+    let attempts = 0;
+
+    await expect(
+      withInputRetry(
+        FIRST,
+        () => promptDbUrl(CONFIG),
+        () => {
+          attempts++;
+          throw rejected();
+        },
+      ),
+    ).rejects.toThrow(CliError);
+
+    expect(attempts).toBe(1);
+  });
+
+  // `-y` is a human on a TTY who could be asked and said not to. Agent mode
+  // cannot reach the prompt at all; this one can and declines to, so it needs
+  // its own check rather than riding on the mode assertion above.
+  test("throws without prompting when `-y` said not to ask", async () => {
+    setAssumeYes(true);
     let attempts = 0;
 
     await expect(

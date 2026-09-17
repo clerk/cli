@@ -12,10 +12,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { dim, green, yellow } from "../../../lib/color.ts";
+import { throwUsageError } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
 import { NEXT_STEPS } from "../../../lib/next-steps.ts";
 import { text } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
+import { isAssumeYes } from "../lib/assume-yes.ts";
 
 /**
  * `YYYYMMDD-HHmm`, local time — ISO 8601 basic format, minus seconds.
@@ -52,13 +54,39 @@ export function defaultOutputPath(platform: string, now?: Date): string {
  * One prompt, not a confirm followed by a path prompt: the proposed path is
  * prefilled, so Enter accepts it and typing replaces it.
  *
- * `--output` is an answer already given, and agent mode has nobody to ask.
+ * `--output` is an answer already given, and agent mode has nobody to ask, so
+ * it takes the proposal.
+ *
+ * `-y` is neither: somebody is there, and they said not to ask. It fails
+ * instead of defaulting, because this is the one prompt whose default cannot
+ * be undone by running the command again — a file written to a path nobody
+ * chose has to be found and moved, and a second run writes a second copy.
+ * Silencing that question is what `--output` is for, so the error hands over
+ * the exact line, proposed path and all. (The log-directory question does take
+ * its default under `-y`: `./logs` is where the reader would look anyway, and
+ * nothing is saved.)
  */
 export async function resolveOutputPath(platform: string, output?: string): Promise<string> {
   if (output) return output;
 
   const proposed = defaultOutputPath(platform);
+  // Ordered so agent mode keeps defaulting even when it also passes `-y`:
+  // there was never a prompt on that path to suppress.
   if (!isHuman()) return proposed;
+
+  if (isAssumeYes()) {
+    throwUsageError(
+      `\`clerk migrate export ${platform}\` needs an export location and will not prompt for one with -y.\nPass --output, then run it again.`,
+      undefined,
+      undefined,
+      [
+        {
+          command: `clerk migrate export ${platform} -y --output ${proposed}`,
+          description: "Re-run with the proposed path",
+        },
+      ],
+    );
+  }
 
   const chosen = await text({
     message: "Save the export to:",

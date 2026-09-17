@@ -18,6 +18,7 @@
 import { CliError } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
+import { isAssumeYes } from "./assume-yes.ts";
 
 /**
  * Runs `work`, and on failure asks for the input again and runs it once more.
@@ -53,7 +54,7 @@ export async function withInputRetry<I, T>(
       // Everything these steps raise for a bad credential is a CliError
       // carrying its own explanation; anything else (an interrupt, a bug) is
       // not ours to retry.
-      if (!(error instanceof CliError) || !isHuman() || isAgent()) throw error;
+      if (!(error instanceof CliError) || !isHuman() || isAgent() || isAssumeYes()) throw error;
 
       log.error(error.message);
       candidate = await reprompt();

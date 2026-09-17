@@ -161,8 +161,9 @@ database. Only the connection or the token exchange can say, and by then the
 operator has answered every other question the command asked. So that step —
 and only that step, never a fetch already under way or a file already written —
 runs inside a retry: the failure is explained, the prompt comes back, and the
-rest of the export continues against whichever credential worked. `-y`, agent
-mode and a non-TTY fail outright instead, having nobody to ask.
+rest of the export continues against whichever credential worked. Agent mode
+and a non-TTY fail outright instead, having nobody to ask, and `-y` fails too,
+having been told not to.
 
 | Platform     | Source                           | Feeds                      |
 | ------------ | -------------------------------- | -------------------------- |
@@ -187,19 +188,28 @@ never silently overwrites the first.
 takes the proposed path. `--output` resolves against the **current directory**,
 like every other path flag here.
 
+`-y` does neither: it **fails**, naming `--output` and handing back the whole
+command with the proposed path already in it, to run again. This is the one
+prompt whose default cannot be undone by re-running — a file written where
+nobody chose it has to be found and moved, and the second run writes a second
+copy. Every other question `-y` silences has a default that costs nothing to
+land on. Agent mode keeps defaulting even when it also passes `-y`, since there
+was no prompt on that path to suppress.
+
 The question comes before any users are fetched, so a long export can be left
 unattended rather than stalling on a prompt with everything held in memory.
 
-| Flag                       | Platforms                          | Description                                               |
-| -------------------------- | ---------------------------------- | --------------------------------------------------------- |
-| `-o, --output <path>`      | all                                | Where to write the export                                 |
-| `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Postgres, MySQL, libsql/Turso or SQLite connection string |
-| `--service-account <path>` | `firebase`                         | Path to a service account key JSON file                   |
-| `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com`              |
-| `--client-id <id>`         | `auth0`                            | Machine-to-machine application client ID                  |
-| `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret              |
-| `--api-key <key>`          | `workos`                           | WorkOS secret API key, the one starting `sk_`             |
-| `--with-identities`        | `workos`                           | Also record each user's OAuth providers                   |
+| Flag                       | Platforms                          | Description                                                 |
+| -------------------------- | ---------------------------------- | ----------------------------------------------------------- |
+| `-o, --output <path>`      | all                                | Where to write the export                                   |
+| `-y, --yes`                | all                                | Do not prompt: require `--output`, fail on a bad credential |
+| `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Postgres, MySQL, libsql/Turso or SQLite connection string   |
+| `--service-account <path>` | `firebase`                         | Path to a service account key JSON file                     |
+| `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com`                |
+| `--client-id <id>`         | `auth0`                            | Machine-to-machine application client ID                    |
+| `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret                |
+| `--api-key <key>`          | `workos`                           | WorkOS secret API key, the one starting `sk_`               |
+| `--with-identities`        | `workos`                           | Also record each user's OAuth providers                     |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
 so it resolves a key the same way `clerk migrate import` does, with one extra

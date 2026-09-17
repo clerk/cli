@@ -32,6 +32,7 @@ mock.module("../../../lib/prompts.ts", () => ({
 
 const { _resetLogDir, ensureLogDir } = await import("./logger.ts");
 const { loadSettings, saveSettings } = await import("./settings.ts");
+const { setAssumeYes } = await import("./assume-yes.ts");
 
 useCaptureLog();
 
@@ -68,6 +69,7 @@ beforeEach(() => {
   mockText.mockClear();
   answer = "";
   setMode("human");
+  setAssumeYes(false);
 });
 
 afterEach(() => _resetLogDir());
@@ -109,5 +111,31 @@ describe("ensureLogDir asks once", () => {
       file: "users.json",
       logDir: "./audit",
     });
+  });
+});
+
+describe("ensureLogDir with `-y`", () => {
+  // Agent mode cannot reach this prompt; `-y` is a human on a TTY who could be
+  // asked and said not to be, so it needs its own check.
+  test("takes ./logs without asking", async () => {
+    setAssumeYes(true);
+
+    expect(await ensureLogDir()).toBe(path.join(workDir, "logs"));
+    expect(mockText).not.toHaveBeenCalled();
+  });
+
+  // Landing on a default is not a choice, and recording one would retire the
+  // question for a human who never saw it.
+  test("saves nothing, so the next interactive run still asks", async () => {
+    setAssumeYes(true);
+    await ensureLogDir();
+    expect((await loadSettings()).logDir).toBeUndefined();
+
+    _resetLogDir();
+    setAssumeYes(false);
+    answer = "./audit";
+
+    expect(await ensureLogDir()).toBe(path.join(workDir, "audit"));
+    expect(mockText).toHaveBeenCalledTimes(1);
   });
 });

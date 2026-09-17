@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { type CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
 
 const mockText = mock();
 mock.module("../../../lib/prompts.ts", () => ({
@@ -14,9 +15,11 @@ mock.module("../../../mode.ts", () => ({
 }));
 
 const { defaultOutputPath, outputStamp, resolveOutputPath } = await import("./shared.ts");
+const { setAssumeYes } = await import("../lib/assume-yes.ts");
 
 beforeEach(() => {
   human = true;
+  setAssumeYes(false);
   mockText.mockReset();
 });
 
@@ -78,5 +81,56 @@ describe("resolveOutputPath", () => {
       /^exports\/supabase-export-\d{8}-\d{4}\.json$/,
     );
     expect(mockText).not.toHaveBeenCalled();
+  });
+
+  // The one prompt whose default cannot be undone by running the command
+  // again: a file at a path nobody chose has to be found and moved, and a
+  // second run writes a second copy. So `-y` fails here rather than guessing.
+  describe("with -y", () => {
+    beforeEach(() => setAssumeYes(true));
+
+    test("fails rather than prompting or defaulting", async () => {
+      await expect(resolveOutputPath("supabase")).rejects.toThrow(
+        /needs an export location and will not prompt for one with -y/,
+      );
+      expect(mockText).not.toHaveBeenCalled();
+    });
+
+    test("is a usage error, so the exit code says what to fix", async () => {
+      const error = (await resolveOutputPath("supabase").catch((e: unknown) => e)) as CliError;
+
+      expect(error.code).toBe(ERROR_CODE.USAGE_ERROR);
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+    });
+
+    // The whole point of failing instead of defaulting: the error has to hand
+    // back a line that runs, or it has cost the operator the run for nothing.
+    test("hands back the command to re-run, proposed path and all", async () => {
+      const error = (await resolveOutputPath("supabase").catch((e: unknown) => e)) as CliError;
+
+      expect(error.examples?.[0]?.command).toMatch(
+        /^clerk migrate export supabase -y --output exports\/supabase-export-\d{8}-\d{4}\.json$/,
+      );
+    });
+
+    test("names the platform that was actually run", async () => {
+      const error = (await resolveOutputPath("firebase").catch((e: unknown) => e)) as CliError;
+
+      expect(error.message).toContain("`clerk migrate export firebase`");
+    });
+
+    test("stays quiet when --output already answered it", async () => {
+      expect(await resolveOutputPath("clerk", "somewhere/mine.json")).toBe("somewhere/mine.json");
+    });
+
+    // An agent passes `-y` reflexively and has no prompt to suppress, so the
+    // flag must not turn a working export into a usage error there.
+    test("still defaults in agent mode", async () => {
+      human = false;
+
+      expect(await resolveOutputPath("supabase")).toMatch(
+        /^exports\/supabase-export-\d{8}-\d{4}\.json$/,
+      );
+    });
   });
 });

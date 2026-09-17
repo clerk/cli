@@ -109,6 +109,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       "Export users from a Clerk instance (default: ./exports/clerk-export-<timestamp>.json)",
     )
     .option("-o, --output <path>", "Where to write the export, relative to the current directory")
+    .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
@@ -135,6 +136,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     .option("--client-id <id>", "Machine-to-machine application client ID")
     .option("--client-secret <secret>", "Machine-to-machine application client secret")
     .option("-o, --output <path>", "Where to write the export, relative to the current directory")
+    .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
     .setExamples([
       {
         command:
@@ -157,6 +159,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     )
     .option("--service-account <path>", "Path to a service account key JSON file")
     .option("-o, --output <path>", "Where to write the export, relative to the current directory")
+    .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
     .setExamples([
       {
         command: "clerk migrate export firebase --service-account ./service-account.json",
@@ -178,6 +181,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       "Also record each user's OAuth providers — one extra request per user",
     )
     .option("-o, --output <path>", "Where to write the export, relative to the current directory")
+    .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
     .setExamples([
       {
         command: "clerk migrate export workos --api-key sk_…",
@@ -202,6 +206,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       )
       .option("--db-url <url>", "Postgres, MySQL, libsql/Turso or SQLite connection string")
       .option("-o, --output <path>", "Where to write the export, relative to the current directory")
+      .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
       .setExamples([
         {
           command: `clerk migrate export ${platform.key} --db-url "${platform.example}"`,

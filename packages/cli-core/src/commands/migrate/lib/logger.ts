@@ -17,6 +17,7 @@ import { log } from "../../../lib/log.ts";
 import { text } from "../../../lib/prompts.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import { envNames, findSetting } from "../settings/registry.ts";
+import { isAssumeYes } from "./assume-yes.ts";
 import { findMigrateEnvValue } from "./env-file.ts";
 import { loadSettings, saveSettings } from "./settings.ts";
 import type {
@@ -105,7 +106,7 @@ export async function resolveLogDir(): Promise<string> {
 export async function ensureLogDir(): Promise<string> {
   const chosen = await chosenLogDir();
   if (chosen) return remember(chosen);
-  if (!isHuman() || isAgent()) return remember(DEFAULT_LOG_DIR);
+  if (!isHuman() || isAgent() || isAssumeYes()) return remember(DEFAULT_LOG_DIR);
 
   const answer = await text({
     message: "Where should migration logs be saved?",
