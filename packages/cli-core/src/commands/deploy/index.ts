@@ -224,11 +224,13 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   // is what comes next.
   await runDnsRecordHandoff(
     { ...operationState, pending: { type: "dns" } },
-    cnameTargets,
-    cnameTargets,
-    // Nothing has been checked yet on a fresh run.
-    { dns: false, ssl: false, mail: false },
-    { oauthNext: oauthProviders.length > 0 },
+    {
+      display: cnameTargets,
+      exportTargets: cnameTargets,
+      // Nothing has been checked yet on a fresh run.
+      status: { dns: false, ssl: false, mail: false },
+      oauthNext: oauthProviders.length > 0,
+    },
   );
 
   bar();
@@ -398,11 +400,17 @@ async function confirmProductionInstanceCreation(domain: string): Promise<boolea
  */
 async function runDnsRecordHandoff(
   state: DeployOperationState,
-  display: readonly CnameTarget[],
-  exportTargets: readonly CnameTarget[],
-  status: DeployComponentStatus,
-  options: { afterCheck?: boolean; oauthNext: boolean },
+  options: {
+    /** Records printed on screen: only the ones still to add. */
+    display: readonly CnameTarget[];
+    /** Records offered for the zone-file export: every record for the domain. */
+    exportTargets: readonly CnameTarget[];
+    status: DeployComponentStatus;
+    afterCheck?: boolean;
+    oauthNext: boolean;
+  },
 ): Promise<void> {
+  const { display, exportTargets, status } = options;
   const handoffInstanceId = state.productionInstanceId;
   const domainsUrl = handoffInstanceId
     ? domainsDashboardUrl(state.appId, handoffInstanceId)
@@ -416,7 +424,7 @@ async function runDnsRecordHandoff(
       ? [
           ...dnsIntro(state.domain),
           "",
-          ...dnsRecords(display, options),
+          ...dnsRecords(display, { afterCheck: options.afterCheck }),
           "",
           ...dnsDashboardHandoff(state.domain, domainsUrl, { oauthNext: options.oauthNext }),
         ]
@@ -446,13 +454,13 @@ async function runExistingDomainDnsVerification(
   // are records to add, and the user may have added those already.
   const allTargets = state.cnameTargets ?? [];
   // OAuth ran before this on the resume path, so the check is next.
-  await runDnsRecordHandoff(
-    state,
-    pendingCnameTargets(allTargets, componentStatus),
-    allTargets,
-    componentStatus,
-    { afterCheck: true, oauthNext: false },
-  );
+  await runDnsRecordHandoff(state, {
+    display: pendingCnameTargets(allTargets, componentStatus),
+    exportTargets: allTargets,
+    status: componentStatus,
+    afterCheck: true,
+    oauthNext: false,
+  });
   return runDnsVerificationPrompt(ctx, state);
 }
 
