@@ -78,13 +78,10 @@ describe("generateCompletions", () => {
       expect(completionNames("deploy", "")).toContain("status");
     });
 
-    test("completes security subcommands and --fail-on choices", () => {
+    test("completes security subcommands", () => {
       expect(completionNames("")).toContain("security");
       const names = completionNames("security", "");
       expect(names).toEqual(expect.arrayContaining(["audit", "fix", "checks"]));
-      expect(completionNames("security", "audit", "--fail-on", "")).toEqual(
-        expect.arrayContaining(["critical", "recommended", "any", "none"]),
-      );
     });
   });
 

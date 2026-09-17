@@ -3,8 +3,7 @@
  * against the real config document, so a renamed config key shows up here
  * instead of silently turning a check into a permanent "unmet".
  *
- * Read-only: `--fail-on none` keeps the exit code at 0 whatever the test
- * instance's posture, and `fix` only runs under `--dry-run`, which the
+ * Read-only: the audit never writes, and `fix` only runs under `--dry-run`, which the
  * Platform API validates without persisting, so every patch payload is
  * checked against the real schema without mutating the shared instance.
  *
@@ -45,7 +44,7 @@ afterAll(() => {
 }, 60_000);
 
 test("security audit --json returns a graded report over the live config document", async () => {
-  const result = await Bun.$`bun ${CLI_PATH} security audit --json --fail-on none --app ${APP_ID}`
+  const result = await Bun.$`bun ${CLI_PATH} security audit --json --app ${APP_ID}`
     .env({ ...process.env, CLERK_CONFIG_DIR: configDir, CLERK_TELEMETRY_DISABLED: "1" })
     .quiet();
 

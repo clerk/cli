@@ -158,11 +158,6 @@ describe("security fix", () => {
     expect(captured.err).toContain("Applied: user-lockout, device-trust, lockout-threshold");
   });
 
-  test("--check unions with positional ids", async () => {
-    await run(["user-lockout"], { check: ["device-trust", "user-lockout"], yes: true });
-    expect(Object.keys(patches()[0]!.body!)).toEqual(["auth_attack_protection", "auth_password"]);
-  });
-
   test("--all fixes the critical and recommended gaps and leaves good-to-have alone", async () => {
     await run([], { all: true, yes: true, json: true });
     const body = patches()[0]!.body!;

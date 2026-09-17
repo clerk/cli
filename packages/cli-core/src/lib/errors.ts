@@ -56,8 +56,6 @@ export const ERROR_CODE = {
    * things to chase.
    */
   DOCTOR_CHECK_CRASHED: "doctor_check_crashed",
-  /** `clerk security audit` found unmet recommendations at or above `--fail-on`. */
-  SECURITY_AUDIT_FAILED: "security_audit_failed",
   /** Frontend API request failed. */
   FAPI_ERROR: "fapi_error",
   /** Subscription plan does not cover the dev instance's enabled features. */

@@ -104,21 +104,15 @@ export interface AuditReport {
   findings: Finding[];
 }
 
-export const FAIL_ON_LEVELS = ["critical", "recommended", "any", "none"] as const;
-export type FailOnLevel = (typeof FAIL_ON_LEVELS)[number];
-
 export interface AuditOptions {
   app?: string;
   instance?: string;
   json?: boolean;
-  spotlight?: boolean;
-  failOn?: FailOnLevel;
 }
 
 export interface FixOptions {
   app?: string;
   instance?: string;
-  check?: string[];
   all?: boolean;
   dryRun?: boolean;
   yes?: boolean;
