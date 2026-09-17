@@ -697,6 +697,7 @@ describe("deploy", () => {
       expect(mockGetApplicationDomainStatus.mock.calls.length).toBeGreaterThanOrEqual(2);
       expect(err).toContain("DNS verified for example.com");
       expect(err).toContain("Production ready at https://example.com");
+      expect(err).toMatch(/└\s+Success/);
     });
 
     test("DNS verification triggers a fresh DNS check before polling status", async () => {
@@ -1961,6 +1962,9 @@ describe("deploy", () => {
       expect(err).toContain("Saved Google OAuth credentials");
       expect(err).toContain("Domain      DNS pending");
       expect(err).not.toContain("Domain      Verified");
+      // The closing word agrees with the status row instead of contradicting it.
+      expect(err).toMatch(/└\s+DNS pending/);
+      expect(err).not.toMatch(/└\s+Success/);
       expect(mockSelect).toHaveBeenCalledWith({
         message: "DNS verification",
         choices: [

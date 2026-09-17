@@ -687,7 +687,10 @@ async function finishDeploy(
     fallback: bold,
     body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId, domain, dnsStatus))}\n`,
   });
-  await outro("Success");
+  // The closing word summarizes how the run ended. After a skipped DNS check
+  // the status row four lines up says "DNS pending", and "Success" beneath it
+  // contradicted that; the same value that drives the headline drives this.
+  await outro(dnsStatus === "verified" ? "Success" : "DNS pending");
 }
 
 export function registerDeploy(program: Program): void {
