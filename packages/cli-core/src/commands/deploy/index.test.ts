@@ -1286,29 +1286,33 @@ describe("deploy", () => {
       const err = stripAnsi(captured.err);
 
       // Google requires the consent screen before it will create a client, and
-      // the name entered there is what end users see on the sign-in prompt.
-      // The fixture's application is named "my-saas-app".
-      expect(err).toContain("The consent screen's app name is what users see");
-      expect(err).toContain('Your Clerk app is named "my-saas-app"');
+      // the name entered there is what end users see.
+      expect(err).toContain(
+        "The consent screen's app name is what users see when they sign in with Google. Use the name you want them to see.",
+      );
+      // The Clerk app name is often a directory-derived slug, so showing it
+      // read as a recommendation to reuse it on a user-facing screen.
+      expect(err).not.toContain('my-saas-app".');
+      expect(err).not.toContain("Your Clerk app is named");
       // Guidance follows the values to paste and the IMPORTANT note, not before.
       const tipAt = err.indexOf("The consent screen's app name is what users see");
       expect(err.indexOf("Authorized Redirect URI")).toBeLessThan(tipAt);
       expect(err.indexOf("IMPORTANT")).toBeLessThan(tipAt);
     });
 
-    test("the consent-screen TIP is Google-only and needs an app name", async () => {
+    test("the consent-screen TIP is Google-only", async () => {
       mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
 
-      await showOAuthWalkthrough("github", "example.com", "https://clerk.example.com", "my-app");
+      await showOAuthWalkthrough("github", "example.com", "https://clerk.example.com");
       const github = stripAnsi(captured.err);
       captured.clear();
       await showOAuthWalkthrough("google", "example.com", "https://clerk.example.com");
-      const googleNoName = stripAnsi(captured.err);
+      const google = stripAnsi(captured.err);
 
       expect(github).toContain("Configure your GitHub OAuth app");
       expect(github).not.toContain("consent screen's app name");
-      expect(googleNoName).not.toContain("consent screen's app name");
-      expect(googleNoName).not.toContain("undefined");
+      expect(google).toContain("consent screen's app name");
+      expect(google).not.toContain("undefined");
     });
 
     test("names the Clerk production instance and where it lives once created", async () => {

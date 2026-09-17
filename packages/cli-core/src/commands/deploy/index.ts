@@ -624,7 +624,7 @@ async function collectAndSaveOAuthCredentials(
   }
 
   if (choice === "walkthrough") {
-    await showOAuthWalkthrough(descriptor, domain, frontendApiUrl, ctx.appLabel);
+    await showOAuthWalkthrough(descriptor, domain, frontendApiUrl);
     choice = await chooseOAuthCredentialAction(descriptor, { includeWalkthrough: false });
     if (choice === "skip") {
       return false;

@@ -453,7 +453,6 @@ export async function showOAuthWalkthrough(
   provider: OAuthProvider | OAuthProviderDescriptor,
   domain: string,
   frontendApiUrl?: string,
-  appName?: string,
 ): Promise<void> {
   const descriptor = providerDescriptorFromInput(provider);
   const slug = descriptor?.provider ?? (provider as OAuthProvider);
@@ -474,12 +473,15 @@ export async function showOAuthWalkthrough(
     log.info(gotcha);
   }
   // Google makes you fill in the OAuth consent screen before it will create a
-  // client, and the app name entered there is what end users see on the
-  // sign-in prompt. Guidance, not a value to paste, so it follows the values.
-  if (slug === "google" && appName) {
+  // client, and the name entered there is what end users see. It is free-form
+  // and unrelated to the Clerk app's name, so this says to choose rather than
+  // naming a value: the Clerk name is often a directory-derived slug, and
+  // showing it read as a recommendation to use it. Guidance, not a value to
+  // paste, so it follows the values.
+  if (slug === "google") {
     log.blank();
     log.info(
-      `${dim(cyan("TIP"))}        The consent screen's app name is what users see on Google's sign-in prompt. Your Clerk app is named "${appName}".`,
+      `${dim(cyan("TIP"))}        The consent screen's app name is what users see when they sign in with Google. Use the name you want them to see.`,
     );
   }
   log.blank();
