@@ -100,14 +100,26 @@ export function domainAssociationSummary(domain: string): string[] {
     // for action the user can't take yet (record values arrive after creation).
     `Clerk will use these subdomains for ${cyan(domain)}. You'll add a DNS record for each after the instance is created:`,
     "",
-    ...productionDnsHosts(domain).map((host) => `  ${cnameTargetLabel(host)}  ${host}`),
+    ...productionDnsHosts(domain).map((host) => `  ${confirmationHostLabel(host)}  ${host}`),
     "",
     "This will create a Clerk production instance for your application.",
   ];
 }
 
-export function dnsRecords(targets: readonly CnameTarget[]): string[] {
-  const lines = ["Add the following records at your DNS provider:"];
+/**
+ * `afterCheck`: the records are being shown again because a DNS check didn't
+ * find them. The user may already have added them and be waiting on
+ * propagation, so the heading hedges. The first hand-over doesn't.
+ */
+export function dnsRecords(
+  targets: readonly CnameTarget[],
+  options: { afterCheck?: boolean } = {},
+): string[] {
+  const lines = [
+    options.afterCheck
+      ? "Add the following records at your DNS provider if you haven't already:"
+      : "Add the following records at your DNS provider:",
+  ];
   for (const target of targets) {
     const label = cnameTargetLabel(target.host);
     const optional = target.required ? "" : ` ${dim("(optional)")}`;
@@ -126,13 +138,17 @@ export function dnsRecords(targets: readonly CnameTarget[]): string[] {
   return lines;
 }
 
-export function pendingDnsRecords(
+/**
+ * The targets the user still has to add, given what the domain check found.
+ * The single source of "are there records to show" for both the wizard and
+ * the agent report; formatters and classifiers derive from this, never from
+ * each other.
+ */
+export function pendingCnameTargets(
   targets: readonly CnameTarget[],
   status: DeployComponentStatus,
-): string[] {
-  const pendingTargets = targets.filter((target) => cnameTargetPending(target, status));
-  if (pendingTargets.length === 0) return [];
-  return dnsRecords(pendingTargets);
+): CnameTarget[] {
+  return targets.filter((target) => cnameTargetPending(target, status));
 }
 
 export function cnameTargetPending(target: CnameTarget, status: DeployComponentStatus): boolean {
@@ -143,6 +159,29 @@ export function cnameTargetPending(target: CnameTarget, status: DeployComponentS
 function isMailCnameTarget(target: CnameTarget): boolean {
   const prefix = target.host.split(".", 1)[0];
   return prefix === "clkmail" || prefix === "clk" || prefix === "clk2";
+}
+
+/**
+ * Labels for the confirmation screen, where the lead line says the user will
+ * add a record for each host. "Clerk handles SPF/DKIM automatically" belongs
+ * on the post-creation records block (it's about record contents); next to
+ * that lead it reads as "nothing for you to do on these rows".
+ */
+function confirmationHostLabel(host: string): string {
+  const prefix = host.split(".", 1)[0];
+  switch (prefix) {
+    case "clerk":
+      return "Frontend API";
+    case "accounts":
+      return "Account portal";
+    case "clkmail":
+      return "Email";
+    case "clk":
+    case "clk2":
+      return "Email (DKIM)";
+    default:
+      return "CNAME";
+  }
 }
 
 function cnameTargetLabel(host: string): string {
@@ -265,8 +304,8 @@ export function pendingRecordComponents(status: DeployComponentStatus): string {
 export function deployStatusPendingFooter(
   domain: string,
   status: DeployComponentStatus,
-  domainsUrl?: string,
-  hasPendingRecords = true,
+  domainsUrl: string | undefined,
+  hasPendingRecords: boolean,
 ): string[] {
   const state = classifyDomainPending(status, hasPendingRecords);
   const records = capitalizeFirst(pendingRecordComponents(status));
@@ -277,16 +316,19 @@ export function deployStatusPendingFooter(
   if (state === "records_available") {
     return [
       `${records} records not found yet for ${domain}.`,
-      "  - Add them at your DNS provider, then run `clerk deploy` again to resume. The production instance is already created.",
+      "  - Add them at your DNS provider if you haven't already, then run `clerk deploy` again to resume. The production instance is already created.",
       "  - Propagation usually takes minutes, but can occasionally take up to 48 hours.",
       `  - If you can't add DNS records for this domain, change the domain in the Clerk Dashboard${domainsUrl ? `: ${domainsUrl}` : "."}`,
     ];
   }
   if (state === "records_unavailable") {
+    // URL on its own line: mid-sentence, terminal autolinkers swallow the
+    // trailing punctuation.
     return [
       `${records} records not found yet for ${domain}.`,
       "",
-      `Clerk didn't return the list of records to add. Find them on the Domains page in the Clerk Dashboard${domainsUrl ? `: ${domainsUrl}` : ""}, then run \`clerk deploy\` again to resume. The production instance is already created.`,
+      "Clerk didn't return the list of records to add. Find them on the Domains page in the Clerk Dashboard, then run `clerk deploy` again to resume. The production instance is already created.",
+      ...(domainsUrl ? [`  ${domainsUrl}`] : []),
     ];
   }
   if (state === "ssl_pending") {
@@ -322,14 +364,6 @@ export function productionSummary(
     `  Domain      ${domainStatus === "verified" ? "Verified" : "DNS pending"}`,
     `  OAuth       ${completedOAuthProviderLabels.length ? completedOAuthProviderLabels.join(", ") : "Not applicable"}`,
   ];
-}
-
-export function nextStepsBlock(
-  appId: string,
-  productionInstanceId: string,
-  domain: string,
-): string {
-  return `${bold("Next steps")}\n${nextStepsBody(appId, productionInstanceId, domain)}`;
 }
 
 export function nextStepsBody(appId: string, productionInstanceId: string, domain: string): string {

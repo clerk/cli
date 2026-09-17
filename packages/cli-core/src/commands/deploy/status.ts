@@ -14,7 +14,7 @@ import {
 import { sleep } from "../../lib/sleep.ts";
 import { withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
 import {
-  cnameTargetPending,
+  pendingCnameTargets,
   deployComponentLabels,
   deployStatusRetryMessage,
   capitalizeFirst,
@@ -71,7 +71,7 @@ export interface DeployStatusReport {
   domain: string | null;
   productionInstanceId: string | null;
   domainStatus: { dns: string; ssl: string; mail: string } | null;
-  pendingDnsRecords: { type: "CNAME"; host: string; value: string }[];
+  pendingDnsRecords: { type: "CNAME"; host: string; value: string; required: boolean }[];
   oauth: { complete: boolean; configured: string[]; pending: string[]; unsupported: string[] };
   nextAction: string;
 }
@@ -360,9 +360,12 @@ export function buildDeployStatusReport(
   const reportState = resolveActiveReportState(domainComplete, complete);
 
   const pendingDnsRecords: DeployStatusReport["pendingDnsRecords"] = !domainComplete
-    ? (snapshot.cnameTargets ?? [])
-        .filter((target) => cnameTargetPending(target, componentStatus))
-        .map((target) => ({ type: "CNAME" as const, host: target.host, value: target.value }))
+    ? pendingCnameTargets(snapshot.cnameTargets ?? [], componentStatus).map((target) => ({
+        type: "CNAME" as const,
+        host: target.host,
+        value: target.value,
+        required: target.required,
+      }))
     : [];
 
   return {

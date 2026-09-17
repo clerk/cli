@@ -222,6 +222,7 @@ describe("deploy status", () => {
       type: "CNAME",
       host: "clerk.example.com",
       value: "frontend-api.clerk.services",
+      required: true,
     });
   });
 
@@ -337,6 +338,93 @@ describe("deploy status", () => {
     expect(output).toContain("Interrupted before the deploy status could be read");
     expect(output).not.toContain("OAuth");
     expect(captured.out).toBe("");
+  });
+
+  test("human mode prints the pending records and refers to them, not to the JSON field", async () => {
+    // The agent reads `pendingDnsRecords` from the JSON; a person has no JSON,
+    // so the records are printed and the sentence points at them.
+    setMode("human");
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+    mockGetApplicationDomainStatus.mockResolvedValue(pendingDnsDomainStatus());
+
+    await deployStatus();
+
+    const output = stripAnsi(captured.err);
+    expect(output).toContain(
+      "Add the following records at your DNS provider if you haven't already:",
+    );
+    expect(output).toContain("Host:  clerk.example.com");
+    expect(output).toContain("Value: frontend-api.clerk.services");
+    // The records block already says "add these"; the sentence says what's next.
+    expect(output).toContain("Once they're added, re-run `clerk deploy status --wait`");
+    expect(output).not.toContain("Add the records above");
+    expect(output).not.toContain("pendingDnsRecords");
+    expect(output).not.toContain("Ask the user");
+  });
+
+  test("human mode keeps Clerk's optional flag on a pending record instead of inventing one", async () => {
+    setMode("human");
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockListApplicationDomains.mockResolvedValue({
+      data: [
+        {
+          object: "domain",
+          id: "dmn_1",
+          name: "example.com",
+          is_satellite: false,
+          is_provider_domain: false,
+          frontend_api_url: "https://clerk.example.com",
+          accounts_portal_url: "https://accounts.example.com",
+          development_origin: "",
+          cname_targets: [
+            { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+            { host: "clk2._domainkey.example.com", value: "dkim2.clerk.services", required: false },
+          ],
+        },
+      ],
+      total_count: 1,
+    });
+    mockOAuthComplete();
+    const pendingBoth = {
+      status: "incomplete",
+      dns: { status: "not_started" },
+      ssl: { status: "complete", required: true },
+      mail: { status: "not_started", required: true },
+    };
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingBoth);
+    mockGetApplicationDomainStatus.mockResolvedValue(pendingBoth);
+
+    await deployStatus();
+
+    const output = stripAnsi(captured.err);
+    // The wizard prints the same record as optional; status must agree.
+    expect(output).toMatch(
+      /Email \(Clerk handles SPF\/DKIM automatically\) \(optional\)\n\s+Type:  CNAME\n\s+Host:  clk2\._domainkey\.example\.com/,
+    );
+    expect(output).not.toMatch(/Frontend API \(optional\)/);
+  });
+
+  test("agent report carries each pending record's required flag", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+    mockGetApplicationDomainStatus.mockResolvedValue(pendingDnsDomainStatus());
+
+    await deployStatus();
+
+    const payload = JSON.parse(captured.out);
+    expect(payload.pendingDnsRecords).toEqual([
+      {
+        type: "CNAME",
+        host: "clerk.example.com",
+        value: "frontend-api.clerk.services",
+        required: true,
+      },
+    ]);
   });
 
   test("human mode rewrites the agent clause for a plain-http Dashboard URL too", async () => {

@@ -1781,11 +1781,12 @@ describe("deploy", () => {
 
       expect(err).toContain("DNS and email DNS records not found yet for example.com.");
       expect(err).toContain("Clerk didn't return the list of records to add.");
+      expect(err).toContain("Find them on the Domains page in the Clerk Dashboard, then run");
       expect(err).toContain(
-        "Find them on the Domains page in the Clerk Dashboard: https://dashboard.clerk.com/apps/app_xyz789/instances/ins_prod_mock/domains",
+        "  https://dashboard.clerk.com/apps/app_xyz789/instances/ins_prod_mock/domains",
       );
       expect(err).not.toContain("Add them at your DNS provider");
-      expect(err).not.toContain("Add the following records at your DNS provider:");
+      expect(err).not.toContain("Add the following records at your DNS provider");
     });
 
     test("DNS verification timeout does not reprint DNS records when only SSL remains pending", async () => {
@@ -1814,6 +1815,7 @@ describe("deploy", () => {
       expect(err).toContain("SSL certificate still pending for example.com");
       expect(err).not.toContain("not found yet");
       expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(1);
+      expect(err).not.toContain("if you haven't already:");
     });
 
     test("plain deploy can skip DNS verification and continue configuring production", async () => {
@@ -2200,7 +2202,11 @@ describe("deploy", () => {
       expect(err).toContain("DNS and email DNS records not found yet for example.com");
       expect(err).not.toContain("still pending");
       expect(err).toContain("DNS: pending");
-      expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(2);
+      // First hand-over uses the plain heading; the reprint after a failed check hedges.
+      expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(1);
+      expect(
+        err.match(/Add the following records at your DNS provider if you haven't already:/g),
+      ).toHaveLength(1);
       expect(err).toContain("Host:  clerk.example.com");
       expect(err).toContain("Value: frontend-api.clerk.services");
       expect(err).toContain("Skipping DNS verification for now.");

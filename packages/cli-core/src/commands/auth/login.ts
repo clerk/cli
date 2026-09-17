@@ -231,7 +231,9 @@ async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
     const label = result.app.name || result.app.application_id;
     log.success(`Claimed and linked application: \`${label}\``);
     // First time this app has a home in an account; say where it is.
-    const development = result.app.instances.find(
+    // Deserialized API JSON; a missing array must not fail a claim that
+    // already succeeded server-side.
+    const development = result.app.instances?.find(
       (instance) => instance.environment_type === "development",
     );
     if (development) {

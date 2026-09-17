@@ -31,7 +31,7 @@ import {
   domainsDashboardUrl,
   instanceDashboardUrl,
   nextStepsBody,
-  pendingDnsRecords,
+  pendingCnameTargets,
   pausedOperationNotice,
   printPlan,
   productionSummary,
@@ -449,14 +449,12 @@ async function runDnsVerification(
       state.productionInstanceId ?? ctx.productionInstanceId ?? ctx.profile.instances.production;
     // Computed before the footer so the footer can tell the user when there is
     // no record list to print, instead of saying "add them" over nothing.
-    const pendingRecords = state.cnameTargets
-      ? pendingDnsRecords(state.cnameTargets, outcome.status)
-      : [];
+    const pendingTargets = pendingCnameTargets(state.cnameTargets ?? [], outcome.status);
     for (const line of deployStatusPendingFooter(
       state.domain,
       outcome.status,
       productionInstanceId ? domainsDashboardUrl(ctx.appId, productionInstanceId) : undefined,
-      pendingRecords.length > 0,
+      pendingTargets.length > 0,
     )) {
       if (line === "") log.blank();
       else log.warn(line);
@@ -468,9 +466,9 @@ async function runDnsVerification(
       throw deployPausedError(state);
     }
 
-    if (pendingRecords.length > 0) {
+    if (pendingTargets.length > 0) {
       log.blank();
-      for (const line of pendingRecords) log.info(line);
+      for (const line of dnsRecords(pendingTargets, { afterCheck: true })) log.info(line);
     }
     log.blank();
     let action: Awaited<ReturnType<typeof chooseDnsVerificationRetryAction>>;

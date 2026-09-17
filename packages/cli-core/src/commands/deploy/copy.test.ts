@@ -12,8 +12,8 @@ import {
   domainAssociationSummary,
   domainsDashboardUrl,
   instanceDashboardUrl,
-  nextStepsBlock,
-  pendingDnsRecords,
+  nextStepsBody,
+  pendingCnameTargets,
   productionDnsHosts,
 } from "./copy.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
@@ -91,6 +91,22 @@ describe("dnsRecords", () => {
   });
 });
 
+describe("dnsRecords heading", () => {
+  const targets: CnameTarget[] = [
+    { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+  ];
+
+  test("first hand-over tells the user to add the records", () => {
+    expect(dnsRecords(targets)[0]).toBe("Add the following records at your DNS provider:");
+  });
+
+  test("after a check that didn't find them, the heading allows that they may already be added", () => {
+    expect(dnsRecords(targets, { afterCheck: true })[0]).toBe(
+      "Add the following records at your DNS provider if you haven't already:",
+    );
+  });
+});
+
 describe("deployComponentLabels", () => {
   test("returns email DNS in-progress and done labels", () => {
     expect(deployComponentLabels("mail", "example.com")).toEqual({
@@ -122,9 +138,9 @@ describe("deployStatusRetryMessage", () => {
   });
 });
 
-describe("nextStepsBlock", () => {
+describe("nextStepsBody", () => {
   test("links to the production instance home and its domain settings", () => {
-    const output = stripAnsi(nextStepsBlock("app_123", "ins_456", "example.com"));
+    const output = stripAnsi(nextStepsBody("app_123", "ins_456", "example.com"));
 
     expect(output).toContain("Manage this instance in the Clerk Dashboard");
     expect(output).toContain("- Users, settings, and billing:");
@@ -138,7 +154,7 @@ describe("nextStepsBlock", () => {
     // `env pull --instance prod` writes only the two keys. The routing
     // variables `init` wrote have to be carried over by hand, or sign-in
     // silently falls back to the hosted Account Portal.
-    const output = nextStepsBlock("app_123", "ins_456", "example.com");
+    const output = nextStepsBody("app_123", "ins_456", "example.com");
 
     expect(output).toContain("- Add the same pk_live_/sk_live_ values there.");
     expect(output).toContain("- Also copy the other Clerk variables from your env file");
@@ -147,7 +163,7 @@ describe("nextStepsBlock", () => {
   });
 
   test("ends with a real sign-up on the production domain", () => {
-    const output = nextStepsBlock("app_123", "ins_456", "example.com");
+    const output = nextStepsBody("app_123", "ins_456", "example.com");
 
     expect(output).toContain("sign up at https://example.com to confirm it works");
   });
@@ -178,11 +194,16 @@ describe("domainAssociationSummary", () => {
     expect(lead).not.toMatch(/\b(three|five|3|5)\b/);
   });
 
-  test("labels the DKIM hosts as email records, not bare CNAMEs", () => {
+  test("labels the mail hosts plainly, without the 'Clerk handles it' parenthetical", () => {
+    // The lead says the user will add a record for each row; a label saying
+    // Clerk handles SPF/DKIM automatically would contradict it on this screen.
     const output = domainAssociationSummary("example.com").join("\n");
 
+    expect(output).toContain("Email  clkmail.example.com");
+    expect(output).toContain("Email (DKIM)  clk._domainkey.example.com");
+    expect(output).toContain("Email (DKIM)  clk2._domainkey.example.com");
+    expect(output).not.toContain("Clerk handles SPF/DKIM");
     expect(output).not.toContain("CNAME  clk._domainkey");
-    expect(output).toMatch(/Email .*clk\._domainkey\.example\.com/);
   });
 });
 
@@ -209,11 +230,12 @@ describe("deployStatusPendingFooter", () => {
         mail: false,
       },
       DOMAINS_URL,
+      true,
     ).join("\n");
 
     expect(output).toContain("DNS and email DNS records not found yet for example.com.");
     expect(output).toContain(
-      "Add them at your DNS provider, then run `clerk deploy` again to resume.",
+      "Add them at your DNS provider if you haven't already, then run `clerk deploy` again to resume.",
     );
     expect(output).toContain("usually takes minutes, but can occasionally take up to 48 hours");
     expect(output).toContain(
@@ -232,6 +254,7 @@ describe("deployStatusPendingFooter", () => {
         mail: false,
       },
       DOMAINS_URL,
+      true,
     ).join("\n");
 
     // Capitalized at the sentence start; lowercase "email DNS" is only right
@@ -253,9 +276,9 @@ describe("deployStatusPendingFooter", () => {
 
     expect(output).toContain("DNS and email DNS records not found yet for example.com.\n\n");
     expect(output).toContain("Clerk didn't return the list of records to add.");
-    expect(output).toContain(
-      `Find them on the Domains page in the Clerk Dashboard: ${DOMAINS_URL}`,
-    );
+    // URL on its own line so terminal autolinkers don't swallow punctuation.
+    expect(output).toContain("Find them on the Domains page in the Clerk Dashboard, then run");
+    expect(output).toContain(`already created.\n  ${DOMAINS_URL}`);
     expect(output).toContain("run `clerk deploy` again to resume");
     expect(output).not.toContain("  - ");
     expect(output).not.toContain("Add them at your DNS provider");
@@ -271,6 +294,7 @@ describe("deployStatusPendingFooter", () => {
         mail: true,
       },
       DOMAINS_URL,
+      true,
     ).join("\n");
 
     expect(output).toContain("SSL certificate still pending for example.com.");
@@ -282,14 +306,51 @@ describe("deployStatusPendingFooter", () => {
     expect(output).not.toContain("change the domain in the Clerk Dashboard");
   });
 
+  test("says Clerk is still finalizing when every component is verified", () => {
+    // The fallthrough branch: all three verified, server hasn't flipped the
+    // domain to complete yet. One follow-up line, so blank line + sentence.
+    const output = deployStatusPendingFooter(
+      "example.com",
+      { dns: true, ssl: true, mail: true },
+      DOMAINS_URL,
+      false,
+    ).join("\n");
+
+    expect(output).toContain(
+      "Production setup for example.com is still finalizing on Clerk's side.\n\nRun `clerk deploy` again in a few minutes to resume.",
+    );
+    expect(output).not.toContain("not found yet");
+    expect(output).not.toContain("SSL");
+  });
+
   test.each([
     { label: "records pending", status: { dns: false, ssl: false, mail: false } },
     { label: "SSL only pending", status: { dns: true, ssl: false, mail: true } },
     { label: "all components verified", status: { dns: true, ssl: true, mail: true } },
   ])("always says how to resume and that re-running is safe ($label)", ({ status }) => {
-    const output = deployStatusPendingFooter("example.com", status, DOMAINS_URL).join("\n");
+    const output = deployStatusPendingFooter("example.com", status, DOMAINS_URL, true).join("\n");
     expect(output).toMatch(/run `clerk deploy` again.*to resume/i);
     expect(output).toContain("The production instance is already created.");
+  });
+});
+
+describe("pendingCnameTargets", () => {
+  const targets: CnameTarget[] = [
+    { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+    { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
+    { host: "clk._domainkey.example.com", value: "dkim1.clerk.services", required: true },
+  ];
+
+  test("returns only the mail targets when only email DNS is unverified", () => {
+    const pending = pendingCnameTargets(targets, { dns: true, ssl: true, mail: false });
+    expect(pending.map((t) => t.host)).toEqual([
+      "clkmail.example.com",
+      "clk._domainkey.example.com",
+    ]);
+  });
+
+  test("returns nothing when only SSL is pending", () => {
+    expect(pendingCnameTargets(targets, { dns: true, ssl: false, mail: true })).toEqual([]);
   });
 });
 
@@ -325,38 +386,6 @@ describe("DEPLOY_COMMAND_DESCRIPTION", () => {
     expect(DEPLOY_COMMAND_DESCRIPTION).toContain("creates the production instance");
     expect(DEPLOY_COMMAND_DESCRIPTION).toContain("When run by an agent");
     expect(DEPLOY_COMMAND_DESCRIPTION).toContain("`nextAction`");
-  });
-});
-
-describe("pendingDnsRecords", () => {
-  const targets: CnameTarget[] = [
-    { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
-    { host: "accounts.example.com", value: "accounts.clerk.services", required: true },
-    {
-      host: "clkmail.example.com",
-      value: "mail.example.com.nam1.clerk.services",
-      required: true,
-    },
-  ];
-
-  test("returns no records when only SSL remains pending", () => {
-    expect(pendingDnsRecords(targets, { dns: true, ssl: false, mail: true })).toEqual([]);
-  });
-
-  test("returns only email records when email DNS remains pending", () => {
-    const output = pendingDnsRecords(targets, { dns: true, ssl: true, mail: false }).join("\n");
-
-    expect(output).toContain("clkmail.example.com");
-    expect(output).not.toContain("clerk.example.com");
-    expect(output).not.toContain("accounts.example.com");
-  });
-
-  test("returns non-email records when DNS remains pending", () => {
-    const output = pendingDnsRecords(targets, { dns: false, ssl: true, mail: true }).join("\n");
-
-    expect(output).toContain("clerk.example.com");
-    expect(output).toContain("accounts.example.com");
-    expect(output).not.toContain("clkmail.example.com");
   });
 });
 

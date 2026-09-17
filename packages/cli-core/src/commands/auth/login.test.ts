@@ -557,6 +557,24 @@ describe("login", () => {
     );
   });
 
+  test("a claim response without instances still reports the claim and does not throw", async () => {
+    // The Dashboard line is a nice-to-have; a missing array in API JSON must
+    // not turn a claim that already succeeded server-side into a failed login.
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "claimed",
+      envPulled: true,
+      app: { application_id: "app_claimed", name: "bad-agent" },
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain("Claimed and linked application: `bad-agent`");
+    expect(captured.err).not.toContain("Your app now lives");
+  });
+
   test("shows default next steps when not linked", async () => {
     mockGetValidToken.mockResolvedValue(null);
     mockOAuthSuccess();

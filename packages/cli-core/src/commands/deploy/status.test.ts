@@ -251,6 +251,7 @@ describe("buildDeployStatusReport", () => {
       type: "CNAME",
       host: "clerk.example.com",
       value: "frontend-api.clerk.services",
+      required: true,
     });
     expect(report.oauth.pending).toEqual(["github"]);
   });
@@ -266,6 +267,7 @@ describe("buildDeployStatusReport", () => {
         type: "CNAME",
         host: "clkmail.example.com",
         value: "mail.clerk.services",
+        required: true,
       },
     ]);
   });
@@ -393,6 +395,21 @@ describe("buildDeployStatusReport", () => {
     expect(report.nextAction).not.toContain("still provisioning");
     // The Dashboard URL appears once, via the shared trailing clause.
     expect(report.nextAction.match(/\/domains/g)).toHaveLength(1);
+  });
+
+  test("all components verified but not yet complete says Clerk is still finalizing", () => {
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: activeSnapshot },
+      { verified: false, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.state).toBe("domain_pending");
+    expect(report.pendingDnsRecords).toEqual([]);
+    expect(report.nextAction).toContain(
+      "Production setup for example.com is still finalizing on Clerk's side.",
+    );
+    expect(report.nextAction).not.toContain("not found yet");
+    expect(report.nextAction).not.toContain("SSL");
   });
 
   test("unsupported OAuth providers surface without blocking completion", () => {

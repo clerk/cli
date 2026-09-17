@@ -4,7 +4,7 @@ import { log } from "../../lib/log.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { withSpinner } from "../../lib/spinner.ts";
-import { deployComponentLabels, type DeployComponentStatus } from "./copy.ts";
+import { deployComponentLabels, dnsRecords, type DeployComponentStatus } from "./copy.ts";
 import {
   buildDeployStatusReport,
   buildInterruptedDeployStatusReport,
@@ -133,7 +133,8 @@ function emitReport(report: DeployStatusReport): void {
   renderHuman(report);
 }
 
-function renderHuman(report: DeployStatusReport): void {
+/** Exported so the human rendering can be exercised directly. */
+export function renderHuman(report: DeployStatusReport): void {
   log.blank();
   if (report.domain) {
     log.info(`Deploy status for \`${report.domain}\``);
@@ -168,16 +169,38 @@ function renderHuman(report: DeployStatusReport): void {
     );
   }
 
+  // The agent gets these as `pendingDnsRecords` in the JSON; a person has no
+  // JSON, so print the records themselves before the sentence that refers to
+  // them.
+  if (report.pendingDnsRecords.length > 0) {
+    log.blank();
+    const targets = report.pendingDnsRecords.map((record) => ({
+      host: record.host,
+      value: record.value,
+      required: record.required,
+    }));
+    for (const line of dnsRecords(targets, { afterCheck: true })) log.info(line);
+  }
+
   log.blank();
   log.info(formatHumanNextAction(report.nextAction));
   log.blank();
 }
 
 function formatHumanNextAction(nextAction: string): string {
-  return nextAction.replace(
-    // `https?`: the URL follows CLERK_DASHBOARD_URL, which is plain http for a
-    // local Dashboard.
-    /Ask the user to visit the Clerk Dashboard domains page, or offer to open it: (https?:\/\/\S+)/,
-    "Visit the Clerk Dashboard domains page to monitor its status there: $1",
+  return (
+    nextAction
+      // The records block printed above already says "add these"; the sentence
+      // only needs to say what happens next.
+      .replace(
+        "Add the records in `pendingDnsRecords` at the domain's DNS provider if you haven't already, then re-run",
+        "Once they're added, re-run",
+      )
+      .replace(
+        // `https?`: the URL follows CLERK_DASHBOARD_URL, which is plain http for a
+        // local Dashboard.
+        /Ask the user to visit the Clerk Dashboard domains page, or offer to open it: (https?:\/\/\S+)/,
+        "Visit the Clerk Dashboard domains page to monitor its status there: $1",
+      )
   );
 }
