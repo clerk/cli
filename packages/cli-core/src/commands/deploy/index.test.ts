@@ -1003,7 +1003,7 @@ describe("deploy", () => {
       await runDeployUntilPause();
       const err = stripAnsi(captured.err);
       expect(err).toContain(
-        "Clerk will use these subdomains for example.com. You'll add a DNS record for each after the instance is created:",
+        "Clerk will use these subdomains for example.com. You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:",
       );
       expect(err).toContain("clerk.example.com");
       expect(err).toContain("accounts.example.com");
@@ -1045,7 +1045,7 @@ describe("deploy", () => {
       const err = stripAnsi(captured.err);
 
       expect(err).toContain(
-        "Clerk will use these subdomains for example.com. You'll add a DNS record for each after the instance is created:",
+        "Clerk will use these subdomains for example.com. You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:",
       );
       expect(err).toContain("No production instance was created.");
       expect(mockCreateProductionInstance).not.toHaveBeenCalled();

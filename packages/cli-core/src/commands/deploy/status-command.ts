@@ -211,6 +211,11 @@ function formatHumanNextAction(nextAction: string): string {
         /but this report has no record list\. Find the records to add on the Domains page in the Clerk Dashboard, then re-run `clerk deploy status --wait`\./,
         "but Clerk didn't return the list of records to add. Find them on the Domains page in the Clerk Dashboard, add them, then run `clerk deploy` again to resume.",
       )
+      // The unsupported-provider warning row above already says this.
+      .replace(
+        / These providers are enabled in development but the CLI could not configure them for production: [^.]+\. Configure them in the Clerk Dashboard before going live, or users signing in with them will fail\./,
+        "",
+      )
       .replace(
         "needs a human terminal, ask the user to run `clerk deploy`, then run `clerk deploy status` to verify.",
         "needs a terminal. Run `clerk deploy` to set it up.",

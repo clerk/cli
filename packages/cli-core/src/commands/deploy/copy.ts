@@ -96,14 +96,18 @@ export function productionDnsHosts(domain: string): string[] {
 }
 
 export function domainAssociationSummary(domain: string): string[] {
+  const hosts = productionDnsHosts(domain);
+  const labels = hosts.map((host) => cnameTargetLabel(host, { terse: true }));
+  const width = Math.max(...labels.map((label) => label.length));
   return [
     // Disclose the obligation before the one-way create step, without asking
     // for action the user can't take yet (record values arrive after creation).
-    `Clerk will use these subdomains for ${cyan(domain)}. You'll add a DNS record for each after the instance is created:`,
+    // "The exact list": the server omits the Account portal record when the
+    // portal is disabled on the instance being cloned, and this screen runs
+    // before the CLI can know that.
+    `Clerk will use these subdomains for ${cyan(domain)}. You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:`,
     "",
-    ...productionDnsHosts(domain).map(
-      (host) => `  ${cnameTargetLabel(host, { terse: true }).padEnd(14)}  ${host}`,
-    ),
+    ...hosts.map((host, i) => `  ${labels[i]!.padEnd(width)}  ${host}`),
     "",
     "This will create a Clerk production instance for your application.",
   ];
@@ -345,10 +349,13 @@ each enabled provider.
 
 ${dim("Reference: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/overview")}`;
 
+// `domainStatus` is required on both closing-screen functions: it selects the
+// headline and step 3, and a caller that forgot it would print "Production
+// ready" over a domain that doesn't resolve yet.
 export function productionSummary(
   domain: string,
   completedOAuthProviderLabels: readonly string[],
-  domainStatus: "verified" | "pending" = "verified",
+  domainStatus: "verified" | "pending",
 ): string[] {
   return [
     domainStatus === "verified"
@@ -364,7 +371,7 @@ export function nextStepsBody(
   appId: string,
   productionInstanceId: string,
   domain: string,
-  domainStatus: "verified" | "pending" = "verified",
+  domainStatus: "verified" | "pending",
 ): string {
   // Until DNS is verified the domain doesn't resolve, so "sign up there"
   // would send the user to a page that doesn't exist yet.

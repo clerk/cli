@@ -141,7 +141,7 @@ describe("deployStatusRetryMessage", () => {
 
 describe("nextStepsBody", () => {
   test("links to the production instance home and its domain settings", () => {
-    const output = stripAnsi(nextStepsBody("app_123", "ins_456", "example.com"));
+    const output = stripAnsi(nextStepsBody("app_123", "ins_456", "example.com", "verified"));
 
     expect(output).toContain("Manage this instance in the Clerk Dashboard");
     expect(output).toContain("- Users, settings, and billing:");
@@ -155,7 +155,7 @@ describe("nextStepsBody", () => {
     // `env pull --instance prod` writes only the two keys. The routing
     // variables `init` wrote have to be carried over by hand, or sign-in
     // silently falls back to the hosted Account Portal.
-    const output = nextStepsBody("app_123", "ins_456", "example.com");
+    const output = nextStepsBody("app_123", "ins_456", "example.com", "verified");
 
     expect(output).toContain("- Add the same pk_live_/sk_live_ values there.");
     expect(output).toContain("- Also copy the other Clerk variables from your env file");
@@ -164,7 +164,7 @@ describe("nextStepsBody", () => {
   });
 
   test("ends with a real sign-up on the production domain", () => {
-    const output = nextStepsBody("app_123", "ins_456", "example.com");
+    const output = nextStepsBody("app_123", "ins_456", "example.com", "verified");
 
     expect(output).toContain(
       "3. Redeploy your app, then sign up at https://example.com to confirm it works",
@@ -215,7 +215,9 @@ describe("domainAssociationSummary", () => {
     expect(lead).toContain("Clerk will use these subdomains for");
     // Disclose the obligation before the one-way step without demanding
     // action the user can't take yet.
-    expect(lead).toContain("You'll add a DNS record for each after the instance is created:");
+    expect(lead).toContain(
+      "You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:",
+    );
     expect(lead).not.toMatch(/\b(three|five|3|5)\b/);
   });
 
@@ -230,6 +232,12 @@ describe("domainAssociationSummary", () => {
     // Labels pad to one column so the hosts line up.
     expect(output).toContain("Frontend API    clerk.example.com");
     expect(output).toContain("Account portal  accounts.example.com");
+    // The server omits the Account portal record when the portal is disabled
+    // on the cloned instance, so the lead can't promise one record per row.
+    expect(output).toContain(
+      "You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:",
+    );
+    expect(output).not.toContain("a DNS record for each");
     expect(output).not.toContain("Clerk handles SPF/DKIM");
     expect(output).not.toContain("CNAME  clk._domainkey");
   });

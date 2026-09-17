@@ -277,6 +277,36 @@ describe("deploy status", () => {
     expect(output).not.toContain("Add the following records");
   });
 
+  test("human mode says the unsupported-provider warning once, in its own row", async () => {
+    setMode("human");
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    // discord is enabled in both configs but absent from the schema, so the
+    // CLI can't configure it: the "unsupported" case.
+    mockFetchInstanceConfig.mockImplementation((_appId: string, instanceId: string) =>
+      instanceId === "ins_prod" || instanceId === "production"
+        ? {
+            connection_oauth_google: { enabled: true, client_id: "x", client_secret: "y" },
+            connection_oauth_discord: { enabled: true },
+          }
+        : {
+            connection_oauth_google: { enabled: true },
+            connection_oauth_discord: { enabled: true },
+          },
+    );
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(completeDomainStatus());
+    mockGetApplicationDomainStatus.mockResolvedValue(completeDomainStatus());
+
+    await deployStatus();
+
+    const output = stripAnsi(captured.err);
+    expect(output).toContain("not supported by automated deploy: discord");
+    // The agent sentence carries the same fact; a person already has the row.
+    expect(output).not.toContain("could not configure them for production");
+    expect(JSON.stringify(captured.out)).not.toContain("could not configure");
+  });
+
   test.each([
     {
       label: "finalizing",
