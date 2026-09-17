@@ -29,7 +29,7 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@clerk/shared": "^4.29.1",
+    "@clerk/shared": "^4.30.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/semver": "^7.8.0"
   }
