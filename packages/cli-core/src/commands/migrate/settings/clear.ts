@@ -113,7 +113,22 @@ export async function clear(options: SettingsClearOptions = {}, name?: string): 
   const saved = await loadSettings();
   const hadConfig = Object.keys(saved).length > 0;
 
-  if (!options.yes && isHuman() && !isAgent()) {
+  if (!options.yes) {
+    if (isAgent() || !isHuman()) {
+      throwUsageError(
+        "`clerk migrate settings clear` forgets this project's settings and every credential in " +
+          `${MIGRATE_ENV_FILE}, and cannot prompt here. Pass -y to confirm.`,
+        undefined,
+        undefined,
+        [
+          {
+            command: "clerk migrate settings clear -y",
+            description: "Forget them all without prompting",
+          },
+        ],
+      );
+    }
+
     if (hadConfig) warnAboutUndo(saved);
     const proceed = await confirm({
       message: "Clear this project's migration settings?",

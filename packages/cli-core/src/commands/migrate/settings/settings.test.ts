@@ -249,6 +249,20 @@ describe("clear", () => {
 
     expect(envFileContent()).toBe("OTHER=keep\n");
   });
+
+  // It destroys credentials, like `logs clean` destroys logs and `migrate
+  // delete` destroys users — and those two both refuse rather than assume.
+  // Proceeding here because nobody could be asked is the one reading of
+  // silence that cannot be undone.
+  test("refuses rather than assuming when it cannot prompt", async () => {
+    await set("transformer", "firebase");
+    await set("firebase-signer-key", "aVeryLongSignerKeyValue123456");
+
+    await expect(clear({})).rejects.toThrow(/cannot prompt here\. Pass -y to confirm/);
+
+    expect(await loadSettings()).toMatchObject({ transformer: "firebase" });
+    expect(envFileContent()).toContain("CLERK_FIREBASE_SIGNER_KEY");
+  });
 });
 
 describe("clear <name>", () => {
