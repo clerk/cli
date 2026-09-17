@@ -217,7 +217,9 @@ export function dnsDashboardHandoff(
     `Monitor DNS propagation and SSL issuance for ${domain} on the Domains page in the Clerk Dashboard${domainsUrl ? ":" : "."}`,
     ...(domainsUrl ? [`  ${domainsUrl}`] : []),
     "",
-    `${options.oauthNext ? "Next you'll set up OAuth, then this command checks these records." : "Next, this command checks these records."} If they haven't taken effect yet, you can skip the check and run \`clerk deploy\` again later to finish.`,
+    // "checks that these records have taken effect": what the check is for.
+    // "checks these records" said nothing about what it looks for.
+    `${options.oauthNext ? "Next you'll set up OAuth, then this command checks that these records have taken effect." : "Next, this command checks that these records have taken effect."} If they haven't yet, you can skip the check and run \`clerk deploy\` again later to finish.`,
   ];
 }
 

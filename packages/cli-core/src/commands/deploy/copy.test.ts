@@ -490,7 +490,9 @@ describe("dnsDashboardHandoff", () => {
     expect(output).toContain(`Clerk Dashboard:\n  ${DOMAINS_URL}`);
     // "wizard" appears nowhere else the user can see, so it isn't introduced here.
     expect(output).not.toContain("wizard");
-    expect(output).toContain("Next you'll set up OAuth, then this command checks these records.");
+    expect(output).toContain(
+      "Next you'll set up OAuth, then this command checks that these records have taken effect.",
+    );
     expect(output).toContain("run `clerk deploy` again later to finish");
     // "skip and finish" read as though skipping completed the deploy.
     expect(output).not.toContain("skip and finish");
@@ -501,7 +503,7 @@ describe("dnsDashboardHandoff", () => {
     // Under a checklist showing OAuth done, "you'll set up OAuth" was wrong.
     const output = dnsDashboardHandoff("example.com", DOMAINS_URL, { oauthNext: false }).join("\n");
 
-    expect(output).toContain("Next, this command checks these records.");
+    expect(output).toContain("Next, this command checks that these records have taken effect.");
     expect(output).not.toContain("set up OAuth");
     expect(output).toContain("run `clerk deploy` again later to finish");
   });
