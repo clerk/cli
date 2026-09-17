@@ -107,7 +107,7 @@ export function formatCatalogJson(checks: CheckDef[]): string {
           options: check.decision.options.map((o) => o.value),
         },
       }),
-      ...(check.feature && { feature: check.feature }),
+      ...(check.features && { features: check.features }),
       ...(check.blockedBy && { blockedBy: check.blockedBy }),
       docsUrl: check.docsUrl,
     })),

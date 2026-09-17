@@ -184,12 +184,16 @@ password checks (`breach-detection`, `breach-detection-sign-in`,
 `device-trust`, `password-min-length`) when
 `auth_password.enabled` is false, and the OAuth check outside production.
 
-Three controls depend on a Clerk billing feature and carry a `feature` key in
-the report: `mfa` (`app:mfa_totp`), `passkeys` (`app:passkey`), and
-`session-lifetime` (`app:custom_session_duration`). The config document does
-not say which plan the application is on, so a production instance whose plan
-lacks the feature learns that from the API's error when `fix` writes. They
-still count against the score; run `fix --dry-run` first when that matters.
+Three controls depend on Clerk billing features and carry a `features` key in
+the report: `mfa` (`app:mfa_totp`, `app:mfa_phone_code`, `app:mfa_backup_code`),
+`passkeys` (`app:passkey`), and `session-lifetime`
+(`app:custom_session_duration`). Development instances are exempt from plan
+checks. On production, the Platform API rejects a patch the plan does not cover
+with a 402 before writing anything; `fix` turns that into a `plan_insufficient`
+error naming the affected check ids, with a ready-to-run command for the rest.
+No endpoint reports plan features ahead of time, so `fix --dry-run --instance
+prod` is the way to find out first. Gated controls still count against the
+score.
 
 ## Score
 
@@ -242,7 +246,7 @@ The report:
       "id": "mfa",
       "severity": "critical",
       "status": "unmet",
-      "feature": "app:mfa_totp",
+      "features": ["app:mfa_totp", "app:mfa_phone_code", "app:mfa_backup_code"],
       "patch": null,
       "suggestedPatch": {
         "auth_multi_factor": {
@@ -273,7 +277,7 @@ options, suggested }`. Pass the values with `--<flag>` to `fix`; `remedy`
   `suggestedPatch` is the config patch those suggested values produce, for
   agents that prefer `clerk config patch`. Confirm the choice with the user
   when it matters (SMS costs money, passkeys need client support).
-- `feature` names the billing feature a control depends on (see Checks).
+- `features` lists the billing features a control depends on (see Checks).
 - `fixCommand` lists the fixable critical and recommended gaps; good-to-have
   ids are applied only when named explicitly or via `--all --good-to-have`.
   It and every `remedy` pin `--app` and `--instance` to the audited instance,
@@ -293,11 +297,11 @@ tab completion for the ids is registered separately in `completion/__complete.ts
 
 ## Exit Codes
 
-| Code | Meaning                                                                                                        |
-| ---- | -------------------------------------------------------------------------------------------------------------- |
-| 0    | No unmet recommendation at or above `--fail-on`; `fix` applied or had nothing to do                            |
-| 1    | `audit`: unmet recommendations at or above `--fail-on` (error code `security_audit_failed`); or an API failure |
-| 2    | Usage error: missing or unknown ids, manual/blocked ids, agent mode without `--yes`                            |
+| Code | Meaning                                                                                                                                                                      |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | No unmet recommendation at or above `--fail-on`; `fix` applied or had nothing to do                                                                                          |
+| 1    | `audit`: unmet recommendations at or above `--fail-on` (error code `security_audit_failed`); `fix`: the plan does not cover a check (`plan_insufficient`); or an API failure |
+| 2    | Usage error: missing or unknown ids, manual/blocked ids, agent mode without `--yes`                                                                                          |
 
 ## API Endpoints
 
