@@ -403,7 +403,14 @@ async function runDnsRecordHandoff(
     log.blank();
   }
 
-  for (const line of dnsDashboardHandoff(state.domain)) log.info(line);
+  const handoffInstanceId = state.productionInstanceId;
+  for (const line of dnsDashboardHandoff(
+    state.domain,
+    handoffInstanceId ? domainsDashboardUrl(state.appId, handoffInstanceId) : undefined,
+  )) {
+    if (line === "") log.blank();
+    else log.info(line);
+  }
   log.blank();
   try {
     await offerBindZoneExport(state.domain, exportTargets);

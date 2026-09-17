@@ -97,7 +97,7 @@ export function productionDnsHosts(domain: string): string[] {
 
 export function domainAssociationSummary(domain: string): string[] {
   const hosts = productionDnsHosts(domain);
-  const labels = hosts.map((host) => cnameTargetLabel(host, { terse: true }));
+  const labels = hosts.map((host) => cnameTargetLabel(host));
   const width = Math.max(...labels.map((label) => label.length));
   return [
     // Disclose the obligation before the one-way create step, without asking
@@ -140,6 +140,11 @@ export function dnsRecords(
   }
   lines.push(
     "",
+    // These are CNAMEs pointing at Clerk, so the user never generates or
+    // rotates key material and never hand-writes an SPF record. Said once
+    // here rather than on each email row.
+    "The email records point at Clerk, so you don't need to create SPF or DKIM values yourself.",
+    "",
     `${yellow("NOTE")}  If your DNS host proxies these records, set them to "DNS only" or verification will fail.`,
   );
   return lines;
@@ -169,13 +174,14 @@ function isMailCnameTarget(target: CnameTarget): boolean {
 }
 
 /**
- * Human label for a record host. `terse` is for the confirmation screen, where
- * the lead line says the user will add a record for each host: "Clerk handles
- * SPF/DKIM automatically" belongs on the records block (it's about record
- * contents); next to that lead it reads as "nothing for you to do on these
- * rows".
+ * Human label for a record host, used by every screen that lists records so
+ * the confirmation screen and the records block can't name the same host two
+ * ways. "DKIM" stays: it is the standard name for these records and already
+ * appears in the host (`clk._domainkey`). What Clerk manages on the user's
+ * behalf is said once under the block instead of on each row, where it read
+ * as "nothing to do here".
  */
-function cnameTargetLabel(host: string, options: { terse?: boolean } = {}): string {
+function cnameTargetLabel(host: string): string {
   // `host.split(".", 1)[0]` yields only the first label, so DKIM records
   // (clk._domainkey, clk2._domainkey) arrive here as "clk"/"clk2".
   const prefix = host.split(".", 1)[0];
@@ -185,19 +191,23 @@ function cnameTargetLabel(host: string, options: { terse?: boolean } = {}): stri
     case "accounts":
       return "Account portal";
     case "clkmail":
-      return options.terse ? "Email" : "Email (Clerk handles SPF/DKIM automatically)";
+      return "Email";
     case "clk":
     case "clk2":
-      return options.terse ? "Email (DKIM)" : "Email (Clerk handles SPF/DKIM automatically)";
+      return "Email (DKIM)";
     default:
       return "CNAME";
   }
 }
 
-export function dnsDashboardHandoff(domain: string): string[] {
+export function dnsDashboardHandoff(domain: string, domainsUrl: string | undefined): string[] {
   return [
-    `Check the Domains section in the Clerk Dashboard for ${domain} to monitor DNS propagation and SSL issuance.`,
-    "After OAuth setup, you can verify DNS or skip and finish. DNS propagation can take time.",
+    // "this command", not "the wizard": nothing the user sees uses that word.
+    // Skipping the check leaves setup unfinished, so name what resumes it.
+    `Monitor DNS propagation and SSL issuance for ${domain} on the Domains page in the Clerk Dashboard${domainsUrl ? ":" : "."}`,
+    ...(domainsUrl ? [`  ${domainsUrl}`] : []),
+    "",
+    "Next you'll set up OAuth, then this command checks these records. If they haven't taken effect yet, you can skip the check and run `clerk deploy` again later to finish.",
   ];
 }
 

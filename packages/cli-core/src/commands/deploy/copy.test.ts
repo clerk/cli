@@ -8,6 +8,7 @@ import {
   deployStatusPendingFooter,
   deployStatusRetryMessage,
   dnsIntro,
+  dnsDashboardHandoff,
   dnsRecords,
   domainAssociationSummary,
   domainsDashboardUrl,
@@ -85,9 +86,7 @@ describe("dnsRecords", () => {
     expect(output).toContain("    Host:  clk2._domainkey.example.com");
     // Both DKIM hosts must carry the email label, not fall through to the
     // generic "CNAME" default (the host's first label is "clk"/"clk2").
-    expect(
-      output.filter((line) => line.includes("Email (Clerk handles SPF/DKIM automatically)")),
-    ).toHaveLength(2);
+    expect(output.filter((line) => line.includes("Email (DKIM)"))).toHaveLength(2);
     expect(output.some((line) => line.trimStart().startsWith("CNAME"))).toBe(false);
   });
 });
@@ -456,7 +455,51 @@ describe("dnsRecords", () => {
       { host: "clk2._domainkey.example.com", value: "dkim2.clerk.services", required: true },
     ]).join("\n");
 
-    expect(output).toContain("Email (Clerk handles SPF/DKIM automatically)");
+    expect(output).toContain("Email (DKIM)");
     expect(output).not.toContain("\n  CNAME\n    Type:");
+    // Said once under the block, never on a row the user must act on.
+    expect(output).toContain(
+      "The email records point at Clerk, so you don't need to create SPF or DKIM values yourself.",
+    );
+    expect(output).not.toMatch(/Email \(DKIM\).*Clerk handles/);
+  });
+
+  test("labels the mail host and both DKIM hosts the same way the confirmation screen does", () => {
+    // One label set across screens: a host named two ways reads as two records.
+    const records = dnsRecords([
+      { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
+      { host: "clk._domainkey.example.com", value: "dkim1.clerk.services", required: true },
+    ]).join("\n");
+    const confirmation = stripAnsi(domainAssociationSummary("example.com").join("\n"));
+
+    for (const label of ["Email", "Email (DKIM)"]) {
+      expect(records).toContain(label);
+      expect(confirmation).toContain(label);
+    }
+    expect(records).not.toContain("Clerk handles SPF/DKIM automatically");
+    expect(confirmation).not.toContain("Clerk handles SPF/DKIM automatically");
+  });
+});
+
+describe("dnsDashboardHandoff", () => {
+  const DOMAINS_URL = "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains";
+
+  test("links the Domains page and says how to resume if the check is skipped", () => {
+    const output = dnsDashboardHandoff("example.com", DOMAINS_URL).join("\n");
+
+    expect(output).toContain(`Clerk Dashboard:\n  ${DOMAINS_URL}`);
+    // "wizard" appears nowhere else the user can see, so it isn't introduced here.
+    expect(output).not.toContain("wizard");
+    expect(output).toContain("then this command checks these records");
+    expect(output).toContain("run `clerk deploy` again later to finish");
+    // "skip and finish" read as though skipping completed the deploy.
+    expect(output).not.toContain("skip and finish");
+  });
+
+  test("ends the sentence cleanly when no Dashboard URL is known", () => {
+    const output = dnsDashboardHandoff("example.com", undefined).join("\n");
+
+    expect(output).toContain("on the Domains page in the Clerk Dashboard.");
+    expect(output).not.toContain("undefined");
   });
 });

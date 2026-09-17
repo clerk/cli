@@ -545,7 +545,7 @@ describe("deploy status", () => {
     const output = stripAnsi(captured.err);
     // The wizard prints the same record as optional; status must agree.
     expect(output).toMatch(
-      /Email \(Clerk handles SPF\/DKIM automatically\) \(optional\)\n\s+Type:  CNAME\n\s+Host:  clk2\._domainkey\.example\.com/,
+      /Email \(DKIM\) \(optional\)\n\s+Type:  CNAME\n\s+Host:  clk2\._domainkey\.example\.com/,
     );
     expect(output).not.toMatch(/Frontend API \(optional\)/);
   });

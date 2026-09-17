@@ -12,4 +12,5 @@
 - The Google walkthrough adds a tip with the app name to use on the OAuth consent screen.
 - The DNS check footer points at the "Check again" prompt that follows it instead of telling you to quit and re-run; the closing screen no longer says "Production ready" or "sign up at your domain" when DNS verification was skipped.
 - Resuming the wizard shows only the DNS records still outstanding, not ones Clerk already verified.
+- Each DNS record host is named the same way on every screen, the note about what Clerk manages moved off the rows the user has to add, the Domains-page pointer carries its link, and the closing line says what happens next instead of implying that skipping the check finishes the deploy.
 - Agent-mode `nextAction` tells the agent to add pending DNS records instead of polling, at `complete` says the production keys still have to reach the host, and names OAuth providers the CLI could not configure so an agent doesn't report OAuth as done. Human-mode `clerk deploy status` prints the pending records, never says "ask the user", and resumes with `clerk deploy` rather than a flag that only affects agents.

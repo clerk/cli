@@ -901,7 +901,7 @@ describe("deploy", () => {
       expect(err).toContain("[ ] Create production instance");
       expect(err).toContain("[ ] Verify DNS records");
       expect(err).toContain("[ ] Configure Google OAuth credentials");
-      expect(err).toContain("Check the Domains section in the Clerk Dashboard");
+      expect(err).toContain("on the Domains page in the Clerk Dashboard");
     });
 
     test("asks directly for an owned production domain and accepts short domains", async () => {
@@ -1012,9 +1012,9 @@ describe("deploy", () => {
       expect(err).toContain("clkmail.example.com");
       expect(err).toContain("This will create a Clerk production instance");
       expect(err).toContain("Add the following records at your DNS provider");
-      expect(err).toContain("Check the Domains section in the Clerk Dashboard");
+      expect(err).toContain("on the Domains page in the Clerk Dashboard");
       expect(err).toContain("propagation and SSL issuance");
-      expect(err).toContain("DNS propagation can take time");
+      expect(err).toContain("then this command checks these records");
       expect(mockConfirm).toHaveBeenCalledTimes(3);
       expect(mockConfirm).toHaveBeenCalledWith({
         message: "Create production instance?",
@@ -1983,8 +1983,8 @@ describe("deploy", () => {
 
       await runDeployUntilPause();
       const err = stripAnsi(captured.err);
-      expect(err).toContain("Check the Domains section in the Clerk Dashboard");
-      expect(err).toContain("DNS propagation can take time");
+      expect(err).toContain("on the Domains page in the Clerk Dashboard");
+      expect(err).toContain("then this command checks these records");
       expect(err).toContain("Configure Google OAuth for production");
     });
 
@@ -2100,7 +2100,7 @@ describe("deploy", () => {
 
       await runDeployUntilPause();
       mockLiveProduction();
-      expect(stripAnsi(captured.err)).toContain("Check the Domains section in the Clerk Dashboard");
+      expect(stripAnsi(captured.err)).toContain("on the Domains page in the Clerk Dashboard");
       expect(stripAnsi(captured.err)).toContain("Configure Google OAuth for production");
 
       captured.clear();
