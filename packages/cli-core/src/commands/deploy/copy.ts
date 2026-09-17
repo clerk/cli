@@ -201,6 +201,21 @@ function cnameTargetLabel(host: string): string {
 }
 
 /**
+ * The "what happens next" sentence both DNS screens end with. One place for
+ * the OAuth-first phrasing so the records-present and no-records branches
+ * can't drift: the first time they were composed separately, the no-records
+ * branch told the user to "check now" on a run where OAuth setup came first.
+ * `resume` differs by state (finalizing pauses the run rather than offering
+ * a retry), so the caller supplies it.
+ */
+function nextStepSentence(options: { oauthNext: boolean; check: string; resume: string }): string {
+  const lead = options.oauthNext
+    ? "Next you'll set up OAuth, then this command "
+    : "Next, this command ";
+  return `${lead}${options.check}. ${options.resume}`;
+}
+
+/**
  * The DNS screen when there is nothing left to add. Printed instead of
  * `dnsIntro` + `dnsDashboardHandoff`: a "Configure DNS" page with an empty
  * record list told the user to do work they had already done. What is
@@ -213,6 +228,7 @@ export function dnsHandoffNothingToAdd(
   domain: string,
   status: DeployComponentStatus,
   domainsUrl: string | undefined,
+  options: { oauthNext: boolean },
 ): string[] {
   const state = classifyDomainPending(status, false);
   const url = domainsUrl ? [`  ${domainsUrl}`] : [];
@@ -226,7 +242,11 @@ export function dnsHandoffNothingToAdd(
         `Monitor SSL issuance on the Domains page in the Clerk Dashboard${domainsUrl ? ":" : "."}`,
         ...url,
         "",
-        `Next, this command checks whether the certificate has been issued. ${resume}`,
+        nextStepSentence({
+          ...options,
+          check: "checks whether the certificate has been issued",
+          resume,
+        }),
       ];
     case "finalizing":
       // No "check again": once every component is verified, the check pauses
@@ -237,20 +257,33 @@ export function dnsHandoffNothingToAdd(
         `Monitor it on the Domains page in the Clerk Dashboard${domainsUrl ? ":" : "."}`,
         ...url,
         "",
-        "Next, this command checks whether Clerk has finished. If it hasn't, run `clerk deploy` again in a few minutes.",
+        nextStepSentence({
+          ...options,
+          check: "checks whether Clerk has finished",
+          resume: "If it hasn't, run `clerk deploy` again in a few minutes.",
+        }),
       ];
     case "records_available":
     case "records_unavailable": {
       // Records are needed but Clerk returned no list: the user has to find
-      // and add them, so this is an instruction, not a wait.
+      // and add them, so this is an instruction, not a wait. "Then choose
+      // Check DNS now below" only when that prompt really is next; on a fresh
+      // run with providers, OAuth setup comes first.
       const records = capitalizeFirst(pendingRecordComponents(status));
+      const find = options.oauthNext
+        ? `Find them on the Domains page in the Clerk Dashboard and add them at your DNS provider${domainsUrl ? ":" : "."}`
+        : `Find them on the Domains page in the Clerk Dashboard, add them at your DNS provider, then choose Check DNS now below${domainsUrl ? ":" : "."}`;
       return [
         `${records} records for ${cyan(domain)} are not verified yet, but Clerk didn't return the list to add.`,
         "",
-        `Find them on the Domains page in the Clerk Dashboard, add them at your DNS provider, then choose Check DNS now below${domainsUrl ? ":" : "."}`,
+        find,
         ...url,
         "",
-        `Next, this command checks that they have taken effect. ${resume.replace("If it hasn't yet", "If they haven't yet")}`,
+        nextStepSentence({
+          ...options,
+          check: "checks that they have taken effect",
+          resume: resume.replace("If it hasn't yet", "If they haven't yet"),
+        }),
       ];
     }
   }
@@ -277,7 +310,12 @@ export function dnsDashboardHandoff(
     // rather than "with": the check looks the records up, it doesn't contact
     // the provider. Naming both options matters because a failed check isn't a
     // dead end — "Check again" is the other choice on the prompt that follows.
-    `${options.oauthNext ? "Next you'll set up OAuth, then this command checks that these records have taken effect at your DNS provider." : "Next, this command checks that these records have taken effect at your DNS provider."} If they haven't yet, you can either wait a few minutes and check again, or skip the check and run \`clerk deploy\` again later to finish.`,
+    nextStepSentence({
+      oauthNext: options.oauthNext,
+      check: "checks that these records have taken effect at your DNS provider",
+      resume:
+        "If they haven't yet, you can either wait a few minutes and check again, or skip the check and run `clerk deploy` again later to finish.",
+    }),
   ];
 }
 

@@ -1946,6 +1946,29 @@ describe("deploy", () => {
       expect(err).not.toContain("Domain      Verified");
     });
 
+    test("no record list on a first run without providers points straight at the DNS check", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      // No enabled providers: OAuth setup is skipped, so the check really is next.
+      mockFetchInstanceConfig.mockResolvedValue({});
+      stubCreateProductionInstance({ cnameTargets: [] });
+      mockConfirm
+        .mockResolvedValueOnce(true) // Proceed?
+        .mockResolvedValueOnce(true); // Create production instance?
+      mockInput.mockResolvedValueOnce("example.com");
+      mockSelect.mockResolvedValueOnce("skip"); // DNS verification
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("add them at your DNS provider, then choose Check DNS now below");
+      expect(err).toContain("Next, this command checks that they have taken effect.");
+      expect(err).not.toContain("set up OAuth");
+    });
+
     test("DNS verification footer says the record list is missing when the API returned no targets", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
@@ -1970,10 +1993,16 @@ describe("deploy", () => {
 
       // Before the check, the first-run screen already says the list is
       // missing and what to do, instead of a "Configure DNS" page with no records.
+      // This run has a Google provider, so OAuth setup is the next prompt and
+      // the screen must not point at a "Check DNS now" that isn't there yet.
       expect(err).toContain(
         "DNS and email DNS records for example.com are not verified yet, but Clerk didn't return the list to add.",
       );
-      expect(err).toContain("add them at your DNS provider, then choose Check DNS now below");
+      expect(err).toContain("and add them at your DNS provider:");
+      expect(err).toContain(
+        "Next you'll set up OAuth, then this command checks that they have taken effect.",
+      );
+      expect(err).not.toContain("Check DNS now below");
       expect(err).not.toContain("Configure DNS for");
       // After the check, the footer says the same in its own words.
       expect(err).toContain("DNS and email DNS records not found yet for example.com.");

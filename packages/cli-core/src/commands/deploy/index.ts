@@ -420,7 +420,7 @@ async function runDnsRecordHandoff(
           "",
           ...dnsDashboardHandoff(state.domain, domainsUrl, { oauthNext: options.oauthNext }),
         ]
-      : dnsHandoffNothingToAdd(state.domain, status, domainsUrl);
+      : dnsHandoffNothingToAdd(state.domain, status, domainsUrl, { oauthNext: options.oauthNext });
   for (const line of lines) {
     if (line === "") log.blank();
     else log.info(line);

@@ -493,7 +493,9 @@ describe("dnsHandoffNothingToAdd", () => {
 
   test("SSL pending: records are done, the certificate is Clerk's side, check again is offered", () => {
     const out = stripAnsi(
-      dnsHandoffNothingToAdd("example.com", { dns: true, ssl: false, mail: true }, URL).join("\n"),
+      dnsHandoffNothingToAdd("example.com", { dns: true, ssl: false, mail: true }, URL, {
+        oauthNext: false,
+      }).join("\n"),
     );
 
     expect(out).toContain("Your DNS records for example.com are verified.");
@@ -509,7 +511,9 @@ describe("dnsHandoffNothingToAdd", () => {
 
   test("finalizing: nothing for the user to do, and no in-session retry is promised", () => {
     const out = stripAnsi(
-      dnsHandoffNothingToAdd("example.com", { dns: true, ssl: true, mail: true }, URL).join("\n"),
+      dnsHandoffNothingToAdd("example.com", { dns: true, ssl: true, mail: true }, URL, {
+        oauthNext: false,
+      }).join("\n"),
     );
 
     expect(out).toContain("Your DNS records and SSL certificate for example.com are verified.");
@@ -531,7 +535,9 @@ describe("dnsHandoffNothingToAdd", () => {
   ])(
     "no record list ($label): tells the user to find and add the records",
     ({ status, records }) => {
-      const out = stripAnsi(dnsHandoffNothingToAdd("example.com", status, URL).join("\n"));
+      const out = stripAnsi(
+        dnsHandoffNothingToAdd("example.com", status, URL, { oauthNext: false }).join("\n"),
+      );
 
       expect(out).toContain(
         `${records} records for example.com are not verified yet, but Clerk didn't return the list to add.`,
@@ -544,11 +550,29 @@ describe("dnsHandoffNothingToAdd", () => {
     },
   );
 
+  test("no record list on a first run with providers: OAuth comes before the check", () => {
+    // The prompt after this screen is OAuth setup, not the DNS check, so the
+    // screen must not point at a "Check DNS now" that isn't there.
+    const out = stripAnsi(
+      dnsHandoffNothingToAdd("example.com", { dns: false, ssl: false, mail: false }, URL, {
+        oauthNext: true,
+      }).join("\n"),
+    );
+
+    expect(out).toContain(
+      "Find them on the Domains page in the Clerk Dashboard and add them at your DNS provider:",
+    );
+    expect(out).toContain(
+      "Next you'll set up OAuth, then this command checks that they have taken effect.",
+    );
+    expect(out).not.toContain("Check DNS now");
+  });
+
   test("ends sentences cleanly with no Dashboard URL", () => {
     const out = stripAnsi(
-      dnsHandoffNothingToAdd("example.com", { dns: true, ssl: false, mail: true }, undefined).join(
-        "\n",
-      ),
+      dnsHandoffNothingToAdd("example.com", { dns: true, ssl: false, mail: true }, undefined, {
+        oauthNext: false,
+      }).join("\n"),
     );
     expect(out).toContain("on the Domains page in the Clerk Dashboard.");
     expect(out).not.toContain("undefined");
