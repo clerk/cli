@@ -483,4 +483,69 @@ describe("security fix", () => {
       );
     });
   });
+
+  describe("plan gating", () => {
+    const PLAN_402 = JSON.stringify({
+      errors: [
+        {
+          code: "unsupported_subscription_plan_features",
+          message: "Unsupported subscription plan features",
+          meta: { unsupported_features: ["app:passkey"] },
+        },
+      ],
+    });
+
+    function serveRejectingWrites() {
+      stubFetch(async (input, init) => {
+        const method = init?.method ?? "GET";
+        requests.push({ method, url: input.toString(), body: null });
+        if (method === "PATCH") return new Response(PLAN_402, { status: 402 });
+        return new Response(JSON.stringify(INSECURE_CONFIG), { status: 200 });
+      });
+    }
+
+    test("a 402 names the gated checks and offers the rest", async () => {
+      serveRejectingWrites();
+      let error: unknown;
+      await run(["passkeys", "user-lockout"], { yes: true }).catch((e) => (error = e));
+      const e = error as { code: string; message: string; examples: Array<{ command: string }> };
+      expect(e.code).toBe("plan_insufficient");
+      expect(e.message).toBe("passkeys needs a plan that includes app:passkey.");
+      expect(e.examples[0]!.command).toBe(
+        "clerk security fix user-lockout --app app_1 --instance ins_dev",
+      );
+    });
+
+    test("the subset command keeps decision flags", async () => {
+      serveRejectingWrites();
+      let error: unknown;
+      await run(["passkeys", "mfa"], { factors: ["authenticator"], yes: true }).catch(
+        (e) => (error = e),
+      );
+      const e = error as { examples: Array<{ command: string }> };
+      expect(e.examples[0]!.command).toBe(
+        "clerk security fix mfa --factors authenticator --app app_1 --instance ins_dev",
+      );
+    });
+
+    test("no example when every selected check is gated", async () => {
+      serveRejectingWrites();
+      let error: unknown;
+      await run(["passkeys"], { yes: true }).catch((e) => (error = e));
+      expect((error as { examples?: unknown }).examples).toBeUndefined();
+    });
+
+    test("other API errors pass through untouched", async () => {
+      stubFetch(async (input, init) => {
+        const method = init?.method ?? "GET";
+        requests.push({ method, url: input.toString(), body: null });
+        if (method === "PATCH")
+          return new Response('{"errors":[{"code":"boom"}]}', { status: 500 });
+        return new Response(JSON.stringify(INSECURE_CONFIG), { status: 200 });
+      });
+      let error: unknown;
+      await run(["user-lockout"], { yes: true }).catch((e) => (error = e));
+      expect((error as { code: string }).code).toBe("boom");
+    });
+  });
 });

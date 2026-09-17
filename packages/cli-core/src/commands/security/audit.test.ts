@@ -131,7 +131,7 @@ describe("security audit", () => {
     expect(mfa.suggestedPatch).toEqual({
       auth_multi_factor: { authenticator_app: { enabled: true }, backup_code: { enabled: true } },
     });
-    expect(mfa.feature).toBe("app:mfa_totp");
+    expect(mfa.features).toEqual(["app:mfa_totp", "app:mfa_phone_code", "app:mfa_backup_code"]);
     expect(mfa.remedy).toContain(
       "clerk security fix mfa --factors authenticator,backup-code --app app_1 --instance ins_dev",
     );

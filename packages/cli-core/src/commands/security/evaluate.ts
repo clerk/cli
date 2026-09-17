@@ -76,7 +76,7 @@ export function evaluate(input: CheckInput, ref: InstanceRef): Finding[] {
       status,
       path: check.path,
       ...evaluation,
-      ...(check.feature && { feature: check.feature }),
+      ...(check.features && { features: check.features }),
       ...(check.blockedBy && { blockedBy: check.blockedBy }),
       patch,
       suggestedPatch,
