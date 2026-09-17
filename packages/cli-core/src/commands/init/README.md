@@ -1,6 +1,6 @@
 # Init Command
 
-Initializes Clerk in a project by detecting the framework, installing the SDK, and scaffolding framework-specific boilerplate. When the user is unauthenticated and the framework supports accountless, init defaults to accountless mode — auto-generated temporary development keys that a later `clerk auth login` claims automatically — during bootstrap (new projects) in human mode and in all agent-mode runs. Otherwise init logs the user in (interactively) and links a real Clerk application. `--accountless` forces accountless (even when logged in); `--login` forces the authenticated flow.
+Initializes Clerk in a project by detecting the framework, installing the SDK, and scaffolding framework-specific boilerplate. When the user is unauthenticated, init defaults to accountless mode — auto-generated temporary development keys that a later `clerk auth login` claims automatically — during bootstrap (new projects) in human mode and in all agent-mode runs. Otherwise init logs the user in (interactively) and links a real Clerk application. `--accountless` forces accountless (even when logged in); `--login` forces the authenticated flow.
 
 ## Usage
 
@@ -29,7 +29,7 @@ clerk init --no-skills
 | `--name <project-name>` | Project name for `--starter` (skips prompt). Must be lowercase, no spaces, no path separators                                                                                                                                                                      |
 | `--app <id>`            | Application ID to link (skips the interactive app picker during authenticated linking)                                                                                                                                                                             |
 | `--starter`             | Bootstrap a new project from a starter template (runs the framework generator, installs deps, and scaffolds Clerk)                                                                                                                                                 |
-| `--accountless`         | Force auto-generated temporary development keys, even when logged in. Only valid on an accountless-capable framework; cannot be combined with `--login` or `--app`                                                                                                 |
+| `--accountless`         | Force auto-generated temporary development keys, even when logged in. Cannot be combined with `--login` or `--app`                                                                                                                                                 |
 | `--login`               | Force the authenticated flow: log in (interactively if needed) and link a real application instead of accountless keys. Errors in agent mode when unauthenticated (agents can't run OAuth)                                                                         |
 | `--template <name>`     | Pre-configure the accountless application at creation: `b2b-saas`, `b2c-saas`, `native`, `waitlist`. Only applies when the run resolves to accountless — errors otherwise (see [Application templates](#application-templates)); cannot be combined with `--login` |
 | `--fresh`               | Replace an existing unclaimed accountless application with a new one, instead of keeping it (see [Accountless breadcrumb](#accountless-breadcrumb)). Only applies when the run resolves to accountless — errors otherwise; cannot be combined with `--login`       |
@@ -46,25 +46,23 @@ When running in agent mode (`--mode agent` or non-TTY), the command runs the ful
 - For **existing projects**: framework and package manager are auto-detected, no flags required
 - For **new projects** (`--starter` or blank directory): `--framework` is required (no way to auto-detect in an empty dir). Package manager is auto-selected by availability (bun → pnpm → yarn → npm) unless `--pm` is provided
 - Project name defaults to the framework's default (e.g. `my-clerk-next-app`) unless `--name` is provided
-- For accountless-capable frameworks with no `--app` and no linked profile:
+- With no `--app` and no linked profile:
   - When **authenticated**, init creates a real Clerk app named after the project (`package.json#name`, `--name`, or directory basename) and links it.
   - When **unauthenticated**, init uses accountless: the app runs on auto-generated dev keys, and init writes a legacy-named `.clerk/keyless.json` breadcrumb so the next `clerk auth login` claims the app automatically.
-- For frameworks that require API keys, init will not pick or create an app in agent mode; pass `--app <id>` or link the project first to pull real keys
 - `--login` while unauthenticated exits with a usage error (agents can't complete the interactive browser login)
-- Agent mode never trusts the mere _presence_ of a stored credential the way human mode does — a stored session that turns out to be expired/broken (e.g. keyring holds a stale OAuth session) is validated before init decides it's "authenticated". A broken credential is treated as unauthenticated, which routes an accountless-capable framework to accountless instead of blocking on a browser OAuth round-trip an agent can never complete. If `--login` (or a real app target) forces the authenticated flow anyway and the credential turns out broken, init exits with a usage error instead of attempting an interactive login
+- Agent mode never trusts the mere _presence_ of a stored credential the way human mode does — a stored session that turns out to be expired/broken (e.g. keyring holds a stale OAuth session) is validated before init decides it's "authenticated". A broken credential is treated as unauthenticated, which routes the run to accountless instead of blocking on a browser OAuth round-trip an agent can never complete. If `--login` (or a real app target) forces the authenticated flow anyway and the credential turns out broken, init exits with a usage error instead of attempting an interactive login
 - Agent mode never mints a fresh accountless application over an existing unclaimed one on re-run — see [Accountless breadcrumb](#accountless-breadcrumb)
 
 ## Flow
 
 1. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
 2. Determines the strategy (in precedence order). In agent mode, "authenticated" here means a _validated_ credential (a real `CLERK_PLATFORM_API_KEY`, or a stored session that still exchanges for a valid token) — not just the presence of something in the keyring, since agent mode has no interactive fallback if a stale credential turns out to be unusable:
-   - **`--accountless`**: forces accountless mode, even when logged in. Only valid on an accountless-capable framework, and cannot be combined with `--login` or `--app` (usage errors otherwise). The app runs on auto-generated dev keys; init writes a legacy-named `.clerk/keyless.json` breadcrumb so the next `clerk auth login` claims the app automatically
+   - **`--accountless`**: forces accountless mode, even when logged in. Cannot be combined with `--login` or `--app` (usage errors otherwise). The app runs on auto-generated dev keys; init writes a legacy-named `.clerk/keyless.json` breadcrumb so the next `clerk auth login` claims the app automatically
    - **`--login`**: forces the authenticated flow. In agent mode while unauthenticated (or while stored credentials are broken) this exits with a usage error, since agents can't complete the interactive browser login
    - **Real app target** (`--app` or linked profile): authenticates, links if needed, and pulls real API keys into `.env`
-   - **Agent + non-accountless framework + no real app target**: scaffolds locally and prints manual setup instructions instead of selecting or creating an app
-   - **Agent + accountless-capable framework + authenticated + no real app target**: creates a real Clerk app named after the project, links it, and pulls real API keys into `.env`
-   - **Agent + accountless-capable framework + unauthenticated + no real app target**: uses accountless mode — the app runs on auto-generated dev keys and the breadcrumb lets the next `clerk auth login` claim it. A broken/stale stored credential (present in the keyring but no longer valid) is treated the same as unauthenticated, so this is also the fallback when the presence-only check would have wrongly said "authenticated"
-   - **Human mode + bootstrap + accountless-capable framework + not authenticated**: uses accountless mode
+   - **Agent + authenticated + no real app target**: creates a real Clerk app named after the project, links it, and pulls real API keys into `.env`
+   - **Agent + unauthenticated + no real app target**: uses accountless mode — the app runs on auto-generated dev keys and the breadcrumb lets the next `clerk auth login` claim it. A broken/stale stored credential (present in the keyring but no longer valid) is treated the same as unauthenticated, so this is also the fallback when the presence-only check would have wrongly said "authenticated"
+   - **Human mode + bootstrap + not authenticated**: uses accountless mode
    - **Human mode + existing project + not authenticated**: runs the authenticated flow, which triggers an interactive login so real keys can be pulled. `-y` does not bypass this — it only suppresses y/n confirmation prompts, not authentication
    - `--template` and `--fresh` are rejected with a usage error whenever the resolved strategy above isn't accountless — see [Application templates](#application-templates) and [Accountless breadcrumb](#accountless-breadcrumb)
 3. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
@@ -86,19 +84,19 @@ When running in agent mode (`--mode agent` or non-TTY), the command runs the ful
 
 Detects the project's framework from `package.json` dependencies (checked top-to-bottom, first match wins):
 
-| Dependency              | Framework      | Clerk SDK                     | Publishable Key Env Var             | Accountless |
-| ----------------------- | -------------- | ----------------------------- | ----------------------------------- | ----------- |
-| `next`                  | Next.js        | `@clerk/nextjs`               | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Yes         |
-| `astro`                 | Astro          | `@clerk/astro`                | `PUBLIC_CLERK_PUBLISHABLE_KEY`      | Yes         |
-| `nuxt`                  | Nuxt           | `@clerk/nuxt`                 | `NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Yes         |
-| `@tanstack/react-start` | TanStack Start | `@clerk/tanstack-react-start` | `VITE_CLERK_PUBLISHABLE_KEY`        | Yes         |
-| `react-router`          | React Router   | `@clerk/react-router`         | `VITE_CLERK_PUBLISHABLE_KEY`        | Yes         |
-| `vue`                   | Vue            | `@clerk/vue`                  | `VITE_CLERK_PUBLISHABLE_KEY`        | No          |
-| `expo`                  | Expo           | `@clerk/expo`                 | `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` | No          |
-| `react`                 | React          | `@clerk/react`                | `VITE_CLERK_PUBLISHABLE_KEY`        | No          |
-| `vite`                  | JavaScript     | `@clerk/clerk-js`             | `VITE_CLERK_PUBLISHABLE_KEY`        | No          |
-| `express`               | Express        | `@clerk/express`              | `CLERK_PUBLISHABLE_KEY`             | No          |
-| `fastify`               | Fastify        | `@clerk/fastify`              | `CLERK_PUBLISHABLE_KEY`             | No          |
+| Dependency              | Framework      | Clerk SDK                     | Publishable Key Env Var             |
+| ----------------------- | -------------- | ----------------------------- | ----------------------------------- |
+| `next`                  | Next.js        | `@clerk/nextjs`               | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` |
+| `astro`                 | Astro          | `@clerk/astro`                | `PUBLIC_CLERK_PUBLISHABLE_KEY`      |
+| `nuxt`                  | Nuxt           | `@clerk/nuxt`                 | `NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY` |
+| `@tanstack/react-start` | TanStack Start | `@clerk/tanstack-react-start` | `VITE_CLERK_PUBLISHABLE_KEY`        |
+| `react-router`          | React Router   | `@clerk/react-router`         | `VITE_CLERK_PUBLISHABLE_KEY`        |
+| `vue`                   | Vue            | `@clerk/vue`                  | `VITE_CLERK_PUBLISHABLE_KEY`        |
+| `expo`                  | Expo           | `@clerk/expo`                 | `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` |
+| `react`                 | React          | `@clerk/react`                | `VITE_CLERK_PUBLISHABLE_KEY`        |
+| `vite`                  | JavaScript     | `@clerk/clerk-js`             | `VITE_CLERK_PUBLISHABLE_KEY`        |
+| `express`               | Express        | `@clerk/express`              | `CLERK_PUBLISHABLE_KEY`             |
+| `fastify`               | Fastify        | `@clerk/fastify`              | `CLERK_PUBLISHABLE_KEY`             |
 
 Native mobile platforms may not have a `package.json`, so they are detected from project marker files when no npm framework matches:
 
@@ -109,7 +107,9 @@ Native mobile platforms may not have a `package.json`, so they are detected from
 
 A bare `Package.swift` or `build.gradle` is intentionally **not** enough — those also match server-side Swift packages and non-Android JVM projects. For native platforms the Clerk SDK cannot be installed by a JS package manager, so init skips the SDK install step and the scaffold plan prints Swift Package Manager / Gradle install steps instead. The publishable key is configured in source code (`Clerk.configure(...)` / `Clerk.initialize(...)`), so init still pulls keys into the env file and instructs the user to copy the key over.
 
-The **Accountless** column indicates whether the framework's Clerk SDK supports accountless mode (auto-generated temporary dev keys). Accountless is the default for unauthenticated runs on Yes-row frameworks — during bootstrap (new projects) in human mode, and in all agent-mode runs. In human mode, an unauthenticated re-run in an existing project still triggers the authenticated flow. `--accountless` forces accountless anywhere a Yes-row framework is detected (existing projects included, even when logged in); passing it for a No-row framework exits with a usage error. In agent mode, an authenticated run on an accountless-capable framework creates a real app named after the project and links it.
+Accountless mode (auto-generated temporary dev keys) works on every framework above, native platforms included: the CLI mints the application itself via `POST /v1/accountless_applications` and only needs the framework's env var names. It is the default for unauthenticated runs — during bootstrap (new projects) in human mode, and in all agent-mode runs. In human mode, an unauthenticated re-run in an existing project still triggers the authenticated flow. `--accountless` forces accountless anywhere (existing projects included, even when logged in). In agent mode, an authenticated run creates a real app named after the project and links it.
+
+iOS and Android get only the publishable key in `.env` — their default `.gitignore` doesn't cover it, the same reason `clerk env pull` never writes the secret key there. The secret key becomes available once the app is claimed.
 
 Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, else npm.
 
@@ -291,7 +291,7 @@ See [auth/README.md](../auth/README.md), [link/README.md](../link/README.md), an
 | `native`   | Native/mobile application        |
 | `waitlist` | Waitlist sign-up mode            |
 
-The template only applies when a _new_ application is actually created, so `--template` is rejected with a usage error whenever the resolved strategy isn't accountless — whether that's because of an explicit conflicting flag (`--login`, or `--app` once the strategy resolves) or because the run is simply already authenticated (e.g. `CLERK_PLATFORM_API_KEY` is set) or the framework doesn't support accountless at all. The error names the reason, so `--template` is never silently dropped: add `--accountless` to force an accountless app, or drop `--template`. Settings can still be changed afterwards with `clerk config patch`, which also works without an account (see [config accountless mode](../config/README.md#accountless-mode)).
+The template only applies when a _new_ application is actually created, so `--template` is rejected with a usage error whenever the resolved strategy isn't accountless — whether that's because of an explicit conflicting flag (`--login`, or `--app` once the strategy resolves) or because the run is simply already authenticated (e.g. `CLERK_PLATFORM_API_KEY` is set). The error names the reason, so `--template` is never silently dropped: add `--accountless` to force an accountless app, or drop `--template`. Settings can still be changed afterwards with `clerk config patch`, which also works without an account (see [config accountless mode](../config/README.md#accountless-mode)).
 
 ## Accountless breadcrumb
 
