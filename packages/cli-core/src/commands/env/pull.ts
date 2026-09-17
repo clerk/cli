@@ -1,5 +1,5 @@
 import { resolve, join, basename } from "node:path";
-import { resolveAppContext, type AppContextOptions } from "../../lib/config.ts";
+import { resolveAppContext, type AppContextOptions } from "../../lib/app-context.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
 import {

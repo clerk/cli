@@ -3,10 +3,20 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
+import { setMode } from "../../mode.ts";
 import { useCaptureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
+
+const mockConfirm = mock();
+mock.module("../../lib/prompts.ts", () => ({
+  confirm: (...args: unknown[]) => mockConfirm(...args),
+  text: async () => "",
+  password: async () => "",
+  editor: async () => "{}",
+  multiselect: async () => [],
+}));
 mock.module("../../lib/spinner.ts", () => ({
   intro: () => {},
   outro: () => {},
@@ -215,16 +225,89 @@ describe("config pull", () => {
     expect(requestedUrl).toContain("/instances/ins_custom_123/");
   });
 
-  test("errors when production instance not configured", async () => {
-    await setProfile(process.cwd(), {
-      workspaceId: "org_1",
-      appId: "app_1",
-      instances: { development: "ins_dev" },
+  describe("production instance missing from the link", () => {
+    const devOnlyApp = {
+      application_id: "app_1",
+      instances: [
+        { instance_id: "ins_dev", environment_type: "development", publishable_key: "pk_test_1" },
+      ],
+    };
+
+    beforeEach(async () => {
+      // Agent mode so the recovery path reports rather than prompting.
+      setMode("agent");
+      await setProfile(process.cwd(), {
+        workspaceId: "org_1",
+        appId: "app_1",
+        instances: { development: "ins_dev" },
+      });
     });
 
-    await expect(runConfigPull({ instance: "prod" })).rejects.toThrow(
-      "No production instance configured",
-    );
+    afterEach(() => setMode("human"));
+
+    test("points at `clerk deploy` when the application has none either", async () => {
+      stubFetch(async () => new Response(JSON.stringify(devOnlyApp), { status: 200 }));
+
+      await expect(runConfigPull({ instance: "prod" })).rejects.toThrow("clerk deploy");
+    });
+
+    test("human mode refreshes on confirm and resumes the pull against production", async () => {
+      setMode("human");
+      mockConfirm.mockResolvedValue(true);
+
+      const requestedUrls: string[] = [];
+      stubFetch(async (input) => {
+        const url = input.toString();
+        requestedUrls.push(url);
+        if (url.includes("/instances/")) {
+          return new Response(JSON.stringify(mockConfig), { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({
+            ...devOnlyApp,
+            instances: [
+              ...devOnlyApp.instances,
+              {
+                instance_id: "ins_prod",
+                environment_type: "production",
+                publishable_key: "pk_live_1",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      });
+
+      await runConfigPull({ instance: "prod" });
+
+      // The command completed against production rather than erroring out...
+      expect(requestedUrls.some((url) => url.includes("/instances/ins_prod/"))).toBe(true);
+      // ...and the repaired link was persisted, so the next run needs no prompt.
+      const { getProfile } = await import("../../lib/config.ts");
+      expect((await getProfile(process.cwd()))?.instances.production).toBe("ins_prod");
+    });
+
+    test("points at `clerk link --refresh` when the application has one", async () => {
+      stubFetch(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...devOnlyApp,
+              instances: [
+                ...devOnlyApp.instances,
+                {
+                  instance_id: "ins_prod",
+                  environment_type: "production",
+                  publishable_key: "pk_live_1",
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+      );
+
+      await expect(runConfigPull({ instance: "prod" })).rejects.toThrow("clerk link --refresh");
+    });
   });
 
   test("--keys passes keys as query params to the API", async () => {

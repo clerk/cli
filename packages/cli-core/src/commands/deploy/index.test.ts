@@ -29,6 +29,7 @@ const mockFetchInstanceConfigSchema = mock();
 const mockFetchApplication = mock();
 const mockListApplicationDomains = mock();
 const mockCreateProductionInstance = mock();
+const mockUpdateApplicationDomain = mock();
 const mockGetApplicationDomainStatus = mock();
 const mockTriggerApplicationDomainDNSCheck = mock();
 const mockSleep = mock();
@@ -51,6 +52,7 @@ mock.module("../../lib/plapi.ts", () => ({
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
   listApplicationDomains: (...args: unknown[]) => mockListApplicationDomains(...args),
   createProductionInstance: (...args: unknown[]) => mockCreateProductionInstance(...args),
+  updateApplicationDomain: (...args: unknown[]) => mockUpdateApplicationDomain(...args),
   getApplicationDomainStatus: (...args: unknown[]) => mockGetApplicationDomainStatus(...args),
   triggerApplicationDomainDNSCheck: (...args: unknown[]) =>
     mockTriggerApplicationDomainDNSCheck(...args),
@@ -87,11 +89,13 @@ function domainStatus({
   dns,
   ssl,
   mail,
+  proxy,
 }: {
   status: "complete" | "incomplete";
   dns?: boolean;
   ssl?: boolean;
   mail?: boolean;
+  proxy?: boolean;
 }) {
   return {
     status,
@@ -102,6 +106,9 @@ function domainStatus({
     ...(mail === undefined
       ? {}
       : { mail: { status: mail ? "complete" : "not_started", required: true } }),
+    ...(proxy === undefined
+      ? {}
+      : { proxy: { status: proxy ? "complete" : "not_configured", required: true } }),
   };
 }
 
@@ -263,6 +270,7 @@ describe("deploy", () => {
     mockFetchApplication.mockReset();
     mockListApplicationDomains.mockReset();
     mockCreateProductionInstance.mockReset();
+    mockUpdateApplicationDomain.mockReset();
     mockGetApplicationDomainStatus.mockReset();
     mockTriggerApplicationDomainDNSCheck.mockReset();
     mockSleep.mockReset();
@@ -279,6 +287,7 @@ describe("deploy", () => {
     overrides: {
       frontendApiUrl?: string;
       cnameTargets?: { host: string; value: string; required: boolean }[];
+      isProviderDomain?: boolean;
     } = {},
   ) {
     mockCreateProductionInstance.mockImplementation(
@@ -293,7 +302,7 @@ describe("deploy", () => {
             id: "dmn_prod_mock",
             name: hostname,
             is_satellite: false,
-            is_provider_domain: false,
+            is_provider_domain: overrides.isProviderDomain ?? false,
             frontend_api_url: overrides.frontendApiUrl ?? `https://clerk.${hostname}`,
             development_origin: "",
             cname_targets: overrides.cnameTargets ?? [
@@ -374,6 +383,8 @@ describe("deploy", () => {
       productionConfig?: Record<string, unknown>;
       developmentConfig?: Record<string, unknown>;
       cnameTargets?: readonly { host: string; value: string; required: boolean }[];
+      isProviderDomain?: boolean;
+      proxyUrl?: string;
     } = {},
   ) {
     const instanceId = options.instanceId ?? "ins_prod_mock";
@@ -412,7 +423,8 @@ describe("deploy", () => {
           id: domainId,
           name: domain,
           is_satellite: false,
-          is_provider_domain: false,
+          is_provider_domain: options.isProviderDomain ?? false,
+          proxy_url: options.proxyUrl,
           frontend_api_url: `https://clerk.${domain}`,
           accounts_portal_url: `https://accounts.${domain}`,
           development_origin: "",
@@ -581,6 +593,143 @@ describe("deploy", () => {
 
       const allOutput = captured.out;
       expect(allOutput).not.toContain("deploying a Clerk application to production");
+    });
+
+    describe("provider domains", () => {
+      function mockProviderDomainFlow() {
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockSelect.mockResolvedValueOnce("skip");
+        mockInput.mockResolvedValueOnce("my-app.vercel.app");
+        stubCreateProductionInstance({ isProviderDomain: true });
+        mockUpdateApplicationDomain.mockImplementation(
+          (_appId: string, params: { name: string }) => ({
+            object: "domain",
+            id: "dmn_prod_mock",
+            name: params.name,
+            is_satellite: false,
+            is_provider_domain: true,
+            proxy_url: `https://${params.name}/__clerk`,
+            frontend_api_url: `https://clerk.${params.name}`,
+            development_origin: "",
+            cname_targets: [],
+            created_at: "2026-05-06T00:00:00Z",
+            updated_at: "2026-05-06T00:00:00Z",
+          }),
+        );
+      }
+
+      // The instances endpoint stores the domain without deriving a proxy URL,
+      // which would leave the CNAMEs required and DNS forever unverifiable.
+      test("asks the API to derive the proxy URL after creating the instance", async () => {
+        await linkedProject();
+        mockProviderDomainFlow();
+
+        await runDeployUntilPause();
+
+        expect(mockUpdateApplicationDomain).toHaveBeenCalledWith("app_xyz789", {
+          name: "my-app.vercel.app",
+        });
+      });
+
+      test("hands off proxy instructions instead of CNAME records", async () => {
+        await linkedProject();
+        mockProviderDomainFlow();
+
+        await runDeployUntilPause();
+        const err = stripAnsi(captured.err);
+
+        expect(err).toContain("https://my-app.vercel.app/__clerk");
+        expect(err).toContain("Configure the Clerk proxy for my-app.vercel.app");
+        expect(err).not.toContain("Add the following records at your DNS provider");
+      });
+
+      // A resumed deploy re-derives everything from the API, so it has to reach
+      // the same conclusion as the run that created the instance.
+      test("keeps proxy instructions when resuming a deploy on a provider domain", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockLiveProduction({
+          instanceId: "ins_prod_123",
+          domain: "my-app.vercel.app",
+          isProviderDomain: true,
+          proxyUrl: "https://my-app.vercel.app/__clerk",
+          cnameTargets: [],
+          developmentConfig: {},
+          productionConfig: {},
+        });
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "incomplete", dns: true, proxy: false }),
+        );
+        mockSelect.mockResolvedValueOnce("skip");
+        mockConfirm.mockResolvedValueOnce(false);
+
+        await runDeployUntilPause();
+        const err = stripAnsi(captured.err);
+
+        expect(err).toContain("Configure the Clerk proxy for my-app.vercel.app");
+        expect(err).toContain("https://my-app.vercel.app/__clerk");
+        expect(err).not.toContain("Add the following records at your DNS provider");
+      });
+
+      // If the PATCH failed or the process died right after creation, the
+      // provider domain is still unproxied — the resumed run must finish the job
+      // rather than fall back to CNAMEs that can never resolve.
+      test("derives a missing proxy URL when resuming", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockLiveProduction({
+          instanceId: "ins_prod_123",
+          domain: "my-app.vercel.app",
+          isProviderDomain: true,
+          cnameTargets: [],
+          developmentConfig: {},
+          productionConfig: {},
+        });
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "incomplete", dns: true, proxy: false }),
+        );
+        mockUpdateApplicationDomain.mockImplementation(
+          (_appId: string, params: { name: string }) => ({
+            object: "domain",
+            id: "dmn_prod_mock",
+            name: params.name,
+            is_satellite: false,
+            is_provider_domain: true,
+            proxy_url: `https://${params.name}/__clerk`,
+            frontend_api_url: `https://clerk.${params.name}`,
+            development_origin: "",
+            cname_targets: [],
+            created_at: "2026-05-06T00:00:00Z",
+            updated_at: "2026-05-06T00:00:00Z",
+          }),
+        );
+        mockSelect.mockResolvedValueOnce("skip");
+        mockConfirm.mockResolvedValueOnce(false);
+
+        await runDeployUntilPause();
+
+        expect(mockUpdateApplicationDomain).toHaveBeenCalledWith("app_xyz789", {
+          name: "my-app.vercel.app",
+        });
+        expect(stripAnsi(captured.err)).toContain("https://my-app.vercel.app/__clerk");
+      });
+
+      test("leaves ordinary domains on the CNAME path", async () => {
+        await linkedProject();
+        mockHumanFlow();
+
+        await runDeployUntilPause();
+        const err = stripAnsi(captured.err);
+
+        expect(mockUpdateApplicationDomain).not.toHaveBeenCalled();
+        expect(err).toContain("Add the following records at your DNS provider");
+        expect(err).not.toContain("Configure the Clerk proxy");
+      });
     });
 
     test("creates production instance without a separate clone-validation preflight", async () => {
@@ -918,12 +1067,10 @@ describe("deploy", () => {
       expect(firstInputArg.validate("example..com")).toContain("Enter a valid domain");
       expect(firstInputArg.validate("example-.com")).toContain("Enter a valid domain");
       expect(firstInputArg.validate("-example.com")).toContain("Enter a valid domain");
-      expect(firstInputArg.validate("demo.vercel.app")).toContain(
-        "Production needs a domain you own",
-      );
-      expect(firstInputArg.validate("demo.clerk.app")).toContain(
-        "Production needs a domain you own",
-      );
+      // Domain policy itself is covered in prompts.test.ts; this only asserts
+      // the prompt is wired to that validator.
+      expect(firstInputArg.validate("demo.netlify.app")).toContain("shared hosting domain");
+      expect(firstInputArg.validate("demo.vercel.app")).toBe(true);
       expect(mockSelect).not.toHaveBeenCalledWith(
         expect.objectContaining({
           message: "How would you like to set up your production domain?",

@@ -1,5 +1,6 @@
 import { bold, cyan, dim } from "../../lib/color.ts";
-import { resolveAppContext, resolveInstanceId, resolveProfile } from "../../lib/config.ts";
+import { resolveAppContext } from "../../lib/app-context.ts";
+import { resolveInstanceId, resolveProfile } from "../../lib/config.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { keylessCopy } from "../../lib/copy.ts";

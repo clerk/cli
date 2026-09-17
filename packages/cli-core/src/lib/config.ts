@@ -308,19 +308,32 @@ export async function resolveProfile(cwd: string): Promise<
   return undefined;
 }
 
-const INSTANCE_ALIASES: Record<string, "development" | "production"> = {
+export const INSTANCE_ALIASES = {
   dev: "development",
   development: "development",
   prod: "production",
   production: "production",
-};
+} satisfies Record<string, "development" | "production">;
+
+export type InstanceAlias = keyof typeof INSTANCE_ALIASES;
+
+/**
+ * Narrow arbitrary user input (an `--instance` value) to the environment a
+ * known alias refers to, or undefined for anything else — a literal instance
+ * ID, a typo.
+ */
+export function instanceAliasEnv(flag: string): "development" | "production" | undefined {
+  return Object.hasOwn(INSTANCE_ALIASES, flag)
+    ? INSTANCE_ALIASES[flag as InstanceAlias]
+    : undefined;
+}
 
 export function resolveInstanceId(profile: Profile, flag?: string): { id: string; label: string } {
   if (!flag) {
     return { id: profile.instances.development, label: "development" };
   }
 
-  const env = INSTANCE_ALIASES[flag];
+  const env = instanceAliasEnv(flag);
   if (!env) return { id: flag, label: flag }; // literal instance ID
 
   const id = profile.instances[env];
@@ -333,12 +346,6 @@ export function resolveInstanceId(profile: Profile, flag?: string): { id: string
   return { id, label: env };
 }
 
-interface AppContextOptions {
-  app?: string;
-  instance?: string;
-  cwd?: string;
-}
-
 export function resolveFetchedApplicationInstance(
   appId: string,
   app: Application,
@@ -347,7 +354,7 @@ export function resolveFetchedApplicationInstance(
   | { found: true; instance: ApplicationInstance; instanceId: string; instanceLabel: string }
   | { found: false; instanceId: string; instanceLabel: string } {
   if (instance) {
-    const env = INSTANCE_ALIASES[instance];
+    const env = instanceAliasEnv(instance);
     if (env) {
       const matched = app.instances.find((entry) => entry.environment_type === env);
       if (!matched) {
@@ -397,54 +404,4 @@ export function resolveFetchedApplicationInstance(
   };
 }
 
-/**
- * Resolve app context from explicit flags or linked profile.
- * This is the isomorphic resolution chain used by profile-dependent commands:
- *   1. Explicit --app flag (works from any directory)
- *   2. resolveProfile(cwd) (project-aware, existing behavior)
- *   3. Error with helpful message
- */
-export async function resolveAppContext(
-  options: AppContextOptions,
-): Promise<{ appId: string; appLabel: string; instanceId: string; instanceLabel: string }> {
-  if (options.app) {
-    const { fetchApplication } = await import("./plapi.ts");
-    const app = await fetchApplication(options.app);
-    const appLabel = app.name || options.app;
-    const resolved = resolveFetchedApplicationInstance(options.app, app, options.instance);
-    if (!resolved.found) {
-      throw new CliError(
-        `Instance ${resolved.instanceId} not found in application ${options.app}.`,
-        { code: ERROR_CODE.INSTANCE_NOT_FOUND },
-      );
-    }
-
-    return {
-      appId: options.app,
-      appLabel,
-      instanceId: resolved.instanceId,
-      instanceLabel: resolved.instanceLabel,
-    };
-  }
-
-  const resolved = await resolveProfile(options.cwd ?? process.cwd());
-  if (!resolved) {
-    throw new CliError(
-      "No Clerk project linked to this directory.\n" +
-        "Either:\n" +
-        "  - Run `clerk link` from your project directory\n" +
-        "  - Pass --app <app_id> to target an app directly",
-      { code: ERROR_CODE.NOT_LINKED },
-    );
-  }
-
-  const instance = resolveInstanceId(resolved.profile, options.instance);
-  return {
-    appId: resolved.profile.appId,
-    appLabel: resolved.profile.appName || resolved.profile.appId,
-    instanceId: instance.id,
-    instanceLabel: instance.label,
-  };
-}
-
-export type { Auth, Profile, ClerkConfig, AppContextOptions };
+export type { Auth, Profile, ClerkConfig };

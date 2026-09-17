@@ -15,6 +15,9 @@ export type DeployOperationState = {
   oauthProviders: string[];
   completedOAuthProviders: string[];
   cnameTargets?: readonly CnameTarget[];
+  /** Set for domains Clerk serves through a proxy instead of CNAME records. */
+  proxyUrl?: string;
+  isProviderDomain?: boolean;
 };
 
 export type DeployContext = {

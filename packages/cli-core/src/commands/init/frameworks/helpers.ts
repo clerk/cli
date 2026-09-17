@@ -254,8 +254,12 @@ function nextjsMiddlewareHandler(returnStatement = ""): string {
 function nextjsMiddlewareConfig(): string {
   return `export const config = {
   matcher: [
+    // Skip Next.js internals and all static files, unless found in search params
     "/((?!_next|[^?]*\\\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    // Always run for API routes
     "/(api|trpc)(.*)",
+    // Always run for Clerk-specific frontend API routes
+    "/__clerk/(.*)",
   ],
 };`;
 }
@@ -290,7 +294,22 @@ ${content}
  * Compose Clerk middleware with existing non-Clerk middleware.
  * Renames the existing default export and wraps it inside clerkMiddleware.
  */
+/**
+ * Whether an `export { … }` clause supplies this module's default export —
+ * `export { default }` or `export { handler as default }`, but not
+ * `export { default as logger }`, which re-exports someone else's default by name.
+ */
+function reExportsDefault(existing: string): boolean {
+  return [...existing.matchAll(/export\s*\{([^}]*)\}/g)].some((clause) =>
+    clause[1]!.split(",").some((specifier) => /(?:^|\bas\s+)default$/.test(specifier.trim())),
+  );
+}
+
 function renameDefaultMiddlewareExport(existing: string): string | null {
+  // A class can be renamed but not called, so wrapping it compiles and then throws
+  // "class constructor cannot be invoked without new" on every matched request.
+  if (/export\s+default\s+(?:abstract\s+)?class\b/.test(existing)) return null;
+
   const functionExportPattern = /export\s+default\s+(?:async\s+)?function(?:\s+\w+)?/;
   if (functionExportPattern.test(existing)) {
     return existing.replace(functionExportPattern, "async function middleware");
@@ -315,28 +334,120 @@ function renameDefaultMiddlewareExport(existing: string): string | null {
 }
 
 function hasMiddlewareConfigExport(existing: string): boolean {
-  return /export\s+const\s+config\s*=/.test(existing);
+  return /export\s+const\s+config\b[^=]*=/.test(existing);
+}
+
+/**
+ * Index just past the literal opening at `start`, tracking nesting and skipping
+ * quoted text and comments so braces inside matcher strings or comments don't
+ * end the scan early.
+ */
+function endOfLiteral(source: string, start: number): number {
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let i = start; i < source.length; i++) {
+    const char = source[i];
+
+    if (quote) {
+      if (char === "\\") i++;
+      else if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === "/" && source[i + 1] === "/") {
+      const lineEnd = source.indexOf("\n", i);
+      if (lineEnd === -1) break;
+      i = lineEnd;
+      continue;
+    }
+    if (char === "/" && source[i + 1] === "*") {
+      const blockEnd = source.indexOf("*/", i + 2);
+      if (blockEnd === -1) break;
+      i = blockEnd + 1;
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === "`") quote = char;
+    else if (char === "{" || char === "[") depth++;
+    else if (char === "}" || char === "]") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+
+  return source.length;
+}
+
+/**
+ * Remove an `export const config = ...` declaration wherever it sits in the file.
+ * Clerk's matcher replaces it — keeping the original would leave two config exports
+ * in one module, and a narrower matcher would stop Clerk's own routes (including the
+ * `/__clerk` proxy) from running. Only the declaration is removed: everything after
+ * it is user code, and a config export placed above the handler must not take the
+ * handler with it.
+ */
+function stripMiddlewareConfigExport(existing: string): string {
+  const declaration = /export\s+const\s+config\b[^=]*=\s*/.exec(existing);
+  if (!declaration) return existing;
+
+  const valueStart = declaration.index + declaration[0].length;
+  const opener = existing[valueStart];
+  let end: number;
+  if (opener === "{" || opener === "[") {
+    end = endOfLiteral(existing, valueStart);
+  } else {
+    const terminator = existing.slice(valueStart).search(/[;\n]/);
+    end = terminator === -1 ? existing.length : valueStart + terminator + 1;
+  }
+
+  const before = existing.slice(0, declaration.index).trimEnd();
+  const after = existing
+    .slice(end)
+    .replace(/^\s*;?\s*/, "")
+    .trimEnd();
+
+  return after ? `${before}\n\n${after}\n` : `${before}\n`;
+}
+
+/**
+ * The composers are regex surgery, not parsers, so an input shape they don't
+ * anticipate (a config export whose value is a call expression, one followed
+ * by `satisfies`, …) can produce output that no longer parses. Rejecting
+ * unparseable output downgrades every such case to the safe "unsupported
+ * shape" skip instead of silently writing a broken middleware file.
+ */
+function composedOrNull(source: string): string | null {
+  try {
+    new Bun.Transpiler({ loader: "tsx" }).transformSync(source);
+    return source;
+  } catch {
+    return null;
+  }
 }
 
 export function composeWithExistingMiddleware(existing: string): string | null {
   const clerkImport = `import { clerkMiddleware } from "@clerk/nextjs/server";\n`;
   const preamble = clerkImport + "\n";
+  const stripped = stripMiddlewareConfigExport(existing);
 
-  if (hasMiddlewareConfigExport(existing)) {
-    return null;
+  // Appending our own default export alongside a re-exported one is invalid ESM —
+  // the module would have two defaults and fail to parse.
+  if (reExportsDefault(stripped)) return null;
+
+  if (!/export\s+default\s+/.test(stripped)) {
+    return composedOrNull(
+      `${preamble}${stripped}\n${nextjsMiddlewareHandler()}\n\n${nextjsMiddlewareConfig()}\n`,
+    );
   }
 
-  if (!/export\s+default\s+/.test(existing)) {
-    return `${preamble}${existing}\n${nextjsMiddlewareHandler()}\n\n${nextjsMiddlewareConfig()}\n`;
-  }
-
-  const content = renameDefaultMiddlewareExport(existing);
+  const content = renameDefaultMiddlewareExport(stripped);
   if (!content) return null;
 
-  return (
+  return composedOrNull(
     preamble +
-    content +
-    `\n${nextjsMiddlewareHandler("middleware(request)")}\n\n${nextjsMiddlewareConfig()}\n`
+      content +
+      `\n${nextjsMiddlewareHandler("middleware(request)")}\n\n${nextjsMiddlewareConfig()}\n`,
   );
 }
 
@@ -365,8 +476,7 @@ export function composeWithI18nMiddleware(existing: string): string | null {
 
   const clerkImport = `import { clerkMiddleware } from "@clerk/nextjs/server";\n`;
 
-  // Strip existing config export (Clerk's matcher replaces it)
-  let content = existing.replace(/\n*export\s+const\s+config\s*=[\s\S]*$/, "");
+  let content = stripMiddlewareConfigExport(existing);
 
   // Rename `export default <expression>` to `const <varName> = <expression>`
   content = content.replace(/export\s+default\s+/, `const ${lib.varName} = `);
@@ -374,10 +484,10 @@ export function composeWithI18nMiddleware(existing: string): string | null {
   // Verify the rename succeeded — if export default is still present, bail
   if (/export\s+default\s+/.test(content)) return null;
 
-  return (
+  return composedOrNull(
     clerkImport +
-    content +
-    `\n\n${nextjsMiddlewareHandler(`${lib.varName}(request)`)}\n\n${nextjsMiddlewareConfig()}\n`
+      content +
+      `\n\n${nextjsMiddlewareHandler(`${lib.varName}(request)`)}\n\n${nextjsMiddlewareConfig()}\n`,
   );
 }
 
@@ -462,16 +572,10 @@ export async function scaffoldNextjsMiddleware(ctx: {
     };
   }
 
-  // For i18n middleware with function exports (user already composed their own middleware),
-  // strip the config export first — Clerk's matcher replaces it — then use the general composer.
+  // Fall through to general-purpose composition, which replaces any existing
+  // config export with Clerk's matcher.
   const isI18nMiddleware = detectI18nMiddlewareImport(content) !== null;
-  const contentForComposition =
-    isI18nMiddleware && hasMiddlewareConfigExport(content)
-      ? content.replace(/\n*export\s+const\s+config\s*=[\s\S]*$/, "")
-      : content;
-
-  // Fall through to general-purpose composition
-  const composedContent = composeWithExistingMiddleware(contentForComposition);
+  const composedContent = composeWithExistingMiddleware(content);
   if (!composedContent) {
     return {
       type: "skip",
@@ -480,13 +584,15 @@ export async function scaffoldNextjsMiddleware(ctx: {
     };
   }
 
+  const target = isI18nMiddleware ? "wrapping existing i18n middleware" : "to existing middleware";
+  // Surfaced in the plan so the user sees their matcher is going away before confirming
+  const matcherNote = hasMiddlewareConfigExport(content) ? ", replacing its matcher" : "";
+
   return {
     path,
     type: "modify",
     content: composedContent,
-    description: isI18nMiddleware
-      ? "Add clerkMiddleware wrapping existing i18n middleware"
-      : "Add clerkMiddleware to existing middleware",
+    description: `Add clerkMiddleware ${target}${matcherNote}`,
   };
 }
 

@@ -54,6 +54,9 @@ mock.module("../../lib/config.ts", () => ({
     if (!id) throw new Error(`No ${env} instance configured. Run \`clerk link\` to set one up.`);
     return { id, label: env };
   },
+}));
+
+mock.module("../../lib/app-context.ts", () => ({
   resolveAppContext: async (options: { app?: string; instance?: string; cwd?: string }) => {
     if (options.app) {
       const app = {

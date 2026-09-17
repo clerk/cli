@@ -276,29 +276,6 @@ export default middleware;
   }
 });
 
-test("skips middleware composition when config export already exists", async () => {
-  await Bun.write(
-    join(tempDir, "middleware.ts"),
-    `export default function middleware() {
-  return Response.redirect("https://example.com");
-}
-
-export const config = {
-  matcher: ["/foo"],
-};
-`,
-  );
-  await mkdir(join(tempDir, "app"), { recursive: true });
-  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
-
-  const plan = await nextjsApp.scaffold(makeCtx());
-
-  expect(findAction(plan.actions, "middleware.ts")).toMatchObject({
-    type: "skip",
-    skipReason: "Existing middleware uses an unsupported shape for automatic Clerk composition",
-  });
-});
-
 test("adds Clerk middleware once when existing middleware has no default export", async () => {
   await Bun.write(
     join(tempDir, "middleware.ts"),
@@ -495,6 +472,332 @@ export const config = {
   expect(mw.content).not.toContain("createRouteMatcher");
   // Should strip the old config and use Clerk's
   expect(mw.content).not.toContain("socket\\.io");
+});
+
+// The generated matcher must route Clerk's frontend API proxy paths (`/__clerk/*`)
+// through clerkMiddleware. The first matcher entry excludes anything that looks like
+// a static file, so proxy paths such as `/__clerk/v1/client.json` need this entry.
+const CLERK_PROXY_MATCHER = '"/__clerk/(.*)"';
+
+test("generated middleware matches Clerk frontend API proxy routes", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  if (mw.type !== "create") throw new Error("Expected create action");
+  expect(mw.content).toContain(CLERK_PROXY_MATCHER);
+});
+
+test("proxy.ts for Next.js 16+ matches Clerk frontend API proxy routes", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx({ middlewareBasename: "proxy" }));
+  const mw = findAction(plan.actions, "proxy.ts");
+
+  if (mw.type !== "create") throw new Error("Expected create action");
+  expect(mw.content).toContain(CLERK_PROXY_MATCHER);
+});
+
+test("i18n-composed middleware matches Clerk frontend API proxy routes", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx({ deps: { "next-intl": "4.0.0" } }));
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  if (mw.type !== "create") throw new Error("Expected create action");
+  expect(mw.content).toContain(CLERK_PROXY_MATCHER);
+});
+
+test("replacing an existing matcher keeps the Clerk frontend API proxy routes", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `import createMiddleware from "next-intl/middleware";
+import { routing } from "./i18n/routing";
+
+export default createMiddleware(routing);
+
+export const config = {
+  matcher: ["/((?!api|_next).*)"],
+};
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  if (mw.type !== "modify") throw new Error("Expected modify action");
+  expect(mw.content).not.toContain('matcher: ["/((?!api|_next).*)"]');
+  expect(mw.content).toContain(CLERK_PROXY_MATCHER);
+});
+
+test("composes into existing middleware that declares its own matcher", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `import { NextResponse } from "next/server";
+
+export default function middleware() {
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: ["/dashboard/:path*", "/admin/:path*"],
+};
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  // Previously skipped outright, leaving the project with no Clerk middleware at all
+  expect(mw.type).toBe("modify");
+  if (mw.type !== "modify") throw new Error("Expected modify action");
+  expect(mw.content).toContain("clerkMiddleware");
+  expect(mw.content).toContain(CLERK_PROXY_MATCHER);
+  // The user's own handler is preserved, only their matcher is replaced
+  expect(mw.content).toContain("NextResponse.next()");
+  expect(mw.content).not.toContain('"/dashboard/:path*"');
+  expect(mw.description).toContain("replacing");
+});
+
+// The config strip is regex surgery: shapes it can't cut cleanly (a call
+// expression spanning lines, a literal followed by `satisfies`) must degrade
+// to a skip rather than a silent write of a middleware file that no longer
+// parses.
+test("skips when the config export's value is a call expression", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `async function middleware(req) { return; }
+
+export const config = buildConfig({
+  matcher: ["/foo"],
+});
+
+export default middleware;
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  expect(mw.type).toBe("skip");
+});
+
+test("skips when the config export uses a satisfies clause", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `export default async function middleware(req) {}
+
+export const config = { matcher: ["/x"] } satisfies MiddlewareConfig;
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  expect(mw.type).toBe("skip");
+});
+
+test("strips a config export containing a closing brace inside a comment", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `import { NextResponse } from "next/server";
+
+export default function middleware() {
+  return NextResponse.next();
+}
+
+export const config = {
+  // closing } brace in comment
+  matcher: ["/x"],
+};
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  if (mw.type !== "modify") throw new Error("Expected modify action");
+  expect(mw.content).toContain(CLERK_PROXY_MATCHER);
+  expect(mw.content).not.toContain("brace in comment");
+  // The composed file must parse — the strip must not orphan config remnants
+  new Bun.Transpiler({ loader: "tsx" }).transformSync(mw.content);
+});
+
+test("preserves user logic when the config export precedes the default export", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `import { NextResponse } from "next/server";
+
+export const config = {
+  matcher: ["/dashboard/:path*"],
+};
+
+export default function middleware(req) {
+  if (req.nextUrl.pathname === "/blocked") return new NextResponse("BLOCKED", { status: 403 });
+  return NextResponse.next();
+}
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  if (mw.type !== "modify") throw new Error("Expected modify action");
+  // Stripping the config must not swallow everything after it
+  expect(mw.content).toContain("BLOCKED");
+  expect(mw.content).toContain("middleware(request)");
+  expect(mw.content).not.toContain('"/dashboard/:path*"');
+  expect(mw.content.match(/export const config/g)?.length).toBe(1);
+});
+
+test("strips a config export that carries a type annotation", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `import type { MiddlewareConfig } from "next/server";
+
+export default function middleware() {
+  return "USER_LOGIC";
+}
+
+export const config: MiddlewareConfig = {
+  matcher: ["/dashboard/:path*"],
+};
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  if (mw.type !== "modify") throw new Error("Expected modify action");
+  expect(mw.content).toContain("USER_LOGIC");
+  expect(mw.content).not.toContain('"/dashboard/:path*"');
+  expect(mw.content.match(/export const config/g)?.length).toBe(1);
+});
+
+const UNSUPPORTED_SHAPES = [
+  [
+    "re-exported default",
+    `export { default } from "./custom-middleware";
+
+export const config = {
+  matcher: ["/api/:path*"],
+};
+`,
+  ],
+  [
+    "renamed re-exported default",
+    `export { handler as default } from "./custom-middleware";
+
+export const config = {
+  matcher: ["/api/:path*"],
+};
+`,
+  ],
+  [
+    "class default export",
+    `export default class ApiGuard {
+  async handle(request: Request) {
+    return new Response("ok");
+  }
+}
+
+export const config = {
+  matcher: ["/api/:path*"],
+};
+`,
+  ],
+];
+
+// Composing these would emit a module with two default exports, or wrap something
+// that isn't callable. Leaving the file untouched beats writing code that can't run.
+test.each(UNSUPPORTED_SHAPES)("skips composition for %s", async (_name, middleware) => {
+  await Bun.write(join(tempDir, "middleware.ts"), middleware as string);
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+
+  expect(findAction(plan.actions, "middleware.ts")).toMatchObject({
+    type: "skip",
+    skipReason: "Existing middleware uses an unsupported shape for automatic Clerk composition",
+  });
+});
+
+test("still composes when `default` only appears as a re-export source name", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `export { default as logger } from "./logger";
+
+export default function middleware() {
+  return "USER_LOGIC";
+}
+
+export const config = {
+  matcher: ["/api/:path*"],
+};
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  if (mw.type !== "modify") throw new Error("Expected modify action");
+  expect(mw.content).toContain("USER_LOGIC");
+  expect(mw.content).toContain(CLERK_PROXY_MATCHER);
+});
+
+test("does not duplicate the config export when replacing an existing matcher", async () => {
+  await Bun.write(
+    join(tempDir, "middleware.ts"),
+    `export default function middleware() {}
+
+export const config = {
+  matcher: ["/dashboard/:path*"],
+};
+`,
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  if (mw.type !== "modify") throw new Error("Expected modify action");
+  expect(mw.content.match(/export const config/g)?.length).toBe(1);
+  expect(mw.content.match(/export default clerkMiddleware/g)?.length).toBe(1);
+});
+
+test("generated matcher escapes the static-file pattern for the emitted file", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const mw = findAction(plan.actions, "middleware.ts");
+
+  if (mw.type !== "create") throw new Error("Expected create action");
+  // The emitted file carries `\\.` inside a string literal so the matcher Next.js
+  // compiles sees a literal `\.` — losing one level here would break the regex.
+  expect(mw.content).toContain(String.raw`[^?]*\\.(?:html?|css|js(?!on)`);
 });
 
 test("falls back to general composer when i18n middleware already defines the varName", async () => {

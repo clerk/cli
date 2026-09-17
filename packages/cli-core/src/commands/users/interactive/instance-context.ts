@@ -1,9 +1,6 @@
 import { fetchAppsTolerantly, pickOrCreateApp } from "../../../lib/app-picker.ts";
-import {
-  resolveAppContext,
-  resolveFetchedApplicationInstance,
-  resolveProfile,
-} from "../../../lib/config.ts";
+import { resolveAppContext } from "../../../lib/app-context.ts";
+import { resolveFetchedApplicationInstance, resolveProfile } from "../../../lib/config.ts";
 import {
   BapiError,
   CliError,

@@ -66,7 +66,7 @@ describe("Recover from errors gracefully", () => {
   });
 
   test.each([{ mode: "human" }, { mode: "agent" }])(
-    "profile has only dev instance -> prod pull fails ($mode mode)",
+    "application has no prod instance -> prod pull points at `clerk deploy` ($mode mode)",
     async ({ mode }) => {
       const devInstance = getInstance(MOCK_APP_DEV_ONLY, "development");
 
@@ -74,6 +74,9 @@ describe("Recover from errors gracefully", () => {
         workspaceId: "",
         appId: MOCK_APP_DEV_ONLY.application_id,
         instances: { development: devInstance.instance_id },
+      });
+      http.mock({
+        [`/applications/${MOCK_APP_DEV_ONLY.application_id}`]: MOCK_APP_DEV_ONLY,
       });
 
       const { stderr, exitCode } = await clerk.raw(
@@ -85,7 +88,44 @@ describe("Recover from errors gracefully", () => {
         "prod",
       );
       expect(exitCode).toBe(1);
-      expect(stderr).toContain("No production instance configured");
+      expect(stderr).toContain("has no production instance yet");
+      expect(stderr).toContain("clerk deploy");
     },
   );
+
+  test("link predates the prod instance -> agent mode points at `clerk link --refresh`", async () => {
+    await setProfile("github.com/test/project", {
+      workspaceId: "",
+      appId: MOCK_APP.application_id,
+      instances: { development: getInstance(MOCK_APP, "development").instance_id },
+    });
+    http.mock({ [`/applications/${MOCK_APP.application_id}`]: MOCK_APP });
+
+    const { stderr, exitCode } = await clerk.raw(
+      "--mode",
+      "agent",
+      "env",
+      "pull",
+      "--instance",
+      "prod",
+    );
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("clerk link --refresh");
+  });
+
+  test("`clerk link --refresh` picks up a prod instance created after linking", async () => {
+    await setProfile("github.com/test/project", {
+      workspaceId: "",
+      appId: MOCK_APP.application_id,
+      instances: { development: getInstance(MOCK_APP, "development").instance_id },
+    });
+    http.mock({ [`/applications/${MOCK_APP.application_id}`]: MOCK_APP });
+
+    await clerk("--mode", "agent", "link", "--refresh");
+
+    const prodInstance = getInstance(MOCK_APP, "production");
+    await clerk("--mode", "agent", "env", "pull", "--instance", "prod");
+    const env = parseEnvFile(await Bun.file(join(h.tempDir, ".env.local")).text(), ".env.local");
+    expect(env.get("CLERK_SECRET_KEY")).toBe(prodInstance.secret_key);
+  });
 });
