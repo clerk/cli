@@ -491,7 +491,12 @@ describe("dnsDashboardHandoff", () => {
     // "wizard" appears nowhere else the user can see, so it isn't introduced here.
     expect(output).not.toContain("wizard");
     expect(output).toContain(
-      "Next you'll set up OAuth, then this command checks that these records have taken effect.",
+      "Next you'll set up OAuth, then this command checks that these records have taken effect at your DNS provider.",
+    );
+    // A failed check is not a dead end: "Check again" is the other choice on
+    // the prompt that follows, and the sentence names it.
+    expect(output).toContain(
+      "you can either wait a few minutes and check again, or skip the check",
     );
     expect(output).toContain("run `clerk deploy` again later to finish");
     // "skip and finish" read as though skipping completed the deploy.
@@ -503,7 +508,9 @@ describe("dnsDashboardHandoff", () => {
     // Under a checklist showing OAuth done, "you'll set up OAuth" was wrong.
     const output = dnsDashboardHandoff("example.com", DOMAINS_URL, { oauthNext: false }).join("\n");
 
-    expect(output).toContain("Next, this command checks that these records have taken effect.");
+    expect(output).toContain(
+      "Next, this command checks that these records have taken effect at your DNS provider.",
+    );
     expect(output).not.toContain("set up OAuth");
     expect(output).toContain("run `clerk deploy` again later to finish");
   });

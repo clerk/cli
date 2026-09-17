@@ -217,9 +217,11 @@ export function dnsDashboardHandoff(
     `Monitor DNS propagation and SSL issuance for ${domain} on the Domains page in the Clerk Dashboard${domainsUrl ? ":" : "."}`,
     ...(domainsUrl ? [`  ${domainsUrl}`] : []),
     "",
-    // "checks that these records have taken effect": what the check is for.
-    // "checks these records" said nothing about what it looks for.
-    `${options.oauthNext ? "Next you'll set up OAuth, then this command checks that these records have taken effect." : "Next, this command checks that these records have taken effect."} If they haven't yet, you can skip the check and run \`clerk deploy\` again later to finish.`,
+    // "at your DNS provider" matches the records block's own heading, and "at"
+    // rather than "with": the check looks the records up, it doesn't contact
+    // the provider. Naming both options matters because a failed check isn't a
+    // dead end — "Check again" is the other choice on the prompt that follows.
+    `${options.oauthNext ? "Next you'll set up OAuth, then this command checks that these records have taken effect at your DNS provider." : "Next, this command checks that these records have taken effect at your DNS provider."} If they haven't yet, you can either wait a few minutes and check again, or skip the check and run \`clerk deploy\` again later to finish.`,
   ];
 }
 
