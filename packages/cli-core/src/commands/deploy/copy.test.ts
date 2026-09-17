@@ -468,6 +468,20 @@ describe("dnsRecords", () => {
     expect(output).not.toMatch(/Email \(DKIM\).*Clerk handles/);
   });
 
+  test("omits the SPF/DKIM sentence when no email record is listed", () => {
+    // On resume with email DNS already verified, only the Frontend API
+    // record is outstanding; a sentence about "the email records" under a
+    // list with none reads as if rows are missing.
+    const output = dnsRecords(
+      [{ host: "clerk.example.com", value: "frontend-api.clerk.services", required: true }],
+      { afterCheck: true },
+    ).join("\n");
+
+    expect(output).not.toContain("SPF or DKIM");
+    expect(output).toContain("Frontend API");
+    expect(output).toContain('set them to "DNS only"');
+  });
+
   test("labels the mail host and both DKIM hosts the same way the confirmation screen does", () => {
     // One label set across screens: a host named two ways reads as two records.
     const records = dnsRecords([

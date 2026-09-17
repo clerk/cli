@@ -550,6 +550,48 @@ describe("deploy status", () => {
     expect(output).not.toMatch(/Frontend API \(optional\)/);
   });
 
+  test("human mode omits the email note when only non-email records are pending", async () => {
+    setMode("human");
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockListApplicationDomains.mockResolvedValue({
+      data: [
+        {
+          object: "domain",
+          id: "dmn_1",
+          name: "example.com",
+          is_satellite: false,
+          is_provider_domain: false,
+          frontend_api_url: "https://clerk.example.com",
+          accounts_portal_url: "https://accounts.example.com",
+          development_origin: "",
+          cname_targets: [
+            { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+            { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
+          ],
+        },
+      ],
+      total_count: 1,
+    });
+    mockOAuthComplete();
+    // Email DNS verified, Frontend API not: the filtered list has no email
+    // row, so a sentence about "the email records" would point at nothing.
+    const dnsOnly = {
+      status: "incomplete",
+      dns: { status: "not_started" },
+      ssl: { status: "complete", required: true },
+      mail: { status: "complete", required: true },
+    };
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(dnsOnly);
+    mockGetApplicationDomainStatus.mockResolvedValue(dnsOnly);
+
+    await deployStatus();
+
+    const output = stripAnsi(captured.err);
+    expect(output).toContain("Host:  clerk.example.com");
+    expect(output).not.toContain("Host:  clkmail.example.com");
+    expect(output).not.toContain("SPF or DKIM");
+  });
+
   test("agent report carries each pending record's required flag", async () => {
     mockFetchApplication.mockResolvedValue(appWith(true));
     mockDomain();

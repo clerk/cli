@@ -138,12 +138,17 @@ export function dnsRecords(
       `    Value: ${target.value}`,
     );
   }
-  lines.push(
-    "",
+  if (targets.some(isMailCnameTarget)) {
     // These are CNAMEs pointing at Clerk, so the user never generates or
     // rotates key material and never hand-writes an SPF record. Said once
-    // here rather than on each email row.
-    "The email records point at Clerk, so you don't need to create SPF or DKIM values yourself.",
+    // here rather than on each email row, and only when an email row is on
+    // screen: a resume where email DNS is already verified lists none.
+    lines.push(
+      "",
+      "The email records point at Clerk, so you don't need to create SPF or DKIM values yourself.",
+    );
+  }
+  lines.push(
     "",
     `${yellow("NOTE")}  If your DNS host proxies these records, set them to "DNS only" or verification will fail.`,
   );
