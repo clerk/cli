@@ -1,4 +1,10 @@
-import { throwUsageError, throwUserAbort } from "../../lib/errors.ts";
+import {
+  CliError,
+  ERROR_CODE,
+  PlapiError,
+  throwUsageError,
+  throwUserAbort,
+} from "../../lib/errors.ts";
 import type { Example } from "../../lib/help.ts";
 import { log } from "../../lib/log.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
@@ -7,7 +13,13 @@ import { withGutter } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
 import { CHECKS, CHECK_IDS, findCheck } from "./catalog.ts";
-import { evaluate, fixCommandFor, fixCommandWithDecision, fixableIds } from "./evaluate.ts";
+import {
+  evaluate,
+  fixCommandFor,
+  fixCommandWithDecision,
+  fixableIds,
+  targetFlags,
+} from "./evaluate.ts";
 import { formatScoreTransition } from "./format.ts";
 import { loadAudit } from "./load.ts";
 import { deepMerge, projectPatches } from "./merge.ts";
@@ -214,6 +226,48 @@ function afterDocument(
   return Object.keys(sections).length ? deepMerge(before, sections) : projected;
 }
 
+// Production rejects plan-gated fields with a 402; name the checks and offer the rest.
+function translatePlanError(
+  error: unknown,
+  checks: CheckDef[],
+  decisions: Record<string, string[]>,
+  ref: InstanceRef,
+): unknown {
+  if (
+    !(error instanceof PlapiError) ||
+    error.status !== 402 ||
+    error.code !== "unsupported_subscription_plan_features"
+  ) {
+    return error;
+  }
+  const raw = error.meta?.unsupported_features;
+  const unsupported = Array.isArray(raw) ? raw.map(String) : [];
+  const gated = checks.filter((c) => c.features?.some((f) => unsupported.includes(f)));
+  const rest = checks.filter((c) => !gated.includes(c)).map((c) => c.id);
+  const subject = gated.length ? gated.map((c) => c.id).join(", ") : "This change";
+  const flags = [
+    rest.includes("mfa") && decisions.mfa ? ` --factors ${decisions.mfa.join(",")}` : "",
+    rest.includes("passwordless-auth") && decisions["passwordless-auth"]
+      ? ` --strategy ${decisions["passwordless-auth"][0]}`
+      : "",
+  ].join("");
+  return new CliError(
+    `${subject} need${gated.length === 1 ? "s" : ""} a plan that includes ${unsupported.join(", ")}.`,
+    {
+      code: ERROR_CODE.PLAN_INSUFFICIENT,
+      docsUrl: "https://clerk.com/pricing",
+      examples: rest.length
+        ? [
+            {
+              command: `clerk security fix ${rest.join(" ")}${flags}${targetFlags(ref)}${isAgent() ? " --yes" : ""}`,
+              description: "Apply the rest without the plan-gated checks",
+            },
+          ]
+        : undefined,
+    },
+  );
+}
+
 export async function securityFix(ids: string[] = [], options: FixOptions = {}): Promise<void> {
   const selected = [...new Set([...ids, ...(options.check ?? [])])];
   const all = Boolean(options.all);
@@ -296,19 +350,24 @@ export async function securityFix(ids: string[] = [], options: FixOptions = {}):
     const applied = resolved.map((c) => c.id);
     const { payload, projected } = projectPatches(input, resolved);
     let written: InstanceConfig | undefined;
-    const changed = await applyConfigPatch({
-      target,
-      payload,
-      verb: `Applying ${applied.length === 1 ? "1 security fix" : `${applied.length} security fixes`}`,
-      successMessage: `Applied: ${applied.join(", ")}`,
-      failureContext: "Failed to apply security fixes",
-      yes: options.yes,
-      dryRun,
-      currentConfig: input.config,
-      onWritten: (body) => {
-        written = body;
-      },
-    });
+    let changed: boolean;
+    try {
+      changed = await applyConfigPatch({
+        target,
+        payload,
+        verb: `Applying ${applied.length === 1 ? "1 security fix" : `${applied.length} security fixes`}`,
+        successMessage: `Applied: ${applied.join(", ")}`,
+        failureContext: "Failed to apply security fixes",
+        yes: options.yes,
+        dryRun,
+        currentConfig: input.config,
+        onWritten: (body) => {
+          written = body;
+        },
+      });
+    } catch (error) {
+      throw translatePlanError(error, resolved, summary.decisions, report.instance);
+    }
 
     if (changed) {
       const after = evaluate(

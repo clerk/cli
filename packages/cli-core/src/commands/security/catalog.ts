@@ -18,9 +18,9 @@ const DEFAULT_LIFETIME_SECONDS = 604800;
 const MIN_PASSWORD_LENGTH = 8;
 
 // Plan-gated in the Dashboard.
-const FEATURE_MFA = "app:mfa_totp";
-const FEATURE_PASSKEY = "app:passkey";
-const FEATURE_LIFETIME = "app:custom_session_duration";
+const FEATURES_MFA = ["app:mfa_totp", "app:mfa_phone_code", "app:mfa_backup_code"];
+const FEATURES_PASSKEY = ["app:passkey"];
+const FEATURES_LIFETIME = ["app:custom_session_duration"];
 
 const rec = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : {});
 
@@ -231,7 +231,7 @@ export const CHECKS: CheckDef[] = [
     path: "auth_multi_factor",
     dashboardPath: "user-authentication",
     docsUrl: DOCS_SIGN_IN_OPTIONS,
-    feature: FEATURE_MFA,
+    features: FEATURES_MFA,
     evaluate({ config }) {
       const met = mfaAvailable(config);
       return {
@@ -358,7 +358,7 @@ export const CHECKS: CheckDef[] = [
     severity: "recommended",
     dashboardPath: "user-authentication",
     docsUrl: DOCS_SIGN_IN_OPTIONS,
-    feature: FEATURE_PASSKEY,
+    features: FEATURES_PASSKEY,
     ...booleanCheck("auth_passkey.used_for_sign_in"),
     patch: () => ({ auth_passkey: { used_for_sign_in: true } }),
   },
@@ -443,7 +443,7 @@ export const CHECKS: CheckDef[] = [
     severity: "good-to-have",
     dashboardPath: "sessions",
     docsUrl: DOCS_SESSIONS,
-    feature: FEATURE_LIFETIME,
+    features: FEATURES_LIFETIME,
     ...booleanCheck("session_settings.maximum_lifetime.enabled"),
     patch: ({ config }) => {
       const current = num(config, "session_settings.maximum_lifetime.duration_seconds");
