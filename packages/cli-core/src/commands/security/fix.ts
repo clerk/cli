@@ -269,7 +269,7 @@ function translatePlanError(
 }
 
 export async function securityFix(ids: string[] = [], options: FixOptions = {}): Promise<void> {
-  const selected = [...new Set([...ids, ...(options.check ?? [])])];
+  const selected = [...new Set(ids)];
   const all = Boolean(options.all);
   const json = Boolean(options.json) || isAgent();
   const supplied = suppliedDecisions(options);
