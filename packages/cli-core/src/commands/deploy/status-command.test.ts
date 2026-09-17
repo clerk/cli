@@ -196,8 +196,118 @@ describe("deploy status", () => {
     await deployStatus();
 
     expect(captured.out).toBe("");
-    expect(stripAnsi(captured.err)).toContain("clerk deploy");
+    const output = stripAnsi(captured.err);
+    // The person reading this is the user, so the agent's "ask the user" is
+    // reworded, and OAuth was never checked so its row is not printed.
+    expect(output).toContain("No production instance yet.");
+    expect(output).toContain("Run `clerk deploy` to set it up.");
+    expect(output).not.toContain("ask the user");
+    expect(output).not.toContain("human terminal");
+    expect(output).not.toContain("OAuth");
   });
+
+  test("human mode domain_provisioning does not claim OAuth was checked or address an agent", async () => {
+    setMode("human");
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+
+    await deployStatus();
+
+    const output = stripAnsi(captured.err);
+    expect(output).toContain("its domain is still provisioning");
+    expect(output).toContain("or run `clerk deploy` to finish setup.");
+    expect(output).not.toContain("ask the user");
+    expect(output).not.toContain("OAuth");
+  });
+
+  test("human mode oauth_pending tells the person to finish the wizard, not to ask themselves", async () => {
+    setMode("human");
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    // Production config has the provider enabled but no credentials.
+    mockFetchInstanceConfig.mockImplementation(() => ({
+      connection_oauth_google: { enabled: true },
+    }));
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(completeDomainStatus());
+    mockGetApplicationDomainStatus.mockResolvedValue(completeDomainStatus());
+
+    await deployStatus();
+
+    const output = stripAnsi(captured.err);
+    expect(output).toContain("OAuth    pending: google");
+    expect(output).toContain(
+      "missing production credentials: google. Run `clerk deploy` to finish setup.",
+    );
+    expect(output).not.toContain("Ask the user");
+    // The domain is verified; nothing to monitor on the Domains page.
+    expect(output).not.toContain("domains page");
+  });
+
+  test("human mode records-missing says Clerk returned no list and how to resume", async () => {
+    setMode("human");
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockListApplicationDomains.mockResolvedValue({
+      data: [
+        {
+          object: "domain",
+          id: "dmn_1",
+          name: "example.com",
+          is_satellite: false,
+          is_provider_domain: false,
+          frontend_api_url: "https://clerk.example.com",
+          accounts_portal_url: "https://accounts.example.com",
+          development_origin: "",
+        },
+      ],
+      total_count: 1,
+    });
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+    mockGetApplicationDomainStatus.mockResolvedValue(pendingDnsDomainStatus());
+
+    await deployStatus();
+
+    const output = stripAnsi(captured.err);
+    expect(output).toContain(
+      "DNS records not found yet for example.com, but Clerk didn't return the list of records to add. Find them on the Domains page in the Clerk Dashboard, add them, then run `clerk deploy` again to resume.",
+    );
+    expect(output).not.toContain("this report");
+    expect(output).not.toContain("--wait");
+    expect(output).not.toContain("Add the following records");
+  });
+
+  test.each([
+    {
+      label: "finalizing",
+      domain: () => ({ ...completeDomainStatus(), status: "incomplete" }),
+      expected: "still finalizing on Clerk's side",
+    },
+    {
+      label: "complete",
+      domain: completeDomainStatus,
+      expected:
+        "Manage users, settings, and billing for this instance: https://dashboard.clerk.com/apps/app_1/instances/ins_prod",
+    },
+  ])(
+    "human mode $label prints no records block and no agent copy",
+    async ({ domain, expected }) => {
+      setMode("human");
+      mockFetchApplication.mockResolvedValue(appWith(true));
+      mockDomain();
+      mockOAuthComplete();
+      mockTriggerApplicationDomainDNSCheck.mockResolvedValue(domain());
+      mockGetApplicationDomainStatus.mockResolvedValue(domain());
+
+      await deployStatus();
+
+      const output = stripAnsi(captured.err);
+      expect(output).toContain(expected);
+      expect(output).not.toContain("Add the following records");
+      expect(output).not.toContain("Ask the user");
+      expect(output).not.toContain("--wait");
+    },
+  );
 
   test("agent mode domain pending reports pending DNS records and exit 1", async () => {
     mockFetchApplication.mockResolvedValue(appWith(true));
@@ -358,8 +468,11 @@ describe("deploy status", () => {
     );
     expect(output).toContain("Host:  clerk.example.com");
     expect(output).toContain("Value: frontend-api.clerk.services");
-    // The records block already says "add these"; the sentence says what's next.
-    expect(output).toContain("Once they're added, re-run `clerk deploy status --wait`");
+    // The records block already says "add these"; the sentence says what's
+    // next. Human mode already waits, so `--wait` is never suggested; the
+    // wizard is what resumes setup.
+    expect(output).toContain("Once they're added, run `clerk deploy` again to resume.");
+    expect(output).not.toContain("--wait");
     expect(output).not.toContain("Add the records above");
     expect(output).not.toContain("pendingDnsRecords");
     expect(output).not.toContain("Ask the user");
@@ -427,6 +540,45 @@ describe("deploy status", () => {
     ]);
   });
 
+  test("agent report passes an optional record through as required: false", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockListApplicationDomains.mockResolvedValue({
+      data: [
+        {
+          object: "domain",
+          id: "dmn_1",
+          name: "example.com",
+          is_satellite: false,
+          is_provider_domain: false,
+          frontend_api_url: "https://clerk.example.com",
+          accounts_portal_url: "https://accounts.example.com",
+          development_origin: "",
+          cname_targets: [
+            { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+            { host: "accounts.example.com", value: "accounts.clerk.services", required: false },
+          ],
+        },
+      ],
+      total_count: 1,
+    });
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+    mockGetApplicationDomainStatus.mockResolvedValue(pendingDnsDomainStatus());
+
+    await deployStatus();
+
+    const payload = JSON.parse(captured.out);
+    expect(
+      payload.pendingDnsRecords.map((r: { host: string; required: boolean }) => [
+        r.host,
+        r.required,
+      ]),
+    ).toEqual([
+      ["clerk.example.com", true],
+      ["accounts.example.com", false],
+    ]);
+  });
+
   test("human mode rewrites the agent clause for a plain-http Dashboard URL too", async () => {
     // Dashboard links follow CLERK_DASHBOARD_URL, which is http:// for a local
     // Dashboard; the human rewrite must not depend on https.
@@ -469,6 +621,8 @@ describe("deploy status", () => {
     );
     expect(output).not.toContain("Ask the user to visit");
     expect(output).not.toContain("offer to open it");
+    // No records are outstanding, so no records block.
+    expect(output).not.toContain("Add the following records");
   });
 });
 

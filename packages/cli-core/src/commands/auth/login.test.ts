@@ -557,6 +557,39 @@ describe("login", () => {
     );
   });
 
+  test("links to the development instance even when production is listed first", async () => {
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "claimed",
+      envPulled: true,
+      app: {
+        application_id: "app_claimed",
+        name: "bad-agent",
+        instances: [
+          {
+            instance_id: "ins_prod_claimed",
+            environment_type: "production",
+            publishable_key: "pk_live_claimed",
+          },
+          {
+            instance_id: "ins_dev_claimed",
+            environment_type: "development",
+            publishable_key: "pk_test_claimed",
+          },
+        ],
+      },
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "https://dashboard.clerk.com/apps/app_claimed/instances/ins_dev_claimed",
+    );
+    expect(captured.err).not.toContain("ins_prod_claimed");
+  });
+
   test("a claim response without instances still reports the claim and does not throw", async () => {
     // The Dashboard line is a nice-to-have; a missing array in API JSON must
     // not turn a claim that already succeeded server-side into a failed login.

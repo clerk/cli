@@ -19,6 +19,7 @@ import {
   DEPLOY_COMMAND_SUMMARY,
   INTRO_PREAMBLE,
   OAUTH_SECTION_INTRO,
+  type DeployComponentStatus,
   type DeployPlanStep,
   deployComponentLabels,
   deployComponentStatus,
@@ -288,10 +289,11 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
   }
 
   if (!snapshot.domainComplete) {
-    dnsStatus = await runExistingDomainDnsVerification(ctx, {
-      ...snapshot,
-      pending: { type: "dns" },
-    });
+    dnsStatus = await runExistingDomainDnsVerification(
+      ctx,
+      { ...snapshot, pending: { type: "dns" } },
+      snapshot.componentStatus,
+    );
   }
 
   await finishDeploy(ctx, snapshot.domain, snapshot.completedOAuthProviders, dnsStatus);
@@ -378,11 +380,12 @@ async function confirmProductionInstanceCreation(domain: string): Promise<boolea
 async function runDnsRecordHandoff(
   state: DeployOperationState,
   cnameTargets: readonly CnameTarget[],
+  options: { afterCheck?: boolean } = {},
 ): Promise<void> {
   for (const line of dnsIntro(state.domain)) log.info(line);
   log.blank();
   if (cnameTargets.length > 0) {
-    for (const line of dnsRecords(cnameTargets)) log.info(line);
+    for (const line of dnsRecords(cnameTargets, options)) log.info(line);
     log.blank();
   }
 
@@ -402,8 +405,13 @@ async function runDnsRecordHandoff(
 async function runExistingDomainDnsVerification(
   ctx: DeployContext,
   state: DeployOperationState,
+  componentStatus: DeployComponentStatus,
 ): Promise<DnsVerificationResult> {
-  await runDnsRecordHandoff(state, state.cnameTargets ?? []);
+  // On resume some records may already be verified; only the outstanding ones
+  // are records to add, and the user may have added those already.
+  await runDnsRecordHandoff(state, pendingCnameTargets(state.cnameTargets ?? [], componentStatus), {
+    afterCheck: true,
+  });
   return runDnsVerificationPrompt(ctx, state);
 }
 
@@ -655,7 +663,7 @@ async function finishDeploy(
     prefix: isInsideGutter() ? `${dim("│")}  ` : "",
     label: "Next steps",
     fallback: bold,
-    body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId, domain))}\n`,
+    body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId, domain, dnsStatus))}\n`,
   });
   await outro("Success");
 }

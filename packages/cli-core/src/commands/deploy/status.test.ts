@@ -280,9 +280,9 @@ describe("buildDeployStatusReport", () => {
 
     expect(report.state).toBe("oauth_pending");
     expect(report.complete).toBe(false);
-    expect(report.nextAction).toContain(
-      "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
-    );
+    expect(report.nextAction).toContain("missing production credentials: github");
+    // The domain is verified, so there is nothing to monitor on the Domains page.
+    expect(report.nextAction).not.toContain("/domains");
     expect(report.oauth).toMatchObject({
       complete: false,
       configured: ["google"],
@@ -427,4 +427,67 @@ describe("buildDeployStatusReport", () => {
     expect(report.complete).toBe(true);
     expect(report.oauth.unsupported).toEqual(["discord"]);
   });
+
+  test.each<{ label: string; completed: string[] }>([
+    { label: "complete", completed: ["google", "github"] },
+    { label: "oauth_pending", completed: ["google"] },
+  ])(
+    "names providers the CLI could not configure so the agent does not call OAuth done ($label)",
+    ({ completed }) => {
+      // In development Clerk supplies shared OAuth credentials; in production
+      // it doesn't. A provider the CLI skipped has a sign-in button that fails
+      // for real users, and `oauth.complete` only covers what the CLI manages.
+      const withUnsupported = {
+        ...activeSnapshot,
+        completedOAuthProviders: completed,
+        unsupportedOAuthProviders: ["discord"],
+        unsupportedOAuthProviderCount: 1,
+      } satisfies LiveDeploySnapshot;
+      const report = buildDeployStatusReport(
+        { kind: "active", snapshot: withUnsupported },
+        { verified: true, status: { dns: true, ssl: true, mail: true } },
+      );
+
+      expect(report.nextAction).toContain(
+        "These providers are enabled in development but the CLI could not configure them for production: discord.",
+      );
+      expect(report.nextAction).toContain("users signing in with them will fail");
+    },
+  );
+
+  test("does not mention unsupported providers when there are none", () => {
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: { ...activeSnapshot, completedOAuthProviders: ["google", "github"] },
+      },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.nextAction).not.toContain("could not configure");
+  });
+
+  test.each([
+    { label: "complete", verified: true, status: { dns: true, ssl: true, mail: true } },
+    { label: "records pending", verified: false, status: { dns: false, ssl: false, mail: false } },
+    { label: "SSL pending", verified: false, status: { dns: true, ssl: false, mail: true } },
+  ])(
+    "omits Dashboard links cleanly when the production instance id is unknown ($label)",
+    ({ verified, status }) => {
+      const noInstance = {
+        ...activeSnapshot,
+        productionInstanceId: undefined,
+        completedOAuthProviders: ["google", "github"],
+      } satisfies LiveDeploySnapshot;
+      const report = buildDeployStatusReport(
+        { kind: "active", snapshot: noInstance },
+        { verified, status },
+      );
+
+      expect(report.productionInstanceId).toBeNull();
+      expect(report.nextAction).not.toContain("dashboard.clerk.com");
+      expect(report.nextAction).not.toContain("undefined");
+      expect(report.nextAction).not.toContain("Clerk Dashboard domains page");
+    },
+  );
 });

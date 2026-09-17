@@ -15,6 +15,7 @@ import {
   nextStepsBody,
   pendingCnameTargets,
   productionDnsHosts,
+  productionSummary,
 } from "./copy.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
 
@@ -165,7 +166,31 @@ describe("nextStepsBody", () => {
   test("ends with a real sign-up on the production domain", () => {
     const output = nextStepsBody("app_123", "ins_456", "example.com");
 
+    expect(output).toContain(
+      "3. Redeploy your app, then sign up at https://example.com to confirm it works",
+    );
+  });
+
+  test("does not send the user to a domain that is not verified yet", () => {
+    // After skipping DNS verification the domain doesn't resolve, so step 3
+    // has to route through the wizard before the sign-up check.
+    const output = nextStepsBody("app_123", "ins_456", "example.com", "pending");
+
+    expect(output).toContain("3. Run `clerk deploy` again once your DNS records are added");
     expect(output).toContain("sign up at https://example.com to confirm it works");
+    expect(output).not.toContain("3. Redeploy your app");
+  });
+});
+
+describe("productionSummary", () => {
+  test("only calls production ready once the domain is verified", () => {
+    const verified = stripAnsi(productionSummary("example.com", ["Google"], "verified").join("\n"));
+    const pending = stripAnsi(productionSummary("example.com", [], "pending").join("\n"));
+
+    expect(verified).toContain("Production ready at https://example.com");
+    expect(pending).toContain("Production instance created for https://example.com");
+    expect(pending).toContain("Domain      DNS pending");
+    expect(pending).not.toContain("Production ready");
   });
 });
 
@@ -199,9 +224,12 @@ describe("domainAssociationSummary", () => {
     // Clerk handles SPF/DKIM automatically would contradict it on this screen.
     const output = domainAssociationSummary("example.com").join("\n");
 
-    expect(output).toContain("Email  clkmail.example.com");
-    expect(output).toContain("Email (DKIM)  clk._domainkey.example.com");
-    expect(output).toContain("Email (DKIM)  clk2._domainkey.example.com");
+    expect(output).toContain("Email           clkmail.example.com");
+    expect(output).toContain("Email (DKIM)    clk._domainkey.example.com");
+    expect(output).toContain("Email (DKIM)    clk2._domainkey.example.com");
+    // Labels pad to one column so the hosts line up.
+    expect(output).toContain("Frontend API    clerk.example.com");
+    expect(output).toContain("Account portal  accounts.example.com");
     expect(output).not.toContain("Clerk handles SPF/DKIM");
     expect(output).not.toContain("CNAME  clk._domainkey");
   });
@@ -234,9 +262,12 @@ describe("deployStatusPendingFooter", () => {
     ).join("\n");
 
     expect(output).toContain("DNS and email DNS records not found yet for example.com.");
+    // A "Check again" prompt follows this footer, so it points there first and
+    // gives the resume command as the fallback.
     expect(output).toContain(
-      "Add them at your DNS provider if you haven't already, then run `clerk deploy` again to resume.",
+      "Add them at your DNS provider if you haven't already, then choose Check again below.",
     );
+    expect(output).toContain("skip for now and run `clerk deploy` later to resume");
     expect(output).toContain("usually takes minutes, but can occasionally take up to 48 hours");
     expect(output).toContain(
       "change the domain in the Clerk Dashboard: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
@@ -277,9 +308,11 @@ describe("deployStatusPendingFooter", () => {
     expect(output).toContain("DNS and email DNS records not found yet for example.com.\n\n");
     expect(output).toContain("Clerk didn't return the list of records to add.");
     // URL on its own line so terminal autolinkers don't swallow punctuation.
-    expect(output).toContain("Find them on the Domains page in the Clerk Dashboard, then run");
+    expect(output).toContain(
+      "Find them on the Domains page in the Clerk Dashboard, add them, then choose Check again below.",
+    );
     expect(output).toContain(`already created.\n  ${DOMAINS_URL}`);
-    expect(output).toContain("run `clerk deploy` again to resume");
+    expect(output).toContain("run `clerk deploy` later to resume");
     expect(output).not.toContain("  - ");
     expect(output).not.toContain("Add them at your DNS provider");
   });
@@ -298,7 +331,8 @@ describe("deployStatusPendingFooter", () => {
     ).join("\n");
 
     expect(output).toContain("SSL certificate still pending for example.com.");
-    expect(output).toContain("run `clerk deploy` again in a few minutes to resume");
+    expect(output).toContain("choose Check again below in a few minutes");
+    expect(output).toContain("run `clerk deploy` later to resume");
     // One follow-up line: a blank line and a sentence, not a one-item list.
     expect(output).toContain("example.com.\n\nClerk issues it");
     expect(output).not.toContain("  - ");
@@ -324,13 +358,31 @@ describe("deployStatusPendingFooter", () => {
   });
 
   test.each([
-    { label: "records pending", status: { dns: false, ssl: false, mail: false } },
-    { label: "SSL only pending", status: { dns: true, ssl: false, mail: true } },
-    { label: "all components verified", status: { dns: true, ssl: true, mail: true } },
-  ])("always says how to resume and that re-running is safe ($label)", ({ status }) => {
-    const output = deployStatusPendingFooter("example.com", status, DOMAINS_URL, true).join("\n");
-    expect(output).toMatch(/run `clerk deploy` again.*to resume/i);
-    expect(output).toContain("The production instance is already created.");
+    { label: "records pending", status: { dns: false, ssl: false, mail: false }, records: true },
+    { label: "records missing", status: { dns: false, ssl: false, mail: false }, records: false },
+    { label: "SSL only pending", status: { dns: true, ssl: false, mail: true }, records: false },
+    {
+      label: "all components verified",
+      status: { dns: true, ssl: true, mail: true },
+      records: false,
+    },
+  ])("always says how to resume and that re-running is safe ($label)", ({ status, records }) => {
+    const output = deployStatusPendingFooter("example.com", status, DOMAINS_URL, records).join(
+      "\n",
+    );
+    expect(output).toMatch(/run `clerk deploy` (again|later).*to resume/i);
+    expect(output).toMatch(/production instance is already created\./i);
+  });
+
+  test("omits the Dashboard URL cleanly when no production instance id is known", () => {
+    const output = deployStatusPendingFooter(
+      "example.com",
+      { dns: false, ssl: false, mail: false },
+      undefined,
+      true,
+    ).join("\n");
+    expect(output).toContain("change the domain in the Clerk Dashboard.");
+    expect(output).not.toContain("undefined");
   });
 });
 

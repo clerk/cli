@@ -391,6 +391,7 @@ export function buildDeployStatusReport(
       componentStatus,
       pendingDnsRecords.length > 0,
       oauthPending,
+      snapshot.unsupportedOAuthProviders,
       snapshot.productionInstanceId
         ? {
             domains: domainsDashboardUrl(snapshot.appId, snapshot.productionInstanceId),
@@ -437,9 +438,20 @@ function deployNextAction(
   componentStatus: DeployComponentStatus,
   hasPendingRecords: boolean,
   oauthPending: string[],
+  oauthUnsupported: readonly string[],
   urls: { domains: string; instance: string } | null,
 ): string {
   const domainsAction = urls ? ` ${domainSettingsNextAction(urls.domains)}` : "";
+  // In development Clerk supplies shared OAuth credentials; in production it
+  // doesn't, so a provider the CLI couldn't configure has a sign-in button
+  // that fails for real users. `oauth.complete` only covers what the CLI
+  // manages, so the report has to say this out loud.
+  const unsupportedAction =
+    oauthUnsupported.length > 0
+      ? ` These providers are enabled in development but the CLI could not configure them for ` +
+        `production: ${oauthUnsupported.join(", ")}. Configure them in the Clerk Dashboard before ` +
+        `going live, or users signing in with them will fail.`
+      : "";
 
   if (state === "complete") {
     // Complete on Clerk's side only. The app keeps running on development
@@ -455,14 +467,17 @@ function deployNextAction(
       `Clerk's production setup for https://${domain} is verified. If you haven't already: ` +
       `run \`clerk env pull --instance prod\`, set those keys on your host alongside the other ` +
       `Clerk variables from your env file, redeploy, then sign up at https://${domain} to confirm.` +
+      unsupportedAction +
       instanceAction
     );
   }
   if (state === "oauth_pending") {
+    // The domain is verified, so there is nothing to monitor on the Domains
+    // page; the wizard is the only way to supply credentials.
     return (
       `Domain verified, but these OAuth providers are missing production credentials: ` +
       `${oauthPending.join(", ")}. Ask the user to finish \`clerk deploy\`, then run \`clerk deploy status\`.` +
-      domainsAction
+      unsupportedAction
     );
   }
 

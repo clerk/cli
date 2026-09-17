@@ -23,7 +23,8 @@ re-run it at any time to resume where you left off.
 
 When run by an agent (or without a TTY), it is read-only: it prints a JSON
 status report with the current state and a \`nextAction\` field saying what to
-do next. \`clerk deploy status\` prints the same report.`;
+do next. \`clerk deploy status\` prints the same report; add \`--wait\` to keep
+checking until DNS, SSL, and email DNS are verified.`;
 
 export const INTRO_PREAMBLE = `This will prepare your linked Clerk app for production by cloning your
 development instance into a new production instance and walking you through
@@ -100,7 +101,9 @@ export function domainAssociationSummary(domain: string): string[] {
     // for action the user can't take yet (record values arrive after creation).
     `Clerk will use these subdomains for ${cyan(domain)}. You'll add a DNS record for each after the instance is created:`,
     "",
-    ...productionDnsHosts(domain).map((host) => `  ${confirmationHostLabel(host)}  ${host}`),
+    ...productionDnsHosts(domain).map(
+      (host) => `  ${cnameTargetLabel(host, { terse: true }).padEnd(14)}  ${host}`,
+    ),
     "",
     "This will create a Clerk production instance for your application.",
   ];
@@ -162,12 +165,15 @@ function isMailCnameTarget(target: CnameTarget): boolean {
 }
 
 /**
- * Labels for the confirmation screen, where the lead line says the user will
- * add a record for each host. "Clerk handles SPF/DKIM automatically" belongs
- * on the post-creation records block (it's about record contents); next to
- * that lead it reads as "nothing for you to do on these rows".
+ * Human label for a record host. `terse` is for the confirmation screen, where
+ * the lead line says the user will add a record for each host: "Clerk handles
+ * SPF/DKIM automatically" belongs on the records block (it's about record
+ * contents); next to that lead it reads as "nothing for you to do on these
+ * rows".
  */
-function confirmationHostLabel(host: string): string {
+function cnameTargetLabel(host: string, options: { terse?: boolean } = {}): string {
+  // `host.split(".", 1)[0]` yields only the first label, so DKIM records
+  // (clk._domainkey, clk2._domainkey) arrive here as "clk"/"clk2".
   const prefix = host.split(".", 1)[0];
   switch (prefix) {
     case "clerk":
@@ -175,28 +181,10 @@ function confirmationHostLabel(host: string): string {
     case "accounts":
       return "Account portal";
     case "clkmail":
-      return "Email";
+      return options.terse ? "Email" : "Email (Clerk handles SPF/DKIM automatically)";
     case "clk":
     case "clk2":
-      return "Email (DKIM)";
-    default:
-      return "CNAME";
-  }
-}
-
-function cnameTargetLabel(host: string): string {
-  const prefix = host.split(".", 1)[0];
-  switch (prefix) {
-    case "clerk":
-      return "Frontend API";
-    case "accounts":
-      return "Account portal";
-    // `host.split(".", 1)[0]` yields only the first label, so DKIM records
-    // (clk._domainkey, clk2._domainkey) arrive here as "clk"/"clk2".
-    case "clkmail":
-    case "clk":
-    case "clk2":
-      return "Email (Clerk handles SPF/DKIM automatically)";
+      return options.terse ? "Email (DKIM)" : "Email (Clerk handles SPF/DKIM automatically)";
     default:
       return "CNAME";
   }
@@ -313,10 +301,14 @@ export function deployStatusPendingFooter(
   // A lead line, then either a bulleted list (several follow-ups) or a blank
   // line and one sentence (a single follow-up). An empty string is a blank
   // line; the caller renders it with `log.blank()`.
+  // The wizard is still running when this prints: a "Check again" prompt
+  // follows, so the resume command is the fallback, not the instruction.
+  const resume =
+    "You can also skip for now and run `clerk deploy` later to resume; the production instance is already created.";
   if (state === "records_available") {
     return [
       `${records} records not found yet for ${domain}.`,
-      "  - Add them at your DNS provider if you haven't already, then run `clerk deploy` again to resume. The production instance is already created.",
+      `  - Add them at your DNS provider if you haven't already, then choose Check again below. ${resume}`,
       "  - Propagation usually takes minutes, but can occasionally take up to 48 hours.",
       `  - If you can't add DNS records for this domain, change the domain in the Clerk Dashboard${domainsUrl ? `: ${domainsUrl}` : "."}`,
     ];
@@ -327,7 +319,7 @@ export function deployStatusPendingFooter(
     return [
       `${records} records not found yet for ${domain}.`,
       "",
-      "Clerk didn't return the list of records to add. Find them on the Domains page in the Clerk Dashboard, then run `clerk deploy` again to resume. The production instance is already created.",
+      `Clerk didn't return the list of records to add. Find them on the Domains page in the Clerk Dashboard, add them, then choose Check again below. ${resume}`,
       ...(domainsUrl ? [`  ${domainsUrl}`] : []),
     ];
   }
@@ -335,7 +327,7 @@ export function deployStatusPendingFooter(
     return [
       `SSL certificate still pending for ${domain}.`,
       "",
-      "Clerk issues it automatically now that DNS is verified; run `clerk deploy` again in a few minutes to resume. The production instance is already created.",
+      `Clerk issues it automatically now that DNS is verified; choose Check again below in a few minutes. ${resume}`,
     ];
   }
   return [
@@ -359,14 +351,28 @@ export function productionSummary(
   domainStatus: "verified" | "pending" = "verified",
 ): string[] {
   return [
-    `Production ready at ${cyan(`https://${domain}`)}`,
+    domainStatus === "verified"
+      ? `Production ready at ${cyan(`https://${domain}`)}`
+      : `Production instance created for ${cyan(`https://${domain}`)}`,
     "",
     `  Domain      ${domainStatus === "verified" ? "Verified" : "DNS pending"}`,
     `  OAuth       ${completedOAuthProviderLabels.length ? completedOAuthProviderLabels.join(", ") : "Not applicable"}`,
   ];
 }
 
-export function nextStepsBody(appId: string, productionInstanceId: string, domain: string): string {
+export function nextStepsBody(
+  appId: string,
+  productionInstanceId: string,
+  domain: string,
+  domainStatus: "verified" | "pending" = "verified",
+): string {
+  // Until DNS is verified the domain doesn't resolve, so "sign up there"
+  // would send the user to a page that doesn't exist yet.
+  const step3 =
+    domainStatus === "verified"
+      ? `Redeploy your app, then sign up at https://${domain} to confirm it works`
+      : `Run \`clerk deploy\` again once your DNS records are added, then redeploy your app
+     and sign up at https://${domain} to confirm it works`;
   return `
   1. Pull production keys into your environment
        clerk env pull --instance prod
@@ -380,7 +386,7 @@ export function nextStepsBody(appId: string, productionInstanceId: string, domai
        - Also copy the other Clerk variables from your env file, such as
          NEXT_PUBLIC_CLERK_SIGN_IN_URL. \`env pull\` writes only the two keys.
 
-  3. Redeploy your app, then sign up at https://${domain} to confirm it works
+  3. ${step3}
 
   4. (If applicable) Update webhook URLs and signing secrets
      ${dim("https://clerk.com/docs/guides/development/webhooks/syncing#configure-your-production-instance")}

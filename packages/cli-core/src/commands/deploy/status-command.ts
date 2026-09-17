@@ -158,10 +158,14 @@ export function renderHuman(report: DeployStatusReport): void {
     );
   }
 
-  const oauthStatus = report.oauth.complete
-    ? "complete"
-    : `pending: ${report.oauth.pending.join(", ") || "none"}`;
-  log.info(`  OAuth    ${oauthStatus}`);
+  // No domain status means no production instance was read, so OAuth was
+  // never checked either; "pending: none" would claim it was.
+  if (report.domainStatus) {
+    const oauthStatus = report.oauth.complete
+      ? "complete"
+      : `pending: ${report.oauth.pending.join(", ") || "none"}`;
+    log.info(`  OAuth    ${oauthStatus}`);
+  }
 
   if (report.oauth.unsupported.length > 0) {
     log.warn(
@@ -187,14 +191,37 @@ export function renderHuman(report: DeployStatusReport): void {
   log.blank();
 }
 
+/**
+ * The report's `nextAction` is written for an agent. A person running
+ * `clerk deploy status` has no JSON and is the user, so the sentences that
+ * name the JSON field or say "ask the user" are reworded here. Human mode
+ * already waits, so `--wait` is never suggested; the resume command is the
+ * wizard, as the wizard's own footer says.
+ */
 function formatHumanNextAction(nextAction: string): string {
   return (
     nextAction
       // The records block printed above already says "add these"; the sentence
       // only needs to say what happens next.
       .replace(
-        "Add the records in `pendingDnsRecords` at the domain's DNS provider if you haven't already, then re-run",
-        "Once they're added, re-run",
+        "Add the records in `pendingDnsRecords` at the domain's DNS provider if you haven't already, then re-run `clerk deploy status --wait`.",
+        "Once they're added, run `clerk deploy` again to resume.",
+      )
+      .replace(
+        /but this report has no record list\. Find the records to add on the Domains page in the Clerk Dashboard, then re-run `clerk deploy status --wait`\./,
+        "but Clerk didn't return the list of records to add. Find them on the Domains page in the Clerk Dashboard, add them, then run `clerk deploy` again to resume.",
+      )
+      .replace(
+        "needs a human terminal, ask the user to run `clerk deploy`, then run `clerk deploy status` to verify.",
+        "needs a terminal. Run `clerk deploy` to set it up.",
+      )
+      .replace(
+        "or ask the user to finish `clerk deploy`.",
+        "or run `clerk deploy` to finish setup.",
+      )
+      .replace(
+        "Ask the user to finish `clerk deploy`, then run `clerk deploy status`.",
+        "Run `clerk deploy` to finish setup.",
       )
       .replace(
         // `https?`: the URL follows CLERK_DASHBOARD_URL, which is plain http for a
