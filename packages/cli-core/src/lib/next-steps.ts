@@ -63,7 +63,7 @@ export const NEXT_STEPS = {
     "Run `clerk security audit --instance prod` to audit production",
     "Run `clerk security checks` to read what each recommendation means",
   ],
-  SECURITY_FIX_REMAINING: ["Run `clerk security audit --spotlight` to see what is still open"],
+  SECURITY_FIX_REMAINING: ["Run `clerk security audit` to see what is still open"],
   LOGOUT: ["Run `clerk auth login` to sign in again"],
   WHOAMI: ["Run `clerk link` to connect this directory to an application"],
   // An unclaimed keyless app can't be `clerk link`ed — nothing in any account
