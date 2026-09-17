@@ -14,7 +14,6 @@ re-evaluates from the live configuration.
 clerk security                       # Audit the linked development instance
 clerk security audit --instance prod # Audit production
 clerk security audit --json          # Machine-readable report
-clerk security audit --spotlight     # Only unmet and blocked recommendations
 clerk security fix                   # Pick which recommendations to apply
 clerk security fix user-lockout      # Apply one recommendation by id
 clerk security fix mfa --factors authenticator,backup-code   # A recommendation that needs a choice
@@ -24,9 +23,10 @@ clerk security checks                # List the catalog (no network)
 
 ### `clerk security audit`
 
-Fetches the config document, evaluates every applicable check, prints the
-report, and sets the exit code from `--fail-on`. `clerk security` with no
-subcommand runs `audit`.
+Fetches the config document, evaluates every applicable check, and prints the
+report. It is informational: the exit code is 0 whatever the grade, and JSON
+consumers gate on `score.hasCriticalGap`. `clerk security` with no subcommand
+runs `audit`.
 
 Each row shows the recommendation's title, its id, and the current versus
 recommended value, so the id `fix` takes is right there:
@@ -40,13 +40,11 @@ Recommended
 ✗ Passkeys                    passkeys       Disabled → Enabled
 ```
 
-| Flag                | Description                                                                                                    |
-| ------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `--app <id>`        | Application ID to target (works from any directory)                                                            |
-| `--instance <id>`   | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development.                            |
-| `--json`            | Output the report as JSON (automatic in agent mode)                                                            |
-| `--spotlight`       | Only show unmet and blocked recommendations                                                                    |
-| `--fail-on <level>` | Lowest severity of an unmet recommendation that exits 1: `critical` (default), `recommended`, `any`, or `none` |
+| Flag              | Description                                                                         |
+| ----------------- | ----------------------------------------------------------------------------------- |
+| `--app <id>`      | Application ID to target (works from any directory)                                 |
+| `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID). Defaults to development. |
+| `--json`          | Output the report as JSON (automatic in agent mode)                                 |
 
 ### `clerk security fix [ids...]`
 
@@ -59,7 +57,6 @@ deselecting everything cancels without writing.
 | Flag                | Description                                                                                                                                                                   |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `[ids...]`          | Recommendation ids to fix, as shown in the audit. Omit them in human mode to pick from a checklist of the fixable gaps (all preselected). Agent mode requires ids or `--all`. |
-| `--check <id>`      | Same as a positional id; repeatable, so `--input-json` can pass `{"check":[...]}`                                                                                             |
 | `--all`             | Fix every unmet critical and recommended check that has an inline patch. Add `--factors` or `--strategy` to include the decision checks too.                                  |
 | `--good-to-have`    | With `--all`, also apply the good-to-have tier.                                                                                                                               |
 | `--factors <list>`  | Second factors for `mfa`: `authenticator`, `backup-code`, `sms` (comma-separated or repeated). Asked interactively when omitted in human mode; required in agent mode.        |
@@ -207,7 +204,7 @@ Agents get JSON automatically; `--json` forces it for humans too.
 
 ```sh
 clerk security checks --json                     # Discover ids and what they mean
-clerk security audit --json --spotlight          # Only the gaps
+clerk security audit --json                      # The report; filter on status with jq
 clerk security fix <ids...> --yes                # Apply, no prompt
 clerk security fix --all --dry-run               # Server-validated preview
 ```
@@ -297,11 +294,11 @@ tab completion for the ids is registered separately in `completion/__complete.ts
 
 ## Exit Codes
 
-| Code | Meaning                                                                                                                                                                      |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | No unmet recommendation at or above `--fail-on`; `fix` applied or had nothing to do                                                                                          |
-| 1    | `audit`: unmet recommendations at or above `--fail-on` (error code `security_audit_failed`); `fix`: the plan does not cover a check (`plan_insufficient`); or an API failure |
-| 2    | Usage error: missing or unknown ids, manual/blocked ids, agent mode without `--yes`                                                                                          |
+| Code | Meaning                                                                             |
+| ---- | ----------------------------------------------------------------------------------- |
+| 0    | `audit` always; `fix` applied or had nothing to do                                  |
+| 1    | `fix`: the plan does not cover a check (`plan_insufficient`); or an API failure     |
+| 2    | Usage error: missing or unknown ids, manual/blocked ids, agent mode without `--yes` |
 
 ## API Endpoints
 

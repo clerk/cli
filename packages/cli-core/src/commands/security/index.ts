@@ -5,7 +5,6 @@ import { securityAudit } from "./audit.ts";
 import { securityFix } from "./fix.ts";
 import { securityChecks } from "./list-checks.ts";
 import { findCheck } from "./catalog.ts";
-import { FAIL_ON_LEVELS } from "./types.ts";
 
 const PASSWORDLESS_STRATEGIES = findCheck("passwordless-auth")!.decision!.options.map(
   (o) => o.value,
@@ -34,26 +33,10 @@ export function registerSecurity(program: Program): void {
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--json", "Output the report as JSON")
-    .option("--spotlight", "Only show unmet and blocked recommendations")
-    .addOption(
-      createOption(
-        "--fail-on <level>",
-        "Lowest severity of an unmet recommendation that makes the command exit 1",
-      )
-        .choices(FAIL_ON_LEVELS)
-        .default("critical"),
-    )
     .setExamples([
       { command: "clerk security audit", description: "Audit the linked development instance" },
-      {
-        command: "clerk security audit --instance prod --spotlight",
-        description: "Only show gaps on production",
-      },
+      { command: "clerk security audit --instance prod", description: "Audit production" },
       { command: "clerk security audit --json", description: "Emit the report as JSON" },
-      {
-        command: "clerk security audit --fail-on none",
-        description: "Report without failing the exit code",
-      },
     ])
     .action(securityAudit);
 
@@ -63,11 +46,6 @@ export function registerSecurity(program: Program): void {
     .argument(
       "[ids...]",
       "Recommendation ids to fix (shown in the audit); omit to pick interactively",
-    )
-    .option(
-      "--check <id>",
-      "Recommendation id to fix (repeatable; for --input-json)",
-      collectOptionValues,
     )
     .option("--all", "Fix every unmet critical and recommended check that has an inline patch")
     .option("--good-to-have", "With --all, also apply the good-to-have tier")

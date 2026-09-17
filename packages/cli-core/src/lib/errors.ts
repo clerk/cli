@@ -48,8 +48,6 @@ export const ERROR_CODE = {
   CATALOG_ERROR: "catalog_error",
   /** Doctor checks found issues. */
   DOCTOR_FAILED: "doctor_failed",
-  /** `clerk security audit` found unmet recommendations at or above `--fail-on`. */
-  SECURITY_AUDIT_FAILED: "security_audit_failed",
   /** Frontend API request failed. */
   FAPI_ERROR: "fapi_error",
   /** Subscription plan does not cover the dev instance's enabled features. */
