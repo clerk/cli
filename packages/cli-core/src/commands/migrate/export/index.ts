@@ -118,8 +118,8 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
         description: "Prompts for the source instance and where to save the file",
       },
       {
-        command: "clerk migrate export clerk --instance prod --output prod-users.json",
-        description: "Export a specific instance to a chosen path",
+        command: "clerk migrate export clerk --secret-key sk_live_… --output prod-users.json",
+        description: "Name the source instance outright, skipping the picker",
       },
     ])
     .action(async (_opts, cmd) =>

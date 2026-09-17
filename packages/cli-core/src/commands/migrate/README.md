@@ -208,6 +208,8 @@ as the source without asking is how a run exports an instance and imports it
 back into itself. Instead:
 
 - `--secret-key <sk_…>` names the source instance outright and runs unquestioned.
+  It is the only flag that does: `--app` and `--instance` decide whose instances
+  lead the picker, but the picker still opens.
 - Anything resolved on your behalf — the linked project, a keyless app — is
   never taken silently. A picker of every **instance** on your account opens
   instead — one flat row each, `my-app - Production instance (ins_…)`, not an
@@ -215,12 +217,16 @@ back into itself. Instead:
   application's instances listed **first** so taking one is still a single
   Enter. Only when there are no instances to offer does it stop and list
   `--secret-key`, `--app`/`--instance` and `clerk link` instead.
-- With nothing to resolve at all (no link, no key, no flags), that same picker
-  opens directly, rather than an error about an unlinked directory.
+- With nothing to resolve at all (no link, no key, no flags), you get the
+  application picker `clerk users` uses — `Select a Clerk application to use:`,
+  followed by an instance picker when the application has more than one —
+  rather than an error about an unlinked directory. That is `clerk link`'s
+  picker, so it does offer `+ Create a new application`; a brand-new
+  application has no users to export, so it is never the answer here.
 
-The picker has no "create a new application" choice, unlike `clerk link`'s — a
-new application has no users to export. Rows are searchable by what they show,
-so typing an application name, `production`, or an instance id all narrow it.
+The instance picker (the second tier) has no "create a new application" choice.
+Its rows are searchable by what they show, so typing an application name,
+`production`, or an instance id all narrow it.
 
 In agent mode the resolved instance is used without a prompt; pass
 `--secret-key` or `--app`/`--instance` to be explicit.
@@ -651,7 +657,11 @@ Transformers:
 
   …
 
-6 built-in transformers
+  workos  WorkOS
+    Works with WorkOS's User Management API. WorkOS returns no password hashes,
+    so imported users sign in by reset or SSO.
+
+7 built-in transformers
 Migrating from something else? Write a transformer and pass --transformer-file.
 ```
 
@@ -728,11 +738,14 @@ Each setting is named after the `clerk migrate import` flag it stands in for.
 SETTING                     VALUE       SOURCE               DESCRIPTION
 transformer                 firebase    clerk config         Source platform the export came from
 file                        users.json  clerk config         Export file to import users from
+skip-unsupported-providers              not set              Skip users with no provider enabled in Clerk (Supabase)
+log-dir                     ./logs      clerk config         Directory migration logs are written to
 firebase-signer-key         [REDACTED]  .env.clerk-migrate   Firebase base64 signer key
+firebase-salt-separator                 not set              Firebase base64 salt separator
 firebase-rounds             8           .env.local (ROUNDS)  Firebase scrypt rounds
 firebase-mem-cost           14          MEM_COST env var     Firebase scrypt memory cost
 
-4 of 7 settings set. Credentials are shown redacted.
+6 of 8 settings set. Credentials are shown redacted.
 
    → Run `clerk migrate settings set <name> <value>` to change one
    → Run `clerk migrate settings clear <name>` to forget one

@@ -14,9 +14,11 @@
  *    keyless app) is not taken silently: every instance on the account is
  *    offered, with the resolved application's instances first so "yes, that
  *    one" is still a single Enter.
- * 3. Nothing to resolve at all — no link, no key, no flags — offers those same
- *    instances, the trade `users list` makes, rather than failing on an
- *    unlinked directory.
+ * 3. Nothing to resolve at all — no link, no key, no flags — falls back to the
+ *    application picker `users list` uses, rather than failing on an unlinked
+ *    directory. That one is `clerk link`'s, so it also offers "create a new
+ *    application"; an empty application is never the right source, but the
+ *    alternative here is an error, not a better list.
  */
 
 import { fetchAppsTolerantly } from "../../../lib/app-picker.ts";
