@@ -9,7 +9,11 @@
  *
  * So the source is resolved in three tiers:
  *
- * 1. `--secret-key` names an instance outright — it runs unquestioned.
+ * 1. The user named the instance — `--secret-key`, `--app`, `--instance`, or
+ *    an exported `CLERK_SECRET_KEY` — and it runs unquestioned. An exported
+ *    key outranks the linked profile everywhere else in this CLI
+ *    (`resolveBapiSecretKey`), and this command is not the one place that
+ *    should differ.
  * 2. Anything the CLI resolved on the user's behalf (the linked project, a
  *    keyless app) is not taken silently: every instance on the account is
  *    offered, with the resolved application's instances first so "yes, that
@@ -59,24 +63,33 @@ export type ClerkExportSource = {
 type ResolvedSource = ClerkExportSource & { chosen: boolean };
 
 async function resolveSource(options: ResolveClerkSourceOptions): Promise<ResolvedSource> {
+  // What separates the two tiers is not "did the CLI have to look anything up"
+  // but "did the user say which instance". A flag or an exported key is a
+  // sentence they typed for this run; the linked project is a choice they made
+  // for some other purpose, possibly months ago, and normally names the
+  // migration's destination rather than its source. Only the second is worth
+  // asking about.
+  //
+  // `--instance` counts on its own: paired with the linked application it
+  // names one instance, and pairing it with `--app` addresses any instance on
+  // the account. Without this an export could not be scripted at all outside
+  // agent mode — every run would stop at a picker no flag could answer.
+  const named =
+    Boolean(options.secretKey) ||
+    Boolean(options.app) ||
+    Boolean(options.instance) ||
+    Boolean(process.env.CLERK_SECRET_KEY);
+
   try {
     return {
       target: await describeBapiTarget(options),
       secretKey: await resolveBapiSecretKey(options),
-      // Flags and env keys are a choice the user typed; the linked project is
-      // one they made for some other purpose, possibly months ago.
-      chosen: Boolean(options.secretKey),
+      chosen: named,
     };
   } catch (error) {
-    const hasExplicitTarget =
-      Boolean(options.secretKey) ||
-      Boolean(options.app) ||
-      Boolean(options.instance) ||
-      Boolean(process.env.CLERK_SECRET_KEY);
-
     if (
       !isHuman() ||
-      hasExplicitTarget ||
+      named ||
       !(error instanceof CliError) ||
       error.code !== ERROR_CODE.NO_SECRET_KEY
     ) {

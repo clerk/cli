@@ -69,6 +69,36 @@ describe("resolveClerkSource", () => {
     expect(mockSearch).not.toHaveBeenCalled();
   });
 
+  // An export has to be scriptable outside agent mode. Before this, `chosen`
+  // keyed off `--secret-key` alone, so every other way of naming an instance
+  // still stopped at a picker no flag could answer.
+  test.each([
+    ["--app", { app: "app_1" }],
+    ["--instance", { instance: "prod" }],
+    ["--app and --instance", { app: "app_1", instance: "prod" }],
+  ])("%s names the instance, so nothing is asked", async (_label, options) => {
+    stubResolved("my-app (production)");
+
+    const source = await resolveClerkSource(options);
+
+    expect(source).toEqual({ secretKey: "sk_test_resolved", target: "my-app (production)" });
+    expect(mockSearch).not.toHaveBeenCalled();
+  });
+
+  // `resolveBapiSecretKey` puts an exported key above the linked profile for
+  // every other command in this family. Opening a picker here — and then
+  // overriding the key with whatever it returned — made this the one command
+  // where exporting CLERK_SECRET_KEY did less than not exporting it.
+  test("an exported CLERK_SECRET_KEY is not second-guessed in a linked directory", async () => {
+    process.env.CLERK_SECRET_KEY = "sk_test_from_env";
+    stubResolved("my-app (development)", "sk_test_from_env");
+
+    const source = await resolveClerkSource({});
+
+    expect(source).toEqual({ secretKey: "sk_test_from_env", target: "my-app (development)" });
+    expect(mockSearch).not.toHaveBeenCalled();
+  });
+
   // Exporting the instance that is about to be imported *into* is the failure
   // this whole module exists to prevent, so a resolved instance is offered as
   // one choice among the account's applications rather than taken silently.

@@ -217,9 +217,12 @@ step. The linked project is usually the migration's _destination_, so taking it
 as the source without asking is how a run exports an instance and imports it
 back into itself. Instead:
 
-- `--secret-key <sk_…>` names the source instance outright and runs unquestioned.
-  It is the only flag that does: `--app` and `--instance` decide whose instances
-  lead the picker, but the picker still opens.
+- **Naming the instance runs unquestioned.** `--secret-key <sk_…>`, `--app`,
+  `--instance`, or an exported `CLERK_SECRET_KEY` — any of them is a sentence
+  you typed for this run, so none of them opens a picker. That is what makes
+  the export scriptable outside agent mode, and it keeps an exported key
+  outranking the linked profile here the way it does everywhere else in the
+  CLI.
 - Anything resolved on your behalf — the linked project, a keyless app — is
   never taken silently. A picker of every **instance** on your account opens
   instead — one flat row each, `my-app - Production instance (ins_…)`, not an
@@ -706,6 +709,13 @@ would report the setting cleared and leave the next run reading the old value.
 It only ever edits `.env.clerk-migrate`; a value coming from the app's own env
 file or the shell is named in the listing's source column and has to be removed
 there.
+
+**A bare `settings clear` needs `-y` where it cannot ask.** It forgets every
+setting and every credential in `.env.clerk-migrate`, so a non-interactive or
+agent run refuses rather than assuming, the way `migrate logs clean` and
+`migrate delete` already do. `settings clear <name>` does not: naming the one
+setting to forget is itself the confirmation, the same way `settings set` needs
+none.
 
 A misspelled name gets the closest match back, not just the list:
 
