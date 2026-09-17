@@ -33,6 +33,10 @@ export const NEXT_STEPS = {
     "Run `clerk auth login` again to retry auto-claim",
     "Run `clerk link` to connect your application manually",
   ],
+  AUTOCLAIM_SWITCH_WORKSPACE: [
+    "Select a different workspace in the Clerk Dashboard",
+    "Run `clerk auth login` again to proceed",
+  ],
   ENABLE_ORGS: [
     "Run `clerk config schema --keys organization_settings` to see all available settings",
     "Run `clerk config pull --keys organization_settings` to see current values",
