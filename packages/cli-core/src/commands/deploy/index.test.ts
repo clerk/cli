@@ -1847,6 +1847,7 @@ describe("deploy", () => {
       mockSelect.mockResolvedValueOnce("skip");
 
       await runDeploy({});
+      const err = stripAnsi(captured.err);
 
       expect(mockConfirm).toHaveBeenCalledWith(
         expect.objectContaining({ message: expect.stringContaining("BIND") }),
@@ -1855,6 +1856,71 @@ describe("deploy", () => {
         String(call[0]).endsWith(".zone"),
       );
       expect(zoneCall).toBeDefined();
+      // Nothing left to add: the screen says the certificate is pending
+      // instead of framing a DNS task around an empty record list.
+      expect(err).toContain("Your DNS records for example.com are verified.");
+      expect(err).toContain("The SSL certificate is still pending; Clerk issues it automatically.");
+      expect(err).not.toContain("Configure DNS for");
+      expect(err).not.toContain("these records");
+      expect(err).not.toContain("Add the following records");
+      // Skipping closes on the domain, not on DNS, which is already done.
+      expect(err).toContain("Domain      Not yet verified");
+      expect(err).toMatch(/└\s+Not verified/);
+    });
+
+    test("resume while Clerk is finalizing says so and does not promise a retry", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        developmentConfig: {},
+        productionConfig: {},
+      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: true, mail: true }),
+      );
+      mockConfirm.mockResolvedValueOnce(false); // BIND export
+      mockSelect.mockResolvedValueOnce("skip");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("Clerk is still finalizing production setup.");
+      expect(err).toContain("run `clerk deploy` again in a few minutes");
+      expect(err).not.toContain("check again");
+      expect(err).not.toContain("Configure DNS for");
+    });
+
+    test("resume with no record list from Clerk tells the user to find and add the records", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        developmentConfig: {},
+        productionConfig: {},
+        cnameTargets: [],
+      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: false, mail: false }),
+      );
+      mockSelect.mockResolvedValueOnce("skip");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain(
+        "Email DNS records for example.com are not verified yet, but Clerk didn't return the list to add.",
+      );
+      expect(err).toContain("add them at your DNS provider, then choose Check DNS now below");
+      expect(err).not.toContain("Add the following records");
+      // No records, no export offer.
+      expect(mockConfirm).not.toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining("BIND") }),
+      );
     });
 
     test("DNS verification treats absent components as pending", async () => {
@@ -1902,6 +1968,14 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
+      // Before the check, the first-run screen already says the list is
+      // missing and what to do, instead of a "Configure DNS" page with no records.
+      expect(err).toContain(
+        "DNS and email DNS records for example.com are not verified yet, but Clerk didn't return the list to add.",
+      );
+      expect(err).toContain("add them at your DNS provider, then choose Check DNS now below");
+      expect(err).not.toContain("Configure DNS for");
+      // After the check, the footer says the same in its own words.
       expect(err).toContain("DNS and email DNS records not found yet for example.com.");
       expect(err).toContain("Clerk didn't return the list of records to add.");
       expect(err).toContain(
@@ -1967,10 +2041,10 @@ describe("deploy", () => {
       const err = stripAnsi(captured.err);
 
       expect(err).toContain("Saved Google OAuth credentials");
-      expect(err).toContain("Domain      DNS pending");
+      expect(err).toContain("Domain      Not yet verified");
       expect(err).not.toContain("Domain      Verified");
       // The closing word agrees with the status row instead of contradicting it.
-      expect(err).toMatch(/└\s+DNS pending/);
+      expect(err).toMatch(/└\s+Not verified/);
       expect(err).not.toMatch(/└\s+Success/);
       expect(mockSelect).toHaveBeenCalledWith({
         message: "DNS verification",

@@ -201,6 +201,62 @@ function cnameTargetLabel(host: string): string {
 }
 
 /**
+ * The DNS screen when there is nothing left to add. Printed instead of
+ * `dnsIntro` + `dnsDashboardHandoff`: a "Configure DNS" page with an empty
+ * record list told the user to do work they had already done. What is
+ * outstanding comes from the same classifier the post-check footer uses, so
+ * the screen before the check and the footer after it can't disagree.
+ * `hasPendingRecords` is false by construction here (the display list is
+ * empty), so `records_available` is unreachable.
+ */
+export function dnsHandoffNothingToAdd(
+  domain: string,
+  status: DeployComponentStatus,
+  domainsUrl: string | undefined,
+): string[] {
+  const state = classifyDomainPending(status, false);
+  const url = domainsUrl ? [`  ${domainsUrl}`] : [];
+  const resume =
+    "If it hasn't yet, you can either wait a few minutes and check again, or skip the check and run `clerk deploy` again later to finish.";
+  switch (state) {
+    case "ssl_pending":
+      return [
+        `Your DNS records for ${cyan(domain)} are verified. The SSL certificate is still pending; Clerk issues it automatically.`,
+        "",
+        `Monitor SSL issuance on the Domains page in the Clerk Dashboard${domainsUrl ? ":" : "."}`,
+        ...url,
+        "",
+        `Next, this command checks whether the certificate has been issued. ${resume}`,
+      ];
+    case "finalizing":
+      // No "check again": once every component is verified, the check pauses
+      // the run instead of prompting.
+      return [
+        `Your DNS records and SSL certificate for ${cyan(domain)} are verified. Clerk is still finalizing production setup.`,
+        "",
+        `Monitor it on the Domains page in the Clerk Dashboard${domainsUrl ? ":" : "."}`,
+        ...url,
+        "",
+        "Next, this command checks whether Clerk has finished. If it hasn't, run `clerk deploy` again in a few minutes.",
+      ];
+    case "records_available":
+    case "records_unavailable": {
+      // Records are needed but Clerk returned no list: the user has to find
+      // and add them, so this is an instruction, not a wait.
+      const records = capitalizeFirst(pendingRecordComponents(status));
+      return [
+        `${records} records for ${cyan(domain)} are not verified yet, but Clerk didn't return the list to add.`,
+        "",
+        `Find them on the Domains page in the Clerk Dashboard, add them at your DNS provider, then choose Check DNS now below${domainsUrl ? ":" : "."}`,
+        ...url,
+        "",
+        `Next, this command checks that they have taken effect. ${resume.replace("If it hasn't yet", "If they haven't yet")}`,
+      ];
+    }
+  }
+}
+
+/**
  * `oauthNext` is required: on a fresh run with providers, OAuth setup comes
  * between this screen and the DNS check; on resume (OAuth already done) and
  * on a fresh run with no providers, the check is next. Saying "you'll set up
@@ -386,7 +442,10 @@ export function productionSummary(
       ? `Production ready at ${cyan(`https://${domain}`)}`
       : `Production instance created for ${cyan(`https://${domain}`)}`,
     "",
-    `  Domain      ${domainStatus === "verified" ? "Verified" : "DNS pending"}`,
+    // "Not yet verified", not "DNS pending": the DNS may be done and only
+    // the certificate or Clerk's own setup outstanding; the screen above
+    // said which.
+    `  Domain      ${domainStatus === "verified" ? "Verified" : "Not yet verified"}`,
     `  OAuth       ${completedOAuthProviderLabels.length ? completedOAuthProviderLabels.join(", ") : "Not applicable"}`,
   ];
 }
@@ -402,7 +461,7 @@ export function nextStepsBody(
   const step3 =
     domainStatus === "verified"
       ? `Redeploy your app, then sign up at https://${domain} to confirm it works`
-      : `Run \`clerk deploy\` again once your DNS records are added, then redeploy your app
+      : `Run \`clerk deploy\` again once the domain is verified, then redeploy your app
      and sign up at https://${domain} to confirm it works`;
   return `
   1. Pull production keys into your environment

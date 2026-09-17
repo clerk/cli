@@ -27,6 +27,7 @@ import {
   domainAssociationSummary,
   bindZoneFile,
   dnsDashboardHandoff,
+  dnsHandoffNothingToAdd,
   dnsIntro,
   dnsRecords,
   domainsDashboardUrl,
@@ -225,9 +226,9 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     { ...operationState, pending: { type: "dns" } },
     cnameTargets,
     cnameTargets,
-    {
-      oauthNext: oauthProviders.length > 0,
-    },
+    // Nothing has been checked yet on a fresh run.
+    { dns: false, ssl: false, mail: false },
+    { oauthNext: oauthProviders.length > 0 },
   );
 
   bar();
@@ -399,21 +400,28 @@ async function runDnsRecordHandoff(
   state: DeployOperationState,
   display: readonly CnameTarget[],
   exportTargets: readonly CnameTarget[],
+  status: DeployComponentStatus,
   options: { afterCheck?: boolean; oauthNext: boolean },
 ): Promise<void> {
-  for (const line of dnsIntro(state.domain)) log.info(line);
-  log.blank();
-  if (display.length > 0) {
-    for (const line of dnsRecords(display, options)) log.info(line);
-    log.blank();
-  }
-
   const handoffInstanceId = state.productionInstanceId;
-  for (const line of dnsDashboardHandoff(
-    state.domain,
-    handoffInstanceId ? domainsDashboardUrl(state.appId, handoffInstanceId) : undefined,
-    { oauthNext: options.oauthNext },
-  )) {
+  const domainsUrl = handoffInstanceId
+    ? domainsDashboardUrl(state.appId, handoffInstanceId)
+    : undefined;
+
+  // With no records to add, a "Configure DNS" page is the wrong page: say
+  // what is actually outstanding instead (certificate, Clerk finalizing, or
+  // a record list Clerk didn't return).
+  const lines =
+    display.length > 0
+      ? [
+          ...dnsIntro(state.domain),
+          "",
+          ...dnsRecords(display, options),
+          "",
+          ...dnsDashboardHandoff(state.domain, domainsUrl, { oauthNext: options.oauthNext }),
+        ]
+      : dnsHandoffNothingToAdd(state.domain, status, domainsUrl);
+  for (const line of lines) {
     if (line === "") log.blank();
     else log.info(line);
   }
@@ -438,10 +446,13 @@ async function runExistingDomainDnsVerification(
   // are records to add, and the user may have added those already.
   const allTargets = state.cnameTargets ?? [];
   // OAuth ran before this on the resume path, so the check is next.
-  await runDnsRecordHandoff(state, pendingCnameTargets(allTargets, componentStatus), allTargets, {
-    afterCheck: true,
-    oauthNext: false,
-  });
+  await runDnsRecordHandoff(
+    state,
+    pendingCnameTargets(allTargets, componentStatus),
+    allTargets,
+    componentStatus,
+    { afterCheck: true, oauthNext: false },
+  );
   return runDnsVerificationPrompt(ctx, state);
 }
 
@@ -698,7 +709,7 @@ async function finishDeploy(
   // The closing word summarizes how the run ended. After a skipped DNS check
   // the status row four lines up says "DNS pending", and "Success" beneath it
   // contradicted that; the same value that drives the headline drives this.
-  await outro(dnsStatus === "verified" ? "Success" : "DNS pending");
+  await outro(dnsStatus === "verified" ? "Success" : "Not verified");
 }
 
 export function registerDeploy(program: Program): void {

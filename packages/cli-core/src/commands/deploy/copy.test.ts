@@ -9,6 +9,7 @@ import {
   deployStatusRetryMessage,
   dnsIntro,
   dnsDashboardHandoff,
+  dnsHandoffNothingToAdd,
   dnsRecords,
   domainAssociationSummary,
   domainsDashboardUrl,
@@ -175,7 +176,9 @@ describe("nextStepsBody", () => {
     // has to route through the wizard before the sign-up check.
     const output = nextStepsBody("app_123", "ins_456", "example.com", "pending");
 
-    expect(output).toContain("3. Run `clerk deploy` again once your DNS records are added");
+    // "once the domain is verified", not "once your DNS records are added":
+    // the DNS may already be done with only the certificate outstanding.
+    expect(output).toContain("3. Run `clerk deploy` again once the domain is verified");
     expect(output).toContain("sign up at https://example.com to confirm it works");
     expect(output).not.toContain("3. Redeploy your app");
   });
@@ -188,7 +191,8 @@ describe("productionSummary", () => {
 
     expect(verified).toContain("Production ready at https://example.com");
     expect(pending).toContain("Production instance created for https://example.com");
-    expect(pending).toContain("Domain      DNS pending");
+    expect(pending).toContain("Domain      Not yet verified");
+    expect(pending).not.toContain("DNS pending");
     expect(pending).not.toContain("Production ready");
   });
 });
@@ -478,6 +482,76 @@ describe("dnsRecords", () => {
     }
     expect(records).not.toContain("Clerk handles SPF/DKIM automatically");
     expect(confirmation).not.toContain("Clerk handles SPF/DKIM automatically");
+  });
+});
+
+describe("dnsHandoffNothingToAdd", () => {
+  // The DNS screen when the list of records to add is empty. It must say what
+  // is actually outstanding rather than framing a records task with no
+  // records, and each state has its own action.
+  const URL = "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains";
+
+  test("SSL pending: records are done, the certificate is Clerk's side, check again is offered", () => {
+    const out = stripAnsi(
+      dnsHandoffNothingToAdd("example.com", { dns: true, ssl: false, mail: true }, URL).join("\n"),
+    );
+
+    expect(out).toContain("Your DNS records for example.com are verified.");
+    expect(out).toContain("The SSL certificate is still pending; Clerk issues it automatically.");
+    expect(out).toContain(`Clerk Dashboard:\n  ${URL}`);
+    expect(out).toContain("checks whether the certificate has been issued");
+    expect(out).toContain("wait a few minutes and check again");
+    // No timing promise the status can't back up.
+    expect(out).not.toContain("usually takes");
+    expect(out).not.toContain("Configure DNS");
+    expect(out).not.toContain("these records");
+  });
+
+  test("finalizing: nothing for the user to do, and no in-session retry is promised", () => {
+    const out = stripAnsi(
+      dnsHandoffNothingToAdd("example.com", { dns: true, ssl: true, mail: true }, URL).join("\n"),
+    );
+
+    expect(out).toContain("Your DNS records and SSL certificate for example.com are verified.");
+    expect(out).toContain("Clerk is still finalizing production setup.");
+    // The check pauses the run once everything is verified, so "check again"
+    // would name an option the prompt never offers.
+    expect(out).toContain("run `clerk deploy` again in a few minutes");
+    expect(out).not.toContain("check again");
+  });
+
+  test.each([
+    {
+      label: "both",
+      status: { dns: false, ssl: false, mail: false },
+      records: "DNS and email DNS",
+    },
+    { label: "email only", status: { dns: true, ssl: false, mail: false }, records: "Email DNS" },
+    { label: "DNS only", status: { dns: false, ssl: false, mail: true }, records: "DNS" },
+  ])(
+    "no record list ($label): tells the user to find and add the records",
+    ({ status, records }) => {
+      const out = stripAnsi(dnsHandoffNothingToAdd("example.com", status, URL).join("\n"));
+
+      expect(out).toContain(
+        `${records} records for example.com are not verified yet, but Clerk didn't return the list to add.`,
+      );
+      // An instruction, not a wait: the records still have to be added.
+      expect(out).toContain("add them at your DNS provider, then choose Check DNS now below");
+      expect(out).toContain(`Check DNS now below:\n  ${URL}`);
+      expect(out).toContain("checks that they have taken effect");
+      expect(out).not.toContain("Configure DNS");
+    },
+  );
+
+  test("ends sentences cleanly with no Dashboard URL", () => {
+    const out = stripAnsi(
+      dnsHandoffNothingToAdd("example.com", { dns: true, ssl: false, mail: true }, undefined).join(
+        "\n",
+      ),
+    );
+    expect(out).toContain("on the Domains page in the Clerk Dashboard.");
+    expect(out).not.toContain("undefined");
   });
 });
 
