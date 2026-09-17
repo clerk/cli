@@ -200,14 +200,24 @@ function cnameTargetLabel(host: string): string {
   }
 }
 
-export function dnsDashboardHandoff(domain: string, domainsUrl: string | undefined): string[] {
+/**
+ * `oauthNext` is required: on a fresh run with providers, OAuth setup comes
+ * between this screen and the DNS check; on resume (OAuth already done) and
+ * on a fresh run with no providers, the check is next. Saying "you'll set up
+ * OAuth" under a checklist that shows OAuth done was wrong.
+ */
+export function dnsDashboardHandoff(
+  domain: string,
+  domainsUrl: string | undefined,
+  options: { oauthNext: boolean },
+): string[] {
   return [
     // "this command", not "the wizard": nothing the user sees uses that word.
     // Skipping the check leaves setup unfinished, so name what resumes it.
     `Monitor DNS propagation and SSL issuance for ${domain} on the Domains page in the Clerk Dashboard${domainsUrl ? ":" : "."}`,
     ...(domainsUrl ? [`  ${domainsUrl}`] : []),
     "",
-    "Next you'll set up OAuth, then this command checks these records. If they haven't taken effect yet, you can skip the check and run `clerk deploy` again later to finish.",
+    `${options.oauthNext ? "Next you'll set up OAuth, then this command checks these records." : "Next, this command checks these records."} If they haven't taken effect yet, you can skip the check and run \`clerk deploy\` again later to finish.`,
   ];
 }
 

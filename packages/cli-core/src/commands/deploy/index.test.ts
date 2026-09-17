@@ -1015,7 +1015,7 @@ describe("deploy", () => {
       expect(err).toContain("Add the following records at your DNS provider");
       expect(err).toContain("on the Domains page in the Clerk Dashboard");
       expect(err).toContain("propagation and SSL issuance");
-      expect(err).toContain("then this command checks these records");
+      expect(err).toContain("Next you'll set up OAuth, then this command checks these records");
       expect(mockConfirm).toHaveBeenCalledTimes(3);
       expect(mockConfirm).toHaveBeenCalledWith({
         message: "Create production instance?",
@@ -1787,6 +1787,9 @@ describe("deploy", () => {
       expect(err).not.toMatch(/Add the following records at your DNS provider:/);
       expect(err).toContain("Host:  clkmail.example.com");
       expect(err).not.toContain("Host:  clerk.example.com");
+      // OAuth ran before this screen on resume, so it is not "next".
+      expect(err).toContain("Next, this command checks these records.");
+      expect(err).not.toContain("set up OAuth");
     });
 
     test("resume exports every record to the zone file even when the screen lists only the outstanding ones", async () => {
@@ -1992,7 +1995,7 @@ describe("deploy", () => {
       await runDeployUntilPause();
       const err = stripAnsi(captured.err);
       expect(err).toContain("on the Domains page in the Clerk Dashboard");
-      expect(err).toContain("then this command checks these records");
+      expect(err).toContain("Next you'll set up OAuth, then this command checks these records");
       expect(err).toContain("Configure Google OAuth for production");
     });
 

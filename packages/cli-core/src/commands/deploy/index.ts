@@ -219,10 +219,15 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     cnameTargets,
   };
 
+  // OAuth setup only runs when there are providers; with none, the DNS check
+  // is what comes next.
   await runDnsRecordHandoff(
     { ...operationState, pending: { type: "dns" } },
     cnameTargets,
     cnameTargets,
+    {
+      oauthNext: oauthProviders.length > 0,
+    },
   );
 
   bar();
@@ -394,7 +399,7 @@ async function runDnsRecordHandoff(
   state: DeployOperationState,
   display: readonly CnameTarget[],
   exportTargets: readonly CnameTarget[],
-  options: { afterCheck?: boolean } = {},
+  options: { afterCheck?: boolean; oauthNext: boolean },
 ): Promise<void> {
   for (const line of dnsIntro(state.domain)) log.info(line);
   log.blank();
@@ -407,6 +412,7 @@ async function runDnsRecordHandoff(
   for (const line of dnsDashboardHandoff(
     state.domain,
     handoffInstanceId ? domainsDashboardUrl(state.appId, handoffInstanceId) : undefined,
+    { oauthNext: options.oauthNext },
   )) {
     if (line === "") log.blank();
     else log.info(line);
@@ -431,8 +437,10 @@ async function runExistingDomainDnsVerification(
   // On resume some records may already be verified; only the outstanding ones
   // are records to add, and the user may have added those already.
   const allTargets = state.cnameTargets ?? [];
+  // OAuth ran before this on the resume path, so the check is next.
   await runDnsRecordHandoff(state, pendingCnameTargets(allTargets, componentStatus), allTargets, {
     afterCheck: true,
+    oauthNext: false,
   });
   return runDnsVerificationPrompt(ctx, state);
 }

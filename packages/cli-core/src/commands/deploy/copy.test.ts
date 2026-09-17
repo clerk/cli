@@ -485,19 +485,29 @@ describe("dnsDashboardHandoff", () => {
   const DOMAINS_URL = "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains";
 
   test("links the Domains page and says how to resume if the check is skipped", () => {
-    const output = dnsDashboardHandoff("example.com", DOMAINS_URL).join("\n");
+    const output = dnsDashboardHandoff("example.com", DOMAINS_URL, { oauthNext: true }).join("\n");
 
     expect(output).toContain(`Clerk Dashboard:\n  ${DOMAINS_URL}`);
     // "wizard" appears nowhere else the user can see, so it isn't introduced here.
     expect(output).not.toContain("wizard");
-    expect(output).toContain("then this command checks these records");
+    expect(output).toContain("Next you'll set up OAuth, then this command checks these records.");
     expect(output).toContain("run `clerk deploy` again later to finish");
     // "skip and finish" read as though skipping completed the deploy.
     expect(output).not.toContain("skip and finish");
   });
 
+  test("does not promise an OAuth step when none is coming", () => {
+    // On resume OAuth already ran, and a fresh run with no providers skips it.
+    // Under a checklist showing OAuth done, "you'll set up OAuth" was wrong.
+    const output = dnsDashboardHandoff("example.com", DOMAINS_URL, { oauthNext: false }).join("\n");
+
+    expect(output).toContain("Next, this command checks these records.");
+    expect(output).not.toContain("set up OAuth");
+    expect(output).toContain("run `clerk deploy` again later to finish");
+  });
+
   test("ends the sentence cleanly when no Dashboard URL is known", () => {
-    const output = dnsDashboardHandoff("example.com", undefined).join("\n");
+    const output = dnsDashboardHandoff("example.com", undefined, { oauthNext: true }).join("\n");
 
     expect(output).toContain("on the Domains page in the Clerk Dashboard.");
     expect(output).not.toContain("undefined");
