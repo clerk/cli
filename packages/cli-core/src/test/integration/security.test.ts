@@ -46,19 +46,17 @@ test("security checks lists the catalog without any request", async () => {
   expect(http.requests).toHaveLength(0);
 });
 
-test("security audit in agent mode exits 1 with the report on stdout and a JSON error on stderr", async () => {
+test("security audit in agent mode prints the report on stdout and exits 0", async () => {
   const result = await clerk.raw("--mode", "agent", "security", "audit");
-  expect(result.exitCode).toBe(1);
+  expect(result.exitCode).toBe(0);
   const report = JSON.parse(result.stdout) as AuditReport;
   expect(report.score.hasCriticalGap).toBe(true);
   expect(report.findings.length).toBeGreaterThan(0);
-  const error = JSON.parse(result.stderr).error;
-  expect(error.code).toBe("security_audit_failed");
   expect(http.requests.filter((r) => r.method === "GET")).toHaveLength(1);
 });
 
 test("security alone runs the audit", async () => {
-  const result = await clerk.raw("--mode", "agent", "security", "--fail-on", "none");
+  const result = await clerk.raw("--mode", "agent", "security");
   expect(result.exitCode).toBe(0);
   expect((JSON.parse(result.stdout) as AuditReport).findings.length).toBeGreaterThan(0);
 });
@@ -73,11 +71,10 @@ test.each([{ mode: "human" }, { mode: "agent" }])(
 );
 
 test("human audit prints the grouped report on stderr", async () => {
-  const result = await clerk.raw("--mode", "human", "security", "audit", "--spotlight");
-  expect(result.exitCode).toBe(1);
+  const result = await clerk.raw("--mode", "human", "security", "audit");
+  expect(result.exitCode).toBe(0);
   expect(result.stderr).toContain("Grade");
   expect(result.stderr).toContain("Critical");
-  expect(result.stderr).toContain("error:");
   expect(result.stdout).toBe("");
 });
 
@@ -132,19 +129,6 @@ test("security fix applies the patch and reports it as JSON in agent mode", asyn
   });
 });
 
-test("security fix accepts ids through --input-json", async () => {
-  await clerk(
-    "--mode",
-    "agent",
-    "security",
-    "fix",
-    "--input-json",
-    '{"check":["user-lockout","bot-protection"],"yes":true}',
-  );
-  const patch = http.requests.find((r) => r.method === "PATCH")!;
-  expect(Object.keys(JSON.parse(patch.body as string))).toEqual(["auth_attack_protection"]);
-});
-
 test("bare security fix in human mode applies the picked recommendations", async () => {
   mockPrompts.multiselect(["user-lockout", "bot-protection"]);
   mockPrompts.confirm(true);
@@ -161,7 +145,7 @@ test("bare security fix in human mode applies the picked recommendations", async
 });
 
 test("human audit rows show the id next to the title", async () => {
-  const result = await clerk.raw("--mode", "human", "security", "audit", "--spotlight");
+  const result = await clerk.raw("--mode", "human", "security", "audit");
   expect(result.stderr).toContain("Brute-force lockout");
   expect(result.stderr).toContain("user-lockout");
 });

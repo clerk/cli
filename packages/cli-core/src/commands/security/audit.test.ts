@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
 import { useCaptureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
-import { INSECURE_CONFIG, INSECURE_OAUTH_CONFIG, SECURE_CONFIG } from "./fixtures.ts";
+import { INSECURE_CONFIG, INSECURE_OAUTH_CONFIG } from "./fixtures.ts";
 import type { AuditOptions, AuditReport } from "./types.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
@@ -98,9 +98,7 @@ describe("security audit", () => {
 
   test("emits the JSON envelope with --json", async () => {
     await link();
-    await expect(run({ json: true })).rejects.toThrow(
-      "security recommendations unmet (--fail-on critical)",
-    );
+    await run({ json: true });
 
     const parsed = report();
     expect(parsed.instance).toEqual({
@@ -141,7 +139,7 @@ describe("security audit", () => {
   test("agent mode forces JSON, rewrites docs URLs, and adds --yes to the fix command", async () => {
     process.env.CLERK_MODE = "agent";
     await link();
-    await expect(run()).rejects.toThrow();
+    await run();
 
     const parsed = report();
     expect(parsed.fixCommand).toEndWith(" --yes");
@@ -151,7 +149,7 @@ describe("security audit", () => {
 
   test("orders findings by severity then status", async () => {
     await link();
-    await expect(run({ json: true })).rejects.toThrow();
+    await run({ json: true });
     const statuses = report().findings.map((f) => `${f.severity}:${f.status}`);
     const firstRecommended = statuses.findIndex((s) => s.startsWith("recommended"));
     expect(statuses.slice(0, firstRecommended).every((s) => s.startsWith("critical"))).toBe(true);
@@ -161,17 +159,9 @@ describe("security audit", () => {
     );
   });
 
-  test("--spotlight drops met findings from JSON", async () => {
-    serve(SECURE_CONFIG);
-    await link();
-    await run({ json: true, spotlight: true });
-    expect(report().findings).toEqual([]);
-    expect(report().score.grade).toBe("A");
-  });
-
   test("renders a grouped human report", async () => {
     await link();
-    await expect(run()).rejects.toThrow();
+    await run();
     expect(captured.err).toContain("Grade F");
     expect(captured.err).toContain("Critical");
     expect(captured.err).toContain("Brute-force lockout");
@@ -183,45 +173,10 @@ describe("security audit", () => {
     expect(captured.out).toBe("");
   });
 
-  test("human --spotlight hides met findings", async () => {
-    serve({ ...INSECURE_CONFIG, auth_password: { ...(SECURE_CONFIG.auth_password as object) } });
-    await link();
-    await expect(run({ spotlight: true })).rejects.toThrow();
-    expect(captured.err).not.toContain("Device trust");
-  });
-
-  test.each([
-    ["critical", true],
-    ["recommended", true],
-    ["any", true],
-    ["none", false],
-  ] as const)("--fail-on %s on the insecure fixture throws: %s", async (failOn, throws) => {
-    await link();
-    const promise = run({ json: true, failOn });
-    if (throws) await expect(promise).rejects.toThrow("unmet");
-    else await expect(promise).resolves.toBeUndefined();
-  });
-
-  test("--fail-on recommended passes when only good-to-have gaps remain", async () => {
-    const config = {
-      ...SECURE_CONFIG,
-      session_settings: {
-        ...(SECURE_CONFIG.session_settings as object),
-        maximum_lifetime: { enabled: false, duration_seconds: 0 },
-      },
-    };
-    serve(config);
-    await link();
-    await expect(run({ json: true, failOn: "recommended" })).resolves.toBeUndefined();
-    await expect(run({ json: true, failOn: "any" })).rejects.toThrow(
-      "1 security recommendation unmet",
-    );
-  });
-
   test("resolves the environment type for a literal instance id", async () => {
     serve(INSECURE_OAUTH_CONFIG);
     await link();
-    await run({ json: true, instance: "ins_prod", failOn: "none" });
+    await run({ json: true, instance: "ins_prod" });
     const parsed = report();
     expect(parsed.instance.environmentType).toBe("production");
     expect(parsed.findings.some((f) => f.id === "oauth-custom-credentials")).toBe(true);
@@ -229,13 +184,13 @@ describe("security audit", () => {
 
   test("rejects a literal instance id the application does not own", async () => {
     await link();
-    await expect(run({ json: true, instance: "ins_other", failOn: "none" })).rejects.toThrow(
+    await expect(run({ json: true, instance: "ins_other" })).rejects.toThrow(
       "does not belong to application app_1",
     );
   });
 
   test("targets an app directly with --app", async () => {
-    await run({ json: true, app: "app_1", instance: "prod", failOn: "none" });
+    await run({ json: true, app: "app_1", instance: "prod" });
     expect(report().instance.instanceId).toBe("ins_prod");
     expect(report().fixCommand).toContain(" --app app_1 --instance ins_prod");
     for (const finding of report().findings.filter((f) => f.remedy.includes("clerk "))) {

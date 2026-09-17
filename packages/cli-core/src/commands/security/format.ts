@@ -29,9 +29,8 @@ const GRADE_COLOR: Record<SecurityScore["grade"], (s: string) => string> = {
   F: red,
 };
 
-export function formatReportJson(report: AuditReport, spotlight: boolean): string {
-  const findings = spotlight ? report.findings.filter((f) => f.status !== "met") : report.findings;
-  return JSON.stringify({ ...report, findings }, null, 2);
+export function formatReportJson(report: AuditReport): string {
+  return JSON.stringify(report, null, 2);
 }
 
 export function formatScoreTransition(
@@ -71,8 +70,8 @@ function formatFindingLine(finding: Finding, widths: { title: number; id: number
   return `${STATUS_ICON.unmet} ${title}  ${cyan(id)}  ${change}${manual}`;
 }
 
-export function formatReportHuman(report: AuditReport, spotlight: boolean): string[] {
-  const findings = spotlight ? report.findings.filter((f) => f.status !== "met") : report.findings;
+export function formatReportHuman(report: AuditReport): string[] {
+  const { findings } = report;
   const widths = {
     title: Math.max(0, ...findings.map((f) => f.title.length)),
     id: Math.max(0, ...findings.map((f) => f.id.length)),
