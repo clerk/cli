@@ -202,3 +202,39 @@ test("security fix mfa in human mode asks which factors", async () => {
     auth_phone: { used_for_second_factor: true, second_factor_strategies: ["phone_code"] },
   });
 });
+
+test("a plan-gated fix exits 1 with plan_insufficient and a subset command in agent mode", async () => {
+  http.stub(async (url, init) => {
+    if (init?.method === "PATCH") {
+      const body = {
+        errors: [
+          {
+            code: "unsupported_subscription_plan_features",
+            message: "Unsupported subscription plan features",
+            meta: { unsupported_features: ["app:passkey"] },
+          },
+        ],
+      };
+      return new Response(JSON.stringify(body), { status: 402 });
+    }
+    return new Response(JSON.stringify(INSECURE_CONFIG), { status: 200 });
+  });
+  const result = await clerk.raw(
+    "--mode",
+    "agent",
+    "security",
+    "fix",
+    "passkeys",
+    "user-lockout",
+    "--yes",
+  );
+  expect(result.exitCode).toBe(1);
+  // The diff precedes the envelope on stderr; the envelope is the last line.
+  const error = JSON.parse(result.stderr.trim().split("\n").at(-1)!).error;
+  expect(error.code).toBe("plan_insufficient");
+  expect(error.message).toContain("passkeys");
+  expect(error.docsUrl).toContain("clerk.com/pricing");
+  expect(error.examples[0].command).toBe(
+    "clerk security fix user-lockout --app app_1 --instance ins_dev --yes",
+  );
+});

@@ -29,8 +29,8 @@ export interface CheckDef {
   path: string;
   dashboardPath: KnownDashboardPath;
   docsUrl: string;
-  /** Billing feature the control needs on production. */
-  feature?: string;
+  /** Billing features the control needs on production. */
+  features?: string[];
   /** False excludes the check from report and score. */
   appliesTo?(input: CheckInput): boolean;
   evaluate(input: CheckInput): CheckEvaluation;
@@ -68,7 +68,7 @@ export interface Finding extends CheckEvaluation {
   severity: Severity;
   status: FindingStatus;
   path: string;
-  feature?: string;
+  features?: string[];
   blockedBy?: string;
   patch: ConfigPatch | null;
   /** Patch the suggested decision values would produce. */

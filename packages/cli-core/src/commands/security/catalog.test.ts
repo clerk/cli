@@ -265,20 +265,20 @@ describe("suggested patches", () => {
 
 describe("plan-gated features", () => {
   test.each([
-    ["mfa", "app:mfa_totp"],
-    ["passkeys", "app:passkey"],
-    ["session-lifetime", "app:custom_session_duration"],
-  ])("%s reports feature %s", (id, feature) => {
-    expect(findCheck(id)!.feature).toBe(feature);
+    ["mfa", ["app:mfa_totp", "app:mfa_phone_code", "app:mfa_backup_code"]],
+    ["passkeys", ["app:passkey"]],
+    ["session-lifetime", ["app:custom_session_duration"]],
+  ])("%s reports features %j", (id, features) => {
+    expect(findCheck(id)!.features).toEqual(features);
     const finding = evaluate(production(INSECURE_CONFIG), REF).find((f) => f.id === id);
-    expect(finding?.feature).toBe(feature);
+    expect(finding?.features).toEqual(features);
   });
 
-  test("checks without a feature omit the key", () => {
+  test("checks without features omit the key", () => {
     const finding = evaluate(production(INSECURE_CONFIG), REF).find(
       (f) => f.id === "user-lockout",
     )!;
-    expect("feature" in finding).toBe(false);
+    expect("features" in finding).toBe(false);
   });
 });
 
