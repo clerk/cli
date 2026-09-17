@@ -173,36 +173,45 @@ export function cnameTargetPending(target: CnameTarget, status: DeployComponentS
   return !status.dns;
 }
 
+/**
+ * What each record host is, keyed by its first label (`clk._domainkey` and
+ * `clk2._domainkey` arrive as "clk"/"clk2"). One table drives both how a
+ * record is classified (email DNS vs DNS, for filtering and for the SPF/DKIM
+ * sentence) and how it is labelled on screen, so a new host can't be
+ * classified as email and still print as an unlabelled "CNAME" row.
+ *
+ * "DKIM" stays in the label: it is the standard name for these records and
+ * already appears in the host. What Clerk manages on the user's behalf is
+ * said once under the block instead of on each row, where it read as
+ * "nothing to do here".
+ *
+ * `productionDnsHosts` keeps its own list of the DKIM hosts: it answers
+ * "which records will this domain need" before any exist, not "what is this
+ * record", so the selector assumption documented there still lives there.
+ */
+const CNAME_HOSTS = new Map<string, { label: string; mail: boolean }>([
+  ["clerk", { label: "Frontend API", mail: false }],
+  ["accounts", { label: "Account portal", mail: false }],
+  ["clkmail", { label: "Email", mail: true }],
+  ["clk", { label: "Email (DKIM)", mail: true }],
+  ["clk2", { label: "Email (DKIM)", mail: true }],
+]);
+
+function cnameHostInfo(host: string): { label: string; mail: boolean } | undefined {
+  return CNAME_HOSTS.get(host.split(".", 1)[0] ?? "");
+}
+
 function isMailCnameTarget(target: CnameTarget): boolean {
-  const prefix = target.host.split(".", 1)[0];
-  return prefix === "clkmail" || prefix === "clk" || prefix === "clk2";
+  return cnameHostInfo(target.host)?.mail ?? false;
 }
 
 /**
  * Human label for a record host, used by every screen that lists records so
  * the confirmation screen and the records block can't name the same host two
- * ways. "DKIM" stays: it is the standard name for these records and already
- * appears in the host (`clk._domainkey`). What Clerk manages on the user's
- * behalf is said once under the block instead of on each row, where it read
- * as "nothing to do here".
+ * ways.
  */
 function cnameTargetLabel(host: string): string {
-  // `host.split(".", 1)[0]` yields only the first label, so DKIM records
-  // (clk._domainkey, clk2._domainkey) arrive here as "clk"/"clk2".
-  const prefix = host.split(".", 1)[0];
-  switch (prefix) {
-    case "clerk":
-      return "Frontend API";
-    case "accounts":
-      return "Account portal";
-    case "clkmail":
-      return "Email";
-    case "clk":
-    case "clk2":
-      return "Email (DKIM)";
-    default:
-      return "CNAME";
-  }
+  return cnameHostInfo(host)?.label ?? "CNAME";
 }
 
 /**
