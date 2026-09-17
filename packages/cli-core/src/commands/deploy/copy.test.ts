@@ -516,7 +516,7 @@ describe("dnsHandoffNothingToAdd", () => {
     expect(out).toContain("The SSL certificate is still pending; Clerk issues it automatically.");
     expect(out).toContain(`Clerk Dashboard:\n  ${URL}`);
     expect(out).toContain("checks whether the certificate has been issued");
-    expect(out).toContain("wait a few minutes and check again");
+    expect(out).toContain("If it hasn't yet, you can either wait a few minutes and check again");
     // No timing promise the status can't back up.
     expect(out).not.toContain("usually takes");
     expect(out).not.toContain("Configure DNS");
@@ -560,6 +560,9 @@ describe("dnsHandoffNothingToAdd", () => {
       expect(out).toContain("add them at your DNS provider, then choose Check DNS now below");
       expect(out).toContain(`Check DNS now below:\n  ${URL}`);
       expect(out).toContain("checks that they have taken effect");
+      // Plural subject: the sentence is about records, not a certificate.
+      expect(out).toContain("If they haven't yet, you can either wait a few minutes");
+      expect(out).not.toContain("If it hasn't");
       expect(out).not.toContain("Configure DNS");
     },
   );

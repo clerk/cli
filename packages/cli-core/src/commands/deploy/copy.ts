@@ -237,8 +237,10 @@ export function dnsHandoffNothingToAdd(
 ): string[] {
   const state = classifyDomainPending(status, false);
   const url = domainsUrl ? [`  ${domainsUrl}`] : [];
-  const resume =
-    "If it hasn't yet, you can either wait a few minutes and check again, or skip the check and run `clerk deploy` again later to finish.";
+  // Written out per subject rather than patched by string replacement, so a
+  // reword of one can't leave the other reading "it" about records.
+  const resume = (subject: "it hasn't" | "they haven't") =>
+    `If ${subject} yet, you can either wait a few minutes and check again, or skip the check and run \`clerk deploy\` again later to finish.`;
   switch (state) {
     case "ssl_pending":
       return [
@@ -250,7 +252,7 @@ export function dnsHandoffNothingToAdd(
         nextStepSentence({
           ...options,
           check: "checks whether the certificate has been issued",
-          resume,
+          resume: resume("it hasn't"),
         }),
       ];
     case "finalizing":
@@ -287,7 +289,7 @@ export function dnsHandoffNothingToAdd(
         nextStepSentence({
           ...options,
           check: "checks that they have taken effect",
-          resume: resume.replace("If it hasn't yet", "If they haven't yet"),
+          resume: resume("they haven't"),
         }),
       ];
     }
