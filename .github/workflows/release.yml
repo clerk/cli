@@ -82,8 +82,25 @@ jobs:
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
 
+  sign-windows:
+    needs: [versioning, build]
+    if: needs.versioning.outputs.release_created == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/sign-windows.yml
+    with:
+      artifact-prefix: clerk
+    secrets:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+      AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+      AZURE_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_SIGNING_CERT_PROFILE }}
+
   smoke-test:
-    needs: [versioning, build, sign-macos]
+    needs: [versioning, build, sign-macos, sign-windows]
     uses: ./.github/workflows/smoke-test.yml
     with:
       version: ${{ needs.versioning.outputs.version }}
@@ -91,7 +108,7 @@ jobs:
       preset: stable
 
   publish-npm:
-    needs: [versioning, build, sign-macos, smoke-test]
+    needs: [versioning, build, sign-macos, sign-windows, smoke-test]
     # Must run on GitHub-hosted runner for npm OIDC trusted publishing
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -119,7 +136,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
   publish-github:
-    needs: [versioning, build, sign-macos, smoke-test, publish-npm]
+    needs: [versioning, build, sign-macos, sign-windows, smoke-test, publish-npm]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -144,7 +161,7 @@ jobs:
           done
 
   homebrew:
-    needs: [versioning, build, sign-macos, smoke-test, publish-npm]
+    needs: [versioning, build, sign-macos, sign-windows, smoke-test, publish-npm]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -175,7 +192,17 @@ jobs:
       always() &&
       needs.versioning.outputs.release_created == 'true' &&
       contains(needs.*.result, 'failure')
-    needs: [versioning, build, sign-macos, smoke-test, publish-npm, publish-github, homebrew]
+    needs:
+      [
+        versioning,
+        build,
+        sign-macos,
+        sign-windows,
+        smoke-test,
+        publish-npm,
+        publish-github,
+        homebrew,
+      ]
     uses: ./.github/workflows/notify-failure.yml
     with:
       workflow-name: Stable release
@@ -238,8 +265,24 @@ jobs:
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
 
+  canary-sign-windows:
+    needs: [canary-version, canary-build]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/sign-windows.yml
+    with:
+      artifact-prefix: clerk-canary
+    secrets:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+      AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+      AZURE_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_SIGNING_CERT_PROFILE }}
+
   canary-smoke-test:
-    needs: [canary-version, canary-build, canary-sign-macos]
+    needs: [canary-version, canary-build, canary-sign-macos, canary-sign-windows]
     uses: ./.github/workflows/smoke-test.yml
     with:
       version: ${{ needs.canary-version.outputs.version }}
@@ -247,7 +290,7 @@ jobs:
       preset: canary
 
   canary-publish-github:
-    needs: [canary-version, canary-build, canary-sign-macos, canary-smoke-test]
+    needs: [canary-version, canary-build, canary-sign-macos, canary-sign-windows, canary-smoke-test]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -335,6 +378,7 @@ jobs:
         canary-version,
         canary-build,
         canary-sign-macos,
+        canary-sign-windows,
         canary-smoke-test,
         canary-publish-github,
         canary-publish-npm,
@@ -471,8 +515,24 @@ jobs:
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
 
+  snapshot-sign-windows:
+    needs: [snapshot, snapshot-build]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/sign-windows.yml
+    with:
+      artifact-prefix: clerk-snapshot
+    secrets:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+      AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+      AZURE_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_SIGNING_CERT_PROFILE }}
+
   snapshot-smoke-test:
-    needs: [snapshot, snapshot-build, snapshot-sign-macos]
+    needs: [snapshot, snapshot-build, snapshot-sign-macos, snapshot-sign-windows]
     uses: ./.github/workflows/smoke-test.yml
     with:
       version: ${{ needs.snapshot.outputs.version }}
@@ -480,7 +540,7 @@ jobs:
       preset: snapshot
 
   snapshot-publish:
-    needs: [snapshot, snapshot-build, snapshot-sign-macos, snapshot-smoke-test]
+    needs: [snapshot, snapshot-build, snapshot-sign-macos, snapshot-sign-windows, snapshot-smoke-test]
     # Must run on GitHub-hosted runner for npm OIDC trusted publishing
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -566,7 +626,15 @@ jobs:
 
   snapshot-notify-failure:
     needs:
-      [snapshot, snapshot-ci, snapshot-build, snapshot-sign-macos, snapshot-smoke-test, snapshot-publish]
+      [
+        snapshot,
+        snapshot-ci,
+        snapshot-build,
+        snapshot-sign-macos,
+        snapshot-sign-windows,
+        snapshot-smoke-test,
+        snapshot-publish,
+      ]
     if: >-
       always() &&
       contains(needs.*.result, 'failure')
