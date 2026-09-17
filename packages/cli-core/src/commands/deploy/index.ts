@@ -367,6 +367,9 @@ async function createProductionInstance(
 }
 
 async function confirmProductionInstanceCreation(domain: string): Promise<boolean> {
+  // Separate this screen from the domain the user just typed; without it the
+  // echoed answer runs straight into the lead sentence.
+  log.blank();
   for (const line of domainAssociationSummary(domain)) log.info(line);
   log.blank();
   const confirmed = await confirmCreateProductionInstance();

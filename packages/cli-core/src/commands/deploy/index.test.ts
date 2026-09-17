@@ -1005,6 +1005,8 @@ describe("deploy", () => {
       expect(err).toContain(
         "Clerk will use these subdomains for example.com. You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:",
       );
+      // A blank line separates the domain the user just typed from this screen.
+      expect(err).toMatch(/│[ \t]*\n│[ \t]+Clerk will use these subdomains for example\.com\./);
       expect(err).toContain("clerk.example.com");
       expect(err).toContain("accounts.example.com");
       expect(err).toContain("clkmail.example.com");
