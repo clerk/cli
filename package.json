@@ -45,6 +45,7 @@
     "typescript": "^7"
   },
   "overrides": {
+    "@xmldom/xmldom": "0.8.15",
     "tmp": "^0.2.6"
   },
   "nano-staged": {
