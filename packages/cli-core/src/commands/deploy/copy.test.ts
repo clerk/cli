@@ -1,13 +1,25 @@
 import { test, expect, describe } from "bun:test";
 import {
+  DEPLOY_COMMAND_DESCRIPTION,
+  DEPLOY_COMMAND_SUMMARY,
+  INTRO_PREAMBLE,
   bindZoneFile,
   deployComponentLabels,
+  deployStatusPendingFooter,
   deployStatusRetryMessage,
+  dnsIntro,
   dnsRecords,
+  domainAssociationSummary,
+  domainsDashboardUrl,
+  instanceDashboardUrl,
   nextStepsBlock,
   pendingDnsRecords,
+  productionDnsHosts,
 } from "./copy.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
+
+const stripAnsi = (value: string): string =>
+  value.replace(new RegExp(String.raw`\x1b\[[0-9;]*m`, "g"), "");
 
 describe("bindZoneFile", () => {
   const fixedDate = new Date("2026-05-20T18:30:00.000Z");
@@ -111,11 +123,208 @@ describe("deployStatusRetryMessage", () => {
 });
 
 describe("nextStepsBlock", () => {
-  test("links directly to the production instance domain settings", () => {
-    const output = nextStepsBlock("app_123", "ins_456");
+  test("links to the production instance home and its domain settings", () => {
+    const output = stripAnsi(nextStepsBlock("app_123", "ins_456", "example.com"));
 
-    expect(output).toContain("View and manage domain configuration in the Clerk Dashboard");
+    expect(output).toContain("Manage this instance in the Clerk Dashboard");
+    expect(output).toContain("- Users, settings, and billing:");
+    expect(output).toContain("- DNS and SSL status:");
+    // The instance root on its own line, not only as a prefix of the domains URL.
+    expect(output).toContain("https://dashboard.clerk.com/apps/app_123/instances/ins_456\n");
     expect(output).toContain("https://dashboard.clerk.com/apps/app_123/instances/ins_456/domains");
+  });
+
+  test("says the pulled keys go on the host alongside the other Clerk variables", () => {
+    // `env pull --instance prod` writes only the two keys. The routing
+    // variables `init` wrote have to be carried over by hand, or sign-in
+    // silently falls back to the hosted Account Portal.
+    const output = nextStepsBlock("app_123", "ins_456", "example.com");
+
+    expect(output).toContain("- Add the same pk_live_/sk_live_ values there.");
+    expect(output).toContain("- Also copy the other Clerk variables from your env file");
+    expect(output).toContain("NEXT_PUBLIC_CLERK_SIGN_IN_URL");
+    expect(output).toContain("writes only the two keys");
+  });
+
+  test("ends with a real sign-up on the production domain", () => {
+    const output = nextStepsBlock("app_123", "ins_456", "example.com");
+
+    expect(output).toContain("sign up at https://example.com to confirm it works");
+  });
+});
+
+describe("domainAssociationSummary", () => {
+  test("lists every record host the domain will need, including both DKIM hosts", () => {
+    // The confirmation screen runs before the instance exists, so this is a
+    // prediction from the domain alone. It must match what the create call
+    // returns, or the user commits without seeing the full list.
+    const output = domainAssociationSummary("example.com").join("\n");
+
+    expect(output).toContain("clerk.example.com");
+    expect(output).toContain("accounts.example.com");
+    expect(output).toContain("clkmail.example.com");
+    expect(output).toContain("clk._domainkey.example.com");
+    expect(output).toContain("clk2._domainkey.example.com");
+    expect(productionDnsHosts("example.com")).toHaveLength(5);
+  });
+
+  test("lead sentence says records are coming, with no record count in it", () => {
+    const [lead] = domainAssociationSummary("example.com");
+
+    expect(lead).toContain("Clerk will use these subdomains for");
+    // Disclose the obligation before the one-way step without demanding
+    // action the user can't take yet.
+    expect(lead).toContain("You'll add a DNS record for each after the instance is created:");
+    expect(lead).not.toMatch(/\b(three|five|3|5)\b/);
+  });
+
+  test("labels the DKIM hosts as email records, not bare CNAMEs", () => {
+    const output = domainAssociationSummary("example.com").join("\n");
+
+    expect(output).not.toContain("CNAME  clk._domainkey");
+    expect(output).toMatch(/Email .*clk\._domainkey\.example\.com/);
+  });
+});
+
+describe("dnsIntro", () => {
+  test("sets the propagation expectation as minutes, with 48 hours as the outlier", () => {
+    const output = dnsIntro("example.com").join("\n");
+
+    expect(output).toContain(
+      "usually propagate within minutes, but can occasionally take up to 48 hours",
+    );
+    expect(output).not.toContain("It can take up to 48 hours");
+  });
+});
+
+describe("deployStatusPendingFooter", () => {
+  const DOMAINS_URL = "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains";
+
+  test("reports missing DNS records as not found yet, not as a failure", () => {
+    const output = deployStatusPendingFooter(
+      "example.com",
+      {
+        dns: false,
+        ssl: false,
+        mail: false,
+      },
+      DOMAINS_URL,
+    ).join("\n");
+
+    expect(output).toContain("DNS and email DNS records not found yet for example.com.");
+    expect(output).toContain(
+      "Add them at your DNS provider, then run `clerk deploy` again to resume.",
+    );
+    expect(output).toContain("usually takes minutes, but can occasionally take up to 48 hours");
+    expect(output).toContain(
+      "change the domain in the Clerk Dashboard: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+    );
+    expect(output).not.toContain("still pending");
+    expect(output).not.toContain("SSL");
+  });
+
+  test("names only the email records when the Frontend API records are verified", () => {
+    const output = deployStatusPendingFooter(
+      "example.com",
+      {
+        dns: true,
+        ssl: false,
+        mail: false,
+      },
+      DOMAINS_URL,
+    ).join("\n");
+
+    // Capitalized at the sentence start; lowercase "email DNS" is only right
+    // mid-sentence ("DNS and email DNS").
+    expect(output).toContain("Email DNS records not found yet for example.com.");
+    expect(output).not.toContain("email DNS records not found");
+    expect(output).not.toContain("DNS and email DNS");
+  });
+
+  test("says when the record list is missing instead of telling the user to add nothing", () => {
+    // DNS unverified but the API returned no targets: "add them" would point
+    // at an empty list. One follow-up line, so blank line + sentence.
+    const output = deployStatusPendingFooter(
+      "example.com",
+      { dns: false, ssl: false, mail: false },
+      DOMAINS_URL,
+      false,
+    ).join("\n");
+
+    expect(output).toContain("DNS and email DNS records not found yet for example.com.\n\n");
+    expect(output).toContain("Clerk didn't return the list of records to add.");
+    expect(output).toContain(
+      `Find them on the Domains page in the Clerk Dashboard: ${DOMAINS_URL}`,
+    );
+    expect(output).toContain("run `clerk deploy` again to resume");
+    expect(output).not.toContain("  - ");
+    expect(output).not.toContain("Add them at your DNS provider");
+  });
+
+  test("tells the user to wait, not act, when only SSL is pending", () => {
+    // SSL is Clerk's side; there are no records the user could add.
+    const output = deployStatusPendingFooter(
+      "example.com",
+      {
+        dns: true,
+        ssl: false,
+        mail: true,
+      },
+      DOMAINS_URL,
+    ).join("\n");
+
+    expect(output).toContain("SSL certificate still pending for example.com.");
+    expect(output).toContain("run `clerk deploy` again in a few minutes to resume");
+    // One follow-up line: a blank line and a sentence, not a one-item list.
+    expect(output).toContain("example.com.\n\nClerk issues it");
+    expect(output).not.toContain("  - ");
+    expect(output).not.toContain("not found yet");
+    expect(output).not.toContain("change the domain in the Clerk Dashboard");
+  });
+
+  test.each([
+    { label: "records pending", status: { dns: false, ssl: false, mail: false } },
+    { label: "SSL only pending", status: { dns: true, ssl: false, mail: true } },
+    { label: "all components verified", status: { dns: true, ssl: true, mail: true } },
+  ])("always says how to resume and that re-running is safe ($label)", ({ status }) => {
+    const output = deployStatusPendingFooter("example.com", status, DOMAINS_URL).join("\n");
+    expect(output).toMatch(/run `clerk deploy` again.*to resume/i);
+    expect(output).toContain("The production instance is already created.");
+  });
+});
+
+describe("dashboard URLs", () => {
+  test("instance URL is the instance root and the domains URL is nested under it", () => {
+    expect(instanceDashboardUrl("app_1", "ins_prod")).toBe(
+      "https://dashboard.clerk.com/apps/app_1/instances/ins_prod",
+    );
+    expect(domainsDashboardUrl("app_1", "ins_prod")).toBe(
+      "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+    );
+  });
+});
+
+describe("INTRO_PREAMBLE", () => {
+  test("rules out host-generated URLs as a production domain and says why", () => {
+    // Described rather than named: the rule covers every host, and the reject
+    // list at the prompt is where specific hosts belong.
+    expect(INTRO_PREAMBLE).toContain("The URL a hosting provider generated");
+    expect(INTRO_PREAMBLE).toContain("for your deployment won't work here.");
+    expect(INTRO_PREAMBLE).not.toMatch(/railway|vercel|netlify/i);
+    // Subdomains you control are fine; the old "development subdomain" line
+    // read as if they weren't.
+    expect(INTRO_PREAMBLE).toContain("app.example.com");
+    expect(INTRO_PREAMBLE).not.toContain("development subdomain");
+  });
+});
+
+describe("DEPLOY_COMMAND_DESCRIPTION", () => {
+  test("describes the bare command and the agent-mode report", () => {
+    expect(DEPLOY_COMMAND_DESCRIPTION.startsWith(`${DEPLOY_COMMAND_SUMMARY}.`)).toBe(true);
+    expect(DEPLOY_COMMAND_DESCRIPTION).toContain("with no subcommand starts an interactive setup");
+    expect(DEPLOY_COMMAND_DESCRIPTION).toContain("creates the production instance");
+    expect(DEPLOY_COMMAND_DESCRIPTION).toContain("When run by an agent");
+    expect(DEPLOY_COMMAND_DESCRIPTION).toContain("`nextAction`");
   });
 });
 

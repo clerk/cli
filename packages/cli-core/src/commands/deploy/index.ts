@@ -15,6 +15,8 @@ import {
   type ProductionInstanceResponse,
 } from "../../lib/plapi.ts";
 import {
+  DEPLOY_COMMAND_DESCRIPTION,
+  DEPLOY_COMMAND_SUMMARY,
   INTRO_PREAMBLE,
   OAUTH_SECTION_INTRO,
   type DeployPlanStep,
@@ -26,6 +28,8 @@ import {
   dnsDashboardHandoff,
   dnsIntro,
   dnsRecords,
+  domainsDashboardUrl,
+  instanceDashboardUrl,
   nextStepsBody,
   pendingDnsRecords,
   pausedOperationNotice,
@@ -182,6 +186,11 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   }
   const production = productionOrExists;
   await persistProductionInstance(ctx, production.id);
+  // "Clerk production instance", not just "production instance": the user
+  // also has a deployment on their host, and this is the one Clerk manages.
+  log.success(
+    `Clerk production instance created. Manage it in the Dashboard: ${instanceDashboardUrl(ctx.appId, production.id)}`,
+  );
 
   if (!production.active_domain) {
     throw new CliError(
@@ -436,8 +445,21 @@ async function runDnsVerification(
     log.blank();
     log.info(deployComponentStatus(outcome.status));
     log.blank();
-    for (const line of deployStatusPendingFooter(state.domain, outcome.status)) {
-      log.warn(line);
+    const productionInstanceId =
+      state.productionInstanceId ?? ctx.productionInstanceId ?? ctx.profile.instances.production;
+    // Computed before the footer so the footer can tell the user when there is
+    // no record list to print, instead of saying "add them" over nothing.
+    const pendingRecords = state.cnameTargets
+      ? pendingDnsRecords(state.cnameTargets, outcome.status)
+      : [];
+    for (const line of deployStatusPendingFooter(
+      state.domain,
+      outcome.status,
+      productionInstanceId ? domainsDashboardUrl(ctx.appId, productionInstanceId) : undefined,
+      pendingRecords.length > 0,
+    )) {
+      if (line === "") log.blank();
+      else log.warn(line);
     }
 
     // When all DNS components are verified but the server has not yet marked the
@@ -446,9 +468,6 @@ async function runDnsVerification(
       throw deployPausedError(state);
     }
 
-    const pendingRecords = state.cnameTargets
-      ? pendingDnsRecords(state.cnameTargets, outcome.status)
-      : [];
     if (pendingRecords.length > 0) {
       log.blank();
       for (const line of pendingRecords) log.info(line);
@@ -577,7 +596,7 @@ async function collectAndSaveOAuthCredentials(
   }
 
   if (choice === "walkthrough") {
-    await showOAuthWalkthrough(descriptor, domain, frontendApiUrl);
+    await showOAuthWalkthrough(descriptor, domain, frontendApiUrl, ctx.appLabel);
     choice = await chooseOAuthCredentialAction(descriptor, { includeWalkthrough: false });
     if (choice === "skip") {
       return false;
@@ -638,15 +657,19 @@ async function finishDeploy(
     prefix: isInsideGutter() ? `${dim("│")}  ` : "",
     label: "Next steps",
     fallback: bold,
-    body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId))}\n`,
+    body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId, domain))}\n`,
   });
   await outro("Success");
 }
 
 export function registerDeploy(program: Program): void {
+  // `summary` is what the root `clerk --help` table shows; `description` is
+  // the prose on `clerk deploy --help`, where the hidden default subcommand
+  // would otherwise leave no trace of what the bare command does.
   const deployCmd = program
     .command("deploy")
-    .description("Deploy a Clerk application to production");
+    .summary(DEPLOY_COMMAND_SUMMARY)
+    .description(DEPLOY_COMMAND_DESCRIPTION);
   deployCmd.command("run", { isDefault: true, hidden: true }).action(deploy);
   deployCmd
     .command("status")

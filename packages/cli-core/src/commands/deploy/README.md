@@ -51,7 +51,7 @@ In agent mode, `clerk deploy status` emits JSON on stdout with:
 - `domainStatus`: per-component DNS, SSL, and email DNS status when a domain exists.
 - `pendingDnsRecords`: CNAME records still tied to pending DNS-backed checks.
 - `oauth`: configured, pending, and unsupported provider slugs.
-- `nextAction`: the next step an agent should present to the user, including the Clerk Dashboard domains URL when a production instance exists. Agents should ask whether to open that URL for the user.
+- `nextAction`: the next step an agent should present to the user. While work remains it includes the Clerk Dashboard domains URL, and agents should ask whether to open that URL for the user. While DNS or email DNS records are unverified it says to add the records in `pendingDnsRecords` at the domain's DNS provider rather than to keep polling; if that list is empty (the API returned no CNAME targets) it says so and points at the Dashboard Domains page instead; when only SSL is pending it says to wait. At `complete` it says the production keys still have to reach the host (`clerk env pull --instance prod`, alongside the other Clerk variables in the env file) and to sign up on the domain to confirm — "complete" is Clerk's side only — and links the instance root (users, settings, billing) instead of the domains page, since nothing is left to monitor there.
 
 Exit codes:
 
@@ -176,10 +176,10 @@ Most providers ask for `client_id` and `client_secret`. Provider-specific schema
 
 The CLI keeps small local overrides for provider setup details that schema does not fully describe:
 
-| Provider | Override                                                                                   |
-| -------- | ------------------------------------------------------------------------------------------ |
-| Google   | Optional Google Cloud Console JSON import and OAuth consent screen warning                 |
-| Apple    | `.p8` file import, production-required `team_id` and `key_id`, native-only field omissions |
+| Provider | Override                                                                                                                                |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Google   | Optional Google Cloud Console JSON import, OAuth consent screen warning, and a tip naming the linked application for the consent screen |
+| Apple    | `.p8` file import, production-required `team_id` and `key_id`, native-only field omissions                                              |
 
 For Google, the wizard can load `client_id` and `client_secret` from the top-level `web` object in a Google Cloud Console OAuth client JSON file, or from `installed` for desktop-style client downloads. The file contents are used in memory and are not written to CLI config.
 

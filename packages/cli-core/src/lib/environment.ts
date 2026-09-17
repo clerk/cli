@@ -153,6 +153,19 @@ export function getDashboardUrl(): string {
 }
 
 /**
+ * Dashboard deep link for one instance of an app, optionally to a page under
+ * it (`domains`, `users`, ...). Lives here rather than in the `open` command
+ * so copy modules can build links without importing a command's module graph.
+ */
+export function buildDashboardUrl(appId: string, instanceId: string, subpath?: string): string {
+  const host = getDashboardUrl().replace(/\/$/, "");
+  const base = `${host}/apps/${appId}/instances/${instanceId}`;
+  if (!subpath) return base;
+  const cleaned = subpath.replace(/^\//, "").replace(/\/$/, "");
+  return cleaned ? `${base}/${cleaned}` : base;
+}
+
+/**
  * Remote MCP server URL for the active environment.
  *
  * Resolution: `CLERK_MCP_URL` (local worker dev, e.g.

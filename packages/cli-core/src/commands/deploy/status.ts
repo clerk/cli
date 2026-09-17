@@ -17,7 +17,11 @@ import {
   cnameTargetPending,
   deployComponentLabels,
   deployStatusRetryMessage,
+  capitalizeFirst,
+  classifyDomainPending,
   domainsDashboardUrl,
+  instanceDashboardUrl,
+  pendingRecordComponents,
   type DeployComponentStatus,
 } from "./copy.ts";
 import { mapDeployError } from "./errors.ts";
@@ -382,9 +386,13 @@ export function buildDeployStatusReport(
       reportState,
       snapshot.domain,
       componentStatus,
+      pendingDnsRecords.length > 0,
       oauthPending,
       snapshot.productionInstanceId
-        ? domainsDashboardUrl(snapshot.appId, snapshot.productionInstanceId)
+        ? {
+            domains: domainsDashboardUrl(snapshot.appId, snapshot.productionInstanceId),
+            instance: instanceDashboardUrl(snapshot.appId, snapshot.productionInstanceId),
+          }
         : null,
     ),
   };
@@ -424,13 +432,28 @@ function deployNextAction(
   state: DeployStatusState,
   domain: string,
   componentStatus: DeployComponentStatus,
+  hasPendingRecords: boolean,
   oauthPending: string[],
-  domainsUrl: string | null,
+  urls: { domains: string; instance: string } | null,
 ): string {
-  const domainsAction = domainsUrl ? ` ${domainSettingsNextAction(domainsUrl)}` : "";
+  const domainsAction = urls ? ` ${domainSettingsNextAction(urls.domains)}` : "";
 
   if (state === "complete") {
-    return `Production is deployed and verified at https://${domain}. No action needed.${domainsAction}`;
+    // Complete on Clerk's side only. The app keeps running on development
+    // keys until the production keys reach the host, and the report can't
+    // tell whether that already happened — hence "if you haven't already".
+    // Nothing is left to monitor on the Domains page here, so the pointer is
+    // the instance itself (users, settings, billing) rather than the shared
+    // "visit the domains page" clause every pending state carries.
+    const instanceAction = urls
+      ? ` Manage users, settings, and billing for this instance: ${urls.instance}`
+      : "";
+    return (
+      `Clerk's production setup for https://${domain} is verified. If you haven't already: ` +
+      `run \`clerk env pull --instance prod\`, set those keys on your host alongside the other ` +
+      `Clerk variables from your env file, redeploy, then sign up at https://${domain} to confirm.` +
+      instanceAction
+    );
   }
   if (state === "oauth_pending") {
     return (
@@ -440,23 +463,45 @@ function deployNextAction(
     );
   }
 
-  const pendingComponents = [
-    !componentStatus.dns ? "DNS" : null,
-    !componentStatus.ssl ? "SSL" : null,
-    !componentStatus.mail ? "email DNS" : null,
-  ].filter((value): value is string => value !== null);
+  // DNS and email DNS are records someone has to add at the registrar; SSL is
+  // Clerk's side and waits on them. Polling can't move the first kind along,
+  // so those get the "add the records" instruction and only SSL keeps "wait".
+  const pending = classifyDomainPending(componentStatus, hasPendingRecords);
+  const records = capitalizeFirst(pendingRecordComponents(componentStatus));
 
-  if (pendingComponents.length === 0) {
+  if (pending === "records_available") {
     return (
-      `Production setup for ${domain} is still finalizing on Clerk's side. ` +
-      `Re-run \`clerk deploy status\` in a few minutes.${domainsAction}`
+      `${records} records not found yet for ${domain}. ` +
+      `Add the records in \`pendingDnsRecords\` at the domain's DNS provider if you haven't already, ` +
+      `then re-run \`clerk deploy status --wait\`. Propagation usually takes minutes.` +
+      domainsAction
+    );
+  }
+
+  if (pending === "records_unavailable") {
+    // The report has nothing to hand over; the Dashboard clause appended below
+    // carries the URL, so this sentence doesn't repeat it.
+    return (
+      `${records} records not found yet for ${domain}, but this report has no record list. ` +
+      `Find the records to add on the Domains page in the Clerk Dashboard, then re-run ` +
+      `\`clerk deploy status --wait\`.` +
+      domainsAction
+    );
+  }
+
+  if (pending === "ssl_pending") {
+    // Records are verified; the certificate is Clerk's side and nobody can
+    // speed it up. Same message the wizard's footer prints for this state.
+    return (
+      `SSL certificate still pending for ${domain}. Clerk issues it automatically now that ` +
+      `DNS is verified; re-run \`clerk deploy status\` in a few minutes.` +
+      domainsAction
     );
   }
 
   return (
-    `${pendingComponents.join(", ")} still provisioning for ${domain}. ` +
-    `Re-run \`clerk deploy status\` in a few minutes, DNS propagation can take time.` +
-    domainsAction
+    `Production setup for ${domain} is still finalizing on Clerk's side. ` +
+    `Re-run \`clerk deploy status\` in a few minutes.${domainsAction}`
   );
 }
 

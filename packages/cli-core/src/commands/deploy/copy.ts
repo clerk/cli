@@ -1,18 +1,38 @@
 import { bold, cyan, dim, green, yellow } from "../../lib/color.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
+import { buildDashboardUrl } from "../../lib/environment.ts";
 
 export type DeployPlanStep = {
   label: string;
   status: "done" | "pending";
 };
 
+export const DEPLOY_COMMAND_SUMMARY = "Deploy a Clerk application to production";
+
+/**
+ * Long description for `clerk deploy --help`. The wizard is registered as a
+ * hidden default subcommand, so without this prose the help lists only
+ * `status` and reads as if the CLI can only watch a deploy, not perform one.
+ */
+export const DEPLOY_COMMAND_DESCRIPTION = `${DEPLOY_COMMAND_SUMMARY}.
+
+Running \`clerk deploy\` with no subcommand starts an interactive setup that
+creates the production instance, prints the DNS records you must add, collects
+production OAuth credentials, and verifies the domain. It needs a terminal;
+re-run it at any time to resume where you left off.
+
+When run by an agent (or without a TTY), it is read-only: it prints a JSON
+status report with the current state and a \`nextAction\` field saying what to
+do next. \`clerk deploy status\` prints the same report.`;
+
 export const INTRO_PREAMBLE = `This will prepare your linked Clerk app for production by cloning your
 development instance into a new production instance and walking you through
 the setup the dashboard would otherwise guide you through.
 
 Before you begin you will need:
-  - A domain you own (production cannot use a development subdomain).
-  - The ability to add DNS records on that domain.
+  - A domain you own where you can add DNS records (example.com, or a
+    subdomain like app.example.com). The URL a hosting provider generated
+    for your deployment won't work here.
   - OAuth credentials for any social providers you have enabled in dev.
 
 ${dim("Reference: https://clerk.com/docs/guides/development/deployment/production")}`;
@@ -37,7 +57,7 @@ export function dnsIntro(domain: string): string[] {
     "Clerk uses DNS records to provide session management and emails",
     "verified from your domain.",
     "",
-    `${yellow("NOTE")}  It can take up to 48 hours for DNS records to fully propagate.`,
+    `${yellow("NOTE")}  DNS records usually propagate within minutes, but can occasionally take up to 48 hours.`,
     `${dim(cyan("TIP"))}   If you can't add a CNAME for the Frontend API, you can use a proxy:`,
     dim("      https://clerk.com/docs/guides/dashboard/dns-domains/proxy-fapi"),
     dim("Reference: https://clerk.com/docs/guides/development/deployment/production#dns-records"),
@@ -56,13 +76,31 @@ export function clerkSubdomains(domain: string): {
   };
 }
 
-export function domainAssociationSummary(domain: string): string[] {
+/**
+ * Every record host a new production domain needs, derived from the domain
+ * alone so the confirmation screen can show the full list before the instance
+ * exists. The DKIM selector is fixed server-side for domains the CLI creates
+ * (`clk`, so `clk._domainkey` and `clk2._domainkey`); the real targets, with
+ * their per-instance values, come back from the create call afterwards.
+ */
+export function productionDnsHosts(domain: string): string[] {
   const { frontendApi, accountPortal, mail } = clerkSubdomains(domain);
-  const hosts = [frontendApi, accountPortal, mail];
   return [
-    `Clerk will associate these subdomains with ${cyan(domain)}:`,
+    frontendApi,
+    accountPortal,
+    mail,
+    `clk._domainkey.${domain}`,
+    `clk2._domainkey.${domain}`,
+  ];
+}
+
+export function domainAssociationSummary(domain: string): string[] {
+  return [
+    // Disclose the obligation before the one-way create step, without asking
+    // for action the user can't take yet (record values arrive after creation).
+    `Clerk will use these subdomains for ${cyan(domain)}. You'll add a DNS record for each after the instance is created:`,
     "",
-    ...hosts.map((host) => `  ${cnameTargetLabel(host)}  ${host}`),
+    ...productionDnsHosts(domain).map((host) => `  ${cnameTargetLabel(host)}  ${host}`),
     "",
     "This will create a Clerk production instance for your application.",
   ];
@@ -191,21 +229,77 @@ export function deployStatusRetryMessage(
  * components are complete. The user keeps the deploy state; rerunning
  * `clerk deploy` resumes from whichever component is still pending.
  */
-export function deployStatusPendingFooter(domain: string, status: DeployComponentStatus): string[] {
-  const pending: string[] = [];
-  if (!status.dns) pending.push("DNS");
-  if (!status.ssl) pending.push("SSL");
-  if (!status.mail) pending.push("email DNS");
+/**
+ * What is actually outstanding after a domain check, from the user's point of
+ * view. Records are theirs to add; SSL and final readiness are Clerk's side.
+ * `records_unavailable` is the case where DNS is unverified but the API gave
+ * us no record list to show — telling the user to "add the records" then
+ * points at nothing. Shared by the wizard footer and the agent `nextAction`
+ * so the two surfaces can't disagree.
+ */
+export type DomainPendingState =
+  | "records_available"
+  | "records_unavailable"
+  | "ssl_pending"
+  | "finalizing";
 
-  const lead =
-    pending.length === 0
-      ? `Production setup for ${domain} is still finalizing.`
-      : `${pending.join(", ")} still pending for ${domain}.`;
+export function classifyDomainPending(
+  status: DeployComponentStatus,
+  hasPendingRecords: boolean,
+): DomainPendingState {
+  if (!status.dns || !status.mail) {
+    return hasPendingRecords ? "records_available" : "records_unavailable";
+  }
+  if (!status.ssl) return "ssl_pending";
+  return "finalizing";
+}
 
+/** "DNS", "email DNS", or "DNS and email DNS" — whichever records are unverified. */
+export function pendingRecordComponents(status: DeployComponentStatus): string {
+  const records: string[] = [];
+  if (!status.dns) records.push("DNS");
+  if (!status.mail) records.push("email DNS");
+  return records.join(" and ");
+}
+
+export function deployStatusPendingFooter(
+  domain: string,
+  status: DeployComponentStatus,
+  domainsUrl?: string,
+  hasPendingRecords = true,
+): string[] {
+  const state = classifyDomainPending(status, hasPendingRecords);
+  const records = capitalizeFirst(pendingRecordComponents(status));
+
+  // A lead line, then either a bulleted list (several follow-ups) or a blank
+  // line and one sentence (a single follow-up). An empty string is a blank
+  // line; the caller renders it with `log.blank()`.
+  if (state === "records_available") {
+    return [
+      `${records} records not found yet for ${domain}.`,
+      "  - Add them at your DNS provider, then run `clerk deploy` again to resume. The production instance is already created.",
+      "  - Propagation usually takes minutes, but can occasionally take up to 48 hours.",
+      `  - If you can't add DNS records for this domain, change the domain in the Clerk Dashboard${domainsUrl ? `: ${domainsUrl}` : "."}`,
+    ];
+  }
+  if (state === "records_unavailable") {
+    return [
+      `${records} records not found yet for ${domain}.`,
+      "",
+      `Clerk didn't return the list of records to add. Find them on the Domains page in the Clerk Dashboard${domainsUrl ? `: ${domainsUrl}` : ""}, then run \`clerk deploy\` again to resume. The production instance is already created.`,
+    ];
+  }
+  if (state === "ssl_pending") {
+    return [
+      `SSL certificate still pending for ${domain}.`,
+      "",
+      "Clerk issues it automatically now that DNS is verified; run `clerk deploy` again in a few minutes to resume. The production instance is already created.",
+    ];
+  }
   return [
-    lead,
-    "DNS propagation can take several hours depending on your provider.",
-    "Run `clerk deploy` again to resume. The production instance is already created.",
+    `Production setup for ${domain} is still finalizing on Clerk's side.`,
+    "",
+    "Run `clerk deploy` again in a few minutes to resume. The production instance is already created.",
   ];
 }
 
@@ -230,23 +324,29 @@ export function productionSummary(
   ];
 }
 
-export function nextStepsBlock(appId: string, productionInstanceId: string): string {
-  return `${bold("Next steps")}\n${nextStepsBody(appId, productionInstanceId)}`;
+export function nextStepsBlock(
+  appId: string,
+  productionInstanceId: string,
+  domain: string,
+): string {
+  return `${bold("Next steps")}\n${nextStepsBody(appId, productionInstanceId, domain)}`;
 }
 
-export function nextStepsBody(appId: string, productionInstanceId: string): string {
+export function nextStepsBody(appId: string, productionInstanceId: string, domain: string): string {
   return `
   1. Pull production keys into your environment
        clerk env pull --instance prod
 
-     This writes pk_live_... and sk_live_... to your .env. They replace your
+     This writes pk_live_... and sk_live_... to your env file. They replace your
      pk_test_... and sk_test_... keys.
 
   2. Update env vars on your hosting provider
      Vercel, AWS, GCP, Heroku, Render, etc. all expose env vars in their UI.
-     Add the same pk_live_/sk_live_ values there.
+       - Add the same pk_live_/sk_live_ values there.
+       - Also copy the other Clerk variables from your env file, such as
+         NEXT_PUBLIC_CLERK_SIGN_IN_URL. \`env pull\` writes only the two keys.
 
-  3. Redeploy your app
+  3. Redeploy your app, then sign up at https://${domain} to confirm it works
 
   4. (If applicable) Update webhook URLs and signing secrets
      ${dim("https://clerk.com/docs/guides/development/webhooks/syncing#configure-your-production-instance")}
@@ -254,8 +354,11 @@ export function nextStepsBody(appId: string, productionInstanceId: string): stri
   5. (If applicable) Update your Content Security Policy
      ${dim("https://clerk.com/docs/guides/secure/best-practices/csp-headers")}
 
-  6. View and manage domain configuration in the Clerk Dashboard
-     ${dim(domainsDashboardUrl(appId, productionInstanceId))}
+  6. Manage this instance in the Clerk Dashboard
+       - Users, settings, and billing:
+         ${dim(instanceDashboardUrl(appId, productionInstanceId))}
+       - DNS and SSL status:
+         ${dim(domainsDashboardUrl(appId, productionInstanceId))}
 
 ${yellow("NOTE")}  Production keys only work on your production domain. They will not work on localhost.
       To run your dev environment, keep using your dev keys.
@@ -263,8 +366,21 @@ ${yellow("NOTE")}  Production keys only work on your production domain. They wil
 ${dim("Reference: https://clerk.com/docs/guides/development/deployment/production#api-keys-and-environment-variables")}`;
 }
 
+/**
+ * Component labels are lowercase so they read naturally mid-sentence ("DNS
+ * and email DNS"); when one of them opens a sentence it needs a capital.
+ */
+export function capitalizeFirst(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+/** Dashboard home for one instance: users, settings, billing. */
+export function instanceDashboardUrl(appId: string, instanceId: string): string {
+  return buildDashboardUrl(appId, instanceId);
+}
+
 export function domainsDashboardUrl(appId: string, productionInstanceId: string): string {
-  return `https://dashboard.clerk.com/apps/${appId}/instances/${productionInstanceId}/domains`;
+  return buildDashboardUrl(appId, productionInstanceId, "domains");
 }
 
 export function pausedMessage(stepDescription: string): string {

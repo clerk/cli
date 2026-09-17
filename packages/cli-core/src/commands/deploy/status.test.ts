@@ -302,9 +302,97 @@ describe("buildDeployStatusReport", () => {
     expect(report.complete).toBe(true);
     expect(report.domainStatus).toEqual({ dns: "complete", ssl: "complete", mail: "complete" });
     expect(report.nextAction).toContain("https://example.com");
+    // Nothing left to monitor on the Domains page once complete; the pointer
+    // is the instance root, where users, settings, and billing live.
     expect(report.nextAction).toContain(
-      "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+      "Manage users, settings, and billing for this instance: https://dashboard.clerk.com/apps/app_1/instances/ins_prod",
     );
+    expect(report.nextAction).not.toContain("/domains");
+    expect(report.nextAction).not.toContain("Ask the user to visit");
+  });
+
+  test("complete next action says the keys still have to reach the host", () => {
+    // Complete on Clerk's side only: the app runs on development keys until
+    // the production keys are set on the host, and the report can't tell
+    // whether that happened — so "if you haven't already", never "no action".
+    const allDone = {
+      ...activeSnapshot,
+      completedOAuthProviders: ["google", "github"],
+    } satisfies LiveDeploySnapshot;
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: allDone },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.nextAction).toContain(
+      "Clerk's production setup for https://example.com is verified. If you haven't already:",
+    );
+    expect(report.nextAction).toContain("clerk env pull --instance prod");
+    expect(report.nextAction).toContain("alongside the other Clerk variables from your env file");
+    expect(report.nextAction).toContain("sign up at https://example.com to confirm");
+    expect(report.nextAction).not.toContain("No action needed");
+  });
+
+  test("pending DNS records tell the agent to add them, not to keep polling", () => {
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: activeSnapshot },
+      { verified: false, status: { dns: false, ssl: false, mail: true } },
+    );
+
+    expect(report.state).toBe("domain_pending");
+    expect(report.nextAction).toContain("DNS records not found yet for example.com.");
+    expect(report.nextAction).toContain("Add the records in `pendingDnsRecords`");
+    expect(report.nextAction).toContain("re-run `clerk deploy status --wait`");
+    expect(report.nextAction).not.toContain("still provisioning");
+  });
+
+  test("pending email DNS records are named on their own when the Frontend API is verified", () => {
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: activeSnapshot },
+      { verified: false, status: { dns: true, ssl: true, mail: false } },
+    );
+
+    expect(report.nextAction).toContain("Email DNS records not found yet for example.com.");
+    expect(report.nextAction).not.toContain("email DNS records not found");
+    expect(report.nextAction).not.toContain("DNS and email DNS");
+  });
+
+  test("SSL-only pending keeps the wait instruction, since there is nothing to add", () => {
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: activeSnapshot },
+      { verified: false, status: { dns: true, ssl: false, mail: true } },
+    );
+
+    expect(report.state).toBe("domain_pending");
+    expect(report.nextAction).toContain(
+      "SSL certificate still pending for example.com. Clerk issues it automatically now that DNS is verified; re-run `clerk deploy status` in a few minutes.",
+    );
+    expect(report.nextAction).not.toContain("not found yet");
+    // DNS is verified in this state, so the old "DNS propagation can take
+    // time" clause would be wrong here.
+    expect(report.nextAction).not.toContain("DNS propagation");
+  });
+
+  test("pending DNS with no record list says so instead of pointing at an empty array", () => {
+    // cname_targets is optional on the API's domain object. When it's absent,
+    // "add the records in pendingDnsRecords" would send the agent to [].
+    const noTargets = { ...activeSnapshot, cnameTargets: [] } satisfies LiveDeploySnapshot;
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: noTargets },
+      { verified: false, status: { dns: false, ssl: false, mail: true } },
+    );
+
+    expect(report.state).toBe("domain_pending");
+    expect(report.pendingDnsRecords).toEqual([]);
+    expect(report.nextAction).toContain(
+      "DNS records not found yet for example.com, but this report has no record list.",
+    );
+    expect(report.nextAction).toContain("Find the records to add on the Domains page");
+    expect(report.nextAction).toContain("re-run `clerk deploy status --wait`");
+    expect(report.nextAction).not.toContain("Add the records in `pendingDnsRecords`");
+    expect(report.nextAction).not.toContain("still provisioning");
+    // The Dashboard URL appears once, via the shared trailing clause.
+    expect(report.nextAction.match(/\/domains/g)).toHaveLength(1);
   });
 
   test("unsupported OAuth providers surface without blocking completion", () => {

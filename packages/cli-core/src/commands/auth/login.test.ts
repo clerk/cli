@@ -92,8 +92,12 @@ mock.module("../../lib/first-application.ts", () => ({
   ensureFirstApplication: () => mockEnsureFirstApplication(),
 }));
 
+const mockAttemptAutoclaim = mock(async (_cwd: string): Promise<unknown> => ({
+  status: "not_keyless",
+}));
+
 mock.module("../../lib/autoclaim.ts", () => ({
-  attemptAutoclaim: async () => ({ status: "not_keyless" }),
+  attemptAutoclaim: (cwd: string) => mockAttemptAutoclaim(cwd),
 }));
 
 const { setLogLevel } = await import("../../lib/log.ts");
@@ -127,6 +131,8 @@ describe("login", () => {
     mockOpenBrowser.mockReset();
     mockEnsureFirstApplication.mockReset();
     mockEnsureFirstApplication.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockReset();
+    mockAttemptAutoclaim.mockResolvedValue({ status: "not_keyless" });
     mockIsHuman.mockReturnValue(false);
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
     mockRevokeToken.mockResolvedValue("revoked");
@@ -519,6 +525,36 @@ describe("login", () => {
     await runLogin();
 
     expect(captured.err).toContain("Linked to `app_abc123`");
+  });
+
+  test("prints where the claimed app now lives in the Dashboard", async () => {
+    // First time this app has a home in an account; nothing else in the flow
+    // says where it is, so the claim line has to.
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "claimed",
+      envPulled: true,
+      app: {
+        application_id: "app_claimed",
+        name: "bad-agent",
+        instances: [
+          {
+            instance_id: "ins_dev_claimed",
+            environment_type: "development",
+            publishable_key: "pk_test_claimed",
+          },
+        ],
+      },
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain("Claimed and linked application: `bad-agent`");
+    expect(captured.err).toContain(
+      "Your app now lives in your Clerk account: https://dashboard.clerk.com/apps/app_claimed/instances/ins_dev_claimed",
+    );
   });
 
   test("shows default next steps when not linked", async () => {

@@ -882,7 +882,9 @@ describe("deploy", () => {
 
       expect(error?.message).toContain("Deploy paused at: DNS verification");
       expect(error?.exitCode).toBe(EXIT_CODE.GENERAL);
-      expect(err).toContain("Production setup for example.com is still finalizing.");
+      expect(err).toContain(
+        "Production setup for example.com is still finalizing on Clerk's side.",
+      );
       expect(err).toContain("Paused");
       expect(err).not.toContain("Production ready at");
     });
@@ -979,6 +981,9 @@ describe("deploy", () => {
       expect(err).toContain("Next steps");
       expect(err).toContain("clerk env pull --instance prod");
       expect(err).toContain("Update env vars on your hosting provider");
+      expect(err).toContain("Also copy the other Clerk variables from your env file");
+      expect(err).toContain("sign up at https://example.com to confirm it works");
+      expect(err).toContain("Manage this instance in the Clerk Dashboard");
       expect(err).toContain(
         "https://dashboard.clerk.com/apps/app_xyz789/instances/ins_prod_mock/domains",
       );
@@ -997,7 +1002,9 @@ describe("deploy", () => {
 
       await runDeployUntilPause();
       const err = stripAnsi(captured.err);
-      expect(err).toContain("Clerk will associate these subdomains with example.com");
+      expect(err).toContain(
+        "Clerk will use these subdomains for example.com. You'll add a DNS record for each after the instance is created:",
+      );
       expect(err).toContain("clerk.example.com");
       expect(err).toContain("accounts.example.com");
       expect(err).toContain("clkmail.example.com");
@@ -1037,7 +1044,9 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("Clerk will associate these subdomains with example.com");
+      expect(err).toContain(
+        "Clerk will use these subdomains for example.com. You'll add a DNS record for each after the instance is created:",
+      );
       expect(err).toContain("No production instance was created.");
       expect(mockCreateProductionInstance).not.toHaveBeenCalled();
       expect(mockConfirm).toHaveBeenCalledWith({
@@ -1251,6 +1260,58 @@ describe("deploy", () => {
       // API-reported frontend_api_url, never the Account Portal subdomain.
       expect(err).toContain("https://clerk-fapi.example.com/v1/oauth_callback");
       expect(err).not.toContain("https://accounts.example.com/v1/oauth_callback");
+    });
+
+    test("Google OAuth walkthrough prints the consent-screen app name users will see", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      stubCreateProductionInstance({
+        frontendApiUrl: "https://clerk-fapi.example.com",
+        cnameTargets: [],
+      });
+      mockConfirm
+        .mockResolvedValueOnce(true) // Proceed?
+        .mockResolvedValueOnce(true); // Create production instance?
+      mockOpenBrowser.mockResolvedValueOnce({ ok: true, launcher: "test" });
+      mockSelect
+        .mockResolvedValueOnce("walkthrough") // Google OAuth credentials
+        .mockResolvedValueOnce("have-credentials")
+        .mockResolvedValueOnce("skip"); // DNS verification
+      mockInput.mockResolvedValueOnce("example.com").mockResolvedValueOnce("fake-client-id-12345");
+      mockPassword.mockResolvedValueOnce("fake-secret");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      // Google requires the consent screen before it will create a client, and
+      // the name entered there is what end users see on the sign-in prompt.
+      // The fixture's application is named "my-saas-app".
+      expect(err).toContain("The consent screen's app name is what users see");
+      expect(err).toContain('Your Clerk app is named "my-saas-app"');
+      // Guidance follows the values to paste and the IMPORTANT note, not before.
+      const tipAt = err.indexOf("The consent screen's app name is what users see");
+      expect(err.indexOf("Authorized Redirect URI")).toBeLessThan(tipAt);
+      expect(err.indexOf("IMPORTANT")).toBeLessThan(tipAt);
+    });
+
+    test("names the Clerk production instance and where it lives once created", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      stubCreateProductionInstance({ cnameTargets: [] });
+      mockConfirm
+        .mockResolvedValueOnce(true) // Proceed?
+        .mockResolvedValueOnce(true); // Create production instance?
+      mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("skip");
+      mockInput.mockResolvedValueOnce("example.com");
+
+      await runDeployUntilPause();
+      const err = stripAnsi(captured.err);
+
+      // "Clerk production instance", not just "production instance": the user
+      // also has a deployment on their host, and this is the one Clerk manages.
+      expect(err).toMatch(
+        /Clerk production instance created\. Manage it in the Dashboard: https:\/\/dashboard\.clerk\.com\/apps\/app_xyz789\/instances\/ins_\S+/,
+      );
     });
 
     test("Apple .p8 file prompt validates path and PEM framing before continuing", async () => {
@@ -1669,8 +1730,8 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("SSL, email DNS still pending for example.com");
-      expect(err).not.toContain("DNS, SSL, email DNS still pending");
+      expect(err).toContain("Email DNS records not found yet for example.com");
+      expect(err).not.toContain("DNS and email DNS records");
     });
 
     test("DNS verification treats absent components as pending", async () => {
@@ -1692,8 +1753,39 @@ describe("deploy", () => {
       const err = stripAnsi(captured.err);
 
       expect(err).toContain("DNS: pending  SSL: ✓  Email DNS: ✓");
-      expect(err).toContain("DNS still pending for example.com");
+      expect(err).toContain("DNS records not found yet for example.com");
       expect(err).not.toContain("Domain      Verified");
+    });
+
+    test("DNS verification footer says the record list is missing when the API returned no targets", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      stubCreateProductionInstance({ cnameTargets: [] });
+      mockConfirm
+        .mockResolvedValueOnce(true) // Proceed?
+        .mockResolvedValueOnce(true); // Create production instance? (no zone-file prompt: no targets)
+      mockInput.mockResolvedValueOnce("example.com");
+      mockSelect
+        .mockResolvedValueOnce("have-credentials")
+        .mockResolvedValueOnce("check")
+        .mockResolvedValueOnce("skip");
+      mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain("DNS and email DNS records not found yet for example.com.");
+      expect(err).toContain("Clerk didn't return the list of records to add.");
+      expect(err).toContain(
+        "Find them on the Domains page in the Clerk Dashboard: https://dashboard.clerk.com/apps/app_xyz789/instances/ins_prod_mock/domains",
+      );
+      expect(err).not.toContain("Add them at your DNS provider");
+      expect(err).not.toContain("Add the following records at your DNS provider:");
     });
 
     test("DNS verification timeout does not reprint DNS records when only SSL remains pending", async () => {
@@ -1719,7 +1811,8 @@ describe("deploy", () => {
       const err = stripAnsi(captured.err);
 
       expect(err).toContain("DNS: ✓  SSL: pending  Email DNS: ✓");
-      expect(err).toContain("SSL still pending for example.com");
+      expect(err).toContain("SSL certificate still pending for example.com");
+      expect(err).not.toContain("not found yet");
       expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(1);
     });
 
@@ -2103,8 +2196,9 @@ describe("deploy", () => {
 
       await runDeploy({});
       const err = stripAnsi(captured.err);
-      expect(err).toContain("DNS propagation can take several hours");
-      expect(err).toContain("DNS, SSL, email DNS still pending for example.com");
+      expect(err).toContain("Propagation usually takes minutes");
+      expect(err).toContain("DNS and email DNS records not found yet for example.com");
+      expect(err).not.toContain("still pending");
       expect(err).toContain("DNS: pending");
       expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(2);
       expect(err).toContain("Host:  clerk.example.com");

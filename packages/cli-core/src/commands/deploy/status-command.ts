@@ -175,7 +175,9 @@ function renderHuman(report: DeployStatusReport): void {
 
 function formatHumanNextAction(nextAction: string): string {
   return nextAction.replace(
-    /Ask the user to visit the Clerk Dashboard domains page, or offer to open it: (https:\/\/\S+)/,
+    // `https?`: the URL follows CLERK_DASHBOARD_URL, which is plain http for a
+    // local Dashboard.
+    /Ask the user to visit the Clerk Dashboard domains page, or offer to open it: (https?:\/\/\S+)/,
     "Visit the Clerk Dashboard domains page to monitor its status there: $1",
   );
 }

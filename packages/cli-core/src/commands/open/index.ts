@@ -2,7 +2,7 @@ import { createArgument } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
 import { resolveProfile } from "../../lib/config.ts";
 import { CliError, ERROR_CODE } from "../../lib/errors.ts";
-import { getDashboardUrl } from "../../lib/environment.ts";
+import { buildDashboardUrl } from "../../lib/environment.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { log } from "../../lib/log.ts";
 import { bold, cyan, dim } from "../../lib/color.ts";
@@ -16,17 +16,9 @@ interface OpenOptions {
   print?: boolean;
 }
 
-/**
- * Build the dashboard deep-link URL for the linked app's instance.
- * Exported for tests and reuse.
- */
-export function buildDashboardUrl(appId: string, instanceId: string, subpath?: string): string {
-  const host = getDashboardUrl().replace(/\/$/, "");
-  const base = `${host}/apps/${appId}/instances/${instanceId}`;
-  if (!subpath) return base;
-  const cleaned = subpath.replace(/^\//, "").replace(/\/$/, "");
-  return cleaned ? `${base}/${cleaned}` : base;
-}
+// Re-exported for existing importers; the implementation lives in
+// lib/environment.ts next to the host resolution it depends on.
+export { buildDashboardUrl };
 
 export async function openDashboard(
   subpath: string | undefined,

@@ -6,7 +6,7 @@ import {
   revokeToken,
   type UserInfo,
 } from "../../lib/token-exchange.ts";
-import { getOAuthConfig } from "../../lib/environment.ts";
+import { buildDashboardUrl, getOAuthConfig } from "../../lib/environment.ts";
 import {
   createOAuthSession,
   getStoredSession,
@@ -230,6 +230,15 @@ async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
   if (result.status === "claimed") {
     const label = result.app.name || result.app.application_id;
     log.success(`Claimed and linked application: \`${label}\``);
+    // First time this app has a home in an account; say where it is.
+    const development = result.app.instances.find(
+      (instance) => instance.environment_type === "development",
+    );
+    if (development) {
+      log.info(
+        `Your app now lives in your Clerk account: ${buildDashboardUrl(result.app.application_id, development.instance_id)}`,
+      );
+    }
   }
 
   const warning = CLAIM_WARNINGS[result.status];

@@ -339,6 +339,32 @@ describe("deploy status", () => {
     expect(captured.out).toBe("");
   });
 
+  test("human mode rewrites the agent clause for a plain-http Dashboard URL too", async () => {
+    // Dashboard links follow CLERK_DASHBOARD_URL, which is http:// for a local
+    // Dashboard; the human rewrite must not depend on https.
+    const previous = process.env.CLERK_DASHBOARD_URL;
+    process.env.CLERK_DASHBOARD_URL = "http://localhost:4000";
+    try {
+      setMode("human");
+      mockFetchApplication.mockResolvedValue(appWith(true));
+      mockDomain();
+      mockOAuthComplete();
+      mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingSslDomainStatus());
+      mockGetApplicationDomainStatus.mockResolvedValue(pendingSslDomainStatus());
+
+      await deployStatus();
+
+      const output = stripAnsi(captured.err);
+      expect(output).toContain(
+        "Visit the Clerk Dashboard domains page to monitor its status there: http://localhost:4000/apps/app_1/instances/ins_prod/domains",
+      );
+      expect(output).not.toContain("Ask the user to visit");
+    } finally {
+      if (previous === undefined) delete process.env.CLERK_DASHBOARD_URL;
+      else process.env.CLERK_DASHBOARD_URL = previous;
+    }
+  });
+
   test("human mode shows dashboard monitoring guidance without agent handoff copy", async () => {
     setMode("human");
     mockFetchApplication.mockResolvedValue(appWith(true));
@@ -351,7 +377,7 @@ describe("deploy status", () => {
 
     const output = stripAnsi(captured.err);
     expect(output).toContain(
-      "SSL still provisioning for example.com. Re-run `clerk deploy status` in a few minutes, DNS propagation can take time. Visit the Clerk Dashboard domains page to monitor its status there: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+      "SSL certificate still pending for example.com. Clerk issues it automatically now that DNS is verified; re-run `clerk deploy status` in a few minutes. Visit the Clerk Dashboard domains page to monitor its status there: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
     );
     expect(output).not.toContain("Ask the user to visit");
     expect(output).not.toContain("offer to open it");
