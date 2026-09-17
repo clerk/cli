@@ -219,7 +219,11 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     cnameTargets,
   };
 
-  await runDnsRecordHandoff({ ...operationState, pending: { type: "dns" } }, cnameTargets);
+  await runDnsRecordHandoff(
+    { ...operationState, pending: { type: "dns" } },
+    cnameTargets,
+    cnameTargets,
+  );
 
   bar();
   completedOAuthProviders = await runOAuthSetup(ctx, operationState, oauthProviders);
@@ -377,22 +381,29 @@ async function confirmProductionInstanceCreation(domain: string): Promise<boolea
   return false;
 }
 
+/**
+ * `display` is what the screen lists as records to add; `exportTargets` is
+ * what the BIND zone file gets. They differ on resume: the screen shows only
+ * the records still outstanding, but a zone file with some of the domain's
+ * records is not a zone file anyone should import.
+ */
 async function runDnsRecordHandoff(
   state: DeployOperationState,
-  cnameTargets: readonly CnameTarget[],
+  display: readonly CnameTarget[],
+  exportTargets: readonly CnameTarget[],
   options: { afterCheck?: boolean } = {},
 ): Promise<void> {
   for (const line of dnsIntro(state.domain)) log.info(line);
   log.blank();
-  if (cnameTargets.length > 0) {
-    for (const line of dnsRecords(cnameTargets, options)) log.info(line);
+  if (display.length > 0) {
+    for (const line of dnsRecords(display, options)) log.info(line);
     log.blank();
   }
 
   for (const line of dnsDashboardHandoff(state.domain)) log.info(line);
   log.blank();
   try {
-    await offerBindZoneExport(state.domain, cnameTargets);
+    await offerBindZoneExport(state.domain, exportTargets);
     log.blank();
   } catch (error) {
     if (error instanceof UserAbortError) {
@@ -409,7 +420,8 @@ async function runExistingDomainDnsVerification(
 ): Promise<DnsVerificationResult> {
   // On resume some records may already be verified; only the outstanding ones
   // are records to add, and the user may have added those already.
-  await runDnsRecordHandoff(state, pendingCnameTargets(state.cnameTargets ?? [], componentStatus), {
+  const allTargets = state.cnameTargets ?? [];
+  await runDnsRecordHandoff(state, pendingCnameTargets(allTargets, componentStatus), allTargets, {
     afterCheck: true,
   });
   return runDnsVerificationPrompt(ctx, state);

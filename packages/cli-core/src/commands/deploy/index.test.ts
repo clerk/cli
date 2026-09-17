@@ -1782,6 +1782,67 @@ describe("deploy", () => {
       expect(err).not.toContain("Host:  clerk.example.com");
     });
 
+    test("resume exports every record to the zone file even when the screen lists only the outstanding ones", async () => {
+      // A zone file with some of the domain's records isn't one to import.
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        developmentConfig: {},
+        productionConfig: {},
+        cnameTargets: [
+          { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+          { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
+        ],
+      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: false, mail: false }),
+      );
+      mockConfirm.mockResolvedValueOnce(true); // BIND export: yes
+      mockSelect.mockResolvedValueOnce("skip");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).not.toContain("Host:  clerk.example.com");
+      const zoneCall = writeSpy.mock.calls.find((call: unknown[]) =>
+        String(call[0]).endsWith(".zone"),
+      );
+      expect(zoneCall).toBeDefined();
+      const zone = String(zoneCall![1]);
+      expect(zone).toContain("clerk.example.com");
+      expect(zone).toContain("clkmail.example.com");
+    });
+
+    test("resume still offers the zone-file export when only SSL is pending", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        developmentConfig: {},
+        productionConfig: {},
+      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: false, mail: true }),
+      );
+      mockConfirm.mockResolvedValueOnce(true); // BIND export: yes
+      mockSelect.mockResolvedValueOnce("skip");
+
+      await runDeploy({});
+
+      expect(mockConfirm).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining("BIND") }),
+      );
+      const zoneCall = writeSpy.mock.calls.find((call: unknown[]) =>
+        String(call[0]).endsWith(".zone"),
+      );
+      expect(zoneCall).toBeDefined();
+    });
+
     test("DNS verification treats absent components as pending", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_123" },
