@@ -108,6 +108,7 @@ export function formatCatalogJson(checks: CheckDef[]): string {
       }),
       ...(check.features && { features: check.features }),
       ...(check.blockedBy && { blockedBy: check.blockedBy }),
+      ...(check.customFlows && { customFlows: check.customFlows }),
       docsUrl: check.docsUrl,
     })),
     null,

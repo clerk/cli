@@ -543,4 +543,20 @@ describe("security fix", () => {
       expect((error as { code: string }).code).toBe("boom");
     });
   });
+
+  describe("custom flow warning", () => {
+    test("names the checks a custom flow must accommodate before confirming", async () => {
+      await run(["bot-protection", "user-lockout"], { yes: true });
+      expect(captured.err).toContain("custom flows must be updated");
+      expect(captured.err).toContain(
+        "bot-protection: Custom sign-up flows must render the CAPTCHA widget",
+      );
+      expect(captured.err).not.toContain("user-lockout:");
+    });
+
+    test("stays silent when nothing affects flows", async () => {
+      await run(["user-lockout"], { yes: true });
+      expect(captured.err).not.toContain("custom flows");
+    });
+  });
 });

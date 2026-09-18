@@ -39,6 +39,13 @@ export interface CheckDef {
   patch?(input: CheckInput): ConfigPatch;
   decision?: CheckDecision;
   manualRemedy?: string;
+  /** What a custom sign-in or sign-up flow must handle once this is applied. */
+  customFlows?: CustomFlowsNote;
+}
+
+export interface CustomFlowsNote {
+  note: string;
+  docsUrl: string;
 }
 
 export type DecisionFlag = "factors" | "strategy";
@@ -74,6 +81,7 @@ export interface Finding extends CheckEvaluation {
   /** Patch the suggested decision values would produce. */
   suggestedPatch: ConfigPatch | null;
   decision?: FindingDecision;
+  customFlows?: CustomFlowsNote;
   remedy: string;
   docsUrl: string;
   dashboardUrl: string;

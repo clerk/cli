@@ -78,6 +78,7 @@ export function evaluate(input: CheckInput, ref: InstanceRef): Finding[] {
       ...evaluation,
       ...(check.features && { features: check.features }),
       ...(check.blockedBy && { blockedBy: check.blockedBy }),
+      ...(check.customFlows && status !== "met" && { customFlows: check.customFlows }),
       patch,
       suggestedPatch,
       ...(decision && {
