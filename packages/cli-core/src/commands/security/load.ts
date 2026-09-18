@@ -6,7 +6,7 @@ import { withSpinner } from "../../lib/spinner.ts";
 import { buildReport } from "./evaluate.ts";
 import type { AuditReport, CheckInput, InstanceRef } from "./types.ts";
 
-export interface LoadedAudit {
+interface LoadedAudit {
   target: Extract<InstanceTarget, { kind: "account" }>;
   input: CheckInput;
   report: AuditReport;

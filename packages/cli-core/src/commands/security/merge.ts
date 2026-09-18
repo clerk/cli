@@ -14,7 +14,7 @@ export function deepMerge(
   return result;
 }
 
-export interface ProjectedPatches {
+interface ProjectedPatches {
   payload: Record<string, unknown>;
   projected: InstanceConfig;
 }

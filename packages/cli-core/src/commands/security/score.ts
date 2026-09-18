@@ -1,6 +1,6 @@
 import type { Finding, SecurityGrade, SecurityScore, Severity } from "./types.ts";
 
-export const SEVERITY_WEIGHT: Record<Severity, number> = {
+const SEVERITY_WEIGHT: Record<Severity, number> = {
   critical: 3,
   recommended: 2,
   "good-to-have": 1,
