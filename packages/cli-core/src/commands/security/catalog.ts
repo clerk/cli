@@ -59,24 +59,23 @@ function booleanCheck(
   };
 }
 
-export const emailEnabled = (config: InstanceConfig): boolean =>
+const emailEnabled = (config: InstanceConfig): boolean =>
   flag(config, "auth_email.used_for_sign_up");
-export const passwordEnabled = (config: InstanceConfig): boolean =>
-  flag(config, "auth_password.enabled");
-export const phoneEnabled = (config: InstanceConfig): boolean =>
+const passwordEnabled = (config: InstanceConfig): boolean => flag(config, "auth_password.enabled");
+const phoneEnabled = (config: InstanceConfig): boolean =>
   flag(config, "auth_phone.used_for_sign_up");
 
-export const mfaAvailable = (config: InstanceConfig): boolean =>
+const mfaAvailable = (config: InstanceConfig): boolean =>
   flag(config, "auth_multi_factor.authenticator_app.enabled") ||
   flag(config, "auth_phone.used_for_second_factor");
 
-export function enabledOAuthProviders(config: InstanceConfig): string[] {
+function enabledOAuthProviders(config: InstanceConfig): string[] {
   return Object.keys(config)
     .filter((key) => key.startsWith("connection_oauth_") && flag(config, `${key}.enabled`))
     .map((key) => key.slice("connection_oauth_".length));
 }
 
-export function passwordlessEnabled(config: InstanceConfig): boolean {
+function passwordlessEnabled(config: InstanceConfig): boolean {
   const emailCode = list(config, "auth_email.sign_in_strategies").some((s) =>
     ["email_code", "email_link"].includes(s),
   );
