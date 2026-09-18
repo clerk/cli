@@ -12,6 +12,8 @@ coverage
 
 # logs
 logs
+!packages/cli-core/src/commands/migrate/logs/
+!packages/cli-core/src/commands/migrate/logs/**
 _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
@@ -44,3 +46,7 @@ test/e2e/.har
 
 # Local planning/spec docs
 docs/superpowers/
+
+# Local migration exports and the credentials that produced them
+exports/
+*service-account*.json

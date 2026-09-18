@@ -96,6 +96,7 @@ mock.module(
       getGitRepoIdentifier: async () => mockState.gitRepoIdentifier,
       getGitNormalizedRemote: async () => mockState.gitNormalizedRemote,
       normalizeGitRemoteUrl: (url: string) => url,
+      ensureGitignoreEntry: async () => {},
     }) satisfies typeof import("../../../lib/git.ts"),
 );
 
@@ -115,7 +116,7 @@ mock.module(
 
 // ── Prompt queue (drives lib/prompts.ts and lib/listage.ts mocks) ────────────
 
-type PromptType = "select" | "search" | "input" | "confirm" | "password" | "editor";
+type PromptType = "select" | "search" | "input" | "confirm" | "password" | "editor" | "multiselect";
 
 const promptQueues: Record<PromptType, unknown[]> = {
   select: [],
@@ -124,6 +125,7 @@ const promptQueues: Record<PromptType, unknown[]> = {
   confirm: [],
   password: [],
   editor: [],
+  multiselect: [],
 };
 
 function dequeuePrompt(name: PromptType) {
@@ -164,6 +166,7 @@ export const mockPrompts = {
   input: (...responses: string[]) => promptQueues.input.push(...responses),
   password: (...responses: string[]) => promptQueues.password.push(...responses),
   editor: (...responses: string[]) => promptQueues.editor.push(...responses),
+  multiselect: (...responses: unknown[][]) => promptQueues.multiselect.push(...responses),
 };
 
 function resetPromptQueues() {
@@ -203,8 +206,12 @@ mock.module("../../../lib/listage.ts", () => ({
   },
 }));
 
+// Every export of the real module must appear here: a missing one is a module
+// link error at import time, not a failed prompt, so it takes down every test
+// in the file the moment any command imports it.
 mock.module("../../../lib/prompts.ts", () => ({
   confirm: dequeuePrompt("confirm"),
+  multiselect: dequeuePrompt("multiselect"),
   text: dequeuePrompt("input"),
   password: dequeuePrompt("password"),
   editor: dequeuePrompt("editor"),

@@ -8,6 +8,7 @@
  * every network error. See `.claude/rules/debug-logging.md`.
  */
 
+import { CliError, ERROR_CODE } from "./errors.ts";
 import { log } from "./log.ts";
 import { interruptSignal } from "./signals.ts";
 import { withNetworkAccess } from "./host-execution.ts";
@@ -74,6 +75,23 @@ function interruptSignalFor(
   return own ? AbortSignal.any([own, interruptSignal()]) : interruptSignal();
 }
 
+/**
+ * Bun reports every connection-level failure — DNS, refused, no route — as a
+ * bare `Error` reading "Unable to connect. Is the computer able to access the
+ * url?", which names neither the host nor what wanted it, and which the global
+ * handler can only render as `unexpected_error`. Everything else, an aborted
+ * request included, is left exactly as thrown.
+ */
+function asConnectionError(error: unknown, url: string): unknown {
+  if ((error as NodeJS.ErrnoException | null)?.code !== "ConnectionRefused") return error;
+
+  const host = URL.parse(url)?.host ?? url;
+  return new CliError(
+    `Could not reach ${host}. Check your network connection (or VPN) and try again.`,
+    { code: ERROR_CODE.NETWORK_UNREACHABLE },
+  );
+}
+
 export async function loggedFetch(url: URL | string, options: LoggedFetchInit): Promise<Response> {
   const { tag, bestEffort, ignoreInterrupt, ...init } = options;
   const method = init.method ?? "GET";
@@ -85,7 +103,9 @@ export async function loggedFetch(url: URL | string, options: LoggedFetchInit): 
   const response = await withNetworkAccess(
     { operation: "connect", target: urlStr, label: tag, bestEffort },
     async () => fetch(url, { ...init, headers, signal }),
-  );
+  ).catch((error: unknown) => {
+    throw asConnectionError(error, urlStr);
+  });
   if (!response.ok) {
     // Clone so the caller can still consume the body for error construction.
     const body = await response.clone().text();

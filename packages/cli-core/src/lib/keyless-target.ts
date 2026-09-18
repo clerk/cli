@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { bapiRequest } from "./bapi.ts";
 import { resolveAppContext, resolveProfile } from "./config.ts";
 import { getStoredSession, hasAccountCredentials, type OAuthSession } from "./credential-store.ts";
-import { parseEnvFile } from "./dotenv.ts";
+import { findEnvValue } from "./dotenv.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "./errors.ts";
 import { decodePublishableKey } from "./fapi.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "./framework.ts";
@@ -37,8 +37,6 @@ export interface AccountContext {
 export type InstanceTarget =
   | { kind: "account"; ctx: AccountContext; label: string }
   | { kind: "keyless"; keyless: KeylessTarget; label: string };
-
-const ENV_FILES = [".env", ".env.local"];
 
 /**
  * Where the Clerk SDKs park the keys for a keyless app they created themselves
@@ -71,45 +69,6 @@ export async function readSdkKeylessApp(
   }
 }
 
-interface LocatedKey {
-  value: string;
-  source: string;
-}
-
-/**
- * Looks for a key under any of `names`, in the order the app itself would
- * resolve one: the environment first, then env files with a later file
- * overriding an earlier one.
- */
-async function findKeyInProject(cwd: string, names: string[]): Promise<LocatedKey | undefined> {
-  for (const name of new Set(names)) {
-    const value = process.env[name];
-    if (value) return { value, source: `${name} env var` };
-  }
-
-  // Priority is by name, not by position: the framework-specific name beats
-  // the generic fallback even when the generic one appears later in the same
-  // file. Within one name, a later file still overrides an earlier one.
-  const foundByName = new Map<string, LocatedKey>();
-  for (const envFile of ENV_FILES) {
-    const file = Bun.file(join(cwd, envFile));
-    if (!(await file.exists())) continue;
-
-    for (const line of parseEnvFile(await file.text())) {
-      if (line.type !== "entry" || !line.value) continue;
-      if (names.includes(line.key)) {
-        foundByName.set(line.key, { value: line.value, source: envFile });
-      }
-    }
-  }
-
-  for (const name of names) {
-    const located = foundByName.get(name);
-    if (located) return located;
-  }
-  return undefined;
-}
-
 /**
  * The instance secret key a keyless project keeps locally. Falls back to the
  * keys an SDK created for itself, which it only does when nothing else supplies
@@ -117,7 +76,7 @@ async function findKeyInProject(cwd: string, names: string[]): Promise<LocatedKe
  */
 export async function findLocalSecretKey(cwd: string): Promise<KeylessTarget | undefined> {
   const names = [await detectSecretKeyName(cwd), "CLERK_SECRET_KEY"];
-  const located = await findKeyInProject(cwd, names);
+  const located = await findEnvValue(cwd, names);
 
   const found = located
     ? { secretKey: located.value, source: located.source }
@@ -136,7 +95,7 @@ async function sdkKeylessTarget(cwd: string): Promise<KeylessTarget | undefined>
 /** The publishable key a keyless project holds locally, when one can be found. */
 export async function findLocalPublishableKey(cwd: string): Promise<string | undefined> {
   const names = [await detectPublishableKeyName(cwd), "CLERK_PUBLISHABLE_KEY"];
-  const located = await findKeyInProject(cwd, names);
+  const located = await findEnvValue(cwd, names);
 
   return located?.value ?? (await readSdkKeylessApp(cwd))?.publishableKey;
 }
