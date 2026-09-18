@@ -25,7 +25,7 @@ When `clerk init` runs in accountless mode it writes `.clerk/keyless.json` conta
 - **404** — claim token expired or application already deleted; breadcrumb is cleared and a warning is shown.
 - **403** — authenticated account has no active organization; breadcrumb is cleared and a warning is shown.
 - **Any other error** — treated as transient; breadcrumb is preserved so the next login retries.
-- **Success** — application is claimed and linked, `.env` is updated via `clerk env pull`, breadcrumb is deleted.
+- **Success** — application is claimed and linked, `.env` is updated via `clerk env pull`, breadcrumb is deleted. The command prints the Dashboard URL of the claimed app's development instance, since this is the first time the app has a home in an account.
 
 #### API Endpoints
 
