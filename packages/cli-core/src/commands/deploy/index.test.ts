@@ -1298,8 +1298,13 @@ describe("deploy", () => {
 
       // Google requires the consent screen before it will create a client, and
       // the name entered there is what end users see.
-      expect(err).toContain(
+      expect(flat(err)).toContain(
         "The consent screen's app name is what users see when they sign in with Google. Use the name you want them to see.",
+      );
+      // Wrapped inside the frame, continuation aligned under the text after
+      // the TIP label (3 + 8 columns), like the NOTE lines elsewhere.
+      expect(err).toMatch(
+        /TIP {8}The consent screen's app name is what users see when they sign in\n│ {13}with Google\. Use the name you want them to see\./,
       );
       // The Clerk app name is often a directory-derived slug, so showing it
       // read as a recommendation to reuse it on a user-facing screen.
@@ -1341,8 +1346,10 @@ describe("deploy", () => {
 
       // "Clerk production instance", not just "production instance": the user
       // also has a deployment on their host, and this is the one Clerk manages.
+      // The URL sits on its own indented line so the sentence fits the frame
+      // and terminal autolinkers see the whole URL.
       expect(err).toMatch(
-        /Clerk production instance created\. Manage it in the Dashboard: https:\/\/dashboard\.clerk\.com\/apps\/app_xyz789\/instances\/ins_\S+/,
+        /Clerk production instance created\. Manage it in the Dashboard:\n│ {4}https:\/\/dashboard\.clerk\.com\/apps\/app_xyz789\/instances\/ins_\S+/,
       );
     });
 

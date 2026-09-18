@@ -552,8 +552,9 @@ describe("login", () => {
     await runLogin();
 
     expect(captured.err).toContain("Claimed and linked application: `bad-agent`");
-    expect(captured.err).toContain(
-      "Your app now lives in your Clerk account: https://dashboard.clerk.com/apps/app_claimed/instances/ins_dev_claimed",
+    // The URL sits on its own indented line so the sentence fits the frame.
+    expect(captured.err).toMatch(
+      /Your app now lives in your Clerk account:\n[^\n]*? {2}https:\/\/dashboard\.clerk\.com\/apps\/app_claimed\/instances\/ins_dev_claimed/,
     );
   });
 

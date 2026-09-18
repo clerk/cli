@@ -472,7 +472,7 @@ export function deployStatusPendingFooter(
     "You can also skip for now and run `clerk deploy` later to resume; the production instance is already created.";
   if (state === "records_available") {
     return [
-      `${records} records not found yet for ${domain}.`,
+      ...wrap(`${records} records not found yet for ${domain}.`),
       ...wrap(
         `  - Add them at your DNS provider if you haven't already, then choose Check again below. ${resume}`,
       ),
@@ -486,7 +486,7 @@ export function deployStatusPendingFooter(
     // URL on its own line: mid-sentence, terminal autolinkers swallow the
     // trailing punctuation.
     return [
-      `${records} records not found yet for ${domain}.`,
+      ...wrap(`${records} records not found yet for ${domain}.`),
       "",
       ...wrap(
         `Clerk didn't return the list of records to add. Find them on the Domains page in the Clerk Dashboard, add them, then choose Check again below. ${resume}`,
@@ -496,7 +496,7 @@ export function deployStatusPendingFooter(
   }
   if (state === "ssl_pending") {
     return [
-      `SSL certificate still pending for ${domain}.`,
+      ...wrap(`SSL certificate still pending for ${domain}.`),
       "",
       ...wrap(
         `Clerk issues it automatically now that DNS is verified; choose Check again below in a few minutes. ${resume}`,
@@ -504,7 +504,7 @@ export function deployStatusPendingFooter(
     ];
   }
   return [
-    `Production setup for ${domain} is still finalizing on Clerk's side.`,
+    ...wrap(`Production setup for ${domain} is still finalizing on Clerk's side.`),
     "",
     ...wrap(
       "Run `clerk deploy` again in a few minutes to resume. The production instance is already created.",
@@ -549,18 +549,22 @@ export function nextStepsBody(
 ): string {
   // Until DNS is verified the domain doesn't resolve, so "sign up there"
   // would send the user to a page that doesn't exist yet.
-  const step3 =
+  // Wrapped here, not by hand: the domain's length moves the break.
+  const step3 = wrap(
     domainStatus === "verified"
-      ? `Redeploy your app, then sign up at https://${domain} to confirm it
-     works`
-      : `Run \`clerk deploy\` again once the domain is verified, then redeploy
-     your app and sign up at https://${domain} to confirm it works`;
+      ? `  3. Redeploy your app, then sign up at https://${domain} to confirm it works`
+      : `  3. Run \`clerk deploy\` again once the domain is verified, then redeploy your app and sign up at https://${domain} to confirm it works`,
+  ).join("\n");
+  const keysNote = wrap(
+    `${yellow("NOTE")}  Production keys only work on your production domain. They will not work on localhost. To run your dev environment, keep using your dev keys.`,
+    { hang: 6 },
+  ).join("\n");
   return `
   1. Pull production keys into your environment
        clerk env pull --instance prod
 
-     This writes pk_live_... and sk_live_... to your env file. They replace your
-     pk_test_... and sk_test_... keys.
+     This writes pk_live_... and sk_live_... to your env file. They
+     replace your pk_test_... and sk_test_... keys.
 
   2. Update env vars on your hosting provider
      Vercel, AWS, GCP, Heroku, Render, etc. all expose env vars in their UI.
@@ -568,7 +572,7 @@ export function nextStepsBody(
        - Also copy the other Clerk variables from your env file, such as
          NEXT_PUBLIC_CLERK_SIGN_IN_URL. \`env pull\` writes only the two keys.
 
-  3. ${step3}
+${step3}
 
   4. (If applicable) Update webhook URLs and signing secrets
      ${dim("https://clerk.com/docs/guides/development/webhooks/syncing#configure-your-production-instance")}
@@ -582,8 +586,7 @@ export function nextStepsBody(
        - DNS and SSL status:
          ${dim(domainsDashboardUrl(appId, productionInstanceId))}
 
-${yellow("NOTE")}  Production keys only work on your production domain. They will not
-      work on localhost. To run your dev environment, keep using your dev keys.
+${keysNote}
 
 ${dim("Reference: https://clerk.com/docs/guides/development/deployment/production#api-keys-and-environment-variables")}`;
 }

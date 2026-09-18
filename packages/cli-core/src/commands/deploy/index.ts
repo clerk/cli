@@ -190,9 +190,9 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   await persistProductionInstance(ctx, production.id);
   // "Clerk production instance", not just "production instance": the user
   // also has a deployment on their host, and this is the one Clerk manages.
-  log.success(
-    `Clerk production instance created. Manage it in the Dashboard: ${instanceDashboardUrl(ctx.appId, production.id)}`,
-  );
+  // URL on its own line: with it, the sentence is wider than the frame.
+  log.success("Clerk production instance created. Manage it in the Dashboard:");
+  log.info(`  ${instanceDashboardUrl(ctx.appId, production.id)}`);
 
   if (!production.active_domain) {
     throw new CliError(

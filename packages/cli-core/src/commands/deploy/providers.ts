@@ -2,6 +2,7 @@ import { OAUTH_PROVIDERS } from "@clerk/shared/oauth";
 import { bold, cyan, dim, yellow } from "../../lib/color.ts";
 import { clerkSubdomains } from "./copy.ts";
 import { log } from "../../lib/log.ts";
+import { wrap } from "../../lib/wrap.ts";
 import { openBrowser } from "../../lib/open.ts";
 import type { ConfigSchemaProperty, InstanceConfigSchema } from "../../lib/plapi.ts";
 
@@ -480,9 +481,12 @@ export async function showOAuthWalkthrough(
   // paste, so it follows the values.
   if (slug === "google") {
     log.blank();
-    log.info(
+    for (const line of wrap(
       `${dim(cyan("TIP"))}        The consent screen's app name is what users see when they sign in with Google. Use the name you want them to see.`,
-    );
+      { hang: 11 },
+    )) {
+      log.info(line);
+    }
   }
   log.blank();
   log.info(dim(`Provider guide: ${docsUrl}`));

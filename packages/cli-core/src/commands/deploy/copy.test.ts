@@ -3,6 +3,7 @@ import {
   DEPLOY_COMMAND_DESCRIPTION,
   DEPLOY_COMMAND_SUMMARY,
   INTRO_PREAMBLE,
+  OAUTH_SECTION_INTRO,
   bindZoneFile,
   deployComponentLabels,
   deployStatusPendingFooter,
@@ -651,5 +652,89 @@ describe("dnsDashboardHandoff", () => {
 
     expect(flat(output)).toContain("on the Domains page in the Clerk Dashboard.");
     expect(output).not.toContain("undefined");
+  });
+});
+
+describe("every wizard screen fits inside the frame", () => {
+  // The wizard prefixes each printed line with a 3-column gutter, added per
+  // line the code emits; the terminal's own soft wrap lands outside it. So
+  // every line a screen emits must fit 76 visible columns. The one allowed
+  // overflow is a lone unbreakable token, optionally after a "Label:" (a URL
+  // on its own line, or "Reference: <url>"); a sentence that merely contains
+  // a URL still has to wrap.
+  const DOMAIN = "auth.my-long-company-name.co.uk";
+  const URL = "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains";
+  const STATUSES = [
+    { dns: false, ssl: false, mail: false },
+    { dns: true, ssl: false, mail: false },
+    { dns: false, ssl: false, mail: true },
+    { dns: true, ssl: false, mail: true },
+    { dns: true, ssl: true, mail: true },
+  ];
+  const targets: CnameTarget[] = [
+    { host: `clerk.${DOMAIN}`, value: "frontend-api.clerk.services", required: true },
+    { host: `accounts.${DOMAIN}`, value: "accounts.clerk.services", required: false },
+    { host: `clk2._domainkey.${DOMAIN}`, value: "dkim2.clerk.services", required: true },
+  ];
+  const screens: Record<string, string[]> = {
+    INTRO_PREAMBLE: [INTRO_PREAMBLE],
+    OAUTH_SECTION_INTRO: [OAUTH_SECTION_INTRO],
+    dnsIntro: dnsIntro(DOMAIN),
+    domainAssociationSummary: domainAssociationSummary(DOMAIN),
+    dnsRecords: dnsRecords(targets),
+    "dnsRecords afterCheck": dnsRecords(targets, { afterCheck: true }),
+    "productionSummary verified": productionSummary(DOMAIN, ["Google"], "verified"),
+    "productionSummary pending": productionSummary(DOMAIN, [], "pending"),
+    "nextStepsBody verified": [nextStepsBody("app_1", "ins_prod", DOMAIN, "verified")],
+    "nextStepsBody pending": [nextStepsBody("app_1", "ins_prod", DOMAIN, "pending")],
+  };
+  for (const oauthNext of [true, false]) {
+    screens[`dnsDashboardHandoff oauthNext=${oauthNext}`] = dnsDashboardHandoff(DOMAIN, URL, {
+      oauthNext,
+    });
+    for (const status of STATUSES) {
+      const key = JSON.stringify(status);
+      screens[`dnsHandoffNothingToAdd ${key} oauthNext=${oauthNext}`] = dnsHandoffNothingToAdd(
+        DOMAIN,
+        status,
+        URL,
+        { oauthNext },
+      );
+    }
+  }
+  for (const status of STATUSES) {
+    for (const hasRecords of [true, false]) {
+      screens[`deployStatusPendingFooter ${JSON.stringify(status)} records=${hasRecords}`] =
+        deployStatusPendingFooter(DOMAIN, status, URL, hasRecords);
+    }
+  }
+
+  const loneToken = /^\s*(\S+:\s+)?\S+$/;
+
+  test.each(Object.entries(screens).map(([name, lines]) => ({ name, lines })))(
+    "$name",
+    ({ lines }) => {
+      const tooWide = lines
+        .join("\n")
+        .split("\n")
+        .map((line) => stripAnsi(line))
+        .filter((line) => line.length > 76 && !loneToken.test(line));
+      expect(tooWide).toEqual([]);
+    },
+  );
+
+  test("step 3 keeps its numbered indent across wrapped lines", () => {
+    for (const status of ["verified", "pending"] as const) {
+      const lines = nextStepsBody("app_1", "ins_prod", DOMAIN, status).split("\n");
+      const start = lines.findIndex((line) => line.startsWith("  3. "));
+      expect(start).toBeGreaterThan(0);
+      // Continuation lines align under the text after "3. ", like steps 1 and 2.
+      let next = start + 1;
+      while (lines[next] !== "") {
+        expect(lines[next]).toMatch(/^ {5}\S/);
+        next++;
+      }
+      expect(next).toBeGreaterThan(start + 1);
+    }
   });
 });

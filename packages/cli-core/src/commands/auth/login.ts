@@ -237,9 +237,9 @@ async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
       (instance) => instance.environment_type === "development",
     );
     if (development) {
-      log.info(
-        `Your app now lives in your Clerk account: ${buildDashboardUrl(result.app.application_id, development.instance_id)}`,
-      );
+      // URL on its own line: with it, the sentence is wider than the frame.
+      log.info("Your app now lives in your Clerk account:");
+      log.info(`  ${buildDashboardUrl(result.app.application_id, development.instance_id)}`);
     }
   }
 
