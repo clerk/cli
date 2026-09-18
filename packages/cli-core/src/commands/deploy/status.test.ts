@@ -19,8 +19,14 @@ mock.module("../../lib/plapi.ts", () => ({
     mockTriggerApplicationDomainDNSCheck(...args),
 }));
 
-const { buildDeployStatusReport, resolveDeployState, waitForDeployStatus } =
-  await import("./status.ts");
+const {
+  agentNextAction,
+  buildDeployStatusReport,
+  buildInterruptedDeployStatusReport,
+  deployNextStep,
+  resolveDeployState,
+  waitForDeployStatus,
+} = await import("./status.ts");
 
 const ctx = {
   profileKey: "/tmp/x",
@@ -490,4 +496,116 @@ describe("buildDeployStatusReport", () => {
       expect(report.nextAction).not.toContain("Clerk Dashboard domains page");
     },
   );
+});
+
+describe("report urls", () => {
+  const snapshot = {
+    appId: "app_1",
+    developmentInstanceId: "ins_dev",
+    productionInstanceId: "ins_prod",
+    productionDomainId: "dmn_1",
+    domain: "example.com",
+    oauthProviders: [],
+    oauthProviderDescriptors: [],
+    completedOAuthProviders: [],
+    cnameTargets: [],
+    domainComplete: false,
+    componentStatus: { dns: false, ssl: false, mail: false },
+    unsupportedOAuthProviderCount: 0,
+    unsupportedOAuthProviders: [],
+    pending: undefined,
+  } satisfies LiveDeploySnapshot;
+
+  test("carries the instance and Domains page URLs once a production instance exists", () => {
+    // Agents used to have to pull the URL out of the `nextAction` prose.
+    const report = buildDeployStatusReport({ kind: "active", snapshot }, null);
+    expect(report.urls).toEqual({
+      instance: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod",
+      domains: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+    });
+    expect(
+      buildDeployStatusReport(
+        { kind: "domain_provisioning", appId: "app_1", productionInstanceId: "ins_prod" },
+        null,
+      ).urls,
+    ).toEqual(report.urls);
+  });
+
+  test("is null when there is no production instance to point at", () => {
+    expect(buildDeployStatusReport({ kind: "not_started" }, null).urls).toBeNull();
+    expect(buildInterruptedDeployStatusReport().urls).toBeNull();
+    expect(
+      buildDeployStatusReport(
+        { kind: "active", snapshot: { ...snapshot, productionInstanceId: undefined } },
+        null,
+      ).urls,
+    ).toBeNull();
+  });
+});
+
+describe("deployNextStep", () => {
+  // The step is derived from the report's own fields, so a report and the
+  // sentence stored in it can't describe different situations.
+  const base = {
+    complete: false,
+    state: "domain_pending" as const,
+    domain: "example.com",
+    productionInstanceId: "ins_prod",
+    domainStatus: { dns: "pending", ssl: "pending", mail: "pending" },
+    pendingDnsRecords: [
+      { type: "CNAME" as const, host: "clerk.example.com", value: "v", required: true },
+    ],
+    oauth: { complete: true, configured: [], pending: [], unsupported: [] },
+    urls: {
+      domains: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+      instance: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod",
+    },
+  };
+
+  test.each([
+    {
+      label: "records to add",
+      domainStatus: { dns: "pending", ssl: "pending", mail: "pending" },
+      records: 1,
+      kind: "records_available",
+      phrase: "DNS and email DNS",
+    },
+    {
+      label: "records missing from the report",
+      domainStatus: { dns: "pending", ssl: "pending", mail: "complete" },
+      records: 0,
+      kind: "records_unavailable",
+      phrase: "DNS",
+    },
+    {
+      label: "only SSL pending",
+      domainStatus: { dns: "complete", ssl: "pending", mail: "complete" },
+      records: 0,
+      kind: "ssl_pending",
+      phrase: "",
+    },
+    {
+      label: "everything verified, Clerk finalizing",
+      domainStatus: { dns: "complete", ssl: "complete", mail: "complete" },
+      records: 0,
+      kind: "finalizing",
+      phrase: "",
+    },
+  ])("classifies a pending domain: $label", ({ domainStatus, records, kind, phrase }) => {
+    const step = deployNextStep({
+      ...base,
+      domainStatus,
+      pendingDnsRecords: base.pendingDnsRecords.slice(0, records),
+    });
+    expect(step.kind).toBe(kind);
+    if (step.kind === "records_available" || step.kind === "records_unavailable") {
+      expect(step.records).toBe(phrase);
+      expect(step.domainsUrl).toBe(base.urls.domains);
+    }
+  });
+
+  test("the agent sentence is rendered from the step the report classifies", () => {
+    const report = buildDeployStatusReport({ kind: "not_started" }, null);
+    expect(report.nextAction).toBe(agentNextAction(deployNextStep(report)));
+  });
 });

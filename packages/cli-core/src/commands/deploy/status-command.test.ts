@@ -23,7 +23,7 @@ mock.module("../../lib/sleep.ts", () => ({
 const { _setConfigDir, setProfile } = await import("../../lib/config.ts");
 const { setMode } = await import("../../mode.ts");
 const { beginInterrupt, _resetInterruptState } = await import("../../lib/signals.ts");
-const { deployStatus } = await import("./status-command.ts");
+const { deployStatus, humanNextAction } = await import("./status-command.ts");
 
 /** What an in-flight request rejects with once Ctrl-C aborts the shared signal. */
 function abortError(): Error {
@@ -740,3 +740,47 @@ async function routePlapiFetch(
 
   return new Response("Not Found", { status: 404 });
 }
+
+describe("humanNextAction", () => {
+  // These are the three things that used to leak from the agent sentence into
+  // the human one. Now that each audience has its own renderer, this pins the
+  // human side for every state rather than trusting seven replace rules.
+  const URL = "https://dashboard.clerk.com/apps/app_1/instances/ins_prod";
+  const steps = [
+    { kind: "not_started" as const },
+    { kind: "domain_provisioning" as const, domainsUrl: `${URL}/domains` },
+    { kind: "interrupted" as const },
+    { kind: "complete" as const, domain: "example.com", oauthUnsupported: ["x"], instanceUrl: URL },
+    { kind: "oauth_pending" as const, oauthPending: ["github"], oauthUnsupported: ["x"] },
+    ...(["records_available", "records_unavailable", "ssl_pending", "finalizing"] as const).map(
+      (kind) => ({ kind, domain: "example.com", records: "DNS", domainsUrl: `${URL}/domains` }),
+    ),
+  ];
+
+  test.each(steps.map((step) => ({ kind: step.kind, step })))(
+    "never speaks to an agent: $kind",
+    ({ step }) => {
+      const line = humanNextAction(step);
+      expect(line).not.toContain("ask the user");
+      expect(line).not.toContain("Ask the user");
+      expect(line).not.toContain("pendingDnsRecords");
+      expect(line).not.toContain("--wait");
+      expect(line).not.toContain("human terminal");
+      // The warning row above the sentence already names unsupported providers.
+      expect(line).not.toContain("could not configure them");
+    },
+  );
+
+  test("points a person at the wizard to resume, and at the Dashboard to watch", () => {
+    const line = humanNextAction({
+      kind: "records_available",
+      domain: "example.com",
+      records: "DNS",
+      domainsUrl: `${URL}/domains`,
+    });
+    expect(line).toBe(
+      "DNS records not found yet for example.com. Once they're added, run `clerk deploy` again to resume. " +
+        `Propagation usually takes minutes. Visit the Clerk Dashboard domains page to monitor its status there: ${URL}/domains`,
+    );
+  });
+});
