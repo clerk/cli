@@ -174,6 +174,14 @@ users sign in; preview with `--dry-run` first. The **good-to-have** tier
 lifetime) counts toward the score but is left out of `--all` and unticked in
 the picker; opt in with `--good-to-have` or by naming ids.
 
+Some fixes change what a sign-in or sign-up flow has to handle: a CAPTCHA
+widget, a verification step, a second-factor step, a forced password reset,
+or a pending `setup-mfa` session task. Prebuilt components handle all of
+these; custom flows built on the frontend API do not until updated. Those
+checks carry a `customFlows` note with a docs link, `fix` prints the notes
+under the diff before asking to proceed, and the finding JSON includes them
+so an agent can warn first.
+
 Checks that have no meaning for the instance are **not applicable** and are
 left out of the report and the score entirely: the email checks when email is
 not a sign-up identifier, the phone check when phone is not, the four
@@ -275,6 +283,8 @@ options, suggested }`. Pass the values with `--<flag>` to `fix`; `remedy`
   agents that prefer `clerk config patch`. Confirm the choice with the user
   when it matters (SMS costs money, passkeys need client support).
 - `features` lists the billing features a control depends on (see Checks).
+- `customFlows` (`{ note, docsUrl }`) is set on unmet findings whose fix a
+  custom sign-in or sign-up flow must accommodate. Surface it before applying.
 - `fixCommand` lists the fixable critical and recommended gaps; good-to-have
   ids are applied only when named explicitly or via `--all --good-to-have`.
   It and every `remedy` pin `--app` and `--instance` to the audited instance,
