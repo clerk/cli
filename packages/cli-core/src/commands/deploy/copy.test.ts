@@ -710,6 +710,10 @@ describe("every wizard screen fits inside the frame", () => {
   }
 
   const loneToken = /^\s*(\S+:\s+)?\S+$/;
+  // Deliberately not imported from wrap.ts: this asserts "fits an 80-column
+  // terminal", and sharing the constant would let a wider default pass the
+  // test while breaking the frame.
+  const FRAME_WIDTH = 76;
 
   test.each(Object.entries(screens).map(([name, lines]) => ({ name, lines })))(
     "$name",
@@ -718,7 +722,7 @@ describe("every wizard screen fits inside the frame", () => {
         .join("\n")
         .split("\n")
         .map((line) => stripAnsi(line))
-        .filter((line) => line.length > 76 && !loneToken.test(line));
+        .filter((line) => line.length > FRAME_WIDTH && !loneToken.test(line));
       expect(tooWide).toEqual([]);
     },
   );

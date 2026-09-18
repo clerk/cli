@@ -65,12 +65,23 @@ export type DeployStatusState =
   // buildInterruptedDeployStatusReport.
   | "interrupted";
 
+/**
+ * Two values only. `deployNextStep` reads this back as booleans, so a third
+ * value would be silently classified as pending; the type makes adding one a
+ * compile error at every reader instead.
+ */
+export type DomainComponentState = "complete" | "pending";
+
 export interface DeployStatusReport {
   complete: boolean;
   state: DeployStatusState;
   domain: string | null;
   productionInstanceId: string | null;
-  domainStatus: { dns: string; ssl: string; mail: string } | null;
+  domainStatus: {
+    dns: DomainComponentState;
+    ssl: DomainComponentState;
+    mail: DomainComponentState;
+  } | null;
   pendingDnsRecords: { type: "CNAME"; host: string; value: string; required: boolean }[];
   oauth: { complete: boolean; configured: string[]; pending: string[]; unsupported: string[] };
   /**
@@ -79,6 +90,11 @@ export interface DeployStatusReport {
    * interrupted before the state could be read.
    */
   urls: { domains: string; instance: string } | null;
+  /**
+   * Derived, never written: every constructor goes through `withNextAction`,
+   * which renders this from `deployNextStep` over the other fields. Assigning
+   * it directly would let it drift from the facts it describes.
+   */
   nextAction: string;
 }
 
@@ -90,7 +106,7 @@ export interface DeployStatusReport {
  */
 export type DeployNextStep =
   | { kind: "not_started" }
-  | { kind: "domain_provisioning"; domainsUrl: string }
+  | { kind: "domain_provisioning"; domainsUrl: string | null }
   | { kind: "interrupted" }
   | {
       kind: "complete";
@@ -338,7 +354,7 @@ export function pendingDomainStatus(): DomainStatusResponse {
   };
 }
 
-function domainComponentState(value: boolean): "complete" | "pending" {
+function domainComponentState(value: boolean): DomainComponentState {
   return value ? "complete" : "pending";
 }
 
@@ -474,8 +490,9 @@ export function deployNextStep(report: DeployStatusFacts): DeployNextStep {
     case "interrupted":
       return { kind: "interrupted" };
     case "domain_provisioning":
-      // Always has a production instance, so always has its URLs.
-      return { kind: "domain_provisioning", domainsUrl: report.urls?.domains ?? "" };
+      // Always has a production instance, so always has its URLs; nullable
+      // only because the report type can't say so.
+      return { kind: "domain_provisioning", domainsUrl: report.urls?.domains ?? null };
     case "complete":
       return {
         kind: "complete",

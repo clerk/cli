@@ -551,7 +551,7 @@ describe("deployNextStep", () => {
     state: "domain_pending" as const,
     domain: "example.com",
     productionInstanceId: "ins_prod",
-    domainStatus: { dns: "pending", ssl: "pending", mail: "pending" },
+    domainStatus: { dns: "pending", ssl: "pending", mail: "pending" } as const,
     pendingDnsRecords: [
       { type: "CNAME" as const, host: "clerk.example.com", value: "v", required: true },
     ],
@@ -565,28 +565,28 @@ describe("deployNextStep", () => {
   test.each([
     {
       label: "records to add",
-      domainStatus: { dns: "pending", ssl: "pending", mail: "pending" },
+      domainStatus: { dns: "pending", ssl: "pending", mail: "pending" } as const,
       records: 1,
       kind: "records_available",
       phrase: "DNS and email DNS",
     },
     {
       label: "records missing from the report",
-      domainStatus: { dns: "pending", ssl: "pending", mail: "complete" },
+      domainStatus: { dns: "pending", ssl: "pending", mail: "complete" } as const,
       records: 0,
       kind: "records_unavailable",
       phrase: "DNS",
     },
     {
       label: "only SSL pending",
-      domainStatus: { dns: "complete", ssl: "pending", mail: "complete" },
+      domainStatus: { dns: "complete", ssl: "pending", mail: "complete" } as const,
       records: 0,
       kind: "ssl_pending",
       phrase: "",
     },
     {
       label: "everything verified, Clerk finalizing",
-      domainStatus: { dns: "complete", ssl: "complete", mail: "complete" },
+      domainStatus: { dns: "complete", ssl: "complete", mail: "complete" } as const,
       records: 0,
       kind: "finalizing",
       phrase: "",
