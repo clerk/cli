@@ -1,5 +1,33 @@
 # clerk
 
+## 3.4.0
+
+### Minor Changes
+
+- Add fx (https://fx.sh) as a supported client for `clerk mcp install`, `list`, and `uninstall`. The Clerk MCP server is written to fx's user-global `~/.fx/mcp.json` as a direct Streamable HTTP entry (`{ "type": "http", "url": … }` under top-level `mcp`) — fx connects to the URL natively, so no `clerk mcp run` bridge is involved. Detected via the presence of `~/.fx/`; target it explicitly with `--client fx`. ([#460](https://github.com/clerk/cli/pull/460)) by [@manovotny](https://github.com/manovotny)
+
+### Patch Changes
+
+- Reject an invalid `clerk api` request body on your machine instead of sending it. The error echoes what arrived and, when a `-d` value reached the CLI with its double quotes stripped or wrapped in literal single quotes, names the shell quoting behind it — an unquoted body in a POSIX shell, or PowerShell before 7.3 and cmd.exe on Windows — and suggests the same request with `--file`, which no shell can mangle. Those shell-quoting rejections carry the error code `invalid_json_shell_quoting`; other parse failures keep `invalid_json`. ([#464](https://github.com/clerk/cli/pull/464)) by [@dmoerner](https://github.com/dmoerner)
+
+- Replace the Clerk Skills install box on the sign-in success page with three command cards — install, customize, and deploy — showing what the CLI can do right after authentication. ([#473](https://github.com/clerk/cli/pull/473)) by [@eatmorespinach](https://github.com/eatmorespinach)
+
+- Restyle the sign-in success page with a theme-aware Clerk mark, the command cards grouped into a banner along the bottom, and a staggered entrance animation. ([#473](https://github.com/clerk/cli/pull/473)) by [@eatmorespinach](https://github.com/eatmorespinach)
+
+- `clerk deploy` copy fixes: ([#484](https://github.com/clerk/cli/pull/484)) by [@shane-kercheval](https://github.com/shane-kercheval)
+
+  - `clerk deploy --help` describes what the bare command does and the JSON report it prints under an agent.
+  - The preamble says a hosting provider's generated URL can't be the production domain.
+  - The confirmation screen lists all five DNS record hosts, including DKIM, and says DNS records will be needed for them once the instance exists.
+  - The DNS check reports records as "not found yet" with a minutes-not-days expectation, tells you what to do based on what's actually pending, and links the Dashboard Domains page for changing the domain.
+  - `clerk auth login` prints the claimed app's Dashboard URL; the wizard prints the new production instance's URL and its next steps say the pulled keys go on the host alongside the other Clerk variables.
+  - The Google walkthrough adds a tip explaining that the OAuth consent screen's app name is what users see when they sign in, and to choose the name they should see.
+  - The DNS check footer points at the "Check again" prompt that follows it instead of telling you to quit and re-run; the closing screen no longer says "Production ready", "sign up at your domain", or "Success" when DNS verification was skipped.
+  - Resuming the wizard shows only the DNS records still outstanding, not ones Clerk already verified. When none are outstanding, the DNS screen says what is (the SSL certificate, Clerk finalizing, or a record list Clerk didn't return) instead of a "Configure DNS" page with no records, and the closing screen says "Not yet verified" rather than "DNS pending" so it is right when DNS is done and something else is pending.
+  - Each DNS record host is named the same way on every screen, the note about what Clerk manages moved off the rows the user has to add, the Domains-page pointer carries its link, and the closing line says what happens next instead of implying that skipping the check finishes the deploy, and no longer promises an OAuth step on resume when OAuth has already run.
+  - Agent-mode `nextAction` tells the agent to add pending DNS records instead of polling, at `complete` says the production keys still have to reach the host, and names OAuth providers the CLI could not configure so an agent doesn't report OAuth as done. Human-mode `clerk deploy status` prints the pending records, never says "ask the user", and resumes with `clerk deploy` rather than a flag that only affects agents.
+  - The wizard's new sentences wrap at 76 columns so they stay inside the gutter on an 80-column terminal. The agent JSON report gains a `urls` field with the production instance's Dashboard page and its Domains page. Human-mode `deploy status` now renders its sentence from the same classification of the report as `nextAction` rather than by rewriting that sentence; both read the same as before this change.
+
 ## 3.3.0
 
 ### Minor Changes
