@@ -33,7 +33,7 @@ export function fixCommandWithDecision(
   return `clerk security fix ${check.id}${flag}${targetFlags(ref)}${isAgent() ? " --yes" : ""}`;
 }
 
-export function remedyFor(
+function remedyFor(
   check: CheckDef,
   status: FindingStatus,
   ref: InstanceRef,
@@ -97,7 +97,7 @@ export function evaluate(input: CheckInput, ref: InstanceRef): Finding[] {
   return sortFindings(findings);
 }
 
-export function sortFindings(findings: Finding[]): Finding[] {
+function sortFindings(findings: Finding[]): Finding[] {
   return [...findings].sort(
     (a, b) =>
       SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) ||
