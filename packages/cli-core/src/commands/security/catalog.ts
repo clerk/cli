@@ -11,6 +11,7 @@ const DOCS_PASSWORDS = `${DOCS}/secure/password-protection-and-rules`;
 const DOCS_LOCKOUT = `${DOCS}/secure/user-lockout`;
 const DOCS_SESSIONS = `${DOCS}/secure/session-options`;
 const DOCS_RESTRICTIONS = `${DOCS}/secure/restricting-access`;
+const FLOWS = `${DOCS}/development/custom-flows/authentication`;
 
 // Backend minimum for session durations.
 const MIN_SESSION_SECONDS = 300;
@@ -188,6 +189,10 @@ export const CHECKS: CheckDef[] = [
         bot_protection: { captcha_enabled: true, captcha_widget_type: "smart" },
       },
     }),
+    customFlows: {
+      note: "Custom sign-up flows must render the CAPTCHA widget or sign-ups fail.",
+      docsUrl: `${FLOWS}/bot-sign-up-protection`,
+    },
   },
   {
     id: "breach-detection",
@@ -221,6 +226,10 @@ export const CHECKS: CheckDef[] = [
     appliesTo: ({ config }) => passwordEnabled(config),
     ...booleanCheck("auth_password.device_trust.enabled"),
     patch: () => ({ auth_password: { device_trust: { enabled: true } } }),
+    customFlows: {
+      note: "Password sign-ins from a new device get a second-factor step that custom sign-in flows must handle.",
+      docsUrl: `${FLOWS}/multi-factor-authentication`,
+    },
   },
   {
     id: "mfa",
@@ -242,6 +251,10 @@ export const CHECKS: CheckDef[] = [
       };
     },
     decision: MFA_DECISION,
+    customFlows: {
+      note: "Once users enroll, custom sign-in flows must handle the second-factor step.",
+      docsUrl: `${FLOWS}/multi-factor-authentication`,
+    },
   },
   {
     id: "passwordless-auth",
@@ -274,6 +287,10 @@ export const CHECKS: CheckDef[] = [
     appliesTo: ({ config }) => emailEnabled(config),
     ...booleanCheck("auth_email.verify_at_sign_up", { labels: ["Required", "Not required"] }),
     patch: verifyAtSignUpPatch("auth_email", "email_code"),
+    customFlows: {
+      note: "Custom sign-up flows must handle the email verification step.",
+      docsUrl: `${FLOWS}/email-password`,
+    },
   },
 
   // --- recommended ---
@@ -299,6 +316,10 @@ export const CHECKS: CheckDef[] = [
       };
     },
     patch: () => ({ auth_password: { disable_hibp: false, enforce_hibp_on_sign_in: true } }),
+    customFlows: {
+      note: "A breached password turns sign-in into a forced reset that custom flows must handle.",
+      docsUrl: `${FLOWS}/forgot-password`,
+    },
   },
   {
     id: "lockout-threshold",
@@ -349,6 +370,10 @@ export const CHECKS: CheckDef[] = [
       };
     },
     patch: () => ({ auth_multi_factor: { required_for_sign_up: true } }),
+    customFlows: {
+      note: "Every sign-in gets a pending setup-mfa session task; custom flows that ignore tasks strand users.",
+      docsUrl: `${FLOWS}/session-tasks`,
+    },
   },
   {
     id: "passkeys",
@@ -371,6 +396,10 @@ export const CHECKS: CheckDef[] = [
     appliesTo: ({ config }) => phoneEnabled(config),
     ...booleanCheck("auth_phone.verify_at_sign_up", { labels: ["Required", "Not required"] }),
     patch: verifyAtSignUpPatch("auth_phone", "phone_code"),
+    customFlows: {
+      note: "Custom sign-up flows must handle the phone verification step.",
+      docsUrl: `${FLOWS}/email-sms-otp`,
+    },
   },
   {
     id: "password-min-length",
