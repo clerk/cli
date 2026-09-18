@@ -44,7 +44,7 @@ A path is **exempt** when it matches any of:
 - `docs/**`
 - `scripts/**`
 - `.claude/**`
-- Root dotfiles or docs at repo root: `.gitignore`, `CLAUDE.md`,
+- Root dotfiles or docs at repo root: `.gitignore`, `AGENTS.md`,
   `CONTRIBUTING.md`, `README.md`
 - Test-only files inside packages: `packages/**/*.test.ts`,
   `packages/**/__tests__/**`
