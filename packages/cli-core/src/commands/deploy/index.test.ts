@@ -77,6 +77,14 @@ function stripAnsi(value: string): string {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
 }
 
+/**
+ * Captured wizard output with the gutter and wrap continuations folded back
+ * into sentences, for asserting on what a line says rather than how it wraps.
+ */
+function flat(value: string): string {
+  return stripAnsi(value).replace(/\n│?[ \t]*/g, " ");
+}
+
 /** What the clack prompt wrappers throw when the user presses Ctrl-C. */
 function promptExitError(): Error {
   return new UserAbortError();
@@ -902,7 +910,7 @@ describe("deploy", () => {
       expect(err).toContain("[ ] Create production instance");
       expect(err).toContain("[ ] Verify DNS records");
       expect(err).toContain("[ ] Configure Google OAuth credentials");
-      expect(err).toContain("on the Domains page in the Clerk Dashboard");
+      expect(flat(err)).toContain("on the Domains page in the Clerk Dashboard");
     });
 
     test("asks directly for an owned production domain and accepts short domains", async () => {
@@ -983,7 +991,7 @@ describe("deploy", () => {
       expect(err).toContain("clerk env pull --instance prod");
       expect(err).toContain("Update env vars on your hosting provider");
       expect(err).toContain("Also copy the other Clerk variables from your env file");
-      expect(err).toContain("sign up at https://example.com to confirm it works");
+      expect(flat(err)).toContain("sign up at https://example.com to confirm it works");
       expect(err).toContain("Manage this instance in the Clerk Dashboard");
       expect(err).toContain(
         "https://dashboard.clerk.com/apps/app_xyz789/instances/ins_prod_mock/domains",
@@ -1003,7 +1011,7 @@ describe("deploy", () => {
 
       await runDeployUntilPause();
       const err = stripAnsi(captured.err);
-      expect(err).toContain(
+      expect(flat(err)).toContain(
         "Clerk will use these subdomains for example.com. You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:",
       );
       // A blank line separates the domain the user just typed from this screen.
@@ -1013,9 +1021,9 @@ describe("deploy", () => {
       expect(err).toContain("clkmail.example.com");
       expect(err).toContain("This will create a Clerk production instance");
       expect(err).toContain("Add the following records at your DNS provider");
-      expect(err).toContain("on the Domains page in the Clerk Dashboard");
+      expect(flat(err)).toContain("on the Domains page in the Clerk Dashboard");
       expect(err).toContain("propagation and SSL issuance");
-      expect(err).toContain(
+      expect(flat(err)).toContain(
         "Next you'll set up OAuth, then this command checks that these records have taken effect at your DNS provider",
       );
       expect(mockConfirm).toHaveBeenCalledTimes(3);
@@ -1049,7 +1057,7 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain(
+      expect(flat(err)).toContain(
         "Clerk will use these subdomains for example.com. You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:",
       );
       expect(err).toContain("No production instance was created.");
@@ -1790,7 +1798,7 @@ describe("deploy", () => {
       expect(err).toContain("Host:  clkmail.example.com");
       expect(err).not.toContain("Host:  clerk.example.com");
       // OAuth ran before this screen on resume, so it is not "next".
-      expect(err).toContain(
+      expect(flat(err)).toContain(
         "Next, this command checks that these records have taken effect at your DNS provider.",
       );
       expect(err).not.toContain("set up OAuth");
@@ -1859,7 +1867,9 @@ describe("deploy", () => {
       // Nothing left to add: the screen says the certificate is pending
       // instead of framing a DNS task around an empty record list.
       expect(err).toContain("Your DNS records for example.com are verified.");
-      expect(err).toContain("The SSL certificate is still pending; Clerk issues it automatically.");
+      expect(flat(err)).toContain(
+        "The SSL certificate is still pending; Clerk issues it automatically.",
+      );
       expect(err).not.toContain("Configure DNS for");
       expect(err).not.toContain("these records");
       expect(err).not.toContain("Add the following records");
@@ -1887,8 +1897,8 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("Clerk is still finalizing production setup.");
-      expect(err).toContain("run `clerk deploy` again in a few minutes");
+      expect(flat(err)).toContain("Clerk is still finalizing production setup.");
+      expect(flat(err)).toContain("run `clerk deploy` again in a few minutes");
       expect(err).not.toContain("check again");
       expect(err).not.toContain("Configure DNS for");
     });
@@ -1912,10 +1922,10 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain(
+      expect(flat(err)).toContain(
         "Email DNS records for example.com are not verified yet, but Clerk didn't return the list to add.",
       );
-      expect(err).toContain("add them at your DNS provider, then choose Check DNS now below");
+      expect(flat(err)).toContain("add them at your DNS provider, then choose Check DNS now below");
       expect(err).not.toContain("Add the following records");
       // No records, no export offer.
       expect(mockConfirm).not.toHaveBeenCalledWith(
@@ -1964,7 +1974,7 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("add them at your DNS provider, then choose Check DNS now below");
+      expect(flat(err)).toContain("add them at your DNS provider, then choose Check DNS now below");
       expect(err).toContain("Next, this command checks that they have taken effect.");
       expect(err).not.toContain("set up OAuth");
     });
@@ -1995,11 +2005,11 @@ describe("deploy", () => {
       // missing and what to do, instead of a "Configure DNS" page with no records.
       // This run has a Google provider, so OAuth setup is the next prompt and
       // the screen must not point at a "Check DNS now" that isn't there yet.
-      expect(err).toContain(
+      expect(flat(err)).toContain(
         "DNS and email DNS records for example.com are not verified yet, but Clerk didn't return the list to add.",
       );
-      expect(err).toContain("and add them at your DNS provider:");
-      expect(err).toContain(
+      expect(flat(err)).toContain("and add them at your DNS provider:");
+      expect(flat(err)).toContain(
         "Next you'll set up OAuth, then this command checks that they have taken effect.",
       );
       expect(err).not.toContain("Check DNS now below");
@@ -2007,7 +2017,7 @@ describe("deploy", () => {
       // After the check, the footer says the same in its own words.
       expect(err).toContain("DNS and email DNS records not found yet for example.com.");
       expect(err).toContain("Clerk didn't return the list of records to add.");
-      expect(err).toContain(
+      expect(flat(err)).toContain(
         "Find them on the Domains page in the Clerk Dashboard, add them, then choose Check again below.",
       );
       // The URL line belongs to the footer, so it precedes the skip, not the
@@ -2101,8 +2111,8 @@ describe("deploy", () => {
 
       await runDeployUntilPause();
       const err = stripAnsi(captured.err);
-      expect(err).toContain("on the Domains page in the Clerk Dashboard");
-      expect(err).toContain(
+      expect(flat(err)).toContain("on the Domains page in the Clerk Dashboard");
+      expect(flat(err)).toContain(
         "Next you'll set up OAuth, then this command checks that these records have taken effect at your DNS provider",
       );
       expect(err).toContain("Configure Google OAuth for production");
@@ -2220,7 +2230,7 @@ describe("deploy", () => {
 
       await runDeployUntilPause();
       mockLiveProduction();
-      expect(stripAnsi(captured.err)).toContain("on the Domains page in the Clerk Dashboard");
+      expect(flat(captured.err)).toContain("on the Domains page in the Clerk Dashboard");
       expect(stripAnsi(captured.err)).toContain("Configure Google OAuth for production");
 
       captured.clear();
@@ -2436,7 +2446,7 @@ describe("deploy", () => {
       expect(err).toContain("Propagation usually takes minutes");
       expect(err).toContain("DNS and email DNS records not found yet for example.com");
       // The footer, not the Next steps block, carries the change-domain URL.
-      expect(err).toContain(
+      expect(flat(err)).toContain(
         "change the domain in the Clerk Dashboard: https://dashboard.clerk.com/apps/app_xyz789/instances/ins_prod_mock/domains",
       );
       expect(err).not.toContain("still pending");

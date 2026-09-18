@@ -1,6 +1,7 @@
 import { bold, cyan, dim, green, yellow } from "../../lib/color.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
 import { buildDashboardUrl } from "../../lib/environment.ts";
+import { wrap } from "../../lib/wrap.ts";
 
 export type DeployPlanStep = {
   label: string;
@@ -58,7 +59,10 @@ export function dnsIntro(domain: string): string[] {
     "Clerk uses DNS records to provide session management and emails",
     "verified from your domain.",
     "",
-    `${yellow("NOTE")}  DNS records usually propagate within minutes, but can occasionally take up to 48 hours.`,
+    ...wrap(
+      `${yellow("NOTE")}  DNS records usually propagate within minutes, but can occasionally take up to 48 hours.`,
+      { hang: 6 },
+    ),
     `${dim(cyan("TIP"))}   If you can't add a CNAME for the Frontend API, you can use a proxy:`,
     dim("      https://clerk.com/docs/guides/dashboard/dns-domains/proxy-fapi"),
     dim("Reference: https://clerk.com/docs/guides/development/deployment/production#dns-records"),
@@ -105,7 +109,9 @@ export function domainAssociationSummary(domain: string): string[] {
     // "The exact list": the server omits the Account portal record when the
     // portal is disabled on the instance being cloned, and this screen runs
     // before the CLI can know that.
-    `Clerk will use these subdomains for ${cyan(domain)}. You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:`,
+    ...wrap(
+      `Clerk will use these subdomains for ${cyan(domain)}. You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:`,
+    ),
     "",
     ...hosts.map((host, i) => `  ${labels[i]!.padEnd(width)}  ${host}`),
     "",
@@ -145,12 +151,17 @@ export function dnsRecords(
     // screen: a resume where email DNS is already verified lists none.
     lines.push(
       "",
-      "The email records point at Clerk, so you don't need to create SPF or DKIM values yourself.",
+      ...wrap(
+        "The email records point at Clerk, so you don't need to create SPF or DKIM values yourself.",
+      ),
     );
   }
   lines.push(
     "",
-    `${yellow("NOTE")}  If your DNS host proxies these records, set them to "DNS only" or verification will fail.`,
+    ...wrap(
+      `${yellow("NOTE")}  If your DNS host proxies these records, set them to "DNS only" or verification will fail.`,
+      { hang: 6 },
+    ),
   );
   return lines;
 }
@@ -253,31 +264,39 @@ export function dnsHandoffNothingToAdd(
   switch (state) {
     case "ssl_pending":
       return [
-        `Your DNS records for ${cyan(domain)} are verified. The SSL certificate is still pending; Clerk issues it automatically.`,
+        ...wrap(
+          `Your DNS records for ${cyan(domain)} are verified. The SSL certificate is still pending; Clerk issues it automatically.`,
+        ),
         "",
         `Monitor SSL issuance on the Domains page in the Clerk Dashboard${domainsUrl ? ":" : "."}`,
         ...url,
         "",
-        nextStepSentence({
-          ...options,
-          check: "checks whether the certificate has been issued",
-          resume: resume("it hasn't"),
-        }),
+        ...wrap(
+          nextStepSentence({
+            ...options,
+            check: "checks whether the certificate has been issued",
+            resume: resume("it hasn't"),
+          }),
+        ),
       ];
     case "finalizing":
       // No "check again": once every component is verified, the check pauses
       // the run instead of prompting.
       return [
-        `Your DNS records and SSL certificate for ${cyan(domain)} are verified. Clerk is still finalizing production setup.`,
+        ...wrap(
+          `Your DNS records and SSL certificate for ${cyan(domain)} are verified. Clerk is still finalizing production setup.`,
+        ),
         "",
         `Monitor it on the Domains page in the Clerk Dashboard${domainsUrl ? ":" : "."}`,
         ...url,
         "",
-        nextStepSentence({
-          ...options,
-          check: "checks whether Clerk has finished",
-          resume: "If it hasn't, run `clerk deploy` again in a few minutes.",
-        }),
+        ...wrap(
+          nextStepSentence({
+            ...options,
+            check: "checks whether Clerk has finished",
+            resume: "If it hasn't, run `clerk deploy` again in a few minutes.",
+          }),
+        ),
       ];
     case "records_available":
     case "records_unavailable": {
@@ -290,16 +309,20 @@ export function dnsHandoffNothingToAdd(
         ? `Find them on the Domains page in the Clerk Dashboard and add them at your DNS provider${domainsUrl ? ":" : "."}`
         : `Find them on the Domains page in the Clerk Dashboard, add them at your DNS provider, then choose Check DNS now below${domainsUrl ? ":" : "."}`;
       return [
-        `${records} records for ${cyan(domain)} are not verified yet, but Clerk didn't return the list to add.`,
+        ...wrap(
+          `${records} records for ${cyan(domain)} are not verified yet, but Clerk didn't return the list to add.`,
+        ),
         "",
-        find,
+        ...wrap(find),
         ...url,
         "",
-        nextStepSentence({
-          ...options,
-          check: "checks that they have taken effect",
-          resume: resume("they haven't"),
-        }),
+        ...wrap(
+          nextStepSentence({
+            ...options,
+            check: "checks that they have taken effect",
+            resume: resume("they haven't"),
+          }),
+        ),
       ];
     }
   }
@@ -319,19 +342,23 @@ export function dnsDashboardHandoff(
   return [
     // "this command", not "the wizard": nothing the user sees uses that word.
     // Skipping the check leaves setup unfinished, so name what resumes it.
-    `Monitor DNS propagation and SSL issuance for ${domain} on the Domains page in the Clerk Dashboard${domainsUrl ? ":" : "."}`,
+    ...wrap(
+      `Monitor DNS propagation and SSL issuance for ${domain} on the Domains page in the Clerk Dashboard${domainsUrl ? ":" : "."}`,
+    ),
     ...(domainsUrl ? [`  ${domainsUrl}`] : []),
     "",
     // "at your DNS provider" matches the records block's own heading, and "at"
     // rather than "with": the check looks the records up, it doesn't contact
     // the provider. Naming both options matters because a failed check isn't a
     // dead end — "Check again" is the other choice on the prompt that follows.
-    nextStepSentence({
-      oauthNext: options.oauthNext,
-      check: "checks that these records have taken effect at your DNS provider",
-      resume:
-        "If they haven't yet, you can either wait a few minutes and check again, or skip the check and run `clerk deploy` again later to finish.",
-    }),
+    ...wrap(
+      nextStepSentence({
+        oauthNext: options.oauthNext,
+        check: "checks that these records have taken effect at your DNS provider",
+        resume:
+          "If they haven't yet, you can either wait a few minutes and check again, or skip the check and run `clerk deploy` again later to finish.",
+      }),
+    ),
   ];
 }
 
@@ -446,9 +473,13 @@ export function deployStatusPendingFooter(
   if (state === "records_available") {
     return [
       `${records} records not found yet for ${domain}.`,
-      `  - Add them at your DNS provider if you haven't already, then choose Check again below. ${resume}`,
-      "  - Propagation usually takes minutes, but can occasionally take up to 48 hours.",
-      `  - If you can't add DNS records for this domain, change the domain in the Clerk Dashboard${domainsUrl ? `: ${domainsUrl}` : "."}`,
+      ...wrap(
+        `  - Add them at your DNS provider if you haven't already, then choose Check again below. ${resume}`,
+      ),
+      ...wrap("  - Propagation usually takes minutes, but can occasionally take up to 48 hours."),
+      ...wrap(
+        `  - If you can't add DNS records for this domain, change the domain in the Clerk Dashboard${domainsUrl ? `: ${domainsUrl}` : "."}`,
+      ),
     ];
   }
   if (state === "records_unavailable") {
@@ -457,7 +488,9 @@ export function deployStatusPendingFooter(
     return [
       `${records} records not found yet for ${domain}.`,
       "",
-      `Clerk didn't return the list of records to add. Find them on the Domains page in the Clerk Dashboard, add them, then choose Check again below. ${resume}`,
+      ...wrap(
+        `Clerk didn't return the list of records to add. Find them on the Domains page in the Clerk Dashboard, add them, then choose Check again below. ${resume}`,
+      ),
       ...(domainsUrl ? [`  ${domainsUrl}`] : []),
     ];
   }
@@ -465,13 +498,17 @@ export function deployStatusPendingFooter(
     return [
       `SSL certificate still pending for ${domain}.`,
       "",
-      `Clerk issues it automatically now that DNS is verified; choose Check again below in a few minutes. ${resume}`,
+      ...wrap(
+        `Clerk issues it automatically now that DNS is verified; choose Check again below in a few minutes. ${resume}`,
+      ),
     ];
   }
   return [
     `Production setup for ${domain} is still finalizing on Clerk's side.`,
     "",
-    "Run `clerk deploy` again in a few minutes to resume. The production instance is already created.",
+    ...wrap(
+      "Run `clerk deploy` again in a few minutes to resume. The production instance is already created.",
+    ),
   ];
 }
 
@@ -514,9 +551,10 @@ export function nextStepsBody(
   // would send the user to a page that doesn't exist yet.
   const step3 =
     domainStatus === "verified"
-      ? `Redeploy your app, then sign up at https://${domain} to confirm it works`
-      : `Run \`clerk deploy\` again once the domain is verified, then redeploy your app
-     and sign up at https://${domain} to confirm it works`;
+      ? `Redeploy your app, then sign up at https://${domain} to confirm it
+     works`
+      : `Run \`clerk deploy\` again once the domain is verified, then redeploy
+     your app and sign up at https://${domain} to confirm it works`;
   return `
   1. Pull production keys into your environment
        clerk env pull --instance prod
@@ -544,8 +582,8 @@ export function nextStepsBody(
        - DNS and SSL status:
          ${dim(domainsDashboardUrl(appId, productionInstanceId))}
 
-${yellow("NOTE")}  Production keys only work on your production domain. They will not work on localhost.
-      To run your dev environment, keep using your dev keys.
+${yellow("NOTE")}  Production keys only work on your production domain. They will not
+      work on localhost. To run your dev environment, keep using your dev keys.
 
 ${dim("Reference: https://clerk.com/docs/guides/development/deployment/production#api-keys-and-environment-variables")}`;
 }

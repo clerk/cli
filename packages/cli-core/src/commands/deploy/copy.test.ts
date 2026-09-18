@@ -24,6 +24,14 @@ import type { CnameTarget } from "../../lib/plapi.ts";
 const stripAnsi = (value: string): string =>
   value.replace(new RegExp(String.raw`\x1b\[[0-9;]*m`, "g"), "");
 
+/**
+ * Lines with wrap continuations folded back into their sentence, for asserting
+ * on what a sentence says. Assertions about layout (blank lines, a URL on its
+ * own line, bullets) use the raw join instead.
+ */
+const flat = (lines: readonly string[] | string): string =>
+  stripAnsi(typeof lines === "string" ? lines : lines.join("\n")).replace(/\n[ \t]*/g, " ");
+
 describe("bindZoneFile", () => {
   const fixedDate = new Date("2026-05-20T18:30:00.000Z");
 
@@ -166,7 +174,7 @@ describe("nextStepsBody", () => {
   test("ends with a real sign-up on the production domain", () => {
     const output = nextStepsBody("app_123", "ins_456", "example.com", "verified");
 
-    expect(output).toContain(
+    expect(flat(output)).toContain(
       "3. Redeploy your app, then sign up at https://example.com to confirm it works",
     );
   });
@@ -213,7 +221,9 @@ describe("domainAssociationSummary", () => {
   });
 
   test("lead sentence says records are coming, with no record count in it", () => {
-    const [lead] = domainAssociationSummary("example.com");
+    // The lead now wraps onto several lines; read up to the first blank line.
+    const lines = domainAssociationSummary("example.com");
+    const lead = flat(lines.slice(0, lines.indexOf("")));
 
     expect(lead).toContain("Clerk will use these subdomains for");
     // Disclose the obligation before the one-way step without demanding
@@ -237,7 +247,7 @@ describe("domainAssociationSummary", () => {
     expect(output).toContain("Account portal  accounts.example.com");
     // The server omits the Account portal record when the portal is disabled
     // on the cloned instance, so the lead can't promise one record per row.
-    expect(output).toContain(
+    expect(flat(output)).toContain(
       "You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:",
     );
     expect(output).not.toContain("a DNS record for each");
@@ -250,7 +260,7 @@ describe("dnsIntro", () => {
   test("sets the propagation expectation as minutes, with 48 hours as the outlier", () => {
     const output = dnsIntro("example.com").join("\n");
 
-    expect(output).toContain(
+    expect(flat(output)).toContain(
       "usually propagate within minutes, but can occasionally take up to 48 hours",
     );
     expect(output).not.toContain("It can take up to 48 hours");
@@ -275,12 +285,14 @@ describe("deployStatusPendingFooter", () => {
     expect(output).toContain("DNS and email DNS records not found yet for example.com.");
     // A "Check again" prompt follows this footer, so it points there first and
     // gives the resume command as the fallback.
-    expect(output).toContain(
+    expect(flat(output)).toContain(
       "Add them at your DNS provider if you haven't already, then choose Check again below.",
     );
-    expect(output).toContain("skip for now and run `clerk deploy` later to resume");
-    expect(output).toContain("usually takes minutes, but can occasionally take up to 48 hours");
-    expect(output).toContain(
+    expect(flat(output)).toContain("skip for now and run `clerk deploy` later to resume");
+    expect(flat(output)).toContain(
+      "usually takes minutes, but can occasionally take up to 48 hours",
+    );
+    expect(flat(output)).toContain(
       "change the domain in the Clerk Dashboard: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
     );
     expect(output).not.toContain("still pending");
@@ -319,7 +331,7 @@ describe("deployStatusPendingFooter", () => {
     expect(output).toContain("DNS and email DNS records not found yet for example.com.\n\n");
     expect(output).toContain("Clerk didn't return the list of records to add.");
     // URL on its own line so terminal autolinkers don't swallow punctuation.
-    expect(output).toContain(
+    expect(flat(output)).toContain(
       "Find them on the Domains page in the Clerk Dashboard, add them, then choose Check again below.",
     );
     expect(output).toContain(`already created.\n  ${DOMAINS_URL}`);
@@ -342,8 +354,8 @@ describe("deployStatusPendingFooter", () => {
     ).join("\n");
 
     expect(output).toContain("SSL certificate still pending for example.com.");
-    expect(output).toContain("choose Check again below in a few minutes");
-    expect(output).toContain("run `clerk deploy` later to resume");
+    expect(flat(output)).toContain("choose Check again below in a few minutes");
+    expect(flat(output)).toContain("run `clerk deploy` later to resume");
     // One follow-up line: a blank line and a sentence, not a one-item list.
     expect(output).toContain("example.com.\n\nClerk issues it");
     expect(output).not.toContain("  - ");
@@ -381,8 +393,8 @@ describe("deployStatusPendingFooter", () => {
     const output = deployStatusPendingFooter("example.com", status, DOMAINS_URL, records).join(
       "\n",
     );
-    expect(output).toMatch(/run `clerk deploy` (again|later).*to resume/i);
-    expect(output).toMatch(/production instance is already created\./i);
+    expect(flat(output)).toMatch(/run `clerk deploy` (again|later).*to resume/i);
+    expect(flat(output)).toMatch(/production instance is already created\./i);
   });
 
   test("omits the Dashboard URL cleanly when no production instance id is known", () => {
@@ -392,7 +404,7 @@ describe("deployStatusPendingFooter", () => {
       undefined,
       true,
     ).join("\n");
-    expect(output).toContain("change the domain in the Clerk Dashboard.");
+    expect(flat(output)).toContain("change the domain in the Clerk Dashboard.");
     expect(output).not.toContain("undefined");
   });
 });
@@ -462,7 +474,7 @@ describe("dnsRecords", () => {
     expect(output).toContain("Email (DKIM)");
     expect(output).not.toContain("\n  CNAME\n    Type:");
     // Said once under the block, never on a row the user must act on.
-    expect(output).toContain(
+    expect(flat(output)).toContain(
       "The email records point at Clerk, so you don't need to create SPF or DKIM values yourself.",
     );
     expect(output).not.toMatch(/Email \(DKIM\).*Clerk handles/);
@@ -513,10 +525,14 @@ describe("dnsHandoffNothingToAdd", () => {
     );
 
     expect(out).toContain("Your DNS records for example.com are verified.");
-    expect(out).toContain("The SSL certificate is still pending; Clerk issues it automatically.");
+    expect(flat(out)).toContain(
+      "The SSL certificate is still pending; Clerk issues it automatically.",
+    );
     expect(out).toContain(`Clerk Dashboard:\n  ${URL}`);
     expect(out).toContain("checks whether the certificate has been issued");
-    expect(out).toContain("If it hasn't yet, you can either wait a few minutes and check again");
+    expect(flat(out)).toContain(
+      "If it hasn't yet, you can either wait a few minutes and check again",
+    );
     // No timing promise the status can't back up.
     expect(out).not.toContain("usually takes");
     expect(out).not.toContain("Configure DNS");
@@ -531,10 +547,10 @@ describe("dnsHandoffNothingToAdd", () => {
     );
 
     expect(out).toContain("Your DNS records and SSL certificate for example.com are verified.");
-    expect(out).toContain("Clerk is still finalizing production setup.");
+    expect(flat(out)).toContain("Clerk is still finalizing production setup.");
     // The check pauses the run once everything is verified, so "check again"
     // would name an option the prompt never offers.
-    expect(out).toContain("run `clerk deploy` again in a few minutes");
+    expect(flat(out)).toContain("run `clerk deploy` again in a few minutes");
     expect(out).not.toContain("check again");
   });
 
@@ -553,15 +569,15 @@ describe("dnsHandoffNothingToAdd", () => {
         dnsHandoffNothingToAdd("example.com", status, URL, { oauthNext: false }).join("\n"),
       );
 
-      expect(out).toContain(
+      expect(flat(out)).toContain(
         `${records} records for example.com are not verified yet, but Clerk didn't return the list to add.`,
       );
       // An instruction, not a wait: the records still have to be added.
-      expect(out).toContain("add them at your DNS provider, then choose Check DNS now below");
+      expect(flat(out)).toContain("add them at your DNS provider, then choose Check DNS now below");
       expect(out).toContain(`Check DNS now below:\n  ${URL}`);
       expect(out).toContain("checks that they have taken effect");
       // Plural subject: the sentence is about records, not a certificate.
-      expect(out).toContain("If they haven't yet, you can either wait a few minutes");
+      expect(flat(out)).toContain("If they haven't yet, you can either wait a few minutes");
       expect(out).not.toContain("If it hasn't");
       expect(out).not.toContain("Configure DNS");
     },
@@ -576,10 +592,10 @@ describe("dnsHandoffNothingToAdd", () => {
       }).join("\n"),
     );
 
-    expect(out).toContain(
+    expect(flat(out)).toContain(
       "Find them on the Domains page in the Clerk Dashboard and add them at your DNS provider:",
     );
-    expect(out).toContain(
+    expect(flat(out)).toContain(
       "Next you'll set up OAuth, then this command checks that they have taken effect.",
     );
     expect(out).not.toContain("Check DNS now");
@@ -605,15 +621,15 @@ describe("dnsDashboardHandoff", () => {
     expect(output).toContain(`Clerk Dashboard:\n  ${DOMAINS_URL}`);
     // "wizard" appears nowhere else the user can see, so it isn't introduced here.
     expect(output).not.toContain("wizard");
-    expect(output).toContain(
+    expect(flat(output)).toContain(
       "Next you'll set up OAuth, then this command checks that these records have taken effect at your DNS provider.",
     );
     // A failed check is not a dead end: "Check again" is the other choice on
     // the prompt that follows, and the sentence names it.
-    expect(output).toContain(
+    expect(flat(output)).toContain(
       "you can either wait a few minutes and check again, or skip the check",
     );
-    expect(output).toContain("run `clerk deploy` again later to finish");
+    expect(flat(output)).toContain("run `clerk deploy` again later to finish");
     // "skip and finish" read as though skipping completed the deploy.
     expect(output).not.toContain("skip and finish");
   });
@@ -623,7 +639,7 @@ describe("dnsDashboardHandoff", () => {
     // Under a checklist showing OAuth done, "you'll set up OAuth" was wrong.
     const output = dnsDashboardHandoff("example.com", DOMAINS_URL, { oauthNext: false }).join("\n");
 
-    expect(output).toContain(
+    expect(flat(output)).toContain(
       "Next, this command checks that these records have taken effect at your DNS provider.",
     );
     expect(output).not.toContain("set up OAuth");
@@ -633,7 +649,7 @@ describe("dnsDashboardHandoff", () => {
   test("ends the sentence cleanly when no Dashboard URL is known", () => {
     const output = dnsDashboardHandoff("example.com", undefined, { oauthNext: true }).join("\n");
 
-    expect(output).toContain("on the Domains page in the Clerk Dashboard.");
+    expect(flat(output)).toContain("on the Domains page in the Clerk Dashboard.");
     expect(output).not.toContain("undefined");
   });
 });
