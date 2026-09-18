@@ -357,3 +357,31 @@ describe("effective protection", () => {
     expect(findCheck("mfa")!.evaluate(production(config)).met).toBe(false);
   });
 });
+
+describe("custom flow notes", () => {
+  test.each([
+    "bot-protection",
+    "device-trust",
+    "mfa",
+    "mfa-required",
+    "email-verification",
+    "phone-verification",
+    "breach-detection-sign-in",
+  ])("%s tells custom flows what to handle", (id) => {
+    const note = findCheck(id)!.customFlows!;
+    expect(note.note.length).toBeGreaterThan(0);
+    expect(note.docsUrl).toStartWith("https://clerk.com/docs/guides/development/custom-flows/");
+  });
+
+  test("the note rides along on unmet findings only", () => {
+    const unmet = evaluate(production(INSECURE_CONFIG), REF).find((f) => f.id === "mfa")!;
+    expect(unmet.customFlows?.docsUrl).toContain("multi-factor-authentication");
+    const met = evaluate(production(SECURE_CONFIG), REF).find((f) => f.id === "mfa")!;
+    expect("customFlows" in met).toBe(false);
+  });
+
+  test("checks that only surface errors carry no note", () => {
+    expect(findCheck("user-lockout")!.customFlows).toBeUndefined();
+    expect(findCheck("password-min-length")!.customFlows).toBeUndefined();
+  });
+});

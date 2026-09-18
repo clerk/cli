@@ -349,6 +349,13 @@ export async function securityFix(ids: string[] = [], options: FixOptions = {}):
 
     const applied = resolved.map((c) => c.id);
     const { payload, projected } = projectPatches(input, resolved);
+    const flowNotes = resolved.filter((c) => c.customFlows);
+    const warning = flowNotes.length
+      ? [
+          "Prebuilt components handle these automatically; custom flows must be updated:",
+          ...flowNotes.map((c) => `  ${c.id}: ${c.customFlows!.note} ${c.customFlows!.docsUrl}`),
+        ].join("\n")
+      : undefined;
     let written: InstanceConfig | undefined;
     let changed: boolean;
     try {
@@ -360,6 +367,7 @@ export async function securityFix(ids: string[] = [], options: FixOptions = {}):
         failureContext: "Failed to apply security fixes",
         yes: options.yes,
         dryRun,
+        warning,
         currentConfig: input.config,
         onWritten: (body) => {
           written = body;
