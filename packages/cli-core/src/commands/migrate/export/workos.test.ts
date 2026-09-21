@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { useCaptureLog, useMigrateLogDir } from "../../../test/lib/stubs.ts";
 import { getLogDir } from "../lib/logger.ts";
+import { setAssumeYes } from "../lib/assume-yes.ts";
 import {
   buildIdentityReport,
   buildWorkOsExport,
@@ -182,6 +183,28 @@ describe("resolveWithIdentities", () => {
   // imported, so it is never the default.
   test("is off without the flag when there is nobody to ask", async () => {
     expect(await resolveWithIdentities({}, 10)).toBe(false);
+  });
+
+  test("is off when `--no-with-identities` said so, even under -y", async () => {
+    setAssumeYes(true);
+    try {
+      expect(await resolveWithIdentities({ withIdentities: false }, 10)).toBe(false);
+    } finally {
+      setAssumeYes(false);
+    }
+  });
+
+  // `-y` is "answer the prompts yes", and the prompt is "also fetch providers?".
+  test("is on under -y, which answers the question rather than asking it", async () => {
+    const originalMode = getMode();
+    setMode("human");
+    setAssumeYes(true);
+    try {
+      expect(await resolveWithIdentities({}, 10)).toBe(true);
+    } finally {
+      setAssumeYes(false);
+      setMode(originalMode);
+    }
   });
 
   test("does not ask when there are no users to ask about", async () => {

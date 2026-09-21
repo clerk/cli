@@ -180,8 +180,12 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       "--with-identities",
       "Also record each user's OAuth providers — one extra request per user",
     )
+    .option("--no-with-identities", "Skip the OAuth provider fan-out without being asked")
     .option("-o, --output <path>", "Where to write the export, relative to the current directory")
-    .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
+    .option(
+      "-y, --yes",
+      "Do not prompt: require --output, fail on a rejected credential, and assume --with-identities",
+    )
     .setExamples([
       {
         command: "clerk migrate export workos --api-key sk_…",

@@ -25,6 +25,7 @@ import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spin
 import { isAgent, isHuman } from "../../../mode.ts";
 import { findMigrateEnvValue } from "../lib/env-file.ts";
 import { exportLogger, startLogging } from "../lib/logger.ts";
+import { isAssumeYes } from "../lib/assume-yes.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
 import { createApiScheduler } from "../lib/scheduler.ts";
 import {
@@ -66,6 +67,7 @@ const DOCS_URL = "https://clerk.com/docs/guides/development/migrating/overview";
 
 export type ExportWorkOsOptions = {
   apiKey?: string;
+  /** Unset means "ask"; `--no-with-identities` sets it to false. */
   withIdentities?: boolean;
   output?: string;
 };
@@ -220,13 +222,17 @@ export async function fetchAllWorkOsUsers(options: {
  * field. It is a line in the coverage report, and a record kept in the file.
  *
  * Agent mode gets the flag's answer and no question: there is nobody to ask.
+ * `-y` answers the question the way a `yes` would, so `--no-with-identities`
+ * is the way to say no without being asked.
  */
 export async function resolveWithIdentities(
   options: ExportWorkOsOptions,
   userCount: number,
 ): Promise<boolean> {
-  if (options.withIdentities) return true;
-  if (userCount === 0 || isAgent() || !isHuman()) return false;
+  if (options.withIdentities !== undefined) return options.withIdentities;
+  if (userCount === 0) return false;
+  if (isAssumeYes()) return true;
+  if (isAgent() || !isHuman()) return false;
 
   return confirm({
     message: `Also fetch each user's OAuth providers? That is ${userCount} extra request${userCount === 1 ? "" : "s"}, and the result is report-only — Clerk's import cannot take external accounts.`,

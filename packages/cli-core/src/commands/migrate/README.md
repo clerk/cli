@@ -210,6 +210,7 @@ unattended rather than stalling on a prompt with everything held in memory.
 | `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret                |
 | `--api-key <key>`          | `workos`                           | WorkOS secret API key, the one starting `sk_`               |
 | `--with-identities`        | `workos`                           | Also record each user's OAuth providers                     |
+| `--no-with-identities`     | `workos`                           | Skip the OAuth provider fan-out without being asked         |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
 so it resolves a key the same way `clerk migrate import` does, with one extra
@@ -419,7 +420,8 @@ becomes 1,010 for a thousand users. Nothing it returns can be imported —
 breakdown in the coverage report, and an `identities` array kept in the export
 file for whoever runs the migration. The interactive path asks once, after the
 user count is known, defaulting to no; agent mode takes the flag's answer and
-asks nothing.
+asks nothing. `-y` answers the question `yes`, so pass
+`--no-with-identities` to skip the fan-out without being asked.
 
 The breakdown prints as its own **OAuth providers** block under the coverage
 table, not as extra coverage rows:
