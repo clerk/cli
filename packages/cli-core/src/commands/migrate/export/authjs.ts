@@ -123,7 +123,7 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
 
   const destination = await resolveOutputPath("authjs", options.output);
 
-  await withGutter("Exporting users from Auth.js", async ({ setNextSteps }) => {
+  await withGutter("Exporting users from Auth.js", async () => {
     const dateTime = await startLogging();
 
     const {
@@ -141,15 +141,13 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
     const { users, coverage } = buildAuthJsExport(rows, dateTime);
     const outputPath = writeExportOutput(users, destination);
 
-    setNextSteps(
-      reportExport({
-        platform: "authjs",
-        userCount: users.length,
-        outputPath,
-        coverage,
-        transformerKey: "authjs",
-      }),
-    );
+    reportExport({
+      platform: "authjs",
+      userCount: users.length,
+      outputPath,
+      coverage,
+      transformerKey: "authjs",
+    });
 
     if (users.length > 0) {
       log.warn(

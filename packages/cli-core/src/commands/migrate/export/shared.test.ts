@@ -14,7 +14,8 @@ mock.module("../../../mode.ts", () => ({
   setMode: () => {},
 }));
 
-const { defaultOutputPath, outputStamp, resolveOutputPath } = await import("./shared.ts");
+const { defaultOutputPath, formatImportCommand, outputStamp, resolveOutputPath } =
+  await import("./shared.ts");
 const { setAssumeYes } = await import("../lib/assume-yes.ts");
 
 beforeEach(() => {
@@ -132,5 +133,36 @@ describe("resolveOutputPath", () => {
         /^exports\/supabase-export-\d{8}-\d{4}\.json$/,
       );
     });
+  });
+});
+
+describe("formatImportCommand", () => {
+  const stripAnsi = (value: string): string => value.replace(/\u001b\[[0-9;]*m/g, "");
+  const render = () => stripAnsi(formatImportCommand("supabase", "exports/mine.json").join("\n"));
+
+  test("names the transformer and the file just written", () => {
+    expect(render()).toContain(
+      "clerk migrate import --transformer supabase --file exports/mine.json",
+    );
+  });
+
+  // The instance comes from the resolved key, so there is no flag whose
+  // absence means development — the note says what actually decides.
+  test("says how to reach production", () => {
+    expect(render()).toContain("--instance prod");
+  });
+
+  test("offers -y when the export was not given it", () => {
+    expect(render()).toContain("Add `-y` to skip the import confirmation prompt.");
+  });
+
+  // Carried across rather than always printed: on import `-y` also waves
+  // through the development-instance user-limit warning.
+  test("carries -y across from the export that was given it", () => {
+    setAssumeYes(true);
+
+    const text = render();
+    expect(text).toContain("clerk migrate import -y --transformer supabase");
+    expect(text).not.toContain("Add `-y`");
   });
 });

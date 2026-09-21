@@ -445,7 +445,7 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
 
   const destination = await resolveOutputPath("workos", options.output);
 
-  await withGutter("Exporting users from WorkOS", async ({ setNextSteps }) => {
+  await withGutter("Exporting users from WorkOS", async () => {
     const dateTime = await startLogging();
 
     // Only WorkOS can say whether the key is live, for the right environment,
@@ -471,18 +471,16 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
     const { users: exported, coverage } = buildWorkOsExport(users, dateTime, providers?.identities);
     const outputPath = writeExportOutput(exported, destination);
 
-    setNextSteps(
-      reportExport({
-        platform: "workos",
-        userCount: exported.length,
-        outputPath,
-        coverage,
-        sections: providers
-          ? [buildIdentityReport(users, providers.identities, providers.failed)]
-          : [],
-        transformerKey: "workos",
-      }),
-    );
+    reportExport({
+      platform: "workos",
+      userCount: exported.length,
+      outputPath,
+      coverage,
+      sections: providers
+        ? [buildIdentityReport(users, providers.identities, providers.failed)]
+        : [],
+      transformerKey: "workos",
+    });
 
     if (exported.length > 0) {
       log.warn(

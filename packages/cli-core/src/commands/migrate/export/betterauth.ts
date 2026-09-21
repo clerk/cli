@@ -170,7 +170,7 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
 
   const destination = await resolveOutputPath("betterauth", options.output);
 
-  await withGutter("Exporting users from Better Auth", async ({ setNextSteps }) => {
+  await withGutter("Exporting users from Better Auth", async () => {
     const dateTime = await startLogging();
 
     const {
@@ -197,14 +197,12 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
     const { users, coverage } = buildBetterAuthExport(rows, dateTime);
     const outputPath = writeExportOutput(users, destination);
 
-    setNextSteps(
-      reportExport({
-        platform: "betterauth",
-        userCount: users.length,
-        outputPath,
-        coverage,
-        transformerKey: "betterauth",
-      }),
-    );
+    reportExport({
+      platform: "betterauth",
+      userCount: users.length,
+      outputPath,
+      coverage,
+      transformerKey: "betterauth",
+    });
   });
 }

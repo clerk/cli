@@ -31,7 +31,7 @@ import {
 } from "../../lib/errors.ts";
 import { describeBapiTarget, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { log } from "../../lib/log.ts";
-import { NEXT_STEPS } from "../../lib/next-steps.ts";
+import { NEXT_STEPS, printAgentNextSteps } from "../../lib/next-steps.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../mode.ts";
@@ -324,6 +324,7 @@ export async function deleteMigration(options: MigrateDeleteOptions): Promise<vo
     log.info(formatSummary(summary, logFile));
 
     setNextSteps(NEXT_STEPS.MIGRATE_DELETE);
+    printAgentNextSteps(NEXT_STEPS.MIGRATE_DELETE);
 
     if (summary.failed > 0) process.exitCode = 1;
   });

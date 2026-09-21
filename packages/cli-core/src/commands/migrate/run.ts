@@ -30,7 +30,7 @@ import {
   type InstanceTarget,
 } from "../../lib/keyless-target.ts";
 import { log } from "../../lib/log.ts";
-import { NEXT_STEPS } from "../../lib/next-steps.ts";
+import { NEXT_STEPS, printAgentNextSteps } from "../../lib/next-steps.ts";
 import { confirm, multiselect } from "../../lib/prompts.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../mode.ts";
@@ -767,9 +767,10 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
     // reading the log and knowing how to undo it matters most. When users did
     // fail, the per-user record of *why* leads, since the breakdown above only
     // counts each error and never names who hit it.
-    setNextSteps(
-      summary.failed > 0 ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(logFile) : NEXT_STEPS.MIGRATE_DONE,
-    );
+    const steps =
+      summary.failed > 0 ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(logFile) : NEXT_STEPS.MIGRATE_DONE;
+    setNextSteps(steps);
+    printAgentNextSteps(steps);
 
     if (summary.failed > 0) process.exitCode = 1;
   });

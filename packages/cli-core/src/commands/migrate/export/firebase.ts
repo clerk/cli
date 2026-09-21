@@ -31,6 +31,7 @@ import { log } from "../../../lib/log.ts";
 import { password as passwordPrompt } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
+import { isAssumeYes } from "../lib/assume-yes.ts";
 import { exportLogger, startLogging } from "../lib/logger.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
@@ -490,7 +491,7 @@ export function formatHashConfigGuidance(
     // as three extra arguments. A line that wraps on screen has no such
     // character in it and pastes back as what was printed.
     dim(
-      `  clerk migrate import -y --transformer firebase --file ${outputPath}` +
+      `  clerk migrate import ${isAssumeYes() ? "-y " : ""}--transformer firebase --file ${outputPath}` +
         ` --firebase-signer-key "${config.signerKey}"` +
         ` --firebase-salt-separator "${config.saltSeparator}"` +
         ` --firebase-rounds ${config.rounds} --firebase-mem-cost ${config.memoryCost}`,
@@ -505,7 +506,7 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
 
   const destination = await resolveOutputPath("firebase", options.output);
 
-  await withGutter("Exporting users from Firebase", async ({ setNextSteps }) => {
+  await withGutter("Exporting users from Firebase", async () => {
     const dateTime = await startLogging();
 
     // Only Google can say whether a well-formed key is still a valid one, so a
@@ -528,15 +529,13 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
     const { users: exported, coverage } = buildFirebaseExport(users, dateTime);
     const outputPath = writeExportOutput(exported, destination);
 
-    setNextSteps(
-      reportExport({
-        platform: "firebase",
-        userCount: exported.length,
-        outputPath,
-        coverage,
-        transformerKey: "firebase",
-      }),
-    );
+    reportExport({
+      platform: "firebase",
+      userCount: exported.length,
+      outputPath,
+      coverage,
+      transformerKey: "firebase",
+    });
 
     const passwordCount = coverage.find((entry) => entry.label.includes("password"))?.count ?? 0;
     const hashConfig = passwordCount > 0 ? await fetchHashConfig(account, token) : null;

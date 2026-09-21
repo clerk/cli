@@ -332,7 +332,7 @@ export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
 
   const destination = await resolveOutputPath("auth0", options.output);
 
-  await withGutter("Exporting users from Auth0", async ({ setNextSteps }) => {
+  await withGutter("Exporting users from Auth0", async () => {
     const dateTime = await startLogging();
 
     // Only Auth0 can say whether these three go together, and whether the
@@ -354,15 +354,13 @@ export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
     const { users: exported, coverage } = buildAuth0Export(users, dateTime);
     const outputPath = writeExportOutput(exported, destination);
 
-    setNextSteps(
-      reportExport({
-        platform: "auth0",
-        userCount: exported.length,
-        outputPath,
-        coverage,
-        transformerKey: "auth0",
-      }),
-    );
+    reportExport({
+      platform: "auth0",
+      userCount: exported.length,
+      outputPath,
+      coverage,
+      transformerKey: "auth0",
+    });
 
     if (exported.length > 0) {
       log.warn(

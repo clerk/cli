@@ -234,7 +234,7 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
 
   const destination = await resolveOutputPath("clerk", options.output);
 
-  await withGutter("Exporting users from Clerk", async ({ setNextSteps }) => {
+  await withGutter("Exporting users from Clerk", async () => {
     const dateTime = await startLogging();
 
     log.info(`Exporting from ${source.target ?? "the resolved instance"}.`);
@@ -246,15 +246,13 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
     const { users: exported, coverage } = buildClerkExport(users, dateTime);
     const outputPath = writeExportOutput(exported, destination);
 
-    setNextSteps(
-      reportExport({
-        platform: "clerk",
-        userCount: exported.length,
-        outputPath,
-        coverage,
-        transformerKey: "clerk",
-      }),
-    );
+    reportExport({
+      platform: "clerk",
+      userCount: exported.length,
+      outputPath,
+      coverage,
+      transformerKey: "clerk",
+    });
 
     if (exported.length > 0) {
       log.warn(

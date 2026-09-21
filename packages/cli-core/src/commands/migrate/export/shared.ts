@@ -14,7 +14,6 @@ import path from "node:path";
 import { dim, green, yellow } from "../../../lib/color.ts";
 import { throwUsageError } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
-import { NEXT_STEPS } from "../../../lib/next-steps.ts";
 import { text } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
@@ -146,17 +145,19 @@ export type ExportSummary = {
 };
 
 /**
- * Reports the coverage table.
+ * Reports the coverage table and the import command that reads the file.
  *
- * @returns The next steps for the caller to hand to `setNextSteps`, so the
- *   suggested import command closes the gutter like every other command's.
- *   Empty when nothing was exported — there is nothing to import.
+ * The command prints through `log.info`, alongside the coverage table, rather
+ * than being handed back for `setNextSteps`. The gutter's next-steps outro is
+ * human-only — `withGutter` and `printNextSteps` both return early for an agent
+ * or a non-TTY — and this is the one line that says what to do with the file
+ * just written. An agent that cannot see it has to guess the invocation.
  */
-export function reportExport(summary: ExportSummary): readonly string[] {
+export function reportExport(summary: ExportSummary): void {
   log.blank();
   if (summary.userCount === 0) {
     log.warn(`No users found to export. Wrote an empty file to ${summary.outputPath}.`);
-    return [];
+    return;
   }
 
   log.info("Field coverage");
@@ -175,7 +176,39 @@ export function reportExport(summary: ExportSummary): readonly string[] {
     `Exported ${summary.userCount} user${summary.userCount === 1 ? "" : "s"} to ${summary.outputPath}`,
   );
 
-  return NEXT_STEPS.MIGRATE_EXPORT(summary.transformerKey, relativeIfInside(summary.outputPath));
+  log.blank();
+  for (const line of formatImportCommand(
+    summary.transformerKey,
+    relativeIfInside(summary.outputPath),
+  )) {
+    log.info(line);
+  }
+}
+
+/**
+ * The import command for the file just written, and what it will target.
+ *
+ * One command rather than a development and a production variant, because
+ * there is no flag whose absence means "development": the key decides, through
+ * `--secret-key`, `--app`, `CLERK_SECRET_KEY`, the keyless project and the
+ * linked profile in that order. A line labelled "development" would be wrong
+ * for anyone holding `CLERK_SECRET_KEY=sk_live_…`, which is the reader who can
+ * least afford it. So the note names what picks the instance instead.
+ *
+ * `-y` is carried across from this export rather than always printed: on
+ * import it also waves through the development-instance user-limit warning, so
+ * it is not a flag to suggest to someone who never asked for it.
+ */
+export function formatImportCommand(transformerKey: string, file: string): string[] {
+  const yes = isAssumeYes() ? "-y " : "";
+  return [
+    "Import them with:",
+    dim(`  clerk migrate import ${yes}--transformer ${transformerKey} --file ${file}`),
+    "",
+    dim("  Imports into whichever instance the resolved secret key belongs to."),
+    dim("  For production, add `--instance prod` or use a production secret key."),
+    ...(isAssumeYes() ? [] : [dim("  Add `-y` to skip the import confirmation prompt.")]),
+  ];
 }
 
 /** Shortens a path for display when it sits under the working directory. */

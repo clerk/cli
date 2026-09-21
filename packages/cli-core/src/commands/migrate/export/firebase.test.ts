@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
+import { setAssumeYes } from "../lib/assume-yes.ts";
 import { useCaptureLog, useMigrateLogDir } from "../../../test/lib/stubs.ts";
 import { getLogDir } from "../lib/logger.ts";
 import {
@@ -418,6 +419,25 @@ describe("formatHashConfigGuidance", () => {
     const [command] = formatHashConfigGuidance(config, "out.json", 3).slice(-1);
     expect(command).not.toContain("\n");
     expect(command).not.toContain("\\");
+  });
+
+  // The shared import block carries `-y` across from the export; this command
+  // is the one a Firebase operator actually copies, so it has to agree.
+  test("carries -y across from the export that was given it", () => {
+    setAssumeYes(true);
+    try {
+      expect(formatHashConfigGuidance(config, "out.json", 3).join("\n")).toContain(
+        "clerk migrate import -y --transformer firebase",
+      );
+    } finally {
+      setAssumeYes(false);
+    }
+  });
+
+  test("leaves -y out when the export was not given it", () => {
+    expect(formatHashConfigGuidance(config, "out.json", 3).join("\n")).toContain(
+      "clerk migrate import --transformer firebase",
+    );
   });
 
   test("says where to find them when the project would not say", () => {

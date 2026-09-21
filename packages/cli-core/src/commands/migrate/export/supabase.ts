@@ -121,7 +121,7 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
 
   const destination = await resolveOutputPath("supabase", options.output);
 
-  await withGutter("Exporting users from Supabase", async ({ setNextSteps }) => {
+  await withGutter("Exporting users from Supabase", async () => {
     const dateTime = await startLogging();
 
     const { value: rows } = await withInputRetry(
@@ -136,15 +136,13 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
     const { users, coverage } = buildSupabaseExport(rows, dateTime);
     const outputPath = writeExportOutput(users, destination);
 
-    setNextSteps(
-      reportExport({
-        platform: "supabase",
-        userCount: users.length,
-        outputPath,
-        coverage,
-        transformerKey: "supabase",
-      }),
-    );
+    reportExport({
+      platform: "supabase",
+      userCount: users.length,
+      outputPath,
+      coverage,
+      transformerKey: "supabase",
+    });
 
     if (users.length > 0) {
       log.info(

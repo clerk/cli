@@ -257,9 +257,27 @@ Field coverage
   ! 2/3 have a password (not exportable — see below)
 
 Exported 3 users to /project/exports/clerk-export-20260817-1432.json
-└  Next steps
-   → Run `clerk migrate import --transformer clerk --file exports/clerk-export-20260817-1432.json` to import them
+
+Import them with:
+  clerk migrate import --transformer clerk --file exports/clerk-export-20260817-1432.json
+
+  Imports into whichever instance the resolved secret key belongs to.
+  For production, add `--instance prod` or use a production secret key.
+  Add `-y` to skip the import confirmation prompt.
 ```
+
+The import command prints through the same channel as the coverage table
+rather than the gutter's **Next steps** outro, which is human-only — an agent
+would otherwise be told what was exported and never how to import it. `-y` is
+carried across from the export that was given it, and replaced by the hint line
+above when it was not: on import `-y` also waves through the
+development-instance user-limit warning, so it is not a flag to suggest to
+someone who never asked for it.
+
+There is one command, not a development and a production variant, because no
+flag's absence means "development" — the resolved key decides, through
+`--secret-key`, `--app`, `CLERK_SECRET_KEY`, the keyless project and the linked
+profile in that order.
 
 Every export also writes `logs/export-<timestamp>.log`, so `migrate logs list`
 sees it alongside imports and deletions.
