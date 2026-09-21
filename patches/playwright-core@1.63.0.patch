@@ -1,0 +1,31 @@
+# Workaround for a Bun/Node divergence: Bun populates IncomingMessage.url on
+# client-side responses (with the request path or redirect target), whereas
+# Node leaves it as "". Playwright's `response.url || url.toString()` fallback
+# therefore picks up a relative path under Bun and crashes in `new URL(...)`
+# inside `_parseSetCookieHeader`. Tracked upstream at:
+#   https://github.com/oven-sh/bun/issues/6892
+# Once Bun stops leaking a non-empty `url` onto client IncomingMessages, this
+# patch can be removed.
+diff --git a/lib/coreBundle.js b/lib/coreBundle.js
+index 8ed8bb5de1b12c7c050191123b22a119298826bb..9c23e184bf1e6dfd58a317bb84385e8344fb1c8e 100644
+--- a/lib/coreBundle.js
++++ b/lib/coreBundle.js
+@@ -26590,7 +26590,8 @@ ${text2}`;
+             fetchLog(`\u2190 ${response2.statusCode} ${response2.statusMessage}`);
+             for (const [name, value2] of Object.entries(response2.headers))
+               fetchLog(`  ${name}: ${value2}`);
+-            const cookies = this._parseSetCookieHeader(response2.url || url3.toString(), response2.headers["set-cookie"]);
++            const resolvedResponseUrl = response2.url && response2.url.startsWith("http") ? response2.url : url3.toString();
++            const cookies = this._parseSetCookieHeader(resolvedResponseUrl, response2.headers["set-cookie"]);
+             if (cookies.length) {
+               try {
+                 await this.addCookies(cookies);
+@@ -26669,7 +26670,7 @@ ${text2}`;
+                 body: body2,
+                 log: log2,
+                 response: {
+-                  url: response2.url || url3.toString(),
++                  url: response2.url && response2.url.startsWith("http") ? response2.url : url3.toString(),
+                   status: response2.statusCode || 0,
+                   statusText: response2.statusMessage || "",
+                   headers: toHeadersArray(response2.rawHeaders),

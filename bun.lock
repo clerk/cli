@@ -60,6 +60,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "playwright-core@1.63.0": "patches/playwright-core@1.63.0.patch",
+  },
   "overrides": {
     "tmp": "^0.2.6",
   },
