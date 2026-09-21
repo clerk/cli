@@ -58,8 +58,12 @@ describe("fetchInstanceSettings", () => {
 
     await fetchInstanceSettings("sk_test_abc");
 
+    // Compared as a parsed hostname rather than a substring: the satellite's
+    // domain can appear anywhere in a URL — in a path or a query parameter —
+    // so `includes` would pass a request that never went near that host, and
+    // fail one that did.
     const urls = mockFetch.mock.calls.map(([input]) => String(input));
-    expect(urls.every((url) => !url.includes("satellite.example.com"))).toBe(true);
+    expect(urls.every((url) => new URL(url).hostname !== "satellite.example.com")).toBe(true);
   });
 
   test("skips the dev browser bootstrap for a production key", async () => {
