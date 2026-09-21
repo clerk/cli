@@ -58,7 +58,7 @@ import {
 } from "./lib/modify-settings.ts";
 import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
 import { startLogging, getLogFilePath } from "./lib/logger.ts";
-import { saveSettings } from "./lib/settings.ts";
+import { loadSettings, saveSettings } from "./lib/settings.ts";
 import {
   countSocialProviders,
   findDisabledProviders,
@@ -737,7 +737,13 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
     // The Firebase hash parameters are deliberately not among these: the signer
     // key is a secret, and remembering it would write it to disk in plaintext.
+    //
+    // Spread over what is already saved rather than written fresh: `logDir` was
+    // settled and saved by `startLogging` at the top of this run, and a bare
+    // object here would drop it — leaving `clerk migrate logs` with no
+    // directory to read the run it just wrote.
     await saveSettings({
+      ...(await loadSettings()),
       transformer,
       file,
       ...(options.skipUnsupportedProviders ? { skipUnsupportedProviders: true } : {}),
