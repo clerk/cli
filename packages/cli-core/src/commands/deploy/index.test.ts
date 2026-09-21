@@ -70,11 +70,19 @@ mock.module("../../lib/open.ts", () => ({
 
 const { _setConfigDir, readConfig, setProfile } = await import("../../lib/config.ts");
 const { deploy } = await import("./index.ts");
-const { providerSetupIntro } = await import("./providers.ts");
+const { providerSetupIntro, showOAuthWalkthrough } = await import("./providers.ts");
 const { collectCustomDomain } = await import("./prompts.ts");
 
 function stripAnsi(value: string): string {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
+}
+
+/**
+ * Captured wizard output with the gutter and wrap continuations folded back
+ * into sentences, for asserting on what a line says rather than how it wraps.
+ */
+function flat(value: string): string {
+  return stripAnsi(value).replace(/\n│?[ \t]*/g, " ");
 }
 
 /** What the clack prompt wrappers throw when the user presses Ctrl-C. */
@@ -697,6 +705,7 @@ describe("deploy", () => {
       expect(mockGetApplicationDomainStatus.mock.calls.length).toBeGreaterThanOrEqual(2);
       expect(err).toContain("DNS verified for example.com");
       expect(err).toContain("Production ready at https://example.com");
+      expect(err).toMatch(/└\s+Success/);
     });
 
     test("DNS verification triggers a fresh DNS check before polling status", async () => {
@@ -882,7 +891,9 @@ describe("deploy", () => {
 
       expect(error?.message).toContain("Deploy paused at: DNS verification");
       expect(error?.exitCode).toBe(EXIT_CODE.GENERAL);
-      expect(err).toContain("Production setup for example.com is still finalizing.");
+      expect(err).toContain(
+        "Production setup for example.com is still finalizing on Clerk's side.",
+      );
       expect(err).toContain("Paused");
       expect(err).not.toContain("Production ready at");
     });
@@ -899,7 +910,7 @@ describe("deploy", () => {
       expect(err).toContain("[ ] Create production instance");
       expect(err).toContain("[ ] Verify DNS records");
       expect(err).toContain("[ ] Configure Google OAuth credentials");
-      expect(err).toContain("Check the Domains section in the Clerk Dashboard");
+      expect(flat(err)).toContain("on the Domains page in the Clerk Dashboard");
     });
 
     test("asks directly for an owned production domain and accepts short domains", async () => {
@@ -979,6 +990,9 @@ describe("deploy", () => {
       expect(err).toContain("Next steps");
       expect(err).toContain("clerk env pull --instance prod");
       expect(err).toContain("Update env vars on your hosting provider");
+      expect(err).toContain("Also copy the other Clerk variables from your env file");
+      expect(flat(err)).toContain("sign up at https://example.com to confirm it works");
+      expect(err).toContain("Manage this instance in the Clerk Dashboard");
       expect(err).toContain(
         "https://dashboard.clerk.com/apps/app_xyz789/instances/ins_prod_mock/domains",
       );
@@ -997,15 +1011,21 @@ describe("deploy", () => {
 
       await runDeployUntilPause();
       const err = stripAnsi(captured.err);
-      expect(err).toContain("Clerk will associate these subdomains with example.com");
+      expect(flat(err)).toContain(
+        "Clerk will use these subdomains for example.com. You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:",
+      );
+      // A blank line separates the domain the user just typed from this screen.
+      expect(err).toMatch(/│[ \t]*\n│[ \t]+Clerk will use these subdomains for example\.com\./);
       expect(err).toContain("clerk.example.com");
       expect(err).toContain("accounts.example.com");
       expect(err).toContain("clkmail.example.com");
       expect(err).toContain("This will create a Clerk production instance");
       expect(err).toContain("Add the following records at your DNS provider");
-      expect(err).toContain("Check the Domains section in the Clerk Dashboard");
+      expect(flat(err)).toContain("on the Domains page in the Clerk Dashboard");
       expect(err).toContain("propagation and SSL issuance");
-      expect(err).toContain("DNS propagation can take time");
+      expect(flat(err)).toContain(
+        "Next you'll set up OAuth, then this command checks that these records have taken effect at your DNS provider",
+      );
       expect(mockConfirm).toHaveBeenCalledTimes(3);
       expect(mockConfirm).toHaveBeenCalledWith({
         message: "Create production instance?",
@@ -1037,7 +1057,9 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("Clerk will associate these subdomains with example.com");
+      expect(flat(err)).toContain(
+        "Clerk will use these subdomains for example.com. You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:",
+      );
       expect(err).toContain("No production instance was created.");
       expect(mockCreateProductionInstance).not.toHaveBeenCalled();
       expect(mockConfirm).toHaveBeenCalledWith({
@@ -1251,6 +1273,84 @@ describe("deploy", () => {
       // API-reported frontend_api_url, never the Account Portal subdomain.
       expect(err).toContain("https://clerk-fapi.example.com/v1/oauth_callback");
       expect(err).not.toContain("https://accounts.example.com/v1/oauth_callback");
+    });
+
+    test("Google OAuth walkthrough prints the consent-screen app name users will see", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      stubCreateProductionInstance({
+        frontendApiUrl: "https://clerk-fapi.example.com",
+        cnameTargets: [],
+      });
+      mockConfirm
+        .mockResolvedValueOnce(true) // Proceed?
+        .mockResolvedValueOnce(true); // Create production instance?
+      mockOpenBrowser.mockResolvedValueOnce({ ok: true, launcher: "test" });
+      mockSelect
+        .mockResolvedValueOnce("walkthrough") // Google OAuth credentials
+        .mockResolvedValueOnce("have-credentials")
+        .mockResolvedValueOnce("skip"); // DNS verification
+      mockInput.mockResolvedValueOnce("example.com").mockResolvedValueOnce("fake-client-id-12345");
+      mockPassword.mockResolvedValueOnce("fake-secret");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      // Google requires the consent screen before it will create a client, and
+      // the name entered there is what end users see.
+      expect(flat(err)).toContain(
+        "The consent screen's app name is what users see when they sign in with Google. Use the name you want them to see.",
+      );
+      // Wrapped inside the frame, continuation aligned under the text after
+      // the TIP label (3 + 8 columns), like the NOTE lines elsewhere.
+      expect(err).toMatch(
+        /TIP {8}The consent screen's app name is what users see when they sign in\n│ {13}with Google\. Use the name you want them to see\./,
+      );
+      // The Clerk app name is often a directory-derived slug, so showing it
+      // read as a recommendation to reuse it on a user-facing screen.
+      expect(err).not.toContain('my-saas-app".');
+      expect(err).not.toContain("Your Clerk app is named");
+      // Guidance follows the values to paste and the IMPORTANT note, not before.
+      const tipAt = err.indexOf("The consent screen's app name is what users see");
+      expect(err.indexOf("Authorized Redirect URI")).toBeLessThan(tipAt);
+      expect(err.indexOf("IMPORTANT")).toBeLessThan(tipAt);
+    });
+
+    test("the consent-screen TIP is Google-only", async () => {
+      mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
+
+      await showOAuthWalkthrough("github", "example.com", "https://clerk.example.com");
+      const github = stripAnsi(captured.err);
+      captured.clear();
+      await showOAuthWalkthrough("google", "example.com", "https://clerk.example.com");
+      const google = stripAnsi(captured.err);
+
+      expect(github).toContain("Configure your GitHub OAuth app");
+      expect(github).not.toContain("consent screen's app name");
+      expect(google).toContain("consent screen's app name");
+      expect(google).not.toContain("undefined");
+    });
+
+    test("names the Clerk production instance and where it lives once created", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      stubCreateProductionInstance({ cnameTargets: [] });
+      mockConfirm
+        .mockResolvedValueOnce(true) // Proceed?
+        .mockResolvedValueOnce(true); // Create production instance?
+      mockSelect.mockResolvedValueOnce("skip").mockResolvedValueOnce("skip");
+      mockInput.mockResolvedValueOnce("example.com");
+
+      await runDeployUntilPause();
+      const err = stripAnsi(captured.err);
+
+      // "Clerk production instance", not just "production instance": the user
+      // also has a deployment on their host, and this is the one Clerk manages.
+      // The URL sits on its own indented line so the sentence fits the frame
+      // and terminal autolinkers see the whole URL.
+      expect(err).toMatch(
+        /Clerk production instance created\. Manage it in the Dashboard:\n│ {4}https:\/\/dashboard\.clerk\.com\/apps\/app_xyz789\/instances\/ins_\S+/,
+      );
     });
 
     test("Apple .p8 file prompt validates path and PEM framing before continuing", async () => {
@@ -1669,8 +1769,175 @@ describe("deploy", () => {
       await runDeploy({});
       const err = stripAnsi(captured.err);
 
-      expect(err).toContain("SSL, email DNS still pending for example.com");
-      expect(err).not.toContain("DNS, SSL, email DNS still pending");
+      expect(err).toContain("Email DNS records not found yet for example.com");
+      expect(err).not.toContain("DNS and email DNS records");
+    });
+
+    test("resume prints only the records still outstanding, with the hedged heading", async () => {
+      // Frontend API DNS is already verified on resume; reprinting its record
+      // under "Add the following records" would send the user to add it again.
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        developmentConfig: {},
+        productionConfig: {},
+        cnameTargets: [
+          { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+          { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
+        ],
+      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: false, mail: false }),
+      );
+      mockConfirm.mockResolvedValueOnce(false); // BIND export
+      mockSelect.mockResolvedValueOnce("skip");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).toContain(
+        "Add the following records at your DNS provider if you haven't already:",
+      );
+      expect(err).not.toMatch(/Add the following records at your DNS provider:/);
+      expect(err).toContain("Host:  clkmail.example.com");
+      expect(err).not.toContain("Host:  clerk.example.com");
+      // OAuth ran before this screen on resume, so it is not "next".
+      expect(flat(err)).toContain(
+        "Next, this command checks that these records have taken effect at your DNS provider.",
+      );
+      expect(err).not.toContain("set up OAuth");
+    });
+
+    test("resume exports every record to the zone file even when the screen lists only the outstanding ones", async () => {
+      // A zone file with some of the domain's records isn't one to import.
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        developmentConfig: {},
+        productionConfig: {},
+        cnameTargets: [
+          { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+          { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
+        ],
+      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: false, mail: false }),
+      );
+      mockConfirm.mockResolvedValueOnce(true); // BIND export: yes
+      mockSelect.mockResolvedValueOnce("skip");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(err).not.toContain("Host:  clerk.example.com");
+      const zoneCall = writeSpy.mock.calls.find((call: unknown[]) =>
+        String(call[0]).endsWith(".zone"),
+      );
+      expect(zoneCall).toBeDefined();
+      const zone = String(zoneCall![1]);
+      expect(zone).toContain("clerk.example.com");
+      expect(zone).toContain("clkmail.example.com");
+    });
+
+    test("resume still offers the zone-file export when only SSL is pending", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        developmentConfig: {},
+        productionConfig: {},
+      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: false, mail: true }),
+      );
+      mockConfirm.mockResolvedValueOnce(true); // BIND export: yes
+      mockSelect.mockResolvedValueOnce("skip");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(mockConfirm).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining("BIND") }),
+      );
+      const zoneCall = writeSpy.mock.calls.find((call: unknown[]) =>
+        String(call[0]).endsWith(".zone"),
+      );
+      expect(zoneCall).toBeDefined();
+      // Nothing left to add: the screen says the certificate is pending
+      // instead of framing a DNS task around an empty record list.
+      expect(err).toContain("Your DNS records for example.com are verified.");
+      expect(flat(err)).toContain(
+        "The SSL certificate is still pending; Clerk issues it automatically.",
+      );
+      expect(err).not.toContain("Configure DNS for");
+      expect(err).not.toContain("these records");
+      expect(err).not.toContain("Add the following records");
+      // Skipping closes on the domain, not on DNS, which is already done.
+      expect(err).toContain("Domain      Not yet verified");
+      expect(err).toMatch(/└\s+Not verified/);
+    });
+
+    test("resume while Clerk is finalizing says so and does not promise a retry", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        developmentConfig: {},
+        productionConfig: {},
+      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: true, mail: true }),
+      );
+      mockConfirm.mockResolvedValueOnce(false); // BIND export
+      mockSelect.mockResolvedValueOnce("skip");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(flat(err)).toContain("Clerk is still finalizing production setup.");
+      expect(flat(err)).toContain("run `clerk deploy` again in a few minutes");
+      expect(err).not.toContain("check again");
+      expect(err).not.toContain("Configure DNS for");
+    });
+
+    test("resume with no record list from Clerk tells the user to find and add the records", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_123" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockLiveProduction({
+        instanceId: "ins_prod_123",
+        developmentConfig: {},
+        productionConfig: {},
+        cnameTargets: [],
+      });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: false, mail: false }),
+      );
+      mockSelect.mockResolvedValueOnce("skip");
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(flat(err)).toContain(
+        "Email DNS records for example.com are not verified yet, but Clerk didn't return the list to add.",
+      );
+      expect(flat(err)).toContain("add them at your DNS provider, then choose Check DNS now below");
+      expect(err).not.toContain("Add the following records");
+      // No records, no export offer.
+      expect(mockConfirm).not.toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining("BIND") }),
+      );
     });
 
     test("DNS verification treats absent components as pending", async () => {
@@ -1692,8 +1959,81 @@ describe("deploy", () => {
       const err = stripAnsi(captured.err);
 
       expect(err).toContain("DNS: pending  SSL: ✓  Email DNS: ✓");
-      expect(err).toContain("DNS still pending for example.com");
+      expect(err).toContain("DNS records not found yet for example.com");
       expect(err).not.toContain("Domain      Verified");
+    });
+
+    test("no record list on a first run without providers points straight at the DNS check", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      // No enabled providers: OAuth setup is skipped, so the check really is next.
+      mockFetchInstanceConfig.mockResolvedValue({});
+      stubCreateProductionInstance({ cnameTargets: [] });
+      mockConfirm
+        .mockResolvedValueOnce(true) // Proceed?
+        .mockResolvedValueOnce(true); // Create production instance?
+      mockInput.mockResolvedValueOnce("example.com");
+      mockSelect.mockResolvedValueOnce("skip"); // DNS verification
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      expect(flat(err)).toContain("add them at your DNS provider, then choose Check DNS now below");
+      expect(err).toContain("Next, this command checks that they have taken effect.");
+      expect(err).not.toContain("set up OAuth");
+    });
+
+    test("DNS verification footer says the record list is missing when the API returned no targets", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      stubCreateProductionInstance({ cnameTargets: [] });
+      mockConfirm
+        .mockResolvedValueOnce(true) // Proceed?
+        .mockResolvedValueOnce(true); // Create production instance? (no zone-file prompt: no targets)
+      mockInput.mockResolvedValueOnce("example.com");
+      mockSelect
+        .mockResolvedValueOnce("have-credentials")
+        .mockResolvedValueOnce("check")
+        .mockResolvedValueOnce("skip");
+      mockInput.mockResolvedValueOnce("google-client-id.apps.googleusercontent.com");
+      mockPassword.mockResolvedValueOnce("google-secret");
+      mockPatchInstanceConfig.mockResolvedValueOnce({});
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+
+      await runDeploy({});
+      const err = stripAnsi(captured.err);
+
+      // Before the check, the first-run screen already says the list is
+      // missing and what to do, instead of a "Configure DNS" page with no records.
+      // This run has a Google provider, so OAuth setup is the next prompt and
+      // the screen must not point at a "Check DNS now" that isn't there yet.
+      expect(flat(err)).toContain(
+        "DNS and email DNS records for example.com are not verified yet, but Clerk didn't return the list to add.",
+      );
+      expect(flat(err)).toContain("and add them at your DNS provider:");
+      expect(flat(err)).toContain(
+        "Next you'll set up OAuth, then this command checks that they have taken effect.",
+      );
+      expect(err).not.toContain("Check DNS now below");
+      expect(err).not.toContain("Configure DNS for");
+      // After the check, the footer says the same in its own words.
+      expect(err).toContain("DNS and email DNS records not found yet for example.com.");
+      expect(err).toContain("Clerk didn't return the list of records to add.");
+      expect(flat(err)).toContain(
+        "Find them on the Domains page in the Clerk Dashboard, add them, then choose Check again below.",
+      );
+      // The URL line belongs to the footer, so it precedes the skip, not the
+      // Next steps block (which also prints this URL).
+      expect(err).toMatch(
+        /already created\.\n│ {4}https:\/\/dashboard\.clerk\.com\/apps\/app_xyz789\/instances\/ins_prod_mock\/domains\n[\s\S]*Skipping DNS verification/,
+      );
+      expect(err).not.toContain("Add them at your DNS provider");
+      expect(err).not.toContain("Add the following records at your DNS provider");
     });
 
     test("DNS verification timeout does not reprint DNS records when only SSL remains pending", async () => {
@@ -1719,8 +2059,10 @@ describe("deploy", () => {
       const err = stripAnsi(captured.err);
 
       expect(err).toContain("DNS: ✓  SSL: pending  Email DNS: ✓");
-      expect(err).toContain("SSL still pending for example.com");
+      expect(err).toContain("SSL certificate still pending for example.com");
+      expect(err).not.toContain("not found yet");
       expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(1);
+      expect(err).not.toContain("if you haven't already:");
     });
 
     test("plain deploy can skip DNS verification and continue configuring production", async () => {
@@ -1745,8 +2087,11 @@ describe("deploy", () => {
       const err = stripAnsi(captured.err);
 
       expect(err).toContain("Saved Google OAuth credentials");
-      expect(err).toContain("Domain      DNS pending");
+      expect(err).toContain("Domain      Not yet verified");
       expect(err).not.toContain("Domain      Verified");
+      // The closing word agrees with the status row instead of contradicting it.
+      expect(err).toMatch(/└\s+Not verified/);
+      expect(err).not.toMatch(/└\s+Success/);
       expect(mockSelect).toHaveBeenCalledWith({
         message: "DNS verification",
         choices: [
@@ -1773,8 +2118,10 @@ describe("deploy", () => {
 
       await runDeployUntilPause();
       const err = stripAnsi(captured.err);
-      expect(err).toContain("Check the Domains section in the Clerk Dashboard");
-      expect(err).toContain("DNS propagation can take time");
+      expect(flat(err)).toContain("on the Domains page in the Clerk Dashboard");
+      expect(flat(err)).toContain(
+        "Next you'll set up OAuth, then this command checks that these records have taken effect at your DNS provider",
+      );
       expect(err).toContain("Configure Google OAuth for production");
     });
 
@@ -1890,7 +2237,7 @@ describe("deploy", () => {
 
       await runDeployUntilPause();
       mockLiveProduction();
-      expect(stripAnsi(captured.err)).toContain("Check the Domains section in the Clerk Dashboard");
+      expect(flat(captured.err)).toContain("on the Domains page in the Clerk Dashboard");
       expect(stripAnsi(captured.err)).toContain("Configure Google OAuth for production");
 
       captured.clear();
@@ -2103,10 +2450,19 @@ describe("deploy", () => {
 
       await runDeploy({});
       const err = stripAnsi(captured.err);
-      expect(err).toContain("DNS propagation can take several hours");
-      expect(err).toContain("DNS, SSL, email DNS still pending for example.com");
+      expect(err).toContain("Propagation usually takes minutes");
+      expect(err).toContain("DNS and email DNS records not found yet for example.com");
+      // The footer, not the Next steps block, carries the change-domain URL.
+      expect(flat(err)).toContain(
+        "change the domain in the Clerk Dashboard: https://dashboard.clerk.com/apps/app_xyz789/instances/ins_prod_mock/domains",
+      );
+      expect(err).not.toContain("still pending");
       expect(err).toContain("DNS: pending");
-      expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(2);
+      // First hand-over uses the plain heading; the reprint after a failed check hedges.
+      expect(err.match(/Add the following records at your DNS provider:/g)).toHaveLength(1);
+      expect(
+        err.match(/Add the following records at your DNS provider if you haven't already:/g),
+      ).toHaveLength(1);
       expect(err).toContain("Host:  clerk.example.com");
       expect(err).toContain("Value: frontend-api.clerk.services");
       expect(err).toContain("Skipping DNS verification for now.");

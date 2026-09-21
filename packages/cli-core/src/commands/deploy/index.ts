@@ -15,8 +15,11 @@ import {
   type ProductionInstanceResponse,
 } from "../../lib/plapi.ts";
 import {
+  DEPLOY_COMMAND_DESCRIPTION,
+  DEPLOY_COMMAND_SUMMARY,
   INTRO_PREAMBLE,
   OAUTH_SECTION_INTRO,
+  type DeployComponentStatus,
   type DeployPlanStep,
   deployComponentLabels,
   deployComponentStatus,
@@ -24,10 +27,13 @@ import {
   domainAssociationSummary,
   bindZoneFile,
   dnsDashboardHandoff,
+  dnsHandoffNothingToAdd,
   dnsIntro,
   dnsRecords,
+  domainsDashboardUrl,
+  instanceDashboardUrl,
   nextStepsBody,
-  pendingDnsRecords,
+  pendingCnameTargets,
   pausedOperationNotice,
   printPlan,
   productionSummary,
@@ -182,6 +188,11 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   }
   const production = productionOrExists;
   await persistProductionInstance(ctx, production.id);
+  // "Clerk production instance", not just "production instance": the user
+  // also has a deployment on their host, and this is the one Clerk manages.
+  // URL on its own line: with it, the sentence is wider than the frame.
+  log.success("Clerk production instance created. Manage it in the Dashboard:");
+  log.info(`  ${instanceDashboardUrl(ctx.appId, production.id)}`);
 
   if (!production.active_domain) {
     throw new CliError(
@@ -209,7 +220,18 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     cnameTargets,
   };
 
-  await runDnsRecordHandoff({ ...operationState, pending: { type: "dns" } }, cnameTargets);
+  // OAuth setup only runs when there are providers; with none, the DNS check
+  // is what comes next.
+  await runDnsRecordHandoff(
+    { ...operationState, pending: { type: "dns" } },
+    {
+      display: cnameTargets,
+      exportTargets: cnameTargets,
+      // Nothing has been checked yet on a fresh run.
+      status: { dns: false, ssl: false, mail: false },
+      oauthNext: oauthProviders.length > 0,
+    },
+  );
 
   bar();
   completedOAuthProviders = await runOAuthSetup(ctx, operationState, oauthProviders);
@@ -279,10 +301,11 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
   }
 
   if (!snapshot.domainComplete) {
-    dnsStatus = await runExistingDomainDnsVerification(ctx, {
-      ...snapshot,
-      pending: { type: "dns" },
-    });
+    dnsStatus = await runExistingDomainDnsVerification(
+      ctx,
+      { ...snapshot, pending: { type: "dns" } },
+      snapshot.componentStatus,
+    );
   }
 
   await finishDeploy(ctx, snapshot.domain, snapshot.completedOAuthProviders, dnsStatus);
@@ -352,6 +375,9 @@ async function createProductionInstance(
 }
 
 async function confirmProductionInstanceCreation(domain: string): Promise<boolean> {
+  // Separate this screen from the domain the user just typed; without it the
+  // echoed answer runs straight into the lead sentence.
+  log.blank();
   for (const line of domainAssociationSummary(domain)) log.info(line);
   log.blank();
   const confirmed = await confirmCreateProductionInstance();
@@ -366,21 +392,50 @@ async function confirmProductionInstanceCreation(domain: string): Promise<boolea
   return false;
 }
 
+/**
+ * `display` is what the screen lists as records to add; `exportTargets` is
+ * what the BIND zone file gets. They differ on resume: the screen shows only
+ * the records still outstanding, but a zone file with some of the domain's
+ * records is not a zone file anyone should import.
+ */
 async function runDnsRecordHandoff(
   state: DeployOperationState,
-  cnameTargets: readonly CnameTarget[],
+  options: {
+    /** Records printed on screen: only the ones still to add. */
+    display: readonly CnameTarget[];
+    /** Records offered for the zone-file export: every record for the domain. */
+    exportTargets: readonly CnameTarget[];
+    status: DeployComponentStatus;
+    afterCheck?: boolean;
+    oauthNext: boolean;
+  },
 ): Promise<void> {
-  for (const line of dnsIntro(state.domain)) log.info(line);
-  log.blank();
-  if (cnameTargets.length > 0) {
-    for (const line of dnsRecords(cnameTargets)) log.info(line);
-    log.blank();
-  }
+  const { display, exportTargets, status } = options;
+  const handoffInstanceId = state.productionInstanceId;
+  const domainsUrl = handoffInstanceId
+    ? domainsDashboardUrl(state.appId, handoffInstanceId)
+    : undefined;
 
-  for (const line of dnsDashboardHandoff(state.domain)) log.info(line);
+  // With no records to add, a "Configure DNS" page is the wrong page: say
+  // what is actually outstanding instead (certificate, Clerk finalizing, or
+  // a record list Clerk didn't return).
+  const lines =
+    display.length > 0
+      ? [
+          ...dnsIntro(state.domain),
+          "",
+          ...dnsRecords(display, { afterCheck: options.afterCheck }),
+          "",
+          ...dnsDashboardHandoff(state.domain, domainsUrl, { oauthNext: options.oauthNext }),
+        ]
+      : dnsHandoffNothingToAdd(state.domain, status, domainsUrl, { oauthNext: options.oauthNext });
+  for (const line of lines) {
+    if (line === "") log.blank();
+    else log.info(line);
+  }
   log.blank();
   try {
-    await offerBindZoneExport(state.domain, cnameTargets);
+    await offerBindZoneExport(state.domain, exportTargets);
     log.blank();
   } catch (error) {
     if (error instanceof UserAbortError) {
@@ -393,8 +448,19 @@ async function runDnsRecordHandoff(
 async function runExistingDomainDnsVerification(
   ctx: DeployContext,
   state: DeployOperationState,
+  componentStatus: DeployComponentStatus,
 ): Promise<DnsVerificationResult> {
-  await runDnsRecordHandoff(state, state.cnameTargets ?? []);
+  // On resume some records may already be verified; only the outstanding ones
+  // are records to add, and the user may have added those already.
+  const allTargets = state.cnameTargets ?? [];
+  // OAuth ran before this on the resume path, so the check is next.
+  await runDnsRecordHandoff(state, {
+    display: pendingCnameTargets(allTargets, componentStatus),
+    exportTargets: allTargets,
+    status: componentStatus,
+    afterCheck: true,
+    oauthNext: false,
+  });
   return runDnsVerificationPrompt(ctx, state);
 }
 
@@ -436,8 +502,19 @@ async function runDnsVerification(
     log.blank();
     log.info(deployComponentStatus(outcome.status));
     log.blank();
-    for (const line of deployStatusPendingFooter(state.domain, outcome.status)) {
-      log.warn(line);
+    const productionInstanceId =
+      state.productionInstanceId ?? ctx.productionInstanceId ?? ctx.profile.instances.production;
+    // Computed before the footer so the footer can tell the user when there is
+    // no record list to print, instead of saying "add them" over nothing.
+    const pendingTargets = pendingCnameTargets(state.cnameTargets ?? [], outcome.status);
+    for (const line of deployStatusPendingFooter(
+      state.domain,
+      outcome.status,
+      productionInstanceId ? domainsDashboardUrl(ctx.appId, productionInstanceId) : undefined,
+      pendingTargets.length > 0,
+    )) {
+      if (line === "") log.blank();
+      else log.warn(line);
     }
 
     // When all DNS components are verified but the server has not yet marked the
@@ -446,12 +523,9 @@ async function runDnsVerification(
       throw deployPausedError(state);
     }
 
-    const pendingRecords = state.cnameTargets
-      ? pendingDnsRecords(state.cnameTargets, outcome.status)
-      : [];
-    if (pendingRecords.length > 0) {
+    if (pendingTargets.length > 0) {
       log.blank();
-      for (const line of pendingRecords) log.info(line);
+      for (const line of dnsRecords(pendingTargets, { afterCheck: true })) log.info(line);
     }
     log.blank();
     let action: Awaited<ReturnType<typeof chooseDnsVerificationRetryAction>>;
@@ -638,15 +712,22 @@ async function finishDeploy(
     prefix: isInsideGutter() ? `${dim("│")}  ` : "",
     label: "Next steps",
     fallback: bold,
-    body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId))}\n`,
+    body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId, domain, dnsStatus))}\n`,
   });
-  await outro("Success");
+  // The closing word summarizes how the run ended. After a skipped DNS check
+  // the status row four lines up says "DNS pending", and "Success" beneath it
+  // contradicted that; the same value that drives the headline drives this.
+  await outro(dnsStatus === "verified" ? "Success" : "Not verified");
 }
 
 export function registerDeploy(program: Program): void {
+  // `summary` is what the root `clerk --help` table shows; `description` is
+  // the prose on `clerk deploy --help`, where the hidden default subcommand
+  // would otherwise leave no trace of what the bare command does.
   const deployCmd = program
     .command("deploy")
-    .description("Deploy a Clerk application to production");
+    .summary(DEPLOY_COMMAND_SUMMARY)
+    .description(DEPLOY_COMMAND_DESCRIPTION);
   deployCmd.command("run", { isDefault: true, hidden: true }).action(deploy);
   deployCmd
     .command("status")

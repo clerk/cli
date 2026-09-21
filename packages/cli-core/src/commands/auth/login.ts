@@ -6,7 +6,7 @@ import {
   revokeToken,
   type UserInfo,
 } from "../../lib/token-exchange.ts";
-import { getOAuthConfig } from "../../lib/environment.ts";
+import { buildDashboardUrl, getOAuthConfig } from "../../lib/environment.ts";
 import {
   createOAuthSession,
   getStoredSession,
@@ -238,6 +238,17 @@ async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
   if (result.status === "claimed") {
     const label = result.app.name || result.app.application_id;
     log.success(`Claimed and linked application: \`${label}\``);
+    // First time this app has a home in an account; say where it is.
+    // Deserialized API JSON; a missing array must not fail a claim that
+    // already succeeded server-side.
+    const development = result.app.instances?.find(
+      (instance) => instance.environment_type === "development",
+    );
+    if (development) {
+      // URL on its own line: with it, the sentence is wider than the frame.
+      log.info("Your app now lives in your Clerk account:");
+      log.info(`  ${buildDashboardUrl(result.app.application_id, development.instance_id)}`);
+    }
   }
 
   const warning = claimWarning(result);
