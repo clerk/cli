@@ -148,6 +148,31 @@ describe("parseXCProjSource", () => {
     expect(parseXCProjSource(edited).root["products-group"]).toBeNull();
   });
 
+  test("accepts and preserves object components in a Products group reference", () => {
+    const source = XCODE_GENERATED_PROJECT.replace(
+      '  "localizations": {',
+      '  "products-group": [ { "name": "Build/Products" } ],\n  "localizations": {',
+    );
+
+    const parsed = parseXCProjSource(source);
+    expect(parsed.root["products-group"]).toEqual([{ name: "Build/Products" }]);
+
+    const edited = applyXCProjValue(source, ["organization"], "Example");
+    expect(parseXCProjSource(edited).root["products-group"]).toEqual([{ name: "Build/Products" }]);
+    expect(edited).toContain('"products-group": [ { "name": "Build/Products" } ]');
+  });
+
+  test("rejects malformed object components in a Products group reference", () => {
+    const source = XCODE_GENERATED_PROJECT.replace(
+      '  "localizations": {',
+      '  "products-group": [ { "path": "Build/Products" } ],\n  "localizations": {',
+    );
+
+    expect(() => parseXCProjSource(source)).toThrow(
+      expect.objectContaining({ code: "invalid-schema" }),
+    );
+  });
+
   test("rejects malformed component-array configuration file references", () => {
     const source = XCODE_GENERATED_PROJECT.replace(
       '{ "anchor": "App", "relative-path": "Config.xcconfig" }',
@@ -178,6 +203,17 @@ describe("parseXCProjSource", () => {
     );
     expect(() => parseXCProjSource(source)).toThrow(
       expect.objectContaining({ code: "duplicate-key" }),
+    );
+  });
+
+  test("distinguishes valid noncanonical JSON5 without permitting edits", () => {
+    const source = XCODE_GENERATED_PROJECT.replace('"development": "en"', "development: 'en'");
+
+    expect(() => parseXCProjSource(source)).toThrow(
+      expect.objectContaining({ code: "noncanonical-json5" }),
+    );
+    expect(() => applyXCProjValue(source, ["organization"], "Example")).toThrow(
+      expect.objectContaining({ code: "noncanonical-json5" }),
     );
   });
 

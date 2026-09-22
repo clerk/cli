@@ -35,7 +35,7 @@ import { inspectSwiftSources } from "./swift.ts";
 import { filterIOSSwiftSources } from "./source-filters.ts";
 import { shouldTraverseSynchronizedSourceDirectory } from "./source-directories.ts";
 import { inspectXCProjProject } from "./xcproj-inspect.ts";
-import { MAX_XCPROJ_BYTES, parseXCProjSource } from "./xcproj.ts";
+import { MAX_XCPROJ_BYTES, parseXCProjSource, XCProjError } from "./xcproj.ts";
 import type {
   IOSAppTarget,
   IOSClerkPackageState,
@@ -1134,7 +1134,18 @@ async function parseProject(
       requestedTarget,
       requestedPlatform,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof XCProjError && error.code === "noncanonical-json5") {
+      diagnostics.push({
+        code: "xcode.noncanonical-json5",
+        severity: "error",
+        message: `${documentRelativePath} uses valid JSON5 syntax that must be canonicalized before Clerk can inspect or modify it.`,
+        remedy:
+          "Run `xcprojformatter --update <path-to-project.xcodeproj>`, review the resulting project diff, then retry.",
+        evidence: [{ path: documentRelativePath }],
+      });
+      return { inspection: emptyInspection, appTargets: [], appTargetCandidates: [], diagnostics };
+    }
     diagnostics.push({
       code: "xcode.malformed-project",
       severity: "error",

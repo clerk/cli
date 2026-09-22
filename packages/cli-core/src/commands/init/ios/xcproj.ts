@@ -7,6 +7,7 @@ import {
   type Node,
   type ParseError,
 } from "jsonc-parser";
+import JSON5 from "json5";
 
 export const MAX_XCPROJ_BYTES = 15_000_000;
 
@@ -16,6 +17,7 @@ export type XCProjErrorCode =
   | "too-large"
   | "invalid-utf8"
   | "invalid-syntax"
+  | "noncanonical-json5"
   | "duplicate-key"
   | "invalid-schema"
   | "unsupported-capability"
@@ -434,7 +436,12 @@ function validateRoot(root: XCProjRecord): void {
   ) {
     schemaError();
   }
-  if (Array.isArray(root["products-group"])) xcprojStringArray(root["products-group"]);
+  if (Array.isArray(root["products-group"])) {
+    for (const component of xcprojArray(root["products-group"])) {
+      if (typeof component === "string") continue;
+      xcprojString(xcprojRecord(component).name);
+    }
+  }
 }
 
 function validateNoDuplicateKeys(node: Node): void {
@@ -485,7 +492,15 @@ export function parseXCProjSource(
     allowEmptyContent: false,
   });
   if (!tree || errors.length > 0) {
-    throw new XCProjError("invalid-syntax", "project.xcproj is not valid canonical Xcode JSON.");
+    try {
+      JSON5.parse(text);
+    } catch {
+      throw new XCProjError("invalid-syntax", "project.xcproj is not valid JSON5.");
+    }
+    throw new XCProjError(
+      "noncanonical-json5",
+      "project.xcproj uses valid JSON5 syntax that must be canonicalized before Clerk can inspect or modify it.",
+    );
   }
   if (tree.type !== "object") schemaError();
   validateNoDuplicateKeys(tree);

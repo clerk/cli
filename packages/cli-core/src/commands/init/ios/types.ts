@@ -14,6 +14,7 @@ export interface IOSDiagnostic {
   code:
     | "xcode.no-project"
     | "xcode.malformed-project"
+    | "xcode.noncanonical-json5"
     | "xcode.missing-project-file"
     | "xcode.dangling-reference"
     | "xcode.no-ios-app-target"
