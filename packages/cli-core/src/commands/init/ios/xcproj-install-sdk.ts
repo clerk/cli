@@ -304,7 +304,11 @@ function productMembers(target: XCProjRecord): ProductMember[] | XCProjSDKInstal
 }
 
 function appliesToPlatform(member: ProductMember, platform: IOSNativePlatform): boolean {
-  return member.platforms === undefined || member.platforms.includes(platform);
+  return (
+    member.platforms === undefined ||
+    member.platforms.length === 0 ||
+    member.platforms.includes(platform)
+  );
 }
 
 function validateProductMembers(

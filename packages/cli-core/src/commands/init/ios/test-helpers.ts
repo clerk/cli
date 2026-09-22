@@ -1,7 +1,18 @@
-import { cp, lstat, mkdir, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
 import type { PbxObjects } from "./pbx.ts";
+import { applyXCProjValue } from "./xcproj.ts";
 
 const IDS = {
   project: "AAAAAAAAAAAAAAAAAAAAAAAA",
@@ -336,6 +347,49 @@ export async function createIOSFixture(
 /** Copies the canonical Xcode JSON project fixture into a temporary test root. */
 export async function createIOSJSONFixture(root: string): Promise<void> {
   await cp(IOS_JSON_FIXTURE, root, { recursive: true });
+}
+
+/** Adds a second JSON-format target that explicitly includes a nested shared app entry source. */
+export async function addNestedSharedEntryToIOSJSONFixture(root: string): Promise<{
+  primaryTargetId: string;
+  secondaryTargetId: string;
+  sharedSourcePath: string;
+}> {
+  const primaryTargetId = "C1E000000000000000000001";
+  const secondaryTargetId = "C1E000000000000000000099";
+  const sharedSourcePath = "MyApp/Nested/MyAppApp.swift";
+  await mkdir(join(root, "MyApp", "Nested"), { recursive: true });
+  await rename(
+    join(root, "MyApp", "MyAppApp.swift"),
+    join(root, "MyApp", "Nested", "MyAppApp.swift"),
+  );
+  const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+  let source = await readFile(projectPath, "utf8");
+  source = applyXCProjValue(source, ["files", 0], {
+    kind: "folder",
+    path: "MyApp",
+    "target-membership": ["MyApp"],
+    "membership-exceptions": [
+      {
+        target: "SharedTarget",
+        inclusions: ["Nested/MyAppApp.swift"],
+      },
+    ],
+  });
+  source = applyXCProjValue(source, ["targets", 1], {
+    name: "SharedTarget",
+    id: secondaryTargetId,
+    "product-type": "application",
+    "build-phases": ["compile-sources", "frameworks"],
+    "build-settings": {
+      DEVELOPMENT_TEAM: "ABCDE12345",
+      IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+      PRODUCT_BUNDLE_IDENTIFIER: "com.example.SharedTarget",
+      SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+    },
+  });
+  await writeFile(projectPath, source);
+  return { primaryTargetId, secondaryTargetId, sharedSourcePath };
 }
 
 /** Converts the classic fixture into the modern synchronized-root shape used by new Xcode apps. */

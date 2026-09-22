@@ -326,10 +326,14 @@ function folderMembership(
   }
   const matchesPath = (set: Set<string>, path: string): boolean =>
     [...set].some((candidate) => path === candidate || path.startsWith(`${candidate}/`));
+  const matchesPathOrIncludedDescendant = (set: Set<string>, path: string): boolean =>
+    matchesPath(set, path) || [...set].some((candidate) => candidate.startsWith(`${path}/`));
   return {
     member: defaultMember || inclusions.size > 0,
     included(path) {
-      const base = defaultMember ? !matchesPath(exclusions, path) : matchesPath(inclusions, path);
+      const base = defaultMember
+        ? !matchesPath(exclusions, path)
+        : matchesPathOrIncludedDescendant(inclusions, path);
       if (!base || !platform) return base;
       for (const [candidate, raw] of filters) {
         if (path !== candidate && !path.startsWith(`${candidate}/`)) continue;

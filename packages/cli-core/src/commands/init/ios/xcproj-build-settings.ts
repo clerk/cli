@@ -1,4 +1,4 @@
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, relative, resolve } from "node:path";
 import {
   inspectTargetBuildConfigurations,
   type InspectedTargetConfiguration,
@@ -145,19 +145,33 @@ function configurationFileIndex(projectPath: string, project: XCProjRecord): Map
   const projectDirectory = dirname(projectPath);
   const paths = new Map<string, Set<string>>();
   const add = (token: string, path: string): void => {
-    if (!token) return;
-    const matches = paths.get(token) ?? new Set<string>();
+    const normalizedToken = token.replaceAll("\\", "/").replace(/^\.\//, "");
+    if (!normalizedToken) return;
+    const matches = paths.get(normalizedToken) ?? new Set<string>();
     matches.add(path);
-    paths.set(token, matches);
+    paths.set(normalizedToken, matches);
   };
-  const visit = (raw: unknown, parent: string): void => {
+  const logicalChildPath = (parent: string, child: string): string =>
+    parent ? `${parent}/${child}` : child;
+  const visit = (raw: unknown, parent: string, logicalParent: string): void => {
     const reference = xcprojRecord(raw);
     const kind = typeof reference.kind === "string" ? reference.kind : "file";
     const path = typeof reference.path === "string" ? reference.path : "";
     if (kind === "group") {
       const groupDirectory = path ? projectReferencePath(projectDirectory, parent, path) : parent;
       if (!groupDirectory) return;
-      for (const child of xcprojArray(reference.children ?? [])) visit(child, groupDirectory);
+      const logicalName =
+        typeof reference.name === "string" && reference.name
+          ? reference.name
+          : path
+            ? basename(path.replaceAll("\\", "/"))
+            : "";
+      const logicalGroupPath = logicalName
+        ? logicalChildPath(logicalParent, logicalName)
+        : logicalParent;
+      for (const child of xcprojArray(reference.children ?? [])) {
+        visit(child, groupDirectory, logicalGroupPath);
+      }
       return;
     }
     if (kind !== "file" || !path) return;
@@ -165,9 +179,13 @@ function configurationFileIndex(projectPath: string, project: XCProjRecord): Map
     if (!absolutePath) return;
     const displayName = typeof reference.name === "string" ? reference.name : basename(path);
     add(displayName, absolutePath);
-    add(path.replaceAll("\\", "/"), absolutePath);
+    add(path, absolutePath);
+    add(logicalChildPath(logicalParent, displayName), absolutePath);
+    add(relative(projectDirectory, absolutePath), absolutePath);
   };
-  for (const reference of xcprojArray(project.files ?? [])) visit(reference, projectDirectory);
+  for (const reference of xcprojArray(project.files ?? [])) {
+    visit(reference, projectDirectory, "");
+  }
   return new Map([...paths].map(([token, matches]) => [token, [...matches].sort()] as const));
 }
 
