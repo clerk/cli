@@ -641,6 +641,85 @@ describe("inspectXCProjTargetBuildConfigurations", () => {
     expect(diagnostics).toEqual([]);
   });
 
+  test("resolves a root xcconfig by logical path when a nested file has the same name", async () => {
+    const { configurations, diagnostics } = await inspectFixture(
+      {
+        configurations: [{ name: "Debug", file: "Base.xcconfig" }],
+        "build-settings": { SDKROOT: "iphoneos" },
+        files: [
+          { path: "Base.xcconfig" },
+          {
+            kind: "group",
+            path: "Other",
+            children: [{ path: "Base.xcconfig" }],
+          },
+        ],
+      },
+      {},
+      async (root) => {
+        await mkdir(join(root, "Other"), { recursive: true });
+        await Bun.write(
+          join(root, "Base.xcconfig"),
+          "PRODUCT_BUNDLE_IDENTIFIER = com.example.Actual\nDEVELOPMENT_TEAM = ACTUAL1234",
+        );
+        await Bun.write(
+          join(root, "Other", "Base.xcconfig"),
+          "PRODUCT_BUNDLE_IDENTIFIER = com.example.Wrong\nDEVELOPMENT_TEAM = WRONG12345",
+        );
+      },
+    );
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.Actual.Example",
+    });
+    expect(configurations[0]?.model.developmentTeam).toMatchObject({
+      state: "resolved",
+      value: "ABCDE12345",
+    });
+    expect(diagnostics).toEqual([]);
+  });
+
+  test("resolves component-array xcconfig references through the logical tree", async () => {
+    const { configurations, diagnostics } = await inspectFixture(
+      {
+        files: [
+          {
+            kind: "group",
+            name: "Build/Settings",
+            path: "PhysicalSettings",
+            children: [{ path: "Base.xcconfig" }],
+          },
+        ],
+      },
+      {
+        "specialized-configurations": [
+          {
+            name: "Debug",
+            file: [{ name: "Build/Settings" }, "Base.xcconfig"],
+          },
+        ],
+      },
+      async (root) => {
+        await mkdir(join(root, "PhysicalSettings"), { recursive: true });
+        await Bun.write(
+          join(root, "PhysicalSettings", "Base.xcconfig"),
+          "PRODUCT_BUNDLE_IDENTIFIER = com.example.ComponentArray\nDEVELOPMENT_TEAM = ARRAY12345",
+        );
+      },
+    );
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.ComponentArray.Example",
+    });
+    expect(configurations[0]?.model.developmentTeam).toMatchObject({
+      state: "resolved",
+      value: "ABCDE12345",
+    });
+    expect(diagnostics).toEqual([]);
+  });
+
   test("fails string-form xcconfig resolution closed when a filename is ambiguous", async () => {
     const { configurations, diagnostics } = await inspectFixture(
       {

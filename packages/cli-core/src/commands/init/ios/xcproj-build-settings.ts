@@ -1,4 +1,4 @@
-import { basename, dirname, relative, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import {
   inspectTargetBuildConfigurations,
   type InspectedTargetConfiguration,
@@ -14,9 +14,11 @@ import {
   type XCProjTarget,
 } from "./xcproj.ts";
 
+type XCProjConfigurationFile = string | unknown[] | XCProjRecord;
+
 interface XCProjConfiguration {
   name: string;
-  file?: string | XCProjRecord;
+  file?: XCProjConfigurationFile;
 }
 
 export interface InspectXCProjTargetBuildConfigurationsOptions {
@@ -78,14 +80,16 @@ function configuration(value: unknown): XCProjConfiguration {
   const name = xcprojString(record.name);
   if (name === "") invalidSchema();
   if (record.file === "") invalidSchema();
+  const file = record.file;
+  if (Array.isArray(file) && !namePathComponents(file)) invalidSchema();
   return {
     name,
     file:
-      record.file === undefined
+      file === undefined
         ? undefined
-        : typeof record.file === "string"
-          ? record.file
-          : xcprojRecord(record.file),
+        : typeof file === "string" || Array.isArray(file)
+          ? file
+          : xcprojRecord(file),
   };
 }
 
@@ -107,7 +111,6 @@ interface IndexedProjectReference {
 }
 
 interface ConfigurationReferenceIndex {
-  files: ReadonlyMap<string, string[]>;
   referencesById: ReadonlyMap<string, IndexedProjectReference[]>;
   referencesByNamePath: ReadonlyMap<string, IndexedProjectReference[]>;
 }
@@ -164,28 +167,13 @@ function projectReferencePath(
   return resolve(parent, path);
 }
 
-function normalizeConfigurationReferenceToken(token: string): string {
-  return token.replaceAll("\\", "/").replace(/^\.\//, "");
-}
-
 function configurationReferenceIndex(
   projectPath: string,
   project: XCProjRecord,
 ): ConfigurationReferenceIndex {
   const projectDirectory = dirname(projectPath);
-  const files = new Map<string, string[]>();
   const referencesById = new Map<string, IndexedProjectReference[]>();
   const referencesByNamePath = new Map<string, IndexedProjectReference[]>();
-  const addFile = (tokens: readonly string[], path: string): void => {
-    const normalizedTokens = new Set(
-      tokens.map(normalizeConfigurationReferenceToken).filter(Boolean),
-    );
-    for (const normalizedToken of normalizedTokens) {
-      const matches = files.get(normalizedToken) ?? [];
-      matches.push(path);
-      files.set(normalizedToken, matches);
-    }
-  };
   const addReference = (
     logicalPath: readonly string[],
     path: string,
@@ -244,18 +232,11 @@ function configurationReferenceIndex(
     const absolutePath = projectReferencePath(projectDirectory, parent, path);
     if (!absolutePath) return;
     addReference(logicalPath, absolutePath, reference.id, Boolean(logicalName));
-    const logicalToken = logicalPath.join("/");
-    addFile(
-      [logicalName, path, logicalToken, relative(projectDirectory, absolutePath)],
-      absolutePath,
-    );
   };
   for (const reference of xcprojArray(project.files ?? [])) {
     visit(reference, projectDirectory, []);
   }
-  const sorted = (matches: string[]): string[] => [...matches].sort();
   return {
-    files: new Map([...files].map(([token, matches]) => [token, sorted(matches)] as const)),
     referencesById,
     referencesByNamePath,
   };
@@ -293,15 +274,11 @@ function anchoredReferencePath(
 }
 
 function configurationFilePath(
-  file: string | XCProjRecord | undefined,
+  file: XCProjConfigurationFile | undefined,
   index: ConfigurationReferenceIndex,
 ): string | undefined {
   if (!file) return undefined;
-  if (typeof file === "string") {
-    if (file.startsWith("id:")) return anchoredReferencePath(file, index);
-    const matches = index.files.get(normalizeConfigurationReferenceToken(file)) ?? [];
-    return matches.length === 1 ? matches[0] : undefined;
-  }
+  if (typeof file === "string" || Array.isArray(file)) return anchoredReferencePath(file, index);
   const anchorPath = anchoredReferencePath(file.anchor, index);
   const relativePath = fileSystemNamePath(file["relative-path"]);
   if (!anchorPath || relativePath === undefined) return undefined;
@@ -311,7 +288,7 @@ function configurationFilePath(
 function attachBaseConfiguration(
   objects: PbxObjects,
   configurationObject: PbxObject,
-  file: string | XCProjRecord | undefined,
+  file: XCProjConfigurationFile | undefined,
   index: ConfigurationReferenceIndex,
   referenceId: string,
 ): void {
