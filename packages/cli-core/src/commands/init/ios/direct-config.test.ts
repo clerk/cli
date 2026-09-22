@@ -1063,6 +1063,60 @@ struct MyApp: App {
     expect(await readFile(appSourcePath(root))).toEqual(before);
   });
 
+  test.each(["folder", "group"] as const)(
+    "refuses mutation when another target's JSON %s uses an unresolved source-root path",
+    async (kind) => {
+      const root = await temporaryRoot("clerk-xcproj-direct-config-unresolved-source-root-");
+      await createIOSJSONFixture(root);
+      const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+      let project = await readFile(projectPath, "utf8");
+      project = applyXCProjValue(
+        project,
+        ["files", 2],
+        kind === "folder"
+          ? {
+              kind,
+              path: "<USER:SRCROOT>/MyApp",
+              "target-membership": ["SharedTarget"],
+            }
+          : {
+              kind,
+              path: "<USER:SRCROOT>/MyApp",
+              children: [
+                {
+                  path: "MyAppApp.swift",
+                  "target-membership": ["SharedTarget/compile-sources"],
+                },
+              ],
+            },
+      );
+      project = applyXCProjValue(project, ["targets", 1], {
+        name: "SharedTarget",
+        id: "C1E000000000000000000099",
+        "product-type": "application",
+        "build-phases": ["compile-sources"],
+        "build-settings": {
+          DEVELOPMENT_TEAM: "ABCDE12345",
+          IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+          PRODUCT_BUNDLE_IDENTIFIER: "com.example.SharedTarget",
+          SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+        },
+      });
+      await writeFile(projectPath, project);
+      const before = await readFile(appSourcePath(root));
+
+      const plan = await planIOSDirectConfig({
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: "C1E000000000000000000001",
+      });
+
+      expect(plan.status).toBe("blocked");
+      expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+      expect(await readFile(appSourcePath(root))).toEqual(before);
+    },
+  );
+
   test.each(["build-phases", "source-phase-files"] as const)(
     "refuses mutation when shared-source ownership uses malformed %s",
     async (collection) => {

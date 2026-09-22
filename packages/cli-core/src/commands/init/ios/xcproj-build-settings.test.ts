@@ -392,6 +392,45 @@ describe("inspectXCProjTargetBuildConfigurations", () => {
     expect(diagnostics).toEqual([]);
   });
 
+  test("resolves a direct object-ID xcconfig reference", async () => {
+    const { configurations, diagnostics } = await inspectFixture(
+      {
+        configurations: ["Debug"],
+        files: [{ id: "TARGET-CONFIG", path: "Config/Target.xcconfig" }],
+        "build-settings": { SDKROOT: "iphoneos" },
+      },
+      {
+        "specialized-configurations": [
+          {
+            name: "Debug",
+            file: "id:TARGET-CONFIG",
+          },
+        ],
+        "build-settings": {
+          IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+          SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+        },
+      },
+      async (root) => {
+        await mkdir(join(root, "Config"), { recursive: true });
+        await Bun.write(
+          join(root, "Config", "Target.xcconfig"),
+          "PRODUCT_BUNDLE_IDENTIFIER = com.example.Actual\nDEVELOPMENT_TEAM = DIRECTID12",
+        );
+      },
+    );
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.Actual",
+    });
+    expect(configurations[0]?.model.developmentTeam).toMatchObject({
+      state: "resolved",
+      value: "DIRECTID12",
+    });
+    expect(diagnostics).toEqual([]);
+  });
+
   test("fails synchronized-folder anchors closed when the name is ambiguous or the ID is missing", async () => {
     for (const { files, anchor } of [
       {

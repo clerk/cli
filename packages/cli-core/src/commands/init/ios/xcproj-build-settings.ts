@@ -298,6 +298,7 @@ function configurationFilePath(
 ): string | undefined {
   if (!file) return undefined;
   if (typeof file === "string") {
+    if (file.startsWith("id:")) return anchoredReferencePath(file, index);
     const matches = index.files.get(normalizeConfigurationReferenceToken(file)) ?? [];
     return matches.length === 1 ? matches[0] : undefined;
   }

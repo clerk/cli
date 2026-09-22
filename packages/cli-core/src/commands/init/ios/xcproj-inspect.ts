@@ -513,7 +513,10 @@ async function sourceFilesForTarget(options: {
     const path = typeof reference.path === "string" ? reference.path : "";
     if (kind === "group") {
       const groupDirectory = path ? sourceReferencePath(projectDirectory, parent, path) : parent;
-      if (!groupDirectory) return;
+      if (!groupDirectory) {
+        state.complete = false;
+        return;
+      }
       let children: unknown[];
       try {
         children = reference.children === undefined ? [] : xcprojArray(reference.children);
@@ -530,7 +533,10 @@ async function sourceFilesForTarget(options: {
         return;
       }
       const directory = sourceReferencePath(projectDirectory, parent, path);
-      if (!directory) return;
+      if (!directory) {
+        state.complete = false;
+        return;
+      }
       const membership = folderMembership(reference, target, resolveBuildPhase, platform, state);
       if (membership.member) {
         await collectSwiftFiles(root, directory, directory, membership.included, files, state);
