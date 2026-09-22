@@ -252,6 +252,68 @@ describe("inspectXCProjTargetBuildConfigurations", () => {
     expect(diagnostics).toEqual([]);
   });
 
+  test("resolves logical group-qualified xcconfig references to their physical paths", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-logical-xcconfig-"));
+    temporaryDirectories.push(root);
+    const projectPath = join(root, "Example.xcodeproj");
+    const projectDocumentPath = join(projectPath, "project.xcproj");
+    await mkdir(join(root, "PhysicalConfigs"), { recursive: true });
+    await mkdir(projectPath, { recursive: true });
+    await Bun.write(
+      join(root, "PhysicalConfigs", "Target.xcconfig"),
+      "PRODUCT_BUNDLE_IDENTIFIER = com.example.Logical\nDEVELOPMENT_TEAM = LOGICAL123",
+    );
+    const rawTarget: XCProjRecord = {
+      name: "Example",
+      id: "TARGET-ID",
+      "product-type": "application",
+      "specialized-configurations": [
+        { name: "Debug", file: "Build Configurations/Target.xcconfig" },
+        { name: "Release", file: "Build Configurations/Target.xcconfig" },
+      ],
+      "build-settings": {
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+      },
+    };
+    const project: XCProjRecord = {
+      configurations: ["Debug", "Release"],
+      files: [
+        {
+          kind: "group",
+          name: "Build Configurations",
+          path: "PhysicalConfigs",
+          children: [{ path: "Target.xcconfig" }],
+        },
+      ],
+      "build-settings": { SDKROOT: "iphoneos" },
+      targets: [rawTarget],
+    };
+    const diagnostics: IOSDiagnostic[] = [];
+
+    const configurations = await inspectXCProjTargetBuildConfigurations({
+      root,
+      projectPath,
+      projectDocumentPath,
+      project,
+      target: xcprojTargets(project)[0]!,
+      diagnostics,
+    });
+
+    expect(configurations).toHaveLength(2);
+    for (const configuration of configurations) {
+      expect(configuration.model.bundleIdentifier).toMatchObject({
+        state: "resolved",
+        value: "com.example.Logical",
+      });
+      expect(configuration.model.developmentTeam).toMatchObject({
+        state: "resolved",
+        value: "LOGICAL123",
+      });
+    }
+    expect(diagnostics).toEqual([]);
+  });
+
   test("fails string-form xcconfig resolution closed when a filename is ambiguous", async () => {
     const { configurations, diagnostics } = await inspectFixture(
       {
@@ -264,7 +326,10 @@ describe("inspectXCProjTargetBuildConfigurations", () => {
 
     expect(configurations[0]?.model.bundleIdentifier.state).toBe("unresolved");
     expect(diagnostics).toContainEqual(
-      expect.objectContaining({ code: "xcode.dangling-reference", severity: "error" }),
+      expect.objectContaining({
+        code: "xcode.dangling-reference",
+        severity: "error",
+      }),
     );
   });
 });

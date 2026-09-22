@@ -32,7 +32,7 @@ import {
   IOS_FIXTURE_IDS,
   treeDigest,
 } from "./test-helpers.ts";
-import { parseXCProjSource, xcprojPackages, xcprojTargets } from "./xcproj.ts";
+import { applyXCProjValue, parseXCProjSource, xcprojPackages, xcprojTargets } from "./xcproj.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -295,6 +295,93 @@ describe("iOS Clerk SDK installer", () => {
     expect(rerun.status).toBe("satisfied");
     expect(await applyIOSSDKInstall(rerun)).toMatchObject({ status: "satisfied" });
     expect(await readFile(path)).toEqual(installedBytes);
+  });
+
+  test("treats an empty Xcode JSON product platform filter as unrestricted", async () => {
+    const root = await temporaryRoot("clerk-xcproj-empty-platforms-");
+    await createIOSJSONFixture(root);
+    const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+    let source = await Bun.file(path).text();
+    source = applyXCProjValue(
+      source,
+      ["packages"],
+      [
+        {
+          kind: "remote",
+          repository: "https://github.com/clerk/clerk-ios.git",
+          version: { "up-to-next-major-version": DEFAULT_CLERK_IOS_MINIMUM_VERSION },
+        },
+      ],
+    );
+    source = applyXCProjValue(
+      source,
+      ["targets", 0, "package-product-members"],
+      [
+        {
+          package: "clerk-ios",
+          "product-name": "ClerkKit",
+          "build-phase": { "build-phase": "frameworks", platforms: [] },
+        },
+      ],
+    );
+    await Bun.write(path, source);
+    const before = await readFile(path);
+
+    const plan = await planIOSSDKInstall({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("satisfied");
+    expect(await applyIOSSDKInstall(plan)).toMatchObject({ status: "satisfied" });
+    expect(await readFile(path)).toEqual(before);
+  });
+
+  test("rejects duplicate unrestricted Xcode JSON product links", async () => {
+    const root = await temporaryRoot("clerk-xcproj-duplicate-platforms-");
+    await createIOSJSONFixture(root);
+    const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+    let source = await Bun.file(path).text();
+    source = applyXCProjValue(
+      source,
+      ["packages"],
+      [
+        {
+          kind: "remote",
+          repository: "https://github.com/clerk/clerk-ios.git",
+          version: { "up-to-next-major-version": DEFAULT_CLERK_IOS_MINIMUM_VERSION },
+        },
+      ],
+    );
+    source = applyXCProjValue(
+      source,
+      ["targets", 0, "package-product-members"],
+      [
+        {
+          package: "clerk-ios",
+          "product-name": "ClerkKit",
+          "build-phase": { "build-phase": "frameworks", platforms: [] },
+        },
+        {
+          package: "clerk-ios",
+          "product-name": "ClerkKit",
+          "build-phase": { "build-phase": "frameworks" },
+        },
+      ],
+    );
+    await Bun.write(path, source);
+
+    const plan = await planIOSSDKInstall({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan).toMatchObject({
+      status: "blocked",
+      blockers: [{ code: "duplicate-product" }],
+    });
   });
 
   test("rejects a stale project.xcproj plan without overwriting newer bytes", async () => {

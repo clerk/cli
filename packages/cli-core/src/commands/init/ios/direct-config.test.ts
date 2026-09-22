@@ -24,7 +24,13 @@ import {
   type IOSDirectConfigBlockerCode,
 } from "./direct-config.ts";
 import type { PbxObjects } from "./pbx.ts";
-import { createIOSFixture, IOS_FIXTURE_IDS, treeDigest } from "./test-helpers.ts";
+import {
+  addNestedSharedEntryToIOSJSONFixture,
+  createIOSFixture,
+  createIOSJSONFixture,
+  IOS_FIXTURE_IDS,
+  treeDigest,
+} from "./test-helpers.ts";
 
 const DEVELOPMENT_KEY = `pk_test_${Buffer.from("direct-config.clerk.accounts.dev$").toString("base64")}`;
 const OTHER_DEVELOPMENT_KEY = `pk_test_${Buffer.from("other-app.clerk.accounts.dev$").toString("base64")}`;
@@ -862,6 +868,24 @@ struct MyApp: App {
     expect(plan.status).toBe("blocked");
     expect(blockerCodes(plan)).toContain("shared-source");
     expect(await readFile(appSourcePath(root))).toEqual(before);
+  });
+
+  test("refuses a nested JSON folder inclusion shared with another target", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-shared-");
+    await createIOSJSONFixture(root);
+    const { primaryTargetId, sharedSourcePath } = await addNestedSharedEntryToIOSJSONFixture(root);
+    const absoluteSharedSourcePath = join(root, sharedSourcePath);
+    const before = await readFile(absoluteSharedSourcePath);
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: primaryTargetId,
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("shared-source");
+    expect(await readFile(absoluteSharedSourcePath)).toEqual(before);
   });
 
   test.each(["build-phases", "source-phase-files"] as const)(

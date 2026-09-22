@@ -8,6 +8,7 @@ import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
 import { recoverIOSFileTransactions } from "./file-transaction.ts";
 import type { PbxObject, PbxObjects } from "./pbx.ts";
 import {
+  addNestedSharedEntryToIOSJSONFixture,
   addVisionOSDestinationsToFixture,
   convertIOSFixtureToMultiplatform,
   createIOSFixture,
@@ -921,6 +922,24 @@ describe("inspectIOSProject", () => {
       entryPoints: [{ path: "MyApp/MyAppApp.swift" }],
     });
     expect(inspection.diagnostics).toEqual([]);
+  });
+
+  test("traverses nested explicit JSON folder inclusions when proving source ownership", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-nested-inclusion-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+    const { primaryTargetId, secondaryTargetId, sharedSourcePath } =
+      await addNestedSharedEntryToIOSJSONFixture(root);
+
+    const memberships = await inspectIOSSourceMembership(root);
+    const owners = memberships.filter((membership) =>
+      membership.files.some((file) => file.relativePath === sharedSourcePath),
+    );
+
+    expect(owners.map((membership) => membership.targetId).sort()).toEqual(
+      [primaryTargetId, secondaryTargetId].sort(),
+    );
+    expect(owners.every((membership) => membership.complete)).toBe(true);
   });
 
   test("extracts the App ID Prefix when Bundle ID casing differs", async () => {
