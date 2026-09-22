@@ -1339,6 +1339,75 @@ struct GeneratedApp: App {
     expect(await readFile(appSourcePath(root))).toEqual(before);
   });
 
+  test("refuses an entry source toggled into a non-default JSON folder target", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-target-exception-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    let project = await readFile(projectPath, "utf8");
+    project = applyXCProjValue(
+      project,
+      ["files", 0, "membership-exceptions"],
+      [{ target: "SharedTarget", exclusions: ["MyAppApp.swift"] }],
+    );
+    project = applyXCProjValue(project, ["targets", 1], {
+      name: "SharedTarget",
+      id: "C1E000000000000000000099",
+      "product-type": "application",
+      "build-phases": ["compile-sources"],
+      "build-settings": {
+        DEVELOPMENT_TEAM: "ABCDE12345",
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+        PRODUCT_BUNDLE_IDENTIFIER: "com.example.SharedTarget",
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+      },
+    });
+    await writeFile(projectPath, project);
+    const before = await readFile(appSourcePath(root));
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("shared-source");
+    expect(await readFile(appSourcePath(root))).toEqual(before);
+  });
+
+  test("follows a JSON file platform override inside an excluded folder", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-platform-override-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    const nestedDirectory = join(root, "MyApp", "Nested");
+    await mkdir(nestedDirectory, { recursive: true });
+    await rename(join(root, "MyApp", "MyAppApp.swift"), join(nestedDirectory, "MyAppApp.swift"));
+    await writeFile(
+      projectPath,
+      applyXCProjValue(
+        await readFile(projectPath, "utf8"),
+        ["files", 0, "membership-exceptions"],
+        [
+          {
+            target: "MyApp",
+            platforms: { Nested: ["macos"], "Nested/MyAppApp.swift": ["ios"] },
+          },
+        ],
+      ),
+    );
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan).toMatchObject({
+      status: "ready",
+      sourcePath: "MyApp/Nested/MyAppApp.swift",
+    });
+  });
+
   test("preserves a JSON Compile Sources inclusion that overrides a target exclusion", async () => {
     const root = await temporaryRoot("clerk-xcproj-direct-config-inclusion-precedence-");
     await createIOSJSONFixture(root);
