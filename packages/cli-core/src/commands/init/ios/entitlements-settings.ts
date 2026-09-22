@@ -796,12 +796,59 @@ function pathContains(directory: string, candidate: string): boolean {
   );
 }
 
-function entitlementsSettingEntries(
-  settings: Readonly<Record<string, unknown>>,
-): Array<[string, unknown]> {
-  return Object.entries(settings).filter(([key]) =>
-    /^CODE_SIGN_ENTITLEMENTS(?:\[.*\])?$/.test(key),
-  );
+async function xcprojTargetEntitlementsConfigurations(
+  root: string,
+  snapshot: XCProjProjectSnapshot,
+  target: XCProjTarget,
+): Promise<Awaited<ReturnType<typeof inspectXCProjTargetBuildConfigurations>> | undefined> {
+  const inspect = async (
+    platform?: IOSNativePlatform,
+  ): Promise<Awaited<ReturnType<typeof inspectXCProjTargetBuildConfigurations>> | undefined> => {
+    const diagnostics: IOSDiagnostic[] = [];
+    let configurations: Awaited<ReturnType<typeof inspectXCProjTargetBuildConfigurations>>;
+    try {
+      configurations = await inspectXCProjTargetBuildConfigurations({
+        root,
+        projectPath: snapshot.absoluteProjectPath,
+        projectDocumentPath: snapshot.documentPath,
+        project: snapshot.document,
+        target,
+        diagnostics,
+        platform,
+      });
+    } catch {
+      return undefined;
+    }
+    if (
+      configurations.length !== snapshot.configurationIds.length ||
+      configurations.length === 0 ||
+      configurations.some(
+        (configuration) =>
+          !configuration.platformEvidenceComplete ||
+          (platform !== undefined && configuration.platform !== platform) ||
+          configuration.model.entitlementsPath.state === "unresolved",
+      ) ||
+      diagnostics.some((diagnostic) => diagnostic.severity === "error")
+    ) {
+      return undefined;
+    }
+    return configurations;
+  };
+
+  const defaultView = await inspect();
+  if (!defaultView) return undefined;
+  const platforms = [
+    ...new Set(defaultView.flatMap((configuration) => configuration.supportedPlatforms)),
+  ];
+  if (platforms.length === 0) return defaultView;
+
+  const configurations: Awaited<ReturnType<typeof inspectXCProjTargetBuildConfigurations>> = [];
+  for (const platform of platforms) {
+    const platformView = await inspect(platform);
+    if (!platformView) return undefined;
+    configurations.push(...platformView);
+  }
+  return configurations;
 }
 
 async function xcprojDestinationOwnershipIsExclusive(
@@ -833,19 +880,17 @@ async function xcprojDestinationOwnershipIsExclusive(
     return false;
   }
 
-  const projectSettings = snapshot.document["build-settings"];
-  if (projectSettings !== undefined) {
-    try {
-      if (entitlementsSettingEntries(xcprojRecord(projectSettings)).length > 0) return false;
-    } catch {
-      return false;
-    }
-  }
   for (const target of xcprojTargets(snapshot.document)) {
     if (target.id === snapshot.target.id) continue;
-    for (const [, rawValue] of entitlementsSettingEntries(target.buildSettings)) {
-      if (typeof rawValue !== "string" || rawValue.includes("$(")) return false;
-      const targetPath = resolve(dirname(snapshot.absoluteProjectPath), rawValue);
+    const configurations = await xcprojTargetEntitlementsConfigurations(root, snapshot, target);
+    if (!configurations) return false;
+    for (const configuration of configurations) {
+      const entitlementsPath = configuration.model.entitlementsPath;
+      if (entitlementsPath.state === "missing") continue;
+      if (entitlementsPath.state !== "resolved") return false;
+      const value = entitlementsPath.value.trim();
+      if (!value) continue;
+      const targetPath = resolve(dirname(snapshot.absoluteProjectPath), value);
       if (!(await pathIsSafelyWithinIOSRoot(root, targetPath))) return false;
       try {
         if (

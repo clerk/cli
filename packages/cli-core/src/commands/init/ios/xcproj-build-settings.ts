@@ -141,11 +141,15 @@ function projectReferencePath(
   return resolve(parent, path);
 }
 
+function normalizeConfigurationReferenceToken(token: string): string {
+  return token.replaceAll("\\", "/").replace(/^\.\//, "");
+}
+
 function configurationFileIndex(projectPath: string, project: XCProjRecord): Map<string, string[]> {
   const projectDirectory = dirname(projectPath);
   const paths = new Map<string, Set<string>>();
   const add = (token: string, path: string): void => {
-    const normalizedToken = token.replaceAll("\\", "/").replace(/^\.\//, "");
+    const normalizedToken = normalizeConfigurationReferenceToken(token);
     if (!normalizedToken) return;
     const matches = paths.get(normalizedToken) ?? new Set<string>();
     matches.add(path);
@@ -190,32 +194,34 @@ function configurationFileIndex(projectPath: string, project: XCProjRecord): Map
 }
 
 function configurationFilePath(
-  projectPath: string,
   file: string | XCProjRecord | undefined,
   indexedFiles: ReadonlyMap<string, string[]>,
 ): string | undefined {
   if (!file) return undefined;
   if (typeof file === "string") {
-    const matches = indexedFiles.get(file.replaceAll("\\", "/")) ?? [];
+    const matches = indexedFiles.get(normalizeConfigurationReferenceToken(file)) ?? [];
     return matches.length === 1 ? matches[0] : undefined;
   }
   const anchor = simpleNamePath(file.anchor);
   const relativePath = simpleNamePath(file["relative-path"]);
   if (!anchor || anchor.startsWith("id:") || relativePath === undefined) return undefined;
-  return resolve(dirname(projectPath), anchor, relativePath);
+  const token = normalizeConfigurationReferenceToken(
+    relativePath ? `${anchor}/${relativePath}` : anchor,
+  );
+  const matches = indexedFiles.get(token) ?? [];
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function attachBaseConfiguration(
   objects: PbxObjects,
   configurationObject: PbxObject,
-  projectPath: string,
   file: string | XCProjRecord | undefined,
   indexedFiles: ReadonlyMap<string, string[]>,
   referenceId: string,
 ): void {
   if (!file) return;
   configurationObject.baseConfigurationReference = referenceId;
-  const path = configurationFilePath(projectPath, file, indexedFiles);
+  const path = configurationFilePath(file, indexedFiles);
   if (!path) return;
   objects[referenceId] = {
     isa: "PBXFileReference",
@@ -264,7 +270,6 @@ export async function inspectXCProjTargetBuildConfigurations(
     attachBaseConfiguration(
       objects,
       projectConfigurationObject,
-      options.projectPath,
       projectConfiguration.file,
       indexedFiles,
       projectBaseReferenceId,
@@ -280,7 +285,6 @@ export async function inspectXCProjTargetBuildConfigurations(
     attachBaseConfiguration(
       objects,
       targetConfigurationObject,
-      options.projectPath,
       targetSpecialization?.file,
       indexedFiles,
       targetBaseReferenceId,

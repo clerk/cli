@@ -18,10 +18,12 @@ import {
 import type { PbxObjects } from "./pbx.ts";
 import {
   convertIOSFixtureToSynchronizedMissingEntitlements,
+  createIOSJSONFixture,
   createIOSFixture,
   IOS_FIXTURE_IDS,
   treeDigest,
 } from "./test-helpers.ts";
+import { applyXCProjValue } from "./xcproj.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -232,6 +234,42 @@ describe("macOS outgoing network capability", () => {
     await removeNetworkEntitlement(root);
 
     await expect(planMacOSNetworkCapability(options(root))).resolves.toMatchObject({
+      status: "blocked",
+      blockers: [{ code: "unsafe-entitlements" }],
+    });
+  });
+
+  test("blocks mutating a JSON project entitlement shared by iOS and macOS builds", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-macos-network-json-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+    const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+    let project = await readFile(path, "utf8");
+    project = applyXCProjValue(project, ["build-settings", "SDKROOT"], "auto");
+    project = applyXCProjValue(
+      project,
+      ["targets", 0, "build-settings", "SUPPORTED_PLATFORMS"],
+      "iphoneos iphonesimulator macosx",
+    );
+    project = applyXCProjValue(
+      project,
+      ["targets", 0, "build-settings", "MACOSX_DEPLOYMENT_TARGET"],
+      "14.0",
+    );
+    project = applyXCProjValue(
+      project,
+      ["targets", 0, "build-settings", "ENABLE_APP_SANDBOX"],
+      "YES",
+    );
+    await writeFile(path, project);
+
+    await expect(
+      planMacOSNetworkCapability({
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: "C1E000000000000000000001",
+      }),
+    ).resolves.toMatchObject({
       status: "blocked",
       blockers: [{ code: "unsafe-entitlements" }],
     });

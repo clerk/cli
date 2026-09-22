@@ -44,6 +44,7 @@ import type {
   IOSNativePlatform,
   IOSProjectInspectionResult,
 } from "./types.ts";
+import { inspectXCProjTargetBuildConfigurations } from "./xcproj-build-settings.ts";
 import { parseXCProjSource, xcprojTargets } from "./xcproj.ts";
 
 const ASSOCIATED_DOMAINS_KEY = "com.apple.developer.associated-domains";
@@ -379,7 +380,8 @@ async function ownershipIsExclusive(
           15_000_000,
         );
         if (projectFile.status !== "ok") return false;
-        const targets = xcprojTargets(parseXCProjSource(projectFile.bytes).root);
+        const project = parseXCProjSource(projectFile.bytes).root;
+        const targets = xcprojTargets(project);
         // The canonical JSON project path is safe when it has only the
         // selected app target. Additional JSON targets are preserved but left
         // for manual review until their non-application entitlement ownership
@@ -390,6 +392,92 @@ async function ownershipIsExclusive(
           targets[0]?.id !== selectedTargetId
         ) {
           return false;
+        }
+
+        const target = targets[0];
+        if (!target) return false;
+        const primaryDiagnostics: IOSDiagnostic[] = [];
+        const primaryConfigurations = await inspectXCProjTargetBuildConfigurations({
+          root,
+          projectPath: absoluteProject,
+          projectDocumentPath: documentResolution.document.absolutePath,
+          project,
+          target,
+          diagnostics: primaryDiagnostics,
+        });
+        if (
+          primaryConfigurations.length === 0 ||
+          primaryConfigurations.some((configuration) => !configuration.platformEvidenceComplete) ||
+          primaryDiagnostics.some((diagnostic) => diagnostic.severity === "error")
+        ) {
+          return false;
+        }
+        if (
+          !primaryConfigurations.every(
+            (configuration) => configuration.platform === primaryConfigurations[0]?.platform,
+          )
+        ) {
+          return false;
+        }
+
+        const primaryPlatform = primaryConfigurations[0]?.platform;
+        const supportedPlatforms = (["ios", "macos"] as const).filter((platform) =>
+          primaryConfigurations.some((configuration) =>
+            configuration.supportedPlatforms.includes(platform),
+          ),
+        );
+        const views: Array<{
+          platform?: IOSNativePlatform;
+          configurations: typeof primaryConfigurations;
+        }> = [{ platform: primaryPlatform, configurations: primaryConfigurations }];
+        for (const platform of supportedPlatforms) {
+          if (platform === primaryPlatform) continue;
+          const diagnostics: IOSDiagnostic[] = [];
+          const configurations = await inspectXCProjTargetBuildConfigurations({
+            root,
+            projectPath: absoluteProject,
+            projectDocumentPath: documentResolution.document.absolutePath,
+            project,
+            target,
+            diagnostics,
+            platform,
+          });
+          if (
+            configurations.length !== primaryConfigurations.length ||
+            configurations.some(
+              (configuration) =>
+                !configuration.platformEvidenceComplete || configuration.platform !== platform,
+            ) ||
+            diagnostics.some((diagnostic) => diagnostic.severity === "error")
+          ) {
+            return false;
+          }
+          views.push({ platform, configurations });
+        }
+
+        for (const view of views) {
+          if (view.platform === selectedPlatform || allowSelectedTargetPlatformSharing) {
+            continue;
+          }
+          for (const configuration of view.configurations) {
+            const resolution = configuration.model.entitlementsPath;
+            if (resolution.state === "unresolved") return false;
+            if (resolution.state !== "resolved") continue;
+            const siblingPath = resolve(dirname(absoluteProject), resolution.value);
+            if (!(await pathIsSafelyWithinIOSRoot(root, siblingPath))) return false;
+            try {
+              const canonical = await realpath(siblingPath);
+              const info = await lstat(siblingPath);
+              if (
+                selectedCanonical.has(canonical) ||
+                selectedInodes.has(`${info.dev}:${info.ino}`)
+              ) {
+                return false;
+              }
+            } catch {
+              // A missing sibling entitlements path cannot currently alias an existing selected file.
+            }
+          }
         }
         continue;
       }

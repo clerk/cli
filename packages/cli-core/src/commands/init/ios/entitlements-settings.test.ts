@@ -182,6 +182,42 @@ async function initializeGitRepository(root: string): Promise<void> {
   if (exitCode !== 0) throw new Error("Could not initialize the test Git repository.");
 }
 
+async function makeXCProjMissingEntitlementsWithOtherTarget(xcconfig: string): Promise<string> {
+  const root = await temporaryRoot();
+  await createIOSJSONFixture(root);
+  await mkdir(join(root, "Config"), { recursive: true });
+  await mkdir(join(root, "Tests"), { recursive: true });
+  await writeFile(join(root, "Config", "Tests.xcconfig"), xcconfig);
+
+  const path = xcprojPath(root);
+  let source = await readFile(path, "utf8");
+  source = applyXCProjValue(
+    source,
+    ["targets", 0, "build-settings", "CODE_SIGN_ENTITLEMENTS"],
+    undefined,
+  );
+  source = applyXCProjValue(source, ["files", 2], { path: "Config/Tests.xcconfig" });
+  source = applyXCProjValue(source, ["targets", 1], {
+    name: "MyAppTests",
+    id: "C1E000000000000000000099",
+    "product-type": "unit-test",
+    "build-phases": ["compile-sources"],
+    "specialized-configurations": [
+      { name: "Debug", file: "Tests.xcconfig" },
+      { name: "Release", file: "Tests.xcconfig" },
+    ],
+    "build-settings": {
+      DEVELOPMENT_TEAM: "ABCDE12345",
+      IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+      PRODUCT_BUNDLE_IDENTIFIER: "com.example.MyAppTests",
+      SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+    },
+  });
+  await writeFile(path, source);
+  await rm(entitlementsPath(root));
+  return root;
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
@@ -264,6 +300,50 @@ describe("missing iOS entitlements build settings", () => {
     expect(rerun.status).toBe("satisfied");
     expect((await prepareIOSMissingEntitlementsSettingsMutation(rerun)).status).toBe("satisfied");
     expect(await readFile(path)).toEqual(after);
+  });
+
+  test("blocks a missing Xcode JSON destination referenced through another target xcconfig", async () => {
+    const root = await makeXCProjMissingEntitlementsWithOtherTarget(
+      "CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements\n",
+    );
+
+    const plan = await planIOSMissingEntitlementsSettings({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("shared-synchronized-root");
+  });
+
+  test("allows an unrelated effective entitlements path on another Xcode JSON target", async () => {
+    const root = await makeXCProjMissingEntitlementsWithOtherTarget(
+      "CODE_SIGN_ENTITLEMENTS = Tests/MyAppTests.entitlements\n",
+    );
+
+    expect(
+      await planIOSMissingEntitlementsSettings({
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: "C1E000000000000000000001",
+      }),
+    ).toMatchObject({ status: "ready", blockers: [] });
+  });
+
+  test("fails closed on an unresolved other-target Xcode JSON xcconfig", async () => {
+    const root = await makeXCProjMissingEntitlementsWithOtherTarget(
+      "CODE_SIGN_ENTITLEMENTS = $(TESTS_ENTITLEMENTS_DIR)/MyAppTests.entitlements\n",
+    );
+
+    const plan = await planIOSMissingEntitlementsSettings({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("shared-synchronized-root");
   });
 
   test("composes Xcode JSON SDK and entitlements edits into one project mutation", async () => {

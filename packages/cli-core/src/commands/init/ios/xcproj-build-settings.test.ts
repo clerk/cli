@@ -165,6 +165,13 @@ describe("inspectXCProjTargetBuildConfigurations", () => {
           file: { anchor: "Config", "relative-path": "Project.xcconfig" },
         },
       ],
+      files: [
+        {
+          kind: "group",
+          path: "Config",
+          children: [{ path: "Project.xcconfig" }, { path: "Target.xcconfig" }],
+        },
+      ],
       "build-settings": { SDKROOT: "iphoneos" },
       targets: [rawTarget],
     };
@@ -188,6 +195,125 @@ describe("inspectXCProjTargetBuildConfigurations", () => {
       value: "PROJECT1234",
     });
     expect(diagnostics).toEqual([]);
+  });
+
+  test("resolves object-form xcconfig anchors through logical groups instead of physical paths", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-object-xcconfig-"));
+    temporaryDirectories.push(root);
+    const projectPath = join(root, "Example.xcodeproj");
+    const projectDocumentPath = join(projectPath, "project.xcproj");
+    await mkdir(join(root, "PhysicalSources"), { recursive: true });
+    await mkdir(join(root, "LogicalSources"), { recursive: true });
+    await mkdir(projectPath, { recursive: true });
+    await Bun.write(
+      join(root, "PhysicalSources", "Target.xcconfig"),
+      "PRODUCT_BUNDLE_IDENTIFIER = com.example.Correct\nDEVELOPMENT_TEAM = CORRECT123",
+    );
+    await Bun.write(
+      join(root, "LogicalSources", "Target.xcconfig"),
+      "PRODUCT_BUNDLE_IDENTIFIER = com.example.Wrong\nDEVELOPMENT_TEAM = WRONG12345",
+    );
+    const rawTarget: XCProjRecord = {
+      name: "Example",
+      id: "TARGET-ID",
+      "product-type": "application",
+      "specialized-configurations": [
+        {
+          name: "Debug",
+          file: { anchor: "LogicalSources", "relative-path": "Target.xcconfig" },
+        },
+      ],
+      "build-settings": {
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+      },
+    };
+    const project: XCProjRecord = {
+      configurations: ["Debug"],
+      files: [
+        {
+          kind: "group",
+          name: "LogicalSources",
+          path: "PhysicalSources",
+          children: [{ path: "Target.xcconfig" }],
+        },
+      ],
+      "build-settings": { SDKROOT: "iphoneos" },
+      targets: [rawTarget],
+    };
+    const diagnostics: IOSDiagnostic[] = [];
+
+    const configurations = await inspectXCProjTargetBuildConfigurations({
+      root,
+      projectPath,
+      projectDocumentPath,
+      project,
+      target: xcprojTargets(project)[0]!,
+      diagnostics,
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.Correct",
+    });
+    expect(configurations[0]?.model.developmentTeam).toMatchObject({
+      state: "resolved",
+      value: "CORRECT123",
+    });
+    expect(diagnostics).toEqual([]);
+  });
+
+  test("fails object-form xcconfig anchors closed when the logical path is ambiguous", async () => {
+    const { configurations, diagnostics } = await inspectFixture(
+      {
+        files: [
+          {
+            kind: "group",
+            name: "LogicalSources",
+            path: "ConfigA",
+            children: [{ path: "Target.xcconfig" }],
+          },
+          {
+            kind: "group",
+            name: "LogicalSources",
+            path: "ConfigB",
+            children: [{ path: "Target.xcconfig" }],
+          },
+        ],
+      },
+      {
+        "specialized-configurations": [
+          {
+            name: "Debug",
+            file: { anchor: "LogicalSources", "relative-path": "Target.xcconfig" },
+          },
+        ],
+      },
+    );
+
+    expect(configurations[0]?.model.bundleIdentifier.state).toBe("unresolved");
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({ code: "xcode.dangling-reference", severity: "error" }),
+    );
+  });
+
+  test("fails object-form xcconfig anchors closed when the logical path is missing", async () => {
+    const { configurations, diagnostics } = await inspectFixture(
+      { files: [{ path: "Config/Other.xcconfig" }] },
+      {
+        "specialized-configurations": [
+          {
+            name: "Debug",
+            file: { anchor: "Config", "relative-path": "Target.xcconfig" },
+          },
+        ],
+      },
+    );
+
+    expect(configurations[0]?.model.bundleIdentifier.state).toBe("unresolved");
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({ code: "xcode.dangling-reference", severity: "error" }),
+    );
   });
 
   test("resolves Xcode 27 string-form xcconfig references through the file graph", async () => {
