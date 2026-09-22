@@ -297,6 +297,38 @@ describe("iOS Clerk SDK installer", () => {
     expect(await readFile(path)).toEqual(installedBytes);
   });
 
+  test("blocks before adding clerk-ios beside an unattributed Xcode JSON Clerk product", async () => {
+    const root = await temporaryRoot("clerk-xcproj-unattributed-product-");
+    await createIOSJSONFixture(root);
+    const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+    await Bun.write(
+      path,
+      applyXCProjValue(
+        await Bun.file(path).text(),
+        ["targets", 0, "package-product-members"],
+        [
+          {
+            "product-name": "ClerkKit",
+            "build-phase": { "build-phase": "frameworks" },
+          },
+        ],
+      ),
+    );
+    const before = await readFile(path);
+
+    const plan = await planIOSSDKInstall({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan).toMatchObject({
+      status: "blocked",
+      blockers: [{ code: "unattributed-product" }],
+    });
+    expect(await readFile(path)).toEqual(before);
+  });
+
   test("treats an empty Xcode JSON product platform filter as unrestricted", async () => {
     const root = await temporaryRoot("clerk-xcproj-empty-platforms-");
     await createIOSJSONFixture(root);

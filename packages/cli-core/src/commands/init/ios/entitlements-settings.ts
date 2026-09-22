@@ -324,7 +324,7 @@ async function selectedXCProjSynchronizedRoot(
       malformed = true;
       return;
     }
-    const kind = typeof reference.kind === "string" ? reference.kind : "file";
+    const kind = typeof reference.kind === "string" ? reference.kind : "file-reference";
     const path = typeof reference.path === "string" ? reference.path : "";
     if (kind === "group") {
       const groupDirectory = path ? xcprojReferencePath(parent, path, projectDirectory) : parent;
@@ -965,7 +965,8 @@ async function xcprojDestinationOwnershipIsExclusive(
       }
       return;
     }
-    if (kind !== "file") {
+    if (kind === "variant-group" || kind === "version-group") return;
+    if (kind !== "file" && kind !== "file-reference") {
       complete = false;
       return;
     }

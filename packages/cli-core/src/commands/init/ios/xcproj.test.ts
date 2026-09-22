@@ -134,6 +134,20 @@ describe("parseXCProjSource", () => {
     );
   });
 
+  test("accepts and preserves a null Products group reference", () => {
+    const source = XCODE_GENERATED_PROJECT.replace(
+      '  "localizations": {',
+      '  "products-group": null,\n  "localizations": {',
+    );
+
+    const parsed = parseXCProjSource(source);
+    expect(parsed.root["products-group"]).toBeNull();
+    expect(xcprojTargets(parsed.root)).toHaveLength(1);
+
+    const edited = applyXCProjValue(source, ["organization"], "Example");
+    expect(parseXCProjSource(edited).root["products-group"]).toBeNull();
+  });
+
   test("rejects malformed component-array configuration file references", () => {
     const source = XCODE_GENERATED_PROJECT.replace(
       '{ "anchor": "App", "relative-path": "Config.xcconfig" }',

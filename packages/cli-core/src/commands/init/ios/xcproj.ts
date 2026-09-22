@@ -428,6 +428,7 @@ function validateRoot(root: XCProjRecord): void {
   }
   if (
     root["products-group"] !== undefined &&
+    root["products-group"] !== null &&
     typeof root["products-group"] !== "string" &&
     !Array.isArray(root["products-group"])
   ) {

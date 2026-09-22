@@ -35,15 +35,20 @@ import {
 const APP_PRODUCT_TYPES = new Set(["application", "com.apple.product-type.application"]);
 const MAX_SOURCE_FILES = 2_500;
 const MAX_SOURCE_DEPTH = 24;
-const SOURCE_IGNORES = new Set([
-  ".build",
-  ".git",
-  ".swiftpm",
-  "build",
-  "Carthage",
-  "DerivedData",
-  "Pods",
-  "SourcePackages",
+// Xcode excludes its own metadata directory, but otherwise synchronized folders
+// may compile Swift sources below conventional dependency, build, and hidden
+// directories. Traversal limits below provide the safety bound instead.
+const SOURCE_DIRECTORY_IGNORES = new Set([".git"]);
+// Xcode treats these directory packages as opaque resources rather than
+// recursively discovering their Swift files as target sources.
+const OPAQUE_SOURCE_DIRECTORY_EXTENSIONS = new Set([
+  ".bundle",
+  ".docc",
+  ".lproj",
+  ".playground",
+  ".xcassets",
+  ".xcdatamodeld",
+  ".xcplaygroundpage",
 ]);
 
 function emptySwiftInspection(): IOSSwiftInspection {
@@ -288,6 +293,7 @@ async function collectSwiftFiles(
   directory: string,
   groupRoot: string,
   included: (relativePath: string) => boolean,
+  explicitFileType: (relativePath: string) => string | undefined,
   files: Map<string, { absolutePath: string; relativePath: string }>,
   state: { complete: boolean },
   depth = 0,
@@ -317,12 +323,36 @@ async function collectSwiftFiles(
     const pathFromGroup = normalizedPath(relative(groupRoot, absolutePath).split(sep).join("/"));
     if (!included(pathFromGroup)) continue;
     if (entry.isDirectory()) {
-      if (!SOURCE_IGNORES.has(entry.name) && !entry.name.startsWith(".")) {
-        await collectSwiftFiles(root, absolutePath, groupRoot, included, files, state, depth + 1);
+      if (explicitFileType(pathFromGroup) !== undefined) {
+        // File-type overrides on directories have wrapper semantics that this
+        // source inventory does not model. Refuse ownership-sensitive writes.
+        state.complete = false;
+        continue;
       }
-    } else if (entry.isFile() && extname(entry.name) === ".swift") {
+      if (
+        !SOURCE_DIRECTORY_IGNORES.has(entry.name) &&
+        !OPAQUE_SOURCE_DIRECTORY_EXTENSIONS.has(extname(entry.name).toLowerCase())
+      ) {
+        await collectSwiftFiles(
+          root,
+          absolutePath,
+          groupRoot,
+          included,
+          explicitFileType,
+          files,
+          state,
+          depth + 1,
+        );
+      }
+      continue;
+    }
+    const override = explicitFileType(pathFromGroup);
+    const isSwiftSource =
+      override === "sourcecode.swift" ||
+      (override === undefined && extname(entry.name).toLowerCase() === ".swift");
+    if (entry.isFile() && isSwiftSource) {
       files.set(absolutePath, { absolutePath, relativePath: relativeIOSPath(root, absolutePath) });
-    } else if (entry.isSymbolicLink() && extname(entry.name) === ".swift") {
+    } else if (entry.isSymbolicLink() && isSwiftSource) {
       state.complete = false;
     }
   }
@@ -334,7 +364,24 @@ function folderMembership(
   resolveBuildPhase: ProjectBuildPhaseResolver,
   platform: IOSNativePlatform | undefined,
   state: { complete: boolean },
-): { member: boolean; included: (path: string) => boolean } {
+): {
+  member: boolean;
+  included: (path: string) => boolean;
+  explicitFileType: (path: string) => string | undefined;
+} {
+  const fileTypes = new Map<string, string>();
+  try {
+    const rawFileTypes = reference["file-types"];
+    if (rawFileTypes !== undefined) {
+      for (const [path, rawType] of Object.entries(xcprojRecord(rawFileTypes))) {
+        const normalized = normalizedPath(path);
+        if (!normalized || fileTypes.has(normalized)) state.complete = false;
+        fileTypes.set(normalized, xcprojString(rawType));
+      }
+    }
+  } catch {
+    state.complete = false;
+  }
   let opaqueFolders: string[];
   try {
     opaqueFolders =
@@ -422,11 +469,13 @@ function folderMembership(
     matchesPath(set, path) || [...set].some((candidate) => candidate.startsWith(`${path}/`));
   return {
     member: defaultMember || inclusions.size > 0,
+    explicitFileType(path) {
+      return fileTypes.get(normalizedPath(path));
+    },
     included(path) {
       if (matchesPath(opaque, path)) return false;
-      const base = defaultMember
-        ? !matchesPath(exclusions, path)
-        : matchesPathOrIncludedDescendant(inclusions, path);
+      const explicitlyIncluded = matchesPathOrIncludedDescendant(inclusions, path);
+      const base = explicitlyIncluded || (defaultMember && !matchesPath(exclusions, path));
       if (!base || !platform) return base;
       for (const [candidate, raw] of filters) {
         if (path !== candidate && !path.startsWith(`${candidate}/`)) continue;
@@ -535,7 +584,15 @@ async function sourceFilesForTarget(options: {
       }
       const membership = folderMembership(reference, target, resolveBuildPhase, platform, state);
       if (membership.member) {
-        await collectSwiftFiles(root, directory, directory, membership.included, files, state);
+        await collectSwiftFiles(
+          root,
+          directory,
+          directory,
+          membership.included,
+          membership.explicitFileType,
+          files,
+          state,
+        );
       }
       return;
     }
@@ -544,7 +601,17 @@ async function sourceFilesForTarget(options: {
       state.complete = false;
       return;
     }
-    if (!path || extname(path) !== ".swift") return;
+    let explicitType: string | undefined;
+    try {
+      explicitType = reference.type === undefined ? undefined : xcprojString(reference.type);
+    } catch {
+      state.complete = false;
+      return;
+    }
+    const isSwiftSource =
+      explicitType === "sourcecode.swift" ||
+      (explicitType === undefined && extname(path).toLowerCase() === ".swift");
+    if (!path || !isSwiftSource) return;
     if (!fileBelongsToSources(reference, target, resolveBuildPhase, platform, state)) return;
     const absolutePath = sourceReferencePath(projectDirectory, parent, path);
     if (!absolutePath || !(await pathIsSafelyWithinIOSRoot(root, absolutePath))) {
