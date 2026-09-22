@@ -338,6 +338,158 @@ describe("iOS Clerk SDK installer", () => {
     expect(await readFile(path)).toEqual(before);
   });
 
+  test("resolves an existing Xcode JSON package link through its Frameworks phase ID", async () => {
+    const root = await temporaryRoot("clerk-xcproj-phase-id-");
+    await createIOSJSONFixture(root);
+    const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+    let source = await Bun.file(path).text();
+    source = applyXCProjValue(source, ["targets", 0, "build-phases", 1], {
+      kind: "frameworks",
+      id: "FRAMEWORKS-PHASE-ID",
+    });
+    source = applyXCProjValue(
+      source,
+      ["packages"],
+      [
+        {
+          kind: "remote",
+          repository: "https://github.com/clerk/clerk-ios.git",
+          version: { "up-to-next-major-version": DEFAULT_CLERK_IOS_MINIMUM_VERSION },
+        },
+      ],
+    );
+    source = applyXCProjValue(
+      source,
+      ["targets", 0, "package-product-members"],
+      [
+        {
+          package: "clerk-ios",
+          "product-name": "ClerkKit",
+          "build-phase": { "build-phase": "id:FRAMEWORKS-PHASE-ID" },
+        },
+      ],
+    );
+    await Bun.write(path, source);
+    const before = await readFile(path);
+
+    const plan = await planIOSSDKInstall({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("satisfied");
+    expect(await applyIOSSDKInstall(plan)).toMatchObject({ status: "satisfied" });
+    expect(await readFile(path)).toEqual(before);
+  });
+
+  test("blocks unresolved or non-Frameworks Xcode JSON package phase IDs", async () => {
+    for (const item of [
+      { name: "missing", reference: "id:MISSING-PHASE-ID" },
+      { name: "sources", reference: "id:SOURCES-PHASE-ID" },
+    ]) {
+      const root = await temporaryRoot(`clerk-xcproj-${item.name}-phase-id-`);
+      await createIOSJSONFixture(root);
+      const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+      let source = await Bun.file(path).text();
+      source = applyXCProjValue(source, ["targets", 0, "build-phases", 0], {
+        kind: "compile-sources",
+        id: "SOURCES-PHASE-ID",
+      });
+      source = applyXCProjValue(
+        source,
+        ["packages"],
+        [
+          {
+            kind: "remote",
+            repository: "https://github.com/clerk/clerk-ios.git",
+            version: { "up-to-next-major-version": DEFAULT_CLERK_IOS_MINIMUM_VERSION },
+          },
+        ],
+      );
+      source = applyXCProjValue(
+        source,
+        ["targets", 0, "package-product-members"],
+        [
+          {
+            package: "clerk-ios",
+            "product-name": "ClerkKit",
+            "build-phase": { "build-phase": item.reference },
+          },
+        ],
+      );
+      await Bun.write(path, source);
+
+      const plan = await planIOSSDKInstall({
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: "C1E000000000000000000001",
+      });
+
+      expect(plan).toMatchObject({
+        status: "blocked",
+        blockers: [{ code: "ambiguous-frameworks-phase" }],
+      });
+    }
+  });
+
+  test("writes an unambiguous package link for one explicit Xcode JSON Frameworks phase", async () => {
+    const root = await temporaryRoot("clerk-xcproj-explicit-frameworks-");
+    await createIOSJSONFixture(root);
+    const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+    const source = applyXCProjValue(
+      await Bun.file(path).text(),
+      ["targets", 0, "build-phases", 1],
+      { kind: "frameworks", name: "Dependencies" },
+    );
+    await Bun.write(path, source);
+
+    const plan = await planIOSSDKInstall({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(await applyIOSSDKInstall(plan)).toMatchObject({ status: "applied" });
+    const target = xcprojTargets(parseXCProjSource(await readFile(path)).root)[0]!;
+    expect(target.packageProductMembers[0]?.["build-phase"]).toEqual({
+      "build-phase": "frameworks",
+    });
+  });
+
+  test("blocks Xcode JSON package writes when Frameworks phase selection is ambiguous", async () => {
+    const root = await temporaryRoot("clerk-xcproj-ambiguous-frameworks-");
+    await createIOSJSONFixture(root);
+    const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+    await Bun.write(
+      path,
+      applyXCProjValue(
+        await Bun.file(path).text(),
+        ["targets", 0, "build-phases"],
+        [
+          "compile-sources",
+          { kind: "frameworks", name: "App Frameworks", id: "FRAMEWORKS-PHASE-1" },
+          { kind: "frameworks", name: "Generated Frameworks", id: "FRAMEWORKS-PHASE-2" },
+          "resources",
+        ],
+      ),
+    );
+    const before = await readFile(path);
+
+    const plan = await planIOSSDKInstall({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan).toMatchObject({
+      status: "blocked",
+      blockers: [{ code: "ambiguous-frameworks-phase" }],
+    });
+    expect(await readFile(path)).toEqual(before);
+  });
+
   test("rejects duplicate unrestricted Xcode JSON product links", async () => {
     const root = await temporaryRoot("clerk-xcproj-duplicate-platforms-");
     await createIOSJSONFixture(root);

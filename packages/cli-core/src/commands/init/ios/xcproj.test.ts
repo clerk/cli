@@ -121,6 +121,19 @@ describe("parseXCProjSource", () => {
     ]);
   });
 
+  test("accepts component-array target build-phase references", () => {
+    const source = XCODE_GENERATED_PROJECT.replace(
+      '"build-phase": { "build-phase": "frameworks" }',
+      '"build-phase": { "build-phase": [ "frameworks", { "name": "App/Dependencies" } ] }',
+    );
+
+    expect(xcprojTargets(parseXCProjSource(source).root)[0]?.packageProductMembers[0]).toEqual(
+      expect.objectContaining({
+        "build-phase": { "build-phase": ["frameworks", { name: "App/Dependencies" }] },
+      }),
+    );
+  });
+
   test("rejects malformed component-array configuration file references", () => {
     const source = XCODE_GENERATED_PROJECT.replace(
       '{ "anchor": "App", "relative-path": "Config.xcconfig" }',

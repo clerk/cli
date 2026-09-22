@@ -213,6 +213,67 @@ export function xcprojBuildPhases(target: XCProjRecord): XCProjBuildPhase[] {
   return value === undefined ? [] : xcprojArray(value).map(normalizeBuildPhase);
 }
 
+type ParsedTargetBuildPhaseReference =
+  | { kind: "id"; id: string }
+  | { kind: "named"; phaseKind: XCProjBuildPhaseKind; name?: string };
+
+export function xcprojNamePathChildNames(value: unknown): string[] | undefined {
+  const rawComponents = typeof value === "string" ? value.split("/") : value;
+  if (!Array.isArray(rawComponents)) return undefined;
+  const components: string[] = [];
+  for (const raw of rawComponents) {
+    if (typeof raw === "string") {
+      if (raw === "." || raw === ".." || (Array.isArray(value) && raw.includes("/"))) {
+        return undefined;
+      }
+      components.push(raw);
+      continue;
+    }
+    if (
+      typeof raw !== "object" ||
+      raw === null ||
+      Array.isArray(raw) ||
+      typeof (raw as XCProjRecord).name !== "string"
+    ) {
+      return undefined;
+    }
+    components.push((raw as XCProjRecord).name as string);
+  }
+  return components;
+}
+
+function parseTargetBuildPhaseReference(
+  value: unknown,
+): ParsedTargetBuildPhaseReference | undefined {
+  if (typeof value === "string" && value.startsWith("id:")) {
+    const id = value.slice("id:".length);
+    return id ? { kind: "id", id } : undefined;
+  }
+  const components = xcprojNamePathChildNames(value);
+  if (!components || components.length < 1 || components.length > 2) return undefined;
+  const [kind, name] = components;
+  if (!BUILD_PHASE_KINDS.has(kind as XCProjBuildPhaseKind)) return undefined;
+  return { kind: "named", phaseKind: kind as XCProjBuildPhaseKind, name };
+}
+
+/** Resolves Xcode's target-relative build-phase reference against one target. */
+export function resolveXCProjTargetBuildPhaseReference(
+  target: XCProjTarget,
+  value: unknown,
+): XCProjBuildPhase | undefined {
+  const reference = parseTargetBuildPhaseReference(value);
+  if (!reference) return undefined;
+  const matches = target.buildPhases.filter((phase) =>
+    reference.kind === "id"
+      ? phase.id === reference.id
+      : phase.kind === reference.phaseKind &&
+        // Xcode 27.2 resolves a kind-only reference to the sole phase of that
+        // kind even when the phase carries a display name.
+        (reference.name === undefined || phase.name === reference.name),
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 function validatePackageVersion(value: unknown): XCProjRecord {
   const version = xcprojRecord(value);
   const presentKeys = PACKAGE_VERSION_KEYS.filter((key) => version[key] !== undefined);
@@ -264,7 +325,7 @@ function validatePackageProductMember(value: unknown): XCProjRecord {
   optionalString(member, "product-type");
   const buildPhase = xcprojRecord(member["build-phase"]);
   optionalString(buildPhase, "id");
-  xcprojString(buildPhase["build-phase"]);
+  if (!parseTargetBuildPhaseReference(buildPhase["build-phase"])) schemaError();
   optionalStringArray(buildPhase, "platforms");
   return member;
 }
