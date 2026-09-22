@@ -7,10 +7,13 @@ import type { IOSNativePlatform } from "./types.ts";
 import {
   applyXCProjValue,
   parseXCProjSource,
+  type XCProjBuildPhase,
   type XCProjRecord,
   type XCProjSwiftPackage,
+  type XCProjTarget,
   xcprojPackages,
   xcprojRecord,
+  resolveXCProjTargetBuildPhaseReference,
   xcprojString,
   xcprojStringArray,
   xcprojTargets,
@@ -262,8 +265,8 @@ function compatibilityBlocker(
   );
 }
 
-function productMembers(target: XCProjRecord): ProductMember[] | XCProjSDKInstallPreparation {
-  const rawMembers = target["package-product-members"];
+function productMembers(target: XCProjTarget): ProductMember[] | XCProjSDKInstallPreparation {
+  const rawMembers = target.raw["package-product-members"];
   if (rawMembers === undefined) return [];
   if (!Array.isArray(rawMembers)) {
     return blocked("unsupported-project", "The selected target has malformed package products.");
@@ -275,11 +278,11 @@ function productMembers(target: XCProjRecord): ProductMember[] | XCProjSDKInstal
     if (!PRODUCT_NAMES.has(productName)) continue;
     const packageValue = member.package;
     const buildPhase = xcprojRecord(member["build-phase"]);
-    const phase = xcprojString(buildPhase["build-phase"]);
-    if (phase !== "frameworks") {
+    const phase = resolveXCProjTargetBuildPhaseReference(target, buildPhase["build-phase"]);
+    if (!phase || phase.kind !== "frameworks") {
       return blocked(
         "ambiguous-frameworks-phase",
-        `${productName} is attached to a non-Frameworks build phase.`,
+        `${productName} is attached to an unresolved or non-Frameworks build phase.`,
       );
     }
     const platforms =
@@ -341,23 +344,26 @@ function validateProductMembers(
   return undefined;
 }
 
-function hasFrameworksPhase(target: ReturnType<typeof xcprojTargets>[number]): boolean {
-  return target.buildPhases.some((phase) => phase.kind === "frameworks");
-}
-
 function memberValue(
   packageIdentity: string,
   product: XCProjSDKProduct,
   missingPlatforms: IOSNativePlatform[],
   allPlatforms: IOSNativePlatform[],
+  buildPhaseReference: string,
 ): XCProjRecord {
-  const buildPhase: XCProjRecord = { "build-phase": "frameworks" };
+  const buildPhase: XCProjRecord = { "build-phase": buildPhaseReference };
   if (missingPlatforms.length !== allPlatforms.length) buildPhase.platforms = missingPlatforms;
   return {
     package: packageIdentity,
     "product-name": product,
     "build-phase": buildPhase,
   };
+}
+
+function targetBuildPhaseReferenceValue(phase: XCProjBuildPhase): string {
+  // Prefer object identity. When no ID exists, Xcode resolves the bare kind
+  // only when that kind is unique; the caller proves that before writing.
+  return phase.id ? `id:${phase.id}` : phase.kind;
 }
 
 /**
@@ -429,7 +435,7 @@ export async function prepareXCProjSDKInstall(
     if (compatibility) return compatibility;
   }
 
-  const membersResult = productMembers(selected.target.raw);
+  const membersResult = productMembers(selected.target);
   if (!Array.isArray(membersResult)) return membersResult;
   const memberBlocker = validateProductMembers(
     membersResult,
@@ -438,7 +444,21 @@ export async function prepareXCProjSDKInstall(
   );
   if (memberBlocker) return memberBlocker;
 
-  if (!hasFrameworksPhase(selected.target)) {
+  const missingProducts = options.products.map((product) => {
+    const existing = membersResult.filter((member) => member.product === product);
+    return {
+      product,
+      missingPlatforms: options.supportedPlatforms.filter(
+        (platform) => !existing.some((member) => appliesToPlatform(member, platform)),
+      ),
+    };
+  });
+  const needsProductLink = missingProducts.some((item) => item.missingPlatforms.length > 0);
+  let buildPhaseReference: string | undefined;
+  const frameworksPhases = selected.target.buildPhases.filter(
+    (phase) => phase.kind === "frameworks",
+  );
+  if (needsProductLink && frameworksPhases.length === 0) {
     const rawPhases = selected.target.raw["build-phases"];
     if (!Array.isArray(rawPhases)) {
       return blocked(
@@ -452,22 +472,33 @@ export async function prepareXCProjSDKInstall(
       "frameworks",
     );
     actions.push("Create a Frameworks build phase for the selected target.");
+    buildPhaseReference = "frameworks";
+  } else if (needsProductLink && frameworksPhases.length === 1) {
+    buildPhaseReference = targetBuildPhaseReferenceValue(frameworksPhases[0]!);
+  } else if (needsProductLink) {
+    return blocked(
+      "ambiguous-frameworks-phase",
+      "The selected target has more than one Frameworks build phase, so Clerk cannot choose where to link the SDK safely.",
+    );
   }
 
   let memberCount = Array.isArray(selected.target.raw["package-product-members"])
     ? selected.target.raw["package-product-members"].length
     : 0;
-  for (const product of options.products) {
-    const productMembers = membersResult.filter((member) => member.product === product);
-    const missingPlatforms = options.supportedPlatforms.filter(
-      (platform) => !productMembers.some((member) => appliesToPlatform(member, platform)),
-    );
+  for (const { product, missingPlatforms } of missingProducts) {
     if (missingPlatforms.length === 0) continue;
+    if (!buildPhaseReference) {
+      return blocked(
+        "ambiguous-frameworks-phase",
+        "The selected target's Frameworks build phase could not be referenced safely.",
+      );
+    }
     const value = memberValue(
       selectedPackage.identity,
       product,
       missingPlatforms,
       options.supportedPlatforms,
+      buildPhaseReference,
     );
     if (memberCount === 0 && selected.target.raw["package-product-members"] === undefined) {
       candidate = applyXCProjValue(
@@ -523,7 +554,7 @@ export function validateXCProjSDKInstallPostcondition(
     ) {
       return false;
     }
-    const membersResult = productMembers(targets[0].raw);
+    const membersResult = productMembers(targets[0]);
     if (!Array.isArray(membersResult)) return false;
     const packages = xcprojPackages(parsed.root);
     const referencedIdentities = new Set(
@@ -549,7 +580,7 @@ export function validateXCProjSDKInstallPostcondition(
     if (validateProductMembers(membersResult, verifiedPackage, options.supportedPlatforms)) {
       return false;
     }
-    if (!hasFrameworksPhase(targets[0])) return false;
+    if (!targets[0].buildPhases.some((phase) => phase.kind === "frameworks")) return false;
     return options.products.every((product) =>
       options.supportedPlatforms.every((platform) =>
         membersResult.some(

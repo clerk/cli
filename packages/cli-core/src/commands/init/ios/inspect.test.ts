@@ -884,6 +884,96 @@ describe("inspectIOSProject", () => {
     expect(inspection.diagnostics).toEqual([]);
   });
 
+  test("accepts explicit file references and localized variant groups during source inspection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-reference-kinds-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    await Bun.write(
+      projectPath,
+      applyXCProjValue(
+        await readFile(projectPath, "utf8"),
+        ["files"],
+        [
+          {
+            kind: "group",
+            path: "MyApp",
+            children: [
+              {
+                kind: "file-reference",
+                path: "MyAppApp.swift",
+                "target-membership": ["MyApp/compile-sources"],
+              },
+              {
+                kind: "file-reference",
+                path: "ContentView.swift",
+                "target-membership": ["MyApp/compile-sources"],
+              },
+              {
+                kind: "variant-group",
+                name: "Localizable.strings",
+                children: [{ kind: "file-reference", path: "en.lproj/Localizable.strings" }],
+              },
+            ],
+          },
+        ],
+      ),
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.swift).toMatchObject({
+      evidenceComplete: true,
+      sourceFilesScanned: 2,
+      entryPoints: [{ path: "MyApp/MyAppApp.swift" }],
+    });
+    expect(inspection.diagnostics).toEqual([]);
+  });
+
+  test("recognizes an Xcode JSON Clerk product linked through a build-phase ID", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-package-phase-id-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    let source = await readFile(projectPath, "utf8");
+    source = applyXCProjValue(source, ["targets", 0, "build-phases", 1], {
+      kind: "frameworks",
+      id: "FRAMEWORKS-PHASE-ID",
+    });
+    source = applyXCProjValue(
+      source,
+      ["packages"],
+      [
+        {
+          kind: "remote",
+          repository: "https://github.com/clerk/clerk-ios",
+          version: { "up-to-next-major-version": "1.0.0" },
+        },
+      ],
+    );
+    source = applyXCProjValue(
+      source,
+      ["targets", 0, "package-product-members"],
+      [
+        {
+          package: "clerk-ios",
+          "product-name": "ClerkKit",
+          "build-phase": { "build-phase": "id:FRAMEWORKS-PHASE-ID" },
+        },
+      ],
+    );
+    await Bun.write(projectPath, source);
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.packages).toEqual({
+      package: "remote",
+      clerkKit: "linked",
+      clerkKitUI: "absent",
+    });
+    expect(inspection.diagnostics).toEqual([]);
+  });
+
   test("resolves project-anchored JSON source references from nested groups", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-project-anchor-"));
     temporaryDirectories.push(root);

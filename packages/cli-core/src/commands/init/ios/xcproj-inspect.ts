@@ -23,8 +23,10 @@ import {
   type XCProjRecord,
   type XCProjTarget,
   xcprojArray,
+  xcprojNamePathChildNames,
   xcprojPackages,
   xcprojRecord,
+  resolveXCProjTargetBuildPhaseReference,
   xcprojString,
   xcprojStringArray,
   xcprojTargets,
@@ -161,17 +163,25 @@ function inspectTargetPackages(
     if (matching.length === 0) return { state: "absent", packageNames: [] };
     let linked = false;
     let evidenceComplete = true;
+    const incompleteReasons = new Set<string>();
     for (const member of matching) {
       const phase = xcprojRecord(member["build-phase"]);
+      const resolvedPhase = resolveXCProjTargetBuildPhaseReference(target, phase["build-phase"]);
+      if (!resolvedPhase) {
+        evidenceComplete = false;
+        incompleteReasons.add("an unresolved build-phase reference");
+        continue;
+      }
       const applicability = platformFiltersApply(phase.platforms, platform);
       evidenceComplete &&= applicability.complete;
-      linked ||= phase["build-phase"] === "frameworks" && applicability.applies;
+      if (!applicability.complete) incompleteReasons.add("an unrecognized platform filter");
+      linked ||= resolvedPhase.kind === "frameworks" && applicability.applies;
     }
     if (!evidenceComplete) {
       diagnostics.push({
         code: "clerk.package-unattributed",
         severity: "warning",
-        message: `${target.name} contains an unrecognized platform filter on ${productName}.`,
+        message: `${target.name} contains ${[...incompleteReasons].join(" and ")} on ${productName}.`,
         evidence: [{ path: relativeIOSPath(root, resolve(projectPath, "project.xcproj")) }],
       });
     }
@@ -221,31 +231,6 @@ interface ResolvedProjectBuildPhase {
 
 type ProjectBuildPhaseResolver = (value: unknown) => ResolvedProjectBuildPhase | undefined;
 
-function buildPhaseNamePath(value: unknown): string[] | undefined {
-  if (typeof value === "string") return value.split("/");
-  if (!Array.isArray(value)) return undefined;
-  const components: string[] = [];
-  for (const raw of value) {
-    if (typeof raw === "string") {
-      // A literal child named "." or ".." is encoded as { name }, while a
-      // bare string has relative-path semantics and is invalid in this reference.
-      if (raw === "." || raw === "..") return undefined;
-      components.push(raw);
-      continue;
-    }
-    if (
-      typeof raw !== "object" ||
-      raw === null ||
-      Array.isArray(raw) ||
-      typeof (raw as XCProjRecord).name !== "string"
-    ) {
-      return undefined;
-    }
-    components.push((raw as XCProjRecord).name as string);
-  }
-  return components;
-}
-
 function projectBuildPhaseResolver(document: XCProjRecord): ProjectBuildPhaseResolver {
   const targets = xcprojTargets(document);
   return (value) => {
@@ -264,7 +249,7 @@ function projectBuildPhaseResolver(document: XCProjRecord): ProjectBuildPhaseRes
       return matches.length === 1 ? matches[0] : undefined;
     }
 
-    const components = buildPhaseNamePath(value);
+    const components = xcprojNamePathChildNames(value);
     if (!components || (components.length !== 2 && components.length !== 3)) return undefined;
     const [targetName, kind, phaseName] = components;
     const matches = targets.flatMap((target) =>
@@ -272,8 +257,7 @@ function projectBuildPhaseResolver(document: XCProjRecord): ProjectBuildPhaseRes
         ? target.buildPhases
             .filter(
               (phase) =>
-                phase.kind === kind &&
-                (phaseName === undefined ? phase.name === undefined : phase.name === phaseName),
+                phase.kind === kind && (phaseName === undefined || phase.name === phaseName),
             )
             .map((phase) => ({
               targetId: target.id,
@@ -521,7 +505,7 @@ async function sourceFilesForTarget(options: {
       state.complete = false;
       return;
     }
-    const kind = typeof reference.kind === "string" ? reference.kind : "file";
+    const kind = typeof reference.kind === "string" ? reference.kind : "file-reference";
     const path = typeof reference.path === "string" ? reference.path : "";
     if (kind === "group") {
       const groupDirectory = path ? sourceReferencePath(projectDirectory, parent, path) : parent;
@@ -555,7 +539,8 @@ async function sourceFilesForTarget(options: {
       }
       return;
     }
-    if (kind !== "file") {
+    if (kind === "variant-group" || kind === "version-group") return;
+    if (kind !== "file-reference" && kind !== "file") {
       state.complete = false;
       return;
     }
