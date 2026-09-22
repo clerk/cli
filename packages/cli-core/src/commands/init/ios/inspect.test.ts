@@ -11,9 +11,11 @@ import {
   addVisionOSDestinationsToFixture,
   convertIOSFixtureToMultiplatform,
   createIOSFixture,
+  createIOSJSONFixture,
   IOS_FIXTURE_IDS,
   treeDigest,
 } from "./test-helpers.ts";
+import { applyXCProjValue } from "./xcproj.ts";
 
 const temporaryDirectories: string[] = [];
 const FILE_TRANSACTION_MODULE = `${import.meta.dir}/file-transaction.ts`;
@@ -834,6 +836,91 @@ describe("inspectIOSProject", () => {
       targetName: "MyApp",
       projectPath: "MyApp.xcodeproj",
     });
+  });
+
+  test("inspects an Xcode JSON project through the shared semantic model", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-inspect-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.selection).toEqual({
+      state: "selected",
+      targetId: "C1E000000000000000000001",
+      targetName: "MyApp",
+      projectPath: "MyApp.xcodeproj",
+      platform: "ios",
+    });
+    expect(inspection.projects[0]).toMatchObject({
+      path: "MyApp.xcodeproj",
+      projectFilePath: "MyApp.xcodeproj/project.xcproj",
+      projectFormat: "xcproj",
+      packages: [],
+    });
+    expect(inspection.appTargets[0]).toMatchObject({
+      name: "MyApp",
+      platform: "ios",
+      supportedPlatforms: ["ios"],
+      platformEvidenceComplete: true,
+      packages: { package: "absent", clerkKit: "absent", clerkKitUI: "absent" },
+      swift: {
+        evidenceComplete: true,
+        sourceFilesScanned: 2,
+        entryPoints: [{ path: "MyApp/MyAppApp.swift" }],
+      },
+    });
+    expect(inspection.appTargets[0]?.configurations).toHaveLength(2);
+    expect(inspection.appTargets[0]?.configurations[0]?.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.MyApp",
+    });
+    expect(inspection.appTargets[0]?.configurations[0]?.entitlements).toMatchObject({
+      associatedDomains: ["webcredentials:clerk.example.test"],
+      literalAppIdentifierPrefix: "LEGACY1234",
+      teamIdentifier: "ABCDE12345",
+    });
+    expect(inspection.diagnostics).toEqual([]);
+  });
+
+  test("resolves project-anchored JSON source references from nested groups", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-project-anchor-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    const source = await readFile(projectPath, "utf8");
+    await Bun.write(
+      projectPath,
+      applyXCProjValue(
+        source,
+        ["files"],
+        [
+          {
+            kind: "group",
+            path: "Nested",
+            children: [
+              {
+                path: "<PROJECT>/MyApp/MyAppApp.swift",
+                "target-membership": ["MyApp/compile-sources"],
+              },
+              {
+                path: "<PROJECT>/MyApp/ContentView.swift",
+                "target-membership": ["MyApp/compile-sources"],
+              },
+            ],
+          },
+        ],
+      ),
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.swift).toMatchObject({
+      evidenceComplete: true,
+      sourceFilesScanned: 2,
+      entryPoints: [{ path: "MyApp/MyAppApp.swift" }],
+    });
+    expect(inspection.diagnostics).toEqual([]);
   });
 
   test("extracts the App ID Prefix when Bundle ID casing differs", async () => {

@@ -731,7 +731,7 @@ function configurationReferences(
 
 async function settingsForConfiguration(
   root: string,
-  projectPath: string,
+  projectDocumentRelativePath: string,
   projectDirectory: string,
   groupRootDirectory: string,
   configuration: PbxObject | undefined,
@@ -790,7 +790,7 @@ async function settingsForConfiguration(
           remedy: "Use a literal checked-in base xcconfig path before automating setup.",
           evidence: [
             {
-              path: relativeIOSPath(root, resolve(projectPath, "project.pbxproj")),
+              path: projectDocumentRelativePath,
               objectId: anchor ?? baseReference,
               keyPath: referenceKey,
             },
@@ -815,7 +815,7 @@ async function settingsForConfiguration(
         remedy: "Repair the base xcconfig file reference before automating setup.",
         evidence: [
           {
-            path: relativeIOSPath(root, resolve(projectPath, "project.pbxproj")),
+            path: projectDocumentRelativePath,
             objectId: anchor ?? baseReference,
             keyPath: referenceKey,
           },
@@ -954,12 +954,12 @@ function resolveContextVariants(
 
 function missingConfiguration(
   root: string,
-  projectPath: string,
+  projectDocumentPath: string,
   configurationId: string,
   platform: IOSNativePlatform = "ios",
 ): InspectedTargetConfiguration {
   const evidence: IOSSourceEvidence = {
-    path: relativeIOSPath(root, resolve(projectPath, "project.pbxproj")),
+    path: relativeIOSPath(root, projectDocumentPath),
     objectId: configurationId,
     keyPath: "buildConfigurations",
   };
@@ -988,6 +988,8 @@ function missingConfiguration(
 export async function inspectTargetBuildConfigurations(options: {
   root: string;
   projectPath: string;
+  /** Defaults to the legacy project.pbxproj document inside projectPath. */
+  projectDocumentPath?: string;
   groupRootDirectory: string;
   projectObject: PbxObject;
   targetId: string;
@@ -1001,6 +1003,7 @@ export async function inspectTargetBuildConfigurations(options: {
   const {
     root,
     projectPath,
+    projectDocumentPath = resolve(projectPath, "project.pbxproj"),
     groupRootDirectory,
     projectObject,
     targetId,
@@ -1011,12 +1014,12 @@ export async function inspectTargetBuildConfigurations(options: {
     platform: requestedPlatform,
   } = options;
   const projectDirectory = dirname(projectPath);
-  const pbxprojRelativePath = relativeIOSPath(root, resolve(projectPath, "project.pbxproj"));
+  const projectDocumentRelativePath = relativeIOSPath(root, projectDocumentPath);
   const projectConfigurationReferences = configurationReferences(
     asString(projectObject.buildConfigurationList),
     objects,
     diagnostics,
-    pbxprojRelativePath,
+    projectDocumentRelativePath,
     "PBXProject",
   );
   const projectConfigsByName = new Map(
@@ -1029,7 +1032,7 @@ export async function inspectTargetBuildConfigurations(options: {
     asString(targetObject.buildConfigurationList),
     objects,
     diagnostics,
-    pbxprojRelativePath,
+    projectDocumentRelativePath,
     `Target ${targetName}`,
   );
   const inspected: InspectedTargetConfiguration[] = [];
@@ -1040,7 +1043,12 @@ export async function inspectTargetBuildConfigurations(options: {
     const targetConfig = targetReference.object;
     if (!targetConfig) {
       inspected.push(
-        missingConfiguration(root, projectPath, targetReference.id, requestedPlatform ?? "ios"),
+        missingConfiguration(
+          root,
+          projectDocumentPath,
+          targetReference.id,
+          requestedPlatform ?? "ios",
+        ),
       );
       continue;
     }
@@ -1056,7 +1064,7 @@ export async function inspectTargetBuildConfigurations(options: {
       };
       const projectSettings = await settingsForConfiguration(
         root,
-        projectPath,
+        projectDocumentRelativePath,
         projectDirectory,
         groupRootDirectory,
         projectConfigsByName.get(name),
@@ -1069,7 +1077,7 @@ export async function inspectTargetBuildConfigurations(options: {
       );
       const evaluation = await settingsForConfiguration(
         root,
-        projectPath,
+        projectDocumentRelativePath,
         projectDirectory,
         groupRootDirectory,
         targetConfig,
@@ -1111,7 +1119,7 @@ export async function inspectTargetBuildConfigurations(options: {
 
     if (evaluatedContexts.length === 0) continue;
     const evidence = (setting: string): IOSSourceEvidence => ({
-      path: pbxprojRelativePath,
+      path: projectDocumentRelativePath,
       objectId: targetId,
       keyPath: `buildConfigurations.${name}.buildSettings.${setting}`,
     });

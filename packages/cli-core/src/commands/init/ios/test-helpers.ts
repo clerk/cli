@@ -1,5 +1,5 @@
-import { lstat, mkdir, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { cp, lstat, mkdir, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
 import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
 import type { PbxObjects } from "./pbx.ts";
 
@@ -40,6 +40,8 @@ const IDS = {
   secondSourceBuildFile: "434343434343434343434343",
   secondFrameworksPhase: "444444444444444444444444",
 } as const;
+
+const IOS_JSON_FIXTURE = resolve(import.meta.dir, "../../../../../../test/e2e/fixtures/ios-json");
 
 export interface IOSFixtureOptions {
   complete?: boolean;
@@ -329,6 +331,11 @@ export async function createIOSFixture(
   if (options.generated === "xcodegen") await Bun.write(join(root, "project.yml"), "name: MyApp\n");
   if (options.generated === "tuist")
     await Bun.write(join(root, "Project.swift"), "import ProjectDescription\n");
+}
+
+/** Copies the canonical Xcode JSON project fixture into a temporary test root. */
+export async function createIOSJSONFixture(root: string): Promise<void> {
+  await cp(IOS_JSON_FIXTURE, root, { recursive: true });
 }
 
 /** Converts the classic fixture into the modern synchronized-root shape used by new Xcode apps. */

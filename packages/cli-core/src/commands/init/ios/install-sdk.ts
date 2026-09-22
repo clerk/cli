@@ -8,6 +8,7 @@ import semver from "semver";
 import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import { localClerkIOSPackageIsStructurallyValid } from "./local-package.ts";
+import { resolveXcodeProjectDocument } from "./project-document.ts";
 import {
   applyIOSExistingFileTransaction,
   hashIOSFileBytes,
@@ -24,6 +25,10 @@ import {
   type PbxObjects,
 } from "./pbx.ts";
 import type { IOSNativePlatform } from "./types.ts";
+import {
+  prepareXCProjSDKInstall,
+  validateXCProjSDKInstallPostcondition,
+} from "./xcproj-install-sdk.ts";
 
 const APP_PRODUCT_TYPE = "com.apple.product-type.application";
 const CLERK_REPOSITORY = "https://github.com/clerk/clerk-ios";
@@ -95,7 +100,7 @@ export interface IOSSDKInstallPlan {
   products: IOSSDKProduct[];
   minimumVersion: string;
   requirePrebuiltAuthCompatibility?: true;
-  /** SHA-256 of the exact project.pbxproj bytes this plan was made from. */
+  /** SHA-256 of the exact Xcode project document bytes this plan was made from. */
   expectedPbxprojHash?: string;
   actions: string[];
   blockers: IOSSDKInstallBlocker[];
@@ -806,114 +811,20 @@ function validateCandidateGraph(
   return true;
 }
 
-async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedInstall> {
-  const root = resolve(options.root);
-  const suppliedProjectPath = options.projectPath.replaceAll("\\", "/");
-  const minimumVersion = effectiveMinimumVersion(options);
-  if (
-    !options.targetId ||
-    !suppliedProjectPath ||
-    isAbsolute(options.projectPath) ||
-    !suppliedProjectPath.endsWith(".xcodeproj") ||
-    !validMinimumVersion(minimumVersion)
-  ) {
-    return blocked(
-      options,
-      root,
-      suppliedProjectPath,
-      "invalid-selection",
-      "A selected root-relative .xcodeproj, target object ID, and valid minimum version are required.",
-    );
-  }
+interface VerifiedInstallTarget {
+  options: IOSSDKInstallOptions;
+  inspection: Awaited<ReturnType<typeof inspectIOSProject>>;
+  generator: "xcodegen" | "tuist" | null;
+  supportedPlatforms: IOSNativePlatform[];
+}
 
-  const absoluteProjectPath = resolve(root, suppliedProjectPath);
-  const projectPath = relativeIOSPath(root, absoluteProjectPath);
-  const pbxprojPath = resolve(absoluteProjectPath, "project.pbxproj");
-  if (
-    !(await pathIsSafelyWithinIOSRoot(root, absoluteProjectPath)) ||
-    !(await pathIsSafelyWithinIOSRoot(root, pbxprojPath))
-  ) {
-    return blocked(
-      options,
-      root,
-      projectPath,
-      "external-path",
-      `${projectPath}/project.pbxproj resolves outside the project root.`,
-      { pbxprojPath },
-    );
-  }
-
-  const read = await readBoundedRegularFile(pbxprojPath, MAX_PBXPROJ_BYTES);
-  if (read.status !== "ok") {
-    return blocked(
-      options,
-      root,
-      projectPath,
-      "unreadable-project",
-      `${projectPath}/project.pbxproj is missing, too large, symlinked, or unreadable.`,
-      { pbxprojPath },
-    );
-  }
-  const originalBytes = read.bytes;
-  const originalHash = hashIOSFileBytes(originalBytes);
-  const boundary = await prepareIOSFileMutationBoundary(root, pbxprojPath);
-  if (!boundary) {
-    return blocked(
-      options,
-      root,
-      projectPath,
-      "external-path",
-      `${projectPath}/project.pbxproj moved outside its prepared project boundary.`,
-    );
-  }
-  const source = {
-    pbxprojPath,
-    boundary,
-    originalBytes,
-    originalHash,
-    mode: read.mode,
-  };
-
-  let originalText: string;
-  let parsed: ReturnType<typeof parsePbxProject>;
-  try {
-    originalText = new TextDecoder("utf-8", { fatal: true }).decode(originalBytes);
-    parsed = parsePbxProject(originalText);
-  } catch {
-    return blocked(
-      options,
-      root,
-      projectPath,
-      "malformed-project",
-      `${projectPath}/project.pbxproj could not be parsed safely.`,
-      source,
-    );
-  }
-  const parsedParts = projectParts(parsed, options.targetId);
-  if (!parsedParts) {
-    return blocked(
-      options,
-      root,
-      projectPath,
-      "target-not-found",
-      `The selected target ${options.targetId} does not exist in ${projectPath}.`,
-      source,
-    );
-  }
-  if (
-    parsedParts.targetObject.isa !== "PBXNativeTarget" ||
-    asString(parsedParts.targetObject.productType) !== APP_PRODUCT_TYPE
-  ) {
-    return blocked(
-      options,
-      root,
-      projectPath,
-      "target-not-found",
-      `The selected object ${options.targetId} is not an application target.`,
-      source,
-    );
-  }
-
+async function verifyInstallTarget(
+  options: IOSSDKInstallOptions,
+  root: string,
+  projectPath: string,
+  absoluteProjectPath: string,
+  source: Omit<PreparedInstall, "plan">,
+): Promise<PreparedInstall | VerifiedInstallTarget> {
   const inspection = await inspectIOSProject(root, {
     target: options.targetId,
     exhaustiveContainerDiscovery: true,
@@ -955,6 +866,7 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
       source,
     );
   }
+
   const platform = inspection.selection.platform;
   const inspectedTarget = inspection.appTargets.find(
     (target) => target.id === options.targetId && target.projectPath === projectPath,
@@ -1000,6 +912,7 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
     );
   }
   options = { ...options, platform, supportedPlatforms };
+
   for (const supportedPlatform of supportedPlatforms) {
     const platformInspection =
       supportedPlatform === platform
@@ -1056,6 +969,240 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
       );
     }
   }
+
+  return { options, inspection, generator, supportedPlatforms };
+}
+
+async function prepareXCProjInstallDocument(
+  requestedOptions: IOSSDKInstallOptions,
+  root: string,
+  projectPath: string,
+  absoluteProjectPath: string,
+  source: Omit<PreparedInstall, "plan">,
+): Promise<PreparedInstall> {
+  const verified = await verifyInstallTarget(
+    requestedOptions,
+    root,
+    projectPath,
+    absoluteProjectPath,
+    source,
+  );
+  if ("plan" in verified) return verified;
+  const { options, inspection, generator, supportedPlatforms } = verified;
+
+  const products = requestedProducts(options.includeClerkKitUI);
+  const resolved = await resolvedClerkVersions(root, projectPath, inspection);
+  const prepared = await prepareXCProjSDKInstall({
+    root,
+    projectPath: absoluteProjectPath,
+    source: source.originalBytes!,
+    targetId: options.targetId,
+    products,
+    supportedPlatforms,
+    minimumVersion: effectiveMinimumVersion(options),
+    requiredCompatibilityVersion: requiredCompatibilityVersion(
+      options.requirePrebuiltAuthCompatibility === true,
+    ),
+    requirePrebuiltAuthCompatibility: options.requirePrebuiltAuthCompatibility === true,
+    resolvedClerkVersions: resolved,
+  });
+  if (prepared.status === "blocked") {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      prepared.blocker.code,
+      prepared.blocker.message,
+      source,
+    );
+  }
+  if (prepared.status === "satisfied") {
+    return {
+      ...source,
+      plan: makePlan(options, root, projectPath, "satisfied", {
+        expectedPbxprojHash: source.originalHash,
+      }),
+    };
+  }
+  if (generator) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "generated-project",
+      `This is a ${
+        generator === "xcodegen" ? "XcodeGen" : "Tuist"
+      } project; update its source manifest instead of generated project output.`,
+      source,
+    );
+  }
+  return {
+    ...source,
+    candidateBytes: prepared.candidateBytes,
+    candidateHash: hashIOSFileBytes(prepared.candidateBytes),
+    plan: makePlan(options, root, projectPath, "ready", {
+      actions: prepared.actions,
+      expectedPbxprojHash: source.originalHash,
+    }),
+  };
+}
+
+async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedInstall> {
+  const root = resolve(options.root);
+  const suppliedProjectPath = options.projectPath.replaceAll("\\", "/");
+  const minimumVersion = effectiveMinimumVersion(options);
+  if (
+    !options.targetId ||
+    !suppliedProjectPath ||
+    isAbsolute(options.projectPath) ||
+    !suppliedProjectPath.endsWith(".xcodeproj") ||
+    !validMinimumVersion(minimumVersion)
+  ) {
+    return blocked(
+      options,
+      root,
+      suppliedProjectPath,
+      "invalid-selection",
+      "A selected root-relative .xcodeproj, target object ID, and valid minimum version are required.",
+    );
+  }
+
+  const absoluteProjectPath = resolve(root, suppliedProjectPath);
+  const projectPath = relativeIOSPath(root, absoluteProjectPath);
+  const documentResolution = await resolveXcodeProjectDocument(absoluteProjectPath);
+  const projectDocumentPath =
+    documentResolution.status === "found"
+      ? documentResolution.document.absolutePath
+      : resolve(absoluteProjectPath, "project.pbxproj");
+  if (
+    !(await pathIsSafelyWithinIOSRoot(root, absoluteProjectPath)) ||
+    !(await pathIsSafelyWithinIOSRoot(root, projectDocumentPath))
+  ) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "external-path",
+      `${projectPath}/${projectDocumentPath.split("/").at(-1)} resolves outside the project root.`,
+      { pbxprojPath: projectDocumentPath },
+    );
+  }
+
+  if (documentResolution.status !== "found") {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      documentResolution.status === "ambiguous" ? "malformed-project" : "unreadable-project",
+      documentResolution.status === "ambiguous"
+        ? `${projectPath} contains both project.pbxproj and project.xcproj, so its project format is ambiguous.`
+        : `${projectPath} has no readable Xcode project document.`,
+      { pbxprojPath: projectDocumentPath },
+    );
+  }
+
+  const read = await readBoundedRegularFile(projectDocumentPath, MAX_PBXPROJ_BYTES);
+  if (read.status !== "ok") {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "unreadable-project",
+      `${projectPath}/${documentResolution.document.fileName} is missing, too large, symlinked, or unreadable.`,
+      { pbxprojPath: projectDocumentPath },
+    );
+  }
+  const originalBytes = read.bytes;
+  const originalHash = hashIOSFileBytes(originalBytes);
+  const boundary = await prepareIOSFileMutationBoundary(root, projectDocumentPath);
+  if (!boundary) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "external-path",
+      `${projectPath}/${documentResolution.document.fileName} moved outside its prepared project boundary.`,
+    );
+  }
+  const source = {
+    pbxprojPath: projectDocumentPath,
+    boundary,
+    originalBytes,
+    originalHash,
+    mode: read.mode,
+  };
+
+  if (documentResolution.document.format === "xcproj") {
+    try {
+      return await prepareXCProjInstallDocument(
+        options,
+        root,
+        projectPath,
+        absoluteProjectPath,
+        source,
+      );
+    } catch {
+      return blocked(
+        options,
+        root,
+        projectPath,
+        "malformed-project",
+        `${projectPath}/project.xcproj could not be parsed safely.`,
+        source,
+      );
+    }
+  }
+
+  let originalText: string;
+  let parsed: ReturnType<typeof parsePbxProject>;
+  try {
+    originalText = new TextDecoder("utf-8", { fatal: true }).decode(originalBytes);
+    parsed = parsePbxProject(originalText);
+  } catch {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "malformed-project",
+      `${projectPath}/project.pbxproj could not be parsed safely.`,
+      source,
+    );
+  }
+  const parsedParts = projectParts(parsed, options.targetId);
+  if (!parsedParts) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "target-not-found",
+      `The selected target ${options.targetId} does not exist in ${projectPath}.`,
+      source,
+    );
+  }
+  if (
+    parsedParts.targetObject.isa !== "PBXNativeTarget" ||
+    asString(parsedParts.targetObject.productType) !== APP_PRODUCT_TYPE
+  ) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "target-not-found",
+      `The selected object ${options.targetId} is not an application target.`,
+      source,
+    );
+  }
+
+  const verified = await verifyInstallTarget(
+    options,
+    root,
+    projectPath,
+    absoluteProjectPath,
+    source,
+  );
+  if ("plan" in verified) return verified;
+  ({ options } = verified);
+  const { inspection, generator, supportedPlatforms } = verified;
 
   // Parse a second model instead of structured-cloning. pbxproj data literals
   // can be Buffers, which structuredClone turns into writer-incompatible
@@ -1461,13 +1608,94 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
   };
 }
 
-/** @internal Postcondition for a combined PBX project and Swift source transaction. */
+/** @internal Postcondition for a combined Xcode project and Swift source transaction. */
 export async function validateIOSSDKInstallPostcondition(
   plan: IOSSDKInstallPlan,
 ): Promise<boolean> {
   const absoluteProjectPath = resolve(plan.root, plan.projectPath);
-  const pbxprojPath = resolve(absoluteProjectPath, "project.pbxproj");
+  const documentResolution = await resolveXcodeProjectDocument(absoluteProjectPath);
+  if (documentResolution.status !== "found") return false;
+  const pbxprojPath = documentResolution.document.absolutePath;
   if (!(await pathIsSafelyWithinIOSRoot(plan.root, pbxprojPath))) return false;
+
+  if (documentResolution.document.format === "xcproj") {
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await readFile(pbxprojPath));
+    } catch {
+      return false;
+    }
+    if (
+      !validateXCProjSDKInstallPostcondition(bytes, {
+        targetId: plan.targetId,
+        products: plan.products,
+        supportedPlatforms: plan.supportedPlatforms,
+      })
+    ) {
+      return false;
+    }
+    const inspection = await inspectIOSProject(plan.root, {
+      target: plan.targetId,
+      exhaustiveContainerDiscovery: true,
+      platform: plan.platform,
+    });
+    if (hasIncompleteIOSContainerDiscovery(inspection)) return false;
+    if (
+      inspection.generatedProject ||
+      (await generatedProjectKind(plan.root, absoluteProjectPath))
+    ) {
+      return false;
+    }
+    if (
+      inspection.selection.state !== "selected" ||
+      inspection.selection.targetId !== plan.targetId ||
+      inspection.selection.projectPath !== plan.projectPath ||
+      inspection.selection.platform !== plan.platform
+    ) {
+      return false;
+    }
+    const resolved = await resolvedClerkVersions(plan.root, plan.projectPath, inspection);
+    const prepared = await prepareXCProjSDKInstall({
+      root: plan.root,
+      projectPath: absoluteProjectPath,
+      source: bytes,
+      targetId: plan.targetId,
+      products: plan.products,
+      supportedPlatforms: plan.supportedPlatforms,
+      minimumVersion: plan.minimumVersion,
+      requiredCompatibilityVersion: requiredCompatibilityVersion(
+        plan.requirePrebuiltAuthCompatibility === true,
+      ),
+      requirePrebuiltAuthCompatibility: plan.requirePrebuiltAuthCompatibility === true,
+      resolvedClerkVersions: resolved,
+    });
+    if (prepared.status !== "satisfied") return false;
+    for (const platform of plan.supportedPlatforms) {
+      const platformInspection =
+        platform === plan.platform
+          ? inspection
+          : await inspectIOSProject(plan.root, {
+              target: plan.targetId,
+              exhaustiveContainerDiscovery: true,
+              platform,
+            });
+      if (
+        hasIncompleteIOSContainerDiscovery(platformInspection) ||
+        platformInspection.selection.state !== "selected" ||
+        platformInspection.selection.targetId !== plan.targetId ||
+        platformInspection.selection.projectPath !== plan.projectPath ||
+        platformInspection.selection.platform !== platform
+      ) {
+        return false;
+      }
+      const platformTarget = platformInspection.appTargets.find(
+        (item) => item.id === plan.targetId && item.projectPath === plan.projectPath,
+      );
+      if (!platformTarget?.platformEvidenceComplete) return false;
+    }
+    return true;
+  }
+
   let parsed: ReturnType<typeof parsePbxProject>;
   try {
     parsed = parsePbxProject(await readFile(pbxprojPath, "utf8"));
@@ -1567,7 +1795,7 @@ export async function planIOSSDKInstall(options: IOSSDKInstallOptions): Promise<
 
 /**
  * An internal SDK preparation result for a larger iOS file transaction. The
- * ready case contains candidate PBX bytes and must not be logged or serialized.
+ * ready case contains candidate Xcode project bytes and must not be logged or serialized.
  *
  * @internal
  */
@@ -1582,7 +1810,7 @@ export type PreparedIOSSDKInstallMutation =
     };
 
 /**
- * Reprepares a serialized SDK plan and exposes its PBX mutation without writing
+ * Reprepares a serialized SDK plan and exposes its Xcode project mutation without writing
  * it so a caller can combine it with Swift source mutations.
  *
  * @internal The ready result contains candidate bytes.
