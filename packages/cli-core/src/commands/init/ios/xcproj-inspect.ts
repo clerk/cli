@@ -351,6 +351,17 @@ function folderMembership(
   platform: IOSNativePlatform | undefined,
   state: { complete: boolean },
 ): { member: boolean; included: (path: string) => boolean } {
+  let opaqueFolders: string[];
+  try {
+    opaqueFolders =
+      reference["opaque-folders"] === undefined
+        ? []
+        : xcprojStringArray(reference["opaque-folders"]);
+  } catch {
+    state.complete = false;
+    opaqueFolders = [];
+  }
+  const opaque = new Set(opaqueFolders.map(normalizedPath));
   let members: string[];
   try {
     members =
@@ -428,6 +439,7 @@ function folderMembership(
   return {
     member: defaultMember || inclusions.size > 0,
     included(path) {
+      if (matchesPath(opaque, path)) return false;
       const base = defaultMember
         ? !matchesPath(exclusions, path)
         : matchesPathOrIncludedDescendant(inclusions, path);

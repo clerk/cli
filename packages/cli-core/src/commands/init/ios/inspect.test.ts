@@ -983,6 +983,77 @@ describe("inspectIOSProject", () => {
     expect(inspection.diagnostics).toEqual([]);
   });
 
+  test("does not inspect Swift sources below an opaque JSON folder", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-opaque-folder-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    const templateDirectory = join(root, "MyApp", "Templates");
+    await mkdir(templateDirectory, { recursive: true });
+    await Bun.write(
+      join(templateDirectory, "TemplateApp.swift"),
+      `import SwiftUI
+
+@main
+struct TemplateApp: App {
+  var body: some Scene { WindowGroup { Text("Template") } }
+}
+`,
+    );
+    await Bun.write(
+      projectPath,
+      applyXCProjValue(
+        await readFile(projectPath, "utf8"),
+        ["files", 0, "opaque-folders"],
+        ["Templates"],
+      ),
+    );
+
+    const inspection = await inspectIOSProject(root);
+    const membership = (await inspectIOSSourceMembership(root)).find(
+      (candidate) => candidate.targetId === "C1E000000000000000000001",
+    );
+
+    expect(inspection.appTargets[0]?.swift).toMatchObject({
+      evidenceComplete: true,
+      sourceFilesScanned: 2,
+      entryPoints: [{ path: "MyApp/MyAppApp.swift" }],
+    });
+    expect(membership).toMatchObject({ complete: true });
+    expect(membership?.files.map((file) => file.relativePath)).not.toContain(
+      "MyApp/Templates/TemplateApp.swift",
+    );
+    expect(inspection.diagnostics).toEqual([]);
+  });
+
+  test("marks malformed JSON opaque-folder metadata incomplete", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-malformed-opaque-folder-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    await Bun.write(
+      projectPath,
+      applyXCProjValue(
+        await readFile(projectPath, "utf8"),
+        ["files", 0, "opaque-folders"],
+        "Templates",
+      ),
+    );
+
+    const inspection = await inspectIOSProject(root);
+    const membership = (await inspectIOSSourceMembership(root)).find(
+      (candidate) => candidate.targetId === "C1E000000000000000000001",
+    );
+
+    expect(inspection.appTargets[0]?.swift.evidenceComplete).toBe(false);
+    expect(membership?.complete).toBe(false);
+    expect(
+      inspection.diagnostics.some(
+        (diagnostic) => diagnostic.code === "xcode.incomplete-source-membership",
+      ),
+    ).toBe(true);
+  });
+
   test("extracts the App ID Prefix when Bundle ID casing differs", async () => {
     const root = await fixture({ complete: true });
     const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");

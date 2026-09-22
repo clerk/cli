@@ -889,6 +889,66 @@ struct MyApp: App {
     expect(await readFile(absoluteSharedSourcePath)).toEqual(before);
   });
 
+  test("ignores an @main Swift template below an opaque JSON folder", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-opaque-folder-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    const templateDirectory = join(root, "MyApp", "Templates");
+    await mkdir(templateDirectory, { recursive: true });
+    await writeFile(
+      join(templateDirectory, "TemplateApp.swift"),
+      `import SwiftUI
+
+@main
+struct TemplateApp: App {
+  var body: some Scene { WindowGroup { Text("Template") } }
+}
+`,
+    );
+    await writeFile(
+      projectPath,
+      applyXCProjValue(
+        await readFile(projectPath, "utf8"),
+        ["files", 0, "opaque-folders"],
+        ["Templates"],
+      ),
+    );
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.sourcePath).toBe("MyApp/MyAppApp.swift");
+  });
+
+  test("refuses mutation when JSON opaque-folder metadata is malformed", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-malformed-opaque-folder-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    await writeFile(
+      projectPath,
+      applyXCProjValue(
+        await readFile(projectPath, "utf8"),
+        ["files", 0, "opaque-folders"],
+        "Templates",
+      ),
+    );
+    const before = await readFile(appSourcePath(root));
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+    expect(await readFile(appSourcePath(root))).toEqual(before);
+  });
+
   test.each([
     ["named", "SharedTarget/compile-sources/Shared Sources"],
     ["ID-based", "id:SHARED-SOURCES-PHASE"],

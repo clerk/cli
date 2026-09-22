@@ -179,7 +179,16 @@ function validateConfiguration(value: unknown): void {
   const record = xcprojRecord(value);
   xcprojString(record.name);
   optionalString(record, "id");
-  if (record.file !== undefined && typeof record.file !== "string") xcprojRecord(record.file);
+  if (record.file !== undefined && typeof record.file !== "string") {
+    if (Array.isArray(record.file)) {
+      for (const component of xcprojArray(record.file)) {
+        if (typeof component === "string") continue;
+        xcprojString(xcprojRecord(component).name);
+      }
+    } else {
+      xcprojRecord(record.file);
+    }
+  }
 }
 
 function normalizeBuildPhase(value: unknown): XCProjBuildPhase {

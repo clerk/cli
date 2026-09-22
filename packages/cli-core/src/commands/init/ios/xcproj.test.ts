@@ -106,6 +106,32 @@ describe("parseXCProjSource", () => {
     expect(parseXCProjSource(bytes).root["default-configuration"]).toBe("Release");
   });
 
+  test("accepts component-array configuration file references", () => {
+    const source = XCODE_GENERATED_PROJECT.replace(
+      '{ "anchor": "App", "relative-path": "Config.xcconfig" }',
+      '[ { "name": "Build/Settings" }, "Base.xcconfig" ]',
+    );
+
+    expect(parseXCProjSource(source).root.configurations).toEqual([
+      "Debug",
+      {
+        name: "Release",
+        file: [{ name: "Build/Settings" }, "Base.xcconfig"],
+      },
+    ]);
+  });
+
+  test("rejects malformed component-array configuration file references", () => {
+    const source = XCODE_GENERATED_PROJECT.replace(
+      '{ "anchor": "App", "relative-path": "Config.xcconfig" }',
+      '[ { "wrong": "Build/Settings" }, "Base.xcconfig" ]',
+    );
+
+    expect(() => parseXCProjSource(source)).toThrow(
+      expect.objectContaining({ code: "invalid-schema" }),
+    );
+  });
+
   test("rejects input before decoding when it exceeds the byte bound", () => {
     expect(() => parseXCProjSource(XCODE_GENERATED_PROJECT, { maxBytes: 16 })).toThrow(
       expect.objectContaining({ code: "too-large" }),
