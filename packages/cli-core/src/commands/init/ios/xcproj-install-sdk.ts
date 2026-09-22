@@ -402,9 +402,17 @@ export async function prepareXCProjSDKInstall(
     );
   }
   let selectedPackage = packageScan.verified[0];
+  const membersResult = productMembers(selected.target);
+  if (!Array.isArray(membersResult)) return membersResult;
   let candidate = parsed.source;
   const actions: string[] = [];
   if (!selectedPackage) {
+    if (membersResult.some((member) => member.packageIdentity === undefined)) {
+      return blocked(
+        "unattributed-product",
+        "The selected target already links a Clerk product without identifying which Swift package supplies it, so Clerk cannot add another package safely.",
+      );
+    }
     if (packageScan.unsafeLocalIdentity) {
       return blocked(
         "external-path",
@@ -435,8 +443,6 @@ export async function prepareXCProjSDKInstall(
     if (compatibility) return compatibility;
   }
 
-  const membersResult = productMembers(selected.target);
-  if (!Array.isArray(membersResult)) return membersResult;
   const memberBlocker = validateProductMembers(
     membersResult,
     selectedPackage,

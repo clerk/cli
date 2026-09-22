@@ -331,6 +331,42 @@ describe("missing iOS entitlements build settings", () => {
     ).toMatchObject({ status: "ready", blockers: [] });
   });
 
+  test("accepts unrelated explicit and resource-group references in Xcode JSON ownership", async () => {
+    const root = await temporaryRoot();
+    await createIOSJSONFixture(root);
+    const path = xcprojPath(root);
+    let source = await readFile(path, "utf8");
+    source = applyXCProjValue(
+      source,
+      ["targets", 0, "build-settings", "CODE_SIGN_ENTITLEMENTS"],
+      undefined,
+    );
+    source = applyXCProjValue(source, ["files", 2], {
+      kind: "file-reference",
+      path: "README.md",
+    });
+    source = applyXCProjValue(source, ["files", 3], {
+      kind: "variant-group",
+      name: "Localizable.strings",
+      children: [{ kind: "file-reference", path: "en.lproj/Localizable.strings" }],
+    });
+    source = applyXCProjValue(source, ["files", 4], {
+      kind: "version-group",
+      path: "Model.xcdatamodeld",
+      children: [{ kind: "file-reference", path: "Model.xcdatamodel" }],
+    });
+    await writeFile(path, source);
+    await rm(entitlementsPath(root));
+
+    expect(
+      await planIOSMissingEntitlementsSettings({
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: "C1E000000000000000000001",
+      }),
+    ).toMatchObject({ status: "ready", blockers: [] });
+  });
+
   test("fails closed on an unresolved other-target Xcode JSON xcconfig", async () => {
     const root = await makeXCProjMissingEntitlementsWithOtherTarget(
       "CODE_SIGN_ENTITLEMENTS = $(TESTS_ENTITLEMENTS_DIR)/MyAppTests.entitlements\n",
