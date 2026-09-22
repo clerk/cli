@@ -942,6 +942,47 @@ describe("inspectIOSProject", () => {
     expect(owners.every((membership) => membership.complete)).toBe(true);
   });
 
+  test("accepts attribute-only JSON folder exceptions and applies their platform filters", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-attribute-exception-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    const source = await readFile(projectPath, "utf8");
+    await Bun.write(
+      projectPath,
+      applyXCProjValue(
+        source,
+        ["files", 0, "membership-exceptions"],
+        [
+          {
+            target: "MyApp",
+            platforms: { "ContentView.swift": ["macos"] },
+            attributes: { "ContentView.swift": { "code-generation": "skip" } },
+          },
+        ],
+      ),
+    );
+
+    const inspection = await inspectIOSProject(root);
+    const membership = (await inspectIOSSourceMembership(root)).find(
+      (candidate) => candidate.targetId === "C1E000000000000000000001",
+    );
+
+    expect(inspection.appTargets[0]?.swift).toMatchObject({
+      evidenceComplete: true,
+      sourceFilesScanned: 1,
+      entryPoints: [{ path: "MyApp/MyAppApp.swift" }],
+    });
+    expect(membership).toMatchObject({
+      complete: true,
+    });
+    expect(membership?.files.map((file) => file.relativePath)).toEqual([
+      "MyApp/ContentView.swift",
+      "MyApp/MyAppApp.swift",
+    ]);
+    expect(inspection.diagnostics).toEqual([]);
+  });
+
   test("extracts the App ID Prefix when Bundle ID casing differs", async () => {
     const root = await fixture({ complete: true });
     const entitlementsPath = join(root, "MyApp", "MyApp.entitlements");

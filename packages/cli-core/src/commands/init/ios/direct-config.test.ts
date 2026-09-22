@@ -31,6 +31,7 @@ import {
   IOS_FIXTURE_IDS,
   treeDigest,
 } from "./test-helpers.ts";
+import { applyXCProjValue } from "./xcproj.ts";
 
 const DEVELOPMENT_KEY = `pk_test_${Buffer.from("direct-config.clerk.accounts.dev$").toString("base64")}`;
 const OTHER_DEVELOPMENT_KEY = `pk_test_${Buffer.from("other-app.clerk.accounts.dev$").toString("base64")}`;
@@ -969,6 +970,97 @@ struct MyApp: App {
     expect(plan.status).toBe("blocked");
     expect(blockerCodes(plan)).toContain("shared-source");
     expect(await readFile(absoluteSharedSourcePath)).toEqual(before);
+  });
+
+  test.each([
+    ["named", "SharedTarget/compile-sources/Shared Sources"],
+    ["ID-based", "id:SHARED-SOURCES-PHASE"],
+    ["component-array", ["SharedTarget", "compile-sources", { name: "Shared/Sources" }]],
+  ] as const)(
+    "refuses an entry source shared through a %s JSON source-phase reference",
+    async (_description, phaseReference) => {
+      const root = await temporaryRoot("clerk-xcproj-direct-config-phase-reference-");
+      await createIOSJSONFixture(root);
+      const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+      let project = await readFile(projectPath, "utf8");
+      project = applyXCProjValue(project, ["files", 2], {
+        path: "<PROJECT>/MyApp/MyAppApp.swift",
+        "target-membership": [
+          Array.isArray(phaseReference) ? { "build-phase": phaseReference } : phaseReference,
+        ],
+      });
+      project = applyXCProjValue(project, ["targets", 1], {
+        name: "SharedTarget",
+        id: "C1E000000000000000000099",
+        "product-type": "application",
+        "build-phases": [
+          {
+            kind: "compile-sources",
+            name: Array.isArray(phaseReference) ? "Shared/Sources" : "Shared Sources",
+            id: "SHARED-SOURCES-PHASE",
+          },
+        ],
+        "build-settings": {
+          DEVELOPMENT_TEAM: "ABCDE12345",
+          IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+          PRODUCT_BUNDLE_IDENTIFIER: "com.example.SharedTarget",
+          SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+        },
+      });
+      await writeFile(projectPath, project);
+      const before = await readFile(appSourcePath(root));
+
+      const plan = await planIOSDirectConfig({
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: "C1E000000000000000000001",
+      });
+
+      expect(plan.status).toBe("blocked");
+      expect(blockerCodes(plan)).toContain("shared-source");
+      expect(await readFile(appSourcePath(root))).toEqual(before);
+    },
+  );
+
+  test("refuses an entry source added to another target by a JSON folder build-phase exception", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-phase-exception-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    let project = await readFile(projectPath, "utf8");
+    project = applyXCProjValue(
+      project,
+      ["files", 0, "membership-exceptions"],
+      [
+        {
+          "build-phase": "SharedTarget/compile-sources",
+          inclusions: ["MyAppApp.swift"],
+        },
+      ],
+    );
+    project = applyXCProjValue(project, ["targets", 1], {
+      name: "SharedTarget",
+      id: "C1E000000000000000000099",
+      "product-type": "application",
+      "build-phases": ["compile-sources"],
+      "build-settings": {
+        DEVELOPMENT_TEAM: "ABCDE12345",
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+        PRODUCT_BUNDLE_IDENTIFIER: "com.example.SharedTarget",
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+      },
+    });
+    await writeFile(projectPath, project);
+    const before = await readFile(appSourcePath(root));
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("shared-source");
+    expect(await readFile(appSourcePath(root))).toEqual(before);
   });
 
   test.each(["build-phases", "source-phase-files"] as const)(

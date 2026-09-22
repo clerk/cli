@@ -19,6 +19,7 @@ import type {
 } from "./types.ts";
 import {
   XCProjError,
+  type XCProjBuildPhaseKind,
   type XCProjRecord,
   type XCProjTarget,
   xcprojArray,
@@ -212,6 +213,79 @@ function normalizedPath(path: string): string {
   return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
 }
 
+interface ResolvedProjectBuildPhase {
+  targetId: string;
+  targetName: string;
+  kind: XCProjBuildPhaseKind;
+}
+
+type ProjectBuildPhaseResolver = (value: unknown) => ResolvedProjectBuildPhase | undefined;
+
+function buildPhaseNamePath(value: unknown): string[] | undefined {
+  if (typeof value === "string") return value.split("/");
+  if (!Array.isArray(value)) return undefined;
+  const components: string[] = [];
+  for (const raw of value) {
+    if (typeof raw === "string") {
+      // A literal child named "." or ".." is encoded as { name }, while a
+      // bare string has relative-path semantics and is invalid in this reference.
+      if (raw === "." || raw === "..") return undefined;
+      components.push(raw);
+      continue;
+    }
+    if (
+      typeof raw !== "object" ||
+      raw === null ||
+      Array.isArray(raw) ||
+      typeof (raw as XCProjRecord).name !== "string"
+    ) {
+      return undefined;
+    }
+    components.push((raw as XCProjRecord).name as string);
+  }
+  return components;
+}
+
+function projectBuildPhaseResolver(document: XCProjRecord): ProjectBuildPhaseResolver {
+  const targets = xcprojTargets(document);
+  return (value) => {
+    if (typeof value === "string" && value.startsWith("id:")) {
+      const objectId = value.slice("id:".length);
+      if (!objectId) return undefined;
+      const matches = targets.flatMap((target) =>
+        target.buildPhases
+          .filter((phase) => phase.id === objectId)
+          .map((phase) => ({
+            targetId: target.id,
+            targetName: target.name,
+            kind: phase.kind,
+          })),
+      );
+      return matches.length === 1 ? matches[0] : undefined;
+    }
+
+    const components = buildPhaseNamePath(value);
+    if (!components || (components.length !== 2 && components.length !== 3)) return undefined;
+    const [targetName, kind, phaseName] = components;
+    const matches = targets.flatMap((target) =>
+      target.name === targetName
+        ? target.buildPhases
+            .filter(
+              (phase) =>
+                phase.kind === kind &&
+                (phaseName === undefined ? phase.name === undefined : phase.name === phaseName),
+            )
+            .map((phase) => ({
+              targetId: target.id,
+              targetName: target.name,
+              kind: phase.kind,
+            }))
+        : [],
+    );
+    return matches.length === 1 ? matches[0] : undefined;
+  };
+}
+
 function sourceReferencePath(
   projectDirectory: string,
   parent: string,
@@ -272,7 +346,8 @@ async function collectSwiftFiles(
 
 function folderMembership(
   reference: XCProjRecord,
-  targetName: string,
+  target: XCProjTarget,
+  resolveBuildPhase: ProjectBuildPhaseResolver,
   platform: IOSNativePlatform | undefined,
   state: { complete: boolean },
 ): { member: boolean; included: (path: string) => boolean } {
@@ -286,7 +361,7 @@ function folderMembership(
     state.complete = false;
     members = [];
   }
-  const defaultMember = members.includes(targetName);
+  const defaultMember = members.includes(target.name);
   const inclusions = new Set<string>();
   const exclusions = new Set<string>();
   const filters = new Map<string, unknown>();
@@ -303,17 +378,39 @@ function folderMembership(
     let exception: XCProjRecord;
     try {
       exception = xcprojRecord(raw);
-      if (exception.target !== targetName) continue;
-      const hasInclusions = Object.hasOwn(exception, "inclusions");
-      const hasExclusions = Object.hasOwn(exception, "exclusions");
-      if (hasInclusions === hasExclusions) {
+      const hasTarget = Object.hasOwn(exception, "target");
+      const hasBuildPhase = Object.hasOwn(exception, "build-phase");
+      if (hasTarget === hasBuildPhase) {
         state.complete = false;
         continue;
       }
-      for (const path of xcprojStringArray(
-        exception[hasInclusions ? "inclusions" : "exclusions"],
-      )) {
-        (hasInclusions ? inclusions : exclusions).add(normalizedPath(path));
+
+      let buildPhaseException = false;
+      if (hasTarget) {
+        if (xcprojString(exception.target) !== target.name) continue;
+      } else {
+        const phase = resolveBuildPhase(exception["build-phase"]);
+        if (!phase) {
+          state.complete = false;
+          continue;
+        }
+        if (phase.targetId !== target.id) continue;
+        if (phase.kind !== "compile-sources") continue;
+        buildPhaseException = true;
+      }
+
+      const hasInclusions = Object.hasOwn(exception, "inclusions");
+      const hasExclusions = Object.hasOwn(exception, "exclusions");
+      if ((hasInclusions && hasExclusions) || (buildPhaseException && hasExclusions)) {
+        state.complete = false;
+        continue;
+      }
+      if (hasInclusions || hasExclusions) {
+        for (const path of xcprojStringArray(
+          exception[hasInclusions ? "inclusions" : "exclusions"],
+        )) {
+          (hasInclusions ? inclusions : exclusions).add(normalizedPath(path));
+        }
       }
       if (exception.platforms !== undefined) {
         const byPath = xcprojRecord(exception.platforms);
@@ -348,7 +445,8 @@ function folderMembership(
 
 function fileBelongsToSources(
   reference: XCProjRecord,
-  targetName: string,
+  target: XCProjTarget,
+  resolveBuildPhase: ProjectBuildPhaseResolver,
   platform: IOSNativePlatform | undefined,
   state: { complete: boolean },
 ): boolean {
@@ -363,20 +461,25 @@ function fileBelongsToSources(
     return false;
   }
   for (const raw of memberships) {
-    let buildPhase: string | undefined;
+    let buildPhase: unknown;
     let filters: unknown;
     if (typeof raw === "string") buildPhase = raw;
     else {
       try {
         const member = xcprojRecord(raw);
-        buildPhase = xcprojString(member["build-phase"]);
+        buildPhase = member["build-phase"];
         filters = member.platforms;
       } catch {
         state.complete = false;
         continue;
       }
     }
-    if (buildPhase !== `${targetName}/compile-sources`) continue;
+    const phase = resolveBuildPhase(buildPhase);
+    if (!phase) {
+      state.complete = false;
+      continue;
+    }
+    if (phase.targetId !== target.id || phase.kind !== "compile-sources") continue;
     if (!platform) return true;
     const result = platformFiltersApply(filters, platform);
     state.complete &&= result.complete;
@@ -389,14 +492,15 @@ async function sourceFilesForTarget(options: {
   root: string;
   projectPath: string;
   document: XCProjRecord;
-  targetName: string;
+  target: XCProjTarget;
   platform?: IOSNativePlatform;
   diagnostics: IOSDiagnostic[];
 }): Promise<{ files: Array<{ absolutePath: string; relativePath: string }>; complete: boolean }> {
-  const { root, projectPath, document, targetName, platform, diagnostics } = options;
+  const { root, projectPath, document, target, platform, diagnostics } = options;
   const state = { complete: true };
   const files = new Map<string, { absolutePath: string; relativePath: string }>();
   const projectDirectory = dirname(projectPath);
+  const resolveBuildPhase = projectBuildPhaseResolver(document);
   const visit = async (raw: unknown, parent: string): Promise<void> => {
     let reference: XCProjRecord;
     try {
@@ -427,7 +531,7 @@ async function sourceFilesForTarget(options: {
       }
       const directory = sourceReferencePath(projectDirectory, parent, path);
       if (!directory) return;
-      const membership = folderMembership(reference, targetName, platform, state);
+      const membership = folderMembership(reference, target, resolveBuildPhase, platform, state);
       if (membership.member) {
         await collectSwiftFiles(root, directory, directory, membership.included, files, state);
       }
@@ -438,7 +542,7 @@ async function sourceFilesForTarget(options: {
       return;
     }
     if (!path || extname(path) !== ".swift") return;
-    if (!fileBelongsToSources(reference, targetName, platform, state)) return;
+    if (!fileBelongsToSources(reference, target, resolveBuildPhase, platform, state)) return;
     const absolutePath = sourceReferencePath(projectDirectory, parent, path);
     if (!absolutePath || !(await pathIsSafelyWithinIOSRoot(root, absolutePath))) {
       state.complete = false;
@@ -457,8 +561,8 @@ async function sourceFilesForTarget(options: {
       severity: "info",
       message:
         files.size === 0
-          ? `No Swift source membership could be resolved for ${targetName}; source-level Clerk checks may be incomplete.`
-          : `Swift source membership for ${targetName} was only partially inspected; absence checks are advisory.`,
+          ? `No Swift source membership could be resolved for ${target.name}; source-level Clerk checks may be incomplete.`
+          : `Swift source membership for ${target.name} was only partially inspected; absence checks are advisory.`,
       evidence: [{ path: relativeIOSPath(root, resolve(projectPath, "project.xcproj")) }],
     });
   }
@@ -494,7 +598,7 @@ export async function inspectXCProjProject(options: {
       root,
       projectPath,
       document,
-      targetName: target.name,
+      target,
       diagnostics: [],
     });
     sourceMemberships.push({
@@ -617,7 +721,7 @@ export async function inspectXCProjProject(options: {
       root,
       projectPath,
       document,
-      targetName: target.name,
+      target,
       platform: targetPlatform,
       diagnostics: targetSourceDiagnostics,
     });
