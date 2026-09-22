@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
-import { lstat, mkdtemp, mkdir, readFile, rm, symlink, truncate } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readFile, rename, rm, symlink, truncate } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { discoverIOSContainers, discoverLocalIOSProjects, inspectWorkspace } from "./discovery.ts";
@@ -1055,6 +1055,128 @@ describe("inspectIOSProject", () => {
       [primaryTargetId, secondaryTargetId].sort(),
     );
     expect(owners.every((membership) => membership.complete)).toBe(true);
+  });
+
+  test("derives JSON folder exception polarity from default target membership", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-exception-polarity-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    let source = await readFile(projectPath, "utf8");
+    source = applyXCProjValue(
+      source,
+      ["files", 0, "membership-exceptions"],
+      [{ target: "OtherApp", exclusions: ["MyAppApp.swift"] }],
+    );
+    source = applyXCProjValue(source, ["targets", 1], {
+      name: "OtherApp",
+      id: "C1E000000000000000000099",
+      "product-type": "application",
+      "build-phases": ["compile-sources"],
+      "build-settings": {
+        DEVELOPMENT_TEAM: "ABCDE12345",
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+        PRODUCT_BUNDLE_IDENTIFIER: "com.example.OtherApp",
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+      },
+    });
+    await Bun.write(projectPath, source);
+
+    const memberships = await inspectIOSSourceMembership(root);
+    const otherApp = memberships.find(
+      (membership) => membership.targetId === "C1E000000000000000000099",
+    );
+
+    expect(otherApp).toMatchObject({ complete: true });
+    expect(otherApp?.files.map((file) => file.relativePath)).toContain("MyApp/MyAppApp.swift");
+  });
+
+  test("treats an inclusions-spelled exception as removal from a default JSON folder target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-default-member-exception-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    await Bun.write(
+      projectPath,
+      applyXCProjValue(
+        await readFile(projectPath, "utf8"),
+        ["files", 0, "membership-exceptions"],
+        [{ target: "MyApp", inclusions: ["MyAppApp.swift"] }],
+      ),
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.swift).toMatchObject({
+      evidenceComplete: true,
+      sourceFilesScanned: 1,
+      entryPoints: [],
+    });
+  });
+
+  test.each(["parent-first", "child-first"] as const)(
+    "uses the most-specific JSON platform filter regardless of %s ordering",
+    async (order) => {
+      const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-platform-filter-"));
+      temporaryDirectories.push(root);
+      await createIOSJSONFixture(root);
+      const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+      const nestedDirectory = join(root, "MyApp", "Nested");
+      await mkdir(nestedDirectory, { recursive: true });
+      await rename(join(root, "MyApp", "MyAppApp.swift"), join(nestedDirectory, "MyAppApp.swift"));
+      await Bun.write(join(nestedDirectory, "NotForIOS.swift"), "struct NotForIOS {}\n");
+      const filters =
+        order === "parent-first"
+          ? { Nested: ["macos"], "Nested/MyAppApp.swift": ["ios"] }
+          : { "Nested/MyAppApp.swift": ["ios"], Nested: ["macos"] };
+      await Bun.write(
+        projectPath,
+        applyXCProjValue(
+          await readFile(projectPath, "utf8"),
+          ["files", 0, "membership-exceptions"],
+          [{ target: "MyApp", platforms: filters }],
+        ),
+      );
+
+      const inspection = await inspectIOSProject(root);
+
+      expect(inspection.appTargets[0]?.swift).toMatchObject({
+        evidenceComplete: true,
+        sourceFilesScanned: 2,
+        entryPoints: [{ path: "MyApp/Nested/MyAppApp.swift" }],
+      });
+    },
+  );
+
+  test("lets a specific JSON file filter opt out of its folder's platform", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-platform-opt-out-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    const nestedDirectory = join(root, "MyApp", "Nested");
+    await mkdir(nestedDirectory, { recursive: true });
+    await rename(join(root, "MyApp", "MyAppApp.swift"), join(nestedDirectory, "MyAppApp.swift"));
+    await Bun.write(
+      projectPath,
+      applyXCProjValue(
+        await readFile(projectPath, "utf8"),
+        ["files", 0, "membership-exceptions"],
+        [
+          {
+            target: "MyApp",
+            platforms: { Nested: ["ios"], "Nested/MyAppApp.swift": ["macos"] },
+          },
+        ],
+      ),
+    );
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.appTargets[0]?.swift).toMatchObject({
+      evidenceComplete: true,
+      sourceFilesScanned: 1,
+      entryPoints: [],
+    });
   });
 
   test("accepts attribute-only JSON folder exceptions and applies their platform filters", async () => {

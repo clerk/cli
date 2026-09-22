@@ -292,7 +292,7 @@ async function collectSwiftFiles(
   root: string,
   directory: string,
   groupRoot: string,
-  included: (relativePath: string) => boolean,
+  included: (relativePath: string, kind: "file" | "directory") => boolean,
   explicitFileType: (relativePath: string) => string | undefined,
   files: Map<string, { absolutePath: string; relativePath: string }>,
   state: { complete: boolean },
@@ -321,8 +321,8 @@ async function collectSwiftFiles(
     }
     const absolutePath = resolve(directory, entry.name);
     const pathFromGroup = normalizedPath(relative(groupRoot, absolutePath).split(sep).join("/"));
-    if (!included(pathFromGroup)) continue;
     if (entry.isDirectory()) {
+      if (!included(pathFromGroup, "directory")) continue;
       if (explicitFileType(pathFromGroup) !== undefined) {
         // File-type overrides on directories have wrapper semantics that this
         // source inventory does not model. Refuse ownership-sensitive writes.
@@ -346,6 +346,7 @@ async function collectSwiftFiles(
       }
       continue;
     }
+    if (!included(pathFromGroup, "file")) continue;
     const override = explicitFileType(pathFromGroup);
     const isSwiftSource =
       override === "sourcecode.swift" ||
@@ -366,7 +367,7 @@ function folderMembership(
   state: { complete: boolean },
 ): {
   member: boolean;
-  included: (path: string) => boolean;
+  included: (path: string, kind: "file" | "directory") => boolean;
   explicitFileType: (path: string) => string | undefined;
 } {
   const fileTypes = new Map<string, string>();
@@ -443,15 +444,19 @@ function folderMembership(
 
       const hasInclusions = Object.hasOwn(exception, "inclusions");
       const hasExclusions = Object.hasOwn(exception, "exclusions");
-      if ((hasInclusions && hasExclusions) || (buildPhaseException && hasExclusions)) {
+      if (hasInclusions && hasExclusions) {
         state.complete = false;
         continue;
       }
       if (hasInclusions || hasExclusions) {
+        // Xcode derives an exception's meaning from the folder's default
+        // membership. The serialized key records archive intent, not polarity.
+        // Build-phase exceptions always add files to that phase.
+        const semanticExceptions = buildPhaseException || !defaultMember ? inclusions : exclusions;
         for (const path of xcprojStringArray(
           exception[hasInclusions ? "inclusions" : "exclusions"],
         )) {
-          (hasInclusions ? inclusions : exclusions).add(normalizedPath(path));
+          semanticExceptions.add(normalizedPath(path));
         }
       }
       if (exception.platforms !== undefined) {
@@ -467,23 +472,34 @@ function folderMembership(
     [...set].some((candidate) => path === candidate || path.startsWith(`${candidate}/`));
   const matchesPathOrIncludedDescendant = (set: Set<string>, path: string): boolean =>
     matchesPath(set, path) || [...set].some((candidate) => candidate.startsWith(`${path}/`));
+  const mostSpecificFilter = (path: string): [string, unknown] | undefined => {
+    let match: [string, unknown] | undefined;
+    for (const entry of filters) {
+      const [candidate] = entry;
+      if (path !== candidate && !path.startsWith(`${candidate}/`)) continue;
+      if (!match || candidate.length > match[0].length) match = entry;
+    }
+    return match;
+  };
+  const hasDescendantFilter = (path: string): boolean =>
+    [...filters].some(([candidate]) => candidate.startsWith(`${path}/`));
   return {
     member: defaultMember || inclusions.size > 0,
     explicitFileType(path) {
       return fileTypes.get(normalizedPath(path));
     },
-    included(path) {
+    included(path, kind) {
       if (matchesPath(opaque, path)) return false;
       const explicitlyIncluded = matchesPathOrIncludedDescendant(inclusions, path);
       const base = explicitlyIncluded || (defaultMember && !matchesPath(exclusions, path));
       if (!base || !platform) return base;
-      for (const [candidate, raw] of filters) {
-        if (path !== candidate && !path.startsWith(`${candidate}/`)) continue;
-        const result = platformFiltersApply(raw, platform);
-        state.complete &&= result.complete;
-        return result.applies;
-      }
-      return true;
+      const filter = mostSpecificFilter(path);
+      if (!filter) return true;
+      const result = platformFiltersApply(filter[1], platform);
+      state.complete &&= result.complete;
+      // A more-specific descendant may override a filtered directory, so keep
+      // traversing until the filter can be evaluated for the concrete file.
+      return result.applies || (kind === "directory" && hasDescendantFilter(path));
     },
   };
 }
