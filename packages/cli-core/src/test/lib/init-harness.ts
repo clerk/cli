@@ -29,6 +29,12 @@ export * as bootstrapMod from "../../commands/init/bootstrap.ts";
 export * as nextStepsMod from "../../lib/next-steps.ts";
 export * as keylessMod from "../../lib/keyless.ts";
 export * as keylessTargetMod from "../../lib/keyless-target.ts";
+export * as iosApplyMod from "../../commands/init/ios/apply.ts";
+export * as nativeRemoteMod from "../../commands/init/ios/native-remote.ts";
+export * as nativeAppleMod from "../../commands/init/ios/native-apple.ts";
+export * as iosDevelopmentKeyMod from "../../commands/init/ios/development-key.ts";
+export * as plapiMod from "../../lib/plapi.ts";
+export * as fapiMod from "../../lib/fapi.ts";
 
 import * as loginModule from "../../commands/auth/login.ts";
 import * as linkModule from "../../commands/link/index.ts";
@@ -45,6 +51,16 @@ import * as heuristicsModule from "../../commands/init/heuristics.ts";
 import * as skillsModule from "../../commands/init/skills.ts";
 import * as bootstrapModule from "../../commands/init/bootstrap.ts";
 import * as keylessModule from "../../lib/keyless.ts";
+import * as iosApplyModule from "../../commands/init/ios/apply.ts";
+import * as nativeRemoteModule from "../../commands/init/ios/native-remote.ts";
+import * as nativeAppleModule from "../../commands/init/ios/native-apple.ts";
+import * as iosDevelopmentKeyModule from "../../commands/init/ios/development-key.ts";
+import * as plapiModule from "../../lib/plapi.ts";
+import * as fapiModule from "../../lib/fapi.ts";
+import {
+  IOS_NATIVE_READINESS_PLAPI_BRIDGE_REQUIREMENT,
+  type IOSNativeReadinessAudit,
+} from "../../commands/init/ios/native-readiness.ts";
 
 export const FAKE_CTX = {
   cwd: "/tmp/test",
@@ -67,6 +83,36 @@ export const FAKE_BOOTSTRAP = {
   projectDir: "/tmp/test/my-app",
   projectName: "my-app",
   packageManager: "npm" as const,
+};
+
+export const FAKE_IOS_NATIVE_READINESS: IOSNativeReadinessAudit = {
+  schemaVersion: 1,
+  kind: "clerk-ios-native-readiness",
+  root: "/tmp/test",
+  target: {
+    status: "selected",
+    projectPath: "MyApp.xcodeproj",
+    targetId: "TARGET",
+    targetName: "MyApp",
+    bundleIdentifier: { status: "resolved", value: "com.example.MyApp" },
+    appIdPrefix: {
+      status: "resolved",
+      source: "literal-entitlements",
+      value: "LEGACY1234",
+    },
+  },
+  associatedDomain: {
+    status: "satisfied",
+    expectedDomain: "webcredentials:clerk.example.test",
+    files: ["MyApp/MyApp.entitlements"],
+    automatable: false,
+    blockers: [],
+  },
+  remote: {
+    status: "not-inspected",
+    reason: "dry-run-does-not-read-remote-state",
+    requirement: IOS_NATIVE_READINESS_PLAPI_BRIDGE_REQUIREMENT,
+  },
 };
 
 type FakeFramework = {
@@ -158,8 +204,70 @@ export function useInitHarness(): InitHarness {
       spyOn(loginModule, "login").mockResolvedValue(undefined as never),
       spyOn(linkModule, "link").mockResolvedValue(undefined),
       spyOn(pullModule, "pull").mockResolvedValue(undefined),
+      spyOn(iosDevelopmentKeyModule, "resolveIOSDevelopmentPublicKey").mockResolvedValue({
+        applicationId: "app_test",
+        instanceId: "ins_test",
+        publishableKey: "pk_test_redacted",
+      }),
+      spyOn(fapiModule, "fetchUserSettings").mockResolvedValue({ social: {} } as never),
       spyOn(bootstrapModule, "promptAndBootstrap").mockResolvedValue(FAKE_BOOTSTRAP),
       spyOn(bootstrapModule, "confirmOverwrite").mockResolvedValue(undefined),
+      spyOn(iosApplyModule, "applyIOSLocalSetup").mockResolvedValue({
+        targetName: "MyApp",
+        setupPlan: {
+          schemaVersion: 1,
+          kind: "clerk-ios-setup",
+          root: "/tmp/test",
+          status: "ready",
+          selection: {
+            state: "selected",
+            targetId: "TARGET",
+            targetName: "MyApp",
+            projectPath: "MyApp.xcodeproj",
+          },
+          summary: { satisfied: 0, required: 0, review: 0, blocked: 0 },
+          steps: [],
+          diagnostics: [],
+        },
+        nativeReadiness: FAKE_IOS_NATIVE_READINESS,
+        prebuiltAuthRequested: false,
+        prebuiltAuthActive: false,
+        nativeAppleRequested: false,
+        requiresLinkedApp: false,
+        requiresDevelopmentKey: false,
+        requiresExplicitApplication: false,
+      }),
+      spyOn(iosApplyModule, "applyIOSPlannedLocalSetup").mockResolvedValue(undefined),
+      spyOn(nativeRemoteModule, "prepareIOSNativeRemoteSetup").mockResolvedValue({
+        schemaVersion: 1,
+        kind: "clerk-ios-native-remote-setup",
+        status: "satisfied",
+        applicationId: "app_test",
+        instanceId: "ins_test",
+        bundleIdentifier: "com.example.MyApp",
+        appIdPrefix: "LEGACY1234",
+        nativeApi: "satisfied",
+        registration: "satisfied",
+        actions: [],
+        blockers: [],
+      }),
+      spyOn(nativeRemoteModule, "applyIOSNativeRemoteSetup").mockResolvedValue(undefined),
+      spyOn(nativeAppleModule, "prepareIOSNativeAppleConnection").mockResolvedValue({
+        schemaVersion: 1,
+        kind: "clerk-ios-native-apple-connection",
+        status: "satisfied",
+        applicationId: "app_test",
+        instanceId: "ins_test",
+        bundleIdentifier: "com.example.MyApp",
+        connection: "satisfied",
+        bundleIdentifierConfiguration: "satisfied",
+        current: { enabled: true, authenticatable: true },
+        desired: { enabled: true, authenticatable: true },
+        actions: [],
+        blockers: [],
+      }),
+      spyOn(nativeAppleModule, "applyIOSNativeAppleConnection").mockResolvedValue(undefined),
+      spyOn(plapiModule, "listApplications").mockResolvedValue([]),
       spyOn(keylessModule, "createAccountlessApp").mockResolvedValue({
         publishable_key: "pk_test_stub",
         secret_key: "sk_test_stub",

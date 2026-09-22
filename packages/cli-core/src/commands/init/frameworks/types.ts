@@ -20,6 +20,12 @@ export interface ProjectContext {
   i18nLocaleDir?: string;
   /** When true, the project was created via bootstrap (empty repo). Scaffolders may add starter UI. */
   isBootstrap?: boolean;
+  /** Explicit native iOS application target selected by `clerk init --target`. */
+  iosTarget?: string;
+  /** Authenticated remote Native API and iOS registration verification completed. */
+  iosNativeRemoteReady?: boolean;
+  /** Native Sign in with Apple entitlement and Clerk connection verification completed. */
+  iosNativeAppleReady?: boolean;
 }
 
 export type FileAction =

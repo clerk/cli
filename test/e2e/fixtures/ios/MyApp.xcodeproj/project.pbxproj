@@ -1,3 +1,50 @@
 // !$*UTF8*$!
-// Stub Xcode project file. Detection only requires that a *.xcodeproj
-// directory bundle exists — the contents are never parsed.
+{
+  archiveVersion = 1;
+  classes = { };
+  objectVersion = 56;
+  objects = {
+    AAAAAAAAAAAAAAAAAAAAAAAA = {
+      isa = PBXProject;
+      attributes = { LastUpgradeCheck = 1600; };
+      buildConfigurationList = 131313131313131313131313;
+      compatibilityVersion = "Xcode 14.0";
+      developmentRegion = en;
+      knownRegions = ( en, Base, );
+      mainGroup = BBBBBBBBBBBBBBBBBBBBBBBB;
+      packageReferences = ( );
+      projectDirPath = "";
+      projectRoot = "";
+      targets = ( 111111111111111111111111, );
+    };
+    BBBBBBBBBBBBBBBBBBBBBBBB = { isa = PBXGroup; children = ( CCCCCCCCCCCCCCCCCCCCCCCC, EEEEEEEEEEEEEEEEEEEEEEEE, ); sourceTree = "<group>"; };
+    CCCCCCCCCCCCCCCCCCCCCCCC = { isa = PBXGroup; children = ( DDDDDDDDDDDDDDDDDDDDDDDD, 232323232323232323232323, ); path = MyApp; sourceTree = "<group>"; };
+    DDDDDDDDDDDDDDDDDDDDDDDD = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyAppApp.swift; sourceTree = "<group>"; };
+    232323232323232323232323 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+    EEEEEEEEEEEEEEEEEEEEEEEE = { isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MyApp/MyApp.entitlements; sourceTree = "<group>"; };
+    111111111111111111111111 = {
+      isa = PBXNativeTarget;
+      buildConfigurationList = 161616161616161616161616;
+      buildPhases = ( 191919191919191919191919, 212121212121212121212121, );
+      buildRules = ( );
+      dependencies = ( );
+      name = MyApp;
+      productName = MyApp;
+      productReference = 121212121212121212121212;
+      productType = "com.apple.product-type.application";
+      packageProductDependencies = ( );
+    };
+    121212121212121212121212 = { isa = PBXFileReference; explicitFileType = wrapper.application; path = MyApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+    191919191919191919191919 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ( 202020202020202020202020, 242424242424242424242424, ); runOnlyForDeploymentPostprocessing = 0; };
+    202020202020202020202020 = { isa = PBXBuildFile; fileRef = DDDDDDDDDDDDDDDDDDDDDDDD; };
+    242424242424242424242424 = { isa = PBXBuildFile; fileRef = 232323232323232323232323; };
+    212121212121212121212121 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ( ); runOnlyForDeploymentPostprocessing = 0; };
+    131313131313131313131313 = { isa = XCConfigurationList; buildConfigurations = ( 141414141414141414141414, 151515151515151515151515, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+    141414141414141414141414 = { isa = XCBuildConfiguration; buildSettings = { SDKROOT = iphoneos; }; name = Debug; };
+    151515151515151515151515 = { isa = XCBuildConfiguration; buildSettings = { SDKROOT = iphoneos; }; name = Release; };
+    161616161616161616161616 = { isa = XCConfigurationList; buildConfigurations = ( 171717171717171717171717, 181818181818181818181818, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+    171717171717171717171717 = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements; DEVELOPMENT_TEAM = ABCDE12345; PRODUCT_BUNDLE_IDENTIFIER = com.example.MyApp; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Debug; };
+    181818181818181818181818 = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements; DEVELOPMENT_TEAM = ABCDE12345; PRODUCT_BUNDLE_IDENTIFIER = com.example.MyApp; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Release; };
+  };
+  rootObject = AAAAAAAAAAAAAAAAAAAAAAAA;
+}

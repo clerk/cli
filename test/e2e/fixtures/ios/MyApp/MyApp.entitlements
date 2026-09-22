@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>application-identifier</key><string>LEGACY1234.com.example.MyApp</string>
+<key>com.apple.developer.team-identifier</key><string>ABCDE12345</string>
+<key>com.apple.developer.associated-domains</key><array><string>webcredentials:clerk.example.test</string></array>
+</dict></plist>
