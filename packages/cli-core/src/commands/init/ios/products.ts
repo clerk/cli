@@ -22,7 +22,23 @@ export function shouldInstallClerkKitUI(target: IOSAppTarget): boolean {
   return clerkKitUIInstallDecision(target) === "prebuilt";
 }
 
-/** Existing custom runtime-key routes that direct source configuration must preserve. */
+/**
+ * A custom publishable-key source is structurally usable only when the
+ * selected app has one unambiguous configure call at startup. The expression
+ * itself remains opaque and is never inspected or compared.
+ */
+export function hasSupportedIOSCustomConfigure(target: IOSAppTarget): boolean {
+  const configureCalls = target.swift.configureCalls;
+  return (
+    target.swift.evidenceComplete &&
+    target.swift.status !== "ambiguous" &&
+    configureCalls.length === 1 &&
+    configureCalls[0]?.publishableKeyWiring === "custom" &&
+    configureCalls[0].startupBinding === "app-init"
+  );
+}
+
+/** Existing custom configuration that direct source setup must preserve. */
 export function hasIOSDirectConfigCompatibility(
   inspection: IOSProjectInspectionResult,
   target: IOSAppTarget,
