@@ -303,6 +303,17 @@ export async function applyIOSLocalSetup(
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
+  const selectedProject = inspection.projects.find(
+    (project) => project.path === selection.projectPath,
+  );
+  if (!selectedProject) {
+    throw iosSetupError(
+      "The selected native Apple target no longer has a readable Xcode project document.",
+      ERROR_CODE.IOS_TARGET_UNRESOLVED,
+    );
+  }
+  const projectDocumentAbsolutePath = resolve(options.root, selectedProject.projectFilePath);
+  const projectDocumentDisplayPath = selectedProject.projectFilePath;
   if (!selectedTarget.platformEvidenceComplete) {
     throw iosSetupError(
       `${selectedTargetPlatformBlockerDescription(
@@ -488,8 +499,8 @@ export async function applyIOSLocalSetup(
   const plannedPaths: Array<{ absolutePath: string; displayPath: string }> = [];
   if (installPlan.status === "ready") {
     plannedPaths.push({
-      absolutePath: resolve(options.root, selection.projectPath, "project.pbxproj"),
-      displayPath: `${selection.projectPath}/project.pbxproj`,
+      absolutePath: projectDocumentAbsolutePath,
+      displayPath: projectDocumentDisplayPath,
     });
   }
   if (directConfigNeedsWrite(directConfigPlan) && directConfigPlan?.sourcePath) {
@@ -507,8 +518,8 @@ export async function applyIOSLocalSetup(
   if (associatedDomainNeedsWrite(associatedDomainPlan)) {
     if (associatedDomainPlan.missingEntitlementsSettings) {
       plannedPaths.push({
-        absolutePath: resolve(options.root, selection.projectPath, "project.pbxproj"),
-        displayPath: `${selection.projectPath}/project.pbxproj`,
+        absolutePath: projectDocumentAbsolutePath,
+        displayPath: projectDocumentDisplayPath,
       });
     }
     for (const file of associatedDomainPlan.files) {
@@ -521,8 +532,8 @@ export async function applyIOSLocalSetup(
   if (macOSNetworkCapabilityPlan?.status === "ready") {
     if (macOSNetworkCapabilityPlan.missingEntitlementsSettings) {
       plannedPaths.push({
-        absolutePath: resolve(options.root, selection.projectPath, "project.pbxproj"),
-        displayPath: `${selection.projectPath}/project.pbxproj`,
+        absolutePath: projectDocumentAbsolutePath,
+        displayPath: projectDocumentDisplayPath,
       });
     }
     for (const file of macOSNetworkCapabilityPlan.files) {
@@ -535,8 +546,8 @@ export async function applyIOSLocalSetup(
   if (appleEntitlementPlan?.status === "ready") {
     if (appleEntitlementPlan.missingEntitlementsSettings) {
       plannedPaths.push({
-        absolutePath: resolve(options.root, selection.projectPath, "project.pbxproj"),
-        displayPath: `${selection.projectPath}/project.pbxproj`,
+        absolutePath: projectDocumentAbsolutePath,
+        displayPath: projectDocumentDisplayPath,
       });
     }
     for (const file of appleEntitlementPlan.files) {
@@ -552,8 +563,8 @@ export async function applyIOSLocalSetup(
   ) {
     if (prebuiltAuthAppleEntitlementPlan.missingEntitlementsSettings) {
       plannedPaths.push({
-        absolutePath: resolve(options.root, selection.projectPath, "project.pbxproj"),
-        displayPath: `${selection.projectPath}/project.pbxproj`,
+        absolutePath: projectDocumentAbsolutePath,
+        displayPath: projectDocumentDisplayPath,
       });
     }
     for (const file of prebuiltAuthAppleEntitlementPlan.files) {
@@ -603,7 +614,7 @@ export async function applyIOSLocalSetup(
     log.info(`\nclerk init will perform the following read-only ${platformLabel} verification:\n`);
   }
   if (installPlan.status === "ready") {
-    log.info(`  ${yellow("MODIFY")}  ${selection.projectPath}/project.pbxproj`);
+    log.info(`  ${yellow("MODIFY")}  ${projectDocumentDisplayPath}`);
     for (const action of installPlan.actions) log.info(`          ${action}`);
   }
   if (directConfigPlan) {
@@ -630,7 +641,7 @@ export async function applyIOSLocalSetup(
   }
   if (associatedDomainNeedsWrite(associatedDomainPlan)) {
     if (associatedDomainPlan.missingEntitlementsSettings && installPlan.status !== "ready") {
-      log.info(`  ${yellow("MODIFY")}  ${selection.projectPath}/project.pbxproj`);
+      log.info(`  ${yellow("MODIFY")}  ${projectDocumentDisplayPath}`);
     }
     for (const file of associatedDomainPlan.files) {
       log.info(`  ${yellow(file.operation === "create" ? "CREATE" : "MODIFY")}  ${file.path}`);
@@ -650,7 +661,7 @@ export async function applyIOSLocalSetup(
       installPlan.status !== "ready" &&
       !associatedDomainPlan?.missingEntitlementsSettings
     ) {
-      log.info(`  ${yellow("MODIFY")}  ${selection.projectPath}/project.pbxproj`);
+      log.info(`  ${yellow("MODIFY")}  ${projectDocumentDisplayPath}`);
     }
     for (const file of macOSNetworkCapabilityPlan.files) {
       log.info(`  ${yellow(file.operation === "create" ? "CREATE" : "MODIFY")}  ${file.path}`);
@@ -674,7 +685,7 @@ export async function applyIOSLocalSetup(
       !associatedDomainPlan?.missingEntitlementsSettings &&
       !macOSNetworkCapabilityPlan?.missingEntitlementsSettings
     ) {
-      log.info(`  ${yellow("MODIFY")}  ${selection.projectPath}/project.pbxproj`);
+      log.info(`  ${yellow("MODIFY")}  ${projectDocumentDisplayPath}`);
     }
     for (const file of appleEntitlementPlan.files) {
       if (!alreadyPreviewedEntitlements.has(file.path)) {
@@ -696,24 +707,24 @@ export async function applyIOSLocalSetup(
     );
     const alreadyPreviewedPaths = new Set<string>();
     if (installPlan.status === "ready") {
-      alreadyPreviewedPaths.add(`${selection.projectPath}/project.pbxproj`);
+      alreadyPreviewedPaths.add(projectDocumentDisplayPath);
     }
     if (associatedDomainNeedsWrite(associatedDomainPlan)) {
       if (associatedDomainPlan.missingEntitlementsSettings) {
-        alreadyPreviewedPaths.add(`${selection.projectPath}/project.pbxproj`);
+        alreadyPreviewedPaths.add(projectDocumentDisplayPath);
       }
       for (const file of associatedDomainPlan.files) alreadyPreviewedPaths.add(file.path);
     }
     if (macOSNetworkCapabilityPlan?.status === "ready") {
       if (macOSNetworkCapabilityPlan.missingEntitlementsSettings) {
-        alreadyPreviewedPaths.add(`${selection.projectPath}/project.pbxproj`);
+        alreadyPreviewedPaths.add(projectDocumentDisplayPath);
       }
       for (const file of macOSNetworkCapabilityPlan.files) {
         alreadyPreviewedPaths.add(file.path);
       }
     }
     if (prebuiltAuthAppleEntitlementPlan.missingEntitlementsSettings) {
-      const projectFile = `${selection.projectPath}/project.pbxproj`;
+      const projectFile = projectDocumentDisplayPath;
       if (!alreadyPreviewedPaths.has(projectFile)) {
         log.info(`  ${yellow("MODIFY")}  ${projectFile}`);
       }
@@ -1124,7 +1135,7 @@ function assertCoherentLocalSetup(setup: IOSLocalSetupResult): void {
 
 /**
  * Commits a previously previewed iOS setup after authentication. Fresh direct
- * configuration combines project.pbxproj and the Swift entry source in one
+ * configuration combines the selected Xcode project document and Swift entry source in one
  * guarded local transaction. Existing custom key sources are preserved and
  * are never rewritten or interpreted.
  */

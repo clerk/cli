@@ -168,7 +168,9 @@ export interface IOSAppTarget {
 
 export interface IOSProjectInspection {
   path: string;
-  pbxprojPath: string;
+  /** Project document selected inside the .xcodeproj wrapper. */
+  projectFilePath: string;
+  projectFormat: "pbxproj" | "xcproj";
   objectVersion?: string;
   packages: IOSPackageReference[];
   appTargetIds: string[];

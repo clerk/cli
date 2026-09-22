@@ -27,6 +27,7 @@ import {
   type IOSMissingEntitlementsSettingsPlan,
 } from "./entitlements-settings.ts";
 import { inspectIOSProject } from "./inspect.ts";
+import { xcodeProjectDocumentPath } from "./project-document.ts";
 import type { IOSValueResolution } from "./types.ts";
 
 const APP_SANDBOX_KEY = "com.apple.security.app-sandbox";
@@ -752,7 +753,10 @@ export async function prepareMacOSNetworkCapabilityMutation(
       );
     }
     const entitlementsPath = resolve(plan.root, createFile.path);
-    const pbxprojPath = resolve(plan.root, plan.projectPath, "project.pbxproj");
+    const pbxprojPath = await xcodeProjectDocumentPath(resolve(plan.root, plan.projectPath));
+    if (!pbxprojPath) {
+      return blockPrepared(plan, "invalid-plan", "The selected Xcode project document is missing.");
+    }
     const baseEntitlements = baseByPath.get(entitlementsPath);
     const basePbx = baseByPath.get(pbxprojPath);
     if (baseEntitlements && !isCreateMutation(baseEntitlements)) return { status: "stale", plan };

@@ -26,7 +26,13 @@ import {
 } from "./install-sdk.ts";
 import { applyIOSExistingFileTransaction } from "./file-transaction.ts";
 import { type PbxObject, type PbxObjects } from "./pbx.ts";
-import { createIOSFixture, IOS_FIXTURE_IDS, treeDigest } from "./test-helpers.ts";
+import {
+  createIOSFixture,
+  createIOSJSONFixture,
+  IOS_FIXTURE_IDS,
+  treeDigest,
+} from "./test-helpers.ts";
+import { parseXCProjSource, xcprojPackages, xcprojTargets } from "./xcproj.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -248,6 +254,67 @@ afterEach(async () => {
 });
 
 describe("iOS Clerk SDK installer", () => {
+  test("installs Clerk products in project.xcproj and is byte-idempotent", async () => {
+    const root = await temporaryRoot("clerk-xcproj-install-");
+    await createIOSJSONFixture(root);
+    const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+    const options = {
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+      includeClerkKitUI: true,
+    };
+
+    const plan = await planIOSSDKInstall(options);
+    expect(plan).toMatchObject({
+      status: "ready",
+      products: ["ClerkKit", "ClerkKitUI"],
+      supportedPlatforms: ["ios"],
+    });
+    expect(await applyIOSSDKInstall(plan)).toMatchObject({ status: "applied" });
+
+    const installedBytes = await readFile(path);
+    const installed = parseXCProjSource(installedBytes);
+    expect(xcprojPackages(installed.root)).toEqual([
+      expect.objectContaining({
+        kind: "remote",
+        repository: "https://github.com/clerk/clerk-ios",
+        version: { "up-to-next-major-version": DEFAULT_CLERK_IOS_MINIMUM_VERSION },
+      }),
+    ]);
+    expect(xcprojTargets(installed.root)[0]).toEqual(
+      expect.objectContaining({
+        packageProductMembers: [
+          expect.objectContaining({ package: "clerk-ios", "product-name": "ClerkKit" }),
+          expect.objectContaining({ package: "clerk-ios", "product-name": "ClerkKitUI" }),
+        ],
+      }),
+    );
+
+    const rerun = await planIOSSDKInstall(options);
+    expect(rerun.status).toBe("satisfied");
+    expect(await applyIOSSDKInstall(rerun)).toMatchObject({ status: "satisfied" });
+    expect(await readFile(path)).toEqual(installedBytes);
+  });
+
+  test("rejects a stale project.xcproj plan without overwriting newer bytes", async () => {
+    const root = await temporaryRoot("clerk-xcproj-stale-");
+    await createIOSJSONFixture(root);
+    const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+    const options = {
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    };
+    const plan = await planIOSSDKInstall(options);
+    expect(plan.status).toBe("ready");
+    await appendFile(path, "\n// user edit\n");
+    const newerBytes = await readFile(path);
+
+    expect(await applyIOSSDKInstall(plan)).toMatchObject({ status: "stale" });
+    expect(await readFile(path)).toEqual(newerBytes);
+  });
+
   test("blocks package planning when any configuration platform is unresolved", async () => {
     const root = await fixture({ platform: "macos", releasePlatform: "unresolved" });
     await transformProject(root, removeClerkSDK);

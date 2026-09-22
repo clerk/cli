@@ -37,12 +37,14 @@ import {
 } from "./entitlements-settings.ts";
 import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 import { asString, buildPbxParentIndex, isRecord, type PbxObject, type PbxObjects } from "./pbx.ts";
+import { resolveXcodeProjectDocument } from "./project-document.ts";
 import type {
   IOSAppTarget,
   IOSDiagnostic,
   IOSNativePlatform,
   IOSProjectInspectionResult,
 } from "./types.ts";
+import { parseXCProjSource, xcprojTargets } from "./xcproj.ts";
 
 const ASSOCIATED_DOMAINS_KEY = "com.apple.developer.associated-domains";
 const MAX_ENTITLEMENTS_BYTES = 1_000_000;
@@ -366,6 +368,31 @@ async function ownershipIsExclusive(
     const inventory = await discoverLocalIOSProjects(root, [selectedProject]);
     if (!inventory.complete) return false;
     for (const absoluteProject of inventory.projectPaths) {
+      const documentResolution = await resolveXcodeProjectDocument(absoluteProject);
+      if (documentResolution.status !== "found") return false;
+      if (documentResolution.document.format === "xcproj") {
+        if (!(await pathIsSafelyWithinIOSRoot(root, documentResolution.document.absolutePath))) {
+          return false;
+        }
+        const projectFile = await readBoundedRegularFile(
+          documentResolution.document.absolutePath,
+          15_000_000,
+        );
+        if (projectFile.status !== "ok") return false;
+        const targets = xcprojTargets(parseXCProjSource(projectFile.bytes).root);
+        // The canonical JSON project path is safe when it has only the
+        // selected app target. Additional JSON targets are preserved but left
+        // for manual review until their non-application entitlement ownership
+        // can be modeled with the same guarantees as PBX targets.
+        if (
+          absoluteProject !== selectedProject ||
+          targets.length !== 1 ||
+          targets[0]?.id !== selectedTargetId
+        ) {
+          return false;
+        }
+        continue;
+      }
       const pbxprojPath = resolve(absoluteProject, "project.pbxproj");
       if (!(await pathIsSafelyWithinIOSRoot(root, pbxprojPath))) return false;
       const info = await lstat(pbxprojPath);

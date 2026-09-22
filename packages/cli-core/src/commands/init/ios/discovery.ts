@@ -9,7 +9,9 @@ import {
   type PbxObjects,
 } from "./pbx.ts";
 import { readBoundedRegularFile } from "./bounded-file.ts";
+import { resolveXcodeProjectDocument } from "./project-document.ts";
 import type { IOSWorkspaceInspection } from "./types.ts";
+import { MAX_XCPROJ_BYTES, parseXCProjSource, xcprojArray, xcprojRecord } from "./xcproj.ts";
 
 const MAX_DISCOVERY_DEPTH = 3;
 const MAX_EXHAUSTIVE_DISCOVERY_DEPTH = 24;
@@ -226,7 +228,74 @@ async function referencedProjectsForProject(
     return { projectPaths: [], complete: false, valid: false };
   }
 
-  const pbxprojPath = resolve(projectPath, "project.pbxproj");
+  const documentResolution = await resolveXcodeProjectDocument(projectPath);
+  if (documentResolution.status !== "found") {
+    return { projectPaths: [], complete: false, valid: true };
+  }
+  if (documentResolution.document.format === "xcproj") {
+    const documentPath = documentResolution.document.absolutePath;
+    if (!(await pathIsSafelyWithinIOSRoot(root, documentPath))) {
+      return { projectPaths: [], complete: false, valid: true };
+    }
+    const projectFile = await readBoundedRegularFile(documentPath, MAX_XCPROJ_BYTES);
+    if (projectFile.status !== "ok") {
+      return { projectPaths: [], complete: false, valid: true };
+    }
+    try {
+      const parsed = parseXCProjSource(projectFile.bytes);
+      const projectPaths = new Set<string>();
+      let complete = true;
+      const visit = (value: unknown, parentDirectory: string): void => {
+        let reference: Record<string, unknown>;
+        try {
+          reference = xcprojRecord(value);
+        } catch {
+          complete = false;
+          return;
+        }
+        const path = typeof reference.path === "string" ? reference.path : "";
+        const kind = typeof reference.kind === "string" ? reference.kind : "file";
+        if (kind === "group") {
+          const groupDirectory = path
+            ? path.startsWith("<PROJECT>/")
+              ? resolve(dirname(projectPath), path.slice("<PROJECT>/".length))
+              : resolve(parentDirectory, path)
+            : parentDirectory;
+          try {
+            for (const child of xcprojArray(reference.children ?? [])) {
+              visit(child, groupDirectory);
+            }
+          } catch {
+            complete = false;
+          }
+          return;
+        }
+        if (!path.endsWith(".xcodeproj")) return;
+        if (/^<(?:PRODUCTS|SDK|DEVELOPER)>\//.test(path)) return;
+        const absolutePath = path.startsWith("<PROJECT>/")
+          ? resolve(dirname(projectPath), path.slice("<PROJECT>/".length))
+          : resolve(parentDirectory, path);
+        if (!isWithinRoot(root, absolutePath)) {
+          complete = false;
+          return;
+        }
+        projectPaths.add(absolutePath);
+      };
+      for (const reference of xcprojArray(parsed.root.files)) {
+        visit(reference, dirname(projectPath));
+      }
+      return {
+        projectPaths: [...projectPaths].sort(),
+        complete,
+        valid: true,
+        canonicalProjectPath,
+      };
+    } catch {
+      return { projectPaths: [], complete: false, valid: true };
+    }
+  }
+
+  const pbxprojPath = documentResolution.document.absolutePath;
   if (!(await pathIsSafelyWithinIOSRoot(root, pbxprojPath))) {
     return { projectPaths: [], complete: false, valid: true };
   }
