@@ -136,6 +136,12 @@ export const ERROR_CODE = {
   IOS_PUBLISHABLE_KEY_UNAVAILABLE: "ios_publishable_key_unavailable",
   /** The iOS runtime publishable key does not belong to the linked Clerk application. */
   IOS_PUBLISHABLE_KEY_MISMATCH: "ios_publishable_key_mismatch",
+  /** An approved Clerk native configuration change could not be applied or confirmed. */
+  IOS_REMOTE_APPLY_FAILED: "ios_remote_apply_failed",
+  /** Clerk native configuration was readable after apply but did not match the approved state. */
+  IOS_REMOTE_VERIFY_FAILED: "ios_remote_verify_failed",
+  /** Platform API returned a successful response with missing or contradictory data. */
+  PLAPI_UNEXPECTED_RESPONSE: "plapi_unexpected_response",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];
