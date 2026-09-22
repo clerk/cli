@@ -100,13 +100,29 @@ function configurations(value: unknown, requireAtLeastOne = true): XCProjConfigu
   return parsed;
 }
 
-function simpleNamePath(value: unknown): string | undefined {
-  if (typeof value === "string") return value;
-  if (!Array.isArray(value)) return undefined;
-  const components: string[] = [];
-  for (const component of value) {
+type NamePathComponent = { kind: "child"; name: string } | { kind: "relative"; value: "." | ".." };
+
+interface IndexedProjectReference {
+  path: string;
+}
+
+interface ConfigurationReferenceIndex {
+  files: ReadonlyMap<string, string[]>;
+  referencesById: ReadonlyMap<string, IndexedProjectReference[]>;
+  referencesByNamePath: ReadonlyMap<string, IndexedProjectReference[]>;
+}
+
+function namePathComponents(value: unknown): NamePathComponent[] | undefined {
+  const rawComponents = typeof value === "string" ? value.split("/") : value;
+  if (!Array.isArray(rawComponents)) return undefined;
+  const components: NamePathComponent[] = [];
+  for (const component of rawComponents) {
     if (typeof component === "string") {
-      components.push(component);
+      components.push(
+        component === "." || component === ".."
+          ? { kind: "relative", value: component }
+          : { kind: "child", name: component },
+      );
       continue;
     }
     if (
@@ -115,19 +131,26 @@ function simpleNamePath(value: unknown): string | undefined {
       !Array.isArray(component) &&
       typeof (component as XCProjRecord).name === "string"
     ) {
-      components.push((component as XCProjRecord).name as string);
+      components.push({ kind: "child", name: (component as XCProjRecord).name as string });
       continue;
     }
     return undefined;
   }
-  return components.join("/");
+  return components;
 }
 
-/**
- * Resolve the compact, path-based form emitted for ordinary checked-in
- * xcconfig files. Object-ID anchors require the full groups-and-files graph;
- * leave those unresolved so the shared evaluator fails closed.
- */
+function fileSystemNamePath(value: unknown): string | undefined {
+  const components = namePathComponents(value);
+  if (!components) return undefined;
+  return components
+    .map((component) => (component.kind === "child" ? component.name : component.value))
+    .join("/");
+}
+
+function namePathKey(components: readonly string[]): string {
+  return JSON.stringify(components);
+}
+
 function projectReferencePath(
   projectDirectory: string,
   parent: string,
@@ -145,83 +168,155 @@ function normalizeConfigurationReferenceToken(token: string): string {
   return token.replaceAll("\\", "/").replace(/^\.\//, "");
 }
 
-function configurationFileIndex(projectPath: string, project: XCProjRecord): Map<string, string[]> {
+function configurationReferenceIndex(
+  projectPath: string,
+  project: XCProjRecord,
+): ConfigurationReferenceIndex {
   const projectDirectory = dirname(projectPath);
-  const paths = new Map<string, Set<string>>();
-  const add = (token: string, path: string): void => {
-    const normalizedToken = normalizeConfigurationReferenceToken(token);
-    if (!normalizedToken) return;
-    const matches = paths.get(normalizedToken) ?? new Set<string>();
-    matches.add(path);
-    paths.set(normalizedToken, matches);
+  const files = new Map<string, string[]>();
+  const referencesById = new Map<string, IndexedProjectReference[]>();
+  const referencesByNamePath = new Map<string, IndexedProjectReference[]>();
+  const addFile = (tokens: readonly string[], path: string): void => {
+    const normalizedTokens = new Set(
+      tokens.map(normalizeConfigurationReferenceToken).filter(Boolean),
+    );
+    for (const normalizedToken of normalizedTokens) {
+      const matches = files.get(normalizedToken) ?? [];
+      matches.push(path);
+      files.set(normalizedToken, matches);
+    }
   };
-  const logicalChildPath = (parent: string, child: string): string =>
-    parent ? `${parent}/${child}` : child;
-  const visit = (raw: unknown, parent: string, logicalParent: string): void => {
+  const addReference = (
+    logicalPath: readonly string[],
+    path: string,
+    id: unknown,
+    hasLogicalName: boolean,
+  ): void => {
+    const indexed = { path };
+    if (hasLogicalName) {
+      const key = namePathKey(logicalPath);
+      const namedMatches = referencesByNamePath.get(key) ?? [];
+      namedMatches.push(indexed);
+      referencesByNamePath.set(key, namedMatches);
+    }
+    if (typeof id === "string" && id) {
+      const idMatches = referencesById.get(id) ?? [];
+      idMatches.push(indexed);
+      referencesById.set(id, idMatches);
+    }
+  };
+  const logicalChildPath = (parent: readonly string[], child: string): string[] => [
+    ...parent,
+    child,
+  ];
+  const visit = (raw: unknown, parent: string, logicalParent: readonly string[]): void => {
     const reference = xcprojRecord(raw);
-    const kind = typeof reference.kind === "string" ? reference.kind : "file";
+    const kind = typeof reference.kind === "string" ? reference.kind : "file-reference";
     const path = typeof reference.path === "string" ? reference.path : "";
+    const logicalName =
+      typeof reference.name === "string" && reference.name
+        ? reference.name
+        : path
+          ? basename(path.replaceAll("\\", "/"))
+          : "";
+    const logicalPath = logicalName
+      ? logicalChildPath(logicalParent, logicalName)
+      : [...logicalParent];
+
     if (kind === "group") {
       const groupDirectory = path ? projectReferencePath(projectDirectory, parent, path) : parent;
       if (!groupDirectory) return;
-      const logicalName =
-        typeof reference.name === "string" && reference.name
-          ? reference.name
-          : path
-            ? basename(path.replaceAll("\\", "/"))
-            : "";
-      const logicalGroupPath = logicalName
-        ? logicalChildPath(logicalParent, logicalName)
-        : logicalParent;
+      addReference(logicalPath, groupDirectory, reference.id, Boolean(logicalName));
       for (const child of xcprojArray(reference.children ?? [])) {
-        visit(child, groupDirectory, logicalGroupPath);
+        visit(child, groupDirectory, logicalPath);
       }
       return;
     }
-    if (kind !== "file" || !path) return;
+
+    if (kind === "folder") {
+      const folderDirectory = path ? projectReferencePath(projectDirectory, parent, path) : parent;
+      if (!folderDirectory) return;
+      addReference(logicalPath, folderDirectory, reference.id, Boolean(logicalName));
+      return;
+    }
+
+    if ((kind !== "file" && kind !== "file-reference") || !path) return;
     const absolutePath = projectReferencePath(projectDirectory, parent, path);
     if (!absolutePath) return;
-    const displayName = typeof reference.name === "string" ? reference.name : basename(path);
-    add(displayName, absolutePath);
-    add(path, absolutePath);
-    add(logicalChildPath(logicalParent, displayName), absolutePath);
-    add(relative(projectDirectory, absolutePath), absolutePath);
+    addReference(logicalPath, absolutePath, reference.id, Boolean(logicalName));
+    const logicalToken = logicalPath.join("/");
+    addFile(
+      [logicalName, path, logicalToken, relative(projectDirectory, absolutePath)],
+      absolutePath,
+    );
   };
   for (const reference of xcprojArray(project.files ?? [])) {
-    visit(reference, projectDirectory, "");
+    visit(reference, projectDirectory, []);
   }
-  return new Map([...paths].map(([token, matches]) => [token, [...matches].sort()] as const));
+  const sorted = (matches: string[]): string[] => [...matches].sort();
+  return {
+    files: new Map([...files].map(([token, matches]) => [token, sorted(matches)] as const)),
+    referencesById,
+    referencesByNamePath,
+  };
+}
+
+function anchoredReferencePath(
+  anchor: unknown,
+  index: ConfigurationReferenceIndex,
+): string | undefined {
+  if (typeof anchor === "string" && anchor.startsWith("id:")) {
+    const matches = index.referencesById.get(anchor.slice("id:".length)) ?? [];
+    return matches.length === 1 ? matches[0]?.path : undefined;
+  }
+
+  const components = namePathComponents(anchor);
+  if (!components) return undefined;
+  const logicalPath: string[] = [];
+  let match: IndexedProjectReference | undefined;
+  for (const component of components) {
+    if (component.kind === "child") {
+      logicalPath.push(component.name);
+    } else if (component.value === "..") {
+      if (logicalPath.length === 0) return undefined;
+      logicalPath.pop();
+    }
+    if (logicalPath.length === 0) {
+      match = undefined;
+      continue;
+    }
+    const matches = index.referencesByNamePath.get(namePathKey(logicalPath)) ?? [];
+    if (matches.length !== 1) return undefined;
+    match = matches[0];
+  }
+  return match?.path;
 }
 
 function configurationFilePath(
   file: string | XCProjRecord | undefined,
-  indexedFiles: ReadonlyMap<string, string[]>,
+  index: ConfigurationReferenceIndex,
 ): string | undefined {
   if (!file) return undefined;
   if (typeof file === "string") {
-    const matches = indexedFiles.get(normalizeConfigurationReferenceToken(file)) ?? [];
+    const matches = index.files.get(normalizeConfigurationReferenceToken(file)) ?? [];
     return matches.length === 1 ? matches[0] : undefined;
   }
-  const anchor = simpleNamePath(file.anchor);
-  const relativePath = simpleNamePath(file["relative-path"]);
-  if (!anchor || anchor.startsWith("id:") || relativePath === undefined) return undefined;
-  const token = normalizeConfigurationReferenceToken(
-    relativePath ? `${anchor}/${relativePath}` : anchor,
-  );
-  const matches = indexedFiles.get(token) ?? [];
-  return matches.length === 1 ? matches[0] : undefined;
+  const anchorPath = anchoredReferencePath(file.anchor, index);
+  const relativePath = fileSystemNamePath(file["relative-path"]);
+  if (!anchorPath || relativePath === undefined) return undefined;
+  return resolve(anchorPath, relativePath);
 }
 
 function attachBaseConfiguration(
   objects: PbxObjects,
   configurationObject: PbxObject,
   file: string | XCProjRecord | undefined,
-  indexedFiles: ReadonlyMap<string, string[]>,
+  index: ConfigurationReferenceIndex,
   referenceId: string,
 ): void {
   if (!file) return;
   configurationObject.baseConfigurationReference = referenceId;
-  const path = configurationFilePath(file, indexedFiles);
+  const path = configurationFilePath(file, index);
   if (!path) return;
   objects[referenceId] = {
     isa: "PBXFileReference",
@@ -253,7 +348,7 @@ export async function inspectXCProjTargetBuildConfigurations(
   const projectConfigurationIds: string[] = [];
   const targetConfigurationIds: string[] = [];
   const projectSettings = buildSettings(project["build-settings"]);
-  const indexedFiles = configurationFileIndex(options.projectPath, project);
+  const referenceIndex = configurationReferenceIndex(options.projectPath, project);
 
   for (const [index, projectConfiguration] of projectConfigurations.entries()) {
     const projectConfigurationId = `__xcproj_project_configuration_${index}`;
@@ -271,7 +366,7 @@ export async function inspectXCProjTargetBuildConfigurations(
       objects,
       projectConfigurationObject,
       projectConfiguration.file,
-      indexedFiles,
+      referenceIndex,
       projectBaseReferenceId,
     );
     objects[projectConfigurationId] = projectConfigurationObject;
@@ -286,7 +381,7 @@ export async function inspectXCProjTargetBuildConfigurations(
       objects,
       targetConfigurationObject,
       targetSpecialization?.file,
-      indexedFiles,
+      referenceIndex,
       targetBaseReferenceId,
     );
     objects[targetConfigurationId] = targetConfigurationObject;

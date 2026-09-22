@@ -15,6 +15,7 @@ afterEach(async () => {
 async function inspectFixture(
   projectOverrides: XCProjRecord = {},
   targetOverrides: XCProjRecord = {},
+  setup?: (root: string) => Promise<void>,
 ) {
   const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-build-settings-"));
   temporaryDirectories.push(root);
@@ -44,6 +45,7 @@ async function inspectFixture(
     ...projectOverrides,
   };
   const diagnostics: IOSDiagnostic[] = [];
+  await setup?.(root);
   const configurations = await inspectXCProjTargetBuildConfigurations({
     root,
     projectPath,
@@ -261,6 +263,166 @@ describe("inspectXCProjTargetBuildConfigurations", () => {
       value: "CORRECT123",
     });
     expect(diagnostics).toEqual([]);
+  });
+
+  test("resolves an xcconfig below a top-level synchronized folder without an explicit file leaf", async () => {
+    const { configurations, diagnostics } = await inspectFixture(
+      {
+        configurations: ["Debug"],
+        files: [{ kind: "folder", path: "Config" }],
+        "build-settings": { SDKROOT: "iphoneos" },
+      },
+      {
+        "specialized-configurations": [
+          {
+            name: "Debug",
+            file: { anchor: "Config", "relative-path": "Target.xcconfig" },
+          },
+        ],
+        "build-settings": {
+          IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+          SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+        },
+      },
+      async (root) => {
+        await mkdir(join(root, "Config"), { recursive: true });
+        await Bun.write(
+          join(root, "Config", "Target.xcconfig"),
+          "PRODUCT_BUNDLE_IDENTIFIER = com.example.Folder\nDEVELOPMENT_TEAM = FOLDER1234",
+        );
+      },
+    );
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.Folder",
+    });
+    expect(configurations[0]?.model.developmentTeam).toMatchObject({
+      state: "resolved",
+      value: "FOLDER1234",
+    });
+    expect(diagnostics).toEqual([]);
+  });
+
+  test("resolves a nested folder anchor through component-safe logical names and physical paths", async () => {
+    const { configurations, diagnostics } = await inspectFixture(
+      {
+        configurations: ["Debug"],
+        files: [
+          {
+            kind: "group",
+            name: "Build/Settings",
+            path: "PhysicalRoot",
+            children: [{ kind: "folder", path: "PhysicalConfigs" }],
+          },
+        ],
+        "build-settings": { SDKROOT: "iphoneos" },
+      },
+      {
+        "specialized-configurations": [
+          {
+            name: "Debug",
+            file: {
+              anchor: [{ name: "Build/Settings" }, "PhysicalConfigs"],
+              "relative-path": "Target.xcconfig",
+            },
+          },
+        ],
+        "build-settings": {
+          IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+          SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+        },
+      },
+      async (root) => {
+        await mkdir(join(root, "PhysicalRoot", "PhysicalConfigs"), { recursive: true });
+        await Bun.write(
+          join(root, "PhysicalRoot", "PhysicalConfigs", "Target.xcconfig"),
+          "PRODUCT_BUNDLE_IDENTIFIER = com.example.Nested\nDEVELOPMENT_TEAM = NESTED1234",
+        );
+      },
+    );
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.Nested",
+    });
+    expect(configurations[0]?.model.developmentTeam).toMatchObject({
+      state: "resolved",
+      value: "NESTED1234",
+    });
+    expect(diagnostics).toEqual([]);
+  });
+
+  test("resolves an xcconfig relative to a synchronized folder object ID", async () => {
+    const { configurations, diagnostics } = await inspectFixture(
+      {
+        configurations: ["Debug"],
+        files: [{ kind: "folder", id: "CONFIG-FOLDER", path: "PhysicalConfig" }],
+        "build-settings": { SDKROOT: "iphoneos" },
+      },
+      {
+        "specialized-configurations": [
+          {
+            name: "Debug",
+            file: { anchor: "id:CONFIG-FOLDER", "relative-path": "Target.xcconfig" },
+          },
+        ],
+        "build-settings": {
+          IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+          SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+        },
+      },
+      async (root) => {
+        await mkdir(join(root, "PhysicalConfig"), { recursive: true });
+        await Bun.write(
+          join(root, "PhysicalConfig", "Target.xcconfig"),
+          "PRODUCT_BUNDLE_IDENTIFIER = com.example.ByID\nDEVELOPMENT_TEAM = IDANCHOR12",
+        );
+      },
+    );
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.ByID",
+    });
+    expect(configurations[0]?.model.developmentTeam).toMatchObject({
+      state: "resolved",
+      value: "IDANCHOR12",
+    });
+    expect(diagnostics).toEqual([]);
+  });
+
+  test("fails synchronized-folder anchors closed when the name is ambiguous or the ID is missing", async () => {
+    for (const { files, anchor } of [
+      {
+        files: [
+          { kind: "folder", path: "One/Config" },
+          { kind: "folder", path: "Two/Config" },
+        ],
+        anchor: "Config",
+      },
+      {
+        files: [{ kind: "folder", id: "KNOWN-FOLDER", path: "Config" }],
+        anchor: "id:MISSING-FOLDER",
+      },
+    ]) {
+      const { configurations, diagnostics } = await inspectFixture(
+        { files },
+        {
+          "specialized-configurations": [
+            {
+              name: "Debug",
+              file: { anchor, "relative-path": "Target.xcconfig" },
+            },
+          ],
+        },
+      );
+
+      expect(configurations[0]?.model.bundleIdentifier.state).toBe("unresolved");
+      expect(diagnostics).toContainEqual(
+        expect.objectContaining({ code: "xcode.dangling-reference", severity: "error" }),
+      );
+    }
   });
 
   test("fails object-form xcconfig anchors closed when the logical path is ambiguous", async () => {
