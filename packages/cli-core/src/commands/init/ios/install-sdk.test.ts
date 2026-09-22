@@ -297,6 +297,25 @@ describe("iOS Clerk SDK installer", () => {
     expect(await readFile(path)).toEqual(installedBytes);
   });
 
+  test("leaves valid noncanonical JSON5 byte-identical instead of attempting a package edit", async () => {
+    const root = await temporaryRoot("clerk-xcproj-json5-install-");
+    await createIOSJSONFixture(root);
+    const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+    const source = await readFile(path, "utf8");
+    await Bun.write(path, source.replace('"development": "en"', "development: 'en'"));
+    const before = await readFile(path);
+
+    const plan = await planIOSSDKInstall({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(await applyIOSSDKInstall(plan)).toMatchObject({ status: "blocked" });
+    expect(await readFile(path)).toEqual(before);
+  });
+
   test("blocks before adding clerk-ios beside an unattributed Xcode JSON Clerk product", async () => {
     const root = await temporaryRoot("clerk-xcproj-unattributed-product-");
     await createIOSJSONFixture(root);

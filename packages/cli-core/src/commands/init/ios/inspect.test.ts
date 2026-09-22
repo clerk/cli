@@ -884,6 +884,31 @@ describe("inspectIOSProject", () => {
     expect(inspection.diagnostics).toEqual([]);
   });
 
+  test("reports valid noncanonical JSON5 with safe canonicalization guidance", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-json5-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    const source = await readFile(projectPath, "utf8");
+    await Bun.write(projectPath, source.replace('"development": "en"', "development: 'en'"));
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.selection.state).toBe("none");
+    expect(inspection.appTargets).toEqual([]);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.noncanonical-json5",
+        severity: "error",
+        message: expect.stringContaining("valid JSON5"),
+        remedy: expect.stringContaining("xcprojformatter --update"),
+      }),
+    );
+    expect(
+      inspection.diagnostics.some((diagnostic) => diagnostic.code === "xcode.malformed-project"),
+    ).toBe(false);
+  });
+
   test("accepts explicit file references and localized variant groups during source inspection", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-reference-kinds-"));
     temporaryDirectories.push(root);
