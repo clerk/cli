@@ -5,6 +5,14 @@ runtime configuration remains developer-owned. Selecting a Clerk app with
 `--app` authorizes setup against that app; it does not prove which app a custom
 runtime publishable key belongs to.
 
+`clerk init` selects a sole application target automatically. With several targets,
+an interactive terminal offers a picker showing each target's name, platform, and
+project. `--target` bypasses the picker. Agent mode, `--yes`, JSON output, and
+redirected input/output require explicit selection when targets are ambiguous;
+`--dry-run` can report the available choices without changing anything. Choosing a
+target retains every operation's safety checks. Copied projects with colliding
+target IDs still require running from the intended project's directory.
+
 Existing `AuthView` is evidence for SDK product and version requirements. When its
 runtime wiring is unresolved, it does not activate automatic AuthView setup or
 provider-capability changes. SDK linkage and native registration may still
