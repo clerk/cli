@@ -122,13 +122,9 @@ describe("security audit", () => {
     );
     expect(lockout.dashboardUrl).toContain("/apps/app_1/instances/ins_dev/user-authentication");
     expect(lockout.docsUrl).toBe("https://clerk.com/docs/guides/secure/user-lockout");
-    expect(lockout.suggestedPatch).toBeNull();
 
     const mfa = parsed.findings.find((f) => f.id === "mfa")!;
     expect(mfa.patch).toBeNull();
-    expect(mfa.suggestedPatch).toEqual({
-      auth_multi_factor: { authenticator_app: { enabled: true }, backup_code: { enabled: true } },
-    });
     expect(mfa.features).toEqual(["app:mfa_totp", "app:mfa_phone_code", "app:mfa_backup_code"]);
     expect(mfa.remedy).toContain(
       "clerk security fix mfa --factors authenticator,backup-code --app app_1 --instance ins_dev",

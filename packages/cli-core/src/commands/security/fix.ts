@@ -13,13 +13,7 @@ import { withGutter } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
 import { CHECKS, CHECK_IDS, findCheck } from "./catalog.ts";
-import {
-  evaluate,
-  fixCommandFor,
-  fixCommandWithDecision,
-  fixableIds,
-  targetFlags,
-} from "./evaluate.ts";
+import { evaluate, fixCommand, fixableIds } from "./evaluate.ts";
 import { formatScoreTransition } from "./format.ts";
 import { loadAudit } from "./load.ts";
 import { deepMerge, projectPatches } from "./merge.ts";
@@ -91,7 +85,7 @@ function selectByIds(ids: string[], findings: Finding[], ref: InstanceRef): Sele
     const examples: Example[] = fixable.length
       ? [
           {
-            command: fixCommandFor(fixable, ref),
+            command: fixCommand(fixable, ref),
             description: "Apply the fixable recommendations from this selection",
           },
           ...EXAMPLES,
@@ -107,6 +101,15 @@ function selectByIds(ids: string[], findings: Finding[], ref: InstanceRef): Sele
   return selection;
 }
 
+// A selected check unblocks its dependants; take them along.
+function withUnblocked(ids: Set<string>, findings: Finding[]): void {
+  for (const f of findings) {
+    if (f.status === "blocked" && f.blockedBy && ids.has(f.blockedBy) && findCheck(f.id)?.patch) {
+      ids.add(f.id);
+    }
+  }
+}
+
 function selectAll(
   findings: Finding[],
   supplied: ReturnType<typeof suppliedDecisions>,
@@ -116,11 +119,7 @@ function selectAll(
   for (const f of findings) {
     if (f.status === "unmet" && f.decision && supplied[f.decision.flag]) ids.add(f.id);
   }
-  for (const f of findings) {
-    if (f.status === "blocked" && f.blockedBy && ids.has(f.blockedBy) && findCheck(f.id)?.patch) {
-      ids.add(f.id);
-    }
-  }
+  withUnblocked(ids, findings);
   return { checks: [...ids].map((id) => findCheck(id)!), skipped: [] };
 }
 
@@ -146,11 +145,7 @@ async function selectInteractively(findings: Finding[]): Promise<Selection> {
   });
   if (chosen.length === 0) throwUserAbort();
   const ids = new Set(chosen);
-  for (const f of findings) {
-    if (f.status === "blocked" && f.blockedBy && ids.has(f.blockedBy) && findCheck(f.id)?.patch) {
-      ids.add(f.id);
-    }
-  }
+  withUnblocked(ids, findings);
   return { checks: [...ids].map((id) => findCheck(id)!), skipped: [] };
 }
 
@@ -184,7 +179,7 @@ async function resolveDecision(
       undefined,
       [
         {
-          command: fixCommandWithDecision(check, defaults, ref),
+          command: fixCommand([check.id], ref, { [check.id]: defaults }),
           description: `Apply ${check.id} with the suggested ${decision.flag}`,
         },
       ],
@@ -245,12 +240,6 @@ function translatePlanError(
   const gated = checks.filter((c) => c.features?.some((f) => unsupported.includes(f)));
   const rest = checks.filter((c) => !gated.includes(c)).map((c) => c.id);
   const subject = gated.length ? gated.map((c) => c.id).join(", ") : "This change";
-  const flags = [
-    rest.includes("mfa") && decisions.mfa ? ` --factors ${decisions.mfa.join(",")}` : "",
-    rest.includes("passwordless-auth") && decisions["passwordless-auth"]
-      ? ` --strategy ${decisions["passwordless-auth"][0]}`
-      : "",
-  ].join("");
   return new CliError(
     `${subject} need${gated.length === 1 ? "s" : ""} a plan that includes ${unsupported.join(", ")}.`,
     {
@@ -259,7 +248,7 @@ function translatePlanError(
       examples: rest.length
         ? [
             {
-              command: `clerk security fix ${rest.join(" ")}${flags}${targetFlags(ref)}${isAgent() ? " --yes" : ""}`,
+              command: fixCommand(rest, ref, decisions),
               description: "Apply the rest without the plan-gated checks",
             },
           ]
