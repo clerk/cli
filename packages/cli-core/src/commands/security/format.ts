@@ -1,5 +1,5 @@
 import { bold, cyan, dim, green, red, yellow } from "../../lib/color.ts";
-import { SEVERITY_ORDER } from "./evaluate.ts";
+import { SEVERITY_ORDER, describeDecision } from "./evaluate.ts";
 import type {
   AuditReport,
   CheckDef,
@@ -99,13 +99,7 @@ export function formatCatalogJson(checks: CheckDef[]): string {
       severity: check.severity,
       path: check.path,
       fixable: Boolean(check.patch),
-      ...(check.decision && {
-        decision: {
-          flag: check.decision.flag,
-          multiple: check.decision.multiple,
-          options: check.decision.options.map((o) => o.value),
-        },
-      }),
+      ...(check.decision && { decision: describeDecision(check.decision) }),
       ...(check.features && { features: check.features }),
       ...(check.blockedBy && { blockedBy: check.blockedBy }),
       ...(check.customFlows && { customFlows: check.customFlows }),

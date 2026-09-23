@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { findCheck } from "./catalog.ts";
 import { INSECURE_CONFIG } from "./fixtures.ts";
-import { deepMerge, projectPatches } from "./merge.ts";
+import { deepMerge, projectPatches, withoutGated } from "./merge.ts";
 import type { CheckDef } from "./types.ts";
 
 describe("deepMerge", () => {
@@ -65,5 +65,49 @@ describe("projectPatches", () => {
   test("skips checks without a patch", () => {
     const { payload } = projectPatches(input, [findCheck("mfa")!]);
     expect(payload).toEqual({});
+  });
+});
+
+describe("withoutGated", () => {
+  const input = { config: INSECURE_CONFIG, environmentType: "production" };
+  const lockout = findCheck("user-lockout")!;
+  const gated: CheckDef = {
+    ...lockout,
+    id: "gated",
+    features: ["app:gated"],
+    patch: () => ({ gated: { enabled: true } }),
+  };
+  // Becomes applicable only once `gated` has landed.
+  const dependant: CheckDef = {
+    ...lockout,
+    id: "dependant",
+    appliesTo: ({ config }) =>
+      (config.gated as { enabled?: boolean } | undefined)?.enabled === true,
+    patch: () => ({ dependant: true }),
+  };
+  const blocked: CheckDef = { ...lockout, id: "blocked", blockedBy: "dependant" };
+  const ids = (checks: CheckDef[]) => checks.map((c) => c.id);
+
+  test("keeps everything when nothing is gated", () => {
+    expect(ids(withoutGated(input, [gated, dependant, blocked, lockout], []))).toEqual([
+      "gated",
+      "dependant",
+      "blocked",
+      "user-lockout",
+    ]);
+  });
+
+  test("drops the chain a gated check unlocks through appliesTo and blockedBy", () => {
+    expect(ids(withoutGated(input, [gated, dependant, blocked, lockout], ["app:gated"]))).toEqual([
+      "user-lockout",
+    ]);
+  });
+
+  test("keeps a dependant whose condition the remaining checks still meet", () => {
+    const free: CheckDef = { ...gated, id: "free", features: undefined };
+    expect(ids(withoutGated(input, [gated, free, dependant], ["app:gated"]))).toEqual([
+      "free",
+      "dependant",
+    ]);
   });
 });

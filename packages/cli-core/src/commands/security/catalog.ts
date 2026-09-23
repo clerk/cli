@@ -19,7 +19,12 @@ const DEFAULT_LIFETIME_SECONDS = 604800;
 const MIN_PASSWORD_LENGTH = 8;
 
 // Plan-gated in the Dashboard.
-const FEATURES_MFA = ["app:mfa_totp", "app:mfa_phone_code", "app:mfa_backup_code"];
+const MFA_FEATURE: Record<string, string> = {
+  authenticator: "app:mfa_totp",
+  sms: "app:mfa_phone_code",
+  "backup-code": "app:mfa_backup_code",
+};
+const FEATURES_MFA = Object.values(MFA_FEATURE);
 const FEATURES_PASSKEY = ["app:passkey"];
 const FEATURES_LIFETIME = ["app:custom_session_duration"];
 
@@ -84,7 +89,10 @@ function passwordlessEnabled(config: InstanceConfig): boolean {
     phoneCode ||
     flag(config, "auth_passkey.used_for_sign_in") ||
     flag(config, "auth_web3.used_for_sign_in") ||
-    enabledOAuthProviders(config).length > 0
+    // authenticatable defaults to true in the provider schema, so only an explicit false opts out.
+    enabledOAuthProviders(config).some(
+      (provider) => at(config, `connection_oauth_${provider}.authenticatable`) !== false,
+    )
   );
 }
 
@@ -95,6 +103,7 @@ const MFA_DECISION: CheckDecision = {
   flag: "factors",
   prompt: "Which second factors should users be able to enroll?",
   multiple: true,
+  features: (values) => values.map((v) => MFA_FEATURE[v]!),
   options: [
     { value: "authenticator", label: "Authenticator app (TOTP)" },
     { value: "backup-code", label: "Backup codes" },
@@ -134,6 +143,7 @@ const PASSWORDLESS_DECISION: CheckDecision = {
   flag: "strategy",
   prompt: "Which passwordless sign-in method should be offered?",
   multiple: false,
+  features: ([strategy]) => (strategy === "passkey" ? FEATURES_PASSKEY : []),
   options: [
     { value: "email-code", label: "One-time code by email" },
     { value: "email-link", label: "Magic link by email" },
@@ -201,7 +211,7 @@ export const CHECKS: CheckDef[] = [
     docsUrl: DOCS_PASSWORDS,
     appliesTo: ({ config }) => passwordEnabled(config),
     ...booleanCheck("auth_password.disable_hibp", { invert: true }),
-    patch: () => ({ auth_password: { disable_hibp: false, enforce_hibp_on_sign_in: true } }),
+    patch: () => ({ auth_password: { disable_hibp: false } }),
   },
   {
     id: "user-lockout",
@@ -482,7 +492,12 @@ export const CHECKS: CheckDef[] = [
     severity: "good-to-have",
     dashboardPath: "user-authentication",
     docsUrl: `${DOCS}/secure/best-practices/protect-email-links`,
-    appliesTo: ({ config }) => emailEnabled(config),
+    // Only meaningful where a magic link is actually sent.
+    appliesTo: ({ config }) =>
+      (emailEnabled(config) &&
+        list(config, "auth_email.verification_strategies").includes("email_link")) ||
+      (flag(config, "auth_email.used_for_sign_in") &&
+        list(config, "auth_email.sign_in_strategies").includes("email_link")),
     ...booleanCheck("auth_attack_protection.email_link_require_same_client"),
     patch: () => ({ auth_attack_protection: { email_link_require_same_client: true } }),
   },

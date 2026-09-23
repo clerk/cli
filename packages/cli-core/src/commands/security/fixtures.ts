@@ -33,7 +33,7 @@ export const SECURE_CONFIG: InstanceConfig = {
     required_for_sign_up: true,
     verify_at_sign_up: true,
     sign_in_strategies: ["email_code"],
-    verification_strategies: ["email_code"],
+    verification_strategies: ["email_code", "email_link"],
   },
   auth_phone: {
     used_for_sign_up: true,
@@ -59,7 +59,12 @@ export const SECURE_CONFIG: InstanceConfig = {
     maximum_lifetime: { enabled: true, duration_seconds: 604800 },
     multi_session_enabled: false,
   },
-  connection_oauth_google: { enabled: true, client_id: "custom-id", client_secret: "***" },
+  connection_oauth_google: {
+    enabled: true,
+    authenticatable: true,
+    client_id: "custom-id",
+    client_secret: "***",
+  },
   connection_oauth_github: { enabled: false, client_id: "", client_secret: "" },
 };
 
@@ -94,7 +99,7 @@ export const INSECURE_CONFIG: InstanceConfig = {
     required_for_sign_up: true,
     verify_at_sign_up: false,
     sign_in_strategies: [],
-    verification_strategies: [],
+    verification_strategies: ["email_link"],
   },
   auth_phone: {
     used_for_sign_up: true,
@@ -127,5 +132,10 @@ export const INSECURE_CONFIG: InstanceConfig = {
 // Enabling a provider satisfies passwordless, so the OAuth check gets its own document.
 export const INSECURE_OAUTH_CONFIG: InstanceConfig = {
   ...INSECURE_CONFIG,
-  connection_oauth_google: { enabled: true, client_id: "", client_secret: "" },
+  connection_oauth_google: {
+    enabled: true,
+    authenticatable: true,
+    client_id: "",
+    client_secret: "",
+  },
 };

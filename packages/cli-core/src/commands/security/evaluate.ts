@@ -5,6 +5,7 @@ import { CHECKS } from "./catalog.ts";
 import { computeScore } from "./score.ts";
 import type {
   AuditReport,
+  CheckDecision,
   CheckDef,
   CheckInput,
   Finding,
@@ -34,6 +35,24 @@ export function fixCommand(
     })
     .join("");
   return `clerk security fix ${ids.join(" ")}${flags}${targetFlags(ref)}${isAgent() ? " --yes" : ""}`;
+}
+
+function decisionFeatures(decision: CheckDecision): Record<string, string[]> | undefined {
+  if (!decision.features) return undefined;
+  const entries = decision.options
+    .map((o) => [o.value, decision.features!([o.value])] as const)
+    .filter(([, features]) => features.length > 0);
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
+export function describeDecision(decision: CheckDecision) {
+  const features = decisionFeatures(decision);
+  return {
+    flag: decision.flag,
+    multiple: decision.multiple,
+    options: decision.options.map((o) => o.value),
+    ...(features && { features }),
+  };
 }
 
 function remedyFor(
@@ -69,7 +88,6 @@ export function evaluate(input: CheckInput, ref: InstanceRef): Finding[] {
     const blockedByTitle = CHECKS.find((c) => c.id === check.blockedBy)?.title;
     const patch = status === "unmet" && check.patch ? check.patch(input) : null;
     const decision = status === "unmet" && !check.patch ? check.decision : undefined;
-    const suggested = decision?.defaults(input) ?? [];
     return {
       id: check.id,
       title: check.title,
@@ -83,12 +101,7 @@ export function evaluate(input: CheckInput, ref: InstanceRef): Finding[] {
       ...(check.customFlows && status !== "met" && { customFlows: check.customFlows }),
       patch,
       ...(decision && {
-        decision: {
-          flag: decision.flag,
-          multiple: decision.multiple,
-          options: decision.options.map((o) => o.value),
-          suggested,
-        },
+        decision: { ...describeDecision(decision), suggested: decision.defaults(input) },
       }),
       remedy: remedyFor(check, status, ref, input, blockedByTitle),
       docsUrl: agentDocsUrl(check.docsUrl),

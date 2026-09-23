@@ -14,7 +14,7 @@ export function deepMerge(
   return result;
 }
 
-interface ProjectedPatches {
+export interface ProjectedPatches {
   payload: Record<string, unknown>;
   projected: InstanceConfig;
 }
@@ -33,4 +33,26 @@ export function projectPatches(input: CheckInput, checks: CheckDef[]): Projected
     projected = deepMerge(projected, patch);
   }
   return { payload, projected };
+}
+
+// Drops the checks needing an unsupported feature, then whatever only those
+// unlocked (blockedBy or appliesTo), until the rest stands on its own.
+export function withoutGated(
+  input: CheckInput,
+  checks: CheckDef[],
+  unsupported: string[],
+): CheckDef[] {
+  const excluded = new Set(
+    checks.filter((c) => c.features?.some((f) => unsupported.includes(f))).map((c) => c.id),
+  );
+  let kept = checks.filter((c) => !excluded.has(c.id));
+  for (;;) {
+    const current = { ...input, config: projectPatches(input, kept).projected };
+    const next = kept.filter(
+      (c) => !(c.blockedBy && excluded.has(c.blockedBy)) && (c.appliesTo?.(current) ?? true),
+    );
+    if (next.length === kept.length) return kept;
+    for (const c of kept) if (!next.includes(c)) excluded.add(c.id);
+    kept = next;
+  }
 }

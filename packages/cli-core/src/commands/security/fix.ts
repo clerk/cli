@@ -12,13 +12,14 @@ import { isRecord } from "../../lib/objects.ts";
 import { withGutter } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
-import { CHECKS, CHECK_IDS, findCheck } from "./catalog.ts";
+import { CHECK_IDS, findCheck } from "./catalog.ts";
 import { evaluate, fixCommand, fixableIds } from "./evaluate.ts";
 import { formatScoreTransition } from "./format.ts";
 import { loadAudit } from "./load.ts";
-import { deepMerge, projectPatches } from "./merge.ts";
+import { deepMerge, projectPatches, withoutGated, type ProjectedPatches } from "./merge.ts";
 import { computeScore } from "./score.ts";
 import type {
+  AuditReport,
   CheckDef,
   CheckInput,
   Finding,
@@ -47,6 +48,9 @@ interface Selection {
   checks: CheckDef[];
   skipped: FixSummary["skipped"];
 }
+
+const byCatalogOrder = (checks: CheckDef[]): CheckDef[] =>
+  [...checks].sort((a, b) => CHECK_IDS.indexOf(a.id) - CHECK_IDS.indexOf(b.id));
 
 function suppliedDecisions(options: FixOptions): Partial<Record<"factors" | "strategy", string[]>> {
   const factors = options.factors
@@ -101,15 +105,6 @@ function selectByIds(ids: string[], findings: Finding[], ref: InstanceRef): Sele
   return selection;
 }
 
-// A selected check unblocks its dependants; take them along.
-function withUnblocked(ids: Set<string>, findings: Finding[]): void {
-  for (const f of findings) {
-    if (f.status === "blocked" && f.blockedBy && ids.has(f.blockedBy) && findCheck(f.id)?.patch) {
-      ids.add(f.id);
-    }
-  }
-}
-
 function selectAll(
   findings: Finding[],
   supplied: ReturnType<typeof suppliedDecisions>,
@@ -119,7 +114,6 @@ function selectAll(
   for (const f of findings) {
     if (f.status === "unmet" && f.decision && supplied[f.decision.flag]) ids.add(f.id);
   }
-  withUnblocked(ids, findings);
   return { checks: [...ids].map((id) => findCheck(id)!), skipped: [] };
 }
 
@@ -144,9 +138,48 @@ async function selectInteractively(findings: Finding[]): Promise<Selection> {
     required: false,
   });
   if (chosen.length === 0) throwUserAbort();
-  const ids = new Set(chosen);
-  withUnblocked(ids, findings);
-  return { checks: [...ids].map((id) => findCheck(id)!), skipped: [] };
+  return { checks: chosen.map((id) => findCheck(id)!), skipped: [] };
+}
+
+async function pickUnlocked(unlocked: Finding[]): Promise<string[]> {
+  const { multiselect } = await import("../../lib/prompts.ts");
+  return multiselect<string>({
+    message: "Your selection makes these recommendations available. Apply any of them too?",
+    options: unlocked.map((f) => ({
+      value: f.id,
+      label: f.title,
+      hint: `${f.id} · ${f.description}`,
+    })),
+    initialValues: [],
+    required: false,
+  });
+}
+
+type TakeUnlocked = (unlocked: Finding[]) => Promise<string[]>;
+
+// A fix can unblock a check (mfa → mfa-required) or make one applicable
+// (email-link sign-in → same-client), so the selection is closed over the
+// projected document. Checks the user already saw as unmet stay declined.
+async function withUnlocked(
+  checks: CheckDef[],
+  report: AuditReport,
+  input: CheckInput,
+  take: TakeUnlocked,
+): Promise<ProjectedPatches & { checks: CheckDef[] }> {
+  const seen = new Set(report.findings.filter((f) => f.status === "unmet").map((f) => f.id));
+  for (;;) {
+    const projection = projectPatches(input, checks);
+    const after = evaluate({ ...input, config: projection.projected }, report.instance);
+    const chosen = new Set(checks.map((c) => c.id));
+    const unlocked = after.filter(
+      (f) => f.status === "unmet" && f.patch && !chosen.has(f.id) && !seen.has(f.id),
+    );
+    const extra = unlocked.length ? await take(unlocked) : [];
+    if (extra.length === 0) return { ...projection, checks };
+    for (const f of unlocked) seen.add(f.id);
+    // Catalog order: prerequisites first.
+    checks = byCatalogOrder([...checks, ...extra.map((id) => findCheck(id)!)]);
+  }
 }
 
 async function resolveDecision(
@@ -226,6 +259,7 @@ function translatePlanError(
   error: unknown,
   checks: CheckDef[],
   decisions: Record<string, string[]>,
+  input: CheckInput,
   ref: InstanceRef,
 ): unknown {
   if (
@@ -238,10 +272,10 @@ function translatePlanError(
   const raw = error.meta?.unsupported_features;
   const unsupported = Array.isArray(raw) ? raw.map(String) : [];
   const gated = checks.filter((c) => c.features?.some((f) => unsupported.includes(f)));
-  const rest = checks.filter((c) => !gated.includes(c)).map((c) => c.id);
+  const rest = withoutGated(input, checks, unsupported).map((c) => c.id);
   const subject = gated.length ? gated.map((c) => c.id).join(", ") : "This change";
   return new CliError(
-    `${subject} need${gated.length === 1 ? "s" : ""} a plan that includes ${unsupported.join(", ")}.`,
+    `${subject} need${gated.length > 1 ? "" : "s"} a plan that includes ${unsupported.join(", ")}.`,
     {
       code: ERROR_CODE.PLAN_INSUFFICIENT,
       docsUrl: "https://clerk.com/pricing",
@@ -301,8 +335,6 @@ export async function securityFix(ids: string[] = [], options: FixOptions = {}):
       : selected.length > 0
         ? selectByIds(selected, report.findings, report.instance)
         : await selectInteractively(report.findings);
-    for (const { id, reason } of skipped)
-      log.info(`Skipping \`${id}\`: ${SKIP_REASON_TEXT[reason]}`);
 
     const dryRun = Boolean(options.dryRun);
     const summary: FixSummary = {
@@ -315,29 +347,50 @@ export async function securityFix(ids: string[] = [], options: FixOptions = {}):
       remaining: report.findings.filter((f) => f.status !== "met").map((f) => f.id),
     };
 
-    if (checks.length === 0) {
-      log.info("Nothing to fix.");
-      if (json) log.data(JSON.stringify(summary, null, 2));
-      return;
-    }
-
-    // Catalog order: prerequisites first.
-    const ordered = [...checks].sort((a, b) => CHECKS.indexOf(a) - CHECKS.indexOf(b));
-    const resolved: CheckDef[] = [];
-    for (const check of ordered) {
+    const decided: CheckDef[] = [];
+    for (const check of byCatalogOrder(checks)) {
       if (check.patch || !check.decision) {
-        resolved.push(check);
+        decided.push(check);
         continue;
       }
       const values = await resolveDecision(check, supplied, input, report.instance);
       const problem = check.decision.validate?.(values, input);
       if (problem) throwUsageError(problem);
       summary.decisions[check.id] = values;
-      resolved.push({ ...check, patch: (i) => check.decision!.patch(values, i) });
+      decided.push({
+        ...check,
+        features: check.decision.features?.(values) ?? check.features,
+        patch: (i) => check.decision!.patch(values, i),
+      });
     }
 
+    // --all takes what it unlocks at its tiers, the picker asks, and explicit ids
+    // grow only to a named id that another one makes applicable.
+    const named = new Set(skipped.filter((s) => s.reason === "not_applicable").map((s) => s.id));
+    const take: TakeUnlocked = all
+      ? async (unlocked) =>
+          unlocked
+            .filter((f) => options.goodToHave || f.severity !== "good-to-have")
+            .map((f) => f.id)
+      : selected.length > 0
+        ? async (unlocked) => unlocked.filter((f) => named.has(f.id)).map((f) => f.id)
+        : pickUnlocked;
+    const {
+      checks: resolved,
+      payload,
+      projected,
+    } = await withUnlocked(decided, report, input, take);
     const applied = resolved.map((c) => c.id);
-    const { payload, projected } = projectPatches(input, resolved);
+    summary.skipped = skipped.filter((s) => !applied.includes(s.id));
+    for (const { id, reason } of summary.skipped)
+      log.info(`Skipping \`${id}\`: ${SKIP_REASON_TEXT[reason]}`);
+
+    if (resolved.length === 0) {
+      log.info("Nothing to fix.");
+      if (json) log.data(JSON.stringify(summary, null, 2));
+      return;
+    }
+
     const flowNotes = resolved.filter((c) => c.customFlows);
     const warning = flowNotes.length
       ? [
@@ -363,7 +416,7 @@ export async function securityFix(ids: string[] = [], options: FixOptions = {}):
         },
       });
     } catch (error) {
-      throw translatePlanError(error, resolved, summary.decisions, report.instance);
+      throw translatePlanError(error, resolved, summary.decisions, input, report.instance);
     }
 
     if (changed) {
