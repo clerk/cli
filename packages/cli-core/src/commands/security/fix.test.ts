@@ -181,81 +181,39 @@ describe("security fix", () => {
       auth_email: { used_for_sign_up: false, used_for_sign_in: false },
     });
 
-    test("--all applies a check the selection makes applicable", async () => {
+    test("email-link sign-in also requires links to open on the same device", async () => {
       serve(PHONE_ONLY);
-      await run([], { all: true, goodToHave: true, strategy: "email-link", yes: true, json: true });
-      expect(patches()[0]!.body).toMatchObject({
+      await run(["passwordless-auth"], { strategy: "email-link", yes: true, json: true });
+      expect(patches()[0]!.body).toEqual({
         auth_email: { used_for_sign_in: true, sign_in_strategies: ["email_link"] },
         auth_attack_protection: { email_link_require_same_client: true },
       });
       const summary = JSON.parse(captured.out) as FixSummary;
-      expect(summary.applied).toContain("email-link-same-client");
+      expect(summary.applied).toEqual(["passwordless-auth"]);
       expect(summary.remaining).not.toContain("email-link-same-client");
-      expect(summary.score.after.percent).toBeGreaterThan(summary.score.before.percent);
     });
 
-    test("--all leaves an unlocked good-to-have check alone without --good-to-have", async () => {
-      serve(PHONE_ONLY);
-      await run([], { all: true, strategy: "email-link", yes: true, json: true });
-      expect(patches()[0]!.body).not.toHaveProperty(
-        "auth_attack_protection.email_link_require_same_client",
+    test("email-code sign-in also verifies the email at sign-up", async () => {
+      await run(["passwordless-auth"], { strategy: "email-code", yes: true, json: true });
+      expect(patches()[0]!.body).toEqual({
+        auth_email: {
+          used_for_sign_in: true,
+          sign_in_strategies: ["email_code"],
+          verify_at_sign_up: true,
+          verification_strategies: ["email_link"],
+        },
+      });
+      expect((JSON.parse(captured.out) as FixSummary).remaining).not.toContain(
+        "email-verification",
       );
-      const summary = JSON.parse(captured.out) as FixSummary;
-      expect(summary.applied).not.toContain("email-link-same-client");
-      expect(summary.remaining).toContain("email-link-same-client");
     });
 
-    test("the picker offers a check the selection makes applicable", async () => {
-      serve(PHONE_ONLY);
-      multiselect.mockResolvedValueOnce(["passwordless-auth"]);
-      multiselect.mockResolvedValueOnce(["email-link-same-client"]);
-      await run([], { strategy: "email-link", yes: true, json: true });
-      expect(multiselect).toHaveBeenCalledTimes(2);
-      expect(multiselect.mock.calls[1]![0]).toMatchObject({
-        options: [{ value: "email-link-same-client" }],
-      });
-      expect((JSON.parse(captured.out) as FixSummary).applied).toEqual([
-        "passwordless-auth",
-        "email-link-same-client",
-      ]);
-    });
-
-    test("explicit ids never grow, even when they unlock another check", async () => {
-      serve(PHONE_ONLY);
-      await run(["passwordless-auth"], { strategy: "email-link", yes: true, json: true });
-      expect(patches()[0]!.body).not.toHaveProperty("auth_attack_protection");
+    test("explicit ids never grow, even when they unblock another check", async () => {
+      await run(["mfa"], { factors: ["authenticator"], yes: true, json: true });
+      expect(patches()[0]!.body).not.toHaveProperty("auth_multi_factor.required_for_sign_in");
       const summary = JSON.parse(captured.out) as FixSummary;
-      expect(summary.applied).toEqual(["passwordless-auth"]);
-      expect(summary.remaining).toContain("email-link-same-client");
-    });
-
-    test("an explicit id another one makes applicable is applied, not skipped", async () => {
-      serve(PHONE_ONLY);
-      await run(["email-link-same-client", "passwordless-auth"], {
-        strategy: "email-link",
-        yes: true,
-        json: true,
-      });
-      expect(patches()[0]!.body).toMatchObject({
-        auth_attack_protection: { email_link_require_same_client: true },
-      });
-      const summary = JSON.parse(captured.out) as FixSummary;
-      expect(summary.applied).toEqual(["passwordless-auth", "email-link-same-client"]);
-      expect(summary.skipped).toEqual([]);
-      expect(captured.err).not.toContain("Skipping");
-    });
-
-    test("an explicit id that stays inapplicable after the others is skipped", async () => {
-      serve(PHONE_ONLY);
-      await run(["email-link-same-client", "passwordless-auth"], {
-        strategy: "email-code",
-        yes: true,
-        json: true,
-      });
-      const summary = JSON.parse(captured.out) as FixSummary;
-      expect(summary.applied).toEqual(["passwordless-auth"]);
-      expect(summary.skipped).toEqual([{ id: "email-link-same-client", reason: "not_applicable" }]);
-      expect(captured.err).toMatch(/Skipping .*email-link-same-client.*: not applicable/);
+      expect(summary.applied).toEqual(["mfa"]);
+      expect(summary.remaining).toContain("mfa-required");
     });
 
     test("rejects ids together with --all", async () => {
@@ -497,7 +455,7 @@ describe("security fix", () => {
         }),
       );
       await run(["passwordless-auth"], { strategy: "email-code", yes: true });
-      expect(patches()[0]!.body).toEqual({
+      expect(patches()[0]!.body).toMatchObject({
         auth_email: { used_for_sign_in: true, sign_in_strategies: ["email_code"] },
       });
     });
@@ -576,7 +534,7 @@ describe("security fix", () => {
 
     test("human mode asks for the strategy, defaulting to an identifier already collected", async () => {
       await run(["passwordless-auth"], { yes: true, json: true });
-      expect(patches()[0]!.body).toEqual({
+      expect(patches()[0]!.body).toMatchObject({
         auth_email: { used_for_sign_in: true, sign_in_strategies: ["email_code"] },
       });
     });

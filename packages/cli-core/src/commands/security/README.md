@@ -55,15 +55,12 @@ ids and no `--all`, human mode opens a checklist of the fixable gaps with the
 critical and recommended ones preselected; deselecting everything cancels
 without writing.
 
-A fix can unlock another recommendation: enabling MFA unblocks `mfa-required`,
-and choosing magic-link sign-in makes `email-link-same-client` applicable. The
-selection is closed over the projected document, so `--all` also applies what
-it unlocks at the tiers it covers, the picker offers unlocked recommendations
-in a second checklist with nothing preselected, and explicit ids never grow
-beyond what was named: an id that another named fix makes applicable is
-applied rather than skipped. Selecting optional MFA in the picker therefore
-does not also require MFA enrollment unless that additional recommendation is
-selected.
+A fix can unlock another recommendation: enabling MFA unblocks `mfa-required`.
+The selection is closed over the projected document, so `--all` also applies
+what it unlocks at the tiers it covers, the picker offers unlocked
+recommendations in a second checklist with nothing preselected, and explicit
+ids never grow. Selecting optional MFA in the picker therefore does not also
+require MFA enrollment unless that additional recommendation is selected.
 
 | Flag                | Description                                                                                                                                                                |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -78,8 +75,7 @@ selected.
 | `--yes`             | Skip the confirmation prompt. Required in agent mode unless `--dry-run` is passed.                                                                                         |
 | `--json`            | Print the result summary as JSON (automatic in agent mode)                                                                                                                 |
 
-Ids that are already met or not applicable are skipped with a note, unless
-another id in the same call makes them applicable. Two
+Ids that are already met or not applicable are skipped with a note. Two
 recommendations are product decisions rather than pure config changes: `mfa`
 (which second factors) and `passwordless-auth` (which sign-in method). `fix`
 asks in human mode and takes `--factors` / `--strategy` in agent mode, then
@@ -92,7 +88,7 @@ be applied exits 2 with a usage error naming the remedy, before anything is
 written. Unknown ids exit 2 with the list of valid ids. Passing both ids and
 `--all` is an error.
 
-Backup codes require another second factor: choose `authenticator` or `sms` alongside `backup-code`. Mandatory MFA enables enrollment for both sign-ups and sign-ins. Fixing breached-password sign-in protection also enables breach detection. Fixing `breach-detection` alone leaves sign-in enforcement unchanged.
+Backup codes require another second factor: choose `authenticator` or `sms` alongside `backup-code`. Mandatory MFA enables enrollment for both sign-ups and sign-ins. Fixing breached-password sign-in protection also enables breach detection. Fixing `breach-detection` alone leaves sign-in enforcement unchanged. A passwordless strategy that signs users in by email or phone also requires that identifier to be verified at sign-up when it is collected there, and `email-link` also requires links to be opened on the device that requested them, so the printed fix command is safe on its own.
 
 Patches are applied sequentially onto a projected copy of the document, so a
 later check sees the earlier ones' changes. This is what lets `--all` set the

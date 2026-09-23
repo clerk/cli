@@ -335,6 +335,8 @@ export async function securityFix(ids: string[] = [], options: FixOptions = {}):
       : selected.length > 0
         ? selectByIds(selected, report.findings, report.instance)
         : await selectInteractively(report.findings);
+    for (const { id, reason } of skipped)
+      log.info(`Skipping \`${id}\`: ${SKIP_REASON_TEXT[reason]}`);
 
     const dryRun = Boolean(options.dryRun);
     const summary: FixSummary = {
@@ -346,6 +348,12 @@ export async function securityFix(ids: string[] = [], options: FixOptions = {}):
       score: { before: report.score, after: report.score },
       remaining: report.findings.filter((f) => f.status !== "met").map((f) => f.id),
     };
+
+    if (checks.length === 0) {
+      log.info("Nothing to fix.");
+      if (json) log.data(JSON.stringify(summary, null, 2));
+      return;
+    }
 
     const decided: CheckDef[] = [];
     for (const check of byCatalogOrder(checks)) {
@@ -364,16 +372,14 @@ export async function securityFix(ids: string[] = [], options: FixOptions = {}):
       });
     }
 
-    // --all takes what it unlocks at its tiers, the picker asks, and explicit ids
-    // grow only to a named id that another one makes applicable.
-    const named = new Set(skipped.filter((s) => s.reason === "not_applicable").map((s) => s.id));
+    // --all takes what it unlocks at its tiers, the picker asks, explicit ids never grow.
     const take: TakeUnlocked = all
       ? async (unlocked) =>
           unlocked
             .filter((f) => options.goodToHave || f.severity !== "good-to-have")
             .map((f) => f.id)
       : selected.length > 0
-        ? async (unlocked) => unlocked.filter((f) => named.has(f.id)).map((f) => f.id)
+        ? async () => []
         : pickUnlocked;
     const {
       checks: resolved,
@@ -381,16 +387,6 @@ export async function securityFix(ids: string[] = [], options: FixOptions = {}):
       projected,
     } = await withUnlocked(decided, report, input, take);
     const applied = resolved.map((c) => c.id);
-    summary.skipped = skipped.filter((s) => !applied.includes(s.id));
-    for (const { id, reason } of summary.skipped)
-      log.info(`Skipping \`${id}\`: ${SKIP_REASON_TEXT[reason]}`);
-
-    if (resolved.length === 0) {
-      log.info("Nothing to fix.");
-      if (json) log.data(JSON.stringify(summary, null, 2));
-      return;
-    }
-
     const flowNotes = resolved.filter((c) => c.customFlows);
     const warning = flowNotes.length
       ? [
