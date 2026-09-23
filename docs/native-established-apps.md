@@ -5,6 +5,11 @@ runtime configuration remains developer-owned. Selecting a Clerk app with
 `--app` authorizes setup against that app; it does not prove which app a custom
 runtime publishable key belongs to.
 
+Existing `AuthView` is evidence for SDK product and version requirements. When its
+runtime wiring is unresolved, it does not activate automatic AuthView setup or
+provider-capability changes. SDK linkage and native registration may still
+proceed. Explicit `--prebuilt-auth-ui` requests retain the runtime checks.
+
 | Operation                                                | Required evidence                                                                                                                                                | Effect of uncertain custom startup wiring                                                                            |
 | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Link SDK products                                        | Exhaustive target discovery, consistent platform views, complete source membership for product selection, and a safe package/project edit                        | May proceed when those prerequisites hold; preserve Swift                                                            |
