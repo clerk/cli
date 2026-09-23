@@ -17,7 +17,8 @@ import type { FixOptions, FixSummary } from "./types.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
-mock.module("../../lib/prompts.ts", () => libPromptsStubs);
+const multiselect = mock(libPromptsStubs.multiselect);
+mock.module("../../lib/prompts.ts", () => ({ ...libPromptsStubs, multiselect }));
 mock.module("../../lib/listage.ts", () => ({
   ...listageStubs,
   select: async (config: { default?: unknown }) => config.default,
@@ -83,6 +84,8 @@ describe("security fix", () => {
     process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
     process.env.CLERK_MODE = "human";
     requests = [];
+    multiselect.mockReset();
+    multiselect.mockImplementation(libPromptsStubs.multiselect);
     logSpy = spyOn(console, "log").mockImplementation(() => {});
     errorSpy = spyOn(console, "error").mockImplementation(() => {});
     serve(INSECURE_CONFIG);
@@ -99,6 +102,33 @@ describe("security fix", () => {
   });
 
   describe("argument validation", () => {
+    test("breach detection leaves sign-in enforcement as a separate recommendation", async () => {
+      await run(["breach-detection"], { yes: true, json: true });
+      expect(patches()[0]!.body).toEqual({ auth_password: { disable_hibp: false } });
+      const summary = JSON.parse(captured.out) as FixSummary;
+      expect(summary.remaining).not.toContain("breach-detection");
+      expect(summary.remaining).toContain("breach-detection-sign-in");
+    });
+
+    test("same-client protection can be fixed for email-link sign-in without email sign-up", async () => {
+      serve(
+        deepMerge(INSECURE_CONFIG, {
+          auth_email: {
+            used_for_sign_up: false,
+            used_for_sign_in: true,
+            sign_in_strategies: ["email_link"],
+          },
+        }),
+      );
+      await run(["email-link-same-client"], { yes: true, json: true });
+      expect(patches()[0]!.body).toEqual({
+        auth_attack_protection: { email_link_require_same_client: true },
+      });
+      const summary = JSON.parse(captured.out) as FixSummary;
+      expect(summary.applied).toEqual(["email-link-same-client"]);
+      expect(summary.skipped).toEqual([]);
+    });
+
     test("agent mode requires ids or --all", async () => {
       process.env.CLERK_MODE = "agent";
       await expect(run()).rejects.toThrow("Pass one or more check ids, or --all");
@@ -120,6 +150,112 @@ describe("security fix", () => {
       await run([], { yes: true });
       expect(captured.err).toContain("Nothing to fix");
       expect(patches()).toHaveLength(0);
+    });
+
+    test.each([false, true])(
+      "interactive MFA selection requires a separate enrollment choice (required=%s)",
+      async (required) => {
+        multiselect.mockResolvedValueOnce(["mfa"]);
+        multiselect.mockResolvedValueOnce(required ? ["mfa-required"] : []);
+        await run([], { factors: ["authenticator"], yes: true, json: true });
+
+        expect(multiselect).toHaveBeenCalledTimes(2);
+        expect(multiselect.mock.calls[1]![0]).toMatchObject({
+          initialValues: [],
+          required: false,
+          options: [{ value: "mfa-required" }],
+        });
+        expect(patches()[0]!.body).toEqual({
+          auth_multi_factor: {
+            authenticator_app: { enabled: true },
+            ...(required && { required_for_sign_up: true }),
+          },
+        });
+        const summary = JSON.parse(captured.out) as FixSummary;
+        expect(summary.applied.includes("mfa-required")).toBe(required);
+        expect(summary.remaining.includes("mfa-required")).toBe(!required);
+      },
+    );
+
+    const PHONE_ONLY = deepMerge(INSECURE_CONFIG, {
+      auth_email: { used_for_sign_up: false, used_for_sign_in: false },
+    });
+
+    test("--all applies a check the selection makes applicable", async () => {
+      serve(PHONE_ONLY);
+      await run([], { all: true, goodToHave: true, strategy: "email-link", yes: true, json: true });
+      expect(patches()[0]!.body).toMatchObject({
+        auth_email: { used_for_sign_in: true, sign_in_strategies: ["email_link"] },
+        auth_attack_protection: { email_link_require_same_client: true },
+      });
+      const summary = JSON.parse(captured.out) as FixSummary;
+      expect(summary.applied).toContain("email-link-same-client");
+      expect(summary.remaining).not.toContain("email-link-same-client");
+      expect(summary.score.after.percent).toBeGreaterThan(summary.score.before.percent);
+    });
+
+    test("--all leaves an unlocked good-to-have check alone without --good-to-have", async () => {
+      serve(PHONE_ONLY);
+      await run([], { all: true, strategy: "email-link", yes: true, json: true });
+      expect(patches()[0]!.body).not.toHaveProperty(
+        "auth_attack_protection.email_link_require_same_client",
+      );
+      const summary = JSON.parse(captured.out) as FixSummary;
+      expect(summary.applied).not.toContain("email-link-same-client");
+      expect(summary.remaining).toContain("email-link-same-client");
+    });
+
+    test("the picker offers a check the selection makes applicable", async () => {
+      serve(PHONE_ONLY);
+      multiselect.mockResolvedValueOnce(["passwordless-auth"]);
+      multiselect.mockResolvedValueOnce(["email-link-same-client"]);
+      await run([], { strategy: "email-link", yes: true, json: true });
+      expect(multiselect).toHaveBeenCalledTimes(2);
+      expect(multiselect.mock.calls[1]![0]).toMatchObject({
+        options: [{ value: "email-link-same-client" }],
+      });
+      expect((JSON.parse(captured.out) as FixSummary).applied).toEqual([
+        "passwordless-auth",
+        "email-link-same-client",
+      ]);
+    });
+
+    test("explicit ids never grow, even when they unlock another check", async () => {
+      serve(PHONE_ONLY);
+      await run(["passwordless-auth"], { strategy: "email-link", yes: true, json: true });
+      expect(patches()[0]!.body).not.toHaveProperty("auth_attack_protection");
+      const summary = JSON.parse(captured.out) as FixSummary;
+      expect(summary.applied).toEqual(["passwordless-auth"]);
+      expect(summary.remaining).toContain("email-link-same-client");
+    });
+
+    test("an explicit id another one makes applicable is applied, not skipped", async () => {
+      serve(PHONE_ONLY);
+      await run(["email-link-same-client", "passwordless-auth"], {
+        strategy: "email-link",
+        yes: true,
+        json: true,
+      });
+      expect(patches()[0]!.body).toMatchObject({
+        auth_attack_protection: { email_link_require_same_client: true },
+      });
+      const summary = JSON.parse(captured.out) as FixSummary;
+      expect(summary.applied).toEqual(["passwordless-auth", "email-link-same-client"]);
+      expect(summary.skipped).toEqual([]);
+      expect(captured.err).not.toContain("Skipping");
+    });
+
+    test("an explicit id that stays inapplicable after the others is skipped", async () => {
+      serve(PHONE_ONLY);
+      await run(["email-link-same-client", "passwordless-auth"], {
+        strategy: "email-code",
+        yes: true,
+        json: true,
+      });
+      const summary = JSON.parse(captured.out) as FixSummary;
+      expect(summary.applied).toEqual(["passwordless-auth"]);
+      expect(summary.skipped).toEqual([{ id: "email-link-same-client", reason: "not_applicable" }]);
+      expect(captured.err).toMatch(/Skipping .*email-link-same-client.*: not applicable/);
     });
 
     test("rejects ids together with --all", async () => {
@@ -354,6 +490,18 @@ describe("security fix", () => {
   );
 
   describe("decisions", () => {
+    test("passwordless fix remains available with a connection-only OAuth provider", async () => {
+      serve(
+        deepMerge(INSECURE_CONFIG, {
+          connection_oauth_google: { enabled: true, authenticatable: false },
+        }),
+      );
+      await run(["passwordless-auth"], { strategy: "email-code", yes: true });
+      expect(patches()[0]!.body).toEqual({
+        auth_email: { used_for_sign_in: true, sign_in_strategies: ["email_code"] },
+      });
+    });
+
     test.each([false, true])("rejects backup codes alone before writing (all=%s)", async (all) => {
       await expect(
         run(all ? [] : ["mfa"], {
@@ -520,6 +668,88 @@ describe("security fix", () => {
       const e = error as { examples: Array<{ command: string }> };
       expect(e.examples[0]!.command).toBe(
         "clerk security fix mfa --factors authenticator --app app_1 --instance ins_dev",
+      );
+    });
+
+    test.each([false, true])(
+      "passkey strategy is excluded from plan-error retries (other fixes=%s)",
+      async (otherFixes) => {
+        serveRejectingWrites();
+        let error: unknown;
+        await run(["passwordless-auth", ...(otherFixes ? ["user-lockout"] : [])], {
+          strategy: "passkey",
+          yes: true,
+        }).catch((e) => (error = e));
+        const e = error as { message: string; examples?: Array<{ command: string }> };
+        expect(e.message).toBe("passwordless-auth needs a plan that includes app:passkey.");
+        expect(e.examples?.map((example) => example.command)).toEqual(
+          otherFixes
+            ? ["clerk security fix user-lockout --app app_1 --instance ins_dev"]
+            : undefined,
+        );
+      },
+    );
+
+    test("a free passwordless strategy remains in the retry when passkeys are rejected", async () => {
+      serveRejectingWrites();
+      let error: unknown;
+      await run(["passwordless-auth", "passkeys"], {
+        strategy: "email-code",
+        yes: true,
+      }).catch((e) => (error = e));
+      const e = error as { examples: Array<{ command: string }> };
+      expect(e.examples[0]!.command).toBe(
+        "clerk security fix passwordless-auth --strategy email-code --app app_1 --instance ins_dev",
+      );
+    });
+
+    test.each([false, true])(
+      "MFA plan failure omits dependent enrollment from the retry (other fixes=%s)",
+      async (otherFixes) => {
+        stubFetch(async (_input, init) => {
+          if (init?.method === "PATCH") {
+            return new Response(PLAN_402.replace("app:passkey", "app:mfa_totp"), { status: 402 });
+          }
+          return new Response(JSON.stringify(INSECURE_CONFIG), { status: 200 });
+        });
+        let error: unknown;
+        await run(["mfa-required", "mfa", ...(otherFixes ? ["user-lockout"] : [])], {
+          factors: ["authenticator"],
+          yes: true,
+        }).catch((e) => (error = e));
+        const e = error as { code: string; examples?: Array<{ command: string }> };
+        expect(e.code).toBe("plan_insufficient");
+        if (otherFixes) {
+          expect(e.examples?.map((example) => example.command)).toEqual([
+            "clerk security fix user-lockout --app app_1 --instance ins_dev",
+          ]);
+          serve(INSECURE_CONFIG);
+          await run(["user-lockout"], { yes: true });
+          expect(patches()).toHaveLength(1);
+        } else {
+          expect(e.examples).toBeUndefined();
+        }
+      },
+    );
+
+    test("mfa is gated by the chosen factors, not every MFA feature", async () => {
+      stubFetch(async (_input, init) => {
+        if (init?.method === "PATCH") {
+          return new Response(PLAN_402.replace("app:passkey", "app:mfa_backup_code"), {
+            status: 402,
+          });
+        }
+        return new Response(JSON.stringify(INSECURE_CONFIG), { status: 200 });
+      });
+      let error: unknown;
+      await run(["mfa", "mfa-required", "user-lockout"], {
+        factors: ["authenticator"],
+        yes: true,
+      }).catch((e) => (error = e));
+      const e = error as { message: string; examples: Array<{ command: string }> };
+      expect(e.message).toBe("This change needs a plan that includes app:mfa_backup_code.");
+      expect(e.examples[0]!.command).toBe(
+        "clerk security fix user-lockout mfa mfa-required --factors authenticator --app app_1 --instance ins_dev",
       );
     });
 

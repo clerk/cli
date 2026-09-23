@@ -54,6 +54,8 @@ export interface CheckDecision {
   multiple: boolean;
   options: Array<{ value: string; label: string }>;
   defaults(input: CheckInput): string[];
+  /** Billing features required by the selected values. */
+  features?(values: string[]): string[];
   /** Usage error text for a choice the backend rejects. */
   validate?(values: string[], input: CheckInput): string | undefined;
   patch(values: string[], input: CheckInput): ConfigPatch;
@@ -64,6 +66,8 @@ export interface FindingDecision {
   multiple: boolean;
   options: string[];
   suggested: string[];
+  /** Billing features per option, for the options that need any. */
+  features?: Record<string, string[]>;
 }
 
 export interface Finding extends CheckEvaluation {

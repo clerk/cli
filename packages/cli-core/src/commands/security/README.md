@@ -51,23 +51,35 @@ Recommended
 Re-runs the audit, builds one config patch from the selected recommendations,
 and applies it through the same path as `clerk config patch`: printed diff,
 confirmation prompt, server-side `--dry-run`, and result reporting. With no
-ids and no `--all`, human mode opens a checklist of the fixable gaps;
-deselecting everything cancels without writing.
+ids and no `--all`, human mode opens a checklist of the fixable gaps with the
+critical and recommended ones preselected; deselecting everything cancels
+without writing.
 
-| Flag                | Description                                                                                                                                                                   |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `[ids...]`          | Recommendation ids to fix, as shown in the audit. Omit them in human mode to pick from a checklist of the fixable gaps (all preselected). Agent mode requires ids or `--all`. |
-| `--all`             | Fix every unmet critical and recommended check that has an inline patch. Add `--factors` or `--strategy` to include the decision checks too.                                  |
-| `--good-to-have`    | With `--all`, also apply the good-to-have tier.                                                                                                                               |
-| `--factors <list>`  | Second factors for `mfa`: `authenticator`, `backup-code`, `sms` (comma-separated or repeated). Asked interactively when omitted in human mode; required in agent mode.        |
-| `--strategy <name>` | Sign-in method for `passwordless-auth`: `email-code`, `email-link`, `phone-code`, `passkey`. Asked interactively when omitted in human mode; required in agent mode.          |
-| `--app <id>`        | Application ID to target                                                                                                                                                      |
-| `--instance <id>`   | Instance to target                                                                                                                                                            |
-| `--dry-run`         | Validate server-side and preview the diff without applying it                                                                                                                 |
-| `--yes`             | Skip the confirmation prompt. Required in agent mode unless `--dry-run` is passed.                                                                                            |
-| `--json`            | Print the result summary as JSON (automatic in agent mode)                                                                                                                    |
+A fix can unlock another recommendation: enabling MFA unblocks `mfa-required`,
+and choosing magic-link sign-in makes `email-link-same-client` applicable. The
+selection is closed over the projected document, so `--all` also applies what
+it unlocks at the tiers it covers, the picker offers unlocked recommendations
+in a second checklist with nothing preselected, and explicit ids never grow
+beyond what was named: an id that another named fix makes applicable is
+applied rather than skipped. Selecting optional MFA in the picker therefore
+does not also require MFA enrollment unless that additional recommendation is
+selected.
 
-Ids that are already met or not applicable are skipped with a note. Two
+| Flag                | Description                                                                                                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `[ids...]`          | Recommendation ids to fix, as shown in the audit. Omit them in human mode to pick from a checklist of the fixable gaps. Agent mode requires ids or `--all`.                |
+| `--all`             | Fix every unmet critical and recommended check that has an inline patch, plus what those fixes unlock. Add `--factors` or `--strategy` to include the decision checks too. |
+| `--good-to-have`    | With `--all`, also apply the good-to-have tier.                                                                                                                            |
+| `--factors <list>`  | Second factors for `mfa`: `authenticator`, `backup-code`, `sms` (comma-separated or repeated). Asked interactively when omitted in human mode; required in agent mode.     |
+| `--strategy <name>` | Sign-in method for `passwordless-auth`: `email-code`, `email-link`, `phone-code`, `passkey`. Asked interactively when omitted in human mode; required in agent mode.       |
+| `--app <id>`        | Application ID to target                                                                                                                                                   |
+| `--instance <id>`   | Instance to target                                                                                                                                                         |
+| `--dry-run`         | Validate server-side and preview the diff without applying it                                                                                                              |
+| `--yes`             | Skip the confirmation prompt. Required in agent mode unless `--dry-run` is passed.                                                                                         |
+| `--json`            | Print the result summary as JSON (automatic in agent mode)                                                                                                                 |
+
+Ids that are already met or not applicable are skipped with a note, unless
+another id in the same call makes them applicable. Two
 recommendations are product decisions rather than pure config changes: `mfa`
 (which second factors) and `passwordless-auth` (which sign-in method). `fix`
 asks in human mode and takes `--factors` / `--strategy` in agent mode, then
@@ -80,7 +92,7 @@ be applied exits 2 with a usage error naming the remedy, before anything is
 written. Unknown ids exit 2 with the list of valid ids. Passing both ids and
 `--all` is an error.
 
-Backup codes require another second factor: choose `authenticator` or `sms` alongside `backup-code`. Mandatory MFA enables enrollment for both sign-ups and sign-ins. Fixing breached-password sign-in protection also enables breach detection.
+Backup codes require another second factor: choose `authenticator` or `sms` alongside `backup-code`. Mandatory MFA enables enrollment for both sign-ups and sign-ins. Fixing breached-password sign-in protection also enables breach detection. Fixing `breach-detection` alone leaves sign-in enforcement unchanged.
 
 Patches are applied sequentially onto a projected copy of the document, so a
 later check sees the earlier ones' changes. This is what lets `--all` set the
@@ -151,7 +163,7 @@ and breach detection are what count.
 | `password-min-length`      | recommended  | `auth_password.min_length >= 8` (only when passwords are enabled)                                              | patch                             |
 | `allowlist-on-sign-in`     | recommended  | `auth_access_control.allowlist_blocklist_enforced_on_sign_in` (only when an allowlist or blocklist is enabled) | patch                             |
 | `oauth-custom-credentials` | recommended  | every enabled `connection_oauth_*` has a `client_id` (production only)                                         | manual                            |
-| `email-link-same-client`   | good-to-have | `auth_attack_protection.email_link_require_same_client` (email only)                                           | patch                             |
+| `email-link-same-client`   | good-to-have | `auth_attack_protection.email_link_require_same_client` (only when magic links are sent)                       | patch                             |
 | `session-lifetime`         | good-to-have | `session_settings.maximum_lifetime.enabled`                                                                    | patch                             |
 | `block-disposable-email`   | good-to-have | `auth_access_control.block_disposable_email_domains` (email only)                                              | patch                             |
 | `block-email-subaddresses` | good-to-have | `auth_access_control.block_email_subaddresses` (email only)                                                    | patch                             |
@@ -184,15 +196,21 @@ so an agent can warn first.
 
 Checks that have no meaning for the instance are **not applicable** and are
 left out of the report and the score entirely: the email checks when email is
-not a sign-up identifier, the phone check when phone is not, the four
-password checks (`breach-detection`, `breach-detection-sign-in`,
+not a sign-up identifier, same-client protection unless `email_link` is a
+sign-up verification strategy or an enabled sign-in strategy, the phone check
+when phone is not a sign-up identifier, the four password checks (`breach-detection`, `breach-detection-sign-in`,
 `device-trust`, `password-min-length`) when
 `auth_password.enabled` is false, and the OAuth check outside production.
 
 Three controls depend on Clerk billing features and carry a `features` key in
 the report: `mfa` (`app:mfa_totp`, `app:mfa_phone_code`, `app:mfa_backup_code`),
 `passkeys` (`app:passkey`), and `session-lifetime`
-(`app:custom_session_duration`). Development instances are exempt from plan
+(`app:custom_session_duration`). Decision checks are gated per option, which
+their `decision.features` lists: `mfa` needs `app:mfa_totp` for
+`authenticator`, `app:mfa_phone_code` for `sms`, and `app:mfa_backup_code` for
+`backup-code`; `passwordless-auth` is gated only for `passkey`
+(`{ "passkey": ["app:passkey"] }`). A fix is gated by the factors it enables,
+not by every MFA feature. Development instances are exempt from plan
 checks. On production, the Platform API rejects a patch the plan does not cover
 with a 402 before writing anything; `fix` turns that into a `plan_insufficient`
 error naming the affected check ids, with a ready-to-run command for the rest.
@@ -250,14 +268,16 @@ The report:
       "status": "unmet",
       "features": ["app:mfa_totp", "app:mfa_phone_code", "app:mfa_backup_code"],
       "patch": null,
-          "backup_code": { "enabled": true }
-        }
-      },
       "decision": {
         "flag": "factors",
         "multiple": true,
         "options": ["authenticator", "backup-code", "sms"],
-        "suggested": ["authenticator", "backup-code"]
+        "suggested": ["authenticator", "backup-code"],
+        "features": {
+          "authenticator": ["app:mfa_totp"],
+          "backup-code": ["app:mfa_backup_code"],
+          "sms": ["app:mfa_phone_code"]
+        }
       },
       "remedy": "Run `clerk security fix mfa --factors authenticator,backup-code --app app_… --instance ins_… --yes` (or pick other authenticator, backup-code, sms).",
       "…": "…"
@@ -270,11 +290,12 @@ The report:
   agent can apply it through any path. It is `null` for met, blocked, and
   manual findings.
 - `decision` is set on the two findings that need a choice: `{ flag, multiple,
-options, suggested }`. Pass the values with `--<flag>` to `fix`; `remedy`
-  already spells out the command with the suggested values, e.g.
+options, suggested, features? }`. Pass the values with `--<flag>` to `fix`;
+  `remedy` already spells out the command with the suggested values, e.g.
   `clerk security fix mfa --factors authenticator,backup-code --app … --instance …`.
-  Confirm the choice with the user when it matters (SMS costs money, passkeys
-  need client support).
+  `features` maps the options that need a billing feature, so an agent can
+  avoid a plan-gated option before writing. Confirm the choice with the user
+  when it matters (SMS costs money, passkeys need client support).
 - `features` lists the billing features a control depends on (see Checks).
 - `customFlows` (`{ note, docsUrl }`) is set on unmet findings whose fix a
   custom sign-in or sign-up flow must accommodate. Surface it before applying.
