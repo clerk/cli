@@ -18,6 +18,10 @@ Info.plist value and a working authentication flow.
 CLI against an isolated HTTP stub, and reruns against the resulting installed SDK
 and registered native application. It checks unchanged Swift and entitlements,
 no duplicate remote mutations, and explicit remaining runtime verification.
+It also repeats that lifecycle with the CLI-generated AuthView already present,
+checking that both SDK products can be linked without rewriting existing UI or
+implicitly activating AuthView provider setup. Explicit AuthView setup with
+unproven runtime wiring must still fail before any mutation.
 Negative cases cover incomplete source membership, conflicting Bundle IDs,
 missing App ID Prefix, missing explicit application selection, and unsafe prebuilt
 UI insertion. Doctor tests add an unresolved source build-file record while

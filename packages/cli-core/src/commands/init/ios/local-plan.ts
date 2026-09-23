@@ -70,6 +70,7 @@ export interface IOSLocalSetupProposal {
   prebuiltAuthPlan?: IOSPrebuiltAuthPlan;
   prebuiltRuntimeBlockers: string[];
   prebuiltAuthRequested: boolean;
+  /** Automatic AuthView setup; existing UI with unresolved runtime stays review-only. */
   prebuiltAuthActive: boolean;
   installPlan?: IOSSDKInstallPlan;
   sdkInstallPlan?: IOSSDKInstallPlan;
@@ -238,11 +239,11 @@ export async function buildIOSLocalSetupProposal(
       plan: inspectedPrebuiltAuthPlan,
     });
   }
-  const prebuiltAuthActive =
+  const prebuiltAuthSelectedOrPresent =
     inspectedPrebuiltAuthPlan.status !== "blocked" &&
     (prebuiltAuthRequested || inspectedPrebuiltAuthPlan.status === "satisfied");
 
-  const includeClerkKitUI = platformViews.requiresClerkKitUI || prebuiltAuthActive;
+  const includeClerkKitUI = platformViews.requiresClerkKitUI || prebuiltAuthSelectedOrPresent;
   const installPlan = await planIOSSDKInstall({
     root: options.root,
     projectPath: selection.projectPath,
@@ -251,7 +252,7 @@ export async function buildIOSLocalSetupProposal(
     supportedPlatforms: selectedTarget.supportedPlatforms,
     includeClerkKitUI,
     requirePrebuiltAuthCompatibility:
-      platformViews.requiresAuthViewCompatibility || prebuiltAuthActive,
+      platformViews.requiresAuthViewCompatibility || prebuiltAuthSelectedOrPresent,
   });
 
   const hasCustomConfigure = selectedTarget.swift.configureCalls.some(
@@ -261,7 +262,7 @@ export async function buildIOSLocalSetupProposal(
   const directConfigPlan = shouldPlanIOSDirectConfig(
     inspection,
     selectedTarget,
-    prebuiltAuthActive ? "prebuilt" : productDecision,
+    prebuiltAuthSelectedOrPresent ? "prebuilt" : productDecision,
   )
     ? await planIOSDirectConfig({
         root: options.root,
@@ -272,9 +273,16 @@ export async function buildIOSLocalSetupProposal(
       })
     : undefined;
 
-  const prebuiltRuntimeBlockers = prebuiltAuthActive
+  const prebuiltRuntimeBlockers = prebuiltAuthSelectedOrPresent
     ? planIOSPrebuiltAuthRuntimeBlockers(inspection, directConfigPlan)
     : [];
+  // Observing existing UI does not opt into AuthView-specific work when its
+  // runtime cannot be proven. Keep that diagnostic without blocking independent
+  // SDK/registration work or deriving provider capabilities from an unknown key.
+  // Explicitly requested AuthView setup still fails its runtime prerequisites.
+  const prebuiltAuthActive =
+    prebuiltAuthSelectedOrPresent &&
+    (prebuiltAuthRequested || prebuiltRuntimeBlockers.length === 0);
   const prebuiltAuthPlanForSetup =
     prebuiltRuntimeBlockers.length > 0
       ? {
