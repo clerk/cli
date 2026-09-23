@@ -1,3 +1,11 @@
+import {
+  bytesWithOptionalBOM,
+  newEntitlementsBytes,
+  appendEntitlementsEntry,
+  literalKeyCount,
+  decodeEntitlementsXML,
+} from "./entitlements-xml.ts";
+import { selectedIOSAppTarget as selectedTarget } from "./project-selection.ts";
 import { lstat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -19,9 +27,7 @@ import {
   type IOSMissingEntitlementsSettingsPlan,
 } from "./entitlements-settings.ts";
 import { inspectIOSProject } from "./inspect.ts";
-import { isRecord } from "./pbx.ts";
-import { parseIOSPlist } from "./plist.ts";
-import type { IOSAppTarget, IOSValueResolution } from "./types.ts";
+import type { IOSValueResolution } from "./types.ts";
 
 const APP_SANDBOX_KEY = "com.apple.security.app-sandbox";
 const NETWORK_CLIENT_KEY = "com.apple.security.network.client";
@@ -165,23 +171,6 @@ function blockPrepared(
   };
 }
 
-function selectedTarget(
-  inspection: Awaited<ReturnType<typeof inspectIOSProject>>,
-  projectPath: string,
-  targetId: string,
-): IOSAppTarget | undefined {
-  if (
-    inspection.selection.state !== "selected" ||
-    inspection.selection.projectPath !== projectPath ||
-    inspection.selection.targetId !== targetId
-  ) {
-    return undefined;
-  }
-  return inspection.appTargets.find(
-    (target) => target.projectPath === projectPath && target.id === targetId,
-  );
-}
-
 function booleanBuildSetting(resolution: IOSValueResolution | undefined): BooleanBuildSettingState {
   if (!resolution || resolution.state === "missing") return "missing";
   if (resolution.state === "unresolved") return "invalid";
@@ -193,19 +182,6 @@ function booleanBuildSetting(resolution: IOSValueResolution | undefined): Boolea
 
 function uniqueStates(states: readonly BooleanBuildSettingState[]): Set<BooleanBuildSettingState> {
   return new Set(states);
-}
-
-function stripXMLCommentsPreservingOffsets(source: string): string {
-  return source.replace(/<!--[\s\S]*?-->/g, (comment) => " ".repeat(comment.length));
-}
-
-function literalKeyCount(source: string, key: string): number {
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return [
-    ...stripXMLCommentsPreservingOffsets(source).matchAll(
-      new RegExp(`<key\\b[^>]*>\\s*${escaped}\\s*</key>`, "g"),
-    ),
-  ].length;
 }
 
 function booleanEntitlementState(
@@ -241,10 +217,7 @@ function inspectEntitlementsBytes(
         ),
       };
     }
-    const bom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
-    const source = new TextDecoder("utf-8", { fatal: true }).decode(bom ? bytes.slice(3) : bytes);
-    const parsed = parseIOSPlist(source);
-    if (!isRecord(parsed)) throw new Error("plist root is not a dictionary");
+    const { source, bom, values: parsed } = decodeEntitlementsXML(bytes);
     const appSandbox = booleanEntitlementState(source, parsed, APP_SANDBOX_KEY);
     const networkClient = booleanEntitlementState(source, parsed, NETWORK_CLIENT_KEY);
     if (appSandbox === "invalid" || networkClient === "invalid") {
@@ -319,52 +292,9 @@ async function inspectEntitlementsFile(
   }
 }
 
-function lineIndentAt(source: string, index: number): string {
-  const start = source.lastIndexOf("\n", index - 1) + 1;
-  return /^[\t ]*/.exec(source.slice(start, index))?.[0] ?? "";
-}
-
 function addBooleanEntitlement(source: string, key: string): string | undefined {
   if (literalKeyCount(source, key) !== 0) return undefined;
-  const structural = stripXMLCommentsPreservingOffsets(source);
-  const dictClose = structural.lastIndexOf("</dict>");
-  if (dictClose < 0) return undefined;
-  const newline = source.includes("\r\n") ? "\r\n" : "\n";
-  const closingIndent = lineIndentAt(source, dictClose);
-  const insertionPoint = dictClose - closingIndent.length;
-  const firstKey = /<key\b/.exec(structural);
-  const childIndent =
-    firstKey?.index == null ? `${closingIndent}\t` : lineIndentAt(source, firstKey.index);
-  const prefix = source.slice(0, insertionPoint).endsWith("\n") ? "" : newline;
-  const insertion = `${prefix}${childIndent}<key>${key}</key>${newline}${childIndent}<true/>${newline}`;
-  return `${source.slice(0, insertionPoint)}${insertion}${closingIndent}${source.slice(dictClose)}`;
-}
-
-function bytesWithOptionalBOM(source: string, bom: boolean): Uint8Array {
-  const encoded = new TextEncoder().encode(source);
-  if (!bom) return encoded;
-  const bytes = new Uint8Array(encoded.length + 3);
-  bytes.set([0xef, 0xbb, 0xbf]);
-  bytes.set(encoded, 3);
-  return bytes;
-}
-
-function newEntitlementsBytes(): Uint8Array {
-  return new TextEncoder().encode(
-    [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-      '<plist version="1.0">',
-      "<dict>",
-      `\t<key>${APP_SANDBOX_KEY}</key>`,
-      "\t<true/>",
-      `\t<key>${NETWORK_CLIENT_KEY}</key>`,
-      "\t<true/>",
-      "</dict>",
-      "</plist>",
-      "",
-    ].join("\n"),
-  );
+  return appendEntitlementsEntry(source, [`<key>${key}</key>`, "<true/>"]);
 }
 
 function isCreateMutation(mutation: IOSFileMutation): mutation is IOSCreateFileMutation {
@@ -883,7 +813,12 @@ export async function prepareMacOSNetworkCapabilityMutation(
         candidateHash: hashIOSFileBytes(candidateBytes),
       };
     } else {
-      const candidateBytes = newEntitlementsBytes();
+      const candidateBytes = newEntitlementsBytes([
+        `<key>${APP_SANDBOX_KEY}</key>`,
+        "<true/>",
+        `<key>${NETWORK_CLIENT_KEY}</key>`,
+        "<true/>",
+      ]);
       createMutation = {
         kind: "create",
         path: entitlementsPath,
