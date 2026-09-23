@@ -1,5 +1,8 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { useCaptureLog } from "../../test/lib/stubs.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { captureTelemetryPayload, useCaptureLog } from "../../test/lib/stubs.ts";
 import { BapiError, CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "../../lib/errors.ts";
 
 const mockResolveBapiSecretKey = mock();
@@ -41,6 +44,7 @@ mock.module("../../lib/spinner.ts", () => ({
 }));
 
 const { create } = await import("./create.ts");
+const { _setConfigDir } = await import("../../lib/config.ts");
 
 describe("users create", () => {
   let logSpy: ReturnType<typeof spyOn>;
@@ -326,5 +330,54 @@ describe("users create", () => {
 
     expect(mockConfirm).not.toHaveBeenCalled();
     expect(mockBapiRequest).not.toHaveBeenCalled();
+  });
+
+  // The BAPI error is caught to print Clerk's error body, so the throw path
+  // never classifies it; the event has to carry the code from the catch.
+  describe("what telemetry records as the error code", () => {
+    let configDir: string;
+    beforeEach(async () => {
+      configDir = await mkdtemp(join(tmpdir(), "clerk-users-create-telemetry-"));
+      _setConfigDir(configDir);
+    });
+    afterEach(async () => {
+      _setConfigDir(undefined);
+      await rm(configDir, { recursive: true, force: true });
+    });
+
+    const clerkBody = (code: string) => JSON.stringify({ errors: [{ code, message: "" }] });
+    const input = { app: "app_123", email: "alice@example.com", yes: true };
+
+    function recordedFor(options: Parameters<typeof create>[0]) {
+      return captureTelemetryPayload("users create", () => runCreate(options));
+    }
+
+    test("a Clerk error code in the response body, in either output mode", async () => {
+      mockBapiRequest.mockRejectedValue(
+        BapiError.fromBody(422, clerkBody("form_param_missing"), new Headers()),
+      );
+      const human = await recordedFor(input);
+      expect(human.payload.outcome).toBe("error");
+      expect(human.payload.exit_code).toBe(1);
+      expect(human.payload.error_code).toBe("form_param_missing");
+
+      mockIsAgent.mockReturnValue(true);
+      const json = await recordedFor(input);
+      expect(json.payload.error_code).toBe("form_param_missing");
+    });
+
+    test("an uncoded response is split by status like `clerk api`", async () => {
+      mockBapiRequest.mockRejectedValue(BapiError.fromBody(502, "bad gateway", new Headers()));
+      const { payload } = await recordedFor(input);
+      expect(payload.outcome).toBe("error");
+      expect(payload.error_code).toBe("api_error");
+    });
+
+    test("a created user is a success with no code", async () => {
+      const { payload } = await recordedFor(input);
+      expect(payload.outcome).toBe("success");
+      expect(payload.exit_code).toBe(0);
+      expect(payload.error_code).toBeNull();
+    });
   });
 });

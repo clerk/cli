@@ -1,5 +1,6 @@
 import { BapiError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
+import { declareSoftExitError } from "../../lib/telemetry.ts";
 import { isAgent } from "../../mode.ts";
 
 export type UsersOutputOptions = {
@@ -74,6 +75,7 @@ export function handleUsersBapiError(
     log.error(`${context}: ${formatUsersErrorBody(error.body)}`);
   }
 
+  declareSoftExitError(error);
   process.exitCode = 1;
   return true;
 }

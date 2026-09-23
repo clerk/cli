@@ -7,6 +7,7 @@ import { bapiRequest } from "../../lib/bapi.ts";
 import { fapiRequest } from "../../lib/fapi.ts";
 import { resolveFapiHost } from "./fapi.ts";
 import { ApiError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
+import { declareSoftExitError } from "../../lib/telemetry.ts";
 import { validateJsonBody } from "../../lib/json-body.ts";
 import { isHuman } from "../../mode.ts";
 import { confirm } from "../../lib/prompts.ts";
@@ -154,6 +155,8 @@ export async function api(
           const scope = options.platform ? " --platform" : "";
           log.info(`If the endpoint path was a guess, search with: clerk api ls <keyword>${scope}`);
         }
+        // Handled here, so telemetry never sees the throw it would classify.
+        declareSoftExitError(error);
         process.exitCode = 1;
         closeStatus = "failed";
         return;

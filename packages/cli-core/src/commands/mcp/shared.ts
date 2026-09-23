@@ -5,6 +5,7 @@
 import { getMcpUrl } from "../../lib/environment.ts";
 import { CliError, ERROR_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
+import { declareSoftExitError } from "../../lib/telemetry.ts";
 import { isAgent } from "../../mode.ts";
 import { CLIENT_ALIASES, CLIENT_IDS, CLIENTS, detectInstalledClients } from "./clients/registry.ts";
 import { MCP_DOCS_URL } from "./clients/types.ts";
@@ -198,12 +199,14 @@ export async function settleClients<T>(
  * Exit non-zero when every targeted client failed. In `--json` mode the
  * `{ results, failures }` envelope is already on stdout — exactly the case
  * where `failures` is most useful — so rethrowing would append a second
- * (error) document and corrupt the stream; set the exit code instead. Human
+ * (error) document and corrupt the stream; set the exit code instead, and
+ * hand telemetry the same error so the two modes record the same code. Human
  * mode rethrows the first client's original error so the global handler
  * formats it with its code and docs URL.
  */
 export function failWhenAllFailed(outcome: SettledClients<unknown>, json: boolean): void {
   if (outcome.succeeded.length > 0 || outcome.firstError === undefined) return;
   if (!json) throw outcome.firstError;
+  declareSoftExitError(outcome.firstError);
   process.exitCode = 1;
 }

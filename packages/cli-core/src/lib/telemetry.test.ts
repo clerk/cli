@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from "./config.ts";
 import {
+  declareSoftExitError,
   declareSoftExitOutcome,
   finalizeAndSendTelemetry,
   getTelemetryStatus,
@@ -18,7 +19,7 @@ import {
   type TelemetryCommand,
   type TelemetryResult,
 } from "./telemetry.ts";
-import { ApiError, CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "./errors.ts";
+import { ApiError, BapiError, CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "./errors.ts";
 import { abortInFlight, beginInterrupt, _resetInterruptState } from "./signals.ts";
 import { setLogLevel } from "./log.ts";
 import { captureTelemetryPayload, fakeTelemetryCommand, useCaptureLog } from "../test/lib/stubs.ts";
@@ -642,6 +643,78 @@ describe("finalizeAndSendTelemetry", () => {
 
     test("declaring with no active context is a no-op", () => {
       expect(() => declareSoftExitOutcome("incomplete")).not.toThrow();
+    });
+
+    // The three commands that catch their own failure hand the error over
+    // here. Everything but an uncoded `ApiError` classifies exactly as a throw
+    // would, so `--json` and human mode of the same command record one code.
+    describe("a caught error carries the code a throw would", () => {
+      function codeFor(error: unknown): string | undefined {
+        startCommandTelemetry(fakeCommand());
+        declareSoftExitError(error);
+        return telemetryResultForSoftExit(EXIT_CODE.GENERAL).errorCode;
+      }
+
+      const clerkBody = (code: string) => JSON.stringify({ errors: [{ code, message: "" }] });
+
+      test("a Clerk error code in the body is recorded as-is, whatever the status", () => {
+        expect(codeFor(new ApiError(404, clerkBody("resource_not_found")))).toBe(
+          "resource_not_found",
+        );
+        expect(codeFor(new ApiError(429, clerkBody("too_many_requests")))).toBe(
+          "too_many_requests",
+        );
+        expect(codeFor(new BapiError(422, clerkBody("form_param_missing"), new Headers()))).toBe(
+          "form_param_missing",
+        );
+      });
+
+      // No code in the body: the status is all that was observed, and each
+      // bucket claims exactly that. `too_many_requests` is deliberately not
+      // reused for the 429 — that code means Clerk itself said so.
+      test.each([
+        [429, "api_rate_limited"],
+        [404, "api_not_found"],
+        [400, "api_client_error"],
+        [401, "api_client_error"],
+        [403, "api_client_error"],
+        [422, "api_client_error"],
+        [500, "api_error"],
+        [502, "api_error"],
+        [503, "api_error"],
+      ])("an uncoded %i records %s", (status, expected) => {
+        expect(codeFor(new ApiError(status, "not json"))).toBe(expected);
+        expect(codeFor(new ApiError(status, ""))).toBe(expected);
+        expect(codeFor(new ApiError(status, '{"error":"bad"}'))).toBe(expected);
+      });
+
+      test("a CliError keeps its named code", () => {
+        expect(codeFor(new CliError("boom", { code: ERROR_CODE.MCP_CLIENT_CONFIG_INVALID }))).toBe(
+          "mcp_client_config_invalid",
+        );
+        expect(codeFor(new CliError("boom"))).toBe("cli_error");
+      });
+
+      test("anything else is unexpected_error", () => {
+        expect(codeFor(new Error("EACCES"))).toBe("unexpected_error");
+        expect(codeFor("just a string")).toBe("unexpected_error");
+      });
+
+      test("the outcome is error, and only on a nonzero exit", async () => {
+        const failed = await sendAndCapturePayload(
+          () => declareSoftExitError(new ApiError(404, "")),
+          () => telemetryResultForSoftExit(EXIT_CODE.GENERAL),
+        );
+        expect(failed.outcome).toBe("error");
+        expect(failed.error_code).toBe("api_not_found");
+
+        const recovered = await sendAndCapturePayload(
+          () => declareSoftExitError(new ApiError(404, "")),
+          () => telemetryResultForSoftExit(EXIT_CODE.SUCCESS),
+        );
+        expect(recovered.outcome).toBe("success");
+        expect(recovered.error_code).toBeNull();
+      });
     });
   });
 

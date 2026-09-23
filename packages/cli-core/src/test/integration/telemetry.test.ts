@@ -166,6 +166,37 @@ test("an unfinished `deploy status` is recorded as incomplete, not an error", as
   }
 });
 
+// `clerk api` catches the API error to print its body, so the code reaches
+// the event only through the soft-exit declaration. M3's test above proves a
+// declared outcome survives the real program; this proves a declared *code*
+// does, and covers the status split end to end — the unit tests model the
+// final step, this runs it.
+test("a caught uncoded 404 from `clerk api` is recorded as api_not_found", async () => {
+  await markNoticeAlreadyShown();
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+  http.stub(async (url) => {
+    if (url.startsWith(TELEMETRY_URL)) return new Response("{}");
+    return new Response("404 page not found", { status: 404 });
+  });
+
+  try {
+    await clerk.raw("api", "/organization_role", "--secret-key", "sk_test_123");
+    // Set by the command rather than thrown, so the harness's own result
+    // reports 0; the soft exit is on the process.
+    expect(process.exitCode).toBe(1);
+
+    const bodies = telemetryEvents();
+    expect(bodies).toHaveLength(1);
+    const event = bodies[0]!.events[0]!;
+    expect(event.payload.command).toBe("api");
+    expect(event.payload.outcome).toBe("error");
+    expect(event.payload.exit_code).toBe(1);
+    expect(event.payload.error_code).toBe("api_not_found");
+  } finally {
+    process.exitCode = 0;
+  }
+});
+
 // Drives the real program rather than the unit tests' capture helper, so it
 // pins two things only `runProgram` can: the command name Commander gives the
 // hidden default subcommand — the warehouse contract keys on `deploy run` —

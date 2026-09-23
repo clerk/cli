@@ -365,7 +365,8 @@ export function setTelemetryOAuthComplete(complete: boolean): void {
  * so without this the soft-exit branch in `cli-program.ts` can only say
  * "nonzero, therefore error". That is wrong in both directions: `clerk deploy
  * status` exits 1 on a deploy that simply is not finished, and `clerk api`
- * exits 1 holding an error code it never gets to record.
+ * exits 1 holding an error code a throw would have recorded (see
+ * {@link declareSoftExitError} for that side).
  *
  * Why this is a declaration and not a rule about exit codes: the exit code is
  * a per-command transport detail — 1 means "not done" from `deploy status`
@@ -406,6 +407,69 @@ export function telemetryResultForSoftExit(exitCode: number): TelemetryResult {
     exitCode,
     ...(declared.errorCode ? { errorCode: declared.errorCode } : {}),
   };
+}
+
+/**
+ * Declare a failure the command caught and reported itself, carrying the code
+ * a throw would have.
+ *
+ * `clerk api`, `clerk users create` and `clerk mcp install --json` each catch
+ * their own error for a reason that stays as it is — the raw response body has
+ * to reach stdout for piping, or a second JSON document must not follow the
+ * first — and set the exit code instead. `telemetryResultForError` then never
+ * runs, and the code the error was holding is lost. This is the same
+ * classification, applied where the error is still in hand: a `CliError`
+ * keeps its named code, anything unrecognised is `unexpected_error`, so
+ * `mcp install --json` records what human mode records when it rethrows.
+ *
+ * The one difference from a throw: an `ApiError` with no parsed Clerk code is
+ * split by HTTP status rather than collapsed onto `api_error`. See
+ * {@link uncodedApiErrorCode} for why. Thrown `ApiError`s keep `api_error`
+ * because that code is on the warehouse's reviewed failure list as it is.
+ *
+ * Call it under the same condition that sets the exit code, and with the
+ * error the run means to report — the last-call-wins rule on
+ * {@link declareSoftExitOutcome} applies. Never hand it a `UserAbortError`:
+ * a declaration cannot express an abort, so it would be recorded as
+ * `unexpected_error`. A command that prompts inside a caught section must let
+ * the abort throw instead. (No caller can reach this today; the MCP client
+ * picker runs before any client is settled.)
+ */
+export function declareSoftExitError(error: unknown): void {
+  const code =
+    error instanceof ApiError
+      ? (error.code ?? uncodedApiErrorCode(error.status))
+      : (telemetryResultForError(error).errorCode ?? "unexpected_error");
+  declareSoftExitOutcome("error", code);
+}
+
+/**
+ * An API response with no Clerk error code in its body has one HTTP status and
+ * no single meaning, so each code names exactly what was observed and nothing
+ * more. Telemetry carries no status and no endpoint, so this split is the only
+ * thing that makes the uncoded population measurable.
+ *
+ * - 429 → `api_rate_limited`, not the existing `too_many_requests`: that one
+ *   arrives parsed from Clerk's error body, so it means Clerk itself said so.
+ *   An uncoded 429 means no body said so — an empty body or an unexpected
+ *   shape from Clerk parses the same as a proxy's answer, so the origin is
+ *   unknown. Merging the two would erase the only distinction observable at
+ *   the point of record.
+ * - 404 → `api_not_found`: commonly a URL path that does not exist, but the
+ *   hint `clerk api` prints on this branch is a heuristic, so the code claims
+ *   the status, not the cause.
+ * - other 4xx → `api_client_error`: 400, 401 and 403 collapsed. Cause and
+ *   frequency unknown; the status cannot be recovered afterwards, so no
+ *   finer mapping is promised.
+ * - anything else → `api_error`: a 5xx is a failed request whoever caused it,
+ *   Clerk or a customer's proxy — the same ambiguity every thrown `ApiError`
+ *   carries today.
+ */
+function uncodedApiErrorCode(status: number): string {
+  if (status === 429) return "api_rate_limited";
+  if (status === 404) return "api_not_found";
+  if (status >= 400 && status < 500) return "api_client_error";
+  return "api_error";
 }
 
 export function telemetryResultForError(error: unknown): TelemetryResult {
