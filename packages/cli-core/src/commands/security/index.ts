@@ -47,7 +47,10 @@ export function registerSecurity(program: Program): void {
       "[ids...]",
       "Recommendation ids to fix (shown in the audit); omit to pick interactively",
     )
-    .option("--all", "Fix every unmet critical and recommended check that has an inline patch")
+    .option(
+      "--all",
+      "Fix every unmet critical and recommended check that has an inline patch, plus what those fixes unlock",
+    )
     .option("--good-to-have", "With --all, also apply the good-to-have tier")
     .option(
       "--factors <list>",

@@ -3,6 +3,7 @@ import { hasConfigChanges } from "../config/push.ts";
 import { isKnownDashboardPath } from "../open/dashboard-paths.ts";
 import { CHECKS, CHECK_IDS, findCheck } from "./catalog.ts";
 import { evaluate } from "./evaluate.ts";
+import { formatCatalogJson } from "./format.ts";
 import { INSECURE_CONFIG, INSECURE_OAUTH_CONFIG, SECURE_CONFIG } from "./fixtures.ts";
 import { deepMerge } from "./merge.ts";
 import type { CheckDef, CheckInput, InstanceConfig, InstanceRef } from "./types.ts";
@@ -80,6 +81,30 @@ describe("not applicable checks", () => {
     }
   });
 
+  test.each([
+    ["sign-up verification", { verification_strategies: ["email_link"] }],
+    [
+      "sign-in",
+      { used_for_sign_up: false, used_for_sign_in: true, sign_in_strategies: ["email_link"] },
+    ],
+  ] as const)("email-link-same-client applies when magic links are used for %s", (_name, patch) => {
+    const config = withSection(INSECURE_CONFIG, "auth_email", {
+      verification_strategies: [],
+      sign_in_strategies: [],
+      ...patch,
+    });
+    expect(ids(config)).toContain("email-link-same-client");
+  });
+
+  test("email-link-same-client drops out when no magic link is ever sent", () => {
+    const config = withSection(INSECURE_CONFIG, "auth_email", {
+      used_for_sign_in: true,
+      verification_strategies: ["email_code"],
+      sign_in_strategies: ["email_code"],
+    });
+    expect(ids(config)).not.toContain("email-link-same-client");
+  });
+
   test("password checks drop out when passwords are disabled", () => {
     const result = ids(withSection(INSECURE_CONFIG, "auth_password", { enabled: false }));
     for (const id of [
@@ -147,7 +172,8 @@ describe("patch details", () => {
   });
 
   test("email-verification falls back to email_code", () => {
-    expect(findCheck("email-verification")!.patch!(production(INSECURE_CONFIG))).toEqual({
+    const config = withSection(INSECURE_CONFIG, "auth_email", { verification_strategies: [] });
+    expect(findCheck("email-verification")!.patch!(production(config))).toEqual({
       auth_email: { verify_at_sign_up: true, verification_strategies: ["email_code"] },
     });
   });
@@ -177,17 +203,38 @@ describe("patch details", () => {
 });
 
 describe("passwordless detection", () => {
+  test("connection-only OAuth does not satisfy passwordless authentication", () => {
+    const config = withSection(INSECURE_CONFIG, "connection_oauth_github", {
+      enabled: true,
+      authenticatable: false,
+    });
+    const finding = evaluate(production(config), REF).find((f) => f.id === "passwordless-auth");
+    expect(finding?.status).toBe("unmet");
+    expect(finding?.decision).toBeDefined();
+  });
+
   test.each([
     ["email code", "auth_email", { sign_in_strategies: ["email_code"] }],
     ["phone code", "auth_phone", { sign_in_strategies: ["phone_code"] }],
     ["passkey", "auth_passkey", { used_for_sign_in: true }],
     ["web3", "auth_web3", { used_for_sign_in: true }],
-    ["social connection", "connection_oauth_github", { enabled: true }],
+    ["social connection", "connection_oauth_github", { enabled: true, authenticatable: true }],
+    [
+      "social connection with default authenticatable",
+      "connection_oauth_github",
+      { enabled: true },
+    ],
   ] as const)("%s counts as passwordless", (_name, key, patch) => {
     const config = withSection(INSECURE_CONFIG, key, { ...patch });
     expect(findCheck("passwordless-auth")!.evaluate(production(config)).met).toBe(true);
   });
 });
+
+const MFA_OPTION_FEATURES = {
+  authenticator: ["app:mfa_totp"],
+  "backup-code": ["app:mfa_backup_code"],
+  sms: ["app:mfa_phone_code"],
+};
 
 describe("decision remedies", () => {
   test("remedy is a fix command carrying the suggested decision", () => {
@@ -200,6 +247,7 @@ describe("decision remedies", () => {
       multiple: true,
       options: ["authenticator", "backup-code", "sms"],
       suggested: ["authenticator", "backup-code"],
+      features: MFA_OPTION_FEATURES,
     });
   });
 
@@ -220,6 +268,38 @@ describe("plan-gated features", () => {
     expect(findCheck(id)!.features).toEqual(features);
     const finding = evaluate(production(INSECURE_CONFIG), REF).find((f) => f.id === id);
     expect(finding?.features).toEqual(features);
+  });
+
+  test("passwordless-auth reports the plan-gated option on its decision", () => {
+    const finding = evaluate(production(INSECURE_CONFIG), REF).find(
+      (f) => f.id === "passwordless-auth",
+    )!;
+    expect(finding.decision?.features).toEqual({ passkey: ["app:passkey"] });
+    expect("features" in finding).toBe(false);
+  });
+
+  test("the catalog JSON carries per-option features on decisions", () => {
+    const entries = JSON.parse(formatCatalogJson(CHECKS)) as Array<Record<string, unknown>>;
+    expect(entries.find((e) => e.id === "mfa")).toMatchObject({
+      fixable: false,
+      features: ["app:mfa_totp", "app:mfa_phone_code", "app:mfa_backup_code"],
+      decision: {
+        flag: "factors",
+        multiple: true,
+        options: ["authenticator", "backup-code", "sms"],
+        features: MFA_OPTION_FEATURES,
+      },
+    });
+    expect(entries.find((e) => e.id === "user-lockout")).not.toHaveProperty("decision");
+  });
+
+  test("mfa reports the feature each factor needs", () => {
+    const mfa = evaluate(production(INSECURE_CONFIG), REF).find((f) => f.id === "mfa")!;
+    expect(mfa.decision?.features).toEqual(MFA_OPTION_FEATURES);
+    expect(findCheck("mfa")!.decision!.features!(["sms", "backup-code"])).toEqual([
+      "app:mfa_phone_code",
+      "app:mfa_backup_code",
+    ]);
   });
 
   test("checks without features omit the key", () => {
