@@ -105,5 +105,6 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
     method: endpoint.method,
     data: body,
     yes: true, // skip double-confirmation
+    catalogEndpoint: true,
   });
 }

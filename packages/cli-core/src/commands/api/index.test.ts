@@ -939,6 +939,21 @@ describe("api command", () => {
       expect(captured.err).not.toContain("clerk api ls");
     });
 
+    // The same bare 404 on a path the interactive builder chose from the
+    // CLI's own catalog is the CLI's failure, not a typo, and must not be
+    // filed with the typed ones.
+    test("an uncoded 404 on a catalog endpoint is cli_endpoint_not_found", async () => {
+      stubFetch(async () => new Response("404 page not found", { status: 404 }));
+      const { payload } = await recordedFor("/organization_role", { catalogEndpoint: true });
+      expect(payload.outcome).toBe("error");
+      expect(payload.exit_code).toBe(1);
+      expect(payload.error_code).toBe("cli_endpoint_not_found");
+      // A coded 404 names the resource, whoever wrote the path.
+      stubFetch(async () => new Response(clerkBody("resource_not_found"), { status: 404 }));
+      const coded = await recordedFor("/users/bad_id", { catalogEndpoint: true });
+      expect(coded.payload.error_code).toBe("resource_not_found");
+    });
+
     // Not an ApiError, so the local catch rethrows and the throw path
     // classifies it — unchanged, and pinned so the split cannot widen into it.
     test("a rejected fetch is still a thrown unexpected_error", async () => {

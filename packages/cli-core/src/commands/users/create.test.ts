@@ -373,6 +373,17 @@ describe("users create", () => {
       expect(payload.error_code).toBe("api_error");
     });
 
+    // The CLI built `/v1/users` itself, so a route the API does not serve is
+    // the CLI's failure — never `api_not_found`, which is reserved for a path
+    // the person typed.
+    test("an uncoded 404 is cli_endpoint_not_found, because the CLI wrote the path", async () => {
+      mockBapiRequest.mockRejectedValue(
+        BapiError.fromBody(404, "404 page not found", new Headers()),
+      );
+      const { payload } = await recordedFor(input);
+      expect(payload.error_code).toBe("cli_endpoint_not_found");
+    });
+
     test("a created user is a success with no code", async () => {
       const { payload } = await recordedFor(input);
       expect(payload.outcome).toBe("success");

@@ -427,6 +427,13 @@ export function telemetryResultForSoftExit(exitCode: number): TelemetryResult {
  * {@link uncodedApiErrorCode} for why. Thrown `ApiError`s keep `api_error`
  * because that code is on the warehouse's reviewed failure list as it is.
  *
+ * `userSuppliedPath` says who wrote the request path, which only the call
+ * site knows and which decides what an uncoded 404 means: a person's typo, or
+ * the CLI asking for a route the API does not serve. It defaults to the CLI,
+ * because every caller but one builds its own paths; `clerk api` passes true
+ * for a path typed on the command line and false for one its interactive
+ * builder chose from the endpoint catalog.
+ *
  * Call it under the same condition that sets the exit code, and with the
  * error the run means to report — the last-call-wins rule on
  * {@link declareSoftExitOutcome} applies. Never hand it a `UserAbortError`:
@@ -435,10 +442,13 @@ export function telemetryResultForSoftExit(exitCode: number): TelemetryResult {
  * the abort throw instead. (No caller can reach this today; the MCP client
  * picker runs before any client is settled.)
  */
-export function declareSoftExitError(error: unknown): void {
+export function declareSoftExitError(
+  error: unknown,
+  options: { userSuppliedPath?: boolean } = {},
+): void {
   const code =
     error instanceof ApiError
-      ? (error.code ?? uncodedApiErrorCode(error.status))
+      ? (error.code ?? uncodedApiErrorCode(error.status, options.userSuppliedPath === true))
       : (telemetryResultForError(error).errorCode ?? "unexpected_error");
   declareSoftExitOutcome("error", code);
 }
@@ -455,9 +465,16 @@ export function declareSoftExitError(error: unknown): void {
  *   shape from Clerk parses the same as a proxy's answer, so the origin is
  *   unknown. Merging the two would erase the only distinction observable at
  *   the point of record.
- * - 404 → `api_not_found`: commonly a URL path that does not exist, but the
- *   hint `clerk api` prints on this branch is a heuristic, so the code claims
- *   the status, not the cause.
+ * - 404 with a path the person typed → `api_not_found`: the path did not
+ *   reach a Clerk route, and the person chose it. The hint `clerk api`
+ *   prints on this branch is a heuristic, so the code claims the status and
+ *   who wrote the path, not the cause.
+ * - 404 with a path the CLI built → `cli_endpoint_not_found`: the CLI asked
+ *   for a route the API does not serve, from a stale endpoint catalog or a
+ *   hardcoded path, so this is the CLI's failure and the warehouse counts it
+ *   as one. Kept apart from `api_not_found` because the same status means
+ *   opposite things depending on who wrote the path, and the row cannot say
+ *   which afterwards.
  * - other 4xx → `api_client_error`: 400, 401 and 403 collapsed. Cause and
  *   frequency unknown; the status cannot be recovered afterwards, so no
  *   finer mapping is promised.
@@ -465,9 +482,9 @@ export function declareSoftExitError(error: unknown): void {
  *   Clerk or a customer's proxy — the same ambiguity every thrown `ApiError`
  *   carries today.
  */
-function uncodedApiErrorCode(status: number): string {
+function uncodedApiErrorCode(status: number, userSuppliedPath: boolean): string {
   if (status === 429) return "api_rate_limited";
-  if (status === 404) return "api_not_found";
+  if (status === 404) return userSuppliedPath ? "api_not_found" : "cli_endpoint_not_found";
   if (status >= 400 && status < 500) return "api_client_error";
   return "api_error";
 }

@@ -27,6 +27,12 @@ export interface ApiOptions {
   fapi?: boolean;
   dryRun?: boolean;
   yes?: boolean;
+  /**
+   * Internal, not a flag: set by the interactive builder when the endpoint
+   * came from the CLI's own catalog rather than the command line, so a 404
+   * on it is recorded as the CLI's failure and not the person's.
+   */
+  catalogEndpoint?: boolean;
 }
 
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -156,7 +162,7 @@ export async function api(
           log.info(`If the endpoint path was a guess, search with: clerk api ls <keyword>${scope}`);
         }
         // Handled here, so telemetry never sees the throw it would classify.
-        declareSoftExitError(error);
+        declareSoftExitError(error, { userSuppliedPath: !options.catalogEndpoint });
         process.exitCode = 1;
         closeStatus = "failed";
         return;

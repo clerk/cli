@@ -671,10 +671,12 @@ describe("finalizeAndSendTelemetry", () => {
 
       // No code in the body: the status is all that was observed, and each
       // bucket claims exactly that. `too_many_requests` is deliberately not
-      // reused for the 429 — that code means Clerk itself said so.
+      // reused for the 429 — that code means Clerk itself said so. A 404 with
+      // nobody vouching for the path is the CLI's own route, so the default
+      // is the CLI's failure, not the person's.
       test.each([
         [429, "api_rate_limited"],
-        [404, "api_not_found"],
+        [404, "cli_endpoint_not_found"],
         [400, "api_client_error"],
         [401, "api_client_error"],
         [403, "api_client_error"],
@@ -686,6 +688,19 @@ describe("finalizeAndSendTelemetry", () => {
         expect(codeFor(new ApiError(status, "not json"))).toBe(expected);
         expect(codeFor(new ApiError(status, ""))).toBe(expected);
         expect(codeFor(new ApiError(status, '{"error":"bad"}'))).toBe(expected);
+      });
+
+      // Only a path the person typed can be the person's mistake.
+      test("an uncoded 404 on a path the person supplied is api_not_found", () => {
+        startCommandTelemetry(fakeCommand());
+        declareSoftExitError(new ApiError(404, "404 page not found"), { userSuppliedPath: true });
+        expect(telemetryResultForSoftExit(EXIT_CODE.GENERAL).errorCode).toBe("api_not_found");
+
+        startCommandTelemetry(fakeCommand());
+        declareSoftExitError(new ApiError(404, clerkBody("resource_not_found")), {
+          userSuppliedPath: true,
+        });
+        expect(telemetryResultForSoftExit(EXIT_CODE.GENERAL).errorCode).toBe("resource_not_found");
       });
 
       test("a CliError keeps its named code", () => {
@@ -702,7 +717,7 @@ describe("finalizeAndSendTelemetry", () => {
 
       test("the outcome is error, and only on a nonzero exit", async () => {
         const failed = await sendAndCapturePayload(
-          () => declareSoftExitError(new ApiError(404, "")),
+          () => declareSoftExitError(new ApiError(404, ""), { userSuppliedPath: true }),
           () => telemetryResultForSoftExit(EXIT_CODE.GENERAL),
         );
         expect(failed.outcome).toBe("error");
