@@ -51,8 +51,6 @@ function booleanCheck(
       const met = opts.invert ? !raw : raw;
       return {
         met,
-        currentValue: raw,
-        recommendedValue: !opts.invert,
         current: met ? metLabel : unmetLabel,
         recommended: metLabel,
       };
@@ -244,8 +242,6 @@ export const CHECKS: CheckDef[] = [
       const met = mfaAvailable(config);
       return {
         met,
-        currentValue: met,
-        recommendedValue: true,
         current: met ? "Available" : "Not available",
         recommended: "Available",
       };
@@ -269,8 +265,6 @@ export const CHECKS: CheckDef[] = [
       const met = passwordlessEnabled(config);
       return {
         met,
-        currentValue: met,
-        recommendedValue: true,
         current: met ? "Available" : "None",
         recommended: "At least one",
       };
@@ -309,8 +303,6 @@ export const CHECKS: CheckDef[] = [
         flag(config, "auth_password.enforce_hibp_on_sign_in");
       return {
         met,
-        currentValue: met,
-        recommendedValue: true,
         current: met ? "Enabled" : "Disabled",
         recommended: "Enabled",
       };
@@ -335,8 +327,6 @@ export const CHECKS: CheckDef[] = [
       const attempts = typeof raw === "number" ? raw : undefined;
       return {
         met: enabled && attempts !== undefined && attempts <= 10,
-        currentValue: enabled ? (attempts ?? null) : null,
-        recommendedValue: 10,
         current: !enabled
           ? "Lockout disabled"
           : attempts === undefined
@@ -363,8 +353,6 @@ export const CHECKS: CheckDef[] = [
       const met = flag(config, "auth_multi_factor.required_for_sign_up");
       return {
         met,
-        currentValue: met,
-        recommendedValue: true,
         current: met ? "Required" : "Optional",
         recommended: "Required",
       };
@@ -414,8 +402,6 @@ export const CHECKS: CheckDef[] = [
       const length = num(config, "auth_password.min_length");
       return {
         met: length >= MIN_PASSWORD_LENGTH,
-        currentValue: length,
-        recommendedValue: MIN_PASSWORD_LENGTH,
         current: `${length} characters`,
         recommended: `${MIN_PASSWORD_LENGTH} or more`,
       };
@@ -453,8 +439,6 @@ export const CHECKS: CheckDef[] = [
       );
       return {
         met: shared.length === 0,
-        currentValue: shared,
-        recommendedValue: [],
         current: shared.length ? `Shared credentials: ${shared.join(", ")}` : "Custom credentials",
         recommended: "Custom credentials for every provider",
       };

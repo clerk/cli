@@ -20,17 +20,20 @@ export function targetFlags(ref: InstanceRef): string {
   return ` --app ${ref.appId} --instance ${ref.instanceId}`;
 }
 
-export function fixCommandFor(ids: string[], ref: InstanceRef): string {
-  return `clerk security fix ${ids.join(" ")}${targetFlags(ref)}${isAgent() ? " --yes" : ""}`;
-}
-
-export function fixCommandWithDecision(
-  check: CheckDef,
-  values: string[],
+/** `clerk security fix <ids> [--factors …] [--strategy …] --app … --instance … [--yes]`. */
+export function fixCommand(
+  ids: string[],
   ref: InstanceRef,
+  decisions: Record<string, string[]> = {},
 ): string {
-  const flag = check.decision ? ` --${check.decision.flag} ${values.join(",")}` : "";
-  return `clerk security fix ${check.id}${flag}${targetFlags(ref)}${isAgent() ? " --yes" : ""}`;
+  const flags = ids
+    .map((id) => {
+      const decision = CHECKS.find((c) => c.id === id)?.decision;
+      const values = decisions[id];
+      return decision && values ? ` --${decision.flag} ${values.join(",")}` : "";
+    })
+    .join("");
+  return `clerk security fix ${ids.join(" ")}${flags}${targetFlags(ref)}${isAgent() ? " --yes" : ""}`;
 }
 
 function remedyFor(
@@ -42,11 +45,11 @@ function remedyFor(
 ): string {
   if (status === "met") return "Nothing to do.";
   if (status === "blocked")
-    return `Make "${blockedByTitle}" available first (\`${check.blockedBy}\`), or fix both together: \`${fixCommandFor([check.blockedBy!, check.id], ref)}\`.`;
-  if (check.patch) return `Run \`${fixCommandFor([check.id], ref)}\`.`;
+    return `Make "${blockedByTitle}" available first (\`${check.blockedBy}\`), or fix both together: \`${fixCommand([check.blockedBy!, check.id], ref)}\`.`;
+  if (check.patch) return `Run \`${fixCommand([check.id], ref)}\`.`;
   if (check.decision) {
     const values = check.decision.defaults(input);
-    return `Run \`${fixCommandWithDecision(check, values, ref)}\` (or pick other ${check.decision.options.map((o) => o.value).join(", ")}).`;
+    return `Run \`${fixCommand([check.id], ref, { [check.id]: values })}\` (or pick other ${check.decision.options.map((o) => o.value).join(", ")}).`;
   }
   return check.manualRemedy ?? "Configure this in the Clerk Dashboard.";
 }
@@ -67,7 +70,6 @@ export function evaluate(input: CheckInput, ref: InstanceRef): Finding[] {
     const patch = status === "unmet" && check.patch ? check.patch(input) : null;
     const decision = status === "unmet" && !check.patch ? check.decision : undefined;
     const suggested = decision?.defaults(input) ?? [];
-    const suggestedPatch = decision ? decision.patch(suggested, input) : null;
     return {
       id: check.id,
       title: check.title,
@@ -80,7 +82,6 @@ export function evaluate(input: CheckInput, ref: InstanceRef): Finding[] {
       ...(check.blockedBy && { blockedBy: check.blockedBy }),
       ...(check.customFlows && status !== "met" && { customFlows: check.customFlows }),
       patch,
-      suggestedPatch,
       ...(decision && {
         decision: {
           flag: decision.flag,
@@ -119,7 +120,7 @@ export function buildReport(input: CheckInput, ref: InstanceRef): AuditReport {
   return {
     instance: ref,
     score: computeScore(findings),
-    fixCommand: fixable.length ? fixCommandFor(fixable, ref) : null,
+    fixCommand: fixable.length ? fixCommand(fixable, ref) : null,
     findings,
   };
 }
