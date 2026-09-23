@@ -346,3 +346,35 @@ struct MacCallbackView: View {
     ).toBeUndefined();
   });
 });
+
+test.each([false, true])(
+  "preserves independent identity only after inspecting every platform (failed macOS=%s)",
+  async (failedMacOS) => {
+    const root = await fixture();
+    await convertIOSFixtureToMultiplatform(root);
+    const result = await audit(root, async (input, options) => {
+      if (failedMacOS && options?.platform === "macos") throw new Error("unreadable macOS view");
+      const inspection = await inspectIOSProject(input, options);
+      for (const target of inspection.appTargets) target.swift.evidenceComplete = false;
+      return inspection;
+    });
+    expect(result.status).toBe("blocked");
+    if (result.status !== "blocked")
+      throw new Error("expected incomplete Swift evidence to block edits");
+    if (failedMacOS) {
+      expect(blockerCodes(result)).toContain("platform-inspection-failed");
+      expect(result.nativeIdentity).toBeUndefined();
+    } else {
+      expect(blockerCodes(result)).toEqual([
+        "incomplete-swift-evidence",
+        "incomplete-swift-evidence",
+      ]);
+      expect(result.nativeIdentity).toMatchObject({
+        targetId: IOS_FIXTURE_IDS.appTarget,
+        bundleIdentifier: "com.example.myapp",
+        supportedPlatforms: ["ios", "macos"],
+      });
+      expect(result).not.toHaveProperty("snapshot");
+    }
+  },
+);
