@@ -64,6 +64,7 @@ import {
 import type { ProjectContext } from "./frameworks/types.js";
 import { type PackageManager, PACKAGE_MANAGERS } from "../../lib/package-manager.ts";
 import { validateAppIdPrefix } from "./ios/native-remote.ts";
+import { pickAppleNativeTarget } from "./ios/target-picker.ts";
 import {
   prepareAppleNativeSetup,
   runAppleNativeDryRun,
@@ -194,9 +195,15 @@ export async function init(options: InitOptions = {}) {
       "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native iOS projects.",
     );
   }
+  let iosTarget = options.target;
   if (ctx.framework.dep === "ios") {
-    ctx.iosTarget = options.target;
     assertIOSUsableFlags(options);
+    iosTarget = await pickAppleNativeTarget({
+      root: ctx.cwd,
+      target: options.target,
+      interactive: !agent && !options.yes && !machineOutput,
+    });
+    ctx.iosTarget = iosTarget;
   }
 
   if (options.dryRun) {
@@ -207,7 +214,7 @@ export async function init(options: InitOptions = {}) {
     }
     await runAppleNativeDryRun({
       root: ctx.cwd,
-      target: options.target,
+      target: iosTarget,
       signInWithApple: options.signInWithApple,
       prebuiltAuthUI: options.prebuiltAuthUI,
       machineOutput,
@@ -220,7 +227,7 @@ export async function init(options: InitOptions = {}) {
   if (ctx.framework.dep === "ios") {
     appleNativeSetup = await prepareAppleNativeSetup({
       root: ctx.cwd,
-      target: options.target,
+      target: iosTarget,
       yes: options.yes === true,
       agent,
       allowDirty: options.allowDirty === true,
