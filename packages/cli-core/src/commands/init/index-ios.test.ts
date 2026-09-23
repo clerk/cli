@@ -27,8 +27,10 @@ import {
 import * as telemetryMod from "../../lib/telemetry.ts";
 import { getLogLevel, setLogLevel } from "../../lib/log.ts";
 import * as iosFileTransactionMod from "./ios/file-transaction.ts";
+import * as targetPickerMod from "./ios/target-picker.ts";
+import * as nativeCoordinatorMod from "./ios/coordinator.ts";
 import { init } from "./index.ts";
-import { ERROR_CODE, PlapiError } from "../../lib/errors.ts";
+import { ERROR_CODE, PlapiError, throwUserAbort } from "../../lib/errors.ts";
 import type { IOSLocalSetupResult } from "./ios/apply.ts";
 import type { IOSAppleEntitlementPlan } from "./ios/apple-entitlement.ts";
 import type { IOSNativeApplePlan } from "./ios/native-apple.ts";
@@ -173,6 +175,73 @@ function selectedNativeTarget(
 
 describe("init iOS", () => {
   const { setup, track } = useInitHarness();
+
+  test("carries a picked target through native setup and the scaffold context", async () => {
+    setup({ email: "test@test.com" });
+    const ctx = nativeIOSContext();
+    spyOn(context, "gatherContext").mockResolvedValue(ctx);
+    track(spyOn(targetPickerMod, "pickAppleNativeTarget").mockResolvedValue("PICKED_TARGET"));
+
+    await init({ skills: false });
+
+    expect(iosApplyMod.applyIOSLocalSetup).toHaveBeenCalledWith(
+      expect.objectContaining({ target: "PICKED_TARGET" }),
+    );
+    expect(scaffoldMod.enrichProjectContext).toHaveBeenCalledWith(
+      expect.objectContaining({ iosTarget: "PICKED_TARGET" }),
+    );
+  });
+
+  test("carries a picked target into the read-only plan", async () => {
+    setup();
+    spyOn(context, "gatherContext").mockResolvedValue(nativeIOSContext());
+    track(spyOn(targetPickerMod, "pickAppleNativeTarget").mockResolvedValue("PICKED_TARGET"));
+    const dryRun = spyOn(nativeCoordinatorMod, "runAppleNativeDryRun").mockResolvedValue(undefined);
+    track(dryRun);
+
+    await init({ dryRun: true });
+
+    expect(dryRun).toHaveBeenCalledWith(
+      expect.objectContaining({ target: "PICKED_TARGET", machineOutput: false }),
+    );
+    expect(iosApplyMod.applyIOSLocalSetup).not.toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    { yes: true, json: false, agent: false },
+    { yes: false, json: true, agent: false },
+    { yes: false, json: false, agent: true },
+  ])("keeps target selection noninteractive for %j", async ({ yes, json, agent }) => {
+    setup({ isAgent: agent });
+    spyOn(context, "gatherContext").mockResolvedValue(nativeIOSContext());
+    const pick = spyOn(targetPickerMod, "pickAppleNativeTarget").mockResolvedValue(undefined);
+    track(pick);
+    track(spyOn(nativeCoordinatorMod, "runAppleNativeDryRun").mockResolvedValue(undefined));
+
+    await init({ dryRun: true, yes, json });
+
+    expect(pick).toHaveBeenCalledWith(expect.objectContaining({ interactive: false }));
+  });
+
+  test("target picker cancellation stops before setup and authentication", async () => {
+    setup();
+    spyOn(context, "gatherContext").mockResolvedValue(nativeIOSContext());
+    track(
+      spyOn(targetPickerMod, "pickAppleNativeTarget").mockImplementation(async () =>
+        throwUserAbort(),
+      ),
+    );
+    const recovery = spyOn(iosFileTransactionMod, "recoverIOSFileTransactions");
+    track(recovery);
+
+    await expect(init()).rejects.toMatchObject({ name: "UserAbortError" });
+
+    expect(recovery).not.toHaveBeenCalled();
+    expect(iosApplyMod.applyIOSLocalSetup).not.toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+  });
 
   function trackStages() {
     const stage = spyOn(telemetryMod, "setTelemetryStage");
