@@ -1,3 +1,10 @@
+import {
+  bytesWithOptionalBOM,
+  newEntitlementsBytes,
+  appendEntitlementsEntry,
+  entitlementKeyStructure,
+  decodeEntitlementsXML,
+} from "./entitlements-xml.ts";
 import { lstat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -20,8 +27,6 @@ import {
   validateIOSMissingEntitlementsSettingsPostcondition,
   type IOSMissingEntitlementsSettingsPlan,
 } from "./entitlements-settings.ts";
-import { isRecord } from "./pbx.ts";
-import { parseIOSPlist } from "./plist.ts";
 
 const APPLE_SIGN_IN_KEY = "com.apple.developer.applesignin";
 const APPLE_SIGN_IN_VALUE = "Default";
@@ -157,53 +162,6 @@ function blockPrepared(
   };
 }
 
-function stripXMLCommentsPreservingOffsets(source: string): string {
-  return source.replace(/<!--[\s\S]*?-->/g, (comment) => " ".repeat(comment.length));
-}
-
-function decodeXMLText(value: string): string | undefined {
-  if (/[<>]/.test(value)) return undefined;
-  let unsupported = false;
-  const decoded = value.replace(
-    /&(?:#x([0-9a-f]+)|#([0-9]+)|(amp|lt|gt|quot|apos));/gi,
-    (_entity, hex: string | undefined, decimal: string | undefined, named: string | undefined) => {
-      if (hex) return String.fromCodePoint(Number.parseInt(hex, 16));
-      if (decimal) return String.fromCodePoint(Number.parseInt(decimal, 10));
-      if (named === "amp") return "&";
-      if (named === "lt") return "<";
-      if (named === "gt") return ">";
-      if (named === "quot") return '"';
-      if (named === "apos") return "'";
-      unsupported = true;
-      return "";
-    },
-  );
-  if (unsupported || /&[^;\s]*;/.test(decoded)) return undefined;
-  return decoded;
-}
-
-function appleKeyStructure(source: string): {
-  literalCount: number;
-  semanticCount: number;
-  safelyDecoded: boolean;
-} {
-  const structural = stripXMLCommentsPreservingOffsets(source);
-  const literalCount = [
-    ...structural.matchAll(/<key\b[^>]*>\s*com\.apple\.developer\.applesignin\s*<\/key>/g),
-  ].length;
-  let semanticCount = 0;
-  let safelyDecoded = true;
-  for (const match of structural.matchAll(/<key\b[^>]*>([\s\S]*?)<\/key>/g)) {
-    const decoded = decodeXMLText(match[1] ?? "");
-    if (decoded == null) {
-      safelyDecoded = false;
-      continue;
-    }
-    if (decoded.trim() === APPLE_SIGN_IN_KEY) semanticCount += 1;
-  }
-  return { literalCount, semanticCount, safelyDecoded };
-}
-
 function inspectEntitlementsBytes(
   root: string,
   absolutePath: string,
@@ -230,12 +188,9 @@ function inspectEntitlementsBytes(
         ),
       };
     }
-    const bom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
-    const source = new TextDecoder("utf-8", { fatal: true }).decode(bom ? bytes.slice(3) : bytes);
-    const parsed = parseIOSPlist(source);
-    if (!isRecord(parsed)) throw new Error("plist root is not a dictionary");
+    const { source, bom, values: parsed } = decodeEntitlementsXML(bytes);
     const rawValue = parsed[APPLE_SIGN_IN_KEY];
-    const structure = appleKeyStructure(source);
+    const structure = entitlementKeyStructure(source, APPLE_SIGN_IN_KEY);
     if (
       !structure.safelyDecoded ||
       structure.literalCount > 1 ||
@@ -325,58 +280,18 @@ async function inspectEntitlementsFile(
   return inspectEntitlementsBytes(root, absolutePath, file.bytes, file.mode);
 }
 
-function lineIndentAt(source: string, index: number): string {
-  const start = source.lastIndexOf("\n", index - 1) + 1;
-  return /^[\t ]*/.exec(source.slice(start, index))?.[0] ?? "";
-}
-
 function addAppleEntitlementToXML(source: string): string | undefined {
-  const structural = stripXMLCommentsPreservingOffsets(source);
-  if (appleKeyStructure(source).semanticCount !== 0) return undefined;
-  const dictClose = structural.lastIndexOf("</dict>");
-  if (dictClose < 0) return undefined;
-  const newline = source.includes("\r\n") ? "\r\n" : "\n";
-  const closingIndent = lineIndentAt(source, dictClose);
-  const insertionPoint = dictClose - closingIndent.length;
-  const firstKey = /<key\b/.exec(structural);
-  const childIndent =
-    firstKey?.index == null ? `${closingIndent}\t` : lineIndentAt(source, firstKey.index);
-  const prefix = source.slice(0, insertionPoint).endsWith("\n") ? "" : newline;
-  const insertion = [
-    `${prefix}${childIndent}<key>${APPLE_SIGN_IN_KEY}</key>`,
-    `${childIndent}<array>`,
-    `${childIndent}\t<string>${APPLE_SIGN_IN_VALUE}</string>`,
-    `${childIndent}</array>`,
-    "",
-  ].join(newline);
-  return `${source.slice(0, insertionPoint)}${insertion}${closingIndent}${source.slice(dictClose)}`;
+  if (entitlementKeyStructure(source, APPLE_SIGN_IN_KEY).semanticCount !== 0) return undefined;
+  return appendEntitlementsEntry(source, appleEntitlementLines());
 }
 
-function bytesWithOptionalBOM(source: string, bom: boolean): Uint8Array {
-  const encoded = new TextEncoder().encode(source);
-  if (!bom) return encoded;
-  const bytes = new Uint8Array(encoded.length + 3);
-  bytes.set([0xef, 0xbb, 0xbf]);
-  bytes.set(encoded, 3);
-  return bytes;
-}
-
-function newEntitlementsBytes(): Uint8Array {
-  return new TextEncoder().encode(
-    [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-      '<plist version="1.0">',
-      "<dict>",
-      `\t<key>${APPLE_SIGN_IN_KEY}</key>`,
-      "\t<array>",
-      `\t\t<string>${APPLE_SIGN_IN_VALUE}</string>`,
-      "\t</array>",
-      "</dict>",
-      "</plist>",
-      "",
-    ].join("\n"),
-  );
+function appleEntitlementLines(): string[] {
+  return [
+    `<key>${APPLE_SIGN_IN_KEY}</key>`,
+    "<array>",
+    `\t<string>${APPLE_SIGN_IN_VALUE}</string>`,
+    "</array>",
+  ];
 }
 
 function isCreateMutation(mutation: IOSFileMutation): mutation is IOSCreateFileMutation {
@@ -693,7 +608,7 @@ export async function prepareIOSAppleEntitlementMutation(
         candidateHash: hashIOSFileBytes(candidateBytes),
       };
     } else {
-      const candidateBytes = newEntitlementsBytes();
+      const candidateBytes = newEntitlementsBytes(appleEntitlementLines());
       createMutation = {
         kind: "create",
         path: entitlementsPath,

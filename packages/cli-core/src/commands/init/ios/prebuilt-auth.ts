@@ -1,5 +1,7 @@
-import { lstat, readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
+import { readIOSSourceSnapshot, newlineStyle, type IOSSourceSnapshot } from "./source-snapshot.ts";
+import { generatedProjectKind } from "./project-selection.ts";
 import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import {
   applyIOSFileTransaction,
@@ -15,8 +17,6 @@ import {
   inspectIOSSourceMembership,
 } from "./inspect.ts";
 import type { IOSBuildConfiguration } from "./types.ts";
-
-const MAX_SWIFT_FILE_BYTES = 1_000_000;
 
 export interface IOSPrebuiltAuthPlanOptions {
   root: string;
@@ -96,15 +96,7 @@ export interface IOSPrebuiltAuthApplyResult {
   message?: string;
 }
 
-interface SourceSnapshot {
-  absolutePath: string;
-  relativePath: string;
-  bytes: Uint8Array;
-  source: string;
-  hash: string;
-  mode: number;
-  device: number;
-  inode: number;
+interface SourceSnapshot extends IOSSourceSnapshot {
   newline: "\n" | "\r\n";
 }
 
@@ -172,77 +164,14 @@ function blocked(
   };
 }
 
-function newlineStyle(source: string): "\n" | "\r\n" | undefined {
-  if (/\r(?!\n)/.test(source)) return undefined;
-  const hasCRLF = source.includes("\r\n");
-  const hasBareLF = /(^|[^\r])\n/.test(source);
-  if (hasCRLF && hasBareLF) return undefined;
-  return hasCRLF ? "\r\n" : "\n";
-}
-
-function decodeUTF8(bytes: Uint8Array): string | undefined {
-  try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-  } catch {
-    return undefined;
-  }
-}
-
 async function sourceSnapshot(
   root: string,
   relativePath: string,
 ): Promise<SourceSnapshot | undefined> {
-  const absolutePath = resolve(root, relativePath);
-  if (!(await pathIsSafelyWithinIOSRoot(root, absolutePath))) return undefined;
-  try {
-    const info = await lstat(absolutePath);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_SWIFT_FILE_BYTES) {
-      return undefined;
-    }
-    const bytes = new Uint8Array(await readFile(absolutePath));
-    const source = decodeUTF8(bytes);
-    if (source == null || source.includes("\0")) return undefined;
-    const newline = newlineStyle(source);
-    if (!newline) return undefined;
-    return {
-      absolutePath,
-      relativePath,
-      bytes,
-      source,
-      hash: hashIOSFileBytes(bytes),
-      mode: info.mode & 0o7777,
-      device: info.dev,
-      inode: info.ino,
-      newline,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-async function generatedProjectKind(
-  root: string,
-  absoluteProjectPath: string,
-): Promise<"xcodegen" | "tuist" | null> {
-  let directory = dirname(absoluteProjectPath);
-  while (await pathIsSafelyWithinIOSRoot(root, directory)) {
-    for (const [markerPath, kind] of [
-      ["project.yml", "xcodegen"],
-      ["Project.swift", "tuist"],
-      ["Workspace.swift", "tuist"],
-      ["Tuist/ProjectDescriptionHelpers", "tuist"],
-    ] as const) {
-      const marker = resolve(directory, markerPath);
-      if ((await pathIsSafelyWithinIOSRoot(root, marker)) && (await Bun.file(marker).exists())) {
-        return kind;
-      }
-    }
-    if (directory === root) break;
-    const parent = dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
-  }
-  return null;
+  const snapshot = await readIOSSourceSnapshot(root, relativePath);
+  if (!snapshot) return undefined;
+  const newline = newlineStyle(snapshot.source);
+  return newline ? { ...snapshot, newline } : undefined;
 }
 
 function splitHeader(source: string): { header: string; body: string } | undefined {
