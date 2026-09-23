@@ -79,6 +79,10 @@ Four ways a run ends with the deploy unfinished and nothing broken. All four exi
 
 `pause_step` is null on the finalizing row on purpose: nobody stopped there, the deploy is waiting on Clerk, and recording `dns` would count a drop-off that never happened. The DNS skip is a finished command, not a pause — the wizard prints its summary and exits 0 — so it carries no code, and it is the row to remember when the `paused` class contains no DNS traffic. A Ctrl-C _before_ the production instance exists is not any of these either — there is no state to preserve, so it stays a plain `abort` at exit 0.
 
+`stage` is the state the deploy was in when the run ended, on every `deploy` and `deploy status` event: the same value the status report's `state` field prints, so a wizard run and a `clerk deploy status` run a second later agree about the same deploy. It is the deploy's state, not the wizard's position. On a fresh deploy the DNS handoff comes before OAuth setup, so someone who skips a provider is at `domain_pending` with `pause_step: "oauth"`; `oauth_pending` there would contradict the status command. One value per run, the last one observed.
+
+It is null when no reliable state was established by the time the run ended, and that null is a different answer from `not_started`. That covers a run that failed before reading anything — not linked, a failed sign-in, an API error on the first read — and two cases where a state was invalidated or never observed: a resume whose domain read failed and substituted an all-pending status so the user could retry from the screen, where the user then skipped verification; and a fresh run whose create call answered that an instance already exists, after which the resume could not read it. Two states are known without a status read: a fresh deploy starts at `not_started`, and a newly created instance is at `domain_pending` the moment Clerk returns it with a domain (`domain_provisioning` if it did not). Every other value comes from a read that succeeded.
+
 Agent mode is detected via the mode system (`src/mode.ts`), which checks in priority order:
 
 1. `--mode` CLI flag

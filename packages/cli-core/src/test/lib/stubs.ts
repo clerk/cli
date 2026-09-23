@@ -340,7 +340,10 @@ export async function captureTelemetryPayload(
     process.env.CLERK_TELEMETRY_URL = TELEMETRY_CAPTURE_URL;
     delete process.env.CLERK_TELEMETRY_DISABLED;
     delete process.env.DO_NOT_TRACK;
-    process.exitCode = undefined;
+    // Not `undefined`: Bun ignores that assignment and keeps the previous
+    // number, so a run left at 1 by an earlier test would classify every
+    // later success as an error. 0 classifies exactly as unset does.
+    process.exitCode = EXIT_CODE.SUCCESS;
     globalThis.fetch = (async (url: unknown, init?: { body?: string }) => {
       if (String(url) !== TELEMETRY_CAPTURE_URL) {
         return savedFetch(url as Parameters<typeof fetch>[0], init as RequestInit);
@@ -385,7 +388,7 @@ export async function captureTelemetryPayload(
     return { payload: parsed.events[0]!.payload, error };
   } finally {
     globalThis.fetch = savedFetch;
-    process.exitCode = savedExitCode;
+    process.exitCode = savedExitCode ?? EXIT_CODE.SUCCESS;
     for (const [key, value] of Object.entries(savedEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

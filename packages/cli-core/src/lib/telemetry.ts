@@ -123,9 +123,10 @@ export type TelemetryStage =
   // state of the deploy itself, as `resolveActiveReportState` in
   // `commands/deploy/status.ts` would compute it at that moment. So the stage
   // a wizard run reports and the stage `clerk deploy status` reports a second
-  // later agree about the same deploy. The last one set is sent, and a run
-  // that ends before any state resolves sends null rather than defaulting —
-  // "never established" is a distinct answer from "not started".
+  // later agree about the same deploy. One value per run — the last state
+  // observed, not every state the run passed through — and a run that ends
+  // before any state resolves sends null rather than defaulting: "never
+  // established" is a distinct answer from "not started".
   //
   // A finished deploy is `complete`, never the shared `done` marker below:
   // the warehouse's payload contract test accepts exactly these five values
@@ -291,6 +292,16 @@ export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
  */
 export function setTelemetryStage(stage: TelemetryStage): void {
   if (context) context.stage = stage;
+}
+
+/**
+ * Forget the stage. For the one case where an observation disproves the
+ * stage last set without establishing a new one — `retractDeployStage` in
+ * `commands/deploy/status.ts` is the only caller. Not a general reset: a
+ * command that wants a different stage sets it.
+ */
+export function clearTelemetryStage(): void {
+  if (context) context.stage = null;
 }
 
 /** Read the stage a caller had set, so a nested flow can hand it back. */

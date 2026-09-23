@@ -5,12 +5,13 @@ import { interruptedExitCode } from "../../lib/signals.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { declareSoftExitOutcome } from "../../lib/telemetry.ts";
-import { deployComponentLabels, dnsRecords, type DeployComponentStatus } from "./copy.ts";
+import { deployComponentLabels, dnsRecords } from "./copy.ts";
 import {
   buildDeployStatusReport,
   buildInterruptedDeployStatusReport,
   deployNextStep,
   loadProductionDomain,
+  recordObservedDeployStage,
   resolveDeployContext,
   resolveDeployState,
   triggerDeployStatusCheck,
@@ -35,12 +36,12 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
   // at all — every await here reaches the Platform API or the config file.
   //
   // Both of these are read by the catch, so they live outside the `try`:
-  // `state` is what a report can be built from, and `lastPolledStatus` is what
-  // the wait loop established. The loop's own status is local to it and Ctrl-C
+  // `state` is what a report can be built from, and `lastPolled` is what the
+  // wait loop established. The loop's own status is local to it and Ctrl-C
   // rejects out of the next poll before it returns, so without capturing each
   // poll the report would list components as pending after they verified.
   let state: DeployState | null = null;
-  let lastPolledStatus: DeployComponentStatus | undefined;
+  let lastPolled: DeployStatusOutcome | undefined;
   try {
     const ctx = await resolveDeployContext();
     // Not an interrupt, so the catch rethrows this untouched.
@@ -53,14 +54,20 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
 
     const preflightTriggered = await runPreflightDeployStatusCheck(ctx);
     state = await resolveDeployState(ctx);
+    // Recorded at each observation rather than from the final report: Ctrl-C
+    // is reported by the signal handler, which reads the stage as it stands
+    // when the interrupt lands, and the catch below runs too late for it.
+    recordObservedDeployStage(state, null);
     const shouldWait = options.wait === true || !isAgent();
 
     let outcome: DeployStatusOutcome | null = null;
     if (state.kind === "active" && shouldWait) {
-      outcome = await runWait(state, {
+      const active = state;
+      outcome = await runWait(active, {
         triggerCheck: !preflightTriggered,
-        onStatus: (status) => {
-          lastPolledStatus = status;
+        onStatus: (polled) => {
+          lastPolled = polled;
+          recordObservedDeployStage(active, polled);
         },
       });
     }
@@ -80,9 +87,12 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
     if (!report.complete) declareSoftExitOutcome("incomplete");
   } catch (error) {
     if (interruptedExitCode() === null) throw error;
-    // Report what was established, then rethrow: the exit code stays 130, so no
-    // script reads this as a finished deploy.
-    emitReport(buildInterruptedReport(state, lastPolledStatus));
+    // Report what was established, then rethrow. The report carries the last
+    // observation — the pre-wait read, or the latest poll — so a deploy that
+    // finished just before the interrupt prints as complete, which is also
+    // what telemetry records for it. The exit code stays 130 either way, so
+    // `clerk deploy status && ./cutover.sh` still stops.
+    emitReport(buildInterruptedReport(state, lastPolled));
     throw error;
   }
 }
@@ -94,11 +104,10 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
  */
 function buildInterruptedReport(
   state: DeployState | null,
-  lastPolledStatus: DeployComponentStatus | undefined,
+  lastPolled: DeployStatusOutcome | undefined,
 ): DeployStatusReport {
   if (!state) return buildInterruptedDeployStatusReport();
-  const partial = lastPolledStatus ? { verified: false, status: lastPolledStatus } : null;
-  return buildDeployStatusReport(state, partial);
+  return buildDeployStatusReport(state, lastPolled ?? null);
 }
 
 async function runPreflightDeployStatusCheck(ctx: DeployContext): Promise<boolean> {
@@ -117,7 +126,7 @@ async function runPreflightDeployStatusCheck(ctx: DeployContext): Promise<boolea
 
 async function runWait(
   state: Extract<DeployState, { kind: "active" }>,
-  options: { triggerCheck?: boolean; onStatus?: (status: DeployComponentStatus) => void } = {},
+  options: { triggerCheck?: boolean; onStatus?: (outcome: DeployStatusOutcome) => void } = {},
 ): Promise<DeployStatusOutcome> {
   const { snapshot } = state;
   const domainIdOrName = snapshot.productionDomainId ?? snapshot.domain;

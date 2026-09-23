@@ -156,12 +156,44 @@ test("an unfinished `deploy status` is recorded as incomplete, not an error", as
     expect(event.payload.command).toBe("deploy status");
     expect(event.payload.outcome).toBe("incomplete");
     expect(event.payload.exit_code).toBe(1);
+    expect(event.payload.stage).toBe("not_started");
     // Nothing was thrown, so there is no code to carry — the two fields are
     // unrelated, and `incomplete` is the whole answer.
     expect(event.payload.error_code).toBeNull();
   } finally {
-    process.exitCode = undefined;
+    // Bun ignores `process.exitCode = undefined`; only a number resets it.
+    process.exitCode = 0;
   }
+});
+
+// Drives the real program rather than the unit tests' capture helper, so it
+// pins two things only `runProgram` can: the command name Commander gives the
+// hidden default subcommand — the warehouse contract keys on `deploy run` —
+// and that the stage set inside the command reaches the event it sends.
+test("`clerk deploy` under an agent with no production instance records stage not_started", async () => {
+  await markNoticeAlreadyShown();
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+  await setProfile("github.com/test/project", {
+    workspaceId: "",
+    appId: MOCK_APP_DEV_ONLY.application_id,
+    instances: { development: getInstance(MOCK_APP_DEV_ONLY, "development").instance_id },
+  });
+  http.mock({
+    [`/applications/${MOCK_APP_DEV_ONLY.application_id}`]: MOCK_APP_DEV_ONLY,
+    "test-telemetry.clerk.com": {},
+  });
+
+  const result = await clerk("--mode", "agent", "deploy");
+
+  expect(JSON.parse(result.stdout).state).toBe("not_started");
+  const bodies = telemetryEvents();
+  expect(bodies).toHaveLength(1);
+  const event = bodies[0]!.events[0]!;
+  expect(event.payload.command).toBe("deploy run");
+  expect(event.payload.outcome).toBe("success");
+  expect(event.payload.exit_code).toBe(0);
+  expect(event.payload.stage).toBe("not_started");
+  expect(event.payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
 });
 
 test("maps a soft failure (process.exitCode set without throwing) to outcome error", async () => {
@@ -180,7 +212,8 @@ test("maps a soft failure (process.exitCode set without throwing) to outcome err
     expect(event.payload.outcome).toBe("error");
     expect(event.payload.exit_code).toBe(1);
   } finally {
-    process.exitCode = undefined;
+    // Bun ignores `process.exitCode = undefined`; only a number resets it.
+    process.exitCode = 0;
   }
 });
 

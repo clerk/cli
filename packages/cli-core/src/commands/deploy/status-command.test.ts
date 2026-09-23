@@ -3,7 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EXIT_CODE, PlapiError } from "../../lib/errors.ts";
-import { fakeTelemetryCommand, stubFetch, useCaptureLog } from "../../test/lib/stubs.ts";
+import {
+  captureTelemetryPayload,
+  fakeTelemetryCommand,
+  stubFetch,
+  useCaptureLog,
+} from "../../test/lib/stubs.ts";
 
 const mockFetchApplication = mock();
 const mockListApplicationDomains = mock();
@@ -22,7 +27,8 @@ mock.module("../../lib/sleep.ts", () => ({
 
 const { _setConfigDir, setProfile } = await import("../../lib/config.ts");
 const { setMode } = await import("../../mode.ts");
-const { beginInterrupt, _resetInterruptState } = await import("../../lib/signals.ts");
+const { beginInterrupt, interruptedExitCode, _resetInterruptState } =
+  await import("../../lib/signals.ts");
 const { deployStatus, humanNextAction } = await import("./status-command.ts");
 const { startCommandTelemetry, telemetryResultForSoftExit } =
   await import("../../lib/telemetry.ts");
@@ -125,7 +131,8 @@ describe("deploy status", () => {
     captured.clear();
     setMode("agent");
     exitCodeBefore = process.exitCode;
-    process.exitCode = undefined;
+    // Bun ignores `process.exitCode = undefined`; only a number resets it.
+    process.exitCode = EXIT_CODE.SUCCESS;
     process.env.CLERK_PLATFORM_API_KEY = "ak_test";
     stubFetch((...args) => routePlapiFetch(...args));
     tempDir = await mkdtemp(join(tmpdir(), "clerk-status-test-"));
@@ -464,6 +471,30 @@ describe("deploy status", () => {
     expect(payload.domainStatus).toEqual({ dns: "complete", ssl: "pending", mail: "complete" });
   });
 
+  // The interrupted report carries the last observation rather than a
+  // hardcoded "not verified", so a deploy that was already complete when the
+  // interrupt landed says so — the same thing telemetry records for it. The
+  // exit code is what tells a script the command did not finish.
+  test("agent mode Ctrl-C mid-wait on an already complete deploy still reports complete", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(completeDomainStatus());
+    let reads = 0;
+    mockGetApplicationDomainStatus.mockImplementation(() => {
+      reads++;
+      if (reads === 1) return completeDomainStatus(); // the state read
+      beginInterrupt();
+      throw abortError();
+    });
+
+    await expect(deployStatus({ wait: true })).rejects.toThrow();
+
+    const payload = JSON.parse(captured.out);
+    expect(payload).toMatchObject({ complete: true, state: "complete" });
+    expect(interruptedExitCode()).toBe(EXIT_CODE.SIGINT);
+  });
+
   test("human mode Ctrl-C during the preflight prints only the next action", async () => {
     setMode("human");
     mockFetchApplication.mockResolvedValue(appWith(true));
@@ -790,6 +821,135 @@ describe("deploy status", () => {
       expect(telemetryResultForSoftExit(EXIT_CODE.GENERAL)).toEqual({
         outcome: "error",
         exitCode: EXIT_CODE.GENERAL,
+      });
+    });
+
+    // `stage` is the state the deploy was in when the run ended — the same
+    // value the report's `state` field prints — and null when the run failed
+    // before it had one. Read off the posted payload, since the stage travels
+    // through the telemetry context rather than the report.
+    describe("stage", () => {
+      function statusTelemetry(options: Parameters<typeof deployStatus>[0] = {}) {
+        return captureTelemetryPayload("deploy status", () => deployStatus(options), {
+          captureError: true,
+        });
+      }
+
+      test("no production instance is not_started", async () => {
+        mockFetchApplication.mockResolvedValue(appWith(false));
+
+        const { payload } = await statusTelemetry();
+
+        expect(payload.stage).toBe("not_started");
+        expect(payload.outcome).toBe("incomplete");
+      });
+
+      test("an instance without a domain yet is domain_provisioning", async () => {
+        mockFetchApplication.mockResolvedValue(appWith(true));
+        mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+
+        const { payload } = await statusTelemetry();
+
+        expect(payload.stage).toBe("domain_provisioning");
+      });
+
+      test("unverified DNS is domain_pending", async () => {
+        mockFetchApplication.mockResolvedValue(appWith(true));
+        mockDomain();
+        mockOAuthComplete();
+        mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+        mockGetApplicationDomainStatus.mockResolvedValue(pendingDnsDomainStatus());
+
+        const { payload } = await statusTelemetry();
+
+        expect(payload.stage).toBe("domain_pending");
+      });
+
+      test("a verified domain still missing OAuth credentials is oauth_pending", async () => {
+        mockFetchApplication.mockResolvedValue(appWith(true));
+        mockDomain();
+        mockOAuthComplete();
+        mockFetchInstanceConfig.mockImplementation(() => ({
+          connection_oauth_google: { enabled: true },
+        }));
+        mockTriggerApplicationDomainDNSCheck.mockResolvedValue(completeDomainStatus());
+        mockGetApplicationDomainStatus.mockResolvedValue(completeDomainStatus());
+
+        const { payload } = await statusTelemetry();
+
+        expect(payload.stage).toBe("oauth_pending");
+      });
+
+      test("a finished deploy is complete", async () => {
+        mockFetchApplication.mockResolvedValue(appWith(true));
+        mockDomain();
+        mockOAuthComplete();
+        mockTriggerApplicationDomainDNSCheck.mockResolvedValue(completeDomainStatus());
+        mockGetApplicationDomainStatus.mockResolvedValue(completeDomainStatus());
+
+        const { payload } = await statusTelemetry();
+
+        expect(payload.stage).toBe("complete");
+        expect(payload.outcome).toBe("success");
+      });
+
+      test("under --wait the last poll's state is recorded", async () => {
+        mockFetchApplication.mockResolvedValue(appWith(true));
+        mockDomain();
+        mockOAuthComplete();
+        mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+        mockGetApplicationDomainStatus
+          .mockResolvedValueOnce(pendingDnsDomainStatus())
+          .mockResolvedValueOnce(pendingSslDomainStatus())
+          .mockResolvedValue(completeDomainStatus());
+
+        const { payload } = await statusTelemetry({ wait: true });
+
+        expect(payload.stage).toBe("complete");
+        expect(payload.outcome).toBe("success");
+      });
+
+      test("Ctrl-C mid-wait keeps the state the last completed poll established", async () => {
+        mockFetchApplication.mockResolvedValue(appWith(true));
+        mockDomain();
+        mockOAuthComplete();
+        mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+        let polls = 0;
+        mockGetApplicationDomainStatus.mockImplementation(() => {
+          polls++;
+          if (polls <= 2) return pendingDnsDomainStatus();
+          beginInterrupt();
+          throw abortError();
+        });
+
+        const { payload, error } = await statusTelemetry({ wait: true });
+
+        expect(error).toBeInstanceOf(DOMException);
+        expect(payload.stage).toBe("domain_pending");
+      });
+
+      test("not linked fails before any state and records null", async () => {
+        _setConfigDir(tempDir);
+        await rm(join(tempDir, "config.json"), { force: true });
+
+        const { payload } = await statusTelemetry();
+
+        expect(payload.error_code).toBe("not_linked");
+        expect(payload.stage).toBeNull();
+      });
+
+      test("a failed state read records null, not the state it was about to read", async () => {
+        mockFetchApplication.mockResolvedValue(appWith(true));
+        mockDomain();
+        mockOAuthComplete();
+        mockGetApplicationDomainStatus.mockRejectedValue(
+          new PlapiError(500, JSON.stringify({ errors: [{ code: "server_error" }] }), "https://x"),
+        );
+
+        const { payload, error } = await statusTelemetry();
+
+        expect(error).toBeInstanceOf(PlapiError);
+        expect(payload.stage).toBeNull();
       });
     });
   });

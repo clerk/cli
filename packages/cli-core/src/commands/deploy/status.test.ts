@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { PlapiError } from "../../lib/errors.ts";
+import { fakeTelemetryCommand } from "../../test/lib/stubs.ts";
 import type { LiveDeploySnapshot } from "./status.ts";
 
 const mockFetchApplication = mock();
@@ -24,9 +25,13 @@ const {
   buildDeployStatusReport,
   buildInterruptedDeployStatusReport,
   deployNextStep,
+  loadInitialDeployStatus,
+  recordObservedDeployStage,
   resolveDeployState,
   waitForDeployStatus,
 } = await import("./status.ts");
+const { currentTelemetryStage, setTelemetryStage, startCommandTelemetry } =
+  await import("../../lib/telemetry.ts");
 
 const ctx = {
   profileKey: "/tmp/x",
@@ -166,7 +171,11 @@ describe("waitForDeployStatus", () => {
     mockTriggerApplicationDomainDNSCheck.mockResolvedValue(completeStatus);
     mockGetApplicationDomainStatus.mockResolvedValue(completeStatus);
 
-    const outcome = await waitForDeployStatus("app_1", "dmn_1", "example.com", passthroughHandlers);
+    const observed: unknown[] = [];
+    const outcome = await waitForDeployStatus("app_1", "dmn_1", "example.com", {
+      ...passthroughHandlers,
+      onStatus: (polled) => observed.push(polled),
+    });
 
     expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledWith("app_1", "dmn_1");
     expect(mockTriggerApplicationDomainDNSCheck.mock.invocationCallOrder[0]).toBeLessThan(
@@ -176,6 +185,9 @@ describe("waitForDeployStatus", () => {
       verified: true,
       status: { dns: true, ssl: true, mail: true },
     });
+    // The poll's own verdict travels with its components, so an observer can
+    // tell "verified" from "all three passed but Clerk is still finalizing".
+    expect(observed).toEqual([outcome]);
   });
 
   test("continues polling when the DNS check is already in flight", async () => {
@@ -190,6 +202,105 @@ describe("waitForDeployStatus", () => {
       verified: true,
       status: { dns: true, ssl: true, mail: true },
     });
+  });
+});
+
+// The wizard's resume path substitutes "everything pending" for a failed read
+// so the user can retry from the screen. The substitute is indistinguishable
+// from a real all-pending answer by its fields, so the flag is the only thing
+// that stops it being recorded as an observation.
+describe("loadInitialDeployStatus", () => {
+  test("a successful read is live", async () => {
+    mockGetApplicationDomainStatus.mockResolvedValue(completeStatus);
+
+    const result = await loadInitialDeployStatus("app_1", "dmn_1");
+
+    expect(result.live).toBe(true);
+    expect(result.status).toEqual(completeStatus as typeof result.status);
+  });
+
+  test("a failed read is substituted with everything pending, and is not live", async () => {
+    mockGetApplicationDomainStatus.mockRejectedValue(
+      new PlapiError(500, JSON.stringify({ errors: [{ code: "server_error" }] }), "https://x"),
+    );
+
+    const result = await loadInitialDeployStatus("app_1", "dmn_1");
+
+    expect(result.live).toBe(false);
+    expect(result.status.status).toBe("incomplete");
+    expect(result.status.dns?.status).toBe("not_started");
+  });
+
+  test("the read-only path throws instead of substituting", async () => {
+    mockGetApplicationDomainStatus.mockRejectedValue(
+      new PlapiError(500, JSON.stringify({ errors: [{ code: "server_error" }] }), "https://x"),
+    );
+
+    await expect(
+      loadInitialDeployStatus("app_1", "dmn_1", { throwOnStatusError: true }),
+    ).rejects.toBeInstanceOf(PlapiError);
+  });
+});
+
+// The only guard between a substituted "everything pending" read and a
+// recorded DNS stall. The status command never trips it today because its
+// read throws instead of substituting; the guard is here so that a change to
+// that read cannot silently start recording fallbacks.
+describe("recordObservedDeployStage", () => {
+  const snapshot = {
+    appId: "app_1",
+    developmentInstanceId: "ins_dev",
+    productionInstanceId: "ins_prod",
+    productionDomainId: "dmn_1",
+    domain: "example.com",
+    oauthProviders: ["google"],
+    oauthProviderDescriptors: [],
+    completedOAuthProviders: ["google"],
+    cnameTargets: [],
+    domainComplete: false,
+    live: true,
+    componentStatus: { dns: false, ssl: false, mail: false },
+    unsupportedOAuthProviderCount: 0,
+    unsupportedOAuthProviders: [],
+    pending: { type: "dns" as const },
+  } satisfies LiveDeploySnapshot;
+
+  beforeEach(() => {
+    startCommandTelemetry(fakeTelemetryCommand("deploy status"));
+  });
+
+  test("a live snapshot records its state", () => {
+    recordObservedDeployStage({ kind: "active", snapshot }, null);
+
+    expect(currentTelemetryStage()).toBe("domain_pending");
+  });
+
+  test("a substituted snapshot leaves the stage as it was", () => {
+    setTelemetryStage("oauth_pending");
+
+    recordObservedDeployStage({ kind: "active", snapshot: { ...snapshot, live: false } }, null);
+
+    expect(currentTelemetryStage()).toBe("oauth_pending");
+  });
+
+  test("a poll outcome is its own observation, whatever the snapshot was", () => {
+    recordObservedDeployStage(
+      { kind: "active", snapshot: { ...snapshot, live: false } },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(currentTelemetryStage()).toBe("complete");
+  });
+
+  test("the two states without a snapshot record directly", () => {
+    recordObservedDeployStage({ kind: "not_started" }, null);
+    expect(currentTelemetryStage()).toBe("not_started");
+
+    recordObservedDeployStage(
+      { kind: "domain_provisioning", appId: "app_1", productionInstanceId: "ins_prod" },
+      null,
+    );
+    expect(currentTelemetryStage()).toBe("domain_provisioning");
   });
 });
 
@@ -208,6 +319,7 @@ describe("buildDeployStatusReport", () => {
       { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
     ],
     domainComplete: false,
+    live: true,
     componentStatus: { dns: false, ssl: false, mail: false },
     unsupportedOAuthProviderCount: 0,
     unsupportedOAuthProviders: [],
@@ -510,6 +622,7 @@ describe("report urls", () => {
     completedOAuthProviders: [],
     cnameTargets: [],
     domainComplete: false,
+    live: true,
     componentStatus: { dns: false, ssl: false, mail: false },
     unsupportedOAuthProviderCount: 0,
     unsupportedOAuthProviders: [],

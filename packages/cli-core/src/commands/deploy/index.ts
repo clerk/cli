@@ -65,14 +65,20 @@ import {
 import {
   buildDeployStatusReport,
   loadDevelopmentOAuthProviders,
+  recordDeployStage,
+  recordObservedDeployStage,
+  resolveActiveReportState,
   resolveDeployContext,
   resolveDeployState,
   resolveLiveApplicationContext,
   resolveLiveDeploySnapshot,
+  retractDeployStage,
   waitForDeployStatus,
+  type DeployProgressHandlers,
   type DeployStatusOutcome,
   type DiscoveredOAuthProviders,
   type LiveDeploySnapshot,
+  type OAuthSetupFacts,
 } from "./status.ts";
 
 type DeployOptions = Record<string, never>;
@@ -124,6 +130,7 @@ async function emitAgentDeployHandoff(): Promise<void> {
   }
 
   const state = await resolveDeployState(ctx);
+  recordObservedDeployStage(state, null);
   const report = buildDeployStatusReport(state, null);
   log.data(JSON.stringify(report, null, 2));
 }
@@ -145,6 +152,11 @@ async function runDeploy(ctx: DeployContext): Promise<void> {
 }
 
 async function startNewDeploy(ctx: DeployContext): Promise<void> {
+  // What `clerk deploy status` reports on exactly this condition. Set before
+  // anything is read, so a run that ends at the plan, the domain prompt or the
+  // create confirmation says where the deploy stood rather than nothing.
+  recordDeployStage("not_started");
+
   const { descriptors: oauthProviders, unsupported }: DiscoveredOAuthProviders =
     await loadDevelopmentOAuthProviders(ctx);
 
@@ -171,6 +183,10 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
 
   const productionOrExists = await createProductionInstance(ctx, domain);
   if (productionOrExists === "exists") {
+    // `not_started` is now disproven, and nothing replaces it until the resume
+    // below reads the instance. If that read fails, or substitutes, the run
+    // ends with no stage rather than a false one.
+    retractDeployStage();
     log.blank();
     log.info(
       "A production instance already exists for this application. Resuming the existing deploy.",
@@ -187,6 +203,14 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     return;
   }
   const production = productionOrExists;
+  // From the create response, before anything local happens: the instance
+  // exists, and the response says whether it has a domain. `deploy status`
+  // reads both from the API, so it agrees from this instant on, and a failure
+  // persisting the id below records the deploy's state rather than filing a
+  // local disk write under provisioning. Without this, every run that ends
+  // before the first DNS poll — which comes after OAuth setup — would report
+  // no stage, and that is where the wizard loses people.
+  recordDeployStage(production.active_domain ? "domain_pending" : "domain_provisioning");
   await persistProductionInstance(ctx, production.id);
   // "Clerk production instance", not just "production instance": the user
   // also has a deployment on their host, and this is the one Clerk manages.
@@ -243,7 +267,12 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     completedOAuthProviders,
   });
 
-  await finishDeploy(ctx, productionDomain, completedOAuthProviders, dnsStatus);
+  await finishDeploy(
+    ctx,
+    productionDomain,
+    { oauthProviders: operationState.oauthProviders, completedOAuthProviders },
+    dnsStatus,
+  );
 }
 
 async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
@@ -253,12 +282,16 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
 
   const snapshot = await resolveLiveDeploySnapshot(ctx);
   if (!snapshot) {
+    recordDeployStage("domain_provisioning");
     log.blank();
     log.info("A production instance exists, but Clerk did not return a production domain yet.");
     log.info("Run `clerk deploy` again after the domain is available from the API.");
     await outro("No deploy actions available");
     return;
   }
+  // Records nothing when the domain read was substituted; a later poll that
+  // succeeds will.
+  recordObservedDeployStage({ kind: "active", snapshot }, null);
 
   log.blank();
   for (const line of printPlan(ctx.appLabel, buildLiveDeployPlan(snapshot))) {
@@ -270,7 +303,7 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
 
   if (!snapshot.pending) {
     log.info("No deploy actions remain.");
-    await finishDeploy(ctx, snapshot.domain, snapshot.completedOAuthProviders, "verified");
+    await finishDeploy(ctx, snapshot.domain, snapshot, "verified");
     return;
   }
 
@@ -308,7 +341,7 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
     );
   }
 
-  await finishDeploy(ctx, snapshot.domain, snapshot.completedOAuthProviders, dnsStatus);
+  await finishDeploy(ctx, snapshot.domain, snapshot, dnsStatus);
 }
 
 type DnsVerificationResult = "verified" | "pending";
@@ -491,7 +524,11 @@ async function runDnsVerification(
   const domainIdOrName = state.productionDomainId ?? state.domain;
 
   while (true) {
-    const outcome = await pollDeployStatus(ctx.appId, domainIdOrName, state.domain);
+    // Per poll, not once the wait returns: a Ctrl-C mid-wait is reported by
+    // the signal handler with the stage as it stands at that moment.
+    const outcome = await pollDeployStatus(ctx.appId, domainIdOrName, state.domain, (polled) =>
+      recordDeployStage(resolveActiveReportState(state, polled.verified)),
+    );
 
     if (outcome.verified) {
       log.blank();
@@ -549,10 +586,12 @@ async function pollDeployStatus(
   appId: string,
   domainIdOrName: string,
   domain: string,
+  onStatus: DeployProgressHandlers["onStatus"],
 ): Promise<DeployStatusOutcome> {
   return waitForDeployStatus(appId, domainIdOrName, domain, {
     runVerification: async (progressLabel, work) => withSpinner(progressLabel, work),
     onVerified: () => log.success(deployComponentLabels("dns", domain).done),
+    onStatus,
   });
 }
 
@@ -695,13 +734,21 @@ async function persistProductionInstance(ctx: DeployContext, productionInstanceI
 async function finishDeploy(
   ctx: DeployContext,
   domain: string,
-  completedOAuthProviders: readonly string[],
+  oauth: OAuthSetupFacts,
   dnsStatus: DnsVerificationResult,
 ): Promise<void> {
+  // A verified domain is an observation — a poll's, or a live resume read's —
+  // so the resolver decides between `complete` and `oauth_pending` from the
+  // facts rather than this function assuming OAuth finished. (Today it always
+  // has: `runOAuthSetup` pauses rather than return a partial set.) A pending
+  // domain adds nothing: the last set point already recorded it, or, after a
+  // substituted resume read, deliberately left it unrecorded.
+  if (dnsStatus === "verified") recordDeployStage(resolveActiveReportState(oauth, true));
+
   log.blank();
   for (const line of productionSummary(
     domain,
-    completedOAuthProviders.map((provider) => providerLabel(provider)),
+    oauth.completedOAuthProviders.map((provider) => providerLabel(provider)),
     dnsStatus,
   )) {
     log.info(line);
