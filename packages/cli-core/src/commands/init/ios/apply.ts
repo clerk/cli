@@ -454,11 +454,6 @@ export async function applyIOSLocalSetup(
       "The fresh SwiftUI target was not edited because the selected runtime configuration could not be proven. Configure Clerk directly in the @main initializer, then rerun clerk init. No local files were changed.",
     );
   }
-  if (hasCustomConfigure && !hasSupportedCustomConfigure) {
-    throw iosSetupError(
-      "A custom Clerk.configure(...) source was found, but it is not one unambiguous call in the selected app's startup initializer. clerk init preserved it and made no local or remote changes. Confirm the shipping configuration manually, then rerun the command.",
-    );
-  }
   if (prebuiltAuthActive) {
     if (prebuiltRuntimeBlockers.length > 0) {
       throw iosSetupError(
@@ -626,12 +621,17 @@ export async function applyIOSLocalSetup(
       ),
     );
   }
-  if (hasSupportedCustomConfigure) {
+  if (hasCustomConfigure) {
     log.info(
       dim(
         "  PRESERVE  Custom Clerk.configure(...) publishable-key source. Its value will not be inspected; the developer must select the existing Clerk application it belongs to.",
       ),
     );
+    if (!hasSupportedCustomConfigure) {
+      log.warn(
+        "Custom Clerk configuration: startup execution and runtime key match remain unverified. SDK linkage and native registration can proceed for the explicitly selected Clerk app; verify runtime initialization and the custom key's application manually.",
+      );
+    }
   }
   if (prebuiltAuthPlan) {
     const operation = prebuiltAuthPlan.status === "ready" ? "MODIFY" : "VERIFY";
@@ -779,7 +779,7 @@ export async function applyIOSLocalSetup(
     requiresDevelopmentKey:
       directConfigPlan != null || associatedDomainPlan?.requiresPublishableKey === true,
     requiresExplicitApplication:
-      hasSupportedCustomConfigure || directConfigPlan?.changes?.configuration === "verify-existing",
+      hasCustomConfigure || directConfigPlan?.changes?.configuration === "verify-existing",
   };
 }
 

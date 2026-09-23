@@ -106,9 +106,20 @@ export interface IOSPlatformViewsSnapshot {
   platforms: IOSPlatformTargetViewSnapshot[];
 }
 
+/** Identity proven across every platform, independently of Swift source discovery. */
+export type IOSPlatformNativeIdentity = Pick<
+  IOSPlatformViewsSnapshot,
+  "projectPath" | "targetId" | "supportedPlatforms" | "bundleIdentifier" | "appIdPrefix"
+>;
+
 export type IOSPlatformViewsAudit =
   | { status: "ready"; snapshot: IOSPlatformViewsSnapshot }
-  | { status: "blocked"; blockers: IOSPlatformViewBlocker[] };
+  | {
+      status: "blocked";
+      blockers: IOSPlatformViewBlocker[];
+      /** Read-only registration checks may proceed; this is not approval for local or remote writes. */
+      nativeIdentity?: IOSPlatformNativeIdentity;
+    };
 
 function canonicalPlatforms(platforms: readonly IOSNativePlatform[]): IOSNativePlatform[] {
   const values = new Set(platforms);
@@ -428,14 +439,6 @@ export async function inspectIOSPlatformViews(
       });
       continue;
     }
-    if (!target.swift.evidenceComplete) {
-      blockers.push({
-        code: "incomplete-swift-evidence",
-        platform: view.platform,
-        message: `Clerk-relevant Swift source membership could not be inspected completely for the ${view.platform === "macos" ? "macOS" : "iOS"} target view.`,
-      });
-      continue;
-    }
     targets.push({ platform: view.platform, target });
   }
   if (blockers.length > 0) return { status: "blocked", blockers };
@@ -480,6 +483,31 @@ export async function inspectIOSPlatformViews(
     });
   }
   if (blockers.length > 0) return { status: "blocked", blockers };
+
+  // Incomplete Swift membership blocks source-dependent plans, but does not
+  // invalidate identity that all platform-conditioned build settings proved.
+  for (const { platform, target } of targets) {
+    if (!target.swift.evidenceComplete) {
+      blockers.push({
+        code: "incomplete-swift-evidence",
+        platform,
+        message: `Clerk-relevant Swift source membership could not be inspected completely for the ${platform === "macos" ? "macOS" : "iOS"} target view.`,
+      });
+    }
+  }
+  if (blockers.length > 0) {
+    return {
+      status: "blocked",
+      blockers,
+      nativeIdentity: {
+        projectPath: primaryTarget.projectPath,
+        targetId: primaryTarget.id,
+        supportedPlatforms,
+        bundleIdentifier: resolvedBundleIdentities[0]!,
+        ...(prefixes[0] ? { appIdPrefix: prefixes[0] } : {}),
+      },
+    };
+  }
 
   const platformSnapshots = targets
     .map(({ platform, target }): IOSPlatformTargetViewSnapshot => ({
