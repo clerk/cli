@@ -72,8 +72,11 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
     // The check ran and answered; the deploy just isn't finished. The exit
     // code stays 1 so `clerk deploy status && ./cutover.sh` still stops, but
     // telemetry records what happened rather than reading the 1 as a failure.
-    // Declared here and not in the error path: a thrown error is a real
-    // failure and keeps its own code.
+    //
+    // Declared after the report is built, so a run that failed before it had
+    // an answer declares nothing and stays an error. And this function backs
+    // the `status` subcommand alone — routing the wizard through it would
+    // make every unfinished wizard pass declare `incomplete` too.
     if (!report.complete) declareSoftExitOutcome("incomplete");
   } catch (error) {
     if (interruptedExitCode() === null) throw error;

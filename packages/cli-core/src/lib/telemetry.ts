@@ -50,6 +50,18 @@ import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
  */
 export type TelemetryOutcome = "success" | "error" | "abort" | "incomplete";
 
+/**
+ * What a command may declare for itself on the soft-exit path.
+ *
+ * Deliberately narrower than {@link TelemetryOutcome}. `success` is excluded
+ * because declaring it on a run that then exits nonzero produces a row the
+ * warehouse reads as a success — its classifier tests `outcome = 'success'`
+ * ahead of every error rule and never reads `exit_code` — so the failure
+ * would leave the error series with nothing able to reconcile it. `abort` is
+ * excluded because it belongs to the interrupt path, which reports itself.
+ */
+export type SoftExitOutcome = "incomplete" | "error";
+
 export type TelemetryResult = {
   outcome: TelemetryOutcome;
   exitCode: number;
@@ -114,6 +126,11 @@ export type TelemetryStage =
   // later agree about the same deploy. The last one set is sent, and a run
   // that ends before any state resolves sends null rather than defaulting —
   // "never established" is a distinct answer from "not started".
+  //
+  // A finished deploy is `complete`, never the shared `done` marker below:
+  // the warehouse's payload contract test accepts exactly these five values
+  // on `deploy run` and `deploy status`, so `done` there trips it on every
+  // finished deploy.
   | "not_started"
   | "domain_provisioning"
   | "domain_pending"
@@ -151,7 +168,7 @@ type TelemetryContext = {
  * there is no code, and `incomplete` is the whole answer.
  */
 type SoftExitDeclaration = {
-  outcome: TelemetryOutcome;
+  outcome: SoftExitOutcome;
   errorCode?: string;
 };
 
@@ -298,8 +315,19 @@ export function currentTelemetryStage(): TelemetryStage | null {
  *
  * Ignored when the run throws: a thrown error is the more specific fact, and
  * `runProgram` classifies it through {@link telemetryResultForError}.
+ *
+ * Two rules for callers:
+ *
+ * - **The last call wins.** Call this once, with the fact you want recorded.
+ *   A command that aggregates failures across several targets and means to
+ *   report the first one must select that error before calling, not call from
+ *   inside its loop — which would record the last target's failure instead,
+ *   with no test failing and telemetry naming the wrong thing.
+ * - **It applies to whatever nonzero code the run ends with,** not only the
+ *   one in force when it was called. Declare it under the same condition that
+ *   sets the exit code, so the two cannot diverge.
  */
-export function declareSoftExitOutcome(outcome: TelemetryOutcome, errorCode?: string): void {
+export function declareSoftExitOutcome(outcome: SoftExitOutcome, errorCode?: string): void {
   if (context) context.softExit = { outcome, errorCode };
 }
 

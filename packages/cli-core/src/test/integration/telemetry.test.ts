@@ -5,7 +5,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { clerk, http, useIntegrationTestHarness } from "./lib/harness.ts";
+import {
+  clerk,
+  getInstance,
+  http,
+  MOCK_APP_DEV_ONLY,
+  setProfile,
+  useIntegrationTestHarness,
+} from "./lib/harness.ts";
 import { useCaptureLog } from "../lib/stubs.ts";
 
 useIntegrationTestHarness();
@@ -114,6 +121,47 @@ test("records failures with error code and reuses the machine uuid", async () =>
   expect(event.payload.exit_code).toBe(1);
   expect(event.payload.error_code).toBe("unexpected_error");
   expect(event.payload.machine_uuid).toBe(firstUuid);
+});
+
+// The counterpart to the soft-failure test below: `clerk deploy status` exits
+// 1 on a deploy that is merely unfinished, and declares what that 1 meant.
+// Driven through the real program so the whole seam is covered — the
+// declaration, the soft-exit branch reading it back, and the emitted event —
+// which no unit test of the classifier can do on its own.
+test("an unfinished `deploy status` is recorded as incomplete, not an error", async () => {
+  await markNoticeAlreadyShown();
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+  await setProfile("github.com/test/project", {
+    workspaceId: "",
+    appId: MOCK_APP_DEV_ONLY.application_id,
+    instances: { development: getInstance(MOCK_APP_DEV_ONLY, "development").instance_id },
+  });
+  // Development-only: no production instance, so the report is `not_started`
+  // and no domain or config call follows.
+  http.mock({
+    [`/applications/${MOCK_APP_DEV_ONLY.application_id}`]: MOCK_APP_DEV_ONLY,
+    "test-telemetry.clerk.com": {},
+  });
+
+  try {
+    await clerk.raw("deploy", "status");
+    // Set by the command rather than thrown, so the harness's own result
+    // reports 0 — the soft exit is on the process, which is what the run
+    // would exit with and what the event has to carry.
+    expect(process.exitCode).toBe(1);
+
+    const bodies = telemetryEvents();
+    expect(bodies).toHaveLength(1);
+    const event = bodies[0]!.events[0]!;
+    expect(event.payload.command).toBe("deploy status");
+    expect(event.payload.outcome).toBe("incomplete");
+    expect(event.payload.exit_code).toBe(1);
+    // Nothing was thrown, so there is no code to carry — the two fields are
+    // unrelated, and `incomplete` is the whole answer.
+    expect(event.payload.error_code).toBeNull();
+  } finally {
+    process.exitCode = undefined;
+  }
 });
 
 test("maps a soft failure (process.exitCode set without throwing) to outcome error", async () => {

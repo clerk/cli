@@ -18,7 +18,7 @@ import {
 import { ApiError, CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "./errors.ts";
 import { abortInFlight, beginInterrupt, _resetInterruptState } from "./signals.ts";
 import { setLogLevel } from "./log.ts";
-import { useCaptureLog } from "../test/lib/stubs.ts";
+import { fakeTelemetryCommand, useCaptureLog } from "../test/lib/stubs.ts";
 
 // Isolate config I/O (machine uuid, notice flag) from the real user config dir.
 let configDir: string;
@@ -175,7 +175,7 @@ describe("finalizeAndSendTelemetry", () => {
   });
 
   function fakeCommand(): TelemetryCommand {
-    return { name: () => "list", options: [], getOptionValueSource: () => undefined, parent: null };
+    return fakeTelemetryCommand("list");
   }
 
   /** Captures the payload of the single event a finalize call sends. */
@@ -578,12 +578,15 @@ describe("finalizeAndSendTelemetry", () => {
       });
     });
 
-    // A thrown error is the more specific fact, and `runProgram` routes it
-    // through the other classifier entirely.
+    // What the send does with a result it is handed while a declaration is
+    // live: it uses the result. Resolved through the callback so the two call
+    // sites read alike, and so this keeps holding if `telemetryResultForError`
+    // ever starts reading context — it is pure today, so the ordering itself
+    // makes no difference.
     test("a thrown error keeps its own code regardless of a declaration", async () => {
       const payload = await sendAndCapturePayload(
         () => declareSoftExitOutcome("incomplete"),
-        telemetryResultForError(new CliError("boom", { code: ERROR_CODE.NOT_LINKED })),
+        () => telemetryResultForError(new CliError("boom", { code: ERROR_CODE.NOT_LINKED })),
       );
       expect(payload.outcome).toBe("error");
       expect(payload.error_code).toBe("not_linked");

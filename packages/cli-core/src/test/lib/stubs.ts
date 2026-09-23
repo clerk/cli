@@ -2,6 +2,7 @@ import { Writable } from "node:stream";
 import { afterEach, beforeEach, type spyOn } from "bun:test";
 import { type CapturedLogs, setActiveCapture } from "../../lib/log.ts";
 import { setUiOutput } from "../../lib/ui.ts";
+import type { TelemetryCommand } from "../../lib/telemetry.ts";
 
 export function capturedOutput(spy: ReturnType<typeof spyOn>): string {
   return spy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
@@ -242,4 +243,22 @@ type FetchImpl = (input: string | URL | Request, init?: RequestInit) => Promise<
 
 export function stubFetch(impl: FetchImpl): void {
   globalThis.fetch = impl as typeof fetch;
+}
+
+/**
+ * A stand-in for the Commander command telemetry reads, built from a space
+ * separated command path: `"deploy status"` yields a `status` command whose
+ * parent is `deploy`, which is what `startCommandTelemetry` walks to produce
+ * the payload's `command` field. No flags are reported as set.
+ */
+export function fakeTelemetryCommand(path: string): TelemetryCommand {
+  const noOptions = { options: [] as never[], getOptionValueSource: () => undefined };
+  // Root first, so each command's parent is the segment to its left. The
+  // outermost parent is null: telemetry excludes the root `clerk` itself.
+  return path
+    .split(" ")
+    .reduce<TelemetryCommand | null>(
+      (parent, segment) => ({ name: () => segment, ...noOptions, parent }),
+      null,
+    ) as TelemetryCommand;
 }

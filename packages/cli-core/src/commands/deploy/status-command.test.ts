@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EXIT_CODE, PlapiError } from "../../lib/errors.ts";
-import { stubFetch, useCaptureLog } from "../../test/lib/stubs.ts";
+import { fakeTelemetryCommand, stubFetch, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockFetchApplication = mock();
 const mockListApplicationDomains = mock();
@@ -26,21 +26,6 @@ const { beginInterrupt, _resetInterruptState } = await import("../../lib/signals
 const { deployStatus, humanNextAction } = await import("./status-command.ts");
 const { startCommandTelemetry, telemetryResultForSoftExit } =
   await import("../../lib/telemetry.ts");
-
-/** A telemetry context to declare into — `deploy status` under the real program. */
-function fakeDeployStatusCommand() {
-  return {
-    name: () => "status",
-    options: [],
-    getOptionValueSource: () => undefined,
-    parent: {
-      name: () => "deploy",
-      options: [],
-      getOptionValueSource: () => undefined,
-      parent: null,
-    },
-  };
-}
 
 /** What an in-flight request rejects with once Ctrl-C aborts the shared signal. */
 function abortError(): Error {
@@ -714,16 +699,18 @@ describe("deploy status", () => {
     expect(output).not.toContain("Add the following records");
   });
 
-  // An unfinished deploy is not a failed command. What telemetry records is
-  // read back through the same soft-exit path `runProgram` uses, so these pin
-  // the recorded event rather than the setter call.
+  // An unfinished deploy is not a failed command. These read the declaration
+  // back through the classifier the soft-exit branch calls, so they pin what
+  // would be recorded rather than that the setter ran. The whole path,
+  // including `runProgram` itself, is covered end to end in
+  // `test/integration/telemetry.test.ts`.
   describe("telemetry", () => {
     function recordedResult() {
       return telemetryResultForSoftExit(Number(process.exitCode ?? EXIT_CODE.SUCCESS));
     }
 
     test("a deploy with no production instance is incomplete, not an error", async () => {
-      startCommandTelemetry(fakeDeployStatusCommand());
+      startCommandTelemetry(fakeTelemetryCommand("deploy status"));
       mockFetchApplication.mockResolvedValue(appWith(false));
 
       await deployStatus();
@@ -733,7 +720,7 @@ describe("deploy status", () => {
     });
 
     test("a provisioning domain is incomplete", async () => {
-      startCommandTelemetry(fakeDeployStatusCommand());
+      startCommandTelemetry(fakeTelemetryCommand("deploy status"));
       mockFetchApplication.mockResolvedValue(appWith(true));
       mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
 
@@ -743,7 +730,7 @@ describe("deploy status", () => {
     });
 
     test("a deploy still waiting on DNS is incomplete", async () => {
-      startCommandTelemetry(fakeDeployStatusCommand());
+      startCommandTelemetry(fakeTelemetryCommand("deploy status"));
       mockFetchApplication.mockResolvedValue(appWith(true));
       mockDomain();
       mockOAuthComplete();
@@ -756,7 +743,7 @@ describe("deploy status", () => {
     });
 
     test("a verified domain still missing OAuth credentials is incomplete", async () => {
-      startCommandTelemetry(fakeDeployStatusCommand());
+      startCommandTelemetry(fakeTelemetryCommand("deploy status"));
       mockFetchApplication.mockResolvedValue(appWith(true));
       mockDomain();
       mockOAuthComplete();
@@ -772,7 +759,7 @@ describe("deploy status", () => {
     });
 
     test("a complete deploy declares nothing and is a success at exit 0", async () => {
-      startCommandTelemetry(fakeDeployStatusCommand());
+      startCommandTelemetry(fakeTelemetryCommand("deploy status"));
       mockFetchApplication.mockResolvedValue(appWith(true));
       mockDomain();
       mockOAuthComplete();
@@ -785,12 +772,12 @@ describe("deploy status", () => {
       expect(recordedResult()).toEqual({ outcome: "success", exitCode: EXIT_CODE.SUCCESS });
     });
 
-    // A throw goes to `telemetryResultForError`, not the soft-exit branch, so
-    // what matters is that the run left no declaration behind: were one to
-    // survive a failure, the next reader of the soft exit would call it
-    // "incomplete" and the failure would leave the error series.
-    test("an API failure before the report declares nothing", async () => {
-      startCommandTelemetry(fakeDeployStatusCommand());
+    // The declaration is made only once the report exists, never optimistically
+    // on the way in. Moving it above the status read would set it here and fail
+    // this assertion, which is the regression this guards — a run that never
+    // learned the deploy's state must not claim it is merely unfinished.
+    test("a run that fails before it has a report declares nothing", async () => {
+      startCommandTelemetry(fakeTelemetryCommand("deploy status"));
       mockFetchApplication.mockResolvedValue(appWith(true));
       mockDomain();
       mockOAuthComplete();
