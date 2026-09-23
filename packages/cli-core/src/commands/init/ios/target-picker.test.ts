@@ -10,6 +10,8 @@ import { inspectIOSProject } from "./inspect.ts";
 import { pickAppleNativeTarget } from "./target-picker.ts";
 import {
   createIOSFixture,
+  createIOSJSONFixture,
+  addNestedSharedEntryToIOSJSONFixture,
   convertIOSFixtureToMultiplatform,
   IOS_FIXTURE_IDS,
   treeDigest,
@@ -72,6 +74,29 @@ test("offers app names, platform, and project, selecting the chosen ID without w
   expect((await inspectIOSProject(root, { target })).selection).toMatchObject({
     state: "selected",
     targetId: IOS_FIXTURE_IDS.appTarget,
+  });
+  expect(await treeDigest(root)).toEqual(before);
+});
+
+test("selects JSON project targets through the same read-only picker", async () => {
+  const root = await mkdtemp(join(tmpdir(), "clerk-json-target-picker-"));
+  directories.push(root);
+  await createIOSJSONFixture(root);
+  const { secondaryTargetId } = await addNestedSharedEntryToIOSJSONFixture(root);
+  const before = await treeDigest(root);
+  picker.mockResolvedValue(secondaryTargetId);
+
+  const target = await pickAppleNativeTarget({ root, interactive: true });
+
+  expect(picker.mock.calls[0]?.[0].choices).toContainEqual(
+    expect.objectContaining({
+      name: "SharedTarget — iOS — MyApp.xcodeproj",
+      value: secondaryTargetId,
+    }),
+  );
+  expect((await inspectIOSProject(root, { target })).selection).toMatchObject({
+    state: "selected",
+    targetId: secondaryTargetId,
   });
   expect(await treeDigest(root)).toEqual(before);
 });
