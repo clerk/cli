@@ -237,12 +237,9 @@ The report:
       "status": "unmet",
       "description": "Lock accounts after repeated failed sign-in attempts.",
       "path": "auth_attack_protection.user_lockout.enabled",
-      "currentValue": false,
-      "recommendedValue": true,
       "current": "Disabled",
       "recommended": "Enabled",
       "patch": { "auth_attack_protection": { "user_lockout": { "enabled": true } } },
-      "suggestedPatch": null,
       "remedy": "Run `clerk security fix user-lockout --app app_… --instance ins_…`.",
       "docsUrl": "https://clerk.com/docs/guides/secure/user-lockout.md",
       "dashboardUrl": "https://dashboard.clerk.com/apps/app_…/instances/ins_…/user-authentication"
@@ -253,9 +250,6 @@ The report:
       "status": "unmet",
       "features": ["app:mfa_totp", "app:mfa_phone_code", "app:mfa_backup_code"],
       "patch": null,
-      "suggestedPatch": {
-        "auth_multi_factor": {
-          "authenticator_app": { "enabled": true },
           "backup_code": { "enabled": true }
         }
       },
@@ -279,9 +273,8 @@ The report:
 options, suggested }`. Pass the values with `--<flag>` to `fix`; `remedy`
   already spells out the command with the suggested values, e.g.
   `clerk security fix mfa --factors authenticator,backup-code --app … --instance …`.
-  `suggestedPatch` is the config patch those suggested values produce, for
-  agents that prefer `clerk config patch`. Confirm the choice with the user
-  when it matters (SMS costs money, passkeys need client support).
+  Confirm the choice with the user when it matters (SMS costs money, passkeys
+  need client support).
 - `features` lists the billing features a control depends on (see Checks).
 - `customFlows` (`{ note, docsUrl }`) is set on unmet findings whose fix a
   custom sign-in or sign-up flow must accommodate. Surface it before applying.

@@ -113,7 +113,6 @@ describe("not applicable checks", () => {
     const finding = evaluate(production(INSECURE_OAUTH_CONFIG), REF).find(
       (f) => f.id === "oauth-custom-credentials",
     );
-    expect(finding?.currentValue).toEqual(["google"]);
     expect(finding?.current).toContain("google");
   });
 });
@@ -169,13 +168,11 @@ describe("patch details", () => {
     const result = findCheck("lockout-threshold")!.evaluate(production(config));
     expect(result.met).toBe(false);
     expect(result.current).toBe("Threshold unknown");
-    expect(result.currentValue).toBeNull();
   });
 
   test("lockout-threshold reports the disabled state", () => {
     const result = findCheck("lockout-threshold")!.evaluate(production(INSECURE_CONFIG));
     expect(result.current).toBe("Lockout disabled");
-    expect(result.currentValue).toBeNull();
   });
 });
 
@@ -192,52 +189,7 @@ describe("passwordless detection", () => {
   });
 });
 
-describe("suggested patches", () => {
-  const suggestion = (config: InstanceConfig, id: string) =>
-    evaluate(production(config), REF).find((f) => f.id === id)?.suggestedPatch;
-
-  test("mfa suggests authenticator apps and backup codes", () => {
-    expect(suggestion(INSECURE_CONFIG, "mfa")).toEqual({
-      auth_multi_factor: { authenticator_app: { enabled: true }, backup_code: { enabled: true } },
-    });
-  });
-
-  test("mfa suggestion is null once met", () => {
-    expect(suggestion(SECURE_CONFIG, "mfa")).toBeNull();
-  });
-
-  test("fixable findings carry a patch, not a suggestion", () => {
-    const lockout = evaluate(production(INSECURE_CONFIG), REF).find(
-      (f) => f.id === "user-lockout",
-    )!;
-    expect(lockout.patch).not.toBeNull();
-    expect(lockout.suggestedPatch).toBeNull();
-  });
-
-  test("passwordless-auth adds an email code when email is collected", () => {
-    const config = withSection(INSECURE_CONFIG, "auth_email", { sign_in_strategies: ["password"] });
-    expect(suggestion(config, "passwordless-auth")).toEqual({
-      auth_email: { used_for_sign_in: true, sign_in_strategies: ["password", "email_code"] },
-    });
-  });
-
-  test("passwordless-auth falls back to phone code, then passkeys", () => {
-    const noEmail = withSection(INSECURE_CONFIG, "auth_email", {
-      used_for_sign_up: false,
-      used_for_sign_in: false,
-    });
-    expect(suggestion(noEmail, "passwordless-auth")).toEqual({
-      auth_phone: { used_for_sign_in: true, sign_in_strategies: ["phone_code"] },
-    });
-    const noPhone = withSection(noEmail, "auth_phone", {
-      used_for_sign_up: false,
-      used_for_sign_in: false,
-    });
-    expect(suggestion(noPhone, "passwordless-auth")).toEqual({
-      auth_passkey: { used_for_sign_in: true },
-    });
-  });
-
+describe("decision remedies", () => {
   test("remedy is a fix command carrying the suggested decision", () => {
     const mfa = evaluate(production(INSECURE_CONFIG), REF).find((f) => f.id === "mfa")!;
     expect(mfa.remedy).toContain(
@@ -256,10 +208,6 @@ describe("suggested patches", () => {
       (f) => f.id === "mfa-required",
     )!;
     expect(required.remedy).toContain("clerk security fix mfa mfa-required --app app_1");
-  });
-
-  test("oauth-custom-credentials has no suggestion", () => {
-    expect(suggestion(INSECURE_OAUTH_CONFIG, "oauth-custom-credentials")).toBeNull();
   });
 });
 

@@ -15,8 +15,6 @@ export interface CheckInput {
 
 export interface CheckEvaluation {
   met: boolean;
-  currentValue: unknown;
-  recommendedValue: unknown;
   current: string;
   recommended: string;
 }
@@ -78,8 +76,6 @@ export interface Finding extends CheckEvaluation {
   features?: string[];
   blockedBy?: string;
   patch: ConfigPatch | null;
-  /** Patch the suggested decision values would produce. */
-  suggestedPatch: ConfigPatch | null;
   decision?: FindingDecision;
   customFlows?: CustomFlowsNote;
   remedy: string;
