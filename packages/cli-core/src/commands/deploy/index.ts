@@ -58,7 +58,7 @@ import {
 } from "./prompts.ts";
 import {
   DeployPausedError,
-  deployPausedError,
+  throwDeployPaused,
   type DeployContext,
   type DeployOperationState,
 } from "./state.ts";
@@ -439,7 +439,7 @@ async function runDnsRecordHandoff(
     log.blank();
   } catch (error) {
     if (error instanceof UserAbortError) {
-      throw deployPausedError(state, "cancelled");
+      throwDeployPaused(state, "cancelled");
     }
     throw error;
   }
@@ -478,7 +478,7 @@ async function runDnsVerificationPrompt(
     return await runDnsVerification(ctx, state);
   } catch (error) {
     if (error instanceof UserAbortError) {
-      throw deployPausedError(state, "cancelled");
+      throwDeployPaused(state, "cancelled");
     }
     throw error;
   }
@@ -520,7 +520,7 @@ async function runDnsVerification(
     // When all DNS components are verified but the server has not yet marked the
     // deployment complete, the user cannot influence the remaining wait.
     if (outcome.status.dns && outcome.status.ssl && outcome.status.mail) {
-      throw deployPausedError(state, "finalizing");
+      throwDeployPaused(state, "finalizing");
     }
 
     if (pendingTargets.length > 0) {
@@ -533,7 +533,7 @@ async function runDnsVerification(
       action = await chooseDnsVerificationRetryAction();
     } catch (error) {
       if (error instanceof UserAbortError) {
-        throw deployPausedError(state, "cancelled");
+        throwDeployPaused(state, "cancelled");
       }
       throw error;
     }
@@ -608,15 +608,18 @@ async function runOAuthSetup(
         state.frontendApiUrl,
       );
       if (!saved) {
-        throw deployPausedError({
-          ...state,
-          pending: { type: "oauth", provider: descriptor.provider },
-          completedOAuthProviders: [...completed],
-        });
+        throwDeployPaused(
+          {
+            ...state,
+            pending: { type: "oauth", provider: descriptor.provider },
+            completedOAuthProviders: [...completed],
+          },
+          "paused",
+        );
       }
     } catch (error) {
       if (error instanceof UserAbortError) {
-        throw deployPausedError(
+        throwDeployPaused(
           {
             ...state,
             pending: { type: "oauth", provider: descriptor.provider },

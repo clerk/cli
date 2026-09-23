@@ -55,29 +55,50 @@ export type DeployPauseReason = "paused" | "cancelled" | "finalizing";
  */
 const PAUSE_REASONS: Record<
   DeployPauseReason,
-  { code: ErrorCode; exitCode: typeof EXIT_CODE.GENERAL | typeof EXIT_CODE.SIGINT }
+  {
+    code: ErrorCode;
+    exitCode: typeof EXIT_CODE.GENERAL | typeof EXIT_CODE.SIGINT;
+    /**
+     * Whether the person stopped at a step. The CLI's own call — the warehouse
+     * does not enforce the pairing. Its payload contract test rejects a step
+     * outside `dns`/`oauth` wherever one appears, but only alarms on a step
+     * that stops arriving for `deploy_paused` and `deploy_cancelled` rows. So
+     * a fourth reason that invents a step value fails loudly, while one that
+     * simply needs adding to that alarm ships unmonitored until someone
+     * widens its eligibility list in `data-platform`.
+     */
+    recordsPauseStep: boolean;
+  }
 > = {
-  paused: { code: ERROR_CODE.DEPLOY_PAUSED, exitCode: EXIT_CODE.GENERAL },
-  cancelled: { code: ERROR_CODE.DEPLOY_CANCELLED, exitCode: EXIT_CODE.SIGINT },
-  finalizing: { code: ERROR_CODE.DEPLOY_FINALIZING, exitCode: EXIT_CODE.GENERAL },
+  paused: { code: ERROR_CODE.DEPLOY_PAUSED, exitCode: EXIT_CODE.GENERAL, recordsPauseStep: true },
+  cancelled: {
+    code: ERROR_CODE.DEPLOY_CANCELLED,
+    exitCode: EXIT_CODE.SIGINT,
+    recordsPauseStep: true,
+  },
+  // Every DNS component passed and the deploy is waiting on Clerk: nobody
+  // stopped at a step, and recording `dns` would count a drop-off nobody made.
+  finalizing: {
+    code: ERROR_CODE.DEPLOY_FINALIZING,
+    exitCode: EXIT_CODE.GENERAL,
+    recordsPauseStep: false,
+  },
 };
 
 /**
- * The pause every unfinished `clerk deploy` run throws, and the one place that
- * records which step it stopped on — the only point that knows both, since
- * `state.pending` names the step and `reason` says whether the person stopped
- * there at all. A `finalizing` wait did not: the deploy is waiting on Clerk, so
- * recording `dns` would count a drop-off nobody made, and the code already says
- * everything the step would.
+ * End an unfinished `clerk deploy` run, and record which step it stopped on —
+ * this is the only point that knows both, since `state.pending` names the step
+ * and `reason` says whether the person stopped there at all.
  *
- * The telemetry write is an in-memory assignment that cannot throw, which is
- * the bar for putting one on an error path: instrumentation must never be able
- * to replace the error it is describing.
+ * Two separate guarantees keep that telemetry write safe on an error path.
+ * It cannot outlive a pause that isn't thrown, because this function never
+ * returns — the same idiom as `throwUsageError` — so no caller can construct
+ * the pause to inspect it and then carry on with the step left recorded. And
+ * it cannot replace the error it describes, because the setter is a plain
+ * in-memory assignment that cannot throw.
  */
-export function deployPausedError(
-  state: DeployOperationState,
-  reason: DeployPauseReason = "paused",
-): DeployPausedError {
-  if (reason !== "finalizing") setTelemetryPauseStep(state.pending.type);
-  return new DeployPausedError(pausedMessage(pausedStepDescription(state)), PAUSE_REASONS[reason]);
+export function throwDeployPaused(state: DeployOperationState, reason: DeployPauseReason): never {
+  const { code, exitCode, recordsPauseStep } = PAUSE_REASONS[reason];
+  if (recordsPauseStep) setTelemetryPauseStep(state.pending.type);
+  throw new DeployPausedError(pausedMessage(pausedStepDescription(state)), { code, exitCode });
 }

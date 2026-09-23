@@ -9,8 +9,7 @@
 import { collectEntries } from "../mcp/collect.ts";
 import { probeMcp, type McpProbeResult } from "../mcp/probe.ts";
 import type { ListEntry } from "../mcp/clients/types.ts";
-import { CHECK_NAME } from "./checks.ts";
-import type { CheckResult } from "./types.ts";
+import { CHECK_NAME, type CheckResult } from "./types.ts";
 
 type UrlProbe = { url: string; result: McpProbeResult };
 

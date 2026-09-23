@@ -1,7 +1,37 @@
+/**
+ * The doctor module's shared contract: the result and context types every
+ * check is written against, and — the one runtime export — the display name
+ * of each check, which both the checks and the registry in `index.ts` read.
+ */
 import type { resolveProfile } from "../../lib/config.ts";
 import type { CliError } from "../../lib/errors.ts";
 import type { Application } from "../../lib/plapi.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
+
+/**
+ * The display name of every check, in one place.
+ *
+ * A check that throws never returns a result, so `runChecks` has to name it
+ * from outside — and a second list of names would drift from these the first
+ * time one was reworded. This is that one list, read by the checks and by the
+ * registry in `index.ts`. Declaration order here is not read; the registry
+ * lists the checks in the order they run.
+ */
+export const CHECK_NAME = {
+  cliVersion: "CLI version",
+  hostExecution: "Host execution",
+  loggedIn: "Logged in",
+  tokenValid: "Authentication valid",
+  projectLinked: "Project linked",
+  linkedAppExists: "Application reachable",
+  instances: "Instance IDs",
+  envVars: "Environment variables",
+  configFile: "CLI configuration",
+  shellCompletion: "Shell completion",
+  mcp: "MCP server",
+} as const;
+
+export type CheckKey = keyof typeof CHECK_NAME;
 
 export type CheckStatus = "pass" | "warn" | "fail";
 

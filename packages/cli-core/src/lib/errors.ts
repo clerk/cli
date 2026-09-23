@@ -108,10 +108,10 @@ export const ERROR_CODE = {
   DEPLOY_DOMAIN_MISSING: "deploy_domain_missing",
   /**
    * `clerk deploy` stopped with the deploy unfinished and something left for
-   * the user to do — a skipped OAuth provider, a DNS check they chose not to
-   * run. The three codes below are one situation each, rather than one code
-   * plus a modifier, so telling them apart never means joining `error_code`
-   * against `exit_code`.
+   * the user to do: they skipped an OAuth provider. (Skipping the DNS check is
+   * not a pause — the run carries on and ends as a success.) The three codes
+   * below are one situation each, rather than one code plus a modifier, so
+   * telling them apart never means joining `error_code` against `exit_code`.
    */
   DEPLOY_PAUSED: "deploy_paused",
   /** The user interrupted a `clerk deploy` prompt after the production instance existed. */

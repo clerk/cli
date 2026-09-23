@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { useCaptureLog, listageStubs, fakeTelemetryCommand } from "../../test/lib/stubs.ts";
+import { useCaptureLog, listageStubs, captureTelemetryPayload } from "../../test/lib/stubs.ts";
 import { CliError, ERROR_CODE, EXIT_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
 
 const mockIsAgent = mock();
@@ -69,8 +69,6 @@ mock.module("../../lib/open.ts", () => ({
 }));
 
 const { _setConfigDir, readConfig, setProfile } = await import("../../lib/config.ts");
-const { finalizeAndSendTelemetry, startCommandTelemetry, telemetryResultForError } =
-  await import("../../lib/telemetry.ts");
 const { deploy } = await import("./index.ts");
 const { providerSetupIntro, showOAuthWalkthrough } = await import("./providers.ts");
 const { collectCustomDomain } = await import("./prompts.ts");
@@ -2611,48 +2609,12 @@ describe("deploy", () => {
     // through the telemetry context — and only the payload proves both arrive
     // together.
     describe("what telemetry records for each ending", () => {
-      const TELEMETRY_URL = "https://capture.invalid/v1/event";
-      let realFetch: typeof globalThis.fetch;
-
-      beforeEach(() => {
-        realFetch = globalThis.fetch;
-      });
-      afterEach(() => {
-        globalThis.fetch = realFetch;
-        delete process.env.CLERK_TELEMETRY_URL;
-      });
-
       /** The event a `clerk deploy` run would post, plus whatever it threw. */
-      async function deployTelemetry(
-        run: () => Promise<void>,
-      ): Promise<{ payload: Record<string, any>; error: CliError | undefined }> {
-        const { markTelemetryNoticeShown } = await import("../../lib/config.ts");
-        await markTelemetryNoticeShown(); // past the grace run, which sends nothing
-        process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
-        let sent: string | undefined;
-        globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
-          sent = init.body;
-          return new Response("{}");
-        }) as unknown as typeof fetch;
-
-        startCommandTelemetry(fakeTelemetryCommand("deploy"));
-        let error: CliError | undefined;
-        try {
-          await run();
-        } catch (caught) {
-          error = caught as CliError;
-        }
-        // `runProgram` classifies a throw and reads `process.exitCode` back
-        // otherwise; a wizard that returns normally never sets one.
-        await finalizeAndSendTelemetry(
-          error ? telemetryResultForError(error) : { outcome: "success", exitCode: 0 },
-        );
-
-        expect(sent).toBeDefined();
-        const parsed = JSON.parse(sent as string) as {
-          events: { payload: Record<string, any> }[];
-        };
-        return { payload: parsed.events[0]!.payload, error };
+      async function deployTelemetry(run: () => Promise<void>) {
+        const { payload, error } = await captureTelemetryPayload("deploy", run, {
+          captureError: true,
+        });
+        return { payload, error: error as CliError | undefined };
       }
 
       test("a skipped OAuth provider is a paused deploy at the oauth step", async () => {

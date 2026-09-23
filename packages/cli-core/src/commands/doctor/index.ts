@@ -6,7 +6,6 @@ import { CliError, ERROR_CODE, errorMessage } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { createDoctorContext } from "./context.ts";
 import {
-  CHECK_NAME,
   checkLoggedIn,
   checkHostExecution,
   checkTokenValid,
@@ -20,32 +19,44 @@ import {
 } from "./checks.ts";
 import { checkMcp } from "./check-mcp.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
-import type { CheckFn, CheckResult, DoctorContext, DoctorOptions } from "./types.ts";
+import {
+  CHECK_NAME,
+  type CheckFn,
+  type CheckKey,
+  type CheckResult,
+  type DoctorContext,
+  type DoctorOptions,
+} from "./types.ts";
 
 /**
- * A check paired with the name to report it under if it throws. The name it
- * gives its own results comes from the same {@link CHECK_NAME} entry, so the
- * two cannot disagree.
+ * Every check, keyed by its entry in {@link CHECK_NAME} so the compiler rejects
+ * a missing one — before this, a check that was exported but never listed
+ * simply did not run, and nothing said so. Listed in the order they run; that
+ * order is read from here, not from `CHECK_NAME`. `hostExecution` leads
+ * because it runs first under an agent and not at all for a human.
  */
-type RegisteredCheck = { name: string; run: CheckFn };
+const CHECKS = {
+  hostExecution: checkHostExecution,
+  cliVersion: checkCliVersion,
+  loggedIn: checkLoggedIn,
+  tokenValid: checkTokenValid,
+  projectLinked: checkProjectLinked,
+  linkedAppExists: checkLinkedAppExists,
+  instances: checkInstances,
+  envVars: checkEnvVars,
+  configFile: checkConfigFile,
+  shellCompletion: checkShellCompletion,
+  mcp: checkMcp,
+} satisfies Record<CheckKey, CheckFn>;
 
-const BASE_CHECKS: RegisteredCheck[] = [
-  { name: CHECK_NAME.cliVersion, run: checkCliVersion },
-  { name: CHECK_NAME.loggedIn, run: checkLoggedIn },
-  { name: CHECK_NAME.tokenValid, run: checkTokenValid },
-  { name: CHECK_NAME.projectLinked, run: checkProjectLinked },
-  { name: CHECK_NAME.linkedAppExists, run: checkLinkedAppExists },
-  { name: CHECK_NAME.instances, run: checkInstances },
-  { name: CHECK_NAME.envVars, run: checkEnvVars },
-  { name: CHECK_NAME.configFile, run: checkConfigFile },
-  { name: CHECK_NAME.shellCompletion, run: checkShellCompletion },
-  { name: CHECK_NAME.mcp, run: checkMcp },
-];
-
-function getChecks(): RegisteredCheck[] {
-  return isAgent()
-    ? [{ name: CHECK_NAME.hostExecution, run: checkHostExecution }, ...BASE_CHECKS]
-    : BASE_CHECKS;
+/**
+ * Each check paired with the name to report it under if it throws. A check
+ * names its own results from the same `CHECK_NAME` entry, so the two agree.
+ */
+function getChecks(): { name: string; run: CheckFn }[] {
+  return (Object.keys(CHECKS) as CheckKey[])
+    .filter((key) => key !== "hostExecution" || isAgent())
+    .map((key) => ({ name: CHECK_NAME[key], run: CHECKS[key] }));
 }
 
 /**
@@ -77,6 +88,13 @@ async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
  * and a real finding are both exit 1, but they send the reader to different
  * places — one is a CLI bug, the other is the user's integration — and a
  * single code left them indistinguishable in telemetry and on screen.
+ *
+ * Decided from one result set. After `--fix`, that is the verify pass alone:
+ * it re-runs every check, so it is the complete answer and the screen the
+ * user last saw. The cost is that a first-pass crash the verify pass does not
+ * reproduce is recorded nowhere — a transient one is superseded by whatever
+ * durable finding remained, which is why `doctor_check_crashed` rows can be
+ * rarer than crashes people report.
  */
 function failureCodeFor(
   results: CheckResult[],

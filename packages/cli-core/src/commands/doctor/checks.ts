@@ -18,29 +18,8 @@ import {
 } from "../../lib/update-check.ts";
 import { formatHostStateProbeFailures, getAgentHostStateProbe } from "../../lib/host-execution.ts";
 import { isAgent } from "../../mode.ts";
+import { CHECK_NAME } from "./types.ts";
 import type { CheckResult, DoctorContext, FixAction, KeylessInstanceInfo } from "./types.ts";
-
-/**
- * The display name of every check, in one place.
- *
- * A check that throws never returns a result, so `runChecks` has to name it
- * from outside — and a second list of names would drift from these the first
- * time one was reworded. This is that one list, read both here and by the
- * registry in `index.ts`.
- */
-export const CHECK_NAME = {
-  cliVersion: "CLI version",
-  hostExecution: "Host execution",
-  loggedIn: "Logged in",
-  tokenValid: "Authentication valid",
-  projectLinked: "Project linked",
-  linkedAppExists: "Application reachable",
-  instances: "Instance IDs",
-  envVars: "Environment variables",
-  configFile: "CLI configuration",
-  shellCompletion: "Shell completion",
-  mcp: "MCP server",
-} as const;
 
 interface CheckOptions {
   remedy?: string;

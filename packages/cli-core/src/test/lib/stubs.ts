@@ -2,7 +2,7 @@ import { Writable } from "node:stream";
 import { afterEach, beforeEach, type spyOn } from "bun:test";
 import { type CapturedLogs, setActiveCapture } from "../../lib/log.ts";
 import { setUiOutput } from "../../lib/ui.ts";
-import type { TelemetryCommand } from "../../lib/telemetry.ts";
+import type { TelemetryCommand, TelemetryResult } from "../../lib/telemetry.ts";
 
 export function capturedOutput(spy: ReturnType<typeof spyOn>): string {
   return spy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
@@ -247,18 +247,148 @@ export function stubFetch(impl: FetchImpl): void {
 
 /**
  * A stand-in for the Commander command telemetry reads, built from a space
- * separated command path: `"deploy status"` yields a `status` command whose
- * parent is `deploy`, which is what `startCommandTelemetry` walks to produce
- * the payload's `command` field. No flags are reported as set.
+ * separated command path as it appears in the payload: `"deploy status"`
+ * yields a `status` command whose parent is `deploy`, whose parent is the
+ * root `clerk`. No flags are reported as set.
+ *
+ * The root is synthesized rather than taken from `path` because telemetry
+ * walks parents and stops at the one with no parent — it excludes the root
+ * `clerk` from what it records. Without a root to discard, the leftmost
+ * segment was discarded instead, so `"deploy status"` recorded `status` and
+ * a single-segment `"deploy"` recorded the empty string.
  */
 export function fakeTelemetryCommand(path: string): TelemetryCommand {
   const noOptions = { options: [] as never[], getOptionValueSource: () => undefined };
-  // Root first, so each command's parent is the segment to its left. The
-  // outermost parent is null: telemetry excludes the root `clerk` itself.
-  return path
-    .split(" ")
-    .reduce<TelemetryCommand | null>(
-      (parent, segment) => ({ name: () => segment, ...noOptions, parent }),
-      null,
-    ) as TelemetryCommand;
+  return ["clerk", ...path.split(" ")].reduce<TelemetryCommand | null>(
+    (parent, segment) => ({ name: () => segment, ...noOptions, parent }),
+    null,
+  ) as TelemetryCommand;
+}
+
+/** Where the helper below points telemetry; nothing else may answer on it. */
+const TELEMETRY_CAPTURE_URL = "https://capture.invalid/v1/event";
+
+type CaptureTelemetryOptions = {
+  /**
+   * Finalize with this instead of classifying what `run` did. A function is
+   * resolved after `run`, so one derived from context sees what it declared.
+   */
+  result?: TelemetryResult | (() => TelemetryResult);
+  /**
+   * `run` is a command expected to report its own failure by throwing: the
+   * throw is caught, classified by `telemetryResultForError`, and returned.
+   * Without this a throw from `run` is a broken test and propagates.
+   */
+  captureError?: boolean;
+};
+
+/**
+ * Run `run` inside a telemetry context for `command` and return the payload
+ * of the one event finalizing it would post.
+ *
+ * Models the two `runProgram` branches that send an event: a throw is
+ * classified by `telemetryResultForError` (opt in with `captureError`), a
+ * normal return by `telemetryResultForSoftExit` reading `process.exitCode`
+ * back. It does not model the third — a latched Ctrl-C, on which `runProgram`
+ * sends nothing — so a test of a real interrupt must not expect a payload.
+ *
+ * Exactly one POST carrying exactly one event is required, which is the
+ * one-terminal-event-per-run rule asserted rather than assumed. Only requests
+ * to the capture URL count; anything else `run` fetches is delegated to
+ * whatever `fetch` the caller already had installed.
+ *
+ * Self-contained on purpose. CI sets `CLERK_TELEMETRY_DISABLED` for every
+ * job, and that opt-out beats the capture URL, so the opt-outs are cleared
+ * for the duration; and several test files set `process.exitCode` without
+ * resetting it, so it is cleared before `run` and restored after — otherwise
+ * the soft-exit classification would read a leaked value. `fetch` and every
+ * env var touched are restored in the same `finally`.
+ */
+export async function captureTelemetryPayload(
+  command: string,
+  run: () => void | Promise<void>,
+  options: CaptureTelemetryOptions = {},
+): Promise<{ payload: Record<string, unknown>; error: unknown }> {
+  const { result, captureError = false } = options;
+  if (result !== undefined && captureError) {
+    throw new Error(
+      "captureTelemetryPayload: `result` overrides classification, so `captureError` would do nothing",
+    );
+  }
+
+  // Dynamic: a static import would load the real config module into every
+  // test file that imports these stubs, including the ones that mock it.
+  const { markTelemetryNoticeShown } = await import("../../lib/config.ts");
+  const {
+    finalizeAndSendTelemetry,
+    startCommandTelemetry,
+    telemetryResultForError,
+    telemetryResultForSoftExit,
+  } = await import("../../lib/telemetry.ts");
+  const { EXIT_CODE } = await import("../../lib/errors.ts");
+
+  const savedEnv = {
+    CLERK_TELEMETRY_URL: process.env.CLERK_TELEMETRY_URL,
+    CLERK_TELEMETRY_DISABLED: process.env.CLERK_TELEMETRY_DISABLED,
+    DO_NOT_TRACK: process.env.DO_NOT_TRACK,
+  };
+  const savedFetch = globalThis.fetch;
+  const savedExitCode = process.exitCode;
+  const posted: string[] = [];
+  try {
+    await markTelemetryNoticeShown(); // past the grace run, which sends nothing
+    process.env.CLERK_TELEMETRY_URL = TELEMETRY_CAPTURE_URL;
+    delete process.env.CLERK_TELEMETRY_DISABLED;
+    delete process.env.DO_NOT_TRACK;
+    process.exitCode = undefined;
+    globalThis.fetch = (async (url: unknown, init?: { body?: string }) => {
+      if (String(url) !== TELEMETRY_CAPTURE_URL) {
+        return savedFetch(url as Parameters<typeof fetch>[0], init as RequestInit);
+      }
+      posted.push(init?.body ?? "");
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+
+    startCommandTelemetry(fakeTelemetryCommand(command));
+    let error: unknown;
+    let threw = false;
+    if (captureError) {
+      try {
+        await run();
+      } catch (caught) {
+        error = caught;
+        threw = true;
+      }
+    } else {
+      // A throw here is the test itself breaking, not the command reporting a
+      // failure: let it out, and finalize nothing.
+      await run();
+    }
+
+    const resolved = typeof result === "function" ? result() : result;
+    await finalizeAndSendTelemetry(
+      resolved ??
+        (threw
+          ? telemetryResultForError(error)
+          : telemetryResultForSoftExit(Number(process.exitCode ?? EXIT_CODE.SUCCESS))),
+    );
+
+    if (posted.length !== 1) {
+      throw new Error(`captureTelemetryPayload: expected 1 telemetry POST, got ${posted.length}`);
+    }
+    const parsed = JSON.parse(posted[0]!) as { events: { payload: Record<string, unknown> }[] };
+    if (parsed.events.length !== 1) {
+      throw new Error(
+        `captureTelemetryPayload: expected 1 event in the POST, got ${parsed.events.length}`,
+      );
+    }
+    return { payload: parsed.events[0]!.payload, error };
+  } finally {
+    globalThis.fetch = savedFetch;
+    process.exitCode = savedExitCode;
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 }

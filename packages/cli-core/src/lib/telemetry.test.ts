@@ -19,7 +19,7 @@ import {
 import { ApiError, CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "./errors.ts";
 import { abortInFlight, beginInterrupt, _resetInterruptState } from "./signals.ts";
 import { setLogLevel } from "./log.ts";
-import { fakeTelemetryCommand, useCaptureLog } from "../test/lib/stubs.ts";
+import { captureTelemetryPayload, fakeTelemetryCommand, useCaptureLog } from "../test/lib/stubs.ts";
 
 // Isolate config I/O (machine uuid, notice flag) from the real user config dir.
 let configDir: string;
@@ -184,25 +184,7 @@ describe("finalizeAndSendTelemetry", () => {
     run: () => void | Promise<void>,
     result: TelemetryResult | (() => TelemetryResult),
   ): Promise<Record<string, unknown>> {
-    await markTelemetryNoticeShown(); // past the grace run — reach the send path
-    process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
-    let sent: string | undefined;
-    globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
-      sent = init.body;
-      return new Response("{}");
-    }) as unknown as typeof fetch;
-
-    startCommandTelemetry(fakeCommand());
-    await run();
-    // Resolved after `run` so a result derived from context (the soft-exit
-    // declaration) sees what the run declared.
-    await finalizeAndSendTelemetry(typeof result === "function" ? result() : result);
-
-    expect(sent).toBeDefined();
-    const parsed = JSON.parse(sent as string) as {
-      events: { payload: Record<string, unknown> }[];
-    };
-    return parsed.events[0]!.payload;
+    return (await captureTelemetryPayload("list", run, { result })).payload;
   }
 
   test("no-op when telemetry is disabled (no fetch, no throw)", async () => {
@@ -615,6 +597,7 @@ describe("finalizeAndSendTelemetry", () => {
   describe("payload shape", () => {
     test("carries exactly the agreed keys", async () => {
       const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
+      expect(payload.command).toBe("list");
       expect(Object.keys(payload).sort()).toEqual(
         [
           "ai_agent",
