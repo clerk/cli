@@ -938,7 +938,9 @@ describe("deploy status", () => {
         expect(payload.stage).toBeNull();
       });
 
-      test("a failed state read records null, not the state it was about to read", async () => {
+      // No state was established, so no stage — but the configuration read
+      // that ran alongside the failed domain read did observe OAuth.
+      test("a failed domain read records no stage and keeps the OAuth it did observe", async () => {
         mockFetchApplication.mockResolvedValue(appWith(true));
         mockDomain();
         mockOAuthComplete();
@@ -950,7 +952,7 @@ describe("deploy status", () => {
 
         expect(error).toBeInstanceOf(PlapiError);
         expect(payload.stage).toBeNull();
-        expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+        expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: true });
       });
     });
 
@@ -1041,7 +1043,8 @@ describe("deploy status", () => {
         const { payload } = await statusTelemetry({ wait: true });
 
         expect(payload.components).toEqual({ dns: true, ssl: true, mail: true, oauth: true });
-        // Development and production configuration, once each: no poll re-reads OAuth.
+        // Guards against a future per-poll configuration read. Unrelated to why
+        // polls leave `oauth` alone, which is that they never observed it.
         expect(mockFetchInstanceConfig).toHaveBeenCalledTimes(2);
       });
 

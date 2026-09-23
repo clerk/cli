@@ -624,8 +624,6 @@ async function runOAuthSetup(
 ): Promise<OAuthProvider[]> {
   const completed = new Set(state.completedOAuthProviders as OAuthProvider[]);
   const oauthProviders = descriptors.map((descriptor) => descriptor.provider);
-  const recordOAuth = () =>
-    recordOAuthObservation({ oauthProviders, completedOAuthProviders: [...completed] });
 
   if (descriptors.length > 0) {
     log.info(OAUTH_SECTION_INTRO);
@@ -676,19 +674,19 @@ async function runOAuthSetup(
       throw error;
     }
     completed.add(descriptor.provider);
-    // Each save is an observation of the production configuration: this
-    // provider now has credentials, the ones after it still do not. A pause
-    // on the next provider then reports `oauth: false` from a real write, not
-    // from a guess.
-    recordOAuth();
     if (descriptors.some((nextDescriptor) => !completed.has(nextDescriptor.provider))) {
       log.blank();
     }
   }
 
-  // Also the deploy with nothing to configure: no provider is required, so
-  // OAuth is complete, which is what `deploy status` reports for it too.
-  recordOAuth();
+  // Every required credential is saved — including when none is required —
+  // so OAuth is complete, which is what `deploy status` reports for it too.
+  // Not recorded any earlier: a fresh instance is assumed to have no
+  // production credentials, which is why this prompts for each provider, but
+  // nothing has read that, and a save proves only the provider it saved. A run
+  // that pauses in the loop leaves `oauth` as the last read observed — null
+  // on a fresh deploy.
+  recordOAuthObservation({ oauthProviders, completedOAuthProviders: [...completed] });
   return [...completed];
 }
 

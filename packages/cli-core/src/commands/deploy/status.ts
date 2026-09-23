@@ -224,11 +224,11 @@ export async function resolveDeployState(ctx: DeployContext): Promise<DeployStat
 
   // The read-only status path surfaces domain-status read failures instead of
   // masking them as pending, so a transient API error is not reported as
-  // legitimate progress. `deployStatus` and the agent handoff record the
-  // telemetry stage and components from this read too; `recordDeployObservation`
-  // guards telemetry on its own, but the printed report reads `componentStatus`
-  // unconditionally and would need `snapshot.live` as well if this ever
-  // stopped throwing.
+  // legitimate progress. Telemetry guards itself — components are recorded
+  // only by a read that succeeded, and `recordDeployObservation` records a
+  // stage only from a live snapshot — but the printed report reads
+  // `componentStatus` unconditionally and would need `snapshot.live` as well
+  // if this ever stopped throwing.
   const snapshot = await resolveLiveDeploySnapshot(
     {
       ...ctx,
@@ -265,6 +265,19 @@ export async function loadDevelopmentOAuthProviders(
   });
 }
 
+/**
+ * Read the deploy's live state: the production domain, the providers enabled
+ * in development, the production configuration and the domain status.
+ *
+ * Recording telemetry is a side effect of the last two reads, not of a caller
+ * deciding to record: each is written the moment it succeeds, whatever the
+ * other does. That is what keeps a successful configuration read when the
+ * domain-status endpoint 500s a moment later — the ordinary shape of a
+ * partial outage — instead of the run ending with four nulls after one read
+ * observed something. It rests on every caller consuming the snapshot it
+ * asked for, which both callers today do; a speculative call, to check
+ * whether a deploy exists, say, would record too.
+ */
 export async function resolveLiveDeploySnapshot(
   ctx: DeployContext,
   options: SnapshotOptions = {},
@@ -280,15 +293,36 @@ export async function resolveLiveDeploySnapshot(
 
   const { descriptors: oauthProviderDescriptors, unsupported } = oauth;
   const oauthProviders = oauthProviderDescriptors.map((descriptor) => descriptor.provider);
-  const { productionConfig, deployStatus, live } = await loadProductionState(
-    ctx,
-    productionInstanceId,
-    domain.id,
-    options,
+  const completedProvidersIn = (config: Record<string, unknown>): OAuthProvider[] =>
+    oauthProviderDescriptors
+      .filter((descriptor) => hasProviderRequiredCredentials(config, descriptor))
+      .map((descriptor) => descriptor.provider);
+
+  const { productionConfig, deployStatus, live } = await withSpinner(
+    "Reading production configuration...",
+    async () => {
+      const configRead = Promise.resolve(fetchInstanceConfig(ctx.appId, productionInstanceId)).then(
+        (config) => {
+          recordOAuthObservation({
+            oauthProviders,
+            completedOAuthProviders: completedProvidersIn(config),
+          });
+          return config;
+        },
+      );
+      const statusRead = loadInitialDeployStatus(ctx.appId, domain.id, options).then((read) => {
+        if (read.live)
+          setTelemetryDomainComponents(deployComponentStatusFromDomainStatus(read.status));
+        return read;
+      });
+      const [productionConfig, { status: deployStatus, live }] = await settleBeforeRejecting([
+        configRead,
+        statusRead,
+      ]);
+      return { productionConfig, deployStatus, live };
+    },
   );
-  const completedOAuthProviders = oauthProviderDescriptors
-    .filter((descriptor) => hasProviderRequiredCredentials(productionConfig, descriptor))
-    .map((descriptor) => descriptor.provider);
+  const completedOAuthProviders = completedProvidersIn(productionConfig);
   const pendingOAuthDescriptor = oauthProviderDescriptors.find(
     (descriptor) => !completedOAuthProviders.includes(descriptor.provider),
   );
@@ -316,6 +350,24 @@ export async function resolveLiveDeploySnapshot(
     domainComplete,
     pending: resolvePendingStep(pendingOAuthDescriptor, domainComplete),
   };
+}
+
+/**
+ * `Promise.all`, except a rejection waits for the other promises to settle
+ * before it propagates. Same result and the same winning error — the first
+ * to fail — only the throw is delayed until a `.then` attached to a slower
+ * promise has run. Without this, whether that `.then` lands before or after
+ * the run finalizes its telemetry would be a race.
+ */
+async function settleBeforeRejecting<T extends readonly unknown[] | []>(
+  promises: T,
+): Promise<{ -readonly [P in keyof T]: Awaited<T[P]> }> {
+  try {
+    return await Promise.all(promises);
+  } catch (error) {
+    await Promise.allSettled(promises);
+    throw error;
+  }
 }
 
 function resolvePendingStep(
@@ -346,25 +398,6 @@ export async function loadInitialDeployStatus(
     );
     return { status: pendingDomainStatus(), live: false };
   }
-}
-
-export async function loadProductionState(
-  ctx: DeployContext,
-  productionInstanceId: string,
-  domainIdOrName: string,
-  options: SnapshotOptions = {},
-): Promise<{
-  productionConfig: Record<string, unknown>;
-  deployStatus: DomainStatusResponse;
-  live: boolean;
-}> {
-  return withSpinner("Reading production configuration...", async () => {
-    const [productionConfig, { status: deployStatus, live }] = await Promise.all([
-      fetchInstanceConfig(ctx.appId, productionInstanceId),
-      loadInitialDeployStatus(ctx.appId, domainIdOrName, options),
-    ]);
-    return { productionConfig, deployStatus, live };
-  });
 }
 
 export function pendingDomainStatus(): DomainStatusResponse {
@@ -554,14 +587,19 @@ export function deployReportState(
  *   {@link retractDeployStage}. An instance exists; nothing else is known.
  * - `startNewDeploy` on the create response: `domain_pending` or
  *   `domain_provisioning`, from whether Clerk returned a domain.
+ * - `resolveLiveDeploySnapshot`, on every path that reads: `oauth` when the
+ *   configuration read succeeds, the domain group when the domain-status
+ *   read succeeds and is live — each at its own read.
  * - `reconcileExistingDeploy`: `domain_provisioning` when Clerk lists no
- *   domain, else the snapshot through `recordDeployObservation`.
- * - `runOAuthSetup`, after each credential save: `oauth` alone, through
- *   {@link recordOAuthObservation}.
+ *   domain, else the stage through `recordDeployObservation`.
+ * - `runOAuthSetup`, once every required credential is saved: `oauth: true`,
+ *   through {@link recordOAuthObservation}. Never earlier — nothing has read
+ *   the production configuration on a fresh deploy.
  * - `runDnsVerification`, once per poll: that poll, through `recordDeployPoll`.
  * - `finishDeploy`: the resolver over the OAuth facts and a verified domain.
- * - `emitAgentDeployHandoff` and `deployStatus`: the state read through
- *   `recordDeployObservation`, then each poll through `recordDeployPoll`.
+ * - `emitAgentDeployHandoff` and `deployStatus`: the stage from the state
+ *   read through `recordDeployObservation`, then each poll through
+ *   `recordDeployPoll`.
  *
  * This entry takes a state the caller can vouch for without a snapshot — one
  * the CLI's own action established, or a poll's verdict. Anything derived
@@ -580,15 +618,14 @@ export function recordOAuthObservation(oauth: OAuthSetupFacts): void {
 }
 
 /**
- * Record everything a state read established. The four components come from
- * two reads, so they are two observations: a snapshot exists only if the
- * production-configuration read succeeded, so `oauth` is always recorded
- * here, while the domain group and the stage need the domain-status read too
- * and a substituted one records neither. This is the only place that stops a
- * fallback being recorded as an observation: the callers that read through
- * `resolveDeployState` never trip it today, because that read throws rather
- * than substitutes, and the check is here so that stays true without every
- * call site knowing about the option.
+ * Record the stage a state read established. The components are not recorded
+ * here: `resolveLiveDeploySnapshot` writes each the moment its own read
+ * succeeds, so a failure in the other read cannot discard it. The stage needs
+ * both reads, and a substituted domain read establishes none, so this is
+ * where that check lives — the callers that read through `resolveDeployState`
+ * never trip it today, because that read throws rather than substitutes, and
+ * the check is here so that stays true without every call site knowing about
+ * the option.
  */
 export function recordDeployObservation(state: DeployState): void {
   if (state.kind !== "active") {
@@ -596,17 +633,16 @@ export function recordDeployObservation(state: DeployState): void {
     return;
   }
   const { snapshot } = state;
-  recordOAuthObservation(snapshot);
   if (!snapshot.live) return;
-  setTelemetryDomainComponents(snapshot.componentStatus);
   recordDeployStage(resolveActiveReportState(snapshot, snapshot.domainComplete));
 }
 
 /**
  * Record what one domain-status poll established: the three domain
- * components and the stage. `oauth` is untouched — the poll did not read it,
- * and the earlier observation stands. A poll is its own observation, so it
- * records whatever the snapshot before it was.
+ * components and the stage. `oauth` is untouched because the poll did not
+ * observe it — not as an optimisation, but so a value the poll never learned
+ * cannot overwrite one an earlier read did. A poll is its own observation, so
+ * it records whatever the snapshot before it was.
  */
 export function recordDeployPoll(oauth: OAuthSetupFacts, polled: DeployStatusOutcome): void {
   setTelemetryDomainComponents(polled.status);

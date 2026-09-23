@@ -3024,6 +3024,36 @@ describe("deploy", () => {
         expect(payload.components).toEqual({ dns: true, ssl: true, mail: true, oauth: true });
       });
 
+      // A save proves only the provider it saved. Until every required one is
+      // saved nothing has read the production configuration, so a fresh run
+      // that pauses mid-way sends null — `deploy status` on the same deploy
+      // would read it and say false, and null is the documented exception.
+      test("a fresh run that saves one provider and skips the next observes nothing yet", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockFetchInstanceConfig.mockResolvedValue({
+          connection_oauth_google: { enabled: true },
+          connection_oauth_github: { enabled: true },
+        });
+        mockFetchInstanceConfigSchema.mockResolvedValue(
+          schemaResponse({
+            connection_oauth_google: basicOAuthSchema,
+            connection_oauth_github: basicOAuthSchema,
+          }),
+        );
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+        mockOAuthCompletion();
+        mockSelect.mockResolvedValueOnce("skip");
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_PAUSED);
+        expect(payload.pause_step).toBe("oauth");
+        expect(payload.stage).toBe("domain_pending");
+        expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+      });
+
       test("a fresh run that saves every provider and skips DNS observes oauth alone", async () => {
         await linkedProject();
         mockIsAgent.mockReturnValue(false);

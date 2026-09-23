@@ -32,10 +32,12 @@ const {
   recordDeployObservation,
   recordDeployPoll,
   resolveDeployState,
+  resolveLiveDeploySnapshot,
   waitForDeployStatus,
 } = await import("./status.ts");
 const { setTelemetryStage } = await import("../../lib/telemetry.ts");
 const { _setConfigDir } = await import("../../lib/config.ts");
+const { beginInterrupt, _resetInterruptState } = await import("../../lib/signals.ts");
 
 const ctx = {
   profileKey: "/tmp/x",
@@ -288,18 +290,24 @@ describe("recording observations", () => {
     return { stage: payload.stage, components: payload.components };
   }
 
-  test("a live snapshot records its state and all four components", async () => {
+  test("a live snapshot records its state", async () => {
     const result = await recorded(() => recordDeployObservation({ kind: "active", snapshot }));
 
+    expect(result.stage).toBe("domain_pending");
+  });
+
+  test("a poll records the domain group and the stage, and leaves OAuth alone", async () => {
+    const result = await recorded(() =>
+      recordDeployPoll(snapshot, { verified: true, status: { dns: true, ssl: true, mail: true } }),
+    );
+
     expect(result).toEqual({
-      stage: "domain_pending",
-      components: { dns: false, ssl: true, mail: true, oauth: true },
+      stage: "complete",
+      components: { dns: true, ssl: true, mail: true, oauth: null },
     });
   });
 
-  // The configuration read succeeded, so OAuth is an observation; the domain
-  // read did not, so nothing about the domain is, and the stage stays as it was.
-  test("a substituted snapshot records OAuth only", async () => {
+  test("a substituted snapshot records no stage; its components were the read's to record", async () => {
     const result = await recorded(() => {
       setTelemetryStage("oauth_pending");
       recordDeployObservation({ kind: "active", snapshot: { ...snapshot, live: false } });
@@ -307,19 +315,7 @@ describe("recording observations", () => {
 
     expect(result).toEqual({
       stage: "oauth_pending",
-      components: { dns: null, ssl: null, mail: null, oauth: true },
-    });
-  });
-
-  test("a poll records the domain group and stage, and leaves OAuth as observed", async () => {
-    const result = await recorded(() => {
-      recordDeployObservation({ kind: "active", snapshot: { ...snapshot, live: false } });
-      recordDeployPoll(snapshot, { verified: true, status: { dns: true, ssl: true, mail: true } });
-    });
-
-    expect(result).toEqual({
-      stage: "complete",
-      components: { dns: true, ssl: true, mail: true, oauth: true },
+      components: { dns: null, ssl: null, mail: null, oauth: null },
     });
   });
 
@@ -339,6 +335,121 @@ describe("recording observations", () => {
     );
     expect(provisioning.stage).toBe("domain_provisioning");
     expect(provisioning.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+  });
+});
+
+// Production configuration and domain status are read together, and each is
+// recorded the moment it succeeds: a failure in one must not discard what the
+// other observed, and the recording must not race the telemetry send.
+describe("resolveLiveDeploySnapshot records each read as it succeeds", () => {
+  const serverError = () =>
+    new PlapiError(500, JSON.stringify({ errors: [{ code: "server_error" }] }), "https://x");
+  let tempDir = "";
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "clerk-status-reads-"));
+    _setConfigDir(tempDir);
+    mockListApplicationDomains.mockResolvedValue({
+      data: [
+        {
+          object: "domain",
+          id: "dmn_1",
+          name: "example.com",
+          is_satellite: false,
+          is_provider_domain: false,
+          frontend_api_url: "https://clerk.example.com",
+          accounts_portal_url: "https://accounts.example.com",
+          development_origin: "",
+          cname_targets: [],
+        },
+      ],
+      total_count: 1,
+    });
+    mockFetchInstanceConfigSchema.mockResolvedValue({
+      properties: {
+        connection_oauth_google: {
+          type: "object",
+          properties: {
+            enabled: { type: "boolean" },
+            client_id: { type: "string" },
+            client_secret: { type: "string", "x-clerk-sensitive": true },
+          },
+        },
+      },
+    });
+  });
+
+  afterEach(async () => {
+    _resetInterruptState();
+    _setConfigDir(undefined);
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  /** Development enabled Google; production has credentials, or the read fails. */
+  function mockConfigReads(production: Record<string, unknown> | Error) {
+    mockFetchInstanceConfig.mockImplementation((_appId: string, instanceId: string) => {
+      if (instanceId !== "ins_prod") return { connection_oauth_google: { enabled: true } };
+      return production instanceof Error ? Promise.reject(production) : production;
+    });
+  }
+
+  const configured = {
+    connection_oauth_google: { enabled: true, client_id: "id", client_secret: "s" },
+  };
+
+  async function resolved(options: { throwOnStatusError?: boolean } = {}) {
+    return captureTelemetryPayload(
+      "deploy status",
+      async () => {
+        await resolveLiveDeploySnapshot({ ...ctx, productionInstanceId: "ins_prod" }, options);
+      },
+      { captureError: true },
+    );
+  }
+
+  test("a failed configuration read keeps what the domain read observed", async () => {
+    mockConfigReads(serverError());
+    mockGetApplicationDomainStatus.mockResolvedValue(completeStatus);
+
+    const { payload, error } = await resolved();
+
+    expect(error).toBeInstanceOf(PlapiError);
+    expect(payload.components).toEqual({ dns: true, ssl: true, mail: true, oauth: null });
+    expect(payload.stage).toBeNull();
+  });
+
+  test("on the strict path a failed domain read keeps what the configuration read observed", async () => {
+    mockConfigReads(configured);
+    mockGetApplicationDomainStatus.mockRejectedValue(serverError());
+
+    const { payload, error } = await resolved({ throwOnStatusError: true });
+
+    expect(error).toBeInstanceOf(PlapiError);
+    expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: true });
+    expect(payload.stage).toBeNull();
+  });
+
+  test("on the lenient path a failed domain read substitutes and records OAuth alone", async () => {
+    mockConfigReads(configured);
+    mockGetApplicationDomainStatus.mockRejectedValue(serverError());
+
+    const { payload, error } = await resolved();
+
+    expect(error).toBeUndefined();
+    expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: true });
+  });
+
+  test("a read that completed before an interrupt is kept", async () => {
+    mockConfigReads(configured);
+    mockGetApplicationDomainStatus.mockImplementation(() => {
+      beginInterrupt();
+      throw new DOMException("The operation was aborted.", "AbortError");
+    });
+
+    const { payload, error } = await resolved({ throwOnStatusError: true });
+
+    expect(error).toBeInstanceOf(DOMException);
+    expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: true });
   });
 });
 
