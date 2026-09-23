@@ -363,3 +363,22 @@ test("`clerk telemetry status` explains the dev-build guard", async () => {
   expect(result.stdout.trim()).toBe("disabled");
   expect(result.stderr).toContain("dev build");
 });
+
+// The other half of the doctor change: a check that ran and found a real
+// problem still reports `doctor_failed`. Only a crash may claim the new code,
+// and nothing here crashes.
+test("`doctor` with failing checks still reports doctor_failed", async () => {
+  await markNoticeAlreadyShown();
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+  http.mock({ "test-telemetry.clerk.com": {} });
+
+  const result = await clerk.raw("doctor");
+  expect(result.exitCode).toBe(1);
+
+  const bodies = telemetryEvents();
+  expect(bodies).toHaveLength(1);
+  const event = bodies[0]!.events[0]!;
+  expect(event.payload.command).toBe("doctor");
+  expect(event.payload.outcome).toBe("error");
+  expect(event.payload.error_code).toBe("doctor_failed");
+});

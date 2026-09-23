@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { useCaptureLog, listageStubs } from "../../test/lib/stubs.ts";
+import { useCaptureLog, listageStubs, fakeTelemetryCommand } from "../../test/lib/stubs.ts";
 import { CliError, ERROR_CODE, EXIT_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
 
 const mockIsAgent = mock();
@@ -69,6 +69,8 @@ mock.module("../../lib/open.ts", () => ({
 }));
 
 const { _setConfigDir, readConfig, setProfile } = await import("../../lib/config.ts");
+const { finalizeAndSendTelemetry, startCommandTelemetry, telemetryResultForError } =
+  await import("../../lib/telemetry.ts");
 const { deploy } = await import("./index.ts");
 const { providerSetupIntro, showOAuthWalkthrough } = await import("./providers.ts");
 const { collectCustomDomain } = await import("./prompts.ts");
@@ -330,6 +332,22 @@ describe("deploy", () => {
           updated_at: 1770000000000,
         };
       },
+    );
+  }
+
+  /**
+   * The Platform API answered, but the instance it returned has no id to write
+   * to — the one shape that reaches the wizard's "production instance could
+   * not be resolved" guards.
+   */
+  function stubCreateProductionInstanceWithoutId() {
+    stubCreateProductionInstance();
+    const withId = mockCreateProductionInstance.getMockImplementation() as (
+      appId: string,
+      params: { domain: string },
+    ) => Record<string, unknown>;
+    mockCreateProductionInstance.mockImplementation(
+      (appId: string, params: { domain: string }) => ({ ...withId(appId, params), id: "" }),
     );
   }
 
@@ -2585,6 +2603,237 @@ describe("deploy", () => {
       expect(mockFetchApplication.mock.calls.length).toBeGreaterThanOrEqual(2);
       const config = await readConfig();
       expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_recovered");
+    });
+
+    // What the warehouse sees for each way a deploy run can end. These assert
+    // the payload rather than the thrown error, because the error code and the
+    // pause step travel by different routes — the code on the error, the step
+    // through the telemetry context — and only the payload proves both arrive
+    // together.
+    describe("what telemetry records for each ending", () => {
+      const TELEMETRY_URL = "https://capture.invalid/v1/event";
+      let realFetch: typeof globalThis.fetch;
+
+      beforeEach(() => {
+        realFetch = globalThis.fetch;
+      });
+      afterEach(() => {
+        globalThis.fetch = realFetch;
+        delete process.env.CLERK_TELEMETRY_URL;
+      });
+
+      /** The event a `clerk deploy` run would post, plus whatever it threw. */
+      async function deployTelemetry(
+        run: () => Promise<void>,
+      ): Promise<{ payload: Record<string, any>; error: CliError | undefined }> {
+        const { markTelemetryNoticeShown } = await import("../../lib/config.ts");
+        await markTelemetryNoticeShown(); // past the grace run, which sends nothing
+        process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+        let sent: string | undefined;
+        globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
+          sent = init.body;
+          return new Response("{}");
+        }) as unknown as typeof fetch;
+
+        startCommandTelemetry(fakeTelemetryCommand("deploy"));
+        let error: CliError | undefined;
+        try {
+          await run();
+        } catch (caught) {
+          error = caught as CliError;
+        }
+        // `runProgram` classifies a throw and reads `process.exitCode` back
+        // otherwise; a wizard that returns normally never sets one.
+        await finalizeAndSendTelemetry(
+          error ? telemetryResultForError(error) : { outcome: "success", exitCode: 0 },
+        );
+
+        expect(sent).toBeDefined();
+        const parsed = JSON.parse(sent as string) as {
+          events: { payload: Record<string, any> }[];
+        };
+        return { payload: parsed.events[0]!.payload, error };
+      }
+
+      test("a skipped OAuth provider is a paused deploy at the oauth step", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        await runDnsHandoff();
+        mockSelect.mockResolvedValueOnce("skip");
+
+        const { payload, error } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(error?.message).toContain("Deploy paused at: Google OAuth credential setup");
+        expect(payload.outcome).toBe("error");
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_PAUSED);
+        expect(payload.pause_step).toBe("oauth");
+        expect(payload.exit_code).toBe(EXIT_CODE.GENERAL);
+      });
+
+      test("Ctrl-C at the OAuth prompt is a cancelled deploy at the oauth step", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        await runDnsHandoff();
+        mockSelect.mockRejectedValueOnce(promptExitError());
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_CANCELLED);
+        expect(payload.pause_step).toBe("oauth");
+        expect(payload.exit_code).toBe(EXIT_CODE.SIGINT);
+      });
+
+      test("Ctrl-C at the DNS retry prompt is a cancelled deploy at the dns step", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockLiveProduction({
+          instanceId: "ins_prod_123",
+          productionConfig: {
+            connection_oauth_google: {
+              enabled: true,
+              client_id: "google-client-id.apps.googleusercontent.com",
+              client_secret: "REDACTED",
+            },
+          },
+        });
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        );
+        mockSelect.mockResolvedValueOnce("check").mockRejectedValueOnce(promptExitError());
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_CANCELLED);
+        expect(payload.pause_step).toBe("dns");
+        expect(payload.exit_code).toBe(EXIT_CODE.SIGINT);
+      });
+
+      test("Ctrl-C at the BIND zone export is a cancelled deploy at the dns step", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm
+          .mockResolvedValueOnce(true)
+          .mockResolvedValueOnce(true)
+          .mockRejectedValueOnce(promptExitError());
+        mockInput.mockResolvedValueOnce("example.com");
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_CANCELLED);
+        expect(payload.pause_step).toBe("dns");
+        expect(payload.exit_code).toBe(EXIT_CODE.SIGINT);
+      });
+
+      // Every DNS component passed and the user has nothing left to do, so
+      // this is a wait on Clerk rather than a step anyone stopped on — which
+      // is why it reports no pause step at all.
+      test("waiting on Clerk after every component verified is finalizing, at no step", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockLiveProduction({
+          instanceId: "ins_prod_123",
+          developmentConfig: {},
+          productionConfig: {},
+        });
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "incomplete", dns: true, ssl: true, mail: true }),
+        );
+        mockConfirm.mockResolvedValueOnce(false);
+        mockSelect.mockResolvedValueOnce("check");
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_FINALIZING);
+        expect(payload.pause_step).toBeNull();
+        expect(payload.exit_code).toBe(EXIT_CODE.GENERAL);
+      });
+
+      // The exit-0 endings are the control: "skip" at DNS verification is a
+      // finished command, and a code here would move real successes into the
+      // failure series.
+      test("choosing skip at DNS verification is a success with no code", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockFetchInstanceConfig.mockResolvedValue({}); // no OAuth providers to configure
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+        mockSelect.mockResolvedValueOnce("skip");
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        );
+
+        const { payload, error } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(error).toBeUndefined();
+        expect(stripAnsi(captured.err)).toContain("Skipping DNS verification for now.");
+        expect(payload.outcome).toBe("success");
+        expect(payload.exit_code).toBe(0);
+        expect(payload.error_code).toBeNull();
+        expect(payload.pause_step).toBeNull();
+      });
+
+      // A pause is not the only way this path fails, and the pause codes must
+      // not swallow the ones that name a real failure.
+      test("a failure that is not a pause keeps its own code", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+        mockCreateProductionInstance.mockResolvedValueOnce({
+          object: "instance",
+          id: "ins_prod_mock",
+          environment_type: "production" as const,
+          active_domain: null,
+          publishable_key: "pk_live_test",
+          secret_key: "sk_live_test",
+          created_at: 1770000000000,
+          updated_at: 1770000000000,
+        });
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_DOMAIN_MISSING);
+        expect(payload.pause_step).toBeNull();
+      });
+
+      // Both sites fire when the instance the wizard is about to write to
+      // cannot be named. That is a failure, not the malformed-input `clerk`
+      // was given, so it is no longer filed under `usage_error` — the exit
+      // code stays 2.
+      test("an unnameable production instance during OAuth setup is deploy_instance_unresolved", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+        stubCreateProductionInstanceWithoutId();
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+        expect(payload.exit_code).toBe(EXIT_CODE.USAGE);
+      });
+
+      test("an unnameable production instance at the next steps is deploy_instance_unresolved", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockFetchInstanceConfig.mockResolvedValue({}); // skip OAuth setup, reach finishDeploy
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+        mockSelect.mockResolvedValueOnce("skip");
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        );
+        stubCreateProductionInstanceWithoutId();
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+        expect(payload.exit_code).toBe(EXIT_CODE.USAGE);
+      });
     });
   });
 });

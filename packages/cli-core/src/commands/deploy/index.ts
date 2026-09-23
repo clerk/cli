@@ -439,7 +439,7 @@ async function runDnsRecordHandoff(
     log.blank();
   } catch (error) {
     if (error instanceof UserAbortError) {
-      throw deployPausedError(state, { interrupted: true });
+      throw deployPausedError(state, "cancelled");
     }
     throw error;
   }
@@ -478,7 +478,7 @@ async function runDnsVerificationPrompt(
     return await runDnsVerification(ctx, state);
   } catch (error) {
     if (error instanceof UserAbortError) {
-      throw deployPausedError(state, { interrupted: true });
+      throw deployPausedError(state, "cancelled");
     }
     throw error;
   }
@@ -520,7 +520,7 @@ async function runDnsVerification(
     // When all DNS components are verified but the server has not yet marked the
     // deployment complete, the user cannot influence the remaining wait.
     if (outcome.status.dns && outcome.status.ssl && outcome.status.mail) {
-      throw deployPausedError(state);
+      throw deployPausedError(state, "finalizing");
     }
 
     if (pendingTargets.length > 0) {
@@ -533,7 +533,7 @@ async function runDnsVerification(
       action = await chooseDnsVerificationRetryAction();
     } catch (error) {
       if (error instanceof UserAbortError) {
-        throw deployPausedError(state, { interrupted: true });
+        throw deployPausedError(state, "cancelled");
       }
       throw error;
     }
@@ -595,6 +595,8 @@ async function runOAuthSetup(
       if (!productionInstanceId) {
         throwUsageError(
           "Cannot save OAuth credentials because the production instance could not be resolved. Run `clerk deploy` after confirming the production instance in the Clerk Dashboard.",
+          undefined,
+          ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED,
         );
       }
 
@@ -620,7 +622,7 @@ async function runOAuthSetup(
             pending: { type: "oauth", provider: descriptor.provider },
             completedOAuthProviders: [...completed],
           },
-          { interrupted: true },
+          "cancelled",
         );
       }
       throw error;
@@ -706,6 +708,8 @@ async function finishDeploy(
   if (!productionInstanceId) {
     throwUsageError(
       "Cannot print deploy next steps because the production instance could not be resolved. Run `clerk deploy` after confirming the production instance in the Clerk Dashboard.",
+      undefined,
+      ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED,
     );
   }
   await animateHeader({

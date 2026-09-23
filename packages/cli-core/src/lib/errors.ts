@@ -48,6 +48,14 @@ export const ERROR_CODE = {
   CATALOG_ERROR: "catalog_error",
   /** Doctor checks found issues. */
   DOCTOR_FAILED: "doctor_failed",
+  /**
+   * A doctor check threw instead of returning a result, so nothing was learned
+   * about what it was meant to verify. Distinct from {@link DOCTOR_FAILED},
+   * which means every check ran and one of them found a real problem with the
+   * user's integration — a bug in the CLI and a broken project are different
+   * things to chase.
+   */
+  DOCTOR_CHECK_CRASHED: "doctor_check_crashed",
   /** Frontend API request failed. */
   FAPI_ERROR: "fapi_error",
   /** Subscription plan does not cover the dev instance's enabled features. */
@@ -98,6 +106,20 @@ export const ERROR_CODE = {
   REGISTRY_UNREACHABLE: "registry_unreachable",
   /** Production instance was created but came back without a domain. */
   DEPLOY_DOMAIN_MISSING: "deploy_domain_missing",
+  /**
+   * `clerk deploy` stopped with the deploy unfinished and something left for
+   * the user to do — a skipped OAuth provider, a DNS check they chose not to
+   * run. The three codes below are one situation each, rather than one code
+   * plus a modifier, so telling them apart never means joining `error_code`
+   * against `exit_code`.
+   */
+  DEPLOY_PAUSED: "deploy_paused",
+  /** The user interrupted a `clerk deploy` prompt after the production instance existed. */
+  DEPLOY_CANCELLED: "deploy_cancelled",
+  /** Every DNS component verified; Clerk had not finished provisioning yet. Nobody is waiting on the user. */
+  DEPLOY_FINALIZING: "deploy_finalizing",
+  /** `clerk deploy` could not resolve the production instance it was about to write to. */
+  DEPLOY_INSTANCE_UNRESOLVED: "deploy_instance_unresolved",
   /** Local publishable key and secret key address different applications. */
   KEY_PAIR_MISMATCH: "key_pair_mismatch",
   /** BAPI returned a response the CLI could not use. */

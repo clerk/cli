@@ -19,6 +19,13 @@ export interface CheckResult {
   detail?: string;
   remedy?: string;
   fix?: FixAction;
+  /**
+   * The check threw, so it learned nothing about what it verifies. Set
+   * explicitly by the only place that catches — never inferred later from the
+   * message text, which would make a sentence nobody knew was load-bearing
+   * into the contract.
+   */
+  crashed?: true;
 }
 
 /** The identity of an unclaimed keyless application, fetched via its own secret key. */

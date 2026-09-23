@@ -6,6 +6,7 @@ import { CliError, ERROR_CODE, errorMessage } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { createDoctorContext } from "./context.ts";
 import {
+  CHECK_NAME,
   checkLoggedIn,
   checkHostExecution,
   checkTokenValid,
@@ -21,37 +22,68 @@ import { checkMcp } from "./check-mcp.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
 import type { CheckFn, CheckResult, DoctorContext, DoctorOptions } from "./types.ts";
 
-const BASE_CHECKS: CheckFn[] = [
-  checkCliVersion,
-  checkLoggedIn,
-  checkTokenValid,
-  checkProjectLinked,
-  checkLinkedAppExists,
-  checkInstances,
-  checkEnvVars,
-  checkConfigFile,
-  checkShellCompletion,
-  checkMcp,
+/**
+ * A check paired with the name to report it under if it throws. The name it
+ * gives its own results comes from the same {@link CHECK_NAME} entry, so the
+ * two cannot disagree.
+ */
+type RegisteredCheck = { name: string; run: CheckFn };
+
+const BASE_CHECKS: RegisteredCheck[] = [
+  { name: CHECK_NAME.cliVersion, run: checkCliVersion },
+  { name: CHECK_NAME.loggedIn, run: checkLoggedIn },
+  { name: CHECK_NAME.tokenValid, run: checkTokenValid },
+  { name: CHECK_NAME.projectLinked, run: checkProjectLinked },
+  { name: CHECK_NAME.linkedAppExists, run: checkLinkedAppExists },
+  { name: CHECK_NAME.instances, run: checkInstances },
+  { name: CHECK_NAME.envVars, run: checkEnvVars },
+  { name: CHECK_NAME.configFile, run: checkConfigFile },
+  { name: CHECK_NAME.shellCompletion, run: checkShellCompletion },
+  { name: CHECK_NAME.mcp, run: checkMcp },
 ];
 
-function getChecks(): CheckFn[] {
-  return isAgent() ? [checkHostExecution, ...BASE_CHECKS] : BASE_CHECKS;
+function getChecks(): RegisteredCheck[] {
+  return isAgent()
+    ? [{ name: CHECK_NAME.hostExecution, run: checkHostExecution }, ...BASE_CHECKS]
+    : BASE_CHECKS;
 }
 
+/**
+ * A crash is a bug in the CLI, not a finding about the user's project, so it
+ * says which check broke instead of reporting an anonymous failure the person
+ * cannot act on. It still counts as a failing result: the check was asked a
+ * question and has no answer, and treating that as a pass would hide the one
+ * case where doctor itself is broken.
+ */
 async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
   return Promise.all(
-    getChecks().map(async (check) => {
+    getChecks().map(async ({ name, run }) => {
       try {
-        return await check(ctx);
+        return await run(ctx);
       } catch (error) {
         return {
-          name: "Unknown check",
+          name,
           status: "fail" as const,
-          message: `Check crashed: ${errorMessage(error)}`,
+          message: `${name} check crashed: ${errorMessage(error)}`,
+          crashed: true as const,
         };
       }
     }),
   );
+}
+
+/**
+ * What to throw for a set of results that includes a failure. A crashed check
+ * and a real finding are both exit 1, but they send the reader to different
+ * places — one is a CLI bug, the other is the user's integration — and a
+ * single code left them indistinguishable in telemetry and on screen.
+ */
+function failureCodeFor(
+  results: CheckResult[],
+): typeof ERROR_CODE.DOCTOR_CHECK_CRASHED | typeof ERROR_CODE.DOCTOR_FAILED {
+  return results.some((r) => r.crashed)
+    ? ERROR_CODE.DOCTOR_CHECK_CRASHED
+    : ERROR_CODE.DOCTOR_FAILED;
 }
 
 function printResults(results: CheckResult[], options: DoctorOptions): void {
@@ -127,7 +159,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
       const hasVerifyFailure = verifyResults.some((r) => r.status === "fail");
       if (hasVerifyFailure) {
         throw new CliError("Some checks still failing after auto-fix", {
-          code: ERROR_CODE.DOCTOR_FAILED,
+          code: failureCodeFor(verifyResults),
         });
       }
       await outro("All checks passing");
@@ -138,7 +170,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
   const hasFailure = allResults.some((r) => r.status === "fail");
   if (hasFailure) {
     throw new CliError("Doctor found issues with your Clerk integration", {
-      code: ERROR_CODE.DOCTOR_FAILED,
+      code: failureCodeFor(allResults),
     });
   }
   await outro("All checks passing");

@@ -7,6 +7,7 @@ import {
   declareSoftExitOutcome,
   finalizeAndSendTelemetry,
   getTelemetryStatus,
+  setTelemetryPauseStep,
   setTelemetryStage,
   startCommandTelemetry,
   telemetryEnabled,
@@ -649,6 +650,29 @@ describe("finalizeAndSendTelemetry", () => {
       const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
       expect(payload.pause_step).toBeNull();
       expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+    });
+  });
+
+  describe("pause step", () => {
+    test("the step a run stopped on reaches the payload", async () => {
+      const payload = await sendAndCapturePayload(() => setTelemetryPauseStep("oauth"), {
+        outcome: "error",
+        exitCode: EXIT_CODE.GENERAL,
+      });
+      expect(payload.pause_step).toBe("oauth");
+    });
+
+    // A resume enters OAuth setup after the DNS handoff, so both steps can be
+    // reached in one run; the one the run actually stopped on is the last set.
+    test("the last step set is the one sent", async () => {
+      const payload = await sendAndCapturePayload(
+        () => {
+          setTelemetryPauseStep("dns");
+          setTelemetryPauseStep("oauth");
+        },
+        { outcome: "error", exitCode: EXIT_CODE.GENERAL },
+      );
+      expect(payload.pause_step).toBe("oauth");
     });
   });
 });

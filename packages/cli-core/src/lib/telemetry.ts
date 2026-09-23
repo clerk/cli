@@ -299,6 +299,20 @@ export function currentTelemetryStage(): TelemetryStage | null {
 }
 
 /**
+ * Record the step a `clerk deploy` run stopped on. Set where the pause itself
+ * is constructed, which is the one place that knows both that the run is
+ * stopping and which step it stopped on — a caller that set it earlier would
+ * have to unset it on every path that then carried on.
+ *
+ * Only set it for a step the *person* stopped on. A wait on Clerk's backend
+ * ends the run at no step at all, and leaving the last step in place there
+ * would count it as a drop-off nobody made.
+ */
+export function setTelemetryPauseStep(step: TelemetryPauseStep): void {
+  if (context) context.pauseStep = step;
+}
+
+/**
  * Declare what this run should be recorded as when it ends by setting
  * `process.exitCode` instead of throwing.
  *

@@ -68,6 +68,16 @@ Telemetry's `outcome` says what happened to the _command_, not to the deploy. A 
 
 `success` does not mean the deploy is finished either. `clerk deploy` under an agent prints a status report and exits 0 even when no production instance exists. How far a deploy got is carried by the `stage` and `components` payload fields, never by `outcome`.
 
+The wizard's three non-crash endings all exit the way they always have, and are told apart by their error code rather than by `exit_code` — which cannot separate the first from the third, since both are 1.
+
+| Ending                                                              | `error_code`        | `pause_step`             | Exit |
+| ------------------------------------------------------------------- | ------------------- | ------------------------ | ---- |
+| The user skipped an OAuth provider or a DNS check                   | `deploy_paused`     | the step they stopped on | 1    |
+| The user interrupted a prompt after the production instance existed | `deploy_cancelled`  | the step they stopped on | 130  |
+| Every DNS component verified, Clerk still provisioning              | `deploy_finalizing` | null                     | 1    |
+
+`pause_step` is null on the last row on purpose: nobody stopped there, the deploy is waiting on Clerk, and recording `dns` would count a drop-off that never happened. A Ctrl-C _before_ the production instance exists is not any of these — there is no state to preserve, so it stays a plain `abort` at exit 0.
+
 Agent mode is detected via the mode system (`src/mode.ts`), which checks in priority order:
 
 1. `--mode` CLI flag
