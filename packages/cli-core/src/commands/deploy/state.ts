@@ -59,13 +59,10 @@ const PAUSE_REASONS: Record<
     code: ErrorCode;
     exitCode: typeof EXIT_CODE.GENERAL | typeof EXIT_CODE.SIGINT;
     /**
-     * Whether the person stopped at a step. The CLI's own call — the warehouse
-     * does not enforce the pairing. Its payload contract test rejects a step
-     * outside `dns`/`oauth` wherever one appears, but only alarms on a step
-     * that stops arriving for `deploy_paused` and `deploy_cancelled` rows. So
-     * a fourth reason that invents a step value fails loudly, while one that
-     * simply needs adding to that alarm ships unmonitored until someone
-     * widens its eligibility list in `data-platform`.
+     * Whether the person stopped at a step. The CLI's own call: the warehouse
+     * validates the step value but only alarms on its absence for the codes
+     * it knows (as of data-platform#604), so a new reason that should carry a
+     * step also needs adding there.
      */
     recordsPauseStep: boolean;
   }

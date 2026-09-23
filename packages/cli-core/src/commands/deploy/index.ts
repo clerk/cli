@@ -65,23 +65,24 @@ import {
 import {
   buildDeployStatusReport,
   loadDevelopmentOAuthProviders,
-  recordDeployObservation,
-  recordDeployPoll,
-  recordDeployStage,
-  recordOAuthObservation,
-  resolveActiveReportState,
   resolveDeployContext,
   resolveDeployState,
   resolveLiveApplicationContext,
   resolveLiveDeploySnapshot,
-  retractDeployStage,
   waitForDeployStatus,
   type DeployProgressHandlers,
   type DeployStatusOutcome,
   type DiscoveredOAuthProviders,
   type LiveDeploySnapshot,
-  type OAuthSetupFacts,
 } from "./status.ts";
+import { clearTelemetryStage } from "../../lib/telemetry.ts";
+import { resolveActiveReportState, type OAuthSetupFacts } from "./report-state.ts";
+import {
+  recordDeployObservation,
+  recordDeployPoll,
+  recordDeployStage,
+  recordOAuthObservation,
+} from "./telemetry.ts";
 
 type DeployOptions = Record<string, never>;
 
@@ -185,10 +186,11 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
 
   const productionOrExists = await createProductionInstance(ctx, domain);
   if (productionOrExists === "exists") {
-    // `not_started` is now disproven, and nothing replaces it until the resume
-    // below reads the instance. If that read fails, or substitutes, the run
-    // ends with no stage rather than a false one.
-    retractDeployStage();
+    // An observation that disproves the stage without establishing a new one:
+    // `not_started` is now false, and whether that instance has a domain, or
+    // how far it got, is unknown until the resume below reads it. If that read
+    // fails, or substitutes, the run ends with no stage rather than a false one.
+    clearTelemetryStage();
     log.blank();
     log.info(
       "A production instance already exists for this application. Resuming the existing deploy.",

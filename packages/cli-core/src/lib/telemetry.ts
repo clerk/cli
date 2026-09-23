@@ -54,11 +54,10 @@ export type TelemetryOutcome = "success" | "error" | "abort" | "incomplete";
  * What a command may declare for itself on the soft-exit path.
  *
  * Deliberately narrower than {@link TelemetryOutcome}. `success` is excluded
- * because declaring it on a run that then exits nonzero produces a row the
- * warehouse reads as a success — its classifier tests `outcome = 'success'`
- * ahead of every error rule and never reads `exit_code` — so the failure
- * would leave the error series with nothing able to reconcile it. `abort` is
- * excluded because it belongs to the interrupt path, which reports itself.
+ * because the warehouse classifies a row by `outcome` before it looks at
+ * anything else (as of data-platform#604), so declaring it on a run that then
+ * exits nonzero would file a failure as a success. `abort` is excluded because
+ * it belongs to the interrupt path, which reports itself.
  */
 export type SoftExitOutcome = "incomplete" | "error";
 
@@ -121,7 +120,7 @@ export type TelemetryStage =
   //
   // Unlike the groups above, these are not control-flow positions: each is a
   // state of the deploy itself, as `resolveActiveReportState` in
-  // `commands/deploy/status.ts` would compute it at that moment. So the stage
+  // `commands/deploy/report-state.ts` would compute it at that moment. So the stage
   // a wizard run reports and the stage `clerk deploy status` reports a second
   // later agree about the same deploy. One value per run — the last state
   // observed, not every state the run passed through — and a run that ends
@@ -296,9 +295,10 @@ export function setTelemetryStage(stage: TelemetryStage): void {
 
 /**
  * Forget the stage. For the one case where an observation disproves the
- * stage last set without establishing a new one — `retractDeployStage` in
- * `commands/deploy/status.ts` is the only caller. Not a general reset: a
- * command that wants a different stage sets it.
+ * stage last set without establishing a new one — a fresh deploy's create
+ * call answering that an instance already exists, in `commands/deploy/index.ts`,
+ * is the only caller. Not a general reset: a command that wants a different
+ * stage sets it.
  */
 export function clearTelemetryStage(): void {
   if (context) context.stage = null;
@@ -560,6 +560,13 @@ async function buildAndSend(
       outcome: result.outcome,
       exit_code: result.exitCode,
       error_code: result.errorCode ?? null,
+      // `stage`, `pause_step` and `components` are deploy's and ride on every
+      // command's event as null. They sit at the top level because the
+      // warehouse staging model already reads these exact paths (as of
+      // data-platform#604), so nesting them under a per-command key now would
+      // cost a warehouse change for no visible gain. That is a cost call, not
+      // a shape to copy: a command that needs its own structured detail can
+      // still add a namespaced object, with a contract-test arm to match.
       stage: current.stage,
       pause_step: current.pauseStep,
       // Nested rather than four flat keys: it is one JSON path per component

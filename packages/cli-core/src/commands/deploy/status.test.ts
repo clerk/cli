@@ -29,12 +29,11 @@ const {
   buildInterruptedDeployStatusReport,
   deployNextStep,
   loadInitialDeployStatus,
-  recordDeployObservation,
-  recordDeployPoll,
   resolveDeployState,
   resolveLiveDeploySnapshot,
   waitForDeployStatus,
 } = await import("./status.ts");
+const { recordDeployObservation, recordDeployPoll } = await import("./telemetry.ts");
 const { setTelemetryStage } = await import("../../lib/telemetry.ts");
 const { _setConfigDir } = await import("../../lib/config.ts");
 const { beginInterrupt, _resetInterruptState } = await import("../../lib/signals.ts");
