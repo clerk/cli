@@ -1,3 +1,6 @@
+import { lstat } from "node:fs/promises";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
   bytesWithOptionalBOM,
   newEntitlementsBytes,
@@ -5,9 +8,6 @@ import {
   entitlementKeyStructure,
   decodeEntitlementsXML,
 } from "./entitlements-xml.ts";
-import { lstat } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import {
   selectIOSEntitlementsFiles,
   type IOSEntitlementsFileBlockerCode,
