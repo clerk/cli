@@ -9,9 +9,9 @@ import { lstat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
-  planIOSAssociatedDomain,
-  type IOSAssociatedDomainBlockerCode,
-} from "./associated-domain.ts";
+  selectIOSEntitlementsFiles,
+  type IOSEntitlementsFileBlockerCode,
+} from "./entitlements-files.ts";
 import { readBoundedRegularFile } from "./bounded-file.ts";
 import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import {
@@ -35,7 +35,7 @@ const APPLE_SIGN_IN_VALUE = "Default";
 const MAX_ENTITLEMENTS_BYTES = 1_000_000;
 
 export type IOSAppleEntitlementBlockerCode =
-  | IOSAssociatedDomainBlockerCode
+  | IOSEntitlementsFileBlockerCode
   | "conflicting-apple-entitlement"
   | "invalid-plan";
 
@@ -389,12 +389,11 @@ async function planIOSAppleEntitlementForPlatform(
     root: resolve(options.root),
     platform: options.platform ?? "ios",
   };
-  const entitlementProbe = await planIOSAssociatedDomain({
+  const entitlementProbe = await selectIOSEntitlementsFiles({
     root: normalized.root,
     projectPath: normalized.projectPath,
     targetId: normalized.targetId,
     platform: normalized.platform,
-    deferToPublishableKey: true,
     allowMissingEntitlementsCreation: normalized.allowMissingEntitlementsCreation,
     allowSelectedTargetPlatformSharing: true,
   });

@@ -6,6 +6,7 @@ import { ios } from "./ios.ts";
 import type { ProjectContext } from "./types.ts";
 import { createIOSFixture } from "../ios/test-helpers.ts";
 import * as associatedDomain from "../ios/associated-domain.ts";
+import * as entitlementsFiles from "../ios/entitlements-files.ts";
 import * as directConfig from "../ios/direct-config.ts";
 
 const temporaryRoots: string[] = [];
@@ -123,6 +124,7 @@ test("uses the selected macOS platform for final planning and guidance", async (
   await createIOSFixture(root, { complete: false, clerkSDK: false, platform: "macos" });
   const directPlanner = spyOn(directConfig, "planIOSDirectConfig");
   const domainPlanner = spyOn(associatedDomain, "planIOSAssociatedDomain");
+  const fileSelector = spyOn(entitlementsFiles, "selectIOSEntitlementsFiles");
 
   try {
     const plan = await ios.scaffold({
@@ -135,9 +137,8 @@ test("uses the selected macOS platform for final planning and guidance", async (
     expect(directPlanner).toHaveBeenCalledWith(
       expect.objectContaining({ root, platform: "macos" }),
     );
-    expect(domainPlanner).toHaveBeenCalledWith(
-      expect.objectContaining({ root, platform: "macos" }),
-    );
+    expect(domainPlanner).not.toHaveBeenCalled();
+    expect(fileSelector).toHaveBeenCalledWith(expect.objectContaining({ root, platform: "macos" }));
 
     const instructions = plan.postInstructions.join("\n");
     expect(instructions).toContain("Clerk Swift SDK");
@@ -150,6 +151,7 @@ test("uses the selected macOS platform for final planning and guidance", async (
   } finally {
     directPlanner.mockRestore();
     domainPlanner.mockRestore();
+    fileSelector.mockRestore();
   }
 });
 

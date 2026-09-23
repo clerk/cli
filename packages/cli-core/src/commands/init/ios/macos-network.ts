@@ -9,7 +9,7 @@ import { selectedIOSAppTarget as selectedTarget } from "./project-selection.ts";
 import { lstat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { planIOSAssociatedDomain } from "./associated-domain.ts";
+import { selectIOSEntitlementsFiles } from "./entitlements-files.ts";
 import { readBoundedRegularFile } from "./bounded-file.ts";
 import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import {
@@ -655,12 +655,11 @@ export async function planMacOSNetworkCapability(
     };
   }
 
-  const ownershipProbe = await planIOSAssociatedDomain({
+  const ownershipProbe = await selectIOSEntitlementsFiles({
     root: normalized.root,
     projectPath: normalized.projectPath,
     targetId: normalized.targetId,
     platform: "macos",
-    deferToPublishableKey: true,
   });
   if (ownershipProbe.status === "blocked") {
     return blockedPlan(
