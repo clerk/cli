@@ -8,7 +8,10 @@ import {
   resolveActiveReportState,
   type OAuthSetupFacts,
 } from "./report-state.ts";
+// Type-only on purpose: `status.ts` imports the recorders at runtime, so a
+// runtime import back would be an initialization-order cycle.
 import type { DeployState, DeployStatusOutcome, DeployStatusState } from "./status.ts";
+import type { DeployComponentStatus } from "./copy.ts";
 
 /**
  * Record the deploy's state as telemetry's `stage`. Every write goes through
@@ -39,6 +42,15 @@ export function recordOAuthObservation(oauth: OAuthSetupFacts): void {
 }
 
 /**
+ * Record what one successful domain-status read said about DNS, SSL and email
+ * DNS. The initial read and every poll both come through here, so the two
+ * cannot drift apart. `oauth` is not this read's to write.
+ */
+export function recordDomainObservation(status: DeployComponentStatus): void {
+  setTelemetryDomainComponents(status);
+}
+
+/**
  * Record the stage a state read established. The components are not recorded
  * here: `resolveLiveDeploySnapshot` writes each the moment its own read
  * succeeds, so a failure in the other read cannot discard it. The stage needs
@@ -66,6 +78,6 @@ export function recordDeployObservation(state: DeployState): void {
  * it records whatever the snapshot before it was.
  */
 export function recordDeployPoll(oauth: OAuthSetupFacts, polled: DeployStatusOutcome): void {
-  setTelemetryDomainComponents(polled.status);
+  recordDomainObservation(polled.status);
   recordDeployStage(resolveActiveReportState(oauth, polled.verified));
 }

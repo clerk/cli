@@ -34,8 +34,7 @@ import {
 } from "./providers.ts";
 import { pendingOAuthProviders, resolveActiveReportState } from "./report-state.ts";
 import type { DeployContext, DeployOperationState } from "./state.ts";
-import { recordOAuthObservation } from "./telemetry.ts";
-import { setTelemetryDomainComponents } from "../../lib/telemetry.ts";
+import { recordDomainObservation, recordOAuthObservation } from "./telemetry.ts";
 
 const DEPLOY_STATUS_INITIAL_RETRY_DELAY_MS = 3000;
 const DEPLOY_STATUS_MAX_RETRIES = 5;
@@ -308,8 +307,7 @@ export async function resolveLiveDeploySnapshot(
         },
       );
       const statusRead = loadInitialDeployStatus(ctx.appId, domain.id, options).then((read) => {
-        if (read.live)
-          setTelemetryDomainComponents(deployComponentStatusFromDomainStatus(read.status));
+        if (read.live) recordDomainObservation(deployComponentStatusFromDomainStatus(read.status));
         return read;
       });
       const [productionConfig, { status: deployStatus, live }] = await settleBeforeRejecting([

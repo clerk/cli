@@ -560,8 +560,9 @@ async function buildAndSend(
       outcome: result.outcome,
       exit_code: result.exitCode,
       error_code: result.errorCode ?? null,
-      // `stage`, `pause_step` and `components` are deploy's and ride on every
-      // command's event as null. They sit at the top level because the
+      // `stage` is shared (init, login and deploy each write their own group).
+      // `pause_step` and `components` are deploy's and ride on every other
+      // command's event as null members. They sit at the top level because the
       // warehouse staging model already reads these exact paths (as of
       // data-platform#604), so nesting them under a per-command key now would
       // cost a warehouse change for no visible gain. That is a cost call, not

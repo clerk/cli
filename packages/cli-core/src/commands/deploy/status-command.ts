@@ -90,9 +90,9 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
     // Report what was established, then rethrow. The report carries the last
     // observation — the pre-wait read, or the latest poll — rather than a
     // hardcoded "not verified", so it says the same thing telemetry recorded.
-    // In practice the last poll here is never `complete`: nothing awaits
-    // between a complete poll and the normal report below, so an interrupt
-    // has nowhere to land. The exit code stays 130 either way, so
+    // The last poll here is never `complete`: a complete poll returns before
+    // reaching the abortable backoff sleep, so an interrupt has nothing in
+    // flight to reject. The exit code stays 130 either way, so
     // `clerk deploy status && ./cutover.sh` still stops.
     emitReport(buildInterruptedReport(state, lastPolled));
     throw error;
