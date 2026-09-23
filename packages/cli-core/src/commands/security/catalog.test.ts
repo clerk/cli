@@ -322,13 +322,50 @@ describe("decision patches", () => {
     });
   });
 
+  const verifiedEmail = { verify_at_sign_up: true, verification_strategies: ["email_link"] };
   test.each([
-    ["email-code", { auth_email: { used_for_sign_in: true, sign_in_strategies: ["email_code"] } }],
-    ["email-link", { auth_email: { used_for_sign_in: true, sign_in_strategies: ["email_link"] } }],
-    ["phone-code", { auth_phone: { used_for_sign_in: true, sign_in_strategies: ["phone_code"] } }],
+    [
+      "email-code",
+      {
+        auth_email: {
+          used_for_sign_in: true,
+          sign_in_strategies: ["email_code"],
+          ...verifiedEmail,
+        },
+      },
+    ],
+    [
+      "email-link",
+      {
+        auth_email: {
+          used_for_sign_in: true,
+          sign_in_strategies: ["email_link"],
+          ...verifiedEmail,
+        },
+        auth_attack_protection: { email_link_require_same_client: true },
+      },
+    ],
+    [
+      "phone-code",
+      {
+        auth_phone: {
+          used_for_sign_in: true,
+          sign_in_strategies: ["phone_code"],
+          verify_at_sign_up: true,
+          verification_strategies: ["phone_code"],
+        },
+      },
+    ],
     ["passkey", { auth_passkey: { used_for_sign_in: true } }],
   ])("passwordless-auth %s", (strategy, expected) => {
     expect(passwordless.patch([strategy], input)).toEqual(expected);
+  });
+
+  test("passwordless-auth leaves verification alone for an identifier not collected at sign-up", () => {
+    const config = deepMerge(INSECURE_CONFIG, { auth_email: { used_for_sign_up: false } });
+    expect(passwordless.patch(["email-code"], production(config))).toEqual({
+      auth_email: { used_for_sign_in: true, sign_in_strategies: ["email_code"] },
+    });
   });
 
   test.each<{ values: string[] }>([

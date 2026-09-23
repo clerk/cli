@@ -157,15 +157,24 @@ const PASSWORDLESS_DECISION: CheckDecision = {
       : phoneEnabled(config) || flag(config, "auth_phone.used_for_sign_in")
         ? ["phone-code"]
         : ["passkey"],
-  patch([strategy], { config }) {
+  patch([strategy], input) {
     if (strategy === "passkey") return { auth_passkey: { used_for_sign_in: true } };
+    const { config } = input;
     const section = strategy === "phone-code" ? "auth_phone" : "auth_email";
     const apiStrategy = strategy!.replace("-", "_");
     return {
       [section]: {
         used_for_sign_in: true,
         sign_in_strategies: union(list(config, `${section}.sign_in_strategies`), apiStrategy),
+        // An identifier that signs users in must be verified at sign-up, or an
+        // attacker can pre-register the victim's and inherit their session.
+        ...(flag(config, `${section}.used_for_sign_up`) &&
+          verifyAtSignUpPatch(section, apiStrategy)(input)[section]),
       },
+      // A link redeemed on another device would complete the attacker's attempt.
+      ...(strategy === "email-link" && {
+        auth_attack_protection: { email_link_require_same_client: true },
+      }),
     };
   },
 };
