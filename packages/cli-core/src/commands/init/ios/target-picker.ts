@@ -28,19 +28,30 @@ export async function pickAppleNativeTarget(options: {
   }
 
   const candidates = inspection.selection.candidates;
-  const choices = candidates.map((candidate) => ({
-    value: candidate.targetId,
-    name: `${candidate.targetName} — iOS — ${candidate.projectPath}`,
-    description: candidate.targetId,
-    // A copied project can reuse an object ID. Preserve the inspector's refusal
-    // rather than presenting a choice the existing selector cannot distinguish.
-    disabled:
-      candidates.filter(
-        (other) => other.targetId === candidate.targetId || other.targetName === candidate.targetId,
-      ).length > 1
-        ? "Target ID is shared; run from this project's directory."
-        : false,
-  }));
+  const choices = candidates.map((candidate) => {
+    const target = inspection.appTargets.find(
+      (target) => target.id === candidate.targetId && target.projectPath === candidate.projectPath,
+    );
+    const platform = target?.platformEvidenceComplete
+      ? target.supportedPlatforms
+          .map((platform) => (platform === "ios" ? "iOS" : "macOS"))
+          .join(" + ")
+      : "Platform unresolved";
+    return {
+      value: candidate.targetId,
+      name: `${candidate.targetName} — ${platform} — ${candidate.projectPath}`,
+      description: candidate.targetId,
+      // A copied project can reuse an object ID. Preserve the inspector's refusal
+      // rather than presenting a choice the existing selector cannot distinguish.
+      disabled:
+        candidates.filter(
+          (other) =>
+            other.targetId === candidate.targetId || other.targetName === candidate.targetId,
+        ).length > 1
+          ? "Target ID is shared; run from this project's directory."
+          : false,
+    };
+  });
   if (choices.every((choice) => choice.disabled)) return undefined;
 
   // Planning inspects again after the prompt; this inventory never authorizes edits.
