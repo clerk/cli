@@ -8,6 +8,8 @@ import {
   finalizeAndSendTelemetry,
   getTelemetryStatus,
   setTelemetryPauseStep,
+  setTelemetryDomainComponents,
+  setTelemetryOAuthComplete,
   setTelemetryStage,
   startCommandTelemetry,
   telemetryEnabled,
@@ -514,6 +516,57 @@ describe("finalizeAndSendTelemetry", () => {
 
     test("setting a stage with no active context is a no-op", () => {
       expect(() => setTelemetryStage("flags")).not.toThrow();
+    });
+  });
+
+  // Four booleans from two reads. Each setter owns its group and must not
+  // touch the other: a domain poll that re-sent OAuth would either blank a
+  // good observation or repeat a stale one.
+  describe("components", () => {
+    const success = { outcome: "success" as const, exitCode: 0 };
+
+    test("null until observed", async () => {
+      const payload = await sendAndCapturePayload(() => {}, success);
+      expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+    });
+
+    test("the domain setter leaves oauth alone", async () => {
+      const payload = await sendAndCapturePayload(
+        () => setTelemetryDomainComponents({ dns: true, ssl: false, mail: true }),
+        success,
+      );
+      expect(payload.components).toEqual({ dns: true, ssl: false, mail: true, oauth: null });
+    });
+
+    test("the oauth setter leaves the domain group alone", async () => {
+      const payload = await sendAndCapturePayload(() => setTelemetryOAuthComplete(false), success);
+      expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: false });
+    });
+
+    test("within a group the last write wins, across groups each keeps its own", async () => {
+      const payload = await sendAndCapturePayload(() => {
+        setTelemetryOAuthComplete(true);
+        setTelemetryDomainComponents({ dns: false, ssl: false, mail: false });
+        setTelemetryDomainComponents({ dns: true, ssl: false, mail: true });
+      }, success);
+      expect(payload.components).toEqual({ dns: true, ssl: false, mail: true, oauth: true });
+    });
+
+    test("does not leak into the next run", async () => {
+      await sendAndCapturePayload(() => {
+        setTelemetryOAuthComplete(true);
+        setTelemetryDomainComponents({ dns: true, ssl: true, mail: true });
+      }, success);
+
+      const payload = await sendAndCapturePayload(() => {}, success);
+      expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+    });
+
+    test("setting with no active context is a no-op", () => {
+      expect(() =>
+        setTelemetryDomainComponents({ dns: true, ssl: true, mail: true }),
+      ).not.toThrow();
+      expect(() => setTelemetryOAuthComplete(true)).not.toThrow();
     });
   });
 

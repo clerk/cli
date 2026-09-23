@@ -11,7 +11,8 @@ import {
   buildInterruptedDeployStatusReport,
   deployNextStep,
   loadProductionDomain,
-  recordObservedDeployStage,
+  recordDeployObservation,
+  recordDeployPoll,
   resolveDeployContext,
   resolveDeployState,
   triggerDeployStatusCheck,
@@ -57,7 +58,7 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
     // Recorded at each observation rather than from the final report: Ctrl-C
     // is reported by the signal handler, which reads the stage as it stands
     // when the interrupt lands, and the catch below runs too late for it.
-    recordObservedDeployStage(state, null);
+    recordDeployObservation(state);
     const shouldWait = options.wait === true || !isAgent();
 
     let outcome: DeployStatusOutcome | null = null;
@@ -67,7 +68,7 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
         triggerCheck: !preflightTriggered,
         onStatus: (polled) => {
           lastPolled = polled;
-          recordObservedDeployStage(active, polled);
+          recordDeployPoll(active.snapshot, polled);
         },
       });
     }

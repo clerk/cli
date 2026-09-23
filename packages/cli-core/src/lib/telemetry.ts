@@ -324,6 +324,40 @@ export function setTelemetryPauseStep(step: TelemetryPauseStep): void {
 }
 
 /**
+ * Record what a successful domain-status read said about DNS, SSL and email
+ * DNS. Only ever called with a live read's answer: the wizard's substituted
+ * "everything pending" status and its fresh-run placeholder are not
+ * observations, and recording either would file a network blip as a DNS
+ * failure. Leaves `oauth` alone — it comes from a different read, and a
+ * domain poll must not erase a good OAuth observation or re-send a stale one.
+ */
+export function setTelemetryDomainComponents(status: {
+  dns: boolean;
+  ssl: boolean;
+  mail: boolean;
+}): void {
+  if (!context) return;
+  context.components = {
+    ...context.components,
+    dns: status.dns,
+    ssl: status.ssl,
+    mail: status.mail,
+  };
+}
+
+/**
+ * Record whether every required OAuth provider has production credentials,
+ * from a successful production-configuration read or a credential save.
+ * "Required" is the CLI's rule as it stands — the providers enabled in
+ * development that the wizard knows how to configure. GROW-1236 changes that
+ * rule to read production configuration; this value follows automatically,
+ * because it is computed from the same report. Leaves the domain group alone.
+ */
+export function setTelemetryOAuthComplete(complete: boolean): void {
+  if (context) context.components = { ...context.components, oauth: complete };
+}
+
+/**
  * Declare what this run should be recorded as when it ends by setting
  * `process.exitCode` instead of throwing.
  *

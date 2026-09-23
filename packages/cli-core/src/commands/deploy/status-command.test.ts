@@ -950,6 +950,121 @@ describe("deploy status", () => {
 
         expect(error).toBeInstanceOf(PlapiError);
         expect(payload.stage).toBeNull();
+        expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+      });
+    });
+
+    // The four readiness booleans, each from the read that observed it. DNS,
+    // SSL and email DNS come from the domain-status response; OAuth from the
+    // production configuration. Null means never observed, and is never
+    // written as false by a failed read.
+    describe("components", () => {
+      function statusTelemetry(options: Parameters<typeof deployStatus>[0] = {}) {
+        return captureTelemetryPayload("deploy status", () => deployStatus(options), {
+          captureError: true,
+        });
+      }
+
+      function pendingMailDomainStatus() {
+        return {
+          status: "incomplete",
+          dns: { status: "complete" },
+          ssl: { status: "complete", required: true },
+          mail: { status: "pending", required: true },
+        };
+      }
+
+      function allPendingDomainStatus() {
+        return {
+          status: "incomplete",
+          dns: { status: "not_started" },
+          ssl: { status: "not_started", required: true },
+          mail: { status: "not_started", required: true },
+        };
+      }
+
+      const combinations = [
+        ["DNS only", pendingDnsDomainStatus, { dns: false, ssl: true, mail: true, oauth: true }],
+        ["SSL only", pendingSslDomainStatus, { dns: true, ssl: false, mail: true, oauth: true }],
+        [
+          "email DNS only",
+          pendingMailDomainStatus,
+          { dns: true, ssl: true, mail: false, oauth: true },
+        ],
+        [
+          "every domain component",
+          allPendingDomainStatus,
+          { dns: false, ssl: false, mail: false, oauth: true },
+        ],
+        ["nothing", completeDomainStatus, { dns: true, ssl: true, mail: true, oauth: true }],
+      ] as const;
+
+      for (const [pending, domainStatus, expected] of combinations) {
+        test(`${pending} pending records the observed booleans`, async () => {
+          mockFetchApplication.mockResolvedValue(appWith(true));
+          mockDomain();
+          mockOAuthComplete();
+          mockTriggerApplicationDomainDNSCheck.mockResolvedValue(domainStatus());
+          mockGetApplicationDomainStatus.mockResolvedValue(domainStatus());
+
+          const { payload } = await statusTelemetry();
+
+          expect(payload.components).toEqual(expected);
+        });
+      }
+
+      test("OAuth only pending records oauth false with the domain verified", async () => {
+        mockFetchApplication.mockResolvedValue(appWith(true));
+        mockDomain();
+        mockOAuthComplete();
+        mockFetchInstanceConfig.mockImplementation(() => ({
+          connection_oauth_google: { enabled: true },
+        }));
+        mockTriggerApplicationDomainDNSCheck.mockResolvedValue(completeDomainStatus());
+        mockGetApplicationDomainStatus.mockResolvedValue(completeDomainStatus());
+
+        const { payload } = await statusTelemetry();
+
+        expect(payload.components).toEqual({ dns: true, ssl: true, mail: true, oauth: false });
+      });
+
+      test("polls under --wait update the domain group and leave oauth as first observed", async () => {
+        mockFetchApplication.mockResolvedValue(appWith(true));
+        mockDomain();
+        mockOAuthComplete();
+        mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+        mockGetApplicationDomainStatus
+          .mockResolvedValueOnce(pendingDnsDomainStatus())
+          .mockResolvedValueOnce(pendingSslDomainStatus())
+          .mockResolvedValue(completeDomainStatus());
+
+        const { payload } = await statusTelemetry({ wait: true });
+
+        expect(payload.components).toEqual({ dns: true, ssl: true, mail: true, oauth: true });
+        // Development and production configuration, once each: no poll re-reads OAuth.
+        expect(mockFetchInstanceConfig).toHaveBeenCalledTimes(2);
+      });
+
+      test("a failed poll after a successful state read keeps what the read observed", async () => {
+        mockFetchApplication.mockResolvedValue(appWith(true));
+        mockDomain();
+        mockOAuthComplete();
+        mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+        mockGetApplicationDomainStatus
+          .mockResolvedValueOnce(pendingDnsDomainStatus())
+          .mockRejectedValue(
+            new PlapiError(
+              500,
+              JSON.stringify({ errors: [{ code: "server_error" }] }),
+              "https://x",
+            ),
+          );
+
+        const { payload, error } = await statusTelemetry({ wait: true });
+
+        expect(error).toBeInstanceOf(PlapiError);
+        expect(payload.stage).toBe("domain_pending");
+        expect(payload.components).toEqual({ dns: false, ssl: true, mail: true, oauth: true });
       });
     });
   });

@@ -33,7 +33,12 @@ import {
   type OAuthProviderDescriptor,
 } from "./providers.ts";
 import type { DeployContext, DeployOperationState } from "./state.ts";
-import { clearTelemetryStage, setTelemetryStage } from "../../lib/telemetry.ts";
+import {
+  clearTelemetryStage,
+  setTelemetryDomainComponents,
+  setTelemetryOAuthComplete,
+  setTelemetryStage,
+} from "../../lib/telemetry.ts";
 
 const DEPLOY_STATUS_INITIAL_RETRY_DELAY_MS = 3000;
 const DEPLOY_STATUS_MAX_RETRIES = 5;
@@ -220,8 +225,8 @@ export async function resolveDeployState(ctx: DeployContext): Promise<DeployStat
   // The read-only status path surfaces domain-status read failures instead of
   // masking them as pending, so a transient API error is not reported as
   // legitimate progress. `deployStatus` and the agent handoff record the
-  // telemetry stage from this read too; `recordObservedDeployStage` guards
-  // telemetry on its own, but the printed report reads `componentStatus`
+  // telemetry stage and components from this read too; `recordDeployObservation`
+  // guards telemetry on its own, but the printed report reads `componentStatus`
   // unconditionally and would need `snapshot.live` as well if this ever
   // stopped throwing.
   const snapshot = await resolveLiveDeploySnapshot(
@@ -534,14 +539,15 @@ export function deployReportState(
 
 /**
  * Record the deploy's state as telemetry's `stage`. Every write goes through
- * this function or {@link recordObservedDeployStage}, and every value is a
- * report state — what `clerk deploy status` would print for this deploy at
- * this moment — so the wizard, the agent handoff and the status command agree
- * about the same deploy.
+ * this function, {@link recordDeployObservation} or {@link recordDeployPoll},
+ * and every value is a report state — what `clerk deploy status` would print
+ * for this deploy at this moment — so the wizard, the agent handoff and the
+ * status command agree about the same deploy.
  *
- * One rule across every writer: last write wins, and nothing is written
- * without an observation, so a run that ends before any state is known sends
- * null. The writers, in the order a run can reach them:
+ * One rule across every writer of `stage` and of the four `components`: last
+ * write wins, and nothing is written without an observation, so a run that
+ * ends before any state is known sends null. The writers, in the order a run
+ * can reach them:
  *
  * - `startNewDeploy` on entry: `not_started`. The create call has not run.
  * - `startNewDeploy` when the create call finds an instance already exists:
@@ -549,15 +555,17 @@ export function deployReportState(
  * - `startNewDeploy` on the create response: `domain_pending` or
  *   `domain_provisioning`, from whether Clerk returned a domain.
  * - `reconcileExistingDeploy`: `domain_provisioning` when Clerk lists no
- *   domain, else the snapshot's state through `recordObservedDeployStage`.
- * - `runDnsVerification`, once per poll: that poll's verdict.
+ *   domain, else the snapshot through `recordDeployObservation`.
+ * - `runOAuthSetup`, after each credential save: `oauth` alone, through
+ *   {@link recordOAuthObservation}.
+ * - `runDnsVerification`, once per poll: that poll, through `recordDeployPoll`.
  * - `finishDeploy`: the resolver over the OAuth facts and a verified domain.
- * - `emitAgentDeployHandoff` and `deployStatus`: the state read, then each
- *   poll, through `recordObservedDeployStage`.
+ * - `emitAgentDeployHandoff` and `deployStatus`: the state read through
+ *   `recordDeployObservation`, then each poll through `recordDeployPoll`.
  *
  * This entry takes a state the caller can vouch for without a snapshot — one
- * the CLI's own action established, or a poll's verdict. A state derived from
- * a snapshot goes through `recordObservedDeployStage`, which is where the
+ * the CLI's own action established, or a poll's verdict. Anything derived
+ * from a snapshot goes through `recordDeployObservation`, which is where the
  * substituted-read check lives. `interrupted` is not a state of the deploy:
  * it means nothing was read, so whatever was last observed stays in place.
  */
@@ -566,21 +574,43 @@ export function recordDeployStage(state: DeployStatusState): void {
   setTelemetryStage(state);
 }
 
+/** Record whether every required provider has production credentials. */
+export function recordOAuthObservation(oauth: OAuthSetupFacts): void {
+  setTelemetryOAuthComplete(pendingOAuthProviders(oauth).length === 0);
+}
+
 /**
- * Record the state a `DeployState` establishes, or nothing when it rests on a
- * substituted snapshot. A poll outcome is its own observation, so with one
- * present the snapshot's liveness does not matter. This is the only place
- * that stops a fallback being recorded as an observation: the callers that
- * read through `resolveDeployState` never trip it today, because that read
- * throws rather than substitutes, and the check is here so that stays true
- * without every call site knowing about the option.
+ * Record everything a state read established. The four components come from
+ * two reads, so they are two observations: a snapshot exists only if the
+ * production-configuration read succeeded, so `oauth` is always recorded
+ * here, while the domain group and the stage need the domain-status read too
+ * and a substituted one records neither. This is the only place that stops a
+ * fallback being recorded as an observation: the callers that read through
+ * `resolveDeployState` never trip it today, because that read throws rather
+ * than substitutes, and the check is here so that stays true without every
+ * call site knowing about the option.
  */
-export function recordObservedDeployStage(
-  state: DeployState,
-  outcome: DeployStatusOutcome | null,
-): void {
-  if (state.kind === "active" && !outcome && !state.snapshot.live) return;
-  recordDeployStage(deployReportState(state, outcome));
+export function recordDeployObservation(state: DeployState): void {
+  if (state.kind !== "active") {
+    recordDeployStage(state.kind);
+    return;
+  }
+  const { snapshot } = state;
+  recordOAuthObservation(snapshot);
+  if (!snapshot.live) return;
+  setTelemetryDomainComponents(snapshot.componentStatus);
+  recordDeployStage(resolveActiveReportState(snapshot, snapshot.domainComplete));
+}
+
+/**
+ * Record what one domain-status poll established: the three domain
+ * components and the stage. `oauth` is untouched — the poll did not read it,
+ * and the earlier observation stands. A poll is its own observation, so it
+ * records whatever the snapshot before it was.
+ */
+export function recordDeployPoll(oauth: OAuthSetupFacts, polled: DeployStatusOutcome): void {
+  setTelemetryDomainComponents(polled.status);
+  recordDeployStage(resolveActiveReportState(oauth, polled.verified));
 }
 
 /**

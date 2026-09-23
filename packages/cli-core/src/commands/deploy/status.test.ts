@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PlapiError } from "../../lib/errors.ts";
-import { fakeTelemetryCommand } from "../../test/lib/stubs.ts";
+import { captureTelemetryPayload } from "../../test/lib/stubs.ts";
 import type { LiveDeploySnapshot } from "./status.ts";
 
 const mockFetchApplication = mock();
@@ -26,12 +29,13 @@ const {
   buildInterruptedDeployStatusReport,
   deployNextStep,
   loadInitialDeployStatus,
-  recordObservedDeployStage,
+  recordDeployObservation,
+  recordDeployPoll,
   resolveDeployState,
   waitForDeployStatus,
 } = await import("./status.ts");
-const { currentTelemetryStage, setTelemetryStage, startCommandTelemetry } =
-  await import("../../lib/telemetry.ts");
+const { setTelemetryStage } = await import("../../lib/telemetry.ts");
+const { _setConfigDir } = await import("../../lib/config.ts");
 
 const ctx = {
   profileKey: "/tmp/x",
@@ -245,8 +249,9 @@ describe("loadInitialDeployStatus", () => {
 // The only guard between a substituted "everything pending" read and a
 // recorded DNS stall. The status command never trips it today because its
 // read throws instead of substituting; the guard is here so that a change to
-// that read cannot silently start recording fallbacks.
-describe("recordObservedDeployStage", () => {
+// that read cannot silently start recording fallbacks. Read back through the
+// posted payload, since that is the only place the components are visible.
+describe("recording observations", () => {
   const snapshot = {
     appId: "app_1",
     developmentInstanceId: "ins_dev",
@@ -259,48 +264,81 @@ describe("recordObservedDeployStage", () => {
     cnameTargets: [],
     domainComplete: false,
     live: true,
-    componentStatus: { dns: false, ssl: false, mail: false },
+    componentStatus: { dns: false, ssl: true, mail: true },
     unsupportedOAuthProviderCount: 0,
     unsupportedOAuthProviders: [],
     pending: { type: "dns" as const },
   } satisfies LiveDeploySnapshot;
+  let tempDir = "";
 
-  beforeEach(() => {
-    startCommandTelemetry(fakeTelemetryCommand("deploy status"));
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "clerk-status-observe-"));
+    _setConfigDir(tempDir);
   });
 
-  test("a live snapshot records its state", () => {
-    recordObservedDeployStage({ kind: "active", snapshot }, null);
-
-    expect(currentTelemetryStage()).toBe("domain_pending");
+  afterEach(async () => {
+    _setConfigDir(undefined);
+    await rm(tempDir, { recursive: true, force: true });
   });
 
-  test("a substituted snapshot leaves the stage as it was", () => {
-    setTelemetryStage("oauth_pending");
+  async function recorded(run: () => void) {
+    const { payload } = await captureTelemetryPayload("deploy status", run, {
+      result: { outcome: "success", exitCode: 0 },
+    });
+    return { stage: payload.stage, components: payload.components };
+  }
 
-    recordObservedDeployStage({ kind: "active", snapshot: { ...snapshot, live: false } }, null);
+  test("a live snapshot records its state and all four components", async () => {
+    const result = await recorded(() => recordDeployObservation({ kind: "active", snapshot }));
 
-    expect(currentTelemetryStage()).toBe("oauth_pending");
+    expect(result).toEqual({
+      stage: "domain_pending",
+      components: { dns: false, ssl: true, mail: true, oauth: true },
+    });
   });
 
-  test("a poll outcome is its own observation, whatever the snapshot was", () => {
-    recordObservedDeployStage(
-      { kind: "active", snapshot: { ...snapshot, live: false } },
-      { verified: true, status: { dns: true, ssl: true, mail: true } },
+  // The configuration read succeeded, so OAuth is an observation; the domain
+  // read did not, so nothing about the domain is, and the stage stays as it was.
+  test("a substituted snapshot records OAuth only", async () => {
+    const result = await recorded(() => {
+      setTelemetryStage("oauth_pending");
+      recordDeployObservation({ kind: "active", snapshot: { ...snapshot, live: false } });
+    });
+
+    expect(result).toEqual({
+      stage: "oauth_pending",
+      components: { dns: null, ssl: null, mail: null, oauth: true },
+    });
+  });
+
+  test("a poll records the domain group and stage, and leaves OAuth as observed", async () => {
+    const result = await recorded(() => {
+      recordDeployObservation({ kind: "active", snapshot: { ...snapshot, live: false } });
+      recordDeployPoll(snapshot, { verified: true, status: { dns: true, ssl: true, mail: true } });
+    });
+
+    expect(result).toEqual({
+      stage: "complete",
+      components: { dns: true, ssl: true, mail: true, oauth: true },
+    });
+  });
+
+  test("the two states without a snapshot record a stage and no components", async () => {
+    const notStarted = await recorded(() => recordDeployObservation({ kind: "not_started" }));
+    expect(notStarted).toEqual({
+      stage: "not_started",
+      components: { dns: null, ssl: null, mail: null, oauth: null },
+    });
+
+    const provisioning = await recorded(() =>
+      recordDeployObservation({
+        kind: "domain_provisioning",
+        appId: "app_1",
+        productionInstanceId: "ins_prod",
+      }),
     );
-
-    expect(currentTelemetryStage()).toBe("complete");
-  });
-
-  test("the two states without a snapshot record directly", () => {
-    recordObservedDeployStage({ kind: "not_started" }, null);
-    expect(currentTelemetryStage()).toBe("not_started");
-
-    recordObservedDeployStage(
-      { kind: "domain_provisioning", appId: "app_1", productionInstanceId: "ins_prod" },
-      null,
-    );
-    expect(currentTelemetryStage()).toBe("domain_provisioning");
+    expect(provisioning.stage).toBe("domain_provisioning");
+    expect(provisioning.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
   });
 });
 

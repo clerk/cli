@@ -2674,6 +2674,10 @@ describe("deploy", () => {
         expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_PAUSED);
         expect(payload.pause_step).toBe("oauth");
         expect(payload.stage).toBe("domain_pending");
+        // Nothing was read and nothing was saved, so no component is observed
+        // — not even OAuth, which the wizard knows is unconfigured but has
+        // not read from the production configuration.
+        expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
 
         // The same deploy, read back: instance present, DNS unverified, OAuth
         // unconfigured.
@@ -2686,6 +2690,12 @@ describe("deploy", () => {
 
         expect(status.payload.stage).toBe("domain_pending");
         expect(status.payload.outcome).toBe("incomplete");
+        expect(status.payload.components).toEqual({
+          dns: false,
+          ssl: false,
+          mail: false,
+          oauth: false,
+        });
       });
 
       test("Ctrl-C at the DNS retry prompt is a cancelled deploy at the dns step", async () => {
@@ -2994,6 +3004,7 @@ describe("deploy", () => {
 
         expect(payload.outcome).toBe("success");
         expect(payload.stage).toBe("complete");
+        expect(payload.components).toEqual({ dns: true, ssl: true, mail: true, oauth: true });
       });
 
       test("completing the last OAuth provider on a verified domain ends at complete", async () => {
@@ -3008,6 +3019,50 @@ describe("deploy", () => {
 
         expect(payload.outcome).toBe("success");
         expect(payload.stage).toBe("complete");
+        // The domain group from the live resume read; oauth from the save that
+        // followed it, overriding the `false` the read observed.
+        expect(payload.components).toEqual({ dns: true, ssl: true, mail: true, oauth: true });
+      });
+
+      test("a fresh run that saves every provider and skips DNS observes oauth alone", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+        mockOAuthCompletion();
+        mockSelect.mockResolvedValueOnce("skip");
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.stage).toBe("domain_pending");
+        expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: true });
+      });
+
+      test("a failed poll after a live resume read keeps what the read observed", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockGetApplicationDomainStatus
+          .mockResolvedValueOnce(
+            domainStatus({ status: "incomplete", dns: false, ssl: true, mail: true }),
+          )
+          .mockRejectedValue(
+            new PlapiError(
+              500,
+              JSON.stringify({ errors: [{ code: "server_error" }] }),
+              "https://x",
+            ),
+          );
+        mockConfirm.mockResolvedValueOnce(false);
+        mockSelect.mockResolvedValueOnce("check");
+
+        const { payload, error } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(error).toBeInstanceOf(PlapiError);
+        expect(payload.stage).toBe("domain_pending");
+        expect(payload.components).toEqual({ dns: false, ssl: true, mail: true, oauth: true });
       });
 
       // The resume path substitutes "everything pending" when the domain-status
@@ -3029,6 +3084,13 @@ describe("deploy", () => {
 
         expect(payload.outcome).toBe("success");
         expect(payload.stage).toBeNull();
+        // The configuration read succeeded and the domain read did not: one
+        // observation, not four falses for a network blip.
+        expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: true });
+        // And the user still gets the normal retry screen.
+        expect(mockSelect).toHaveBeenCalledWith(
+          expect.objectContaining({ message: "DNS verification" }),
+        );
       });
 
       test("a resume whose domain read failed records what a later successful poll observes", async () => {
@@ -3054,6 +3116,7 @@ describe("deploy", () => {
 
         expect(payload.outcome).toBe("success");
         expect(payload.stage).toBe("complete");
+        expect(payload.components).toEqual({ dns: true, ssl: true, mail: true, oauth: true });
       });
 
       // The stage is recorded per poll, not once the wait returns: the signal

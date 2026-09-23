@@ -65,8 +65,10 @@ import {
 import {
   buildDeployStatusReport,
   loadDevelopmentOAuthProviders,
+  recordDeployObservation,
+  recordDeployPoll,
   recordDeployStage,
-  recordObservedDeployStage,
+  recordOAuthObservation,
   resolveActiveReportState,
   resolveDeployContext,
   resolveDeployState,
@@ -130,7 +132,7 @@ async function emitAgentDeployHandoff(): Promise<void> {
   }
 
   const state = await resolveDeployState(ctx);
-  recordObservedDeployStage(state, null);
+  recordDeployObservation(state);
   const report = buildDeployStatusReport(state, null);
   log.data(JSON.stringify(report, null, 2));
 }
@@ -289,9 +291,10 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
     await outro("No deploy actions available");
     return;
   }
-  // Records nothing when the domain read was substituted; a later poll that
-  // succeeds will.
-  recordObservedDeployStage({ kind: "active", snapshot }, null);
+  // Records no stage or domain components when the domain read was
+  // substituted; a later poll that succeeds will. OAuth is recorded either
+  // way, since the configuration read succeeded.
+  recordDeployObservation({ kind: "active", snapshot });
 
   log.blank();
   for (const line of printPlan(ctx.appLabel, buildLiveDeployPlan(snapshot))) {
@@ -527,7 +530,7 @@ async function runDnsVerification(
     // Per poll, not once the wait returns: a Ctrl-C mid-wait is reported by
     // the signal handler with the stage as it stands at that moment.
     const outcome = await pollDeployStatus(ctx.appId, domainIdOrName, state.domain, (polled) =>
-      recordDeployStage(resolveActiveReportState(state, polled.verified)),
+      recordDeployPoll(state, polled),
     );
 
     if (outcome.verified) {
@@ -620,6 +623,9 @@ async function runOAuthSetup(
   descriptors: readonly OAuthProviderDescriptor[],
 ): Promise<OAuthProvider[]> {
   const completed = new Set(state.completedOAuthProviders as OAuthProvider[]);
+  const oauthProviders = descriptors.map((descriptor) => descriptor.provider);
+  const recordOAuth = () =>
+    recordOAuthObservation({ oauthProviders, completedOAuthProviders: [...completed] });
 
   if (descriptors.length > 0) {
     log.info(OAUTH_SECTION_INTRO);
@@ -670,11 +676,19 @@ async function runOAuthSetup(
       throw error;
     }
     completed.add(descriptor.provider);
+    // Each save is an observation of the production configuration: this
+    // provider now has credentials, the ones after it still do not. A pause
+    // on the next provider then reports `oauth: false` from a real write, not
+    // from a guess.
+    recordOAuth();
     if (descriptors.some((nextDescriptor) => !completed.has(nextDescriptor.provider))) {
       log.blank();
     }
   }
 
+  // Also the deploy with nothing to configure: no provider is required, so
+  // OAuth is complete, which is what `deploy status` reports for it too.
+  recordOAuth();
   return [...completed];
 }
 
