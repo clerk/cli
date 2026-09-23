@@ -17,6 +17,7 @@ import { log } from "../../../lib/log.ts";
 import { text } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
+import { loadSettings, saveSettings } from "../lib/settings.ts";
 
 /**
  * `YYYYMMDD-HHmm`, local time — ISO 8601 basic format, minus seconds.
@@ -152,8 +153,11 @@ export type ExportSummary = {
  * human-only — `withGutter` and `printNextSteps` both return early for an agent
  * or a non-TTY — and this is the one line that says what to do with the file
  * just written. An agent that cannot see it has to guess the invocation.
+ *
+ * Also remembers the transformer and the file, so the import can be run
+ * without retyping what was just printed.
  */
-export function reportExport(summary: ExportSummary): void {
+export async function reportExport(summary: ExportSummary): Promise<void> {
   log.blank();
   if (summary.userCount === 0) {
     log.warn(`No users found to export. Wrote an empty file to ${summary.outputPath}.`);
@@ -176,13 +180,32 @@ export function reportExport(summary: ExportSummary): void {
     `Exported ${summary.userCount} user${summary.userCount === 1 ? "" : "s"} to ${summary.outputPath}`,
   );
 
+  const file = relativeIfInside(summary.outputPath);
+
   log.blank();
-  for (const line of formatImportCommand(
-    summary.transformerKey,
-    relativeIfInside(summary.outputPath),
-  )) {
+  for (const line of formatImportCommand(summary.transformerKey, file)) {
     log.info(line);
   }
+
+  await rememberExport(summary.transformerKey, file);
+}
+
+/**
+ * Remembers what this export produced, so `clerk migrate import` can be run
+ * without repeating the flags just printed.
+ *
+ * `-y` opts out. It means "do not stop to ask me", and a remembered value is
+ * something a later run picks up silently — the same reason `ensureLogDir`
+ * saves nothing under `-y`. Both settings stay unset until somebody who was
+ * watching the output produced them.
+ *
+ * Stores the path the way it was printed: relative while it sits under the
+ * project, so the remembered value and the copyable command say the same
+ * thing.
+ */
+async function rememberExport(transformer: string, file: string): Promise<void> {
+  if (isAssumeYes()) return;
+  await saveSettings({ ...(await loadSettings()), transformer, file });
 }
 
 /**

@@ -141,7 +141,7 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
     const { users, coverage } = buildAuthJsExport(rows, dateTime);
     const outputPath = writeExportOutput(users, destination);
 
-    reportExport({
+    await reportExport({
       platform: "authjs",
       userCount: users.length,
       outputPath,

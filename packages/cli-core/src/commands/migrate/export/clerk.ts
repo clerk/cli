@@ -246,7 +246,7 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
     const { users: exported, coverage } = buildClerkExport(users, dateTime);
     const outputPath = writeExportOutput(exported, destination);
 
-    reportExport({
+    await reportExport({
       platform: "clerk",
       userCount: exported.length,
       outputPath,

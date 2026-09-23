@@ -136,7 +136,7 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
     const { users, coverage } = buildSupabaseExport(rows, dateTime);
     const outputPath = writeExportOutput(users, destination);
 
-    reportExport({
+    await reportExport({
       platform: "supabase",
       userCount: users.length,
       outputPath,

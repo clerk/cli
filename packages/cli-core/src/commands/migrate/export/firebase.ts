@@ -32,7 +32,9 @@ import { password as passwordPrompt } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
+import { writeMigrateEnvValues } from "../lib/env-file.ts";
 import { exportLogger, startLogging } from "../lib/logger.ts";
+import { findSetting } from "../settings/registry.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 
@@ -499,6 +501,35 @@ export function formatHashConfigGuidance(
   ];
 }
 
+/**
+ * Saves the scrypt parameters where `clerk migrate import` will read them.
+ *
+ * They are credentials, so they land in `.env.clerk-migrate` — created
+ * gitignored — rather than the CLI config, which is the split the settings
+ * registry owns. The variable names come from that registry instead of being
+ * spelled again here: a setting and the variable behind it must not drift into
+ * two names the user has to know separately.
+ *
+ * `-y` opts out, for the reason {@link reportExport} gives. Writing a
+ * credential file is also not something to do silently, so the path is named.
+ */
+async function rememberHashConfig(config: HashConfig | null): Promise<void> {
+  if (!config || isAssumeYes()) return;
+
+  const variable = (name: string) =>
+    (findSetting(name) as NonNullable<ReturnType<typeof findSetting>>).envVar as string;
+
+  const file = await writeMigrateEnvValues({
+    [variable("firebase-signer-key")]: config.signerKey,
+    [variable("firebase-salt-separator")]: config.saltSeparator,
+    [variable("firebase-rounds")]: String(config.rounds),
+    [variable("firebase-mem-cost")]: String(config.memoryCost),
+  });
+
+  log.blank();
+  log.info(dim(`Saved to ${file} (gitignored), so the import can be run without them.`));
+}
+
 export async function exportFirebase(options: ExportFirebaseOptions): Promise<void> {
   // Read and validate before anything reaches the network, so a wrong file
   // fails in a second rather than after an auth round-trip.
@@ -529,7 +560,7 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
     const { users: exported, coverage } = buildFirebaseExport(users, dateTime);
     const outputPath = writeExportOutput(exported, destination);
 
-    reportExport({
+    await reportExport({
       platform: "firebase",
       userCount: exported.length,
       outputPath,
@@ -544,5 +575,7 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
     for (const line of formatHashConfigGuidance(hashConfig, outputPath, passwordCount)) {
       log.info(line);
     }
+
+    await rememberHashConfig(hashConfig);
   });
 }

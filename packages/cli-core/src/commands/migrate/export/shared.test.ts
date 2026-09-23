@@ -1,9 +1,17 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import path from "node:path";
 import { type CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
+import { useCaptureLog } from "../../../test/lib/stubs.ts";
 
 const mockText = mock();
 mock.module("../../../lib/prompts.ts", () => ({
   text: (...args: unknown[]) => mockText(...args),
+}));
+
+const mockSaveSettings = mock(async () => {});
+mock.module("../lib/settings.ts", () => ({
+  loadSettings: async () => ({}),
+  saveSettings: (...args: unknown[]) => mockSaveSettings(...(args as [])),
 }));
 
 let human = true;
@@ -14,7 +22,7 @@ mock.module("../../../mode.ts", () => ({
   setMode: () => {},
 }));
 
-const { defaultOutputPath, formatImportCommand, outputStamp, resolveOutputPath } =
+const { defaultOutputPath, formatImportCommand, outputStamp, reportExport, resolveOutputPath } =
   await import("./shared.ts");
 const { setAssumeYes } = await import("../lib/assume-yes.ts");
 
@@ -22,6 +30,7 @@ beforeEach(() => {
   human = true;
   setAssumeYes(false);
   mockText.mockReset();
+  mockSaveSettings.mockReset();
 });
 
 describe("outputStamp", () => {
@@ -164,5 +173,44 @@ describe("formatImportCommand", () => {
     const text = render();
     expect(text).toContain("clerk migrate import -y --transformer supabase");
     expect(text).not.toContain("Add `-y`");
+  });
+});
+
+describe("reportExport", () => {
+  useCaptureLog();
+
+  const summary = {
+    platform: "supabase",
+    userCount: 2,
+    outputPath: path.resolve(process.cwd(), "exports/mine.json"),
+    coverage: [{ label: "have an email address", count: 2 }],
+    transformerKey: "supabase",
+  };
+
+  // Relative, matching the command printed alongside it: the remembered value
+  // and the copyable one must not disagree about the same file.
+  test("remembers the transformer and the file for the next import", async () => {
+    await reportExport(summary);
+
+    expect(mockSaveSettings).toHaveBeenCalledWith({
+      transformer: "supabase",
+      file: path.join("exports", "mine.json"),
+    });
+  });
+
+  // `-y` means "do not stop to ask me", and a remembered value is one a later
+  // run picks up silently.
+  test("remembers nothing under -y", async () => {
+    setAssumeYes(true);
+
+    await reportExport(summary);
+
+    expect(mockSaveSettings).not.toHaveBeenCalled();
+  });
+
+  test("remembers nothing when there was nothing to export", async () => {
+    await reportExport({ ...summary, userCount: 0 });
+
+    expect(mockSaveSettings).not.toHaveBeenCalled();
   });
 });

@@ -354,7 +354,7 @@ export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
     const { users: exported, coverage } = buildAuth0Export(users, dateTime);
     const outputPath = writeExportOutput(exported, destination);
 
-    reportExport({
+    await reportExport({
       platform: "auth0",
       userCount: exported.length,
       outputPath,

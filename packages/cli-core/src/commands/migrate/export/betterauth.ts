@@ -197,7 +197,7 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
     const { users, coverage } = buildBetterAuthExport(rows, dateTime);
     const outputPath = writeExportOutput(users, destination);
 
-    reportExport({
+    await reportExport({
       platform: "betterauth",
       userCount: users.length,
       outputPath,

@@ -282,6 +282,22 @@ profile in that order.
 Every export also writes `logs/export-<timestamp>.log`, so `migrate logs list`
 sees it alongside imports and deletions.
 
+#### What an export remembers
+
+The printed command is one half of the handoff; the other is that an export
+**saves what it just produced** as this project's `transformer` and `file`
+settings, so a bare `clerk migrate import` picks up where the export left off.
+`clerk migrate settings` shows both afterwards, sourced from the CLI config.
+
+The path is remembered the way it was printed — relative while it sits under
+the project — so the remembered value and the copyable command never disagree
+about which file they mean.
+
+**`-y` saves nothing.** It means "do not stop to ask me", and a remembered
+value is one a later run picks up silently; a non-interactive export leaves the
+settings untouched and the printed command as the only handoff. This is the
+rule [`log-dir`](#where-logs-go) already follows.
+
 #### Three platforms export no passwords
 
 - **Clerk** never returns password digests, TOTP secrets or backup codes over
@@ -387,6 +403,14 @@ that character lands in the middle of the command and is copied along with it �
 the shell then reads each one as another argument and rejects the import. A line
 that wraps on screen carries no such character and pastes back as what was
 printed.
+
+The four parameters are also **saved to `.env.clerk-migrate`** (created
+gitignored), under the variables the `firebase-*` settings read, so the import
+can be run without pasting them back. They are credentials, which is why they
+go to that file rather than the CLI config — the same split
+`settings set firebase-signer-key` uses. The path is named in the output:
+writing a credential file is not something to do silently. As everywhere else,
+`-y` saves nothing.
 
 Reading the config needs a broader role than listing users, so if it is denied
 the export still succeeds and points at **Authentication → Users → (⋮) →

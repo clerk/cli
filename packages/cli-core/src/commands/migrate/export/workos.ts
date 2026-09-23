@@ -471,7 +471,7 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
     const { users: exported, coverage } = buildWorkOsExport(users, dateTime, providers?.identities);
     const outputPath = writeExportOutput(exported, destination);
 
-    reportExport({
+    await reportExport({
       platform: "workos",
       userCount: exported.length,
       outputPath,
