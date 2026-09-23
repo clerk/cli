@@ -1,3 +1,15 @@
+import {
+  bytesWithOptionalBOM,
+  newEntitlementsBytes,
+  lineIndentAt,
+  stripXMLCommentsPreservingOffsets,
+  entitlementKeyStructure,
+  decodeEntitlementsXML,
+} from "./entitlements-xml.ts";
+import {
+  generatedProjectKind,
+  selectedIOSAppTarget as selectedTarget,
+} from "./project-selection.ts";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { parse as parsePbxProject } from "@bacons/xcode/json";
@@ -25,7 +37,6 @@ import {
 } from "./entitlements-settings.ts";
 import { inspectIOSProject } from "./inspect.ts";
 import { asString, buildPbxParentIndex, isRecord, type PbxObject, type PbxObjects } from "./pbx.ts";
-import { parseIOSPlist } from "./plist.ts";
 import type { IOSAppTarget, IOSDiagnostic, IOSProjectInspectionResult } from "./types.ts";
 
 const ASSOCIATED_DOMAINS_KEY = "com.apple.developer.associated-domains";
@@ -148,24 +159,6 @@ function blockedPlan(
   };
 }
 
-function selectedTarget(
-  inspection: IOSProjectInspectionResult,
-  projectPath: string,
-  targetId: string,
-): IOSAppTarget | undefined {
-  const selection = inspection.selection;
-  if (
-    selection.state !== "selected" ||
-    selection.projectPath !== projectPath ||
-    selection.targetId !== targetId
-  ) {
-    return undefined;
-  }
-  return inspection.appTargets.find(
-    (target) => target.projectPath === projectPath && target.id === targetId,
-  );
-}
-
 function runtimeFrontendHost(
   inspection: IOSProjectInspectionResult,
   target: IOSAppTarget,
@@ -181,56 +174,6 @@ function runtimeFrontendHost(
       call.inlinePublishableKey?.state === "valid",
   );
   return connected ? key.frontendApiHost : undefined;
-}
-
-function stripXMLCommentsPreservingOffsets(source: string): string {
-  return source.replace(/<!--[\s\S]*?-->/g, (comment) => " ".repeat(comment.length));
-}
-
-function countAssociatedDomainKeys(source: string): number {
-  const structural = stripXMLCommentsPreservingOffsets(source);
-  return [
-    ...structural.matchAll(/<key\b[^>]*>\s*com\.apple\.developer\.associated-domains\s*<\/key>/g),
-  ].length;
-}
-
-function decodeXMLText(value: string): string | undefined {
-  if (/[<>]/.test(value)) return undefined;
-  let unsupported = false;
-  const decoded = value.replace(
-    /&(?:#x([0-9a-f]+)|#([0-9]+)|(amp|lt|gt|quot|apos));/gi,
-    (_entity, hex: string | undefined, decimal: string | undefined, named: string | undefined) => {
-      if (hex) return String.fromCodePoint(Number.parseInt(hex, 16));
-      if (decimal) return String.fromCodePoint(Number.parseInt(decimal, 10));
-      if (named === "amp") return "&";
-      if (named === "lt") return "<";
-      if (named === "gt") return ">";
-      if (named === "quot") return '"';
-      if (named === "apos") return "'";
-      unsupported = true;
-      return "";
-    },
-  );
-  if (unsupported || /&[^;\s]*;/.test(decoded)) return undefined;
-  return decoded;
-}
-
-function associatedDomainKeyStructure(source: string): {
-  semanticCount: number;
-  safelyDecoded: boolean;
-} {
-  const structural = stripXMLCommentsPreservingOffsets(source);
-  let semanticCount = 0;
-  let safelyDecoded = true;
-  for (const match of structural.matchAll(/<key\b[^>]*>([\s\S]*?)<\/key>/g)) {
-    const decoded = decodeXMLText(match[1] ?? "");
-    if (decoded == null) {
-      safelyDecoded = false;
-      continue;
-    }
-    if (decoded.trim() === ASSOCIATED_DOMAINS_KEY) semanticCount += 1;
-  }
-  return { semanticCount, safelyDecoded };
 }
 
 function hasUnresolvedDomain(value: string): boolean {
@@ -301,14 +244,10 @@ async function inspectEntitlementsFile(
         ),
       };
     }
-    const bom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
-    const textBytes = bom ? bytes.slice(3) : bytes;
-    const source = new TextDecoder("utf-8", { fatal: true }).decode(textBytes);
-    const parsed = parseIOSPlist(source);
-    if (!isRecord(parsed)) throw new Error("plist root is not a dictionary");
+    const { source, bom, values: parsed } = decodeEntitlementsXML(bytes);
     const rawDomains = parsed[ASSOCIATED_DOMAINS_KEY];
-    const structuralKeyCount = countAssociatedDomainKeys(source);
-    const semanticKeyStructure = associatedDomainKeyStructure(source);
+    const semanticKeyStructure = entitlementKeyStructure(source, ASSOCIATED_DOMAINS_KEY);
+    const structuralKeyCount = semanticKeyStructure.literalCount;
     if (
       rawDomains !== undefined &&
       (!Array.isArray(rawDomains) || rawDomains.some((value) => typeof value !== "string"))
@@ -481,31 +420,6 @@ async function ownershipIsExclusive(
 
 function exactDomainPresent(domains: readonly string[], expectedDomain: string): boolean {
   return domains.includes(expectedDomain);
-}
-
-async function generatedProjectKind(
-  root: string,
-  absoluteProjectPath: string,
-): Promise<"xcodegen" | "tuist" | null> {
-  let directory = dirname(absoluteProjectPath);
-  while (await pathIsSafelyWithinIOSRoot(root, directory)) {
-    for (const [relativePath, kind] of [
-      ["project.yml", "xcodegen"],
-      ["Project.swift", "tuist"],
-      ["Workspace.swift", "tuist"],
-      ["Tuist/ProjectDescriptionHelpers", "tuist"],
-    ] as const) {
-      const marker = resolve(directory, relativePath);
-      if ((await pathIsSafelyWithinIOSRoot(root, marker)) && (await Bun.file(marker).exists())) {
-        return kind;
-      }
-    }
-    if (directory === root) break;
-    const parent = dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
-  }
-  return null;
 }
 
 /**
@@ -739,11 +653,6 @@ function xmlEscape(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
-function lineIndentAt(source: string, index: number): string {
-  const start = source.lastIndexOf("\n", index - 1) + 1;
-  return /^[\t ]*/.exec(source.slice(start, index))?.[0] ?? "";
-}
-
 function addDomainToXML(source: string, expectedDomain: string): string | undefined {
   const structural = stripXMLCommentsPreservingOffsets(source);
   const keyMatches = [
@@ -798,33 +707,6 @@ function addDomainToXML(source: string, expectedDomain: string): string | undefi
   // Preserve compact arrays as compact rather than moving their closing tag.
   const insertion = `<string>${encoded}</string>`;
   return `${source.slice(0, close)}${insertion}${source.slice(close)}`;
-}
-
-function bytesWithOptionalBOM(source: string, bom: boolean): Uint8Array {
-  const encoded = new TextEncoder().encode(source);
-  if (!bom) return encoded;
-  const bytes = new Uint8Array(encoded.length + 3);
-  bytes.set([0xef, 0xbb, 0xbf]);
-  bytes.set(encoded, 3);
-  return bytes;
-}
-
-function newEntitlementsBytes(expectedDomain: string): Uint8Array {
-  return new TextEncoder().encode(
-    [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-      '<plist version="1.0">',
-      "<dict>",
-      `\t<key>${ASSOCIATED_DOMAINS_KEY}</key>`,
-      "\t<array>",
-      `\t\t<string>${xmlEscape(expectedDomain)}</string>`,
-      "\t</array>",
-      "</dict>",
-      "</plist>",
-      "",
-    ].join("\n"),
-  );
 }
 
 function isMissingFileError(error: unknown): boolean {
@@ -957,7 +839,12 @@ export async function prepareIOSAssociatedDomainMutation(
     ) {
       return { status: "stale", plan };
     }
-    const candidateBytes = newEntitlementsBytes(expectedDomain);
+    const candidateBytes = newEntitlementsBytes([
+      `<key>${ASSOCIATED_DOMAINS_KEY}</key>`,
+      "<array>",
+      `\t<string>${xmlEscape(expectedDomain)}</string>`,
+      "</array>",
+    ]);
     const createMutation: IOSCreateFileMutation = {
       kind: "create",
       path: createPath,

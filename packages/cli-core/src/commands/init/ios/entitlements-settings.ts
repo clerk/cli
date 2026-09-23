@@ -1,3 +1,4 @@
+import { generatedProjectKind } from "./project-selection.ts";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -305,31 +306,6 @@ async function readProjectSnapshot(
   } catch {
     return undefined;
   }
-}
-
-async function generatedProjectKind(
-  root: string,
-  absoluteProjectPath: string,
-): Promise<"xcodegen" | "tuist" | null> {
-  let directory = dirname(absoluteProjectPath);
-  while (await pathIsSafelyWithinIOSRoot(root, directory)) {
-    for (const [relativePath, kind] of [
-      ["project.yml", "xcodegen"],
-      ["Project.swift", "tuist"],
-      ["Workspace.swift", "tuist"],
-      ["Tuist/ProjectDescriptionHelpers", "tuist"],
-    ] as const) {
-      const marker = resolve(directory, relativePath);
-      if ((await pathIsSafelyWithinIOSRoot(root, marker)) && (await Bun.file(marker).exists())) {
-        return kind;
-      }
-    }
-    if (directory === root) break;
-    const parent = dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
-  }
-  return null;
 }
 
 function parentReferenceCount(objects: PbxObjects, childId: string): number {

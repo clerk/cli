@@ -1,3 +1,4 @@
+import { generatedProjectKind } from "./project-selection.ts";
 import { lstat, readFile } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 import { dirname, isAbsolute, resolve } from "node:path";
@@ -174,31 +175,6 @@ function supportedRemoteRequirement(value: unknown): boolean {
   if (kind === "branch") return (asString(value.branch)?.trim().length ?? 0) > 0;
   if (kind === "revision") return (asString(value.revision)?.trim().length ?? 0) > 0;
   return false;
-}
-
-async function generatedProjectKind(
-  root: string,
-  absoluteProjectPath: string,
-): Promise<"xcodegen" | "tuist" | null> {
-  let directory = dirname(absoluteProjectPath);
-  while (await pathIsSafelyWithinIOSRoot(root, directory)) {
-    for (const [relativePath, kind] of [
-      ["project.yml", "xcodegen"],
-      ["Project.swift", "tuist"],
-      ["Workspace.swift", "tuist"],
-      ["Tuist/ProjectDescriptionHelpers", "tuist"],
-    ] as const) {
-      const marker = resolve(directory, relativePath);
-      if ((await pathIsSafelyWithinIOSRoot(root, marker)) && (await Bun.file(marker).exists())) {
-        return kind;
-      }
-    }
-    if (directory === root) break;
-    const parent = dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
-  }
-  return null;
 }
 
 function makePlan(
