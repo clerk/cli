@@ -4,6 +4,7 @@ import { log } from "../../lib/log.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { withSpinner } from "../../lib/spinner.ts";
+import { declareSoftExitOutcome } from "../../lib/telemetry.ts";
 import { deployComponentLabels, dnsRecords, type DeployComponentStatus } from "./copy.ts";
 import {
   buildDeployStatusReport,
@@ -68,6 +69,12 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
 
     emitReport(report);
     process.exitCode = report.complete ? EXIT_CODE.SUCCESS : EXIT_CODE.GENERAL;
+    // The check ran and answered; the deploy just isn't finished. The exit
+    // code stays 1 so `clerk deploy status && ./cutover.sh` still stops, but
+    // telemetry records what happened rather than reading the 1 as a failure.
+    // Declared here and not in the error path: a thrown error is a real
+    // failure and keeps its own code.
+    if (!report.complete) declareSoftExitOutcome("incomplete");
   } catch (error) {
     if (interruptedExitCode() === null) throw error;
     // Report what was established, then rethrow: the exit code stays 130, so no

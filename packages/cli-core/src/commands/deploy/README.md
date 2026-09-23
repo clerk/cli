@@ -62,6 +62,12 @@ Exit codes:
 | `1`  | The check ran successfully, but deploy is incomplete. Inspect `state` and `nextAction`.       |
 | else | A real CLI error occurred, such as not linked or an API failure, via the standard error path. |
 
+### What telemetry records about a deploy run
+
+Telemetry's `outcome` says what happened to the _command_, not to the deploy. A `clerk deploy status` run on a deploy that is not finished records `outcome: "incomplete"` rather than `"error"`: the check ran and answered, and nothing failed. It still exits 1, so `clerk deploy status && ./cutover.sh` stops as before, and it carries no error code, because nothing was thrown. A run that fails for a real reason — not linked, an API error — throws and is recorded as an error with that error's code, unchanged.
+
+`success` does not mean the deploy is finished either. `clerk deploy` under an agent prints a status report and exits 0 even when no production instance exists. How far a deploy got is carried by the `stage` and `components` payload fields, never by `outcome`.
+
 Agent mode is detected via the mode system (`src/mode.ts`), which checks in priority order:
 
 1. `--mode` CLI flag

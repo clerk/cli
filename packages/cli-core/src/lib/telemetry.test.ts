@@ -4,12 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from "./config.ts";
 import {
+  declareSoftExitOutcome,
   finalizeAndSendTelemetry,
   getTelemetryStatus,
   setTelemetryStage,
   startCommandTelemetry,
   telemetryEnabled,
   telemetryResultForError,
+  telemetryResultForSoftExit,
   type TelemetryCommand,
   type TelemetryResult,
 } from "./telemetry.ts";
@@ -174,6 +176,32 @@ describe("finalizeAndSendTelemetry", () => {
 
   function fakeCommand(): TelemetryCommand {
     return { name: () => "list", options: [], getOptionValueSource: () => undefined, parent: null };
+  }
+
+  /** Captures the payload of the single event a finalize call sends. */
+  async function sendAndCapturePayload(
+    run: () => void | Promise<void>,
+    result: TelemetryResult | (() => TelemetryResult),
+  ): Promise<Record<string, unknown>> {
+    await markTelemetryNoticeShown(); // past the grace run — reach the send path
+    process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+    let sent: string | undefined;
+    globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
+      sent = init.body;
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+
+    startCommandTelemetry(fakeCommand());
+    await run();
+    // Resolved after `run` so a result derived from context (the soft-exit
+    // declaration) sees what the run declared.
+    await finalizeAndSendTelemetry(typeof result === "function" ? result() : result);
+
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent as string) as {
+      events: { payload: Record<string, unknown> }[];
+    };
+    return parsed.events[0]!.payload;
   }
 
   test("no-op when telemetry is disabled (no fetch, no throw)", async () => {
@@ -461,30 +489,6 @@ describe("finalizeAndSendTelemetry", () => {
   });
 
   describe("stage", () => {
-    /** Captures the payload of the single event a finalize call sends. */
-    async function sendAndCapturePayload(
-      run: () => void | Promise<void>,
-      result: TelemetryResult,
-    ): Promise<Record<string, unknown>> {
-      await markTelemetryNoticeShown(); // past the grace run — reach the send path
-      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
-      let sent: string | undefined;
-      globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
-        sent = init.body;
-        return new Response("{}");
-      }) as unknown as typeof fetch;
-
-      startCommandTelemetry(fakeCommand());
-      await run();
-      await finalizeAndSendTelemetry(result);
-
-      expect(sent).toBeDefined();
-      const parsed = JSON.parse(sent as string) as {
-        events: { payload: Record<string, unknown> }[];
-      };
-      return parsed.events[0]!.payload;
-    }
-
     test("reports the furthest stage reached on success", async () => {
       const payload = await sendAndCapturePayload(
         () => {
@@ -527,6 +531,121 @@ describe("finalizeAndSendTelemetry", () => {
 
     test("setting a stage with no active context is a no-op", () => {
       expect(() => setTelemetryStage("flags")).not.toThrow();
+    });
+  });
+
+  // A command that reports failure through `process.exitCode` never reaches
+  // `telemetryResultForError`, so without a declaration the only thing the
+  // soft-exit branch can say is "nonzero, therefore error".
+  describe("soft-exit declarations", () => {
+    test("a declared outcome is recorded when the exit code is nonzero", async () => {
+      const payload = await sendAndCapturePayload(
+        () => declareSoftExitOutcome("incomplete"),
+        () => telemetryResultForSoftExit(EXIT_CODE.GENERAL),
+      );
+      expect(payload.outcome).toBe("incomplete");
+      expect(payload.exit_code).toBe(EXIT_CODE.GENERAL);
+      expect(payload.error_code).toBeNull();
+    });
+
+    // The declaration says what a *failure* meant. A run that ended at 0 did
+    // not fail, and honoring a stale declaration would invent one.
+    test("a declared outcome is ignored when the run exits 0", async () => {
+      const payload = await sendAndCapturePayload(
+        () => declareSoftExitOutcome("incomplete"),
+        () => telemetryResultForSoftExit(EXIT_CODE.SUCCESS),
+      );
+      expect(payload.outcome).toBe("success");
+    });
+
+    test("an undeclared nonzero soft exit is still an error", async () => {
+      const payload = await sendAndCapturePayload(
+        () => {},
+        () => telemetryResultForSoftExit(EXIT_CODE.GENERAL),
+      );
+      expect(payload.outcome).toBe("error");
+      expect(payload.error_code).toBeNull();
+    });
+
+    // The shape M7 extends: `clerk api` holds a code its own catch swallowed.
+    test("a declaration can carry an error code", () => {
+      startCommandTelemetry(fakeCommand());
+      declareSoftExitOutcome("error", "api_not_found");
+      expect(telemetryResultForSoftExit(EXIT_CODE.GENERAL)).toEqual({
+        outcome: "error",
+        exitCode: EXIT_CODE.GENERAL,
+        errorCode: "api_not_found",
+      });
+    });
+
+    // A thrown error is the more specific fact, and `runProgram` routes it
+    // through the other classifier entirely.
+    test("a thrown error keeps its own code regardless of a declaration", async () => {
+      const payload = await sendAndCapturePayload(
+        () => declareSoftExitOutcome("incomplete"),
+        telemetryResultForError(new CliError("boom", { code: ERROR_CODE.NOT_LINKED })),
+      );
+      expect(payload.outcome).toBe("error");
+      expect(payload.error_code).toBe("not_linked");
+    });
+
+    // Tests share the module, and so would two runs in one process: a stale
+    // declaration would relabel the next command's failure.
+    test("a declaration does not leak into the next run", () => {
+      startCommandTelemetry(fakeCommand());
+      declareSoftExitOutcome("incomplete");
+      startCommandTelemetry(fakeCommand());
+      expect(telemetryResultForSoftExit(EXIT_CODE.GENERAL)).toEqual({
+        outcome: "error",
+        exitCode: EXIT_CODE.GENERAL,
+      });
+    });
+
+    test("declaring with no active context is a no-op", () => {
+      expect(() => declareSoftExitOutcome("incomplete")).not.toThrow();
+    });
+  });
+
+  // The warehouse parses this payload by key. A rename splits a column in two
+  // without failing anything here, so the key set itself is the contract.
+  describe("payload shape", () => {
+    test("carries exactly the agreed keys", async () => {
+      const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
+      expect(Object.keys(payload).sort()).toEqual(
+        [
+          "ai_agent",
+          "app_id",
+          "arch",
+          "ci",
+          "command",
+          "components",
+          "duration_ms",
+          "env",
+          "error_code",
+          "exit_code",
+          "flags",
+          "in_screen",
+          "in_tmux",
+          "install_method",
+          "machine_uuid",
+          "mode",
+          "os",
+          "outcome",
+          "pause_step",
+          "stage",
+          "terminal_program",
+          "workspace_id",
+        ].sort(),
+      );
+    });
+
+    // Declared in M3 so the shape is fixed once; the wizard fills them in
+    // later milestones. Null means never observed, and the warehouse reads it
+    // that way — it must not arrive as `false` or as an absent key.
+    test("the fields later milestones fill are present and null", async () => {
+      const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
+      expect(payload.pause_step).toBeNull();
+      expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
     });
   });
 });

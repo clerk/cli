@@ -36,10 +36,45 @@ import { log } from "./log.ts";
 import { getMode } from "../mode.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
 
+/**
+ * What happened to the command, not to the thing it acted on.
+ *
+ * `incomplete` says the command ran and the thing it reports on is not
+ * finished — nobody is being asked to do anything, and nothing failed. Only
+ * `clerk deploy status` sends it, and only by declaring it (see
+ * {@link declareSoftExitOutcome}); it is never a mapping of nonzero exits.
+ *
+ * `success` is not "the deploy is done" either: `clerk deploy` under an agent
+ * prints a status report and exits 0 with nothing started. How far a deploy
+ * got is `stage` and `components`, never `outcome`.
+ */
+export type TelemetryOutcome = "success" | "error" | "abort" | "incomplete";
+
 export type TelemetryResult = {
-  outcome: "success" | "error" | "abort";
+  outcome: TelemetryOutcome;
   exitCode: number;
   errorCode?: string;
+};
+
+/**
+ * Where a `clerk deploy` run stopped when the user has something left to do.
+ * Narrower than `stage`: on a fresh deploy the DNS handoff runs before OAuth
+ * setup, so someone who skips a provider is at `stage: "domain_pending"` and
+ * `pauseStep: "oauth"`. Set by the deploy wizard (GROW-1233 item 2).
+ */
+export type TelemetryPauseStep = "dns" | "oauth";
+
+/**
+ * Per-component readiness at the time the run ended. `null` means never
+ * observed — no successful status read established it — and must never be
+ * read as `false`: a failed status call is not a DNS failure. Filled by the
+ * deploy wizard and `clerk deploy status` (GROW-1233 item 4).
+ */
+export type TelemetryComponents = {
+  dns: boolean | null;
+  ssl: boolean | null;
+  mail: boolean | null;
+  oauth: boolean | null;
 };
 
 /**
@@ -70,6 +105,20 @@ export type TelemetryStage =
   | "token_exchange"
   | "store"
   | "first_application"
+  // `clerk deploy` and `clerk deploy status`
+  //
+  // Unlike the groups above, these are not control-flow positions: each is a
+  // state of the deploy itself, as `resolveActiveReportState` in
+  // `commands/deploy/status.ts` would compute it at that moment. So the stage
+  // a wizard run reports and the stage `clerk deploy status` reports a second
+  // later agree about the same deploy. The last one set is sent, and a run
+  // that ends before any state resolves sends null rather than defaulting —
+  // "never established" is a distinct answer from "not started".
+  | "not_started"
+  | "domain_provisioning"
+  | "domain_pending"
+  | "oauth_pending"
+  | "complete"
   // shared terminal marker
   | "done";
 
@@ -87,7 +136,28 @@ type TelemetryContext = {
   startedAt: number;
   /** Last stage set — see setTelemetryStage. */
   stage: TelemetryStage | null;
+  /** Declared by the command for the soft-exit path — see declareSoftExitOutcome. */
+  softExit: SoftExitDeclaration | null;
+  /** Where the deploy wizard stopped — see TelemetryPauseStep. */
+  pauseStep: TelemetryPauseStep | null;
+  /** Per-component readiness, each field written only by an observation. */
+  components: TelemetryComponents;
 };
+
+/**
+ * What a command wants recorded when it reports failure through
+ * `process.exitCode` rather than by throwing. The error code is optional
+ * because `clerk deploy status` has none to give: nothing was thrown, so
+ * there is no code, and `incomplete` is the whole answer.
+ */
+type SoftExitDeclaration = {
+  outcome: TelemetryOutcome;
+  errorCode?: string;
+};
+
+function emptyComponents(): TelemetryComponents {
+  return { dns: null, ssl: null, mail: null, oauth: null };
+}
 
 let context: TelemetryContext | null = null;
 
@@ -186,6 +256,9 @@ export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
       flags: collectSetFlagNames(actionCommand).join(","),
       startedAt: Date.now(),
       stage: null,
+      softExit: null,
+      pauseStep: null,
+      components: emptyComponents(),
     };
   } catch (error) {
     log.debug(`telemetry: failed to start context: ${error}`);
@@ -206,6 +279,46 @@ export function setTelemetryStage(stage: TelemetryStage): void {
 /** Read the stage a caller had set, so a nested flow can hand it back. */
 export function currentTelemetryStage(): TelemetryStage | null {
   return context?.stage ?? null;
+}
+
+/**
+ * Declare what this run should be recorded as when it ends by setting
+ * `process.exitCode` instead of throwing.
+ *
+ * Commands that catch their own failure never reach `telemetryResultForError`,
+ * so without this the soft-exit branch in `cli-program.ts` can only say
+ * "nonzero, therefore error". That is wrong in both directions: `clerk deploy
+ * status` exits 1 on a deploy that simply is not finished, and `clerk api`
+ * exits 1 holding an error code it never gets to record.
+ *
+ * Why this is a declaration and not a rule about exit codes: the exit code is
+ * a per-command transport detail — 1 means "not done" from `deploy status`
+ * and "request failed" from `api` — so only the command knows what its own
+ * nonzero exit meant. A general mapping would relabel every command at once.
+ *
+ * Ignored when the run throws: a thrown error is the more specific fact, and
+ * `runProgram` classifies it through {@link telemetryResultForError}.
+ */
+export function declareSoftExitOutcome(outcome: TelemetryOutcome, errorCode?: string): void {
+  if (context) context.softExit = { outcome, errorCode };
+}
+
+/**
+ * How a run that set `process.exitCode` and returned is recorded. Honors a
+ * declaration only on a nonzero exit: a command that declared an outcome and
+ * then succeeded anyway (a retry that worked, a later branch clearing the
+ * code) is a success, and reporting the stale declaration would invent a
+ * failure the user never saw.
+ */
+export function telemetryResultForSoftExit(exitCode: number): TelemetryResult {
+  if (exitCode === EXIT_CODE.SUCCESS) return { outcome: "success", exitCode };
+  const declared = context?.softExit;
+  if (!declared) return { outcome: "error", exitCode };
+  return {
+    outcome: declared.outcome,
+    exitCode,
+    ...(declared.errorCode ? { errorCode: declared.errorCode } : {}),
+  };
 }
 
 export function telemetryResultForError(error: unknown): TelemetryResult {
@@ -297,6 +410,11 @@ async function buildAndSend(
       exit_code: result.exitCode,
       error_code: result.errorCode ?? null,
       stage: current.stage,
+      pause_step: current.pauseStep,
+      // Nested rather than four flat keys: it is one JSON path per component
+      // in the warehouse, and the group is obviously one thing. A null member
+      // means never observed — see TelemetryComponents.
+      components: current.components,
       duration_ms: Date.now() - current.startedAt,
       machine_uuid: machineUuid,
       install_method: detectInstallMethod(process.env, process.execPath),
