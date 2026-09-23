@@ -1,9 +1,9 @@
-import { generatedProjectKind } from "./project-selection.ts";
 import { lstat, readFile } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
 import semver from "semver";
+import { generatedProjectKind } from "./project-selection.ts";
 import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import { localClerkIOSPackageIsStructurallyValid } from "./local-package.ts";
