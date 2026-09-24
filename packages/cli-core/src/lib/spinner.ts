@@ -10,6 +10,7 @@ import { getUiOutput } from "./ui.ts";
 const S_BAR = "│";
 const S_BAR_END = "└";
 const PAUSED_INSTRUCTION = "Run this command again to continue.";
+const TRANSIENT_SPINNER_DELAY_MS = 250;
 
 const logUiOutput = new Writable({
   write(chunk, _encoding, callback) {
@@ -135,22 +136,38 @@ export async function withSpinner<T>(
 ): Promise<T> {
   if (!isHuman()) return fn({ update: () => {} });
 
-  const s = clackSpinner({
-    output: getOutput(),
-    ...(doneMessage === null && { withGuide: false }),
-  });
-  s.start(message);
+  const transient = doneMessage === null;
+  let s: ReturnType<typeof clackSpinner> | undefined;
+  let currentMessage = message;
+  const start = () => {
+    s = clackSpinner({
+      output: getOutput(),
+      ...(transient && { withGuide: false }),
+    });
+    s.start(currentMessage);
+  };
+  // Fast checks should never touch the terminal. Delay only the indicator,
+  // not the work or the next prompt; verbose progress still starts immediately.
+  const timer = transient ? setTimeout(start, TRANSIENT_SPINNER_DELAY_MS) : undefined;
+  if (!transient) start();
   try {
-    const result = await fn({ update: (nextMessage) => s.message(nextMessage) });
-    if (doneMessage === null) s.clear();
-    else s.stop(doneMessage ?? message.replace(/\.{3}$/, ""));
+    const result = await fn({
+      update: (nextMessage) => {
+        currentMessage = nextMessage;
+        s?.message(nextMessage);
+      },
+    });
+    if (transient) s?.clear();
+    else s?.stop(doneMessage ?? message.replace(/\.{3}$/, ""));
     return result;
   } catch (error) {
     // An interrupt aborts whatever the spinner was waiting on, so the rejection
     // arrives here first. Rendering "Failed" for a cancel the user asked for is
     // wrong, and it prints before the SIGINT handler finishes exiting.
-    if (isCancelled(error)) s.stop(message.replace(/\.{3}$/, ""));
-    else s.error("Failed");
+    if (isCancelled(error)) s?.stop(message.replace(/\.{3}$/, ""));
+    else s?.error("Failed");
     throw error;
+  } finally {
+    clearTimeout(timer);
   }
 }
