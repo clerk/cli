@@ -43,8 +43,8 @@
     141414141414141414141414 = { isa = XCBuildConfiguration; buildSettings = { SDKROOT = iphoneos; }; name = Debug; };
     151515151515151515151515 = { isa = XCBuildConfiguration; buildSettings = { SDKROOT = iphoneos; }; name = Release; };
     161616161616161616161616 = { isa = XCConfigurationList; buildConfigurations = ( 171717171717171717171717, 181818181818181818181818, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-    171717171717171717171717 = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements; DEVELOPMENT_TEAM = ABCDE12345; PRODUCT_BUNDLE_IDENTIFIER = com.example.MyApp; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Debug; };
-    181818181818181818181818 = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements; DEVELOPMENT_TEAM = ABCDE12345; PRODUCT_BUNDLE_IDENTIFIER = com.example.MyApp; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Release; };
+    171717171717171717171717 = { isa = XCBuildConfiguration; buildSettings = { GENERATE_INFOPLIST_FILE = YES; CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements; DEVELOPMENT_TEAM = ABCDE12345; PRODUCT_BUNDLE_IDENTIFIER = com.example.MyApp; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Debug; };
+    181818181818181818181818 = { isa = XCBuildConfiguration; buildSettings = { GENERATE_INFOPLIST_FILE = YES; CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements; DEVELOPMENT_TEAM = ABCDE12345; PRODUCT_BUNDLE_IDENTIFIER = com.example.MyApp; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Release; };
   };
   rootObject = AAAAAAAAAAAAAAAAAAAAAAAA;
 }
