@@ -583,6 +583,13 @@ function resolveSetting(
       }
 
       const replacement = settings[variable] ?? builtins[variable];
+      // Xcode list expansion preserves word boundaries according to the
+      // referenced setting's type. Flattening a whitespace-containing value
+      // (for example SRCROOT) and then splitting it can lose an inclusion.
+      // Keep source membership uncertain rather than dropping a shipping file.
+      if (preserveQuotes && replacement != null && /\s/.test(replacement)) {
+        missingVariables.add(`unsupported source-filter list expansion (${variable})`);
+      }
       for (const taint of settingTaintsFor(evaluation, variable)) {
         missingVariables.add(taint);
       }

@@ -19,7 +19,7 @@ async function fixture(options: {
   releaseSettings?: Record<string, string | undefined>;
   xcconfig?: string;
 }) {
-  const root = await mkdtemp(join(tmpdir(), "clerk-source-filters-"));
+  const root = await mkdtemp(join(tmpdir(), "clerk source-filters-"));
   roots.push(root);
   await createIOSFixture(root, { xcconfig: options.xcconfig !== undefined });
   const filename = options.filename ?? "Nested/LegacyApp.swift";
@@ -147,6 +147,12 @@ test("resolves inherited xcconfig source filters and variables", async () => {
 
 test.each([
   { settings: { EXCLUDED_SOURCE_FILE_NAMES: "$(UNKNOWN)" } },
+  {
+    settings: {
+      EXCLUDED_SOURCE_FILE_NAMES: "LegacyApp.swift",
+      INCLUDED_SOURCE_FILE_NAMES: "$(SRCROOT)/MyApp/Nested/LegacyApp.swift",
+    },
+  },
   { settings: { "EXCLUDED_SOURCE_FILE_NAMES[variant=profile]": "LegacyApp.swift" } },
   { settings: { EXCLUDED_SOURCE_FILE_NAMES: "Legacy[[:upper:]]pp.swift" } },
   { settings: { EXCLUDED_SOURCE_FILE_NAMES: '"LegacyApp.swift' } },
