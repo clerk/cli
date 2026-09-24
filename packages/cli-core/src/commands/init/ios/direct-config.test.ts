@@ -126,6 +126,102 @@ afterEach(async () => {
 });
 
 describe("iOS direct Clerk configuration", () => {
+  async function synchronizedConfigurationFixture(
+    directory: string,
+    exclusion?: "file" | "directory",
+  ) {
+    const root = await fixture();
+    const directoryPath = join(root, "MyApp", directory);
+    await mkdir(directoryPath, { recursive: true });
+    await writeFile(
+      join(directoryPath, "Bootstrap.swift"),
+      `import ClerkKit\nfunc configureExistingClerk() { Clerk.configure(publishableKey: "${DEVELOPMENT_KEY}") }\n`,
+    );
+    await updateProject(root, (objects) => {
+      objects.sync = {
+        isa: "PBXFileSystemSynchronizedRootGroup",
+        path: "MyApp",
+        sourceTree: "<group>",
+        exceptions: exclusion ? ["exception"] : [],
+      };
+      (objects[IOS_FIXTURE_IDS.mainGroup]!.children as string[]).push("sync");
+      objects[IOS_FIXTURE_IDS.appTarget]!.fileSystemSynchronizedGroups = ["sync"];
+      if (exclusion) {
+        objects.exception = {
+          isa: "PBXFileSystemSynchronizedBuildFileExceptionSet",
+          target: IOS_FIXTURE_IDS.appTarget,
+          membershipExceptions: [
+            exclusion === "directory" ? directory : `${directory}/Bootstrap.swift`,
+          ],
+        };
+      }
+    });
+    return root;
+  }
+
+  test.each([
+    "build",
+    "Pods",
+    "SourcePackages",
+    ".hidden",
+    ".build",
+    ".swiftpm",
+    "Carthage",
+    "DerivedData",
+  ])(
+    "refuses a second configuration when a synchronized %s folder contains one",
+    async (directory) => {
+      const root = await synchronizedConfigurationFixture(directory);
+      const before = await treeDigest(root);
+      const plan = await planIOSDirectConfig(planOptions(root));
+
+      expect(plan.status).toBe("blocked");
+      expect(blockerCodes(plan)).toContain("conflicting-configuration");
+      expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("blocked");
+      expect(await treeDigest(root)).toEqual(before);
+    },
+  );
+
+  test.each(["build", ".hidden"])(
+    "preserves explicitly excluded %s sources during setup and an unchanged rerun",
+    async (directory) => {
+      const root = await synchronizedConfigurationFixture(directory, "file");
+      const excludedSource = join(root, "MyApp", directory, "Bootstrap.swift");
+      const before = await readFile(excludedSource);
+      const plan = await planIOSDirectConfig(planOptions(root));
+
+      expect(plan.status).toBe("ready");
+      expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("applied");
+      expect(await readFile(excludedSource)).toEqual(before);
+      const applied = await treeDigest(root);
+      expect(
+        (await applyIOSDirectConfig(await planIOSDirectConfig(planOptions(root)), DEVELOPMENT_KEY))
+          .status,
+      ).toBe("satisfied");
+      expect(await treeDigest(root)).toEqual(applied);
+    },
+  );
+
+  test("refuses source edits when a folder exception leaves descendant membership unproven", async () => {
+    const root = await synchronizedConfigurationFixture("build", "directory");
+    const before = await treeDigest(root);
+    const plan = await planIOSDirectConfig(planOptions(root));
+
+    expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+    expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("blocked");
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test("refuses source edits when synchronized traversal cannot inspect every subfolder", async () => {
+    const root = await synchronizedConfigurationFixture(Array(26).fill(".hidden").join("/"));
+    const before = await treeDigest(root);
+    const plan = await planIOSDirectConfig(planOptions(root));
+
+    expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+    expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("blocked");
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
   test("plans a fully redacted pristine SwiftUI setup without writing", async () => {
     const root = await fixture();
     const before = await treeDigest(root);
