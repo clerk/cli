@@ -129,13 +129,18 @@ test("human init completes local and remote setup without nested completion mess
   // uninterrupted phase, every animation frame must retain the same label.
   let active: string | undefined;
   let registrationApplyPhases = 0;
+  let localApplyPhases = 0;
+  let localResultsPrinted = false;
   // oxlint-disable-next-line no-control-regex -- Check the terminal cursor's actual escape sequences.
   for (const part of result.stderr.split(/(\u001b\[\?25[hl])/)) {
     if (part === "\u001b[?25l") {
       expect(active).toBeUndefined();
       active = "";
     } else if (part === "\u001b[?25h") {
-      if (active?.includes("Applying your changes")) registrationApplyPhases++;
+      if (active?.includes("Applying your changes")) {
+        if (localResultsPrinted) registrationApplyPhases++;
+        else localApplyPhases++;
+      }
       active = undefined;
     } else if (active !== undefined) {
       active += part;
@@ -144,11 +149,17 @@ test("human init completes local and remote setup without nested completion mess
       expect(part).not.toContain("registered with Clerk");
       expect(part).not.toContain("application registration verified");
       expect(part).not.toContain("Native Sign in with Apple enabled in Clerk");
+    } else if (part.includes("Sign in with Apple entitlement added to the selected target")) {
+      localResultsPrinted = true;
     }
   }
   expect(active).toBeUndefined();
   // Registration and its API enablement/rechecks share one indicator; Apple
   // connection setup shares another after the registration result is printed.
+  expect(localResultsPrinted).toBe(true);
+  // A fast local transaction finishes before the spinner's display delay. A
+  // slower machine may show it once before printing the local results.
+  expect(localApplyPhases).toBeLessThanOrEqual(1);
   expect(registrationApplyPhases).toBe(2);
   expect(currentNativeRemoteState().mutations).toEqual({
     nativeSettingsPatchCount: 1,

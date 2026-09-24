@@ -33,6 +33,12 @@ still block edits. Any permitted edit preserves unrelated capability values.
 | Configure associated domains                             | Proven domain/key inputs and the capability planner's ownership checks                                                                                           | An unproven custom startup call does not supply a domain; preserve domain values and report manual follow-up |
 | Diagnose key matching, AuthView, or Apple authentication | The relevant runtime, source, entitlement, and linked-app evidence                                                                                               | Doctor's registration-only fallback does not run these checks or imply they passed                           |
 
+Registration uses the effective `CFBundleIdentifier`: generated plist settings or
+an explicit XML Info.plist with supported build-setting expansion. The identity
+must agree across configurations, platforms, and compiler/packaging contexts.
+Missing, unreadable, preprocessed, or otherwise unresolved plist inputs block
+registration; selecting `--app` does not bypass those checks.
+
 `init` still rejects incomplete source discovery before edits: its SDK choice and
 combined local plan depend on that evidence. Doctor is read-only and can retain a
 source-discovery failure while reporting an independently supported registration
