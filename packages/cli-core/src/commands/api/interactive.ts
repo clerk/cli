@@ -54,9 +54,7 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
       message: param.description ? `${param.name} (${param.description}):` : `${param.name}:`,
       validate: (v) => (v?.trim() ? undefined : `${param.name} is required`),
     });
-    // Encoded so a typed value cannot change the route: a 404 on the result
-    // is then the catalog's endpoint failing, never the person's input.
-    resolvedPath = resolvedPath.replace(`{${param.name}}`, encodeURIComponent(value.trim()));
+    resolvedPath = resolvedPath.replace(`{${param.name}}`, value.trim());
   }
 
   // 5. Request body (if applicable)
@@ -107,6 +105,9 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
     method: endpoint.method,
     data: body,
     yes: true, // skip double-confirmation
+    // The endpoint is the catalog's, so a bare 404 is recorded as the CLI's.
+    // A typed parameter goes into the route as typed, so a malformed value
+    // (a slash, a dot segment) can be misfiled the same way; accepted as rare.
     userSuppliedPath: false,
   });
 }

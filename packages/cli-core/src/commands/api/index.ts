@@ -29,9 +29,11 @@ export interface ApiOptions {
   yes?: boolean;
   /**
    * Internal, not a flag. Who wrote the request path, for telemetry's 404
-   * classification. Unset means the command line, so the person. The
-   * interactive builder passes false for an endpoint it chose from the CLI's
-   * own catalog, so a 404 on it is recorded as the CLI's failure.
+   * classification. Unset means the command line, so the person — safe only
+   * while Commander's registration and the interactive builder are the only
+   * callers. A caller that builds its own path must pass false, as the
+   * builder does for an endpoint chosen from the CLI's own catalog, so a 404
+   * on it is recorded as the CLI's failure.
    */
   userSuppliedPath?: boolean;
 }

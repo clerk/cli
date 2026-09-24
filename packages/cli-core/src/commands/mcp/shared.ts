@@ -207,6 +207,9 @@ export async function settleClients<T>(
 export function failWhenAllFailed(outcome: SettledClients<unknown>, json: boolean): void {
   if (outcome.succeeded.length > 0 || outcome.firstError === undefined) return;
   if (!json) throw outcome.firstError;
+  // No request path here: client failures are local `CliError`s, so the
+  // answer is never read. It is `false` so that if a client ever surfaces an
+  // `ApiError`, its route is on record as the CLI's.
   declareSoftExitError(outcome.firstError, { userSuppliedPath: false });
   process.exitCode = 1;
 }

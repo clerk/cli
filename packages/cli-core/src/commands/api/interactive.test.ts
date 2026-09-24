@@ -194,28 +194,6 @@ describe("apiInteractive", () => {
     expect(payload.error_code).toBe("cli_endpoint_not_found");
   });
 
-  // A typed parameter is encoded, so it cannot turn `/users/{user_id}` into a
-  // different route; the request the API sees is still the catalog's.
-  test("a typed path parameter is URL-encoded", async () => {
-    setMode("human");
-    selectResponses.push("Users");
-    selectResponses.push({
-      method: "GET",
-      path: "/users/{user_id}",
-      summary: "Retrieve a user",
-      tag: "Users",
-      operationId: "GetUser",
-      pathParams: [{ name: "user_id", description: "" }],
-      hasRequestBody: false,
-    });
-    inputResponses.push("abc/def ghi");
-    confirmResponses.push(true);
-
-    await runApiInteractive({});
-
-    expect(fetchCalls[0]!.url).toContain("/v1/users/abc%2Fdef%20ghi");
-  });
-
   test("prompts for path parameters", async () => {
     setMode("human");
     selectResponses.push("Users");

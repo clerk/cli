@@ -433,8 +433,7 @@ export function telemetryResultForSoftExit(exitCode: number): TelemetryResult {
  * than defaulted so a new call site cannot mis-file a 404 by omission: the
  * BAPI commands build their own paths and pass false; `clerk api` passes true
  * for a path typed on the command line and false for one its interactive
- * builder chose from the endpoint catalog, whose path parameters are
- * URL-encoded so a typed value cannot change the route.
+ * builder chose from the endpoint catalog.
  *
  * Call it under the same condition that sets the exit code, and with the
  * error the run means to report — the last-call-wins rule on
