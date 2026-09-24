@@ -9,6 +9,13 @@
  * producing hundreds of order-dependent failures. Bun does not enforce
  * `engines.bun` at install time, so this preflight fails loudly instead.
  *
+ * A second, lower constraint rides along: the DB-backed `clerk migrate export`
+ * commands read MySQL through `Bun.sql` rather than `mysql2`. Verified against
+ * MySQL 8.4 -- the adapter landed in Bun 1.2.21, but VARBINARY/BLOB columns
+ * came back as lossily decoded strings until 1.3.6, which would silently
+ * corrupt exported password hashes. The 1.3.13 floor above already covers it;
+ * do not drop below 1.3.6 if the `--parallel` requirement ever goes away.
+ *
  * Usage:
  *   bun run scripts/check-bun-version.ts
  */

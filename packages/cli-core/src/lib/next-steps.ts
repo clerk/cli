@@ -75,6 +75,22 @@ export const NEXT_STEPS = {
     "Run `clerk apps list` to see your other applications",
     "Run `clerk config pull` to inspect the live configuration of this instance",
   ],
+  MIGRATE_DONE: [
+    "Run `clerk migrate logs list` to inspect the import log",
+    "Run `clerk migrate delete` to undo this migration",
+  ],
+  // `logs list` only names the file; after a partial import the operator needs
+  // the failures themselves, which live one line per user in that file.
+  MIGRATE_DONE_WITH_ERRORS: (logFile: string) => [
+    `Run \`grep '"status":"error"' ${logFile}\` to see every user that failed and why`,
+    "Run `clerk migrate delete` to undo this migration",
+  ],
+  MIGRATE_DELETE: ["Run `clerk migrate logs list` to inspect the deletion log"],
+  MIGRATE_SETTINGS: [
+    "Run `clerk migrate settings set <name> <value>` to change one",
+    "Run `clerk migrate settings clear <name>` to forget one",
+    "Run `clerk migrate settings clear` to forget them all, credentials included",
+  ],
 } as const;
 
 /**
@@ -82,7 +98,30 @@ export const NEXT_STEPS = {
  * Only shown in human/interactive mode — agents get AGENT_PROMPT instead.
  */
 export function printNextSteps(steps: readonly string[]): void {
-  if (!isHuman() || steps.length === 0) return;
+  if (!isHuman()) return;
+  renderNextSteps(steps);
+}
+
+/**
+ * The same suggestions, on the paths a human never takes: agent mode and a
+ * non-TTY, where `printNextSteps` and `withGutter`'s outro both print nothing.
+ *
+ * A no-op for a human, who gets them from the outro — so a caller pairs this
+ * with `setNextSteps` rather than choosing between the two.
+ *
+ * Opt-in rather than folded into `printNextSteps`, because most steps are a
+ * nudge towards a command someone might like to run next. The migrate ones are
+ * not: they name the log file holding the per-user record of what landed, and
+ * the command that undoes the run. An agent that imported 10,000 users and lost
+ * 300 of them needs both, and has no gutter to read them from.
+ */
+export function printAgentNextSteps(steps: readonly string[]): void {
+  if (isHuman()) return;
+  renderNextSteps(steps);
+}
+
+function renderNextSteps(steps: readonly string[]): void {
+  if (steps.length === 0) return;
   for (const step of steps) {
     log.info(`   ${cyan("\u2192")} ${step}`);
   }

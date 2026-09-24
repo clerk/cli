@@ -55,3 +55,15 @@ export const NPM_REGISTRY_URL = "https://registry.npmjs.org/";
 /** Event ingestion endpoint (telemetry-service worker → BigQuery). */
 export const DEFAULT_TELEMETRY_ENDPOINT = "https://clerk-telemetry.com/v1/event";
 export const TELEMETRY_TIMEOUT_MS = 1000;
+
+// ── Redaction ─────────────────────────────────────────────────────────────
+
+/**
+ * What a withheld secret displays as, everywhere the CLI shows one.
+ *
+ * Square brackets rather than a mask or a truncation: a row of dots or a
+ * head-and-tail (`aVer…3456`) reads as a value, and the reader has to work out
+ * that it is not one. Used by `clerk users create --dry-run` and by
+ * `clerk migrate settings`.
+ */
+export const REDACTED = "[REDACTED]";

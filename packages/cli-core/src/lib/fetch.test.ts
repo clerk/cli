@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { _resetUserAgentCache, loggedFetch } from "./fetch.ts";
 import { _resetInterruptState, abortInFlight, beginInterrupt, interruptSignal } from "./signals.ts";
 import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from "./config.ts";
+import { CliError } from "./errors.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -32,6 +33,31 @@ describe("loggedFetch", () => {
     });
     const [, init] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
     expect(init.headers.get("User-Agent")).toBe("Custom/1.0");
+  });
+
+  test("reports a connection failure as a CliError naming the host", async () => {
+    globalThis.fetch = mock(async () => {
+      // Bun's own shape for DNS failures, refused connections and no-route.
+      const error: NodeJS.ErrnoException = new Error(
+        "Unable to connect. Is the computer able to access the url?",
+      );
+      error.code = "ConnectionRefused";
+      throw error;
+    }) as unknown as typeof fetch;
+
+    const failure = loggedFetch("https://example.test/x", { tag: "test" });
+    await expect(failure).rejects.toThrow(/Could not reach example\.test/);
+    await expect(failure).rejects.toBeInstanceOf(CliError);
+  });
+
+  test("leaves a non-connection failure alone", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }) as unknown as typeof fetch;
+
+    await expect(loggedFetch("https://example.test/x", { tag: "test" })).rejects.toThrow(
+      /operation was aborted/,
+    );
   });
 
   test("preserves other caller-provided headers", async () => {

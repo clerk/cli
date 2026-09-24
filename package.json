@@ -5,7 +5,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "bun run --filter @clerk/cli-core build",
+    "build": "bun run build:compile",
     "dev": "bun run --cwd packages/cli-core dev",
     "test": "bun run scripts/check-bun-version.ts && bun test 'packages/cli-core/src/' 'packages/extras/src/' 'scripts/' --parallel --only-failures",
     "test:e2e": "bun run scripts/check-bun-version.ts && bun test 'test/e2e/' --retry 1 --parallel --only-failures",
@@ -40,7 +40,7 @@
     "oxfmt": "^0.64.0",
     "oxlint": "^1.79.0",
     "oxlint-tsgolint": "^7.0.2001",
-    "playwright": "^1.60.0",
+    "playwright": "1.60.0",
     "semver": "^7.8.5",
     "typescript": "^7"
   },
