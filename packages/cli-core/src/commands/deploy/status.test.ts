@@ -338,8 +338,11 @@ describe("recording observations", () => {
 });
 
 // Production configuration and domain status are read together, and each is
-// recorded the moment it succeeds: a failure in one must not discard what the
-// other observed, and the recording must not race the telemetry send.
+// recorded the moment it succeeds, so a failure in one does not discard what
+// the other observed. The reads fail fast: a read that finishes only after
+// the event is built is dropped, never misrecorded. These mocks settle
+// immediately, so the recording lands before the send — a tripwire for that
+// ordering, not a guarantee the code makes.
 describe("resolveLiveDeploySnapshot records each read as it succeeds", () => {
   const serverError = () =>
     new PlapiError(500, JSON.stringify({ errors: [{ code: "server_error" }] }), "https://x");

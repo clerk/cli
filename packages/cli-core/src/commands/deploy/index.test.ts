@@ -3099,6 +3099,22 @@ describe("deploy", () => {
       // read fails, so the user can retry from the screen. That is not an
       // observation: recording `domain_pending` from it would file a network
       // blip as a DNS stall.
+      // The only stage a resume can establish without a domain read: Clerk
+      // listed no production domain, so the deploy is still provisioning one.
+      test("a resume with no production domain yet records domain_provisioning", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockListApplicationDomains.mockResolvedValue({ data: [] });
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.stage).toBe("domain_provisioning");
+        expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+      });
+
       test("a resume whose domain read failed records no stage when DNS is then skipped", async () => {
         await linkedProject({
           instances: { development: "ins_dev_123", production: "ins_prod_123" },

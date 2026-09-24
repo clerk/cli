@@ -71,7 +71,7 @@ export type TelemetryResult = {
  * Where a `clerk deploy` run stopped when the user has something left to do.
  * Narrower than `stage`: on a fresh deploy the DNS handoff runs before OAuth
  * setup, so someone who skips a provider is at `stage: "domain_pending"` and
- * `pauseStep: "oauth"`. Set by the deploy wizard (GROW-1233 item 2).
+ * `pauseStep: "oauth"`. Set by the deploy wizard (GROW-1233).
  */
 export type TelemetryPauseStep = "dns" | "oauth";
 
@@ -79,7 +79,7 @@ export type TelemetryPauseStep = "dns" | "oauth";
  * Per-component readiness at the time the run ended. `null` means never
  * observed — no successful status read established it — and must never be
  * read as `false`: a failed status call is not a DNS failure. Filled by the
- * deploy wizard and `clerk deploy status` (GROW-1233 item 4).
+ * deploy wizard and `clerk deploy status` (GROW-1233).
  */
 export type TelemetryComponents = {
   dns: boolean | null;

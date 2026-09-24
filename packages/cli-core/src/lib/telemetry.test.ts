@@ -767,10 +767,10 @@ describe("finalizeAndSendTelemetry", () => {
       );
     });
 
-    // Declared in M3 so the shape is fixed once; the wizard fills them in
+    // The deploy fields are on every event; a command that never observes them
     // later milestones. Null means never observed, and the warehouse reads it
     // that way — it must not arrive as `false` or as an absent key.
-    test("the fields later milestones fill are present and null", async () => {
+    test("pause_step and components are present and null on a command that never sets them", async () => {
       const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
       expect(payload.pause_step).toBeNull();
       expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });

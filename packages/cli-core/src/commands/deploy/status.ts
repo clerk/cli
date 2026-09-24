@@ -310,7 +310,12 @@ export async function resolveLiveDeploySnapshot(
         if (read.live) recordDomainObservation(deployComponentStatusFromDomainStatus(read.status));
         return read;
       });
-      const [productionConfig, { status: deployStatus, live }] = await settleBeforeRejecting([
+      // Fail-fast on purpose: a `.then` on the slower read may still land
+      // after the run has built its event, in which case that observation is
+      // dropped — never wrong, just absent. Waiting for the slower read to
+      // settle would hold a real error behind a hanging request, and nothing
+      // bounds how long that is.
+      const [productionConfig, { status: deployStatus, live }] = await Promise.all([
         configRead,
         statusRead,
       ]);
@@ -345,24 +350,6 @@ export async function resolveLiveDeploySnapshot(
     domainComplete,
     pending: resolvePendingStep(pendingOAuthDescriptor, domainComplete),
   };
-}
-
-/**
- * `Promise.all`, except a rejection waits for the other promises to settle
- * before it propagates. Same result and the same winning error — the first
- * to fail — only the throw is delayed until a `.then` attached to a slower
- * promise has run. Without this, whether that `.then` lands before or after
- * the run finalizes its telemetry would be a race.
- */
-async function settleBeforeRejecting<T extends readonly unknown[] | []>(
-  promises: T,
-): Promise<{ -readonly [P in keyof T]: Awaited<T[P]> }> {
-  try {
-    return await Promise.all(promises);
-  } catch (error) {
-    await Promise.allSettled(promises);
-    throw error;
-  }
 }
 
 function resolvePendingStep(
