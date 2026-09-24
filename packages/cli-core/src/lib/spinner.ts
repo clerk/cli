@@ -131,15 +131,19 @@ export async function withGutter<T>(
 export async function withSpinner<T>(
   message: string,
   fn: (controls: SpinnerControls) => Promise<T>,
-  doneMessage?: string,
+  doneMessage?: string | null,
 ): Promise<T> {
   if (!isHuman()) return fn({ update: () => {} });
 
-  const s = clackSpinner({ output: getOutput() });
+  const s = clackSpinner({
+    output: getOutput(),
+    ...(doneMessage === null && { withGuide: false }),
+  });
   s.start(message);
   try {
     const result = await fn({ update: (nextMessage) => s.message(nextMessage) });
-    s.stop(doneMessage ?? message.replace(/\.{3}$/, ""));
+    if (doneMessage === null) s.clear();
+    else s.stop(doneMessage ?? message.replace(/\.{3}$/, ""));
     return result;
   } catch (error) {
     // An interrupt aborts whatever the spinner was waiting on, so the rejection

@@ -23,7 +23,7 @@ import {
   type NativeSettings,
 } from "../../../lib/plapi.ts";
 import { confirm, text } from "../../../lib/prompts.ts";
-import { withSpinner } from "../../../lib/spinner.ts";
+import { withNativeSpinner as withSpinner, compactNativeOutput } from "./presentation.ts";
 import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 import type {
   IOSNativeReadinessTarget,
@@ -202,6 +202,14 @@ export interface IOSNativeRemotePrompts {
 
 const defaultPrompts: IOSNativeRemotePrompts = {
   appIdPrefix: async (bundleIdentifier, suggested) => {
+    log.info(
+      "Use the App ID Prefix from Apple Developer → Certificates, Identifiers & Profiles → Identifiers.",
+    );
+    log.info(
+      dim(
+        "It usually matches your Team ID. Verify it at https://developer.apple.com/account/resources/identifiers/list",
+      ),
+    );
     if (suggested?.source === "xcode-development-team") {
       const choice = await select({
         message: `Apple App ID Prefix for ${bundleIdentifier}`,
@@ -225,14 +233,19 @@ const defaultPrompts: IOSNativeRemotePrompts = {
     return text({
       message: `Apple App ID Prefix for ${bundleIdentifier}`,
       default: suggested?.source === "partial-literal-entitlements" ? suggested.value : undefined,
-      placeholder: suggested?.value ?? "ABCDE12345",
+      placeholder: suggested?.value ?? "Example: ABCDE12345",
       validate: (value) =>
         validateAppIdPrefix(value) != null ||
         `Enter an App ID Prefix containing exactly ${APP_ID_PREFIX_LENGTH} uppercase ASCII letters or numbers. Verify it in Apple Developer; it can differ from your Team ID.`,
     });
   },
   confirmChanges: async () =>
-    confirm({ message: "Apply these remote Clerk Native Application changes?", default: false }),
+    confirm({
+      message: compactNativeOutput()
+        ? "Apply these Clerk registration changes?"
+        : "Apply these remote Clerk Native Application changes?",
+      default: false,
+    }),
 };
 
 function blocker(code: IOSNativeRemoteBlockerCode, message: string): IOSNativeRemoteBlocker {
@@ -737,14 +750,25 @@ export async function prepareIOSNativeRemoteSetup(
     return plan;
   }
 
-  log.info("\nclerk init will make the following remote Clerk changes:\n");
-  for (const action of plan.actions) log.info(`  ${yellow("REMOTE")}  ${action}`);
-  log.info(
-    dim(
-      "\n  Remote changes are additive. clerk init will not update or delete an existing Apple native application registration.",
-    ),
-  );
-  log.blank();
+  if (compactNativeOutput()) {
+    log.info("\nClerk registration changes:");
+    log.info(`  Bundle ID: ${plan.bundleIdentifier}`);
+    log.info(`  App ID Prefix: ${plan.appIdPrefix}`);
+    if (plan.registration === "required")
+      log.info(`  Register this ${platformName(plan.platform)} app`);
+    if (plan.nativeApi === "required")
+      log.info("  Enable the Native API for this development instance");
+    log.blank();
+  } else {
+    log.info("\nclerk init will make the following remote Clerk changes:\n");
+    for (const action of plan.actions) log.info(`  ${yellow("REMOTE")}  ${action}`);
+    log.info(
+      dim(
+        "\n  Remote changes are additive. clerk init will not update or delete an existing Apple native application registration.",
+      ),
+    );
+    log.blank();
+  }
 
   if (options.agent && !options.yes) {
     throwUsageError(

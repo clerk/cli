@@ -203,6 +203,25 @@ describe("login", () => {
     return server;
   }
 
+  test("embedded login preserves the outer setup flow and omits standalone next steps", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetAuth.mockResolvedValue(null);
+    mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
+    mockOAuthSuccess();
+    const spinner = await import("../../lib/spinner.ts");
+    const { isInsideGutter } = await import("../../lib/log.ts");
+    spinner.intro("Setting up Clerk");
+    try {
+      await login({ embedded: true, showNextSteps: false });
+      expect(isInsideGutter()).toBe(true);
+      expect(captured.err).not.toContain("Signing in");
+      expect(captured.err).not.toContain("Next steps");
+      expect(mockStoreToken).toHaveBeenCalled();
+    } finally {
+      await spinner.outro();
+    }
+  });
+
   test("returns early when already authenticated with valid token", async () => {
     mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
