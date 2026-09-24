@@ -86,6 +86,7 @@ test.each([false, true])(
 
 test.each([
   { pattern: "Legac?App.swift", filename: "Nested/LegacyApp.swift" },
+  { pattern: "Legacy?.swift", filename: "Nested/Legacy😀.swift" },
   { pattern: "Legacy[A-Z]pp.swift", filename: "Nested/LegacyApp.swift" },
   { pattern: "Legacy[!a-z]pp.swift", filename: "Nested/LegacyApp.swift" },
   { pattern: "Nested/*.swift", filename: "Nested/LegacyApp.swift" },
@@ -103,6 +104,9 @@ test.each([
 test.each([
   { EXCLUDED_SOURCE_FILE_NAMES: "legacyapp.swift" },
   { EXCLUDED_SOURCE_FILE_NAMES: "Wrong/LegacyApp.swift" },
+  { EXCLUDED_SOURCE_FILE_NAMES: "N*App.swift" },
+  { EXCLUDED_SOURCE_FILE_NAMES: "Nested?LegacyApp.swift" },
+  { EXCLUDED_SOURCE_FILE_NAMES: "Nested[!a-z]LegacyApp.swift" },
   { EXCLUDED_SOURCE_FILE_NAMES: "ted/LegacyApp.swift" },
   { INCLUDED_SOURCE_FILE_NAMES: "MyAppApp.swift" },
   { EXCLUDED_SOURCE_FILE_NAMES: "Legacy*.swift", INCLUDED_SOURCE_FILE_NAMES: "LegacyApp.swift" },

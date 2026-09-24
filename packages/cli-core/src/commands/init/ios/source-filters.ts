@@ -38,8 +38,8 @@ function compilePattern(pattern: string): RegExp | undefined {
   let expression = "";
   for (let index = 0; index < pattern.length; index += 1) {
     const character = pattern[index]!;
-    if (character === "*") expression += ".*";
-    else if (character === "?") expression += ".";
+    if (character === "*") expression += "[^/]*";
+    else if (character === "?") expression += "[^/]";
     else if (character === "[") {
       const end = pattern.indexOf("]", index + 1);
       if (end === -1) return undefined;
@@ -47,15 +47,16 @@ function compilePattern(pattern: string): RegExp | undefined {
       // POSIX character classes, collating symbols, and escaped class syntax
       // require locale-aware fnmatch semantics that this inspector cannot prove.
       if (!/^!?[a-zA-Z0-9_-]+$/.test(members)) return undefined;
-      expression += `[${members.startsWith("!") ? `^${members.slice(1)}` : members}]`;
+      expression += `[${members.startsWith("!") ? `^/${members.slice(1)}` : members}]`;
       index = end;
     } else if (character === "\\" || character === "]") return undefined;
     else expression += character.replace(/[.+^${}()|]/g, "\\$&");
   }
   try {
     // Xcode matches names and path suffixes at directory boundaries, including
-    // absolute paths. Matching is case-sensitive, even on a case-insensitive FS.
-    return new RegExp(`(?:^|/)${expression}$`);
+    // absolute paths. Wildcards cannot cross a directory separator. Matching
+    // is case-sensitive, even on a case-insensitive filesystem.
+    return new RegExp(`(?:^|/)${expression}$`, "u");
   } catch {
     return undefined;
   }
