@@ -3,7 +3,8 @@ import { resolveProfile } from "../../../lib/config.js";
 import { decodePublishableKey, fetchUserSettings } from "../../../lib/fapi.ts";
 import { log } from "../../../lib/log.js";
 import { interruptedExitCode } from "../../../lib/signals.ts";
-import { outro, withSpinner } from "../../../lib/spinner.js";
+import { outro } from "../../../lib/spinner.js";
+import { withNativeSpinner as withSpinner } from "./presentation.ts";
 import { setTelemetryStage, type TelemetryStage } from "../../../lib/telemetry.ts";
 import { applyIOSLocalSetup, applyIOSPlannedLocalSetup } from "./apply.ts";
 import {

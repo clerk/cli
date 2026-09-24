@@ -16,6 +16,8 @@ import { intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
 interface LinkOptions {
+  /** Called within another command that owns its header and next steps. */
+  embedded?: boolean;
   app?: string;
   skipIfLinked?: boolean;
   cwd?: string;
@@ -72,23 +74,23 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     );
   }
 
-  intro("Linking project");
+  if (!options.embedded) intro("Linking project");
 
   if (existing && agent) {
     printExistingStatus(existing, normalizedRemote);
     if (!targetsDifferentApp) {
-      await outro();
+      if (!options.embedded) await outro();
       return;
     }
   } else if (existing) {
     const shouldRelink = await handleExistingProfile(existing, normalizedRemote, options);
     if (!shouldRelink) {
-      await outro();
+      if (!options.embedded) await outro();
       return;
     }
   }
 
-  await ensureAuth();
+  await ensureAuth(options.embedded);
 
   const app = options.app
     ? await withApiContext(
@@ -127,12 +129,16 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   });
 
   const label = app.name || app.application_id;
-  log.success(`Linked to ${cyan(label)} in ${dim(displayPath)}`);
+  log.success(
+    options.embedded
+      ? `Linked to ${cyan(label)}`
+      : `Linked to ${cyan(label)} in ${dim(displayPath)}`,
+  );
 
-  await outro(NEXT_STEPS.LINK);
+  if (!options.embedded) await outro(NEXT_STEPS.LINK);
 }
 
-async function ensureAuth() {
+async function ensureAuth(embedded?: boolean) {
   // CLERK_PLATFORM_API_KEY is a valid non-interactive auth mechanism.
   // The PLAPI fetch helpers use it directly for API calls, so no OAuth
   // token is needed when this key is present.
@@ -140,7 +146,7 @@ async function ensureAuth() {
   const token = await getToken();
   if (!token) {
     log.info("Not logged in. Authenticating first...");
-    await login({ showNextSteps: false });
+    await login({ showNextSteps: false, ...(embedded && { embedded: true }) });
   }
 }
 

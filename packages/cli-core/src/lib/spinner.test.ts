@@ -9,7 +9,7 @@ let lastOutroLabel: string | undefined;
 let outroCalls = 0;
 
 interface SpinnerCall {
-  type: "start" | "stop" | "error" | "message";
+  type: "start" | "stop" | "error" | "message" | "clear";
   message?: string;
 }
 let spinnerCalls: SpinnerCall[] = [];
@@ -32,6 +32,9 @@ mock.module("@clack/prompts", () => ({
     },
     message: (message?: string) => {
       spinnerCalls.push({ type: "message", message });
+    },
+    clear: () => {
+      spinnerCalls.push({ type: "clear" });
     },
     error: (message?: string) => {
       spinnerCalls.push({ type: "error", message });
@@ -264,4 +267,21 @@ test("withSpinner calls error() on the spinner and rethrows when fn throws", asy
   const types = spinnerCalls.map((c) => c.type);
   expect(types).toEqual(["start", "error"]);
   expect(spinnerCalls[1]?.message).toBe("Failed");
+});
+
+test("transient progress clears on success but retains failures", async () => {
+  expect(await withSpinner("Checking...", async () => 42, null)).toBe(42);
+  expect(spinnerCalls.map((c) => c.type)).toEqual(["start", "clear"]);
+  spinnerCalls = [];
+  const error = new Error("check failed");
+  await expect(
+    withSpinner(
+      "Checking...",
+      async () => {
+        throw error;
+      },
+      null,
+    ),
+  ).rejects.toBe(error);
+  expect(spinnerCalls.map((c) => c.type)).toEqual(["start", "error"]);
 });

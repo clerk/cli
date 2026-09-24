@@ -969,7 +969,7 @@ struct MyApp: App {
   test("links ClerkKitUI when a custom-flow target accepts the AuthView prompt", async () => {
     const root = await createCustomFlowWithStarterContent();
     const confirmation = spyOn(prompts, "confirm").mockImplementation(async ({ message }) => {
-      if (message.startsWith("Add ClerkKitUI's prebuilt authentication UI")) return true;
+      if (message === "Add Clerk’s prebuilt sign-in screen?") return true;
       if (message.startsWith("Enable native Sign in with Apple")) return false;
       if (message === "Apply these local iOS changes?") return true;
       throw new Error(`Unexpected confirmation: ${message}`);

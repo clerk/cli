@@ -1,5 +1,5 @@
 import { select } from "../../../lib/listage.ts";
-import { withSpinner } from "../../../lib/spinner.ts";
+import { withNativeSpinner as withSpinner } from "./presentation.ts";
 import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 
 /** Choose a target using the same selector and discovery rules as explicit --target. */
