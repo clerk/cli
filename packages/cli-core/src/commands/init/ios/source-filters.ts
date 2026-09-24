@@ -50,7 +50,7 @@ function compilePattern(pattern: string): RegExp | undefined {
       expression += `[${members.startsWith("!") ? `^/${members.slice(1)}` : members}]`;
       index = end;
     } else if (character === "\\" || character === "]") return undefined;
-    else expression += character.replace(/[.+^${}()|]/g, "\\$&");
+    else expression += character.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
   try {
     // Xcode matches names and path suffixes at directory boundaries, including
