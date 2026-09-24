@@ -75,7 +75,7 @@ export function handleUsersBapiError(
     log.error(`${context}: ${formatUsersErrorBody(error.body)}`);
   }
 
-  declareSoftExitError(error);
+  declareSoftExitError(error, { userSuppliedPath: false });
   process.exitCode = 1;
   return true;
 }

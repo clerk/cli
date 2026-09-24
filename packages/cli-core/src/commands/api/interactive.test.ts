@@ -20,6 +20,7 @@ mock.module("../../mode.ts", () => ({
 }));
 
 const { parseSpec, _setCacheDir } = (await import("./catalog.ts")) as any;
+const { _setConfigDir } = await import("../../lib/config.ts");
 const { setMode } = (await import("../../mode.ts")) as any;
 
 const MINIMAL_SPEC = `
@@ -86,6 +87,7 @@ describe("apiInteractive", () => {
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-interactive-test-"));
     _setCacheDir(tempDir);
+    _setConfigDir(tempDir);
 
     // Pre-populate fresh cache
     const cached = parseSpec(MINIMAL_SPEC);
@@ -120,6 +122,7 @@ describe("apiInteractive", () => {
 
   afterEach(async () => {
     _setCacheDir(undefined);
+    _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
     Object.defineProperty(process.stdin, "isTTY", {
@@ -185,16 +188,32 @@ describe("apiInteractive", () => {
     });
     confirmResponses.push(true);
     stubFetch(async () => new Response("404 page not found", { status: 404 }));
-    const { _setConfigDir } = await import("../../lib/config.ts");
-    _setConfigDir(tempDir);
-    try {
-      const { payload } = await captureTelemetryPayload("api", () => runApiInteractive({}));
-      expect(payload.outcome).toBe("error");
-      expect(payload.exit_code).toBe(1);
-      expect(payload.error_code).toBe("cli_endpoint_not_found");
-    } finally {
-      _setConfigDir(undefined);
-    }
+    const { payload } = await captureTelemetryPayload("api", () => runApiInteractive({}));
+    expect(payload.outcome).toBe("error");
+    expect(payload.exit_code).toBe(1);
+    expect(payload.error_code).toBe("cli_endpoint_not_found");
+  });
+
+  // A typed parameter is encoded, so it cannot turn `/users/{user_id}` into a
+  // different route; the request the API sees is still the catalog's.
+  test("a typed path parameter is URL-encoded", async () => {
+    setMode("human");
+    selectResponses.push("Users");
+    selectResponses.push({
+      method: "GET",
+      path: "/users/{user_id}",
+      summary: "Retrieve a user",
+      tag: "Users",
+      operationId: "GetUser",
+      pathParams: [{ name: "user_id", description: "" }],
+      hasRequestBody: false,
+    });
+    inputResponses.push("abc/def ghi");
+    confirmResponses.push(true);
+
+    await runApiInteractive({});
+
+    expect(fetchCalls[0]!.url).toContain("/v1/users/abc%2Fdef%20ghi");
   });
 
   test("prompts for path parameters", async () => {

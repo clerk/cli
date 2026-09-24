@@ -429,10 +429,12 @@ export function telemetryResultForSoftExit(exitCode: number): TelemetryResult {
  *
  * `userSuppliedPath` says who wrote the request path, which only the call
  * site knows and which decides what an uncoded 404 means: a person's typo, or
- * the CLI asking for a route the API does not serve. It defaults to the CLI,
- * because every caller but one builds its own paths; `clerk api` passes true
+ * the CLI asking for a route the API does not serve. It is required rather
+ * than defaulted so a new call site cannot mis-file a 404 by omission: the
+ * BAPI commands build their own paths and pass false; `clerk api` passes true
  * for a path typed on the command line and false for one its interactive
- * builder chose from the endpoint catalog.
+ * builder chose from the endpoint catalog, whose path parameters are
+ * URL-encoded so a typed value cannot change the route.
  *
  * Call it under the same condition that sets the exit code, and with the
  * error the run means to report — the last-call-wins rule on
@@ -442,13 +444,10 @@ export function telemetryResultForSoftExit(exitCode: number): TelemetryResult {
  * the abort throw instead. (No caller can reach this today; the MCP client
  * picker runs before any client is settled.)
  */
-export function declareSoftExitError(
-  error: unknown,
-  options: { userSuppliedPath?: boolean } = {},
-): void {
+export function declareSoftExitError(error: unknown, options: { userSuppliedPath: boolean }): void {
   const code =
     error instanceof ApiError
-      ? (error.code ?? uncodedApiErrorCode(error.status, options.userSuppliedPath === true))
+      ? (error.code ?? uncodedApiErrorCode(error.status, options.userSuppliedPath))
       : (telemetryResultForError(error).errorCode ?? "unexpected_error");
   declareSoftExitOutcome("error", code);
 }
@@ -470,11 +469,12 @@ export function declareSoftExitError(
  *   prints on this branch is a heuristic, so the code claims the status and
  *   who wrote the path, not the cause.
  * - 404 with a path the CLI built → `cli_endpoint_not_found`: the CLI asked
- *   for a route the API does not serve, from a stale endpoint catalog or a
- *   hardcoded path, so this is the CLI's failure and the warehouse counts it
- *   as one. Kept apart from `api_not_found` because the same status means
- *   opposite things depending on who wrote the path, and the row cannot say
- *   which afterwards.
+ *   for a route and nothing served it — a stale endpoint catalog, a hardcoded
+ *   path the API dropped, or something in front of the API answering for it
+ *   (`CLERK_BACKEND_API_URL` is overridable), the same ambiguity the 5xx
+ *   bullet carries. The warehouse counts it as a failure. Kept apart from
+ *   `api_not_found` because the same status means opposite things depending
+ *   on who wrote the path, and the row cannot say which afterwards.
  * - other 4xx → `api_client_error`: 400, 401 and 403 collapsed. Cause and
  *   frequency unknown; the status cannot be recovered afterwards, so no
  *   finer mapping is promised.

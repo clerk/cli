@@ -152,7 +152,7 @@ export function handleBapiError(error: unknown): boolean {
     log.data(error.body);
   }
 
-  declareSoftExitError(error);
+  declareSoftExitError(error, { userSuppliedPath: false });
   process.exitCode = 1;
   return true;
 }

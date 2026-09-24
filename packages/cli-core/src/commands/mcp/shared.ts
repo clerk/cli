@@ -207,6 +207,6 @@ export async function settleClients<T>(
 export function failWhenAllFailed(outcome: SettledClients<unknown>, json: boolean): void {
   if (outcome.succeeded.length > 0 || outcome.firstError === undefined) return;
   if (!json) throw outcome.firstError;
-  declareSoftExitError(outcome.firstError);
+  declareSoftExitError(outcome.firstError, { userSuppliedPath: false });
   process.exitCode = 1;
 }

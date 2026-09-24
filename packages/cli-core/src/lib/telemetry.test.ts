@@ -651,7 +651,7 @@ describe("finalizeAndSendTelemetry", () => {
     describe("a caught error carries the code a throw would", () => {
       function codeFor(error: unknown): string | undefined {
         startCommandTelemetry(fakeCommand());
-        declareSoftExitError(error);
+        declareSoftExitError(error, { userSuppliedPath: false });
         return telemetryResultForSoftExit(EXIT_CODE.GENERAL).errorCode;
       }
 
@@ -717,14 +717,14 @@ describe("finalizeAndSendTelemetry", () => {
 
       test("the outcome is error, and only on a nonzero exit", async () => {
         const failed = await sendAndCapturePayload(
-          () => declareSoftExitError(new ApiError(404, ""), { userSuppliedPath: true }),
+          () => declareSoftExitError(new ApiError(404, ""), { userSuppliedPath: false }),
           () => telemetryResultForSoftExit(EXIT_CODE.GENERAL),
         );
         expect(failed.outcome).toBe("error");
-        expect(failed.error_code).toBe("api_not_found");
+        expect(failed.error_code).toBe("cli_endpoint_not_found");
 
         const recovered = await sendAndCapturePayload(
-          () => declareSoftExitError(new ApiError(404, "")),
+          () => declareSoftExitError(new ApiError(404, ""), { userSuppliedPath: false }),
           () => telemetryResultForSoftExit(EXIT_CODE.SUCCESS),
         );
         expect(recovered.outcome).toBe("success");
