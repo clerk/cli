@@ -129,13 +129,9 @@ export async function withGutter<T>(
   }
 }
 
-export async function withSpinner<T>(
-  message: string,
-  fn: (controls: SpinnerControls) => Promise<T>,
-  doneMessage?: string | null,
-): Promise<T> {
-  if (!isHuman()) return fn({ update: () => {} });
-
+/** A spinner whose owner explicitly ends it at a prompt, result, or phase boundary. */
+export function createSpinner(message: string, doneMessage?: string | null) {
+  let finished = false;
   const transient = doneMessage === null;
   let s: ReturnType<typeof clackSpinner> | undefined;
   let currentMessage = message;
@@ -146,28 +142,51 @@ export async function withSpinner<T>(
     });
     s.start(currentMessage);
   };
-  // Fast checks should never touch the terminal. Delay only the indicator,
-  // not the work or the next prompt; verbose progress still starts immediately.
-  const timer = transient ? setTimeout(start, TRANSIENT_SPINNER_DELAY_MS) : undefined;
-  if (!transient) start();
+  // Delay the indicator, not the work. Fast phases never touch the terminal.
+  const timer = isHuman() && transient ? setTimeout(start, TRANSIENT_SPINNER_DELAY_MS) : undefined;
+  if (isHuman() && !transient) start();
+  const finish = () => {
+    if (finished) return false;
+    finished = true;
+    clearTimeout(timer);
+    return true;
+  };
+  return {
+    update(nextMessage: string) {
+      if (finished) return;
+      currentMessage = nextMessage;
+      s?.message(nextMessage);
+    },
+    stop() {
+      if (!finish()) return;
+      if (transient) s?.clear();
+      else s?.stop(doneMessage ?? message.replace(/\.{3}$/, ""));
+    },
+    fail(error: unknown) {
+      if (!finish()) return;
+      if (isCancelled(error)) s?.stop(message.replace(/\.{3}$/, ""));
+      else s?.error("Failed");
+    },
+  };
+}
+
+export async function withSpinner<T>(
+  message: string,
+  fn: (controls: SpinnerControls) => Promise<T>,
+  doneMessage?: string | null,
+): Promise<T> {
+  if (!isHuman()) return fn({ update: () => {} });
+
+  const s = createSpinner(message, doneMessage);
   try {
-    const result = await fn({
-      update: (nextMessage) => {
-        currentMessage = nextMessage;
-        s?.message(nextMessage);
-      },
-    });
-    if (transient) s?.clear();
-    else s?.stop(doneMessage ?? message.replace(/\.{3}$/, ""));
+    const result = await fn({ update: s.update });
+    s.stop();
     return result;
   } catch (error) {
     // An interrupt aborts whatever the spinner was waiting on, so the rejection
     // arrives here first. Rendering "Failed" for a cancel the user asked for is
     // wrong, and it prints before the SIGINT handler finishes exiting.
-    if (isCancelled(error)) s?.stop(message.replace(/\.{3}$/, ""));
-    else s?.error("Failed");
+    s.fail(error);
     throw error;
-  } finally {
-    clearTimeout(timer);
   }
 }

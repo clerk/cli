@@ -14,6 +14,7 @@ import {
   cleanupApplyCLITestState,
   currentNativeRemoteState,
   resetApplyCLITestRemoteState,
+  setApplyCLIResponseDelay,
   runCLI,
 } from "./apply-cli.test-helpers.ts";
 
@@ -94,6 +95,7 @@ test("declining the concise local preview still leaves every file unchanged", as
 
 test("human init completes local and remote setup without nested completion messages", async () => {
   resetApplyCLITestRemoteState();
+  setApplyCLIResponseDelay(200);
   const root = await createUnconfiguredFixture();
   const configDir = await createIsolatedCLIState();
   const result = await runCLI(
@@ -119,6 +121,35 @@ test("human init completes local and remote setup without nested completion mess
   expect(result.stderr).not.toContain("No files to scaffold");
   expect(result.stderr).not.toContain("clerk env pull");
   expect(result.stderr).not.toContain("Linking project");
+  expect(result.stderr).toContain("Checking Clerk settings");
+  expect(result.stderr).toContain("Applying your changes");
+  expect(result.stderr).not.toContain("Rechecking the selected Xcode target identity");
+  expect(result.stderr).not.toContain("Auditing Clerk Native Application settings");
+  // Clack hides/shows the cursor when starting/ending an indicator. Within each
+  // uninterrupted phase, every animation frame must retain the same label.
+  let active: string | undefined;
+  let registrationApplyPhases = 0;
+  // oxlint-disable-next-line no-control-regex -- Check the terminal cursor's actual escape sequences.
+  for (const part of result.stderr.split(/(\u001b\[\?25[hl])/)) {
+    if (part === "\u001b[?25l") {
+      expect(active).toBeUndefined();
+      active = "";
+    } else if (part === "\u001b[?25h") {
+      if (active?.includes("Applying your changes")) registrationApplyPhases++;
+      active = undefined;
+    } else if (active !== undefined) {
+      active += part;
+      expect(part).not.toContain("Clerk registration changes:");
+      expect(part).not.toContain("Existing web sign-in settings will be preserved");
+      expect(part).not.toContain("registered with Clerk");
+      expect(part).not.toContain("application registration verified");
+      expect(part).not.toContain("Native Sign in with Apple enabled in Clerk");
+    }
+  }
+  expect(active).toBeUndefined();
+  // Registration and its API enablement/rechecks share one indicator; Apple
+  // connection setup shares another after the registration result is printed.
+  expect(registrationApplyPhases).toBe(2);
   expect(currentNativeRemoteState().mutations).toEqual({
     nativeSettingsPatchCount: 1,
     iosApplicationPostCount: 1,

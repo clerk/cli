@@ -65,7 +65,12 @@ import type { ProjectContext } from "./frameworks/types.js";
 import { type PackageManager, PACKAGE_MANAGERS } from "../../lib/package-manager.ts";
 import { validateAppIdPrefix } from "./ios/native-remote.ts";
 import { pickAppleNativeTarget } from "./ios/target-picker.ts";
-import { compactNativeOutput, withNativeSpinner } from "./ios/presentation.ts";
+import {
+  compactNativeOutput,
+  withNativeSpinner,
+  withNativeProgress,
+  stopNativeProgress,
+} from "./ios/presentation.ts";
 import {
   prepareAppleNativeSetup,
   runAppleNativeDryRun,
@@ -113,6 +118,10 @@ type InitOptions = {
 };
 
 export async function init(options: InitOptions = {}) {
+  return withNativeProgress(async () => runInit(options));
+}
+
+async function runInit(options: InitOptions) {
   if (options.prebuiltAuthUI == null && options.prebuiltAuthUi != null) {
     options = { ...options, prebuiltAuthUI: options.prebuiltAuthUi };
   }
@@ -178,6 +187,7 @@ export async function init(options: InitOptions = {}) {
   if (!resolved) return;
 
   const { ctx, bootstrap } = resolved;
+  if (ctx.framework.dep !== "ios") stopNativeProgress();
 
   if (bootstrap) {
     ctx.isBootstrap = true;
@@ -245,6 +255,7 @@ export async function init(options: InitOptions = {}) {
     };
   }
 
+  stopNativeProgress();
   await enrichProjectContext(ctx);
 
   // Skip auth-related I/O entirely when the user opted into accountless setup — those
@@ -322,6 +333,7 @@ export async function init(options: InitOptions = {}) {
         appIdPrefix: options.appIdPrefix,
       })
     : undefined;
+  stopNativeProgress();
   const authenticatedKeysHandled = appleNativeResult?.authenticatedKeysHandled ?? false;
   if (appleNativeResult?.nativeRemoteReady) {
     ctx.iosNativeRemoteReady = true;
@@ -556,6 +568,7 @@ async function bootstrapAndDetect(
   frameworkOverride: FrameworkInfo | undefined,
   overrides: BootstrapOverrides,
 ): Promise<ResolvedContext> {
+  stopNativeProgress();
   setTelemetryStage("bootstrap");
   const bootstrap = await promptAndBootstrap(cwd, frameworkOverride, overrides);
 

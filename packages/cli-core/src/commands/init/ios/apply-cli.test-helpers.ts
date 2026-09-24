@@ -29,6 +29,11 @@ let nativeSettingsPatchCount = 0;
 let iosApplicationPostCount = 0;
 let appleConfigPatchCount = 0;
 let appleConfigVersion = "v1_1234abcd";
+let responseDelayMs = 0;
+
+export function setApplyCLIResponseDelay(milliseconds: number): void {
+  responseDelayMs = milliseconds;
+}
 let appleConnection: Record<string, unknown> = {
   enabled: false,
   authenticatable: true,
@@ -45,6 +50,7 @@ const authServer = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,
   async fetch(request) {
+    if (responseDelayMs) await Bun.sleep(responseDelayMs);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/v1/platform/applications") {
       return Response.json([]);
@@ -154,6 +160,7 @@ const authServer = Bun.serve({
 authServer.unref();
 
 export function resetApplyCLITestRemoteState(): void {
+  responseDelayMs = 0;
   nativeAPIEnabled = false;
   nextIOSApplication = 1;
   nativeSettingsPatchCount = 0;
