@@ -19,7 +19,7 @@ const CLI_PATH = join(import.meta.dir, "../../packages/cli-core/src/cli.ts");
 const PLATFORMS = [
   {
     fixture: "ios",
-    detectedName: "iOS (Swift)",
+    detectedName: "Found iOS app: MyApp",
     instructions: [
       "ClerkKit and ClerkKitUI linked to MyApp",
       "Clerk configured in MyApp/MyAppApp.swift",
