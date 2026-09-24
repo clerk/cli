@@ -352,6 +352,139 @@ describe("inspectTargetBuildConfigurations", () => {
     );
   });
 
+  test("does not turn an unsupported xcconfig condition into an unconditional Bundle ID", async () => {
+    const { configurations, diagnostics } = await inspectFixture({
+      xcconfig: [
+        "PRODUCT_BUNDLE_IDENTIFIER = com.example.Normal",
+        "PRODUCT_BUNDLE_IDENTIFIER[variant=profile] = com.example.Profile",
+      ].join("\n"),
+      targetBuildSettings: { PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)" },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "unresolved",
+      missingVariables: ["unsupported xcconfig condition"],
+    });
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.unresolved-build-setting",
+        message: expect.stringContaining("PRODUCT_BUNDLE_IDENTIFIER"),
+      }),
+    );
+  });
+
+  test("propagates unsupported conditional variables into the Bundle ID", async () => {
+    const { configurations } = await inspectFixture({
+      xcconfig: [
+        "APP_SUFFIX = Normal",
+        "APP_SUFFIX[variant=profile] = Profile",
+        "PRODUCT_BUNDLE_IDENTIFIER = com.example.$(APP_SUFFIX)",
+      ].join("\n"),
+      targetBuildSettings: { PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)" },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "unresolved",
+      missingVariables: ["unsupported xcconfig condition"],
+    });
+  });
+
+  test("does not let a builtin mask an unsupported conditional override", async () => {
+    const { configurations } = await inspectFixture({
+      xcconfig: [
+        "PRODUCT_NAME[variant=profile] = Other",
+        "PRODUCT_BUNDLE_IDENTIFIER = com.example.$(PRODUCT_NAME)",
+      ].join("\n"),
+      targetBuildSettings: { PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)" },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "unresolved",
+      missingVariables: ["unsupported xcconfig condition"],
+    });
+  });
+
+  test("does not taint a Bundle ID for an unrelated unsupported condition", async () => {
+    const { configurations } = await inspectFixture({
+      xcconfig: [
+        "OTHER_SETTING[variant=profile] = Unused",
+        "PRODUCT_BUNDLE_IDENTIFIER = com.example.Normal",
+      ].join("\n"),
+      targetBuildSettings: { PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)" },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.Normal",
+    });
+  });
+
+  test("does not trust a fallback Bundle ID under a versioned xcconfig SDK condition", async () => {
+    const { configurations } = await inspectFixture({
+      xcconfig: [
+        "PRODUCT_BUNDLE_IDENTIFIER = com.example.Fallback",
+        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos26*] = com.example.Versioned",
+      ].join("\n"),
+      targetBuildSettings: { PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)" },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "unresolved",
+      missingVariables: ["unsupported xcconfig condition"],
+    });
+  });
+
+  test("also treats versioned inline SDK conditions as unresolved", async () => {
+    const { configurations } = await inspectFixture({
+      targetBuildSettings: {
+        PRODUCT_BUNDLE_IDENTIFIER: "com.example.Fallback",
+        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos26*]": "com.example.Versioned",
+      },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "unresolved",
+      missingVariables: ["unsupported conditional build setting"],
+    });
+  });
+
+  test("matches question-mark wildcards in xcconfig conditions", async () => {
+    const { configurations } = await inspectFixture({
+      xcconfig: [
+        "PRODUCT_BUNDLE_IDENTIFIER = com.example.Fallback",
+        "PRODUCT_BUNDLE_IDENTIFIER[config=Debu?] = com.example.Debug",
+      ].join("\n"),
+      targetBuildSettings: { PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)" },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.Debug",
+    });
+  });
+
+  test("removes xcconfig assignment terminators without stripping quoted semicolons", async () => {
+    const { configurations } = await inspectFixture({
+      xcconfig: [
+        "PRODUCT_BUNDLE_IDENTIFIER = com.example.Real;",
+        'DEVELOPMENT_TEAM = "ABCD;EFGH";',
+      ].join("\n"),
+      targetBuildSettings: {
+        PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)",
+        DEVELOPMENT_TEAM: "$(inherited)",
+      },
+    });
+
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "resolved",
+      value: "com.example.Real",
+    });
+    expect(configurations[0]?.model.developmentTeam).toMatchObject({
+      state: "resolved",
+      value: "ABCD;EFGH",
+    });
+  });
+
   test("preserves all active platforms from continued xcconfig values", async () => {
     const { configurations, diagnostics } = await inspectFixture({
       xcconfig: [

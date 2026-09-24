@@ -48,6 +48,7 @@ interface BuildSettingsEvaluation {
 type XCConfigOperation =
   | { kind: "include"; path: string; optional: boolean }
   | { kind: "setting"; key: string; value: string; conditions?: XCConfigCondition[] }
+  | { kind: "unresolved-setting"; key: string }
   | { kind: "unresolved-continuation" };
 
 const BUILD_CONTEXTS: BuildContext[] = [
@@ -63,8 +64,57 @@ interface XCConfigCondition {
 }
 
 function wildcardMatches(value: string, pattern: string): boolean {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*");
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replaceAll("*", ".*")
+    .replaceAll("?", ".");
   return new RegExp(`^${escaped}$`, "i").test(value);
+}
+
+function stripXCConfigAssignmentTerminator(line: string): string {
+  const trimmed = line.trimEnd();
+  if (!trimmed.endsWith(";")) return line;
+
+  let quote: '"' | "'" | undefined;
+  let escaped = false;
+  let escapedTerminator = false;
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const character = trimmed[index];
+    if (escaped) {
+      if (index === trimmed.length - 1) escapedTerminator = true;
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      if (quote === character) quote = undefined;
+      else if (!quote) quote = character;
+    }
+  }
+  return quote || escapedTerminator ? line : trimmed.slice(0, -1).trimEnd();
+}
+
+function parseXCConfigSetting(line: string): XCConfigOperation | undefined {
+  const normalizedLine = stripXCConfigAssignmentTerminator(line);
+  const setting = parseXCConfig(normalizedLine).buildSettings[0];
+  const rawKey = /^([a-zA-Z_][a-zA-Z0-9_]*(?:\[[^\]]*\])*)\s*=/.exec(normalizedLine)?.[1];
+  if (!setting) {
+    const key = /^([a-zA-Z_][a-zA-Z0-9_]*)/.exec(normalizedLine)?.[1];
+    return key && normalizedLine.includes("=") ? { kind: "unresolved-setting", key } : undefined;
+  }
+  const parsedKey = rawKey ? parseInlineBuildSettingKey(rawKey) : undefined;
+  if (!parsedKey?.supported || parsedKey.key !== setting.key) {
+    return { kind: "unresolved-setting", key: setting.key };
+  }
+  return {
+    kind: "setting",
+    key: setting.key,
+    value: setting.value,
+    conditions: parsedKey.conditions,
+  };
 }
 
 function conditionsMatch(
@@ -192,14 +242,9 @@ function parseXCConfigOperations(content: string): XCConfigOperation[] {
       usedContinuation = false;
       continue;
     }
-    const setting = parsed.buildSettings[0];
+    const setting = parseXCConfigSetting(line);
     if (setting) {
-      operations.push({
-        kind: "setting",
-        key: setting.key,
-        value: setting.value,
-        conditions: setting.conditions,
-      });
+      operations.push(setting);
     } else if (usedContinuation && line) {
       operations.push({ kind: "unresolved-continuation" });
     }
@@ -209,15 +254,9 @@ function parseXCConfigOperations(content: string): XCConfigOperation[] {
   // Xcode accepts a trailing continuation at EOF and removes the final
   // backslash, so parse the accumulated assignment once more.
   if (logicalLine) {
-    const parsed = parseXCConfig(logicalLine);
-    const setting = parsed.buildSettings[0];
+    const setting = parseXCConfigSetting(logicalLine);
     if (setting) {
-      operations.push({
-        kind: "setting",
-        key: setting.key,
-        value: setting.value,
-        conditions: setting.conditions,
-      });
+      operations.push(setting);
     } else {
       operations.push({ kind: "unresolved-continuation" });
     }
@@ -357,6 +396,17 @@ async function readXCConfigSettings(
       });
       continue;
     }
+    if (operation.kind === "unresolved-setting") {
+      addSettingTaint(evaluation.settingTaints, operation.key, "unsupported xcconfig condition");
+      addDiagnosticOnce(diagnostics, {
+        code: "xcode.unresolved-build-setting",
+        severity: "warning",
+        message: `${relativeIOSPath(root, path)} has an assignment for ${operation.key} whose condition could not be evaluated safely.`,
+        remedy: "Use an unversioned sdk, arch, or config condition before automating setup.",
+        evidence: [{ path: relativeIOSPath(root, path), keyPath: operation.key }],
+      });
+      continue;
+    }
     if (operation.kind === "setting") {
       if (!conditionsMatch(operation.conditions, configuration, context)) continue;
       applyEvaluatedSetting(evaluation, operation.key, operation.value, operation.conditions);
@@ -443,6 +493,11 @@ function parseInlineBuildSettingKey(
     if (!["sdk", "arch", "config"].includes(type)) {
       return { key, supported: false };
     }
+    // BuildContext records platform families, not SDK versions. A pattern
+    // without a trailing wildcard can differ between iphoneos and iphoneos26.5.
+    if (type === "sdk" && (!value.endsWith("*") || /[0-9?]/.test(value))) {
+      return { key, supported: false };
+    }
     if (type === "sdk") conditions.push({ sdk: value });
     if (type === "arch") conditions.push({ arch: value });
     if (type === "config") conditions.push({ config: value });
@@ -526,6 +581,9 @@ function resolveSetting(
       }
 
       const replacement = settings[variable] ?? builtins[variable];
+      for (const taint of settingTaintsFor(evaluation, variable)) {
+        missingVariables.add(taint);
+      }
       if (replacement == null) {
         missingVariables.add(variable);
         return `$(${variableWithModifier})`;
