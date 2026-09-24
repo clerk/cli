@@ -448,6 +448,40 @@ describe("inspectTargetBuildConfigurations", () => {
     });
   });
 
+  for (const source of ["xcconfig", "inline"] as const) {
+    test.each([
+      { condition: "sdk=IPHONE*", value: "com.example.Shipping" },
+      { condition: "sdk=iPhone*", value: "com.example.Shipping" },
+      { condition: "sdk=iphone*", value: "com.example.Conditional" },
+      { condition: "arch=ARM64", value: "com.example.Shipping" },
+      { condition: "config=debug", value: "com.example.Shipping" },
+      { condition: "config=debu?", value: "com.example.Shipping" },
+      { condition: "config=Debu?", value: "com.example.Conditional" },
+      { condition: "SDK=iphone*", value: undefined },
+      { condition: "ARCH=arm64", value: undefined },
+      { condition: "Config=Debug", value: undefined },
+    ])(`respects condition casing in ${source}: $condition`, async ({ condition, value }) => {
+      const settings = {
+        PRODUCT_BUNDLE_IDENTIFIER: "com.example.Shipping",
+        [`PRODUCT_BUNDLE_IDENTIFIER[${condition}]`]: "com.example.Conditional",
+      };
+      const { configurations } = await inspectFixture(
+        source === "xcconfig"
+          ? {
+              xcconfig: Object.entries(settings)
+                .map(([key, value]) => `${key} = ${value}`)
+                .join("\n"),
+              targetBuildSettings: { PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)" },
+            }
+          : { targetBuildSettings: settings },
+      );
+
+      expect(configurations[0]?.model.bundleIdentifier).toMatchObject(
+        value === undefined ? { state: "unresolved" } : { state: "resolved", value },
+      );
+    });
+  }
+
   test("matches question-mark wildcards in xcconfig conditions", async () => {
     const { configurations } = await inspectFixture({
       xcconfig: [

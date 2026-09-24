@@ -69,7 +69,7 @@ function wildcardMatches(value: string, pattern: string): boolean {
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
     .replaceAll("*", ".*")
     .replaceAll("?", ".");
-  return new RegExp(`^${escaped}$`, "i").test(value);
+  return new RegExp(`^${escaped}$`).test(value);
 }
 
 function stripXCConfigAssignmentTerminator(line: string): string {
@@ -490,7 +490,7 @@ function parseInlineBuildSettingKey(
     const rawType = conditionMatch[1];
     const value = conditionMatch[2];
     if (!rawType || !value) return { key, supported: false };
-    const type = rawType.toLowerCase();
+    const type = rawType;
     if (!["sdk", "arch", "config"].includes(type)) {
       return { key, supported: false };
     }
