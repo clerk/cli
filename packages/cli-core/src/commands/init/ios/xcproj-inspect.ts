@@ -9,6 +9,7 @@ import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import { isClerkIOSRepository, sanitizeRepositoryURL } from "./pbx.ts";
 import { inspectSwiftSources } from "./swift.ts";
 import { filterIOSSwiftSources } from "./source-filters.ts";
+import { shouldTraverseSynchronizedSourceDirectory } from "./source-directories.ts";
 import type {
   IOSAppTarget,
   IOSClerkPackageState,
@@ -36,21 +37,6 @@ import {
 const APP_PRODUCT_TYPES = new Set(["application", "com.apple.product-type.application"]);
 const MAX_SOURCE_FILES = 2_500;
 const MAX_SOURCE_DEPTH = 24;
-// Xcode excludes its own metadata directory, but otherwise synchronized folders
-// may compile Swift sources below conventional dependency, build, and hidden
-// directories. Traversal limits below provide the safety bound instead.
-const SOURCE_DIRECTORY_IGNORES = new Set([".git"]);
-// Xcode treats these directory packages as opaque resources rather than
-// recursively discovering their Swift files as target sources.
-const OPAQUE_SOURCE_DIRECTORY_EXTENSIONS = new Set([
-  ".bundle",
-  ".docc",
-  ".lproj",
-  ".playground",
-  ".xcassets",
-  ".xcdatamodeld",
-  ".xcplaygroundpage",
-]);
 
 function emptySwiftInspection(): IOSSwiftInspection {
   return {
@@ -330,10 +316,7 @@ async function collectSwiftFiles(
         state.complete = false;
         continue;
       }
-      if (
-        !SOURCE_DIRECTORY_IGNORES.has(entry.name) &&
-        !OPAQUE_SOURCE_DIRECTORY_EXTENSIONS.has(extname(entry.name).toLowerCase())
-      ) {
+      if (shouldTraverseSynchronizedSourceDirectory(entry.name)) {
         await collectSwiftFiles(
           root,
           absolutePath,
@@ -491,6 +474,11 @@ function folderMembership(
     },
     included(path, kind) {
       if (matchesPath(opaque, path)) return false;
+      if (kind === "directory" && matchesPath(exclusions, path)) {
+        // A folder exception does not establish descendant source membership.
+        // Keep skipped contents from authorizing ownership-sensitive edits.
+        state.complete = false;
+      }
       const explicitlyIncluded = matchesPathOrIncludedDescendant(inclusions, path);
       const base = explicitlyIncluded || (defaultMember && !matchesPath(exclusions, path));
       if (!base || !platform) return base;

@@ -1070,6 +1070,67 @@ struct GeneratedApp: App {
     },
   );
 
+  test.each([
+    ["build", "none"],
+    [".hidden", "none"],
+    ["build", "file"],
+    [".hidden", "file"],
+    ["build", "directory"],
+    [".hidden", "directory"],
+  ])(
+    "protects JSON configuration calls below %s with %s exclusion",
+    async (directory, exclusion) => {
+      const root = await temporaryRoot("clerk-xcproj-synchronized-configuration-");
+      await createIOSJSONFixture(root);
+      const sourcePath = join(root, "MyApp", directory!, "Bootstrap.swift");
+      await mkdir(dirname(sourcePath), { recursive: true });
+      await writeFile(
+        sourcePath,
+        `import ClerkKit\nfunc startClerk() { Clerk.configure(publishableKey: "${DEVELOPMENT_KEY}") }\n`,
+      );
+      if (exclusion !== "none") {
+        const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+        await writeFile(
+          projectPath,
+          applyXCProjValue(
+            await readFile(projectPath, "utf8"),
+            ["files", 0, "membership-exceptions"],
+            [
+              {
+                target: "MyApp",
+                exclusions: [exclusion === "file" ? `${directory}/Bootstrap.swift` : directory],
+              },
+            ],
+          ),
+        );
+      }
+      const options = {
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: "C1E000000000000000000001",
+      };
+      const before = await treeDigest(root);
+      const plan = await planIOSDirectConfig(options);
+      if (exclusion === "file") {
+        expect(plan.status).toBe("ready");
+        const sourceBefore = await readFile(sourcePath);
+        expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("applied");
+        expect(await readFile(sourcePath)).toEqual(sourceBefore);
+        const applied = await treeDigest(root);
+        expect(
+          (await applyIOSDirectConfig(await planIOSDirectConfig(options), DEVELOPMENT_KEY)).status,
+        ).toBe("satisfied");
+        expect(await treeDigest(root)).toEqual(applied);
+      } else {
+        expect(blockerCodes(plan)).toContain(
+          exclusion === "directory" ? "incomplete-source-membership" : "conflicting-configuration",
+        );
+        expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("blocked");
+        expect(await treeDigest(root)).toEqual(before);
+      }
+    },
+  );
+
   test("recognizes mixed-case Swift extensions in a JSON synchronized folder", async () => {
     const root = await temporaryRoot("clerk-xcproj-direct-config-swift-case-");
     await createIOSJSONFixture(root);
