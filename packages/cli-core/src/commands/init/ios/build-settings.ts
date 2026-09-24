@@ -1109,14 +1109,15 @@ export async function inspectTargetBuildConfigurations(options: {
     const explicitlyNonIOS =
       !hasUnknownPlatformEvidence && !hasIOSSDK && !hasIOSPlatform && hasResolvedNonIOSEvidence;
 
-    const identityContexts = [
+    // Product settings must agree with Xcode's architecture-independent packaging phase.
+    const productContexts = [
       ...activeContexts,
       ...packagingContexts.filter(({ context }) =>
         activeContexts.some(({ context: active }) => active.sdk === context.sdk),
       ),
     ];
     const identityVariants = await Promise.all(
-      identityContexts.map(async ({ context, evaluation, builtins }) => ({
+      productContexts.map(async ({ context, evaluation, builtins }) => ({
         context,
         resolution: await resolveIOSBundleIdentity({
           root,
@@ -1147,7 +1148,7 @@ export async function inspectTargetBuildConfigurations(options: {
       ),
       entitlementsPath: resolveSettingAcrossContexts(
         "CODE_SIGN_ENTITLEMENTS",
-        activeContexts,
+        productContexts,
         evidence("CODE_SIGN_ENTITLEMENTS"),
         targetName,
         name,
@@ -1192,7 +1193,7 @@ export async function inspectTargetBuildConfigurations(options: {
           true,
         ),
       })),
-      entitlementContexts: activeContexts.map(({ context, evaluation, builtins }) => ({
+      entitlementContexts: productContexts.map(({ context, evaluation, builtins }) => ({
         label: context.label,
         settings: { ...evaluation.settings },
         settingTaints: cloneSettingTaints(evaluation.settingTaints),

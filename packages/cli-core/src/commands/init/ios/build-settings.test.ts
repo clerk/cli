@@ -554,6 +554,8 @@ describe("inspectTargetBuildConfigurations", () => {
       "iphoneos/arm64",
       "iphonesimulator/arm64",
       "iphonesimulator/x86_64",
+      "iphoneos/packaging",
+      "iphonesimulator/packaging",
     ]);
     expect(diagnostics).toContainEqual(
       expect.objectContaining({
@@ -586,6 +588,8 @@ describe("inspectTargetBuildConfigurations", () => {
       "iphoneos/arm64",
       "iphonesimulator/arm64",
       "iphonesimulator/x86_64",
+      "iphoneos/packaging",
+      "iphonesimulator/packaging",
     ]);
   });
 
@@ -612,6 +616,8 @@ describe("inspectTargetBuildConfigurations", () => {
       "iphoneos/arm64",
       "iphonesimulator/arm64",
       "iphonesimulator/x86_64",
+      "iphoneos/packaging",
+      "iphonesimulator/packaging",
     ]);
   });
 
@@ -662,6 +668,7 @@ describe("inspectTargetBuildConfigurations", () => {
     expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
       "iphonesimulator/arm64",
       "iphonesimulator/x86_64",
+      "iphonesimulator/packaging",
     ]);
     expect(diagnostics).not.toContainEqual(
       expect.objectContaining({ code: "xcode.conflicting-build-setting" }),
