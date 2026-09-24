@@ -571,6 +571,28 @@ describe("finalizeAndSendTelemetry", () => {
     });
   });
 
+  // A deploy read still in flight when the command failed can resolve while
+  // the send is awaiting its config reads. The event is built from a copy
+  // taken when finalization began, so that late write changes nothing.
+  test("a component written after finalization begins does not reach the event", async () => {
+    await markTelemetryNoticeShown();
+    process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+    const posted: string[] = [];
+    globalThis.fetch = (async (_url: unknown, init?: { body?: string }) => {
+      posted.push(init?.body ?? "");
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    startCommandTelemetry(fakeCommand());
+
+    const sending = finalizeAndSendTelemetry({ outcome: "error", exitCode: 1 });
+    setTelemetryDomainComponents({ dns: true, ssl: true, mail: true });
+    await sending;
+
+    expect(posted).toHaveLength(1);
+    const payload = JSON.parse(posted[0]!).events[0].payload;
+    expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+  });
+
   // A command that reports failure through `process.exitCode` never reaches
   // `telemetryResultForError`, so without a declaration the only thing the
   // soft-exit branch can say is "nonzero, therefore error".
@@ -604,7 +626,8 @@ describe("finalizeAndSendTelemetry", () => {
       expect(payload.error_code).toBeNull();
     });
 
-    // The shape M7 extends: `clerk api` holds a code its own catch swallowed.
+    // The shape the status-based split below extends: `clerk api` holds a code
+    // its own catch swallowed.
     test("a declaration can carry an error code", () => {
       startCommandTelemetry(fakeCommand());
       declareSoftExitOutcome("error", "api_not_found");
@@ -768,8 +791,8 @@ describe("finalizeAndSendTelemetry", () => {
     });
 
     // The deploy fields are on every event; a command that never observes them
-    // later milestones. Null means never observed, and the warehouse reads it
-    // that way — it must not arrive as `false` or as an absent key.
+    // sends null. Null means never observed, and the warehouse reads it that
+    // way — it must not arrive as `false` or as an absent key.
     test("pause_step and components are present and null on a command that never sets them", async () => {
       const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
       expect(payload.pause_step).toBeNull();

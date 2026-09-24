@@ -167,7 +167,7 @@ test("an unfinished `deploy status` is recorded as incomplete, not an error", as
 });
 
 // `clerk api` catches the API error to print its body, so the code reaches
-// the event only through the soft-exit declaration. M3's test above proves a
+// the event only through the soft-exit declaration. The `incomplete` test above proves a
 // declared outcome survives the real program; this proves a declared *code*
 // does, and covers the status split end to end — the unit tests model the
 // final step, this runs it.

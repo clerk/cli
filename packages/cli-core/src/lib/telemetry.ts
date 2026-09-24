@@ -521,7 +521,11 @@ export async function finalizeAndSendTelemetry(
 ): Promise<void> {
   if (finalized || !context) return;
 
-  const current = context;
+  // A copy, not the live context: the send awaits config reads before it
+  // builds the event, and a deploy read still in flight when the command
+  // failed could land in that window. The event says what was known when
+  // the command ended, whatever finishes afterwards.
+  const current = { ...context, components: { ...context.components } };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deadlineMs);
   try {
