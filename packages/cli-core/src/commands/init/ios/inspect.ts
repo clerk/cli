@@ -34,6 +34,7 @@ import {
 import { parseIOSPlist } from "./plist.ts";
 import { inspectSwiftSources } from "./swift.ts";
 import { filterIOSSwiftSources } from "./source-filters.ts";
+import { shouldTraverseSynchronizedSourceDirectory } from "./source-directories.ts";
 import type {
   IOSAppTarget,
   IOSBuildConfiguration,
@@ -54,16 +55,6 @@ const MAX_ENTITLEMENTS_BYTES = 2_000_000;
 const MAX_PBXPROJ_BYTES = 15_000_000;
 const MAX_SOURCE_FILES = 2_500;
 const MAX_SOURCE_DEPTH = 24;
-const SOURCE_IGNORES = new Set([
-  ".build",
-  ".git",
-  ".swiftpm",
-  "build",
-  "Carthage",
-  "DerivedData",
-  "Pods",
-  "SourcePackages",
-]);
 
 interface ParsedProject {
   inspection: IOSProjectInspection;
@@ -568,7 +559,7 @@ function normalizeSynchronizedPath(path: string): string {
 
 function synchronizedStringCollection(
   object: PbxObject,
-  property: "exceptions" | "membershipExceptions",
+  property: "exceptions" | "membershipExceptions" | "explicitFolders",
   state: { complete: boolean },
 ): string[] {
   if (!Object.hasOwn(object, property)) return [];
@@ -584,14 +575,27 @@ function synchronizedStringCollection(
   return strings;
 }
 
+type SynchronizedExclusions = { paths: Set<string>; opaqueFolders: Set<string> };
+
 function synchronizedExclusions(
   group: PbxObject,
   targetId: string,
   relevantPhaseIds: Set<string>,
   objects: PbxObjects,
   state: { complete: boolean },
-): Set<string> {
+): SynchronizedExclusions {
+  const opaqueFolders = new Set(
+    synchronizedStringCollection(group, "explicitFolders", state).map(normalizeSynchronizedPath),
+  );
   const excluded = new Set<string>();
+  if (
+    Object.hasOwn(group, "explicitFileTypes") &&
+    (!isRecord(group.explicitFileTypes) || Object.keys(group.explicitFileTypes).length > 0)
+  ) {
+    // Type overrides can change extension-based source and package membership.
+    // Keep absence and ownership checks uncertain until those overrides are modeled.
+    state.complete = false;
+  }
   for (const exceptionId of synchronizedStringCollection(group, "exceptions", state)) {
     const exception = objects[exceptionId];
     if (!exception) {
@@ -645,7 +649,7 @@ function synchronizedExclusions(
       }
     }
   }
-  return excluded;
+  return { paths: excluded, opaqueFolders };
 }
 
 function synchronizedPathIsExcluded(path: string, excluded: Set<string>): boolean {
@@ -658,7 +662,7 @@ async function collectSwiftFiles(
   root: string,
   directory: string,
   groupRoot: string,
-  excluded: Set<string>,
+  excluded: SynchronizedExclusions,
   files: Map<string, { absolutePath: string; relativePath: string }>,
   state: { complete: boolean },
   depth = 0,
@@ -687,16 +691,21 @@ async function collectSwiftFiles(
     }
     const absolutePath = resolve(directory, entry.name);
     const pathFromGroup = relative(groupRoot, absolutePath).split(sep).join("/");
-    if (synchronizedPathIsExcluded(pathFromGroup, excluded)) {
+    if (synchronizedPathIsExcluded(pathFromGroup, excluded.opaqueFolders)) continue;
+    if (synchronizedPathIsExcluded(pathFromGroup, excluded.paths)) {
+      // A folder membership exception does not prove its descendants are
+      // excluded from compilation. Do not use this skipped subtree as absence
+      // evidence; exact file exceptions remain safe.
+      if (entry.isDirectory()) state.complete = false;
       continue;
     }
     if (entry.isDirectory()) {
-      if (!SOURCE_IGNORES.has(entry.name) && !entry.name.startsWith(".")) {
+      if (shouldTraverseSynchronizedSourceDirectory(entry.name)) {
         await collectSwiftFiles(root, absolutePath, groupRoot, excluded, files, state, depth + 1);
       }
-    } else if (entry.isFile() && extname(entry.name) === ".swift") {
+    } else if (entry.isFile() && extname(entry.name).toLowerCase() === ".swift") {
       files.set(absolutePath, { absolutePath, relativePath: relativeIOSPath(root, absolutePath) });
-    } else if (entry.isSymbolicLink() && extname(entry.name) === ".swift") {
+    } else if (entry.isSymbolicLink() && extname(entry.name).toLowerCase() === ".swift") {
       state.complete = false;
     }
   }
