@@ -83,8 +83,8 @@ function secondTargetObjects(platform: "ios" | "watchos"): string {
     ${IDS.secondSourceBuildFile} = { isa = PBXBuildFile; fileRef = ${IDS.secondAppFile}; };
     ${IDS.secondFrameworksPhase} = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ( ); runOnlyForDeploymentPostprocessing = 0; };
     ${IDS.secondConfigList} = { isa = XCConfigurationList; buildConfigurations = ( ${IDS.secondDebug}, ${IDS.secondRelease}, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-    ${IDS.secondDebug} = { isa = XCBuildConfiguration; buildSettings = { ${platformSettings} }; name = Debug; };
-    ${IDS.secondRelease} = { isa = XCBuildConfiguration; buildSettings = { ${platformSettings} }; name = Release; };
+    ${IDS.secondDebug} = { isa = XCBuildConfiguration; buildSettings = { GENERATE_INFOPLIST_FILE = YES; ${platformSettings} }; name = Debug; };
+    ${IDS.secondRelease} = { isa = XCBuildConfiguration; buildSettings = { GENERATE_INFOPLIST_FILE = YES; ${platformSettings} }; name = Release; };
   `;
 }
 
@@ -161,8 +161,8 @@ function pbxproj(options: IOSFixtureOptions): string {
     ${IDS.projectDebug} = { isa = XCBuildConfiguration; buildSettings = { SDKROOT = iphoneos; }; name = Debug; };
     ${IDS.projectRelease} = { isa = XCBuildConfiguration; buildSettings = { SDKROOT = iphoneos; }; name = Release; };
     ${IDS.targetConfigList} = { isa = XCConfigurationList; buildConfigurations = ( ${IDS.targetDebug}, ${IDS.targetRelease}, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-    ${IDS.targetDebug} = { isa = XCBuildConfiguration; ${baseConfigurationReference} buildSettings = { CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements; ${debugIdentitySettings} IPHONEOS_DEPLOYMENT_TARGET = 17.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Debug; };
-    ${IDS.targetRelease} = { isa = XCBuildConfiguration; ${baseConfigurationReference} buildSettings = { ${releaseEntitlements} ${releaseIdentitySettings} IPHONEOS_DEPLOYMENT_TARGET = 17.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Release; };
+    ${IDS.targetDebug} = { isa = XCBuildConfiguration; ${baseConfigurationReference} buildSettings = { GENERATE_INFOPLIST_FILE = YES; CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements; ${debugIdentitySettings} IPHONEOS_DEPLOYMENT_TARGET = 17.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Debug; };
+    ${IDS.targetRelease} = { isa = XCBuildConfiguration; ${baseConfigurationReference} buildSettings = { GENERATE_INFOPLIST_FILE = YES; ${releaseEntitlements} ${releaseIdentitySettings} IPHONEOS_DEPLOYMENT_TARGET = 17.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Release; };
     ${options.secondTarget ? secondTargetObjects(options.secondTarget === "watchos" ? "watchos" : "ios") : ""}
   };
   rootObject = ${IDS.project};

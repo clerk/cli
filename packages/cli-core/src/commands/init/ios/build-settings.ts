@@ -3,6 +3,7 @@ import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { parse as parseXCConfig } from "@bacons/xcode/xcconfig";
 import { pathIsSafelyWithinIOSRoot, pathIsWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import type { IOSSourceFilterContext } from "./source-filters.ts";
+import { resolveIOSBundleIdentity } from "./bundle-identity.ts";
 import {
   asString,
   asStringArray,
@@ -23,6 +24,10 @@ const MAX_XCCONFIG_DEPTH = 12;
 const BUILD_SETTING_VARIABLE = /\$\(([^)]+)\)|\$\{([^}]+)\}/g;
 const INSPECTED_BUILD_SETTING_KEYS = [
   "PRODUCT_BUNDLE_IDENTIFIER",
+  "GENERATE_INFOPLIST_FILE",
+  "INFOPLIST_FILE",
+  "INFOPLIST_PREPROCESS",
+  "INFOPLIST_EXPAND_BUILD_SETTINGS",
   "DEVELOPMENT_TEAM",
   "CODE_SIGN_ENTITLEMENTS",
   "IPHONEOS_DEPLOYMENT_TARGET",
@@ -31,9 +36,9 @@ const INSPECTED_BUILD_SETTING_KEYS = [
 ] as const;
 
 interface BuildContext {
-  label: "iphoneos/arm64" | "iphonesimulator/arm64" | "iphonesimulator/x86_64";
+  label: string;
   sdk: "iphoneos" | "iphonesimulator";
-  arch: "arm64" | "x86_64";
+  arch: "arm64" | "x86_64" | "undefined_arch";
 }
 
 interface BuildSettingsEvaluation {
@@ -57,6 +62,11 @@ const BUILD_CONTEXTS: BuildContext[] = [
   { label: "iphonesimulator/arm64", sdk: "iphonesimulator", arch: "arm64" },
   { label: "iphonesimulator/x86_64", sdk: "iphonesimulator", arch: "x86_64" },
 ];
+
+// Xcode processes the bundle's Info.plist outside a concrete compiler architecture.
+const PACKAGING_CONTEXTS: BuildContext[] = [
+  ...new Map(BUILD_CONTEXTS.map((context) => [context.sdk, context])).values(),
+].map((context) => ({ ...context, label: `${context.sdk}/packaging`, arch: "undefined_arch" }));
 
 interface XCConfigCondition {
   sdk?: string;
@@ -133,7 +143,7 @@ function conditionsMatch(
 
 function applySettings(base: Record<string, string>, next: Record<string, string>): void {
   for (const [key, value] of Object.entries(next)) {
-    base[key] = value.replace(/\$(?:\(inherited\)|\{inherited\})/gi, base[key] ?? "").trim();
+    base[key] = value.replace(/\$(?:\(inherited\)|\{inherited\})/g, base[key] ?? "").trim();
   }
 }
 
@@ -177,7 +187,7 @@ function applyEvaluatedSetting(
 
 function onlyUsesInheritedBuildSettingVariables(value: string): boolean {
   const variables = [...value.matchAll(/\$\(([^)]+)\)|\$\{([^}]+)\}/g)].map((match) =>
-    String(match[1] ?? match[2]).toLowerCase(),
+    String(match[1] ?? match[2]),
   );
   return variables.length > 0 && variables.every((variable) => variable === "inherited");
 }
@@ -556,9 +566,26 @@ function resolveSetting(
   evidence: IOSSourceEvidence,
   preserveQuotes = false,
 ): IOSValueResolution {
+  return expandBuildSettingValue(
+    evaluation.settings[key],
+    evaluation,
+    builtins,
+    evidence,
+    preserveQuotes,
+    key,
+  );
+}
+
+function expandBuildSettingValue(
+  initial: string | undefined,
+  evaluation: BuildSettingsEvaluation,
+  builtins: Record<string, string>,
+  evidence: IOSSourceEvidence,
+  preserveQuotes = false,
+  settingKey?: string,
+): IOSValueResolution {
   const settings = evaluation.settings;
-  const initial = settings[key];
-  const taints = settingTaintsFor(evaluation, key);
+  const taints = settingKey === undefined ? [] : settingTaintsFor(evaluation, settingKey);
   if ((initial == null || initial.trim() === "") && taints.length === 0) {
     return { state: "missing", evidence: [evidence] };
   }
@@ -576,7 +603,7 @@ function resolveSetting(
         return match;
       }
       const variable = variableWithModifier.split(":", 1)[0] ?? variableWithModifier;
-      if (variable.toLowerCase() === "inherited") return "";
+      if (variable === "inherited") return "";
       if (stack.has(variable)) {
         missingVariables.add(variable);
         return `$(${variableWithModifier})`;
@@ -605,8 +632,13 @@ function resolveSetting(
   };
 
   const raw = initial ?? "";
-  const expanded = resolveValue(raw, new Set([key]));
-  const value = preserveQuotes ? expanded.trim() : stripSurroundingQuotes(expanded);
+  const expanded = resolveValue(raw, new Set(settingKey === undefined ? [] : [settingKey]));
+  const value =
+    settingKey === undefined
+      ? expanded
+      : preserveQuotes
+        ? expanded.trim()
+        : stripSurroundingQuotes(expanded);
   if (missingVariables.size > 0 || hasBuildSettingVariable(value)) {
     return {
       state: "unresolved",
@@ -819,6 +851,24 @@ function resolveSettingAcrossContexts(
     context,
     resolution: resolveSetting(key, evaluation, builtins, evidence),
   }));
+  return resolveContextVariants(
+    key,
+    variants,
+    evidence,
+    targetName,
+    configurationName,
+    diagnostics,
+  );
+}
+
+function resolveContextVariants(
+  key: string,
+  variants: Array<{ context: BuildContext; resolution: IOSValueResolution }>,
+  evidence: IOSSourceEvidence,
+  targetName: string,
+  configurationName: string,
+  diagnostics: IOSDiagnostic[],
+): IOSValueResolution {
   const signatures = new Set(variants.map(({ resolution }) => resolutionSignature(resolution)));
   if (signatures.size <= 1)
     return variants[0]?.resolution ?? { state: "missing", evidence: [evidence] };
@@ -932,7 +982,8 @@ export async function inspectTargetBuildConfigurations(options: {
     }
     const name = asString(targetConfig.name) ?? "Unnamed";
     const evaluatedContexts: EvaluatedBuildContext[] = [];
-    for (const context of BUILD_CONTEXTS) {
+    const packagingContexts: EvaluatedBuildContext[] = [];
+    for (const context of [...BUILD_CONTEXTS, ...PACKAGING_CONTEXTS]) {
       const inherited: BuildSettingsEvaluation = {
         settings: {},
         settingTaints: new Map(),
@@ -975,7 +1026,7 @@ export async function inspectTargetBuildConfigurations(options: {
 
       const productName =
         evaluation.settings.PRODUCT_NAME ?? asString(targetObject.productName) ?? targetName;
-      evaluatedContexts.push({
+      (context.arch === "undefined_arch" ? packagingContexts : evaluatedContexts).push({
         context,
         evaluation,
         builtins: {
@@ -1058,11 +1109,29 @@ export async function inspectTargetBuildConfigurations(options: {
     const explicitlyNonIOS =
       !hasUnknownPlatformEvidence && !hasIOSSDK && !hasIOSPlatform && hasResolvedNonIOSEvidence;
 
+    const identityContexts = [
+      ...activeContexts,
+      ...packagingContexts.filter(({ context }) =>
+        activeContexts.some(({ context: active }) => active.sdk === context.sdk),
+      ),
+    ];
+    const identityVariants = await Promise.all(
+      identityContexts.map(async ({ context, evaluation, builtins }) => ({
+        context,
+        resolution: await resolveIOSBundleIdentity({
+          root,
+          projectDirectory,
+          setting: (key) => resolveSetting(key, evaluation, builtins, evidence(key)),
+          expand: (value, source) => expandBuildSettingValue(value, evaluation, builtins, source),
+        }),
+      })),
+    );
+
     const model: IOSBuildConfiguration = {
       name,
-      bundleIdentifier: resolveSettingAcrossContexts(
-        "PRODUCT_BUNDLE_IDENTIFIER",
-        activeContexts,
+      bundleIdentifier: resolveContextVariants(
+        "CFBundleIdentifier",
+        identityVariants,
         evidence("PRODUCT_BUNDLE_IDENTIFIER"),
         targetName,
         name,

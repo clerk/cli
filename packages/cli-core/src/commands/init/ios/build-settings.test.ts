@@ -47,6 +47,10 @@ async function inspectFixture(options: BuildSettingsFixtureOptions = {}) {
       name: "Debug",
       ...(options.xcconfig ? { baseConfigurationReference: "target-xcconfig" } : {}),
       buildSettings: {
+        GENERATE_INFOPLIST_FILE: "YES",
+        INFOPLIST_FILE: "",
+        INFOPLIST_PREPROCESS: "NO",
+        INFOPLIST_EXPAND_BUILD_SETTINGS: "YES",
         PRODUCT_BUNDLE_IDENTIFIER: "com.example.Example",
         DEVELOPMENT_TEAM: "ABCDE12345",
         IPHONEOS_DEPLOYMENT_TARGET: "17.0",
@@ -58,6 +62,10 @@ async function inspectFixture(options: BuildSettingsFixtureOptions = {}) {
       isa: "XCBuildConfiguration",
       name: "Release",
       buildSettings: {
+        GENERATE_INFOPLIST_FILE: "YES",
+        INFOPLIST_FILE: "",
+        INFOPLIST_PREPROCESS: "NO",
+        INFOPLIST_EXPAND_BUILD_SETTINGS: "YES",
         PRODUCT_BUNDLE_IDENTIFIER: "com.example.Example",
         DEVELOPMENT_TEAM: "ABCDE12345",
         IPHONEOS_DEPLOYMENT_TARGET: "17.0",
@@ -128,7 +136,11 @@ describe("inspectTargetBuildConfigurations", () => {
       "project-debug": {
         isa: "XCBuildConfiguration",
         name: "Debug",
-        buildSettings: { PRODUCT_BUNDLE_IDENTIFIER: "com.example", SDKROOT: "iphoneos" },
+        buildSettings: {
+          GENERATE_INFOPLIST_FILE: "YES",
+          PRODUCT_BUNDLE_IDENTIFIER: "com.example",
+          SDKROOT: "iphoneos",
+        },
       },
       "target-list": {
         isa: "XCConfigurationList",
@@ -193,6 +205,7 @@ describe("inspectTargetBuildConfigurations", () => {
         name: "Debug",
         buildSettings: {
           PRODUCT_NAME: "My App",
+          GENERATE_INFOPLIST_FILE: "YES",
           PRODUCT_BUNDLE_IDENTIFIER: "com.example.$(PRODUCT_NAME:rfc1034identifier)",
           IPHONEOS_DEPLOYMENT_TARGET: "17.0",
           SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
@@ -315,7 +328,7 @@ describe("inspectTargetBuildConfigurations", () => {
     },
   );
 
-  test("accepts matching device and simulator architecture build settings", async () => {
+  test("does not mistake matching compiler identities for a proven packaging identity", async () => {
     const { configurations } = await inspectFixture({
       targetBuildSettings: {
         PRODUCT_BUNDLE_IDENTIFIER: "com.example.Base",
@@ -326,8 +339,7 @@ describe("inspectTargetBuildConfigurations", () => {
     });
 
     expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
-      state: "resolved",
-      value: "com.example.Native",
+      state: "unresolved",
     });
   });
 

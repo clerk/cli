@@ -62,6 +62,7 @@ export interface IOSEntitlementsInspection {
 
 export interface IOSBuildConfiguration {
   name: string;
+  /** Effective Info.plist identity, consistent across compiler and packaging contexts. */
   bundleIdentifier: IOSValueResolution;
   developmentTeam: IOSValueResolution;
   entitlementsPath: IOSValueResolution;

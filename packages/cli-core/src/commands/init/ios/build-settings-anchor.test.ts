@@ -91,12 +91,17 @@ test.each([
   }
 });
 
-test("a literal target override remains authoritative after an unknown base xcconfig", async () => {
+test("explicit target identity inputs remain authoritative after an unknown base xcconfig", async () => {
   const result = await fixture((objects) => {
     delete objects.anchor;
     for (const id of [IDS.targetDebug, IDS.targetRelease]) {
-      (objects[id]!.buildSettings as Record<string, string>).PRODUCT_BUNDLE_IDENTIFIER =
-        "com.example.Explicit";
+      Object.assign(objects[id]!.buildSettings as Record<string, string>, {
+        PRODUCT_BUNDLE_IDENTIFIER: "com.example.Explicit",
+        GENERATE_INFOPLIST_FILE: "YES",
+        INFOPLIST_FILE: "",
+        INFOPLIST_PREPROCESS: "NO",
+        INFOPLIST_EXPAND_BUILD_SETTINGS: "YES",
+      });
     }
   });
   expect(result.appTargets[0]?.configurations[0]?.bundleIdentifier).toMatchObject({
