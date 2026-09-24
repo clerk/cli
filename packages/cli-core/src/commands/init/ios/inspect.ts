@@ -33,6 +33,7 @@ import {
 } from "./pbx.ts";
 import { parseIOSPlist } from "./plist.ts";
 import { inspectSwiftSources } from "./swift.ts";
+import { filterIOSSwiftSources } from "./source-filters.ts";
 import type {
   IOSAppTarget,
   IOSBuildConfiguration,
@@ -1077,12 +1078,17 @@ async function parseProject(
       diagnostics,
     );
     addBuildSettingConflictDiagnostics(targetName, configurations, diagnostics);
-    const targetSources = sourceMembershipById.get(targetId) ?? {
+    const membership = sourceMembershipById.get(targetId) ?? {
       files: [],
       complete: false,
       diagnostics: [],
     };
-    diagnostics.push(...targetSources.diagnostics);
+    diagnostics.push(...membership.diagnostics);
+    const targetSources = filterIOSSwiftSources(membership, targetConfigurations, diagnostics, {
+      path: pbxprojRelativePath,
+      objectId: targetId,
+      keyPath: "buildSettings.EXCLUDED_SOURCE_FILE_NAMES",
+    });
 
     const swiftInspection =
       targetSources.files.length > 0

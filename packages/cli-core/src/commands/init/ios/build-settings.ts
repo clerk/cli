@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
-import { dirname, resolve, sep } from "node:path";
+import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { parse as parseXCConfig } from "@bacons/xcode/xcconfig";
 import { pathIsSafelyWithinIOSRoot, pathIsWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
+import type { IOSSourceFilterContext } from "./source-filters.ts";
 import {
   asString,
   asStringArray,
@@ -553,6 +554,7 @@ function resolveSetting(
   evaluation: BuildSettingsEvaluation,
   builtins: Record<string, string>,
   evidence: IOSSourceEvidence,
+  preserveQuotes = false,
 ): IOSValueResolution {
   const settings = evaluation.settings;
   const initial = settings[key];
@@ -596,7 +598,8 @@ function resolveSetting(
   };
 
   const raw = initial ?? "";
-  const value = stripSurroundingQuotes(resolveValue(raw, new Set([key])));
+  const expanded = resolveValue(raw, new Set([key]));
+  const value = preserveQuotes ? expanded.trim() : stripSurroundingQuotes(expanded);
   if (missingVariables.size > 0 || hasBuildSettingVariable(value)) {
     return {
       state: "unresolved",
@@ -682,14 +685,36 @@ async function settingsForConfiguration(
   let evaluation = cloneEvaluation(inherited);
   if (!configuration) return evaluation;
   const baseReference = asString(configuration.baseConfigurationReference);
-  if (baseReference) {
-    const configPath = resolvePbxFilePath(
-      baseReference,
+  const anchor = asString(configuration.baseConfigurationReferenceAnchor);
+  const relativePath = asString(configuration.baseConfigurationReferenceRelativePath);
+  const hasAnchor =
+    "baseConfigurationReferenceAnchor" in configuration ||
+    "baseConfigurationReferenceRelativePath" in configuration;
+  const referenceKey = hasAnchor
+    ? "baseConfigurationReferenceAnchor"
+    : "baseConfigurationReference";
+  if (hasAnchor || "baseConfigurationReference" in configuration) {
+    // Xcode 16+ can locate an xcconfig relative to a synchronized folder,
+    // without a PBXFileReference. Never silently inherit a fallback when
+    // that reference is incomplete, ambiguous, or cannot be read safely.
+    const referencePath = resolvePbxFilePath(
+      (hasAnchor ? anchor : baseReference) ?? "",
       objects,
       parents,
       projectDirectory,
       groupRootDirectory,
     );
+    const configPath = hasAnchor
+      ? anchor &&
+        !("baseConfigurationReference" in configuration) &&
+        objects[anchor]?.isa === "PBXFileSystemSynchronizedRootGroup" &&
+        referencePath &&
+        relativePath &&
+        !isAbsolute(relativePath) &&
+        pathIsWithinIOSRoot(referencePath, resolve(referencePath, relativePath))
+        ? resolve(referencePath, relativePath)
+        : undefined
+      : referencePath;
     if (configPath) {
       if (hasBuildSettingVariable(configPath)) {
         taintInspectedSettings(evaluation, "variable base xcconfig path");
@@ -701,8 +726,8 @@ async function settingsForConfiguration(
           evidence: [
             {
               path: relativeIOSPath(root, resolve(projectPath, "project.pbxproj")),
-              objectId: baseReference,
-              keyPath: "baseConfigurationReference",
+              objectId: anchor ?? baseReference,
+              keyPath: referenceKey,
             },
           ],
         });
@@ -721,13 +746,13 @@ async function settingsForConfiguration(
       addDiagnosticOnce(diagnostics, {
         code: "xcode.dangling-reference",
         severity: "error",
-        message: `Could not resolve an XCBuildConfiguration baseConfigurationReference (${baseReference}).`,
+        message: `Could not resolve an XCBuildConfiguration ${referenceKey} (${anchor ?? baseReference ?? "missing"}).`,
         remedy: "Repair the base xcconfig file reference before automating setup.",
         evidence: [
           {
             path: relativeIOSPath(root, resolve(projectPath, "project.pbxproj")),
-            objectId: baseReference,
-            keyPath: "baseConfigurationReference",
+            objectId: anchor ?? baseReference,
+            keyPath: referenceKey,
           },
         ],
       });
@@ -745,6 +770,7 @@ async function settingsForConfiguration(
 export interface InspectedTargetConfiguration {
   model: IOSBuildConfiguration;
   entitlementContexts: EntitlementBuildContext[];
+  sourceFilters: IOSSourceFilterContext[];
   isIOS: boolean;
 }
 
@@ -836,6 +862,7 @@ function missingConfiguration(
       deploymentTarget: missing,
     },
     entitlementContexts: [],
+    sourceFilters: [],
     // The product type identifies this as an application target, but the
     // dangling configuration does not contain enough evidence to exclude iOS.
     isIOS: true,
@@ -955,6 +982,7 @@ export async function inspectTargetBuildConfigurations(options: {
           TARGET_NAME: targetName,
           PRODUCT_NAME: productName,
           CONFIGURATION: name,
+          CURRENT_ARCH: context.arch,
         },
       });
     }
@@ -1072,6 +1100,22 @@ export async function inspectTargetBuildConfigurations(options: {
 
     inspected.push({
       model,
+      sourceFilters: activeContexts.map(({ evaluation, builtins }) => ({
+        excluded: resolveSetting(
+          "EXCLUDED_SOURCE_FILE_NAMES",
+          evaluation,
+          builtins,
+          evidence("EXCLUDED_SOURCE_FILE_NAMES"),
+          true,
+        ),
+        included: resolveSetting(
+          "INCLUDED_SOURCE_FILE_NAMES",
+          evaluation,
+          builtins,
+          evidence("INCLUDED_SOURCE_FILE_NAMES"),
+          true,
+        ),
+      })),
       entitlementContexts: activeContexts.map(({ context, evaluation, builtins }) => ({
         label: context.label,
         settings: { ...evaluation.settings },
