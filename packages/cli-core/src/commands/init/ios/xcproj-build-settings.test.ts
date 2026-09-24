@@ -35,6 +35,10 @@ async function inspectFixture(
     },
     ...targetOverrides,
   };
+  target["build-settings"] = {
+    GENERATE_INFOPLIST_FILE: "YES",
+    ...(target["build-settings"] as XCProjRecord),
+  };
   const project: XCProjRecord = {
     configurations: ["Debug", "Release"],
     "build-settings": {
@@ -156,6 +160,7 @@ describe("inspectXCProjTargetBuildConfigurations", () => {
         },
       ],
       "build-settings": {
+        GENERATE_INFOPLIST_FILE: "YES",
         IPHONEOS_DEPLOYMENT_TARGET: "17.0",
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
       },
@@ -226,6 +231,7 @@ describe("inspectXCProjTargetBuildConfigurations", () => {
         },
       ],
       "build-settings": {
+        GENERATE_INFOPLIST_FILE: "YES",
         IPHONEOS_DEPLOYMENT_TARGET: "17.0",
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
       },
@@ -541,6 +547,7 @@ describe("inspectXCProjTargetBuildConfigurations", () => {
         { name: "Release", file: "Target.xcconfig" },
       ],
       "build-settings": {
+        GENERATE_INFOPLIST_FILE: "YES",
         IPHONEOS_DEPLOYMENT_TARGET: "17.0",
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
       },
@@ -599,6 +606,7 @@ describe("inspectXCProjTargetBuildConfigurations", () => {
         { name: "Release", file: "Build Configurations/Target.xcconfig" },
       ],
       "build-settings": {
+        GENERATE_INFOPLIST_FILE: "YES",
         IPHONEOS_DEPLOYMENT_TARGET: "17.0",
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
       },
