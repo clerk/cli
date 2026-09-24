@@ -23,7 +23,11 @@ import {
   type NativeSettings,
 } from "../../../lib/plapi.ts";
 import { confirm, text } from "../../../lib/prompts.ts";
-import { withNativeSpinner as withSpinner, compactNativeOutput } from "./presentation.ts";
+import {
+  withNativeSpinner as withSpinner,
+  compactNativeOutput,
+  stopNativeProgress,
+} from "./presentation.ts";
 import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 import type {
   IOSNativeReadinessTarget,
@@ -717,6 +721,7 @@ export async function prepareIOSNativeRemoteSetup(
         ),
       );
     }
+    stopNativeProgress();
     const appIdPrefix = await prompts.appIdPrefix(plan.bundleIdentifier!, suggestion);
     plan = buildIOSNativeRemotePlan({
       applicationId: options.applicationId,
@@ -735,6 +740,7 @@ export async function prepareIOSNativeRemoteSetup(
     );
   }
 
+  stopNativeProgress();
   if (plan.status === "satisfied") {
     log.info(
       dim(
@@ -1059,9 +1065,11 @@ export async function applyIOSNativeRemoteSetup(
         );
       }
     }
-    log.success(
-      `${platformName(plan.platform)} application ${plan.bundleIdentifier} registered with Clerk`,
-    );
+    if (!compactNativeOutput()) {
+      log.success(
+        `${platformName(plan.platform)} application ${plan.bundleIdentifier} registered with Clerk`,
+      );
+    }
   }
 
   if (currentPlan.nativeApi === "required") {
@@ -1117,7 +1125,9 @@ export async function applyIOSNativeRemoteSetup(
         );
       }
     }
-    log.success("Clerk Native API enabled for the development instance");
+    if (!compactNativeOutput()) {
+      log.success("Clerk Native API enabled for the development instance");
+    }
   }
 
   let finalPlan: IOSNativeRemotePlan;

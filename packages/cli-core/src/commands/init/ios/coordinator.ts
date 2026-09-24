@@ -4,7 +4,11 @@ import { decodePublishableKey, fetchUserSettings } from "../../../lib/fapi.ts";
 import { log } from "../../../lib/log.js";
 import { interruptedExitCode } from "../../../lib/signals.ts";
 import { outro } from "../../../lib/spinner.js";
-import { withNativeSpinner as withSpinner } from "./presentation.ts";
+import {
+  withNativeSpinner as withSpinner,
+  stopNativeProgress,
+  setNativeProgressPhase,
+} from "./presentation.ts";
 import { setTelemetryStage, type TelemetryStage } from "../../../lib/telemetry.ts";
 import { applyIOSLocalSetup, applyIOSPlannedLocalSetup } from "./apply.ts";
 import {
@@ -100,6 +104,7 @@ export async function runAppleNativeDryRun(options: AppleNativeDryRunOptions): P
   });
   const plan = proposal.setupPlan;
   const associatedDomainPlan = proposal.plannedAssociatedDomain;
+  stopNativeProgress();
   if (options.machineOutput) {
     log.data(
       JSON.stringify(
@@ -203,6 +208,7 @@ async function completeAppleNativeSetup(
   options: CompleteAppleNativeSetupOptions,
 ): Promise<AppleNativeSetupResult> {
   if (!localSetup.requiresLinkedApp) {
+    setNativeProgressPhase("Applying your changes...");
     setTelemetryStage("ios_local_setup");
     await applyIOSPlannedLocalSetup(localSetup);
     return {
@@ -225,6 +231,7 @@ async function completeAppleNativeSetup(
   }
 
   setTelemetryStage("keys");
+  setNativeProgressPhase("Checking Clerk settings...");
   const keys = await withSpinner("Fetching the development publishable key...", async () =>
     resolveIOSDevelopmentPublicKey(options.applicationId!),
   );
@@ -324,6 +331,7 @@ async function completeAppleNativeSetup(
     nativeApplePlan = preparedApple;
   }
 
+  setNativeProgressPhase("Applying your changes...");
   const commitProfile = await resolveProfile(preparation.root);
   if (commitProfile?.profile.appId !== options.applicationId) {
     throw new CliError(
@@ -395,6 +403,7 @@ async function completeAppleNativeSetup(
     "Could not reconcile Clerk Native Application settings; underlying error details were omitted.",
     "The local native Apple setup completed, but Clerk Native Application settings could not be completed remotely. Local changes remain intact; rerun clerk init to safely reconcile the additive remote steps.",
   );
+  stopNativeProgress();
   log.success("Clerk Native API and application registration verified");
 
   if (nativeApplePlan) {

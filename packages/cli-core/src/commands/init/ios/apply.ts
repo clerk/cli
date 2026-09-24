@@ -14,6 +14,7 @@ import {
   withNativeSpinner as withSpinner,
   compactNativeOutput,
   printNativeLocalPreview,
+  stopNativeProgress,
 } from "./presentation.ts";
 import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 import {
@@ -328,6 +329,7 @@ export async function applyIOSLocalSetup(
     );
   }
   const platformLabel = selectedTarget.platform === "macos" ? "macOS" : "iOS";
+  stopNativeProgress();
   if (compactNativeOutput()) {
     const platforms = selectedTarget.supportedPlatforms
       .map((p) => (p === "ios" ? "iOS" : "macOS"))
@@ -1339,6 +1341,7 @@ export async function applyIOSPlannedLocalSetup(
       }
     }
 
+    stopNativeProgress();
     if (preparedSDK?.status === "ready") {
       log.success(`${formatProducts(preparedSDK.plan.products)} linked to ${setup.targetName}`);
     }
@@ -1443,6 +1446,7 @@ export async function applyIOSPlannedLocalSetup(
         ERROR_CODE.IOS_LOCAL_APPLY_FAILED,
       );
     }
+    stopNativeProgress();
     if (preparedSDK?.status === "ready") {
       log.success(`${formatProducts(preparedSDK.plan.products)} linked to ${setup.targetName}`);
     }
