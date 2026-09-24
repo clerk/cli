@@ -890,6 +890,22 @@ describe("inspectTargetBuildConfigurations", () => {
     expect(configurations[0]?.platform).toBe("ios");
   });
 
+  test("keeps macOS packaging identity conflicts unresolved", async () => {
+    const { configurations } = await inspectFixture({
+      targetBuildSettings: {
+        SDKROOT: "macosx",
+        SUPPORTED_PLATFORMS: "macosx",
+        PRODUCT_BUNDLE_IDENTIFIER: "com.clerk.Packaged",
+        "PRODUCT_BUNDLE_IDENTIFIER[arch=arm64]": "com.clerk.Compiled",
+        "PRODUCT_BUNDLE_IDENTIFIER[arch=x86_64]": "com.clerk.Compiled",
+      },
+    });
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "unresolved",
+      raw: expect.stringContaining("macosx/packaging=com.clerk.Packaged"),
+    });
+  });
+
   test("classifies Clerk's native macOS app settings and resolves both architectures", async () => {
     const { configurations, diagnostics } = await inspectFixture({
       targetBuildSettings: {
@@ -897,6 +913,7 @@ describe("inspectTargetBuildConfigurations", () => {
         SUPPORTED_PLATFORMS: "macosx",
         MACOSX_DEPLOYMENT_TARGET: "14.0",
         IPHONEOS_DEPLOYMENT_TARGET: "",
+        PRODUCT_BUNDLE_IDENTIFIER: "com.clerk.MacExampleApp",
         "PRODUCT_BUNDLE_IDENTIFIER[arch=arm64]": "com.clerk.MacExampleApp",
         "PRODUCT_BUNDLE_IDENTIFIER[arch=x86_64]": "com.clerk.MacExampleApp",
         "ENABLE_APP_SANDBOX[arch=arm64]": "YES",
