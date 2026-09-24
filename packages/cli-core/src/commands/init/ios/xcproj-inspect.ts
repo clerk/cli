@@ -8,6 +8,7 @@ import type { IOSTargetSourceMembership, ParsedIOSProject } from "./project-adap
 import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import { isClerkIOSRepository, sanitizeRepositoryURL } from "./pbx.ts";
 import { inspectSwiftSources } from "./swift.ts";
+import { filterIOSSwiftSources } from "./source-filters.ts";
 import type {
   IOSAppTarget,
   IOSClerkPackageState,
@@ -803,7 +804,7 @@ export async function inspectXCProjProject(options: {
         membership.targetId === target.id && membership.projectPath === projectRelativePath,
     );
     const targetSourceDiagnostics: IOSDiagnostic[] = [];
-    const sources = await sourceFilesForTarget({
+    const membership = await sourceFilesForTarget({
       root,
       projectPath,
       document,
@@ -811,8 +812,13 @@ export async function inspectXCProjProject(options: {
       platform: targetPlatform,
       diagnostics: targetSourceDiagnostics,
     });
-    sources.complete &&= ownership?.complete ?? false;
+    membership.complete &&= ownership?.complete ?? false;
     diagnostics.push(...targetSourceDiagnostics);
+    const sources = filterIOSSwiftSources(membership, inspectedConfigurations, diagnostics, {
+      path: documentRelativePath,
+      objectId: target.id,
+      keyPath: "build-settings.EXCLUDED_SOURCE_FILE_NAMES",
+    });
     const swift =
       sources.files.length > 0
         ? await inspectSwiftSources(sources.files, {
