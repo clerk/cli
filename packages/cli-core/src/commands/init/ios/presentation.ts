@@ -8,7 +8,7 @@ export function compactNativeOutput(): boolean {
   return isHuman() && getLogLevel() !== "debug";
 }
 
-/** Routine checks stay visible while running; verbose mode retains their history. */
+/** Show progress for slower checks; verbose mode retains every check's history. */
 export async function withNativeSpinner<T>(
   message: string,
   fn: (controls: SpinnerControls) => Promise<T>,
