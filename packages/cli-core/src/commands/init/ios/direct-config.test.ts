@@ -990,3 +990,46 @@ struct MyApp: App {
     expect(JSON.stringify(productionResult)).not.toContain(PRODUCTION_KEY);
   });
 });
+
+test.each([false, true])(
+  "configures only the shipping app when a legacy @main is excluded (uncertain: %s)",
+  async (uncertain) => {
+    const root = await fixture();
+    const legacyPath = join(root, "MyApp/LegacyApp.swift");
+    const legacySource =
+      'import SwiftUI\n@main struct LegacyApp: App { var body: some Scene { WindowGroup { Text("Legacy") } } }\n';
+    await Bun.write(legacyPath, legacySource);
+    await updateProject(root, (objects) => {
+      objects.legacyRoot = {
+        isa: "PBXFileSystemSynchronizedRootGroup",
+        path: "MyApp",
+        sourceTree: "<group>",
+      };
+      (objects[IOS_FIXTURE_IDS.mainGroup]!.children as string[]).push("legacyRoot");
+      objects[IOS_FIXTURE_IDS.appTarget]!.fileSystemSynchronizedGroups = ["legacyRoot"];
+      for (const id of [IOS_FIXTURE_IDS.targetDebug, IOS_FIXTURE_IDS.targetRelease]) {
+        (objects[id]!.buildSettings as Record<string, string>).EXCLUDED_SOURCE_FILE_NAMES =
+          uncertain ? "$(UNKNOWN_EXCLUSIONS)" : "LegacyApp.swift";
+      }
+    });
+    const before = await treeDigest(root);
+    const plan = await planIOSDirectConfig(planOptions(root));
+    if (uncertain) {
+      expect(plan.status).toBe("blocked");
+      expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+      expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("blocked");
+      expect(await treeDigest(root)).toEqual(before);
+    } else {
+      expect(plan.status).toBe("ready");
+      expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("applied");
+      expect(await source(root)).toContain("Clerk.configure");
+      expect(await Bun.file(legacyPath).text()).toBe(legacySource);
+      const configured = await treeDigest(root);
+      expect(
+        (await applyIOSDirectConfig(await planIOSDirectConfig(planOptions(root)), DEVELOPMENT_KEY))
+          .status,
+      ).toBe("satisfied");
+      expect(await treeDigest(root)).toEqual(configured);
+    }
+  },
+);
