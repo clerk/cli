@@ -91,6 +91,85 @@ test.each([
   }
 });
 
+for (const source of ["xcconfig", "inline"] as const) {
+  test.each([
+    { condition: "sdk=IPHONE*", bundleIdentifier: "com.example.Shipping" },
+    { condition: "sdk=iphone*", bundleIdentifier: "com.example.Conditional" },
+    { condition: "arch=ARM64", bundleIdentifier: "com.example.Shipping" },
+    { condition: "config=debug", bundleIdentifier: "com.example.Shipping" },
+    { condition: "SDK=iphone*", bundleIdentifier: undefined },
+    { condition: "ARCH=arm64", bundleIdentifier: undefined },
+    { condition: "Config=Debug", bundleIdentifier: undefined },
+  ])(
+    `preserves registration identity for ${source} condition casing: $condition`,
+    async ({ condition, bundleIdentifier }) => {
+      const root = await mkdtemp(join(tmpdir(), "clerk-native-condition-case-"));
+      try {
+        await createIOSFixture(root, { xcconfig: source === "xcconfig" });
+        const settings = {
+          PRODUCT_BUNDLE_IDENTIFIER: "com.example.Shipping",
+          [`PRODUCT_BUNDLE_IDENTIFIER[${condition}]`]: "com.example.Conditional",
+        };
+        if (source === "xcconfig") {
+          await Bun.write(
+            join(root, "Config/Target.xcconfig"),
+            Object.entries(settings)
+              .map(([key, value]) => `${key} = ${value}`)
+              .join("\n"),
+          );
+        } else {
+          const path = join(root, "MyApp.xcodeproj/project.pbxproj");
+          const project = parse(await Bun.file(path).text());
+          const objects = project.objects as PbxObjects;
+          for (const id of [IDS.targetDebug, IDS.targetRelease]) {
+            Object.assign(objects[id]!.buildSettings as object, settings);
+          }
+          await Bun.write(path, build(project));
+        }
+
+        const { target } = buildIOSNativeReadinessAudit(
+          await inspectIOSProject(root, { target: "MyApp" }),
+        );
+        const plan = buildIOSNativeRemotePlan({
+          root,
+          target,
+          applicationId: "app_condition_case_test",
+          instanceId: "ins_condition_case_test",
+          requestedAppIdPrefix: "ABCDE12345",
+          nativeSettings: { object: "native_settings", api_enabled: true },
+          registrations: [],
+        });
+        if (bundleIdentifier === undefined) {
+          expect(target).toMatchObject({
+            status: "selected",
+            bundleIdentifier: { status: "unresolved" },
+          });
+          expect(plan).toMatchObject({ status: "blocked", registration: "blocked", actions: [] });
+          expect(plan.blockers).toContainEqual(
+            expect.objectContaining({ code: "bundle-identifier-unavailable" }),
+          );
+        } else {
+          expect(target).toMatchObject({
+            status: "selected",
+            bundleIdentifier: { status: "resolved", value: bundleIdentifier },
+          });
+          expect(plan).toMatchObject({
+            status: "ready",
+            registration: "required",
+            bundleIdentifier,
+            blockers: [],
+          });
+          expect(plan.actions).toContain(
+            `Register iOS Bundle ID ${bundleIdentifier} with Apple App ID Prefix ABCDE12345.`,
+          );
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+}
+
 test.each([false, true])(
   "registration uses the synchronized-folder xcconfig identity, never the fallback (missing: %s)",
   async (missing) => {
