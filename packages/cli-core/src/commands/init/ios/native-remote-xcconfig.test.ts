@@ -194,6 +194,11 @@ test.each([false, true])(
         delete configuration.baseConfigurationReference;
         delete (configuration.buildSettings as Record<string, string>).PRODUCT_BUNDLE_IDENTIFIER;
         (configuration.buildSettings as Record<string, string>).CODE_SIGN_ENTITLEMENTS = "";
+        // Keep platform evidence independent of the unavailable base xcconfig.
+        Object.assign(configuration.buildSettings as object, {
+          SDKROOT: "iphoneos",
+          SUPPORTS_MACCATALYST: "NO",
+        });
         configuration.baseConfigurationReferenceAnchor = "anchor";
         configuration.baseConfigurationReferenceRelativePath = missing
           ? "Missing.xcconfig"
