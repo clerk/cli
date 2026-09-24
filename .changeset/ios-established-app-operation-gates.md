@@ -2,4 +2,4 @@
 "clerk": patch
 ---
 
-Allow safe native Apple setup in established apps, isolate capability edits from unrelated Associated Domains issues, and let Doctor check independently verified registration when Swift source discovery is incomplete.
+Improve native Apple setup with clearer previews and progress, safe independent operations in established apps, capability edits isolated from unrelated Associated Domains issues, and Doctor registration checks when Swift source discovery is incomplete.
