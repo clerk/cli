@@ -1,6 +1,8 @@
 import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import { AuthError } from "../../lib/errors.ts";
 import { useCaptureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
+import type { AutoclaimResult } from "../../lib/autoclaim.ts";
+import type { Application } from "../../lib/plapi.ts";
 
 const actualConstants = await import("../../lib/constants.ts");
 const actualEnvironment = await import("../../lib/environment.ts");
@@ -92,7 +94,7 @@ mock.module("../../lib/first-application.ts", () => ({
   ensureFirstApplication: () => mockEnsureFirstApplication(),
 }));
 
-const mockAttemptAutoclaim = mock(async (_cwd: string): Promise<unknown> => ({
+const mockAttemptAutoclaim = mock(async (_cwd: string): Promise<AutoclaimResult> => ({
   status: "not_keyless",
 }));
 
@@ -600,7 +602,8 @@ describe("login", () => {
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
       envPulled: true,
-      app: { application_id: "app_claimed", name: "bad-agent" },
+      // Deliberately shaped like API JSON that dropped the array.
+      app: { application_id: "app_claimed", name: "bad-agent" } as Application,
     });
 
     await runLogin();
@@ -674,6 +677,38 @@ describe("login", () => {
     await runLogin({ showNextSteps: false });
 
     expect(mockEnsureFirstApplication).toHaveBeenCalledTimes(1);
+  });
+
+  test("explains a managed-workspace claim rejection with the provider named by the API", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "managed_workspace",
+      longMessage:
+        "The target application cannot be claimed into the current workspace. Select a different workspace and try again.",
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Unable to claim - The target application cannot be claimed into the current workspace. Select a different workspace and try again.",
+    );
+    expect(captured.err).not.toContain("claim the application there");
+    expect(captured.err).not.toContain("does not have an active organization");
+  });
+
+  test("falls back to a generic provider when the managed-workspace rejection has no long message", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    mockAttemptAutoclaim.mockResolvedValue({ status: "managed_workspace", longMessage: null });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Unable to claim - this workspace is managed by an integration provider.",
+    );
   });
 
   test("does not call ensureFirstApplication when existing session is reused", async () => {
