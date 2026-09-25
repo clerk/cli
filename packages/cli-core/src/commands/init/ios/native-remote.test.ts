@@ -22,6 +22,7 @@ import {
 } from "../../../lib/plapi.ts";
 import {
   IOSNativeRegistrationRetryLockError,
+  IOSNativeRegistrationRetryRecordError,
   type IOSNativeRegistrationRetryIdentity,
   type IOSNativeRegistrationRetryStore,
 } from "./native-registration-retry.ts";
@@ -319,8 +320,50 @@ function prompts(
 }
 
 describe("Clerk Native Application remote setup", () => {
+  test.each(["explicit", "local", "remote"])("refuses lowercase %s prefix evidence", (source) => {
+    const result = buildIOSNativeRemotePlan({
+      applicationId: APPLICATION_ID,
+      instanceId: INSTANCE_ID,
+      target: selectedTarget({ appIdPrefix: source === "local" ? "legacy1234" : null }),
+      requestedAppIdPrefix: source === "explicit" ? "legacy1234" : undefined,
+      nativeSettings: nativeSettings(true),
+      registrations: source === "remote" ? [registration("legacy1234")] : [],
+    });
+    expect(result.status).toBe("blocked");
+    expect(result.registration).toBe("blocked");
+    expect(result.actions).not.toContainEqual(expect.stringContaining("Register iOS Bundle ID"));
+  });
+
+  test("identifies corrupt retry state without remote access or a raw local path", async () => {
+    const recoveryPath = "$CLERK_CONFIG_DIR/idempotency/ios-native-registration-test.json";
+    const retryStore: IOSNativeRegistrationRetryStore = {
+      async getOrCreate() {
+        throw new IOSNativeRegistrationRetryRecordError(recoveryPath);
+      },
+      async peek() {
+        throw new Error("unexpected peek");
+      },
+      async clear() {
+        throw new Error("unexpected clear");
+      },
+    };
+    const { api, calls } = scriptedAPI();
+    await expect(
+      applyRemoteSetup(
+        plan({ nativeApi: "satisfied", registration: "required" }),
+        api,
+        approvedTargetReader,
+        retryStore,
+      ),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining(`record at \`${recoveryPath}\` is malformed`),
+    });
+    expect(calls).toEqual([]);
+  });
+
   test("validates Apple identity formats without equating a prefix to the Team ID", () => {
-    expect(validateAppIdPrefix("  LeGaCy1234  ")).toBe("LeGaCy1234");
+    expect(validateAppIdPrefix("  LEGACY1234  ")).toBe("LEGACY1234");
+    expect(validateAppIdPrefix("LeGaCy1234")).toBeUndefined();
     expect(validateAppIdPrefix("legacy.prefix-value")).toBeUndefined();
     expect(validateAppIdPrefix("   ")).toBeUndefined();
     expect(validateAppIdPrefix("x")).toBeUndefined();

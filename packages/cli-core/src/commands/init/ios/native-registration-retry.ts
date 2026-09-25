@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -60,6 +60,14 @@ export class IOSNativeRegistrationRetryLockError extends Error {
     this.name = "IOSNativeRegistrationRetryLockError";
     this.status = status;
     this.recoveryPath = recoveryPath;
+  }
+}
+
+/** A corrupt record must be recovered explicitly, never replaced with a new retry identity. */
+export class IOSNativeRegistrationRetryRecordError extends Error {
+  constructor(readonly recoveryPath: string) {
+    super(`The Clerk iOS registration retry record is malformed: ${recoveryPath}`);
+    this.name = "IOSNativeRegistrationRetryRecordError";
   }
 }
 
@@ -241,10 +249,10 @@ async function readRetryRecordOnce(
   try {
     parsed = JSON.parse(source);
   } catch {
-    throw new Error(`The Clerk iOS registration retry record is malformed: ${path}`);
+    throw new IOSNativeRegistrationRetryRecordError(publicLockPath(baseDirectory, path));
   }
   if (!isRetryRecord(parsed, identity)) {
-    throw new Error(`The Clerk iOS registration retry record has an unexpected shape: ${path}`);
+    throw new IOSNativeRegistrationRetryRecordError(publicLockPath(baseDirectory, path));
   }
   return parsed;
 }
@@ -289,11 +297,15 @@ async function getOrCreateRetryKey(
     createdAt: new Date().toISOString(),
   };
 
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
   try {
-    await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, {
+    await writeFile(temporaryPath, `${JSON.stringify(record, null, 2)}\n`, {
       flag: "wx",
       mode: 0o600,
+      flush: true,
     });
+    // Publish only complete bytes and never overwrite another invocation's key.
+    await link(temporaryPath, path);
     return record.idempotencyKey;
   } catch (error) {
     if (!isExistingFile(error)) throw error;
@@ -302,6 +314,10 @@ async function getOrCreateRetryKey(
       throw new Error("The Clerk iOS registration retry record disappeared during creation.");
     }
     return concurrent.idempotencyKey;
+  } finally {
+    await unlink(temporaryPath).catch((error: unknown) => {
+      if (!isMissingFile(error)) throw error;
+    });
   }
 }
 

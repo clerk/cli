@@ -32,6 +32,7 @@ import type {
 import { buildIOSNativeReadinessAudit } from "./native-readiness.ts";
 import {
   IOSNativeRegistrationRetryLockError,
+  IOSNativeRegistrationRetryRecordError,
   cliStateIOSNativeRegistrationRetryStore,
   type IOSNativeRegistrationRetryIdentity,
   type IOSNativeRegistrationRetryStore,
@@ -39,7 +40,7 @@ import {
 
 const APP_ID_PREFIX_LENGTH = 10;
 const BUNDLE_IDENTIFIER_MAX_LENGTH = 255;
-const APP_ID_PREFIX_PATTERN = /^[A-Za-z0-9]{10}$/;
+const APP_ID_PREFIX_PATTERN = /^[A-Z0-9]{10}$/;
 const BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9.-]+$/;
 
 function iosRemoteError(
@@ -71,6 +72,10 @@ function retryLockFailureMessage(
     return `Another Clerk command is updating the iOS registration retry state. ${outcome} Wait for it to finish, then rerun \`clerk init\`.`;
   }
   return `An interrupted Clerk command left a stale iOS registration retry-state lock. ${outcome} Confirm no other Clerk command is running, then remove only the stale lock directory at \`${error.recoveryPath}\` and rerun \`clerk init\`.`;
+}
+
+function retryRecordFailureMessage(error: IOSNativeRegistrationRetryRecordError): string {
+  return `The registration retry record at \`${error.recoveryPath}\` is malformed. Recover the original record from a backup, or contact Clerk support to reconcile it with your Native Application registration. Do not delete it or generate a new retry key before the existing registration has been checked.`;
 }
 
 export type IOSNativeRemoteBlockerCode =
@@ -841,6 +846,11 @@ export async function applyIOSNativeRemoteSetup(
       if (error instanceof IOSNativeRegistrationRetryLockError) {
         throw iosRemoteError(retryLockFailureMessage(error, false));
       }
+      if (error instanceof IOSNativeRegistrationRetryRecordError) {
+        throw iosRemoteError(
+          `${retryRecordFailureMessage(error)} No registration request was sent.`,
+        );
+      }
       throw iosRemoteError(
         "The iOS application registration retry state could not be read or preserved safely. The local setup remains intact, and no registration request was sent; verify CLI state directory access and rerun clerk init.",
       );
@@ -1027,6 +1037,12 @@ export async function applyIOSNativeRemoteSetup(
       if (error instanceof IOSNativeRegistrationRetryLockError) {
         throw iosRemoteError(
           retryLockFailureMessage(error, true),
+          ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
+        );
+      }
+      if (error instanceof IOSNativeRegistrationRetryRecordError) {
+        throw iosRemoteError(
+          `Clerk Native Application settings were verified. ${retryRecordFailureMessage(error)}`,
           ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
         );
       }

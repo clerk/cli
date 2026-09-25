@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   IOSNativeRegistrationRetryLockError,
+  IOSNativeRegistrationRetryRecordError,
   createIOSNativeRegistrationRetryStore,
   type IOSNativeRegistrationRetryIdentity,
 } from "./native-registration-retry.ts";
@@ -129,7 +130,13 @@ describe("iOS native registration retry state", () => {
     const [filename] = await readdir(directory);
     await writeFile(join(directory, filename!), "{ malformed");
 
-    await expect(store.getOrCreate(target)).rejects.toThrow("retry record is malformed");
+    await expect(store.getOrCreate(target)).rejects.toBeInstanceOf(
+      IOSNativeRegistrationRetryRecordError,
+    );
+    await expect(store.getOrCreate(target)).rejects.toThrow(
+      `Clerk CLI config directory/idempotency/${filename}`,
+    );
+    expect(await readFile(join(directory, filename!), "utf8")).toBe("{ malformed");
   });
 
   test("reports an actionable stale lock without stealing it and reuses the key after recovery", async () => {
