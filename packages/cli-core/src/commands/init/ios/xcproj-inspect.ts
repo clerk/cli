@@ -190,11 +190,17 @@ function inspectTargetPackages(
   const hasProduct = clerkKit.state !== "absent" || clerkKitUI.state !== "absent";
   const attributedNames = [...clerkKit.packageNames, ...clerkKitUI.packageNames];
   const uniqueNames = new Set(attributedNames.map((name) => name.toLowerCase()));
+  const uniquePackageNamed = (name: string) => {
+    const matches = packages.filter((item) => item.objectId.toLowerCase() === name.toLowerCase());
+    return matches.length === 1 ? matches[0] : undefined;
+  };
   const explicitPackage =
     attributedNames.length > 0 && uniqueNames.size === 1
-      ? packages.find((item) => item.objectId.toLowerCase() === attributedNames[0]!.toLowerCase())
+      ? uniquePackageNamed(attributedNames[0]!)
       : undefined;
-  const declaredClerkPackage = packages.find((item) => item.isClerk);
+  const declaredClerkPackage = packages.find(
+    (item) => item.isClerk && uniquePackageNamed(item.objectId) === item,
+  );
   let packageKind: IOSClerkPackageState["package"] = "absent";
   if (explicitPackage?.isClerk) packageKind = explicitPackage.kind;
   else if (attributedNames.length === 0 && declaredClerkPackage)

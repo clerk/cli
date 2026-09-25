@@ -1691,7 +1691,13 @@ export async function validateIOSSDKInstallPostcondition(
       const platformTarget = platformInspection.appTargets.find(
         (item) => item.id === plan.targetId && item.projectPath === plan.projectPath,
       );
-      if (!platformTarget?.platformEvidenceComplete) return false;
+      if (
+        !platformTarget?.platformEvidenceComplete ||
+        !["remote", "local"].includes(platformTarget.packages.package) ||
+        canonicalPlatforms(platformTarget.supportedPlatforms).join(",") !==
+          plan.supportedPlatforms.join(",")
+      )
+        return false;
     }
     return true;
   }

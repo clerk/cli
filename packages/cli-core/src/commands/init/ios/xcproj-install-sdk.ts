@@ -402,6 +402,16 @@ export async function prepareXCProjSDKInstall(
     );
   }
   let selectedPackage = packageScan.verified[0];
+  const intendedIdentity = selectedPackage?.identity ?? "clerk-ios";
+  if (
+    packages.filter((item) => packageIdentity(item) === intendedIdentity).length >
+    (selectedPackage ? 1 : 0)
+  ) {
+    return blocked(
+      "ambiguous-package",
+      "The clerk-ios package identity is shared with another package reference.",
+    );
+  }
   const membersResult = productMembers(selected.target);
   if (!Array.isArray(membersResult)) return membersResult;
   let candidate = parsed.source;
@@ -579,6 +589,7 @@ export function validateXCProjSDKInstallPostcondition(
     if (clerkPackages.length !== 1) return false;
     const selectedPackage = clerkPackages[0]!;
     const identity = packageIdentity(selectedPackage);
+    if (packages.filter((item) => packageIdentity(item) === identity).length !== 1) return false;
     const verifiedPackage: VerifiedXCProjPackage =
       selectedPackage.kind === "remote"
         ? { index: 0, kind: "remote", identity, value: selectedPackage }

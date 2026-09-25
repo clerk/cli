@@ -17,12 +17,14 @@ export type XcodeProjectDocumentResolution =
   | { status: "missing" }
   | { status: "ambiguous" };
 
-async function isRegularProjectDocument(path: string): Promise<boolean> {
+async function projectDocumentEntry(path: string): Promise<"regular" | "other" | "absent"> {
   try {
     const info = await lstat(path);
-    return info.isFile() && !info.isSymbolicLink();
-  } catch {
-    return false;
+    return info.isFile() && !info.isSymbolicLink() ? "regular" : "other";
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "ENOENT"
+      ? "absent"
+      : "other";
   }
 }
 
@@ -51,9 +53,13 @@ export async function resolveXcodeProjectDocument(
     },
   ];
   const existing = [];
+  let present = 0;
   for (const candidate of candidates) {
-    if (await isRegularProjectDocument(candidate.absolutePath)) existing.push(candidate);
+    const entry = await projectDocumentEntry(candidate.absolutePath);
+    if (entry !== "absent") present += 1;
+    if (entry === "regular") existing.push(candidate);
   }
+  if (present > 1) return { status: "ambiguous" };
   if (existing.length === 0) return { status: "missing" };
   if (existing.length !== 1) return { status: "ambiguous" };
   const candidate = existing[0]!;

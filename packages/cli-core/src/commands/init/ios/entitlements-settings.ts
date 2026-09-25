@@ -855,6 +855,7 @@ async function xcprojDestinationOwnershipIsExclusive(
   root: string,
   inventoryProjectPaths: readonly string[],
   snapshot: XCProjProjectSnapshot,
+  selectedPlatform: IOSNativePlatform,
   synchronizedRoot: SynchronizedRoot,
   destination: string,
 ): Promise<boolean> {
@@ -881,10 +882,10 @@ async function xcprojDestinationOwnershipIsExclusive(
   }
 
   for (const target of xcprojTargets(snapshot.document)) {
-    if (target.id === snapshot.target.id) continue;
     const configurations = await xcprojTargetEntitlementsConfigurations(root, snapshot, target);
     if (!configurations) return false;
     for (const configuration of configurations) {
+      if (target.id === snapshot.target.id && configuration.platform === selectedPlatform) continue;
       const entitlementsPath = configuration.model.entitlementsPath;
       if (entitlementsPath.state === "missing") continue;
       if (entitlementsPath.state !== "resolved") return false;
@@ -1636,6 +1637,7 @@ async function planXCProjMissingEntitlementsSettings(
       options.root,
       inventory.projectPaths,
       snapshot,
+      options.platform,
       synchronized.root,
       destination.absolutePath,
     ))
@@ -1787,11 +1789,24 @@ export async function planIOSMissingEntitlementsSettings(
   }
   const absoluteProjectPath = resolve(root, normalizedProjectPath);
   const documentResolution = await resolveXcodeProjectDocument(absoluteProjectPath);
-  if (
-    !(await pathIsSafelyWithinIOSRoot(root, absoluteProjectPath)) ||
-    documentResolution.status !== "found" ||
-    !(await pathIsSafelyWithinIOSRoot(root, documentResolution.document.absolutePath))
-  ) {
+  if (!(await pathIsSafelyWithinIOSRoot(root, absoluteProjectPath))) {
+    return blockedPlan(
+      normalizedOptions,
+      blocker("external-path", "The selected Xcode project resolves outside the invocation root."),
+    );
+  }
+  if (documentResolution.status !== "found") {
+    return blockedPlan(
+      normalizedOptions,
+      blocker(
+        "unreadable-project",
+        documentResolution.status === "ambiguous"
+          ? "The selected Xcode project contains both project.pbxproj and project.xcproj. Keep only the intended project document before automatic setup."
+          : "The selected Xcode project has no readable regular project.pbxproj or project.xcproj document.",
+      ),
+    );
+  }
+  if (!(await pathIsSafelyWithinIOSRoot(root, documentResolution.document.absolutePath))) {
     return blockedPlan(
       normalizedOptions,
       blocker("external-path", "The selected Xcode project resolves outside the invocation root."),
