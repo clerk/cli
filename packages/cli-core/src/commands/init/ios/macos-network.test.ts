@@ -457,3 +457,23 @@ describe("macOS outgoing network capability", () => {
     expect(JSON.stringify(prepared)).not.toContain("candidateBytes");
   });
 });
+
+test.each(["CODE_SIGN_ENTITLEMENTS", "ENABLE_APP_SANDBOX", "ENABLE_OUTGOING_NETWORK_CONNECTIONS"])(
+  "macOS network planning refuses a packaging conflict in %s",
+  async (key) => {
+    const root = await temporaryRoot();
+    await enableSandbox(root);
+    await removeNetworkEntitlement(root);
+    await updateBuildSettings(root, (settings) => {
+      settings[key] = key === "CODE_SIGN_ENTITLEMENTS" ? "MyApp/Other.entitlements" : "NO";
+      for (const arch of ["arm64", "x86_64"])
+        settings[`${key}[arch=${arch}]`] =
+          key === "CODE_SIGN_ENTITLEMENTS" ? "MyApp/MyApp.entitlements" : "YES";
+    });
+    const before = await treeDigest(root);
+    const plan = await planMacOSNetworkCapability(options(root));
+    expect(plan.status).toBe("blocked");
+    expect((await applyMacOSNetworkCapability(plan)).status).toBe("blocked");
+    expect(await treeDigest(root)).toEqual(before);
+  },
+);
