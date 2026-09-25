@@ -98,15 +98,17 @@ await publishDependenciesBeforePackage(
         }
         console.log(`Publishing ${name}@${version}...`);
         const dir = await generatePlatformPackage(target, version);
-        await publish(dir, { dryRun, tag });
+        if ((await publish(dir, { dryRun, tag })) === "already-published") {
+          console.log(`${name}@${version} was already published by an earlier attempt`);
+        }
       },
       waitUntilAvailable: dryRun
         ? undefined
         : async () => {
             console.log(`Waiting for ${name}@${version} to become available on npm...`);
             await waitUntilPublished(name, version, {
-              intervalMs: 2_000,
-              timeoutMs: 120_000,
+              intervalMs: 5_000,
+              timeoutMs: 300_000,
               isPublished,
             });
           },
@@ -134,7 +136,10 @@ await publishDependenciesBeforePackage(
           console.log(`Skipping ${wrapperName}@${version} (already published)`);
         } else {
           console.log(`Publishing ${wrapperName}@${version}...`);
-          await publish(join(import.meta.dir, "../packages/cli"), { dryRun, tag });
+          const result = await publish(join(import.meta.dir, "../packages/cli"), { dryRun, tag });
+          if (result === "already-published") {
+            console.log(`${wrapperName}@${version} was already published by an earlier attempt`);
+          }
         }
       } finally {
         await Bun.write(WRAPPER_PKG_PATH, wrapperRaw);

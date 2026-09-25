@@ -176,7 +176,7 @@ The releaser accepts these flags:
 - `--tag <tag>` -- publish with a specific npm dist-tag (e.g., `canary`, `snapshot`); defaults to `latest`
 - `--version <version>` -- override the version read from `package.json`
 
-All publishes are idempotent -- the script checks `npm view` before publishing and skips already-published versions.
+All publishes are idempotent -- the script checks the registry before publishing and skips already-published versions, and a publish that npm rejects because the version already exists counts as done. The check reads the per-version document (`registry.npmjs.org/<name>/<version>`), which the registry CDN does not cache, so a version published seconds earlier is visible right away. Before publishing the `clerk` wrapper, the script waits (up to five minutes) for every platform package to be readable. If one platform publish fails, the others still run to completion before the job exits, so a re-run only has to publish what is actually missing.
 
 #### Environment Variables
 
@@ -298,7 +298,7 @@ If your change is internal-only (CI, tests, docs, refactoring), you can skip the
 
 - **`prepublishOnly` guard**: The wrapper `package.json` has a `prepublishOnly` script that exits with an error, preventing accidental `npm publish` from the package directory. The releaser bypasses this with `--ignore-scripts`.
 - **`private: true`**: Both `packages/cli` and `packages/cli-core` are marked private. The releaser removes this flag from the wrapper before publishing and restores it afterward.
-- **Idempotent publishing**: The releaser checks npm before publishing and skips already-published versions, making it safe to re-run.
+- **Idempotent publishing**: The releaser checks npm before publishing, skips already-published versions, and treats npm's "cannot publish over the previously published versions" rejection as success, making it safe to re-run.
 - **Release detection**: `scripts/check-release.ts` compares the version in `package.json` against the npm registry, ensuring stable releases only trigger when there is genuinely a new version to publish.
 - **Binary format verification**: The build script verifies each compiled binary matches its expected architecture before uploading.
 - **Native smoke tests**: Each binary is executed on a native runner for its platform before publishing. This catches cross-compilation issues that format checks alone would miss.
