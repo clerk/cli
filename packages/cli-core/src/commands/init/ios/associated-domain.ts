@@ -84,8 +84,6 @@ export interface IOSAssociatedDomainPlanOptions {
   deferToPublishableKey?: boolean;
   /** Allows the strict synchronized-root planner to create and attach a new file. */
   allowMissingEntitlementsCreation?: boolean;
-  /** Capability planners may allow one selected target to share a file across its platforms. */
-  allowSelectedTargetPlatformSharing?: boolean;
 }
 
 export type PreparedIOSAssociatedDomainMutation =
@@ -255,7 +253,16 @@ export async function planIOSAssociatedDomain(
     exhaustiveContainerDiscovery: true,
     platform,
   });
-  const selection = await selectIOSEntitlementsFiles(options, inspection);
+  const selection = await selectIOSEntitlementsFiles(
+    {
+      root,
+      projectPath: options.projectPath,
+      targetId: options.targetId,
+      platform,
+      allowMissingEntitlementsCreation: options.allowMissingEntitlementsCreation,
+    },
+    inspection,
+  );
   if (selection.status === "blocked") {
     return blockedPlan(options, selection.blockers, selection.targetName);
   }

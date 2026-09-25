@@ -384,7 +384,8 @@ async function ownershipIsExclusive(
         if (
           primaryConfigurations.length === 0 ||
           primaryConfigurations.some(
-            (configuration) => !configuration.platformEvidenceComplete || configuration.platform === undefined,
+            (configuration) =>
+              !configuration.platformEvidenceComplete || configuration.platform === undefined,
           ) ||
           primaryDiagnostics.some((diagnostic) => diagnostic.severity === "error")
         ) {

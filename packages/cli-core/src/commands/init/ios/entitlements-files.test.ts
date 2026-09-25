@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyIOSAppleEntitlement, planIOSAppleEntitlement } from "./apple-entitlement.ts";
 import { applyMacOSNetworkCapability, planMacOSNetworkCapability } from "./macos-network.ts";
-import { planIOSAssociatedDomain } from "./associated-domain.ts";
+import { applyIOSAssociatedDomain, planIOSAssociatedDomain } from "./associated-domain.ts";
 import {
   createIOSFixture,
   createIOSJSONFixture,
@@ -204,3 +204,75 @@ for (const format of ["pbx", "json"] as const) {
     },
   );
 }
+
+test.each(["pbx", "json"] as const)(
+  "%s keeps cross-platform entitlement sharing specific to Apple sign-in",
+  async (format) => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-capability-sharing-"));
+    roots.push(root);
+    if (format === "json") {
+      await createIOSJSONFixture(root);
+      const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+      let project = await Bun.file(path).text();
+      project = applyXCProjValue(project, ["build-settings", "SDKROOT"], "auto");
+      project = applyXCProjValue(
+        project,
+        ["targets", 0, "build-settings", "SUPPORTED_PLATFORMS"],
+        "iphoneos iphonesimulator macosx",
+      );
+      project = applyXCProjValue(
+        project,
+        ["targets", 0, "build-settings", "MACOSX_DEPLOYMENT_TARGET"],
+        "14.0",
+      );
+      await Bun.write(path, project);
+    } else {
+      await createIOSFixture(root);
+      const path = join(root, "MyApp.xcodeproj", "project.pbxproj");
+      const project = parse(await Bun.file(path).text());
+      const objects = (project as unknown as { objects: PbxObjects }).objects;
+      for (const id of [IOS_FIXTURE_IDS.projectDebug, IOS_FIXTURE_IDS.projectRelease]) {
+        (objects[id]!.buildSettings as Record<string, unknown>).SDKROOT = "auto";
+      }
+      for (const id of [IOS_FIXTURE_IDS.targetDebug, IOS_FIXTURE_IDS.targetRelease]) {
+        Object.assign(objects[id]!.buildSettings as Record<string, unknown>, {
+          SUPPORTED_PLATFORMS: "iphoneos iphonesimulator macosx",
+          MACOSX_DEPLOYMENT_TARGET: "14.0",
+        });
+      }
+      await Bun.write(path, build(project));
+    }
+    const options = {
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: format === "json" ? "C1E000000000000000000001" : IOS_FIXTURE_IDS.appTarget,
+      platform: "ios" as const,
+    };
+    expect(
+      (await selectIOSEntitlementsFiles({ ...options, allowSelectedTargetPlatformSharing: true }))
+        .status,
+    ).toBe("ready");
+    const before = await treeDigest(root);
+    // A wider caller's options must not leak capability-specific sharing into
+    // the Associated Domain planner after removing its unused option.
+    const domainOptions = {
+      ...options,
+      deferToPublishableKey: true,
+      allowSelectedTargetPlatformSharing: true,
+    };
+    const domain = await planIOSAssociatedDomain(domainOptions);
+    expect(domain.status).toBe("blocked");
+    expect(domain.blockers).toContainEqual(
+      expect.objectContaining({ code: "shared-entitlements" }),
+    );
+    expect((await applyIOSAssociatedDomain(domain)).status).toBe("blocked");
+    expect(await treeDigest(root)).toEqual(before);
+    const apple = await planIOSAppleEntitlement(options);
+    expect(apple.status).toBe("ready");
+    expect((await applyIOSAppleEntitlement(apple)).status).toBe("applied");
+    expect((await planIOSAppleEntitlement(options)).status).toBe("satisfied");
+    expect(
+      (await planIOSAssociatedDomain({ ...options, deferToPublishableKey: true })).status,
+    ).toBe("blocked");
+  },
+);

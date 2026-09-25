@@ -753,37 +753,6 @@ struct MyApp: App {
     expect(await treeDigest(root)).toEqual(before);
   });
 
-  test("allows explicit selected-target cross-platform sharing in a JSON project", async () => {
-    const root = await temporaryRoot();
-    await createIOSJSONFixture(root);
-    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
-    let project = await readFile(projectPath, "utf8");
-    project = applyXCProjValue(
-      project,
-      ["targets", 0, "build-settings", "SUPPORTED_PLATFORMS"],
-      "iphoneos iphonesimulator macosx",
-    );
-    project = applyXCProjValue(
-      project,
-      ["targets", 0, "build-settings", "MACOSX_DEPLOYMENT_TARGET"],
-      "14.0",
-    );
-    project = applyXCProjValue(project, ["build-settings", "SDKROOT"], "auto");
-    await writeFile(projectPath, project);
-
-    const plan = await planIOSAssociatedDomain({
-      root,
-      projectPath: "MyApp.xcodeproj",
-      targetId: "C1E000000000000000000001",
-      platform: "macos",
-      deferToPublishableKey: true,
-      allowSelectedTargetPlatformSharing: true,
-    });
-
-    expect(plan.status).toBe("ready");
-    expect(plan.blockers).toEqual([]);
-  });
-
   test("returns stale and preserves newer bytes", async () => {
     const root = await directFixture();
     const path = join(root, "MyApp", "MyApp.entitlements");
