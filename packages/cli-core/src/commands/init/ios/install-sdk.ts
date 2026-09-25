@@ -1,4 +1,5 @@
 import { generatedProjectKind } from "./project-selection.ts";
+import { readBoundedRegularFile } from "./bounded-file.ts";
 import { lstat, readFile } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 import { dirname, isAbsolute, resolve } from "node:path";
@@ -753,15 +754,8 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
     );
   }
 
-  let info: Awaited<ReturnType<typeof lstat>>;
-  let originalBuffer: Buffer;
-  try {
-    info = await lstat(pbxprojPath);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_PBXPROJ_BYTES) {
-      throw new Error("unsupported project file");
-    }
-    originalBuffer = await readFile(pbxprojPath);
-  } catch {
+  const read = await readBoundedRegularFile(pbxprojPath, MAX_PBXPROJ_BYTES);
+  if (read.status !== "ok") {
     return blocked(
       options,
       root,
@@ -771,7 +765,7 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
       { pbxprojPath },
     );
   }
-  const originalBytes = new Uint8Array(originalBuffer);
+  const originalBytes = read.bytes;
   const originalHash = hashIOSFileBytes(originalBytes);
   const boundary = await prepareIOSFileMutationBoundary(root, pbxprojPath);
   if (!boundary) {
@@ -788,13 +782,13 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
     boundary,
     originalBytes,
     originalHash,
-    mode: info.mode & 0o7777,
+    mode: read.mode,
   };
 
   let originalText: string;
   let parsed: ReturnType<typeof parsePbxProject>;
   try {
-    originalText = new TextDecoder("utf-8", { fatal: true }).decode(originalBuffer);
+    originalText = new TextDecoder("utf-8", { fatal: true }).decode(originalBytes);
     parsed = parsePbxProject(originalText);
   } catch {
     return blocked(

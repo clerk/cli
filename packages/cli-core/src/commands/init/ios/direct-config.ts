@@ -353,7 +353,15 @@ async function entrySourceOwnership(
     for (const membership of memberships) {
       let ownsSource = false;
       for (const file of membership.files) {
-        const info = await lstat(file.absolutePath);
+        let info;
+        try {
+          info = await lstat(file.absolutePath);
+        } catch (error) {
+          // A deleted reference cannot alias the entry snapshot. The selected
+          // target's shipping-source completeness is checked separately.
+          if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+          throw error;
+        }
         if (!info.isFile() || info.isSymbolicLink()) return "incomplete";
         if (info.dev === snapshot.device && info.ino === snapshot.inode) ownsSource = true;
       }
@@ -677,6 +685,25 @@ function consumeBalancedSuffix(source: string, cursor: number, limit: number): n
   return undefined;
 }
 
+const SWIFT_STATEMENT_KEYWORDS = new Set([
+  "if",
+  "switch",
+  "for",
+  "while",
+  "repeat",
+  "guard",
+  "do",
+  "return",
+  "let",
+  "var",
+  "try",
+  "await",
+  "defer",
+  "throw",
+  "else",
+  "case",
+]);
+
 function rootExpression(
   sanitized: string,
   start: number,
@@ -687,6 +714,7 @@ function rootExpression(
   const expressionStart = cursor;
   let identifier = identifierEnd(sanitized, cursor);
   if (identifier == null) return undefined;
+  if (SWIFT_STATEMENT_KEYWORDS.has(sanitized.slice(cursor, identifier))) return undefined;
   cursor = identifier;
   while (true) {
     const beforeDot = skipWhitespace(sanitized, cursor, end);

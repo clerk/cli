@@ -774,6 +774,89 @@ struct MyApp: App {
     expect(await readFile(adminPath, "utf8")).toContain("Clerk.configure");
   });
 
+  test.each(["if (true) { ContentView() }", "switch (1) { default: ContentView() }"])(
+    "refuses a statement-shaped WindowGroup root: %s",
+    async (expression) => {
+      const root = await fixture();
+      await replaceSource(
+        root,
+        `import SwiftUI
+
+@main
+struct MyApp: App {
+  var body: some Scene {
+    WindowGroup { ${expression} }
+  }
+}
+`,
+      );
+      const before = await treeDigest(root);
+      const plan = await planIOSDirectConfig(planOptions(root));
+      expect(plan.status).toBe("blocked");
+      expect(blockerCodes(plan)).toContain("unsupported-scene");
+      expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("blocked");
+      expect(await treeDigest(root)).toEqual(before);
+    },
+  );
+
+  test("allows conditional content inside a real Group view root", async () => {
+    const root = await fixture();
+    await replaceSource(
+      root,
+      `import SwiftUI
+
+@main
+struct MyApp: App {
+  var body: some Scene {
+    WindowGroup { Group { if (true) { ContentView() } } }
+  }
+}
+`,
+    );
+    const plan = await planIOSDirectConfig(planOptions(root));
+    expect(plan.status).toBe("ready");
+    expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("applied");
+    expect(await source(root)).toContain(
+      "Group { if (true) { ContentView() } }.environment(Clerk.shared)",
+    );
+  });
+
+  test("ignores a deleted source in another target when proving entry ownership", async () => {
+    const root = await fixture({ secondTarget: true });
+    const missing = join(root, "AdminApp", "AdminAppApp.swift");
+    await rm(missing);
+    const plan = await planIOSDirectConfig(planOptions(root));
+    expect(plan.status).toBe("ready");
+    expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("applied");
+    expect(await source(root)).toContain("Clerk.configure");
+    expect(await Bun.file(missing).exists()).toBe(false);
+  });
+
+  test.each(["missing-selected", "directory", "symlink", "invalid-parent"])(
+    "keeps source completeness and ownership checks for %s",
+    async (kind) => {
+      const root = await fixture({ secondTarget: true });
+      const other = join(root, "AdminApp", "AdminAppApp.swift");
+      if (kind === "missing-selected") {
+        await rm(appSourcePath(root));
+      } else {
+        await rm(other);
+        if (kind === "directory") await mkdir(other);
+        if (kind === "symlink") await symlink(appSourcePath(root), other);
+        if (kind === "invalid-parent") {
+          await rm(join(root, "AdminApp"), { recursive: true });
+          await writeFile(join(root, "AdminApp"), "not a directory");
+        }
+      }
+      const before = await treeDigest(root);
+      const plan = await planIOSDirectConfig(planOptions(root));
+      expect(plan.status).toBe("blocked");
+      expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+      expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("blocked");
+      expect(await treeDigest(root)).toEqual(before);
+    },
+  );
+
   test("refuses an entry source shared with another native target", async () => {
     const root = await fixture({ secondTarget: true });
     const before = await readFile(appSourcePath(root));

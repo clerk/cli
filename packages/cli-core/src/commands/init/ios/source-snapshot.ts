@@ -1,5 +1,5 @@
-import { lstat, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { readBoundedRegularFile } from "./bounded-file.ts";
 import { pathIsSafelyWithinIOSRoot } from "./discovery.ts";
 import { hashIOSFileBytes } from "./file-transaction.ts";
 
@@ -40,11 +40,9 @@ export async function readIOSSourceSnapshot(
   const absolutePath = resolve(root, relativePath);
   if (!(await pathIsSafelyWithinIOSRoot(root, absolutePath))) return undefined;
   try {
-    const info = await lstat(absolutePath);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_SWIFT_FILE_BYTES) {
-      return undefined;
-    }
-    const bytes = new Uint8Array(await readFile(absolutePath));
+    const read = await readBoundedRegularFile(absolutePath, MAX_SWIFT_FILE_BYTES);
+    if (read.status !== "ok") return undefined;
+    const bytes = read.bytes;
     const source = decodeUTF8(bytes);
     if (source == null || source.includes("\0")) return undefined;
     return {
@@ -53,9 +51,9 @@ export async function readIOSSourceSnapshot(
       bytes,
       source,
       hash: hashIOSFileBytes(bytes),
-      mode: info.mode & 0o7777,
-      device: info.dev,
-      inode: info.ino,
+      mode: read.mode,
+      device: read.device,
+      inode: read.inode,
     };
   } catch {
     return undefined;

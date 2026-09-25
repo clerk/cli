@@ -4,7 +4,7 @@ import { open } from "node:fs/promises";
 const READ_CHUNK_BYTES = 64 * 1024;
 
 export type BoundedRegularFileReadResult =
-  | { status: "ok"; bytes: Uint8Array; mode: number }
+  | { status: "ok"; bytes: Uint8Array; mode: number; device: number; inode: number }
   | { status: "missing" | "not-regular" | "too-large" | "unreadable" };
 
 function missingPath(error: unknown): boolean {
@@ -53,6 +53,8 @@ export async function readBoundedRegularFile(
       status: "ok",
       bytes: Buffer.concat(chunks, totalBytes),
       mode: info.mode & 0o7777,
+      device: info.dev,
+      inode: info.ino,
     };
   } catch {
     return { status: "unreadable" };

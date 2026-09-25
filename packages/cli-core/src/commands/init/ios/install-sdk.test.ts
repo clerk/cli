@@ -219,6 +219,17 @@ afterEach(async () => {
 });
 
 describe("iOS Clerk SDK installer", () => {
+  test("blocks oversized project files without modifying them", async () => {
+    const root = await fixture();
+    await appendFile(pbxprojPath(root), " ".repeat(15_000_001));
+    const before = await treeDigest(root);
+    const plan = await planIOSSDKInstall(installOptions(root));
+    expect(plan.status).toBe("blocked");
+    expect(plan.blockers[0]?.code).toBe("unreadable-project");
+    expect((await applyIOSSDKInstall(plan)).status).toBe("blocked");
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
   test("returns satisfied without serializing or changing a configured project", async () => {
     const root = await fixture();
     const before = await readFile(pbxprojPath(root));
