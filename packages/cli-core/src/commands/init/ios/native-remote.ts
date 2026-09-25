@@ -197,7 +197,7 @@ const defaultPrompts: IOSNativeRemotePrompts = {
       placeholder: suggested?.value ?? "ABCDE12345",
       validate: (value) =>
         validateAppIdPrefix(value) != null ||
-        `Enter an App ID Prefix containing exactly ${APP_ID_PREFIX_LENGTH} ASCII letters or numbers. Verify it in Apple Developer; it can differ from your Team ID.`,
+        `Enter an App ID Prefix containing exactly ${APP_ID_PREFIX_LENGTH} uppercase ASCII letters or numbers. Verify it in Apple Developer; it can differ from your Team ID.`,
     });
   },
   confirmChanges: async () =>
@@ -311,7 +311,7 @@ function localIdentity(target: IOSNativeReadinessTarget): {
     blockers.push(
       blocker(
         "app-id-prefix-invalid",
-        `The selected target contains an invalid Apple App ID Prefix. App ID Prefixes must contain exactly ${APP_ID_PREFIX_LENGTH} ASCII letters or numbers.`,
+        `The selected target contains an invalid Apple App ID Prefix. App ID Prefixes must contain exactly ${APP_ID_PREFIX_LENGTH} uppercase ASCII letters or numbers.`,
       ),
     );
   }
@@ -355,7 +355,7 @@ export function buildIOSNativeRemotePlan(options: {
     blockers.push(
       blocker(
         "app-id-prefix-invalid",
-        `The supplied Apple App ID Prefix must contain exactly ${APP_ID_PREFIX_LENGTH} ASCII letters or numbers.`,
+        `The supplied Apple App ID Prefix must contain exactly ${APP_ID_PREFIX_LENGTH} uppercase ASCII letters or numbers.`,
       ),
     );
   }
