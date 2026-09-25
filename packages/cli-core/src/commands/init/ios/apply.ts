@@ -31,7 +31,6 @@ import {
   type IOSFileMutation,
 } from "./file-transaction.ts";
 import {
-  planIOSAssociatedDomain,
   prepareIOSAssociatedDomainMutation,
   validatePreparedIOSAssociatedDomain,
   type IOSAssociatedDomainPlan,
@@ -810,18 +809,6 @@ function assertUniqueMutationPaths(mutations: readonly IOSFileMutation[]): void 
   }
 }
 
-async function validateSatisfiedAssociatedDomain(plan: IOSAssociatedDomainPlan): Promise<boolean> {
-  const current = await planIOSAssociatedDomain({
-    root: plan.root,
-    projectPath: plan.projectPath,
-    targetId: plan.targetId,
-  });
-  return (
-    current.status === "satisfied" &&
-    (plan.expectedDomain == null || current.expectedDomain === plan.expectedDomain)
-  );
-}
-
 async function validateSatisfiedAppleEntitlement(plan: IOSAppleEntitlementPlan): Promise<boolean> {
   const current = await planIOSAppleEntitlement({
     root: plan.root,
@@ -1034,7 +1021,7 @@ export async function applyIOSPlannedLocalSetup(
       );
     } else if (preparedAssociatedDomain?.status === "satisfied") {
       postconditions.push(async () =>
-        validateSatisfiedAssociatedDomain(preparedAssociatedDomain.plan),
+        validatePreparedIOSAssociatedDomain(preparedAssociatedDomain),
       );
     }
     const preparedAppleEntitlement = await prepareAppleEntitlementForCommit(
@@ -1146,7 +1133,7 @@ export async function applyIOSPlannedLocalSetup(
       ...(preparedAssociatedDomain?.status === "ready"
         ? [async () => validatePreparedIOSAssociatedDomain(preparedAssociatedDomain)]
         : preparedAssociatedDomain?.status === "satisfied"
-          ? [async () => validateSatisfiedAssociatedDomain(preparedAssociatedDomain.plan)]
+          ? [async () => validatePreparedIOSAssociatedDomain(preparedAssociatedDomain)]
           : []),
       ...(preparedAppleEntitlement?.status === "ready"
         ? [async () => validatePreparedIOSAppleEntitlement(preparedAppleEntitlement)]

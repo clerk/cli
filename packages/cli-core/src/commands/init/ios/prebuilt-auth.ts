@@ -1,4 +1,4 @@
-import { lstat } from "node:fs/promises";
+import { lstat, stat } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
 import { readIOSSourceSnapshot, newlineStyle, type IOSSourceSnapshot } from "./source-snapshot.ts";
 import { generatedProjectKind } from "./project-selection.ts";
@@ -333,8 +333,16 @@ async function sourceIdentityOccurrences(
     for (const membership of memberships) {
       if (!membership.complete) return undefined;
       for (const file of membership.files) {
-        const info = await lstat(file.absolutePath);
-        if (!info.isFile() || info.isSymbolicLink()) return undefined;
+        let info;
+        try {
+          // Follow aliases when counting owners, but stale unrelated entries
+          // cannot own the selected regular file. Other access errors remain uncertain.
+          info = await stat(file.absolutePath);
+        } catch (error) {
+          if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+          throw error;
+        }
+        if (!info.isFile()) continue;
         if (info.dev === snapshot.device && info.ino === snapshot.inode) occurrences += 1;
       }
     }

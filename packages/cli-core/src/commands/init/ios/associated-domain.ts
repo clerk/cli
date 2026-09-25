@@ -912,7 +912,7 @@ export async function prepareIOSAssociatedDomainMutation(
 }
 
 export async function validatePreparedIOSAssociatedDomain(
-  prepared: Extract<PreparedIOSAssociatedDomainMutation, { status: "ready" }>,
+  prepared: Extract<PreparedIOSAssociatedDomainMutation, { status: "ready" | "satisfied" }>,
 ): Promise<boolean> {
   if (
     prepared.plan.missingEntitlementsSettings &&
@@ -960,6 +960,14 @@ export async function validatePreparedIOSAssociatedDomain(
       return false;
     }
     files.push(inspected.file);
+  }
+  // A prepared domain must remain on the same approved files, even when
+  // another capability legitimately changes their bytes in this transaction.
+  const paths = [...new Set(files.map((file) => file.relativePath))].sort();
+  if (
+    JSON.stringify(paths) !== JSON.stringify(prepared.plan.files.map((file) => file.path).sort())
+  ) {
+    return false;
   }
   return ownershipIsExclusive(
     prepared.plan.root,

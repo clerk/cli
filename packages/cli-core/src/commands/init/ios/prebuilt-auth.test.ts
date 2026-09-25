@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { link, symlink, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
@@ -85,13 +85,15 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true })));
 });
 
-async function createFixture(options: { shared?: boolean; crlf?: boolean } = {}): Promise<string> {
+async function createFixture(
+  options: { shared?: boolean; secondTarget?: boolean; crlf?: boolean } = {},
+): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "clerk-prebuilt-auth-"));
   temporaryDirectories.push(root);
   await createIOSFixture(root, {
     clerkSDK: true,
     includeKey: false,
-    secondTarget: options.shared === true,
+    secondTarget: options.shared === true || options.secondTarget === true,
   });
   const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
   const project = parsePbxProject(await readFile(projectPath, "utf8"));
@@ -411,4 +413,30 @@ struct DecoyApp: App {
     expect(plan.status).toBe("blocked");
     expect(plan.blockers[0]?.code).toBe("incomplete-source-membership");
   });
+});
+
+describe("prebuilt source ownership", () => {
+  test.each(["missing", "directory"])("ignores an unrelated %s source entry", async (kind) => {
+    const root = await createFixture({ secondTarget: true });
+    const unrelated = join(root, "AdminApp", "AdminAppApp.swift");
+    await rm(unrelated);
+    if (kind === "directory") await mkdir(unrelated);
+    expect((await planIOSPrebuiltAuth(options(root))).status).toBe("ready");
+  });
+
+  test.each(["symlink", "hardlink"])(
+    "still refuses a %s alias owned by another target",
+    async (kind) => {
+      const root = await createFixture({ secondTarget: true });
+      const unrelated = join(root, "AdminApp", "AdminAppApp.swift");
+      await rm(unrelated);
+      await (kind === "symlink" ? symlink : link)(
+        join(root, "MyApp", "ContentView.swift"),
+        unrelated,
+      );
+      const plan = await planIOSPrebuiltAuth(options(root));
+      expect(plan.status).toBe("blocked");
+      expect(plan.blockers).toContainEqual(expect.objectContaining({ code: "shared-source" }));
+    },
+  );
 });

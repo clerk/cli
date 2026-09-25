@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspectIOSProject } from "./inspect.ts";
@@ -108,5 +108,83 @@ describe("iOS local setup lifecycle", () => {
     });
     await applyIOSPlannedLocalSetup(rerun, publishableKey);
     expect(await treeDigest(root)).toEqual(appliedBytes);
+  });
+});
+
+describe("preserved configuration with an existing domain", () => {
+  useCaptureLog();
+
+  test.each([false, true])(
+    "installs the SDK with Apple entitlement requested: %s",
+    async (signInWithApple) => {
+      const root = await mkdtemp(join(tmpdir(), "clerk-custom-existing-domain-"));
+      temporaryDirectories.push(root);
+      await createIOSFixture(root, { clerkSDK: false, includeKey: false });
+      const sourcePath = join(root, "MyApp", "MyAppApp.swift");
+      const source = `import SwiftUI
+import ClerkKit
+@main struct MyApp: App {
+  init() { Clerk.configure(publishableKey: AppConfig.key) }
+  var body: some Scene { WindowGroup { Text("Hello").environment(Clerk.shared) } }
+}`;
+      await writeFile(sourcePath, source);
+      const setup = await applyIOSLocalSetup({
+        root,
+        target: "MyApp",
+        yes: true,
+        agent: false,
+        allowDirty: true,
+        prebuiltAuthUI: false,
+        signInWithApple,
+      });
+      expect(setup.directConfigPlan).toBeUndefined();
+      expect(setup.sdkInstallPlan?.status).toBe("ready");
+      const key = `pk_test_${Buffer.from("clerk.example.test$").toString("base64")}`;
+      await applyIOSPlannedLocalSetup(setup, key);
+      expect(await readFile(sourcePath, "utf8")).toBe(source);
+      expect((await inspectIOSProject(root)).appTargets[0]?.packages.clerkKit).toBe("linked");
+    },
+  );
+
+  test("rolls SDK changes back when a previously satisfied domain is removed during apply", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-custom-domain-changed-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { clerkSDK: false, includeKey: false });
+    await writeFile(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `import SwiftUI
+import ClerkKit
+@main struct MyApp: App {
+  init() { Clerk.configure(publishableKey: AppConfig.key) }
+  var body: some Scene { WindowGroup { Text("Hello").environment(Clerk.shared) } }
+}`,
+    );
+    const setup = await applyIOSLocalSetup({
+      root,
+      target: "MyApp",
+      yes: true,
+      agent: false,
+      allowDirty: true,
+      prebuiltAuthUI: false,
+      signInWithApple: false,
+    });
+    const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+    const original = await readFile(projectPath, "utf8");
+    const key = `pk_test_${Buffer.from("clerk.example.test$").toString("base64")}`;
+    await expect(
+      applyIOSPlannedLocalSetup(setup, key, {
+        beforePostWriteValidation: async () => {
+          const entitlements = join(root, "MyApp", "MyApp.entitlements");
+          await writeFile(
+            entitlements,
+            (await readFile(entitlements, "utf8")).replace(
+              "webcredentials:clerk.example.test",
+              "webcredentials:other.example.test",
+            ),
+          );
+        },
+      }),
+    ).rejects.toThrow("post-write validation");
+    expect(await readFile(projectPath, "utf8")).toBe(original);
   });
 });
