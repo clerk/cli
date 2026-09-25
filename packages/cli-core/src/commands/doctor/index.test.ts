@@ -106,13 +106,19 @@ describe("doctor", () => {
     expect(error?.message).not.toContain("issues with your Clerk integration");
   });
 
-  // A crash outranks a finding: the run can no longer claim to have checked
-  // everything, so "your integration has issues" would be the wrong answer.
+  // A crash outranks a finding for the code, but the message must still send
+  // the reader to the real problem in their project, not tell them the project
+  // is not the problem.
   test("a crash alongside a real finding still reports doctor_check_crashed", async () => {
     outcomes.envVars = "fail";
     outcomes.tokenValid = "throw";
 
-    expect((await runDoctor())?.code).toBe(ERROR_CODE.DOCTOR_CHECK_CRASHED);
+    const error = await runDoctor();
+
+    expect(error?.code).toBe(ERROR_CODE.DOCTOR_CHECK_CRASHED);
+    expect(error?.message).toContain("bug in the Clerk CLI");
+    expect(error?.message).toContain("issues with your Clerk integration");
+    expect(error?.message).not.toContain("not your project");
   });
 
   test("the crashed check is named on screen, with what it threw", async () => {

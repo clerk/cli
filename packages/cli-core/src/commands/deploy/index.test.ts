@@ -3019,6 +3019,8 @@ describe("deploy", () => {
 
         const { payload } = await deployTelemetry(async () => runDeploy({}));
 
+        // Pins today's exit-0 behaviour on this path; a follow-up makes it fail
+        // with deploy_instance_unresolved.
         expect(payload.outcome).toBe("success");
         expect(payload.stage).toBeNull();
       });

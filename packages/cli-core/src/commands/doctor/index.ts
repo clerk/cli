@@ -85,17 +85,21 @@ async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
 
 /**
  * The error for a set of results that includes a failure. A crashed check is a
- * CLI bug, not a problem with the user's project, so both the message and the
- * code say so. After `--fix` this is decided from the verify pass alone.
+ * CLI bug, so the message says so, and blames the project only when another
+ * check found a real problem. After `--fix` this is decided from the verify
+ * pass alone.
  */
 function failureFor(results: CheckResult[], findingsMessage: string): CliError {
   const crashed = results.some((r) => r.crashed);
-  return new CliError(
-    crashed
-      ? "A doctor check crashed. This is a bug in the Clerk CLI, not your project; see the check marked as crashed above."
-      : findingsMessage,
-    { code: crashed ? ERROR_CODE.DOCTOR_CHECK_CRASHED : ERROR_CODE.DOCTOR_FAILED },
-  );
+  const found = results.some((r) => r.status === "fail" && !r.crashed);
+  const message = !crashed
+    ? findingsMessage
+    : found
+      ? `A doctor check crashed, which is a bug in the Clerk CLI. ${findingsMessage}.`
+      : "A doctor check crashed. This is a bug in the Clerk CLI, not your project; see the check marked as crashed above.";
+  return new CliError(message, {
+    code: crashed ? ERROR_CODE.DOCTOR_CHECK_CRASHED : ERROR_CODE.DOCTOR_FAILED,
+  });
 }
 
 function printResults(results: CheckResult[], options: DoctorOptions): void {

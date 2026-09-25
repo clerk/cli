@@ -269,7 +269,10 @@ export function setTelemetryPauseStep(step: TelemetryPauseStep): void {
   if (context) context.pauseStep = step;
 }
 
-/** Record DNS, SSL and email DNS from a successful domain-status read. Leaves `oauth` alone. */
+/**
+ * Record DNS, SSL and email DNS from a successful domain-status read, never the
+ * substituted all-pending status or the fresh-run placeholder. Leaves `oauth` alone.
+ */
 export function setTelemetryDomainComponents(status: {
   dns: boolean;
   ssl: boolean;
