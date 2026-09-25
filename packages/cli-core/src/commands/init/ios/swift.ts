@@ -13,10 +13,15 @@ const MAX_SWIFT_FILE_BYTES = 1_000_000;
 
 const CLERK_CONFIGURE_CALL = /\bClerk\s*\.\s*configure\s*\(/;
 const CLERK_URL_HANDLER = /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*handle\s*\(/;
-const CLERK_NATIVE_AUTH_FLOW =
-  /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*(?:signIn(?:With(?:Password|EmailCode|EmailLink|PhoneCode|OAuth|IdToken|Apple|Passkey|EnterpriseSSO|Ticket))?|signUp(?:With(?:OAuth|Apple|IdToken|EnterpriseSSO|Ticket))?|startHostedAuth)\s*\(/;
+const CLERK_NATIVE_AUTH_METHOD =
+  "(?:signIn(?:With(?:Password|EmailCode|EmailLink|PhoneCode|OAuth|IdToken|Apple|Passkey|EnterpriseSSO|Ticket))?|signUp(?:With(?:OAuth|Apple|IdToken|EnterpriseSSO|Ticket))?|startHostedAuth)";
+const CLERK_NATIVE_AUTH_FLOW = new RegExp(
+  `\\b(?:Clerk\\s*\\.\\s*shared|clerk)\\s*\\.\\s*auth\\s*\\.\\s*${CLERK_NATIVE_AUTH_METHOD}\\s*\\(`,
+);
 const CLERK_EMAIL_LINK_AUTH_FLOW =
   /(?:\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*signInWithEmailLink|\.\s*sendEmailLink)\s*\(/;
+const CLERK_NATIVE_APPLE_AUTH_FLOW =
+  /\b(?:Clerk\s*\.\s*shared|clerk)\s*\.\s*auth\s*\.\s*(?:signIn|signUp)WithApple\s*\(/;
 const CLERK_ENVIRONMENT_INJECTION = /\.\s*environment\s*\(\s*Clerk\s*\.\s*shared\s*\)/;
 const CLERK_ENVIRONMENT_CONSUMER = /@Environment\s*\(\s*Clerk\s*\.\s*self\s*\)/;
 const CLERK_AUTH_VIEW = /\bAuthView\s*\(/;
@@ -99,6 +104,7 @@ const CLERK_EVIDENCE_PATTERNS = [
   CLERK_URL_HANDLER,
   CLERK_NATIVE_AUTH_FLOW,
   CLERK_EMAIL_LINK_AUTH_FLOW,
+  CLERK_NATIVE_APPLE_AUTH_FLOW,
   CLERK_ENVIRONMENT_INJECTION,
   CLERK_ENVIRONMENT_CONSUMER,
   CLERK_AUTH_VIEW,
@@ -242,6 +248,312 @@ export function sanitizeSwiftSourceWithStatus(source: string): SwiftSourceSaniti
 function has(source: string, pattern: RegExp): boolean {
   pattern.lastIndex = 0;
   return pattern.test(source);
+}
+
+const CLERK_ENVIRONMENT_ATTRIBUTE = /@Environment\s*\(\s*Clerk\s*\.\s*self\s*\)/g;
+const CLERK_ENVIRONMENT_PROPERTY_MODIFIERS = new Set([
+  "class",
+  "dynamic",
+  "fileprivate",
+  "final",
+  "internal",
+  "lazy",
+  "nonisolated",
+  "open",
+  "override",
+  "package",
+  "private",
+  "public",
+  "static",
+  "unowned",
+  "weak",
+]);
+const CLERK_ENVIRONMENT_ACCESS_MODIFIERS = new Set([
+  "fileprivate",
+  "internal",
+  "open",
+  "package",
+  "private",
+  "public",
+]);
+
+interface ClerkEnvironmentAlias {
+  identifier: string;
+  declarationIndex: number;
+  declarationEnd: number;
+  crossFileVisible: boolean;
+  typeBody: NominalTypeBody;
+}
+
+interface ProjectClerkEnvironmentAlias {
+  identifier: string;
+  sourcePath: string;
+  typeIdentity: string;
+  crossFileVisible: boolean;
+}
+
+interface ClerkEnvironmentAuthInspection {
+  native: boolean;
+  apple: boolean;
+  complete: boolean;
+}
+
+interface ParsedClerkEnvironmentDeclaration {
+  identifier: string;
+  declarationEnd: number;
+  crossFileVisible: boolean;
+}
+
+interface NominalTypeBody extends SourceBodyRange {
+  identity: string;
+}
+
+function escapeRegularExpression(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function nominalTypeBodies(source: string): NominalTypeBody[] {
+  const bodies: NominalTypeBody[] = [];
+  const declaration = /\b(struct|class|enum|actor|extension)\s+([A-Za-z_][A-Za-z0-9_.]*)/g;
+  let match: RegExpExecArray | null;
+  while ((match = declaration.exec(source)) !== null) {
+    const openingBrace = source.indexOf("{", match.index + match[0].length);
+    if (openingBrace === -1) continue;
+    const header = source.slice(match.index + match[0].length, openingBrace);
+    if (/[;}]/.test(header) || /\b(?:struct|class|enum|actor|extension)\b/.test(header)) {
+      continue;
+    }
+    const closingBrace = matchingBrace(source, openingBrace);
+    if (closingBrace == null) continue;
+    const kind = match[1];
+    const name = match[2];
+    if (!kind || !name) continue;
+    const parent = innermostTypeBodyAt(bodies, match.index);
+    const identity = kind === "extension" || !parent ? name : `${parent.identity}.${name}`;
+    bodies.push({ openingBrace, closingBrace, identity });
+  }
+  return bodies;
+}
+
+function innermostTypeBodyAt(
+  bodies: NominalTypeBody[],
+  position: number,
+): NominalTypeBody | undefined {
+  return bodies
+    .filter((body) => position > body.openingBrace && position < body.closingBrace)
+    .sort(
+      (left, right) =>
+        left.closingBrace - left.openingBrace - (right.closingBrace - right.openingBrace),
+    )[0];
+}
+
+function parseClerkEnvironmentDeclaration(
+  source: string,
+  start: number,
+): ParsedClerkEnvironmentDeclaration | undefined {
+  let cursor = start;
+  let crossFileVisible = true;
+
+  while (true) {
+    cursor = skipWhitespace(source, cursor);
+
+    if (source[cursor] === "@") {
+      const attribute = /^@[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/.exec(
+        source.slice(cursor),
+      );
+      if (!attribute) return undefined;
+      cursor += attribute[0].length;
+
+      const argumentsStart = skipWhitespace(source, cursor);
+      if (source[argumentsStart] === "(") {
+        const argumentsEnd = matchingParenthesis(source, argumentsStart);
+        if (argumentsEnd == null) return undefined;
+        cursor = argumentsEnd + 1;
+      }
+      continue;
+    }
+
+    const token = /^[A-Za-z_][A-Za-z0-9_]*/.exec(source.slice(cursor))?.[0];
+    if (!token) return undefined;
+    cursor += token.length;
+
+    if (token === "var") {
+      const identifierStart = skipWhitespace(source, cursor);
+      const identifier = /^[A-Za-z_][A-Za-z0-9_]*/.exec(source.slice(identifierStart))?.[0];
+      if (!identifier) return undefined;
+      return {
+        identifier,
+        declarationEnd: identifierStart + identifier.length,
+        crossFileVisible,
+      };
+    }
+
+    if (!CLERK_ENVIRONMENT_PROPERTY_MODIFIERS.has(token)) return undefined;
+
+    const argumentsStart = skipWhitespace(source, cursor);
+    if (source[argumentsStart] !== "(") {
+      if (token === "private" || token === "fileprivate") crossFileVisible = false;
+      continue;
+    }
+    const argumentsEnd = matchingParenthesis(source, argumentsStart);
+    if (argumentsEnd == null) return undefined;
+    const argument = source.slice(argumentsStart + 1, argumentsEnd).replace(/\s+/g, "");
+    const validArgument =
+      (CLERK_ENVIRONMENT_ACCESS_MODIFIERS.has(token) && argument === "set") ||
+      (token === "nonisolated" && argument === "unsafe") ||
+      (token === "unowned" && (argument === "safe" || argument === "unsafe"));
+    if (!validArgument) return undefined;
+    cursor = argumentsEnd + 1;
+  }
+}
+
+function clerkEnvironmentAliases(
+  source: string,
+  typeBodies: NominalTypeBody[],
+): { aliases: ClerkEnvironmentAlias[]; complete: boolean } {
+  const aliases: ClerkEnvironmentAlias[] = [];
+  let complete = true;
+  CLERK_ENVIRONMENT_ATTRIBUTE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = CLERK_ENVIRONMENT_ATTRIBUTE.exec(source)) !== null) {
+    const declaration = parseClerkEnvironmentDeclaration(source, match.index + match[0].length);
+    const typeBody = innermostTypeBodyAt(typeBodies, match.index);
+    if (
+      !declaration ||
+      !typeBody ||
+      braceDepthAt(source, typeBody.openingBrace, match.index) !== 1
+    ) {
+      complete = false;
+      continue;
+    }
+    aliases.push({
+      identifier: declaration.identifier,
+      declarationIndex: match.index,
+      declarationEnd: declaration.declarationEnd,
+      crossFileVisible: declaration.crossFileVisible,
+      typeBody,
+    });
+  }
+  return { aliases, complete };
+}
+
+function aliasIsShadowedInBody(
+  source: string,
+  identifier: string,
+  declaration: ClerkEnvironmentAlias | undefined,
+  body: NominalTypeBody,
+  typeBodies: NominalTypeBody[],
+): boolean {
+  const escaped = escapeRegularExpression(identifier);
+  const typeSource = source.slice(body.openingBrace + 1, body.closingBrace);
+  const typeOffset = body.openingBrace + 1;
+  const declarations = [
+    ...typeSource.matchAll(new RegExp(`\\b(?:let|var)\\s+${escaped}\\b`, "g")),
+  ].filter((match) => {
+    const index = typeOffset + match.index;
+    return innermostTypeBodyAt(typeBodies, index) === body;
+  });
+  if (declaration && body === declaration.typeBody) {
+    const declarationIndex = typeOffset + (declarations[0]?.index ?? -1);
+    if (
+      declarations.length !== 1 ||
+      declarationIndex < declaration.declarationIndex ||
+      declarationIndex >= declaration.declarationEnd
+    ) {
+      return true;
+    }
+  } else if (declarations.length !== 0) {
+    return true;
+  }
+  return new RegExp(
+    `(?:[(,]\\s*(?:[A-Za-z_][A-Za-z0-9_]*\\s+)?${escaped}\\s*:|\\bfor\\s+(?:case\\s+)?${escaped}\\b|\\b${escaped}\\s+in\\b|(?:\\[|,)\\s*(?:(?:weak|unowned(?:\\s*\\(\\s*(?:safe|unsafe)\\s*\\))?)\\s+)?${escaped}\\s*=)`,
+  ).test(typeSource);
+}
+
+function hasScopedAliasCall(
+  source: string,
+  identifier: string,
+  methodPattern: string,
+  body: NominalTypeBody,
+  typeBodies: NominalTypeBody[],
+): boolean {
+  const call = new RegExp(
+    `\\b${escapeRegularExpression(identifier)}\\s*\\.\\s*auth\\s*\\.\\s*${methodPattern}\\s*\\(`,
+    "g",
+  );
+  let match: RegExpExecArray | null;
+  while ((match = call.exec(source)) !== null) {
+    if (innermostTypeBodyAt(typeBodies, match.index) === body) return true;
+  }
+  return false;
+}
+
+function inspectClerkEnvironmentAuth(
+  source: string,
+  sourcePath: string,
+  projectAliases: ProjectClerkEnvironmentAlias[],
+): ClerkEnvironmentAuthInspection {
+  const typeBodies = nominalTypeBodies(source);
+  const environment = clerkEnvironmentAliases(source, typeBodies);
+  let native = false;
+  let apple = false;
+  let complete = environment.complete;
+
+  const aliases = new Map<
+    string,
+    {
+      identifier: string;
+      typeIdentity: string;
+      declaration?: ClerkEnvironmentAlias;
+    }
+  >();
+  for (const declaration of environment.aliases) {
+    aliases.set(`${declaration.typeBody.identity}\0${declaration.identifier}`, {
+      identifier: declaration.identifier,
+      typeIdentity: declaration.typeBody.identity,
+      declaration,
+    });
+  }
+  for (const alias of projectAliases) {
+    if (alias.sourcePath === sourcePath || !alias.crossFileVisible) continue;
+    const key = `${alias.typeIdentity}\0${alias.identifier}`;
+    if (!aliases.has(key)) {
+      aliases.set(key, {
+        identifier: alias.identifier,
+        typeIdentity: alias.typeIdentity,
+      });
+    }
+  }
+
+  for (const alias of aliases.values()) {
+    for (const body of typeBodies.filter(
+      (candidate) => candidate.identity === alias.typeIdentity,
+    )) {
+      const hasNativeCall = hasScopedAliasCall(
+        source,
+        alias.identifier,
+        CLERK_NATIVE_AUTH_METHOD,
+        body,
+        typeBodies,
+      );
+      const hasAppleCall = hasScopedAliasCall(
+        source,
+        alias.identifier,
+        "(?:signIn|signUp)WithApple",
+        body,
+        typeBodies,
+      );
+      if (!hasNativeCall && !hasAppleCall) continue;
+      if (aliasIsShadowedInBody(source, alias.identifier, alias.declaration, body, typeBodies)) {
+        complete = false;
+        continue;
+      }
+      native ||= hasNativeCall;
+      apple ||= hasAppleCall;
+    }
+  }
+
+  return { native, apple, complete };
 }
 
 function matchingBrace(source: string, openingBrace: number): number | undefined {
@@ -766,12 +1078,25 @@ export async function inspectSwiftSources(
   const environmentInjections: IOSSourceEvidence[] = [];
   const rootEnvironmentInjections: IOSSourceEvidence[] = [];
   const environmentConsumers: IOSSourceEvidence[] = [];
+  const authViewReferences: IOSSourceEvidence[] = [];
   const authFlowReferences: IOSSourceEvidence[] = [];
+  const appleAuthReferences: IOSSourceEvidence[] = [];
   const openURLHandlers: IOSSourceEvidence[] = [];
   let sourceFilesScanned = 0;
   let evidenceComplete = options.membershipComplete ?? true;
+  const preparedSources: Array<{
+    file: { absolutePath: string; relativePath: string };
+    source: string;
+    structuralSource: SwiftSourceSanitization;
+    sanitized: string;
+    uncertain: string;
+    importsKit: boolean;
+    importsUI: boolean;
+  }> = [];
 
-  for (const file of sourceFiles.sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
+  for (const file of [...sourceFiles].sort((a, b) =>
+    a.relativePath.localeCompare(b.relativePath),
+  )) {
     const diskFile = Bun.file(file.absolutePath);
     if (!(await diskFile.exists()) || diskFile.size > MAX_SWIFT_FILE_BYTES) {
       evidenceComplete = false;
@@ -799,9 +1124,47 @@ export async function inspectSwiftSources(
     const uncertain = platformSource
       ? withoutPreviewOnlyRegions(platformSource.uncertainSource)
       : "";
-    const evidence = { path: file.relativePath };
     const importsKit = has(sanitized, CLERK_KIT_IMPORT);
     const importsUI = has(sanitized, CLERK_KIT_UI_IMPORT);
+    preparedSources.push({
+      file,
+      source,
+      structuralSource,
+      sanitized,
+      uncertain,
+      importsKit,
+      importsUI,
+    });
+  }
+
+  const projectAliases: ProjectClerkEnvironmentAlias[] = [];
+  const projectAliasOrigins = new Map<string, string>();
+  for (const prepared of preparedSources) {
+    if (!prepared.importsKit && !prepared.importsUI) continue;
+    const typeBodies = nominalTypeBodies(prepared.sanitized);
+    const environment = clerkEnvironmentAliases(prepared.sanitized, typeBodies);
+    if (!environment.complete) evidenceComplete = false;
+    for (const alias of environment.aliases) {
+      const key = `${alias.typeBody.identity}\0${alias.identifier}`;
+      const existingOrigin = projectAliasOrigins.get(key);
+      if (existingOrigin && existingOrigin !== prepared.file.relativePath) {
+        evidenceComplete = false;
+      } else {
+        projectAliasOrigins.set(key, prepared.file.relativePath);
+      }
+      projectAliases.push({
+        identifier: alias.identifier,
+        sourcePath: prepared.file.relativePath,
+        typeIdentity: alias.typeBody.identity,
+        crossFileVisible: alias.crossFileVisible,
+      });
+    }
+  }
+
+  for (const prepared of preparedSources) {
+    const { file, source, structuralSource, sanitized, uncertain, importsKit, importsUI } =
+      prepared;
+    const evidence = { path: file.relativePath };
     const importsClerkModule = importsKit || importsUI;
     if (hasConditionalSetupEvidence(uncertain, importsClerkModule)) evidenceComplete = false;
     const appRoot = structuralSource.complete ? inspectSwiftUIAppRoot(sanitized) : undefined;
@@ -826,10 +1189,26 @@ export async function inspectSwiftSources(
     if (importsClerkModule && has(sanitized, CLERK_ENVIRONMENT_CONSUMER)) {
       environmentConsumers.push(evidence);
     }
+    const constructsAuthView = importsUI && has(sanitized, CLERK_AUTH_VIEW);
+    const environmentAuth = importsClerkModule
+      ? inspectClerkEnvironmentAuth(sanitized, file.relativePath, projectAliases)
+      : { native: false, apple: false, complete: true };
+    if (!environmentAuth.complete) evidenceComplete = false;
+    if (constructsAuthView) {
+      authViewReferences.push(evidence);
+    }
     if (
-      (importsUI && has(sanitized, CLERK_AUTH_VIEW)) ||
+      importsClerkModule &&
+      (has(sanitized, CLERK_NATIVE_APPLE_AUTH_FLOW) || environmentAuth.apple)
+    ) {
+      appleAuthReferences.push(evidence);
+    }
+    if (
+      constructsAuthView ||
       (importsClerkModule &&
-        (has(sanitized, CLERK_NATIVE_AUTH_FLOW) || has(sanitized, CLERK_EMAIL_LINK_AUTH_FLOW)))
+        (has(sanitized, CLERK_NATIVE_AUTH_FLOW) ||
+          has(sanitized, CLERK_EMAIL_LINK_AUTH_FLOW) ||
+          environmentAuth.native))
     ) {
       authFlowReferences.push(evidence);
     }
@@ -874,7 +1253,9 @@ export async function inspectSwiftSources(
     environmentInjections,
     rootEnvironmentInjections: provenRootEnvironmentInjections,
     environmentConsumers,
+    authViewReferences,
     authFlowReferences,
+    appleAuthReferences,
     openURLHandlers,
     status,
   };
