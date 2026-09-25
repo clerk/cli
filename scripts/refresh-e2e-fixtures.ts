@@ -101,6 +101,22 @@ export async function normalizeProjectSymlinks(projectDir: string): Promise<stri
   return dropped;
 }
 
+/**
+ * Replace `fixtureDir` with a copy of `projectDir`.
+ *
+ * `cp` resolves relative symlinks against the source by default, which would
+ * turn the relative links [normalizeProjectSymlinks] just wrote back into
+ * absolute paths under the temp project. `verbatimSymlinks` keeps them as is.
+ */
+export async function copyProjectIntoFixture(
+  projectDir: string,
+  fixtureDir: string,
+): Promise<void> {
+  await rm(fixtureDir, { recursive: true, force: true });
+  await mkdir(fixtureDir, { recursive: true });
+  await cp(projectDir, fixtureDir, { recursive: true, verbatimSymlinks: true });
+}
+
 type FixtureEntry = [string, FixtureConfig];
 
 type CommandResult = {
@@ -248,10 +264,7 @@ export async function refreshFixtures({
         console.warn(`⚠️  ${name}: dropped symlink escaping the fixture: ${link}`);
       }
 
-      // Copy generated files into fixture dir
-      await rm(fixtureDir, { recursive: true, force: true });
-      await mkdir(fixtureDir, { recursive: true });
-      await cp(tmpProject, fixtureDir, { recursive: true });
+      await copyProjectIntoFixture(tmpProject, fixtureDir);
 
       console.log(`✅ Done: ${name}`);
     } finally {
