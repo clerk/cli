@@ -425,6 +425,9 @@ Clerk.configure(publishableKey: key)`,
       `import ClerkKit
        import ClerkKitUI
        let native = #/Clerk.shared.auth.signInWithApple()/#
+       let text = "Clerk.shared.auth.signUpWithApple()"
+       // Clerk.shared.auth.signInWithApple()
+       /* Clerk.shared.auth.signUpWithApple() */
        let prebuilt = /AuthView()/`,
     );
 
@@ -434,6 +437,7 @@ Clerk.configure(publishableKey: key)`,
 
     expect(inspection.evidenceComplete).toBe(true);
     expect(inspection.authFlowReferences).toEqual([]);
+    expect(inspection.appleAuthReferences).toEqual([]);
   });
 
   test("still records a real authentication call adjacent to a regex literal", async () => {
@@ -446,6 +450,7 @@ Clerk.configure(publishableKey: key)`,
        let matcher = #/Clerk.shared.auth.signInWithApple()/#
        func authenticate() async throws {
          try await Clerk.shared.auth.signInWithApple()
+         try await Clerk.shared.auth.signUpWithApple()
        }`,
     );
 
@@ -455,6 +460,249 @@ Clerk.configure(publishableKey: key)`,
 
     expect(inspection.evidenceComplete).toBe(true);
     expect(inspection.authFlowReferences).toEqual([{ path: "Authentication.swift" }]);
+    expect(inspection.appleAuthReferences).toEqual([{ path: "Authentication.swift" }]);
+  });
+
+  test("recognizes native Apple calls through the declared Clerk environment identifier", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const declaredPath = join(root, "Declared.swift");
+    const undeclaredPath = join(root, "Undeclared.swift");
+    await Bun.write(
+      declaredPath,
+      `import ClerkKit
+       struct DeclaredFlow {
+         @Environment(Clerk.self) private var authClient
+         func authenticate() async throws {
+           try await authClient.auth.signInWithApple()
+         }
+       }`,
+    );
+    await Bun.write(
+      undeclaredPath,
+      `import ClerkKit
+       struct UnrelatedFlow {
+         func authenticate() async throws {
+           try await authClient.auth.signInWithApple()
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: declaredPath, relativePath: "Declared.swift" },
+      { absolutePath: undeclaredPath, relativePath: "Undeclared.swift" },
+    ]);
+
+    expect(inspection.authFlowReferences).toEqual([{ path: "Declared.swift" }]);
+    expect(inspection.appleAuthReferences).toEqual([{ path: "Declared.swift" }]);
+  });
+
+  test("recognizes a Clerk environment declaration with an intervening global-actor attribute", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "MainActorFlow.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       struct MainActorFlow {
+         @Environment(Clerk.self) @MainActor private var authClient
+         func authenticate() async throws {
+           try await authClient.auth.signInWithApple()
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "MainActorFlow.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.authFlowReferences).toEqual([{ path: "MainActorFlow.swift" }]);
+    expect(inspection.appleAuthReferences).toEqual([{ path: "MainActorFlow.swift" }]);
+  });
+
+  test("recognizes a Clerk environment declaration with a parameterized attribute", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "AvailableFlow.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       struct AvailableFlow {
+         @Environment(Clerk.self) @available(iOS 17.0, *) private var authClient
+         func authenticate() async throws {
+           try await authClient.auth.signInWithApple()
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "AvailableFlow.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.authFlowReferences).toEqual([{ path: "AvailableFlow.swift" }]);
+    expect(inspection.appleAuthReferences).toEqual([{ path: "AvailableFlow.swift" }]);
+  });
+
+  test("fails closed for malformed attributes after a Clerk environment declaration", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "MalformedFlow.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       struct MalformedFlow {
+         @Environment(Clerk.self) @available(iOS 17.0, * private var authClient
+         func authenticate() async throws {
+           try await authClient.auth.signInWithApple()
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "MalformedFlow.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(false);
+    expect(inspection.authFlowReferences).toEqual([]);
+    expect(inspection.appleAuthReferences).toEqual([]);
+  });
+
+  test("fails closed for unsupported modifiers after a Clerk environment declaration", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "UnsupportedFlow.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       struct UnsupportedFlow {
+         @Environment(Clerk.self) borrowing var authClient
+         func authenticate() async throws {
+           try await authClient.auth.signInWithApple()
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "UnsupportedFlow.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(false);
+    expect(inspection.authFlowReferences).toEqual([]);
+    expect(inspection.appleAuthReferences).toEqual([]);
+  });
+
+  test("does not attribute a same-named receiver in another type to the Clerk environment", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "MixedFlows.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       struct ClerkView {
+         @Environment(Clerk.self) private var authClient
+       }
+       struct OtherFlow {
+         let authClient: OtherSDK
+         func authenticate() async throws {
+           try await authClient.auth.signInWithApple()
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "MixedFlows.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.authFlowReferences).toEqual([]);
+    expect(inspection.appleAuthReferences).toEqual([]);
+  });
+
+  test("recognizes a Clerk environment alias used by a same-type extension", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "ExtendedFlow.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       struct ClerkView {
+         @Environment(Clerk.self) private var authClient
+       }
+       extension ClerkView {
+         func authenticate() async throws {
+           try await authClient.auth.signInWithApple()
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "ExtendedFlow.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.authFlowReferences).toEqual([{ path: "ExtendedFlow.swift" }]);
+    expect(inspection.appleAuthReferences).toEqual([{ path: "ExtendedFlow.swift" }]);
+  });
+
+  test("recognizes an internal Clerk environment alias used by an extension in another file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const viewPath = join(root, "ClerkView.swift");
+    const extensionPath = join(root, "ClerkView+Auth.swift");
+    await Bun.write(
+      viewPath,
+      `import ClerkKit
+       struct ClerkView {
+         @Environment(Clerk.self) var authClient
+       }`,
+    );
+    await Bun.write(
+      extensionPath,
+      `import ClerkKit
+       extension ClerkView {
+         func authenticate() async throws {
+           try await authClient.auth.signInWithApple()
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: viewPath, relativePath: "ClerkView.swift" },
+      { absolutePath: extensionPath, relativePath: "ClerkView+Auth.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(true);
+    expect(inspection.authFlowReferences).toEqual([{ path: "ClerkView+Auth.swift" }]);
+    expect(inspection.appleAuthReferences).toEqual([{ path: "ClerkView+Auth.swift" }]);
+  });
+
+  test("leaves a closure capture that rebinds the Clerk alias unresolved", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "CapturedFlow.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       struct ClerkView {
+         @Environment(Clerk.self) private var authClient
+         let otherSDK: OtherSDK
+         func authenticate() {
+           Task { [authClient = otherSDK] in
+             try await authClient.auth.signInWithApple()
+           }
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "CapturedFlow.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(false);
+    expect(inspection.authFlowReferences).toEqual([]);
+    expect(inspection.appleAuthReferences).toEqual([]);
   });
 
   test("marks source evidence incomplete for an unclosed regex literal", async () => {
@@ -474,6 +722,7 @@ Clerk.configure(publishableKey: key)`,
 
     expect(inspection.evidenceComplete).toBe(false);
     expect(inspection.authFlowReferences).toEqual([]);
+    expect(inspection.appleAuthReferences).toEqual([]);
   });
 
   test("records real Clerk evidence without retaining key expressions", async () => {
@@ -512,7 +761,9 @@ Clerk.configure(publishableKey: key)`,
       },
     ]);
     expect(inspection.environmentInjections).toEqual([{ path: "App.swift" }]);
+    expect(inspection.authViewReferences).toEqual([{ path: "App.swift" }]);
     expect(inspection.authFlowReferences).toEqual([{ path: "App.swift" }]);
+    expect(inspection.appleAuthReferences).toEqual([]);
     expect(inspection.openURLHandlers).toEqual([{ path: "App.swift" }]);
     expect(JSON.stringify(inspection)).not.toContain("must-not-leak");
   });
@@ -1029,6 +1280,8 @@ Clerk.configure(publishableKey: key)`,
       { path: "Password.swift" },
       { path: "SignUp.swift" },
     ]);
+    expect(inspection.authViewReferences).toEqual([]);
+    expect(inspection.appleAuthReferences).toEqual([]);
   });
 
   test("marks multiple entry points as ambiguous", async () => {
@@ -1093,6 +1346,7 @@ Clerk.configure(publishableKey: key)`,
       { absolutePath: path, relativePath: "ContentView.swift" },
     ]);
 
+    expect(inspection.authViewReferences).toEqual([]);
     expect(inspection.authFlowReferences).toEqual([]);
   });
 });

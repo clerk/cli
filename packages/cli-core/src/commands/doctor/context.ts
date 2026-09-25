@@ -1,6 +1,6 @@
-import { getToken, getValidToken } from "../../lib/credential-store.ts";
+import { getToken, getValidToken, hasAccountCredentials } from "../../lib/credential-store.ts";
 import { resolveProfile } from "../../lib/config.ts";
-import { fetchApplication, type Application } from "../../lib/plapi.ts";
+import { fetchApplication, listApplications, type Application } from "../../lib/plapi.ts";
 import { resolveKeylessTarget, type KeylessTarget } from "../../lib/keyless-target.ts";
 import { peekKeylessBreadcrumb } from "../../lib/keyless.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
@@ -17,6 +17,8 @@ import type { DoctorContext, KeylessInstanceInfo, ResolvedProfile } from "./type
 
 export function createDoctorContext(): DoctorContext {
   let tokenPromise: Promise<string | null> | undefined;
+  let accountCredentialsPromise: Promise<boolean> | undefined;
+  let accountAccessVerificationPromise: Promise<void> | undefined;
   let validTokenPromise: Promise<string | null> | undefined;
   let profilePromise: Promise<ResolvedProfile | undefined> | undefined;
   let appPromise: Promise<Application | null> | undefined;
@@ -26,6 +28,24 @@ export function createDoctorContext(): DoctorContext {
   let keylessKeyError: CliError | undefined;
 
   const ctx: DoctorContext = {
+    hasPlatformAPIKey() {
+      return Boolean(process.env.CLERK_PLATFORM_API_KEY);
+    },
+
+    hasAccountCredentials() {
+      if (!accountCredentialsPromise) {
+        accountCredentialsPromise = hasAccountCredentials();
+      }
+      return accountCredentialsPromise;
+    },
+
+    verifyAccountAccess() {
+      if (!accountAccessVerificationPromise) {
+        accountAccessVerificationPromise = listApplications().then(() => undefined);
+      }
+      return accountAccessVerificationPromise;
+    },
+
     getToken() {
       if (!tokenPromise) {
         tokenPromise = getToken();
@@ -50,11 +70,14 @@ export function createDoctorContext(): DoctorContext {
     getApplication() {
       if (!appPromise) {
         appPromise = (async () => {
-          const token = await ctx.getToken();
-          if (!token) return null;
+          if (!(await ctx.hasAccountCredentials())) return null;
           const resolved = await ctx.getProfile();
           if (!resolved) return null;
-          return fetchApplication(resolved.profile.appId);
+          // Doctor only needs application and instance identity. Keeping
+          // secret keys out of this long-lived, shared diagnostic context
+          // prevents unrelated checks from retaining credentials they never
+          // use (including the iOS checks below).
+          return fetchApplication(resolved.profile.appId, { includeSecretKeys: false });
         })();
       }
       return appPromise;

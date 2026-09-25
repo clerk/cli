@@ -89,7 +89,9 @@ function emptySwiftInspection() {
     environmentInjections: [],
     rootEnvironmentInjections: [],
     environmentConsumers: [],
+    authViewReferences: [],
     authFlowReferences: [],
+    appleAuthReferences: [],
     openURLHandlers: [],
     status: "absent" as const,
   };
