@@ -18,6 +18,7 @@ import { registerTelemetry } from "./commands/telemetry/index.ts";
 import { registerToggles } from "./commands/toggles/index.ts";
 import { registerApi } from "./commands/api/index.ts";
 import { registerDoctor } from "./commands/doctor/index.ts";
+import { registerSecurity } from "./commands/security/index.ts";
 import { registerMcp } from "./commands/mcp/index.ts";
 import { registerSwitchEnv } from "./commands/switch-env/index.ts";
 import { registerCompletion } from "./commands/completion/index.ts";
@@ -77,6 +78,7 @@ const registrants: CommandRegistrant[] = [
   registerToggles,
   registerApi,
   registerDoctor,
+  registerSecurity,
   registerMcp,
   registerSwitchEnv,
   registerCompletion,
