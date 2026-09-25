@@ -400,6 +400,7 @@ describe("api command", () => {
               {
                 instance_id: "ins_dev",
                 environment_type: "development",
+                publishable_key: "pk_test_fixture",
                 secret_key: "sk_test_derived",
               },
             ],
@@ -433,6 +434,7 @@ describe("api command", () => {
               {
                 instance_id: "ins_dev",
                 environment_type: "development",
+                publishable_key: "pk_test_fixture",
                 secret_key: "sk_test_oauth",
               },
             ],
