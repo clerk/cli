@@ -18,7 +18,12 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(missing: boolean, evidence: string, platform: "ios" | "macos" = "ios") {
+async function fixture(
+  missing: boolean,
+  evidence: string,
+  platform: "ios" | "macos" = "ios",
+  sibling: "mixed" | "visionos" = "mixed",
+) {
   const root = await mkdtemp(join(tmpdir(), "clerk-entitlement-ownership-"));
   roots.push(root);
   await createIOSFixture(root, { secondTarget: true, platform });
@@ -28,7 +33,9 @@ async function fixture(missing: boolean, evidence: string, platform: "ios" | "ma
   const objects = (project as unknown as { objects: PbxObjects }).objects;
   for (const id of [ids.secondDebug, ids.secondRelease]) {
     const settings = objects[id]!.buildSettings as Record<string, unknown>;
-    settings.SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
+    settings.SUPPORTED_PLATFORMS =
+      sibling === "mixed" ? "iphoneos iphonesimulator xros xrsimulator" : "xros xrsimulator";
+    if (sibling === "visionos") settings.SDKROOT = "xros";
     if (evidence === "inline")
       settings["CODE_SIGN_ENTITLEMENTS[sdk=xros*]"] = "MyApp/MyApp.entitlements";
     if (evidence === "project") {
@@ -70,26 +77,28 @@ async function fixture(missing: boolean, evidence: string, platform: "ios" | "ma
   };
 }
 
-for (const missing of [false, true]) {
-  test.each(["none", "unrelated-xcconfig"])(
-    `allows ${missing ? "new" : "existing"} entitlements with a sibling having %s entitlement assignments`,
-    async (evidence) => {
-      const options = await fixture(missing, evidence);
-      const plan = await planIOSAssociatedDomain(options);
-      expect(plan.status).toBe("ready");
-      const key = `pk_test_${Buffer.from("ownership.clerk.example$").toString("base64")}`;
-      expect((await applyIOSAssociatedDomain(plan, key)).status).toBe("applied");
-      expect((await planIOSAppleEntitlement(options)).status).toBe("ready");
-    },
-  );
-  test.each(["inline", "project", "xcconfig", "missing-include"])(
-    `blocks ${missing ? "new" : "existing"} entitlements when sibling ownership is uncertain through %s`,
-    async (evidence) => {
-      expect((await planIOSAssociatedDomain(await fixture(missing, evidence))).status).toBe(
-        "blocked",
-      );
-    },
-  );
+for (const sibling of ["mixed", "visionos"] as const) {
+  for (const missing of [false, true]) {
+    test.each(["none", "unrelated-xcconfig"])(
+      `allows ${missing ? "new" : "existing"} entitlements with a ${sibling} sibling having %s entitlement assignments`,
+      async (evidence) => {
+        const options = await fixture(missing, evidence, "ios", sibling);
+        const plan = await planIOSAssociatedDomain(options);
+        expect(plan.status).toBe("ready");
+        const key = `pk_test_${Buffer.from("ownership.clerk.example$").toString("base64")}`;
+        expect((await applyIOSAssociatedDomain(plan, key)).status).toBe("applied");
+        expect((await planIOSAppleEntitlement(options)).status).toBe("ready");
+      },
+    );
+    test.each(["inline", "project", "xcconfig", "missing-include"])(
+      `blocks ${missing ? "new" : "existing"} entitlements when ${sibling} sibling ownership is uncertain through %s`,
+      async (evidence) => {
+        expect(
+          (await planIOSAssociatedDomain(await fixture(missing, evidence, "ios", sibling))).status,
+        ).toBe("blocked");
+      },
+    );
+  }
 }
 
 test("allows macOS networking when a mixed-platform sibling has no entitlement assignments", async () => {

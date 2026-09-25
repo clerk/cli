@@ -729,7 +729,10 @@ async function entitlementsDestinationIsExclusive(
       }
       if (
         primaryConfigurations.length === 0 ||
-        primaryConfigurations.some((configuration) => !configuration.platformEvidenceComplete) ||
+        primaryConfigurations.some(
+          (configuration) =>
+            !configuration.platformEvidenceComplete || configuration.platform === undefined,
+        ) ||
         primaryDiagnostics.some((diagnostic) => diagnostic.severity === "error")
       ) {
         return false;
