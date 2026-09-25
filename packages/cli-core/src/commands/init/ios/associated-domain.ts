@@ -613,8 +613,11 @@ export async function validatePreparedIOSAssociatedDomain(
   );
   if (selection.status === "blocked") return false;
   // Other capabilities may change bytes, but not the approved domain's file set.
-  if (JSON.stringify(selection.files.map((file) => file.path).sort()) !==
-      JSON.stringify(prepared.plan.files.map((file) => file.path).sort())) return false;
+  if (
+    JSON.stringify(selection.files.map((file) => file.path).sort()) !==
+    JSON.stringify(prepared.plan.files.map((file) => file.path).sort())
+  )
+    return false;
   for (const file of selection.files) {
     const inspected = await inspectEntitlementsFile(
       prepared.plan.root,

@@ -1,3 +1,6 @@
+import { build, parse } from "@bacons/xcode/json";
+import { selectIOSEntitlementsFiles } from "./entitlements-files.ts";
+import type { PbxObjects } from "./pbx.ts";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -151,6 +154,53 @@ for (const capability of ["apple", "network"] as const) {
         }),
       );
       expect(await treeDigest(root)).toEqual(before);
+    },
+  );
+}
+
+for (const format of ["pbx", "json"] as const) {
+  test.each(["./MyApp/MyApp.entitlements", "MyApp/../MyApp/MyApp.entitlements"])(
+    `${format} treats the equivalent entitlement path %s as one file`,
+    async (alias) => {
+      const root = await mkdtemp(join(tmpdir(), "clerk-entitlements-alias-"));
+      roots.push(root);
+      if (format === "json") {
+        await createIOSJSONFixture(root);
+        const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+        await Bun.write(
+          path,
+          applyXCProjValue(
+            await Bun.file(path).text(),
+            ["targets", 0, "build-settings", "CODE_SIGN_ENTITLEMENTS[config=Release]"],
+            alias,
+          ),
+        );
+      } else {
+        await createIOSFixture(root);
+        const path = join(root, "MyApp.xcodeproj", "project.pbxproj");
+        const project = parse(await Bun.file(path).text());
+        const objects = (project as unknown as { objects: PbxObjects }).objects;
+        (
+          objects[IOS_FIXTURE_IDS.targetRelease]!.buildSettings as Record<string, unknown>
+        ).CODE_SIGN_ENTITLEMENTS = alias;
+        await Bun.write(path, build(project));
+      }
+      const options = {
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: format === "json" ? "C1E000000000000000000001" : IOS_FIXTURE_IDS.appTarget,
+      };
+      const selection = await selectIOSEntitlementsFiles(options);
+      expect(selection.status).toBe("ready");
+      expect(selection.files).toHaveLength(1);
+      expect(selection.blockers).toEqual([]);
+      expect(
+        (await planIOSAssociatedDomain({ ...options, deferToPublishableKey: true })).status,
+      ).toBe("ready");
+      const apple = await planIOSAppleEntitlement(options);
+      expect(apple.status).toBe("ready");
+      expect((await applyIOSAppleEntitlement(apple)).status).toBe("applied");
+      expect((await planIOSAppleEntitlement(options)).status).toBe("satisfied");
     },
   );
 }

@@ -622,13 +622,15 @@ export async function selectIOSEntitlementsFiles(
 
   const filesByPath = new Map<string, IOSEntitlementsFile>();
   const blockers: IOSEntitlementsFileBlocker[] = [];
-  for (const configuredPath of new Set(resolvedPaths)) {
-    const absolutePath = resolve(root, options.projectPath, "..", configuredPath);
+  const absolutePaths = new Set(
+    resolvedPaths.map((configuredPath) => resolve(root, options.projectPath, "..", configuredPath)),
+  );
+  for (const absolutePath of absolutePaths) {
     const inspected = await inspectIOSEntitlementsFile(root, absolutePath);
     if (inspected.blocker) blockers.push(inspected.blocker);
     if (inspected.file) filesByPath.set(inspected.file.absolutePath, inspected.file);
   }
-  if (blockers.length > 0 || filesByPath.size !== new Set(resolvedPaths).size) {
+  if (blockers.length > 0 || filesByPath.size !== absolutePaths.size) {
     return blockedSelection(blockers, target.name);
   }
   const files = [...filesByPath.values()].sort((a, b) =>
