@@ -18,7 +18,9 @@ runtime wiring is unresolved, it does not activate automatic AuthView setup or
 provider-capability changes. SDK linkage and native registration may still
 proceed. Explicit `--prebuilt-auth-ui` requests retain the runtime checks.
 
-Entitlement edits require safe file selection and proven ownership. An unresolved
+Entitlement edits require safe file selection and proven ownership. File paths
+and each capability’s evaluated settings must agree with Xcode’s packaging
+settings as well as its compiler settings. An unresolved
 or malformed Associated Domains value blocks editing that capability, but does
 not by itself block a Sign in with Apple or macOS networking edit in the same
 valid XML dictionary. Shared files, unresolved paths, and invalid plist structure
