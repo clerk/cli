@@ -2,7 +2,8 @@
  * `clerk mcp install` — register the Clerk remote MCP server in supported clients.
  *
  * URL resolution: `CLERK_MCP_URL` > active env profile `mcpUrl` > Clerk's hosted server.
- * The URL is resolved at bridge runtime, not embedded in the stored config entry.
+ * The URL is resolved at bridge runtime, not embedded in the stored config entry
+ * (except fx, which connects over HTTP directly and stores the resolved URL).
  * Target clients: `--client <id>` (repeatable) > `--all` > human picker > all detected (agent mode).
  * Install always converges: whatever entry exists under the name is replaced.
  * Clients with their own CLI (claude, gemini, codex, vscode, openclaw, hermes)

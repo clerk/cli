@@ -32,6 +32,7 @@ const { opencodeClient } = await import("./opencode.ts");
 const { openclawClient } = await import("./openclaw.ts");
 const { warpClient } = await import("./warp.ts");
 const { hermesClient } = await import("./hermes.ts");
+const { fxClient } = await import("./fx.ts");
 const { vscodeUserDir } = await import("./paths.ts");
 
 useCaptureLog();
@@ -88,10 +89,16 @@ const pathCases = [
     client: hermesClient,
     expectedPath: () => join(mockHome, ".hermes", "config.yaml"),
   },
+  {
+    name: "fx",
+    client: fxClient,
+    expectedPath: () => join(mockHome, ".fx", "mcp.json"),
+  },
 ];
 
-// File-backed clients: we write the entry ourselves (no usable registration
-// CLI exists — opencode's `mcp add` is an interactive wizard, Warp has none).
+// File-backed clients: we write the entry ourselves (opencode's `mcp add` is
+// an interactive wizard, Warp has none, and fx's is skipped for version
+// coverage — see the README's fx note).
 const fileCases = [
   { name: "cursor", client: cursorClient, topKey: "mcpServers", shape: RUN_SHAPE },
   { name: "windsurf", client: windsurfClient, topKey: "mcpServers", shape: RUN_SHAPE },
@@ -102,6 +109,15 @@ const fileCases = [
     topKey: "mcp",
     // opencode's stdio dialect: `type: "local"` and a single command array.
     shape: { type: "local", command: ["clerk", "mcp", "run"] },
+  },
+  {
+    name: "fx",
+    client: fxClient,
+    topKey: "mcp",
+    // fx registers in the user-global `~/.fx/mcp.json` profile and connects
+    // over Streamable HTTP directly — no stdio bridge, so the URL is embedded
+    // at install time.
+    shape: { type: "http", url: DEFAULT_URL },
   },
 ];
 
@@ -327,6 +343,144 @@ describe("client contracts (homedir redirected)", () => {
     const entries = await opencodeClient.list("/ignored");
     expect(entries.map((e) => e.name).sort()).toEqual(["clerk", "hosted"]);
     expect(entries.every((e) => e.url === DEFAULT_URL)).toBe(true);
+  });
+
+  test("fx lists clerk-flavored direct-URL entries and ignores unrelated ones", async () => {
+    const configPath = fxClient.configPath("/ignored");
+    await mkdir(join(configPath, ".."), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        mcp: {
+          clerk: { type: "http", url: DEFAULT_URL },
+          unrelated: { type: "http", url: "https://example.com/mcp" },
+        },
+      }),
+    );
+    const entries = await fxClient.list("/ignored");
+    expect(entries).toEqual([
+      expect.objectContaining({ client: "fx", name: "clerk", url: DEFAULT_URL }),
+    ]);
+  });
+
+  // fx accepts `mcpServers` as a profile alias for `mcp` and ignores the
+  // alias whenever `mcp` exists — so installing a fresh `mcp` next to an
+  // alias-form profile would shadow every aliased server. The client migrates
+  // alias-only profiles to canonical `mcp` instead.
+  test("fx install migrates an alias-form profile without dropping its servers", async () => {
+    const configPath = fxClient.configPath("/ignored");
+    await mkdir(join(configPath, ".."), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        mcpServers: { existing: { type: "http", url: "https://example.com/mcp" } },
+        theme: "dark",
+      }),
+    );
+    await fxClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored");
+    const parsed = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown>;
+    expect(parsed.mcpServers).toBeUndefined();
+    expect(parsed.theme).toBe("dark");
+    expect(parsed.mcp).toEqual({
+      existing: { type: "http", url: "https://example.com/mcp" },
+      clerk: { type: "http", url: DEFAULT_URL },
+    });
+  });
+
+  test("fx list and remove see a clerk entry stored under the alias key", async () => {
+    const configPath = fxClient.configPath("/ignored");
+    await mkdir(join(configPath, ".."), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({ mcpServers: { clerk: { type: "http", url: DEFAULT_URL } } }),
+    );
+    const entries = await fxClient.list("/ignored");
+    expect(entries).toEqual([
+      expect.objectContaining({ client: "fx", name: "clerk", url: DEFAULT_URL }),
+    ]);
+    const result = await fxClient.remove("clerk", "/ignored");
+    expect(result.removed).toBe(true);
+  });
+
+  test("fx leaves the ignored alias alone when canonical `mcp` exists", async () => {
+    const configPath = fxClient.configPath("/ignored");
+    await mkdir(join(configPath, ".."), { recursive: true });
+    const shadowed = { mcpServers: { shadowed: { type: "http", url: "https://example.com/mcp" } } };
+    await writeFile(configPath, JSON.stringify({ mcp: {}, ...shadowed }));
+    await fxClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored");
+    const parsed = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown>;
+    expect(parsed.mcpServers).toEqual(shadowed.mcpServers);
+    expect(parsed.mcp).toEqual({ clerk: { type: "http", url: DEFAULT_URL } });
+  });
+
+  // Direct-URL entries carry no bridge argv, so provenance rides on the URL:
+  // a custom-name entry pointing at the active `CLERK_MCP_URL` override must
+  // stay visible to list/doctor/uninstall while that override is set.
+  test("fx lists a custom-name entry matching the resolved URL override", async () => {
+    const configPath = fxClient.configPath("/ignored");
+    await mkdir(join(configPath, ".."), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({ mcp: { local: { type: "http", url: "http://localhost:8787/mcp" } } }),
+    );
+    const origMcpUrl = process.env.CLERK_MCP_URL;
+    process.env.CLERK_MCP_URL = "http://localhost:8787/mcp";
+    try {
+      const entries = await fxClient.list("/ignored");
+      expect(entries).toEqual([
+        expect.objectContaining({ client: "fx", name: "local", url: "http://localhost:8787/mcp" }),
+      ]);
+    } finally {
+      if (origMcpUrl === undefined) {
+        delete process.env.CLERK_MCP_URL;
+      } else {
+        process.env.CLERK_MCP_URL = origMcpUrl;
+      }
+    }
+  });
+
+  // Install stores `resolveUrl()`'s canonical `URL.href`; the raw override may
+  // differ in case or trailing slash and must still match.
+  test("fx matches a non-canonical but equivalent URL override", async () => {
+    const configPath = fxClient.configPath("/ignored");
+    await mkdir(join(configPath, ".."), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({ mcp: { local: { type: "http", url: "http://localhost:8787/mcp" } } }),
+    );
+    const origMcpUrl = process.env.CLERK_MCP_URL;
+    process.env.CLERK_MCP_URL = "HTTP://LOCALHOST:8787/mcp";
+    try {
+      const entries = await fxClient.list("/ignored");
+      expect(entries).toEqual([
+        expect.objectContaining({ client: "fx", name: "local", url: "http://localhost:8787/mcp" }),
+      ]);
+    } finally {
+      if (origMcpUrl === undefined) {
+        delete process.env.CLERK_MCP_URL;
+      } else {
+        process.env.CLERK_MCP_URL = origMcpUrl;
+      }
+    }
+  });
+
+  // Normalization migrates by key presence, not value shape, so a malformed
+  // profile still fails validation the way fx itself would reject it.
+  test.each([
+    ["invalid canonical key beside the alias", { mcp: null, mcpServers: { a: {} } }, "mcp"],
+    ["invalid alias key alone", { mcpServers: null }, "mcp"],
+  ])("fx rejects a profile with an %s", async (_label, profile) => {
+    const configPath = fxClient.configPath("/ignored");
+    await mkdir(join(configPath, ".."), { recursive: true });
+    await writeFile(configPath, JSON.stringify(profile));
+    await expect(
+      fxClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored"),
+    ).rejects.toMatchObject({
+      code: "mcp_client_config_invalid",
+    });
+    await expect(fxClient.list("/ignored")).rejects.toMatchObject({
+      code: "mcp_client_config_invalid",
+    });
   });
 
   test("`copilot` resolves to the same client as `vscode`", async () => {

@@ -64,6 +64,45 @@ test("deploy relies on global options", () => {
   expect(optionNames).toEqual([]);
 });
 
+test("deploy --help describes the bare command, not only the status subcommand", () => {
+  // The wizard is a hidden default subcommand, so without the long
+  // description the help lists only `status` and reads as if the CLI can only
+  // watch a deploy. Both headless test agents concluded exactly that.
+  const program = createProgram();
+  program.configureOutput({ getOutHelpWidth: () => 80 });
+  const deploy = program.commands.find((command) => command.name() === "deploy")!;
+  deploy.configureOutput({ getOutHelpWidth: () => 80 });
+  const help = deploy.helpInformation().replace(new RegExp(String.raw`\x1b\[[0-9;]*m`, "g"), "");
+
+  expect(help).toBe(
+    [
+      "Usage: clerk deploy [options] [command]",
+      "",
+      "Deploy a Clerk application to production.",
+      "",
+      "Running `clerk deploy` with no subcommand starts an interactive setup that",
+      "creates the production instance, prints the DNS records you must add, collects",
+      "production OAuth credentials, and verifies the domain. It needs a terminal;",
+      "re-run it at any time to resume where you left off.",
+      "",
+      "When run by an agent (or without a TTY), it is read-only: it prints a JSON",
+      "status report with the current state and a `nextAction` field saying what to",
+      "do next. `clerk deploy status` prints the same report; add `--wait` to keep",
+      "checking until DNS, SSL, and email DNS are verified.",
+      "",
+      "Options:",
+      "  -h, --help  Display help for command",
+      "",
+      "Commands:",
+      "  help    [command]  Display help for command",
+      "  status  [options]  Show production deploy status (read-only)",
+      "",
+    ].join("\n"),
+  );
+  // The root `clerk --help` table keeps the one-line summary.
+  expect(deploy.summary()).toBe("Deploy a Clerk application to production");
+});
+
 test("deploy status exposes wait option", () => {
   const program = createProgram();
   const deploy = program.commands.find((command) => command.name() === "deploy")!;
@@ -144,6 +183,35 @@ test("users parent command exposes targeting flags inherited by subcommands", ()
   const optionNames = users.options.map((option) => option.long);
 
   expect(optionNames).toEqual(expect.arrayContaining(["--secret-key", "--app", "--instance"]));
+});
+
+describe("help output ordering", () => {
+  type AnyCommand = ReturnType<typeof createProgram>["commands"][number];
+
+  function collectCommands(cmd: AnyCommand, path: string): { path: string; cmd: AnyCommand }[] {
+    return [
+      { path, cmd },
+      ...cmd.commands.flatMap((sub) => collectCommands(sub, `${path} ${sub.name()}`)),
+    ];
+  }
+
+  const allCommands = collectCommands(createProgram() as AnyCommand, "clerk");
+
+  // Commander's option sort key: short flag if present, else long flag.
+  const optionSortKey = (option: { short?: string; long?: string }): string =>
+    option.short ? option.short.replace(/^-/, "") : (option.long ?? "").replace(/^--/, "");
+
+  test.each(allCommands)("$path lists subcommands alphabetically in help", ({ cmd }) => {
+    const helper = cmd.createHelp();
+    const names = helper.visibleCommands(cmd).map((sub) => sub.name());
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+  });
+
+  test.each(allCommands)("$path lists options alphabetically in help", ({ cmd }) => {
+    const helper = cmd.createHelp();
+    const keys = helper.visibleOptions(cmd).map(optionSortKey);
+    expect(keys).toEqual([...keys].sort((a, b) => a.localeCompare(b)));
+  });
 });
 
 test("users create documents -d and --file for raw BAPI request bodies", () => {

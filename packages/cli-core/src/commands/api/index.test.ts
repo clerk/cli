@@ -726,4 +726,156 @@ describe("api command", () => {
     await runApi("/users", { data: '{"from":"inline"}', file: bodyFile });
     expect(JSON.parse(capturedBody)).toEqual({ from: "inline" });
   });
+
+  // --- request body is parse-checked before it goes out ---
+
+  test("rejects invalid -d without making a request", async () => {
+    let requested = false;
+    stubFetch(async () => {
+      requested = true;
+      return new Response("{}", { status: 200 });
+    });
+
+    // What PowerShell before 7.3 leaves of -d '{"first_name":"Alice"}'.
+    await expect(runApi("/users", { data: "{first_name:Alice}" })).rejects.toThrow(
+      "Invalid JSON in --data",
+    );
+    expect(requested).toBe(false);
+  });
+
+  test('rejects an explicit -d "" instead of sending a bodyless request', async () => {
+    let requested = false;
+    stubFetch(async () => {
+      requested = true;
+      return new Response("{}", { status: 200 });
+    });
+
+    await expect(runApi("/users", { data: "" })).rejects.toThrow(
+      "Invalid JSON in --data: the body is empty.",
+    );
+    expect(requested).toBe(false);
+  });
+
+  test("rejects an invalid --file body", async () => {
+    const bodyFile = join(tempDir, "broken.json");
+    await Bun.write(bodyFile, '{"first_name":"Alice"');
+
+    await expect(runApi("/users", { file: bodyFile })).rejects.toThrow(
+      `Invalid JSON in --file ${bodyFile}`,
+    );
+  });
+
+  /**
+   * Make stdin look like a pipe carrying `text`: not a TTY, and its async
+   * iterator yields that one chunk. Returns the restore function; isTTY itself
+   * is put back by afterEach.
+   */
+  function pipeStdin(text: string): () => void {
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: false,
+      writable: true,
+      configurable: true,
+    });
+    const original = process.stdin[Symbol.asyncIterator];
+    Object.defineProperty(process.stdin, Symbol.asyncIterator, {
+      value: async function* () {
+        if (text) yield Buffer.from(text);
+      },
+      writable: true,
+      configurable: true,
+    });
+    return () => {
+      Object.defineProperty(process.stdin, Symbol.asyncIterator, {
+        value: original,
+        writable: true,
+        configurable: true,
+      });
+    };
+  }
+
+  test("rejects an invalid piped body", async () => {
+    const restore = pipeStdin("not json at all");
+    try {
+      await expect(runApi("/users")).rejects.toThrow("Invalid JSON in the piped request body");
+    } finally {
+      restore();
+    }
+  });
+
+  // CI jobs and cron have a non-TTY stdin with nothing on it; a plain GET must
+  // still go out rather than be rejected as an empty body.
+  test("treats an empty non-TTY stdin as no body, not an empty one", async () => {
+    let capturedMethod = "";
+    let capturedBody: unknown = "unset";
+    stubFetch(async (_input, init) => {
+      capturedMethod = init?.method as string;
+      capturedBody = init?.body;
+      return new Response(JSON.stringify(mockUsers), { status: 200 });
+    });
+
+    const restore = pipeStdin("");
+    try {
+      await runApi("/users");
+    } finally {
+      restore();
+    }
+    expect(capturedMethod).toBe("GET");
+    expect(capturedBody).toBeUndefined();
+  });
+
+  test("forwards a piped body untrimmed", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      capturedBody = init?.body as string;
+      return new Response("{}", { status: 200 });
+    });
+
+    const raw = '{"first_name": "Alice"}\n';
+    const restore = pipeStdin(raw);
+    try {
+      await runApi("/users");
+    } finally {
+      restore();
+    }
+    expect(capturedBody).toBe(raw);
+  });
+
+  test("--dry-run rejects an invalid body too", async () => {
+    await expect(runApi("/users", { dryRun: true, data: "{first_name:Alice}" })).rejects.toThrow(
+      "Invalid JSON in --data",
+    );
+  });
+
+  test("forwards a valid body byte-for-byte", async () => {
+    let capturedBody = "";
+    stubFetch(async (_input, init) => {
+      capturedBody = init?.body as string;
+      return new Response("{}", { status: 200 });
+    });
+
+    const raw = '{"first_name":  "Alice"}';
+    await runApi("/users", { data: raw });
+    expect(capturedBody).toBe(raw);
+  });
+
+  test("the suggested --file command repeats the caller's targeting flags", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", writable: true });
+    try {
+      const error = (await runApi("/environment", {
+        fapi: true,
+        app: "app_1",
+        instance: "dev",
+        method: "post",
+        data: "{a:b}",
+      }).catch((e: unknown) => e)) as CliError;
+      expect(error.code).toBe(ERROR_CODE.INVALID_JSON_SHELL_QUOTING);
+      expect(error.examples?.[0]?.command).toBe(
+        "clerk api --fapi /environment -X POST --app app_1 --instance dev --file body.json",
+      );
+      expect(error.examples?.[0]?.command).not.toContain("sk_");
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
+    }
+  });
 });

@@ -2,6 +2,44 @@
 
 The Clerk command-line interface.
 
+## Add Clerk to an app
+
+```sh
+npx -y clerk@latest init
+```
+
+`clerk init` is the setup path for developers and coding agents. It detects the
+framework, installs the matching Clerk SDK for npm-based projects when it is
+missing, and scaffolds the Clerk wiring it can safely generate.
+
+For accountless-capable frameworks (Next.js, Astro, Nuxt, TanStack Start, and
+React Router), unauthenticated agent runs can start without a Clerk account or
+browser login. With no `--app` and no linked project, a first `clerk init` run
+creates an unclaimed development application, writes local development keys, and
+stores a claim breadcrumb for a later `clerk auth login`. Later runs keep an
+existing unclaimed application instead of replacing it, unless you pass
+`--fresh`. Frameworks without accountless
+support need an authenticated app target before keys can be pulled: pass
+`--app <id>`, use a linked project, or run `npx -y clerk@latest init --login`
+in an interactive terminal to log in and link one.
+
+What `clerk init` changes:
+
+- Installs missing Clerk SDK packages in npm-based projects.
+- Creates or updates supported framework files, such as provider wiring,
+  middleware or proxy files, and sign-in/sign-up routes.
+- Writes Clerk keys to an env file when a real or accountless app is available.
+- When it creates a new accountless application, writes `.clerk/keyless.json`
+  and adds `.clerk/` to `.gitignore`.
+- In npm-based projects, offers to install Clerk agent skills; agent mode runs
+  that step non-interactively unless `--no-skills` is passed.
+
+After setup, run `clerk doctor` to verify the integration:
+
+```sh
+npx -y clerk@latest doctor
+```
+
 ## Installation
 
 ### Homebrew (macOS / Linux)
@@ -24,37 +62,37 @@ Usage: clerk [options] [command]
 Clerk CLI
 
 Options:
-  -v, --version        Output the version number
+  -h, --help           Display help for command
   --input-json <json>  Pass command options as a JSON string, @file.json, or -
                        for stdin
   --mode <mode>        Force interaction mode (human or agent). Defaults to
                        auto-detect based on TTY.
+  -v, --version        Output the version number
   --verbose            Show detailed output (enables debug messages)
-  -h, --help           Display help for command
 
 Commands:
-  init             [options]                      Initialize Clerk in your project
-  auth                                            Manage authentication
-  link             [options]                      Link this project to a Clerk application
-  unlink           [options]                      Unlink this project from its Clerk application
-  whoami           [options]                      Show the current logged-in user and linked application
-  open                                            Open Clerk resources in your browser
-  apps                                            Manage your Clerk applications
-  users            [options]                      Manage Clerk users
-  impersonate|imp  [options] [user]               Impersonate a Clerk user
-  env                                             Manage environment variables
-  config                                          Manage instance configuration
-  telemetry                                       Control CLI usage telemetry (status, disable, enable)
-  enable                                          Enable Clerk features on the linked instance
-  disable                                         Disable Clerk features on the linked instance
   api              [options] [endpoint] [filter]  Call any Clerk API endpoint (200+; `clerk api ls` to browse)
-  doctor           [options]                      Check your project's Clerk integration health
-  mcp                                             Manage the Clerk remote MCP server connection for AI editors and CLIs
+  apps                                            Manage your Clerk applications
+  auth                                            Manage authentication
   completion       [shell]                        Generate shell autocompletion script
-  update           [options]                      Update the Clerk CLI to the latest version
+  config                                          Manage instance configuration
   deploy                                          Deploy a Clerk application to production
-  webhooks                                        Stream webhook events to a local handler and verify their signatures
+  disable                                         Disable Clerk features on the linked instance
+  doctor           [options]                      Check your project's Clerk integration health
+  enable                                          Enable Clerk features on the linked instance
+  env                                             Manage environment variables
   help             [command]                      Display help for command
+  impersonate|imp  [options] [user]               Impersonate a Clerk user
+  init             [options]                      Initialize Clerk in your project
+  link             [options]                      Link this project to a Clerk application
+  mcp                                             Manage the Clerk remote MCP server connection for AI editors and CLIs
+  open                                            Open Clerk resources in your browser
+  telemetry                                       Control CLI usage telemetry (status, disable, enable)
+  unlink           [options]                      Unlink this project from its Clerk application
+  update           [options]                      Update the Clerk CLI to the latest version
+  users            [options]                      Manage Clerk users
+  webhooks                                        Stream webhook events to a local handler and verify their signatures
+  whoami           [options]                      Show the current logged-in user and linked application
   bird                                            Play Clerk Bird, a Flappy Bird game in your terminal
 ```
 

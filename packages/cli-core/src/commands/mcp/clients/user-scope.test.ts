@@ -52,6 +52,7 @@ const ALL_CLIENT_IDS = [
   "openclaw",
   "warp",
   "hermes",
+  "fx",
 ];
 
 // The entry shape the bridge registers — no URL in args.
@@ -195,6 +196,7 @@ describe("install/uninstall across all clients (homedir + cwd redirected)", () =
       mkdir(join(mockHome, ".config", "opencode"), { recursive: true }),
       mkdir(join(mockHome, ".warp"), { recursive: true }),
       mkdir(join(mockHome, ".hermes"), { recursive: true }),
+      mkdir(join(mockHome, ".fx"), { recursive: true }),
     ]);
     // Hermes verifies its entry landed after add (its CLI can exit 0 without
     // saving); the mocked CLI writes nothing, so seed the config it would have

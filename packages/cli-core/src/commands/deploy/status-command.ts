@@ -4,15 +4,17 @@ import { log } from "../../lib/log.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { withSpinner } from "../../lib/spinner.ts";
-import { deployComponentLabels, type DeployComponentStatus } from "./copy.ts";
+import { deployComponentLabels, dnsRecords, type DeployComponentStatus } from "./copy.ts";
 import {
   buildDeployStatusReport,
   buildInterruptedDeployStatusReport,
+  deployNextStep,
   loadProductionDomain,
   resolveDeployContext,
   resolveDeployState,
   triggerDeployStatusCheck,
   waitForDeployStatus,
+  type DeployNextStep,
   type DeployState,
   type DeployStatusOutcome,
   type DeployStatusReport,
@@ -133,7 +135,8 @@ function emitReport(report: DeployStatusReport): void {
   renderHuman(report);
 }
 
-function renderHuman(report: DeployStatusReport): void {
+/** Exported so the human rendering can be exercised directly. */
+export function renderHuman(report: DeployStatusReport): void {
   log.blank();
   if (report.domain) {
     log.info(`Deploy status for \`${report.domain}\``);
@@ -146,7 +149,7 @@ function renderHuman(report: DeployStatusReport): void {
   // is true here.
   if (report.state === "interrupted") {
     log.blank();
-    log.info(report.nextAction);
+    log.info(humanNextAction(deployNextStep(report)));
     log.blank();
     return;
   }
@@ -157,10 +160,14 @@ function renderHuman(report: DeployStatusReport): void {
     );
   }
 
-  const oauthStatus = report.oauth.complete
-    ? "complete"
-    : `pending: ${report.oauth.pending.join(", ") || "none"}`;
-  log.info(`  OAuth    ${oauthStatus}`);
+  // No domain status means no production instance was read, so OAuth was
+  // never checked either; "pending: none" would claim it was.
+  if (report.domainStatus) {
+    const oauthStatus = report.oauth.complete
+      ? "complete"
+      : `pending: ${report.oauth.pending.join(", ") || "none"}`;
+    log.info(`  OAuth    ${oauthStatus}`);
+  }
 
   if (report.oauth.unsupported.length > 0) {
     log.warn(
@@ -168,14 +175,92 @@ function renderHuman(report: DeployStatusReport): void {
     );
   }
 
+  // The agent gets these as `pendingDnsRecords` in the JSON; a person has no
+  // JSON, so print the records themselves before the sentence that refers to
+  // them.
+  if (report.pendingDnsRecords.length > 0) {
+    log.blank();
+    const targets = report.pendingDnsRecords.map((record) => ({
+      host: record.host,
+      value: record.value,
+      required: record.required,
+    }));
+    for (const line of dnsRecords(targets, { afterCheck: true })) log.info(line);
+  }
+
   log.blank();
-  log.info(formatHumanNextAction(report.nextAction));
+  log.info(humanNextAction(deployNextStep(report)));
   log.blank();
 }
 
-function formatHumanNextAction(nextAction: string): string {
-  return nextAction.replace(
-    /Ask the user to visit the Clerk Dashboard domains page, or offer to open it: (https:\/\/\S+)/,
-    "Visit the Clerk Dashboard domains page to monitor its status there: $1",
-  );
+/**
+ * The line a person sees under `clerk deploy status`. Rendered from the same
+ * {@link DeployNextStep} as the agent's `nextAction`, not from that sentence:
+ * the reader is the user (so never "ask the user"), has no JSON (so never
+ * `pendingDnsRecords`), already waits (so never `--wait`), and resumes setup
+ * with the wizard. The unsupported-provider warning row above says its piece,
+ * so it isn't repeated here. Exported so the wording can be tested per state.
+ */
+export function humanNextAction(step: DeployNextStep): string {
+  const domains = (url: string | null): string =>
+    url ? ` Visit the Clerk Dashboard domains page to monitor its status there: ${url}` : "";
+
+  switch (step.kind) {
+    case "not_started":
+      return (
+        "No production instance yet. `clerk deploy` configures production interactively and " +
+        "needs a terminal. Run `clerk deploy` to set it up."
+      );
+    case "domain_provisioning":
+      return (
+        "A production instance exists but its domain is still provisioning. " +
+        "Run `clerk deploy status` again shortly, or run `clerk deploy` to finish setup." +
+        domains(step.domainsUrl)
+      );
+    case "interrupted":
+      return (
+        "Interrupted before the deploy status could be read, so nothing is known about this " +
+        "deploy. Run `clerk deploy status` again to check it."
+      );
+    case "complete":
+      return (
+        `Clerk's production setup for https://${step.domain} is verified. If you haven't already: ` +
+        `run \`clerk env pull --instance prod\`, set those keys on your host alongside the other ` +
+        `Clerk variables from your env file, redeploy, then sign up at https://${step.domain} to confirm.` +
+        (step.instanceUrl
+          ? ` Manage users, settings, and billing for this instance: ${step.instanceUrl}`
+          : "")
+      );
+    case "oauth_pending":
+      return (
+        `Domain verified, but these OAuth providers are missing production credentials: ` +
+        `${step.oauthPending.join(", ")}. Run \`clerk deploy\` to finish setup.`
+      );
+    case "records_available":
+      // The records block printed above already says "add these"; the
+      // sentence only needs to say what happens next.
+      return (
+        `${step.records} records not found yet for ${step.domain}. ` +
+        `Once they're added, run \`clerk deploy\` again to resume. Propagation usually takes minutes.` +
+        domains(step.domainsUrl)
+      );
+    case "records_unavailable":
+      return (
+        `${step.records} records not found yet for ${step.domain}, but Clerk didn't return the list of records to add. ` +
+        `Find them on the Domains page in the Clerk Dashboard, add them, then run \`clerk deploy\` again to resume.` +
+        domains(step.domainsUrl)
+      );
+    case "ssl_pending":
+      return (
+        `SSL certificate still pending for ${step.domain}. Clerk issues it automatically now that ` +
+        `DNS is verified; re-run \`clerk deploy status\` in a few minutes.` +
+        domains(step.domainsUrl)
+      );
+    case "finalizing":
+      return (
+        `Production setup for ${step.domain} is still finalizing on Clerk's side. ` +
+        `Re-run \`clerk deploy status\` in a few minutes.` +
+        domains(step.domainsUrl)
+      );
+  }
 }

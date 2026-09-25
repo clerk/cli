@@ -6,6 +6,7 @@
 import { claudeClient } from "./claude.ts";
 import { codexClient } from "./codex.ts";
 import { cursorClient } from "./cursor.ts";
+import { fxClient } from "./fx.ts";
 import { geminiClient } from "./gemini.ts";
 import { hermesClient } from "./hermes.ts";
 import { openclawClient } from "./openclaw.ts";
@@ -26,6 +27,7 @@ export const CLIENTS: readonly McpClient[] = [
   openclawClient,
   warpClient,
   hermesClient,
+  fxClient,
 ];
 
 export const CLIENT_IDS: readonly ClientId[] = CLIENTS.map((c) => c.id);

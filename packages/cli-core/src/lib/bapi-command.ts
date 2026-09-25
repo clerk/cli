@@ -33,7 +33,7 @@ export async function describeBapiTarget(
     cwd: options.cwd,
   });
   if (keyless) {
-    return `this keyless application (secret key from ${keyless.source})`;
+    return `this accountless application (secret key from ${keyless.source})`;
   }
 
   try {

@@ -1,13 +1,37 @@
 import { test, expect, describe } from "bun:test";
 import {
+  DEPLOY_COMMAND_DESCRIPTION,
+  DEPLOY_COMMAND_SUMMARY,
+  INTRO_PREAMBLE,
+  OAUTH_SECTION_INTRO,
   bindZoneFile,
   deployComponentLabels,
+  deployStatusPendingFooter,
   deployStatusRetryMessage,
+  dnsIntro,
+  dnsDashboardHandoff,
+  dnsHandoffNothingToAdd,
   dnsRecords,
-  nextStepsBlock,
-  pendingDnsRecords,
+  domainAssociationSummary,
+  domainsDashboardUrl,
+  instanceDashboardUrl,
+  nextStepsBody,
+  pendingCnameTargets,
+  productionDnsHosts,
+  productionSummary,
 } from "./copy.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
+
+const stripAnsi = (value: string): string =>
+  value.replace(new RegExp(String.raw`\x1b\[[0-9;]*m`, "g"), "");
+
+/**
+ * Lines with wrap continuations folded back into their sentence, for asserting
+ * on what a sentence says. Assertions about layout (blank lines, a URL on its
+ * own line, bullets) use the raw join instead.
+ */
+const flat = (lines: readonly string[] | string): string =>
+  stripAnsi(typeof lines === "string" ? lines : lines.join("\n")).replace(/\n[ \t]*/g, " ");
 
 describe("bindZoneFile", () => {
   const fixedDate = new Date("2026-05-20T18:30:00.000Z");
@@ -72,10 +96,24 @@ describe("dnsRecords", () => {
     expect(output).toContain("    Host:  clk2._domainkey.example.com");
     // Both DKIM hosts must carry the email label, not fall through to the
     // generic "CNAME" default (the host's first label is "clk"/"clk2").
-    expect(
-      output.filter((line) => line.includes("Email (Clerk handles SPF/DKIM automatically)")),
-    ).toHaveLength(2);
+    expect(output.filter((line) => line.includes("Email (DKIM)"))).toHaveLength(2);
     expect(output.some((line) => line.trimStart().startsWith("CNAME"))).toBe(false);
+  });
+});
+
+describe("dnsRecords heading", () => {
+  const targets: CnameTarget[] = [
+    { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+  ];
+
+  test("first hand-over tells the user to add the records", () => {
+    expect(dnsRecords(targets)[0]).toBe("Add the following records at your DNS provider:");
+  });
+
+  test("after a check that didn't find them, the heading allows that they may already be added", () => {
+    expect(dnsRecords(targets, { afterCheck: true })[0]).toBe(
+      "Add the following records at your DNS provider if you haven't already:",
+    );
   });
 });
 
@@ -110,44 +148,320 @@ describe("deployStatusRetryMessage", () => {
   });
 });
 
-describe("nextStepsBlock", () => {
-  test("links directly to the production instance domain settings", () => {
-    const output = nextStepsBlock("app_123", "ins_456");
+describe("nextStepsBody", () => {
+  test("links to the production instance home and its domain settings", () => {
+    const output = stripAnsi(nextStepsBody("app_123", "ins_456", "example.com", "verified"));
 
-    expect(output).toContain("View and manage domain configuration in the Clerk Dashboard");
+    expect(output).toContain("Manage this instance in the Clerk Dashboard");
+    expect(output).toContain("- Users, settings, and billing:");
+    expect(output).toContain("- DNS and SSL status:");
+    // The instance root on its own line, not only as a prefix of the domains URL.
+    expect(output).toContain("https://dashboard.clerk.com/apps/app_123/instances/ins_456\n");
     expect(output).toContain("https://dashboard.clerk.com/apps/app_123/instances/ins_456/domains");
+  });
+
+  test("says the pulled keys go on the host alongside the other Clerk variables", () => {
+    // `env pull --instance prod` writes only the two keys. The routing
+    // variables `init` wrote have to be carried over by hand, or sign-in
+    // silently falls back to the hosted Account Portal.
+    const output = nextStepsBody("app_123", "ins_456", "example.com", "verified");
+
+    expect(output).toContain("- Add the same pk_live_/sk_live_ values there.");
+    expect(output).toContain("- Also copy the other Clerk variables from your env file");
+    expect(output).toContain("NEXT_PUBLIC_CLERK_SIGN_IN_URL");
+    expect(output).toContain("writes only the two keys");
+  });
+
+  test("ends with a real sign-up on the production domain", () => {
+    const output = nextStepsBody("app_123", "ins_456", "example.com", "verified");
+
+    expect(flat(output)).toContain(
+      "3. Redeploy your app, then sign up at https://example.com to confirm it works",
+    );
+  });
+
+  test("does not send the user to a domain that is not verified yet", () => {
+    // After skipping DNS verification the domain doesn't resolve, so step 3
+    // has to route through the wizard before the sign-up check.
+    const output = nextStepsBody("app_123", "ins_456", "example.com", "pending");
+
+    // "once the domain is verified", not "once your DNS records are added":
+    // the DNS may already be done with only the certificate outstanding.
+    expect(output).toContain("3. Run `clerk deploy` again once the domain is verified");
+    expect(output).toContain("sign up at https://example.com to confirm it works");
+    expect(output).not.toContain("3. Redeploy your app");
   });
 });
 
-describe("pendingDnsRecords", () => {
-  const targets: CnameTarget[] = [
-    { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
-    { host: "accounts.example.com", value: "accounts.clerk.services", required: true },
-    {
-      host: "clkmail.example.com",
-      value: "mail.example.com.nam1.clerk.services",
-      required: true,
-    },
-  ];
+describe("productionSummary", () => {
+  test("only calls production ready once the domain is verified", () => {
+    const verified = stripAnsi(productionSummary("example.com", ["Google"], "verified").join("\n"));
+    const pending = stripAnsi(productionSummary("example.com", [], "pending").join("\n"));
 
-  test("returns no records when only SSL remains pending", () => {
-    expect(pendingDnsRecords(targets, { dns: true, ssl: false, mail: true })).toEqual([]);
+    expect(verified).toContain("Production ready at https://example.com");
+    expect(pending).toContain("Production instance created for https://example.com");
+    expect(pending).toContain("Domain      Not yet verified");
+    expect(pending).not.toContain("DNS pending");
+    expect(pending).not.toContain("Production ready");
   });
+});
 
-  test("returns only email records when email DNS remains pending", () => {
-    const output = pendingDnsRecords(targets, { dns: true, ssl: true, mail: false }).join("\n");
-
-    expect(output).toContain("clkmail.example.com");
-    expect(output).not.toContain("clerk.example.com");
-    expect(output).not.toContain("accounts.example.com");
-  });
-
-  test("returns non-email records when DNS remains pending", () => {
-    const output = pendingDnsRecords(targets, { dns: false, ssl: true, mail: true }).join("\n");
+describe("domainAssociationSummary", () => {
+  test("lists every record host the domain will need, including both DKIM hosts", () => {
+    // The confirmation screen runs before the instance exists, so this is a
+    // prediction from the domain alone. It must match what the create call
+    // returns, or the user commits without seeing the full list.
+    const output = domainAssociationSummary("example.com").join("\n");
 
     expect(output).toContain("clerk.example.com");
     expect(output).toContain("accounts.example.com");
-    expect(output).not.toContain("clkmail.example.com");
+    expect(output).toContain("clkmail.example.com");
+    expect(output).toContain("clk._domainkey.example.com");
+    expect(output).toContain("clk2._domainkey.example.com");
+    expect(productionDnsHosts("example.com")).toHaveLength(5);
+  });
+
+  test("lead sentence says records are coming, with no record count in it", () => {
+    // The lead now wraps onto several lines; read up to the first blank line.
+    const lines = domainAssociationSummary("example.com");
+    const lead = flat(lines.slice(0, lines.indexOf("")));
+
+    expect(lead).toContain("Clerk will use these subdomains for");
+    // Disclose the obligation before the one-way step without demanding
+    // action the user can't take yet.
+    expect(lead).toContain(
+      "You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:",
+    );
+    expect(lead).not.toMatch(/\b(three|five|3|5)\b/);
+  });
+
+  test("labels the mail hosts plainly, without the 'Clerk handles it' parenthetical", () => {
+    // The lead says the user will add a record for each row; a label saying
+    // Clerk handles SPF/DKIM automatically would contradict it on this screen.
+    const output = domainAssociationSummary("example.com").join("\n");
+
+    expect(output).toContain("Email           clkmail.example.com");
+    expect(output).toContain("Email (DKIM)    clk._domainkey.example.com");
+    expect(output).toContain("Email (DKIM)    clk2._domainkey.example.com");
+    // Labels pad to one column so the hosts line up.
+    expect(output).toContain("Frontend API    clerk.example.com");
+    expect(output).toContain("Account portal  accounts.example.com");
+    // The server omits the Account portal record when the portal is disabled
+    // on the cloned instance, so the lead can't promise one record per row.
+    expect(flat(output)).toContain(
+      "You'll add DNS records for them after the instance is created. The exact list is printed once the instance exists:",
+    );
+    expect(output).not.toContain("a DNS record for each");
+    expect(output).not.toContain("Clerk handles SPF/DKIM");
+    expect(output).not.toContain("CNAME  clk._domainkey");
+  });
+});
+
+describe("dnsIntro", () => {
+  test("sets the propagation expectation as minutes, with 48 hours as the outlier", () => {
+    const output = dnsIntro("example.com").join("\n");
+
+    expect(flat(output)).toContain(
+      "usually propagate within minutes, but can occasionally take up to 48 hours",
+    );
+    expect(output).not.toContain("It can take up to 48 hours");
+  });
+});
+
+describe("deployStatusPendingFooter", () => {
+  const DOMAINS_URL = "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains";
+
+  test("reports missing DNS records as not found yet, not as a failure", () => {
+    const output = deployStatusPendingFooter(
+      "example.com",
+      {
+        dns: false,
+        ssl: false,
+        mail: false,
+      },
+      DOMAINS_URL,
+      true,
+    ).join("\n");
+
+    expect(output).toContain("DNS and email DNS records not found yet for example.com.");
+    // A "Check again" prompt follows this footer, so it points there first and
+    // gives the resume command as the fallback.
+    expect(flat(output)).toContain(
+      "Add them at your DNS provider if you haven't already, then choose Check again below.",
+    );
+    expect(flat(output)).toContain("skip for now and run `clerk deploy` later to resume");
+    expect(flat(output)).toContain(
+      "usually takes minutes, but can occasionally take up to 48 hours",
+    );
+    expect(flat(output)).toContain(
+      "change the domain in the Clerk Dashboard: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+    );
+    expect(output).not.toContain("still pending");
+    expect(output).not.toContain("SSL");
+  });
+
+  test("names only the email records when the Frontend API records are verified", () => {
+    const output = deployStatusPendingFooter(
+      "example.com",
+      {
+        dns: true,
+        ssl: false,
+        mail: false,
+      },
+      DOMAINS_URL,
+      true,
+    ).join("\n");
+
+    // Capitalized at the sentence start; lowercase "email DNS" is only right
+    // mid-sentence ("DNS and email DNS").
+    expect(output).toContain("Email DNS records not found yet for example.com.");
+    expect(output).not.toContain("email DNS records not found");
+    expect(output).not.toContain("DNS and email DNS");
+  });
+
+  test("says when the record list is missing instead of telling the user to add nothing", () => {
+    // DNS unverified but the API returned no targets: "add them" would point
+    // at an empty list. One follow-up line, so blank line + sentence.
+    const output = deployStatusPendingFooter(
+      "example.com",
+      { dns: false, ssl: false, mail: false },
+      DOMAINS_URL,
+      false,
+    ).join("\n");
+
+    expect(output).toContain("DNS and email DNS records not found yet for example.com.\n\n");
+    expect(output).toContain("Clerk didn't return the list of records to add.");
+    // URL on its own line so terminal autolinkers don't swallow punctuation.
+    expect(flat(output)).toContain(
+      "Find them on the Domains page in the Clerk Dashboard, add them, then choose Check again below.",
+    );
+    expect(output).toContain(`already created.\n  ${DOMAINS_URL}`);
+    expect(output).toContain("run `clerk deploy` later to resume");
+    expect(output).not.toContain("  - ");
+    expect(output).not.toContain("Add them at your DNS provider");
+  });
+
+  test("tells the user to wait, not act, when only SSL is pending", () => {
+    // SSL is Clerk's side; there are no records the user could add.
+    const output = deployStatusPendingFooter(
+      "example.com",
+      {
+        dns: true,
+        ssl: false,
+        mail: true,
+      },
+      DOMAINS_URL,
+      true,
+    ).join("\n");
+
+    expect(output).toContain("SSL certificate still pending for example.com.");
+    expect(flat(output)).toContain("choose Check again below in a few minutes");
+    expect(flat(output)).toContain("run `clerk deploy` later to resume");
+    // One follow-up line: a blank line and a sentence, not a one-item list.
+    expect(output).toContain("example.com.\n\nClerk issues it");
+    expect(output).not.toContain("  - ");
+    expect(output).not.toContain("not found yet");
+    expect(output).not.toContain("change the domain in the Clerk Dashboard");
+  });
+
+  test("says Clerk is still finalizing when every component is verified", () => {
+    // The fallthrough branch: all three verified, server hasn't flipped the
+    // domain to complete yet. One follow-up line, so blank line + sentence.
+    const output = deployStatusPendingFooter(
+      "example.com",
+      { dns: true, ssl: true, mail: true },
+      DOMAINS_URL,
+      false,
+    ).join("\n");
+
+    expect(output).toContain(
+      "Production setup for example.com is still finalizing on Clerk's side.\n\nRun `clerk deploy` again in a few minutes to resume.",
+    );
+    expect(output).not.toContain("not found yet");
+    expect(output).not.toContain("SSL");
+  });
+
+  test.each([
+    { label: "records pending", status: { dns: false, ssl: false, mail: false }, records: true },
+    { label: "records missing", status: { dns: false, ssl: false, mail: false }, records: false },
+    { label: "SSL only pending", status: { dns: true, ssl: false, mail: true }, records: false },
+    {
+      label: "all components verified",
+      status: { dns: true, ssl: true, mail: true },
+      records: false,
+    },
+  ])("always says how to resume and that re-running is safe ($label)", ({ status, records }) => {
+    const output = deployStatusPendingFooter("example.com", status, DOMAINS_URL, records).join(
+      "\n",
+    );
+    expect(flat(output)).toMatch(/run `clerk deploy` (again|later).*to resume/i);
+    expect(flat(output)).toMatch(/production instance is already created\./i);
+  });
+
+  test("omits the Dashboard URL cleanly when no production instance id is known", () => {
+    const output = deployStatusPendingFooter(
+      "example.com",
+      { dns: false, ssl: false, mail: false },
+      undefined,
+      true,
+    ).join("\n");
+    expect(flat(output)).toContain("change the domain in the Clerk Dashboard.");
+    expect(output).not.toContain("undefined");
+  });
+});
+
+describe("pendingCnameTargets", () => {
+  const targets: CnameTarget[] = [
+    { host: "clerk.example.com", value: "frontend-api.clerk.services", required: true },
+    { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
+    { host: "clk._domainkey.example.com", value: "dkim1.clerk.services", required: true },
+  ];
+
+  test("returns only the mail targets when only email DNS is unverified", () => {
+    const pending = pendingCnameTargets(targets, { dns: true, ssl: true, mail: false });
+    expect(pending.map((t) => t.host)).toEqual([
+      "clkmail.example.com",
+      "clk._domainkey.example.com",
+    ]);
+  });
+
+  test("returns nothing when only SSL is pending", () => {
+    expect(pendingCnameTargets(targets, { dns: true, ssl: false, mail: true })).toEqual([]);
+  });
+});
+
+describe("dashboard URLs", () => {
+  test("instance URL is the instance root and the domains URL is nested under it", () => {
+    expect(instanceDashboardUrl("app_1", "ins_prod")).toBe(
+      "https://dashboard.clerk.com/apps/app_1/instances/ins_prod",
+    );
+    expect(domainsDashboardUrl("app_1", "ins_prod")).toBe(
+      "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+    );
+  });
+});
+
+describe("INTRO_PREAMBLE", () => {
+  test("rules out host-generated URLs as a production domain and says why", () => {
+    // Described rather than named: the rule covers every host, and the reject
+    // list at the prompt is where specific hosts belong.
+    expect(INTRO_PREAMBLE).toContain("The URL a hosting provider generated");
+    expect(INTRO_PREAMBLE).toContain("for your deployment won't work here.");
+    expect(INTRO_PREAMBLE).not.toMatch(/railway|vercel|netlify/i);
+    // Subdomains you control are fine; the old "development subdomain" line
+    // read as if they weren't.
+    expect(INTRO_PREAMBLE).toContain("app.example.com");
+    expect(INTRO_PREAMBLE).not.toContain("development subdomain");
+  });
+});
+
+describe("DEPLOY_COMMAND_DESCRIPTION", () => {
+  test("describes the bare command and the agent-mode report", () => {
+    expect(DEPLOY_COMMAND_DESCRIPTION.startsWith(`${DEPLOY_COMMAND_SUMMARY}.`)).toBe(true);
+    expect(DEPLOY_COMMAND_DESCRIPTION).toContain("with no subcommand starts an interactive setup");
+    expect(DEPLOY_COMMAND_DESCRIPTION).toContain("creates the production instance");
+    expect(DEPLOY_COMMAND_DESCRIPTION).toContain("When run by an agent");
+    expect(DEPLOY_COMMAND_DESCRIPTION).toContain("`nextAction`");
   });
 });
 
@@ -158,7 +472,273 @@ describe("dnsRecords", () => {
       { host: "clk2._domainkey.example.com", value: "dkim2.clerk.services", required: true },
     ]).join("\n");
 
-    expect(output).toContain("Email (Clerk handles SPF/DKIM automatically)");
+    expect(output).toContain("Email (DKIM)");
     expect(output).not.toContain("\n  CNAME\n    Type:");
+    // Said once under the block, never on a row the user must act on.
+    expect(flat(output)).toContain(
+      "The email records point at Clerk, so you don't need to create SPF or DKIM values yourself.",
+    );
+    expect(output).not.toMatch(/Email \(DKIM\).*Clerk handles/);
+  });
+
+  test("omits the SPF/DKIM sentence when no email record is listed", () => {
+    // On resume with email DNS already verified, only the Frontend API
+    // record is outstanding; a sentence about "the email records" under a
+    // list with none reads as if rows are missing.
+    const output = dnsRecords(
+      [{ host: "clerk.example.com", value: "frontend-api.clerk.services", required: true }],
+      { afterCheck: true },
+    ).join("\n");
+
+    expect(output).not.toContain("SPF or DKIM");
+    expect(output).toContain("Frontend API");
+    expect(output).toContain('set them to "DNS only"');
+  });
+
+  test("labels the mail host and both DKIM hosts the same way the confirmation screen does", () => {
+    // One label set across screens: a host named two ways reads as two records.
+    const records = dnsRecords([
+      { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
+      { host: "clk._domainkey.example.com", value: "dkim1.clerk.services", required: true },
+    ]).join("\n");
+    const confirmation = stripAnsi(domainAssociationSummary("example.com").join("\n"));
+
+    for (const label of ["Email", "Email (DKIM)"]) {
+      expect(records).toContain(label);
+      expect(confirmation).toContain(label);
+    }
+    expect(records).not.toContain("Clerk handles SPF/DKIM automatically");
+    expect(confirmation).not.toContain("Clerk handles SPF/DKIM automatically");
+  });
+});
+
+describe("dnsHandoffNothingToAdd", () => {
+  // The DNS screen when the list of records to add is empty. It must say what
+  // is actually outstanding rather than framing a records task with no
+  // records, and each state has its own action.
+  const URL = "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains";
+
+  test("SSL pending: records are done, the certificate is Clerk's side, check again is offered", () => {
+    const out = stripAnsi(
+      dnsHandoffNothingToAdd("example.com", { dns: true, ssl: false, mail: true }, URL, {
+        oauthNext: false,
+      }).join("\n"),
+    );
+
+    expect(out).toContain("Your DNS records for example.com are verified.");
+    expect(flat(out)).toContain(
+      "The SSL certificate is still pending; Clerk issues it automatically.",
+    );
+    expect(out).toContain(`Clerk Dashboard:\n  ${URL}`);
+    expect(out).toContain("checks whether the certificate has been issued");
+    expect(flat(out)).toContain(
+      "If it hasn't yet, you can either wait a few minutes and check again",
+    );
+    // No timing promise the status can't back up.
+    expect(out).not.toContain("usually takes");
+    expect(out).not.toContain("Configure DNS");
+    expect(out).not.toContain("these records");
+  });
+
+  test("finalizing: nothing for the user to do, and no in-session retry is promised", () => {
+    const out = stripAnsi(
+      dnsHandoffNothingToAdd("example.com", { dns: true, ssl: true, mail: true }, URL, {
+        oauthNext: false,
+      }).join("\n"),
+    );
+
+    expect(out).toContain("Your DNS records and SSL certificate for example.com are verified.");
+    expect(flat(out)).toContain("Clerk is still finalizing production setup.");
+    // The check pauses the run once everything is verified, so "check again"
+    // would name an option the prompt never offers.
+    expect(flat(out)).toContain("run `clerk deploy` again in a few minutes");
+    expect(out).not.toContain("check again");
+  });
+
+  test.each([
+    {
+      label: "both",
+      status: { dns: false, ssl: false, mail: false },
+      records: "DNS and email DNS",
+    },
+    { label: "email only", status: { dns: true, ssl: false, mail: false }, records: "Email DNS" },
+    { label: "DNS only", status: { dns: false, ssl: false, mail: true }, records: "DNS" },
+  ])(
+    "no record list ($label): tells the user to find and add the records",
+    ({ status, records }) => {
+      const out = stripAnsi(
+        dnsHandoffNothingToAdd("example.com", status, URL, { oauthNext: false }).join("\n"),
+      );
+
+      expect(flat(out)).toContain(
+        `${records} records for example.com are not verified yet, but Clerk didn't return the list to add.`,
+      );
+      // An instruction, not a wait: the records still have to be added.
+      expect(flat(out)).toContain("add them at your DNS provider, then choose Check DNS now below");
+      expect(out).toContain(`Check DNS now below:\n  ${URL}`);
+      expect(out).toContain("checks that they have taken effect");
+      // Plural subject: the sentence is about records, not a certificate.
+      expect(flat(out)).toContain("If they haven't yet, you can either wait a few minutes");
+      expect(out).not.toContain("If it hasn't");
+      expect(out).not.toContain("Configure DNS");
+    },
+  );
+
+  test("no record list on a first run with providers: OAuth comes before the check", () => {
+    // The prompt after this screen is OAuth setup, not the DNS check, so the
+    // screen must not point at a "Check DNS now" that isn't there.
+    const out = stripAnsi(
+      dnsHandoffNothingToAdd("example.com", { dns: false, ssl: false, mail: false }, URL, {
+        oauthNext: true,
+      }).join("\n"),
+    );
+
+    expect(flat(out)).toContain(
+      "Find them on the Domains page in the Clerk Dashboard and add them at your DNS provider:",
+    );
+    expect(flat(out)).toContain(
+      "Next you'll set up OAuth, then this command checks that they have taken effect.",
+    );
+    expect(out).not.toContain("Check DNS now");
+  });
+
+  test("ends sentences cleanly with no Dashboard URL", () => {
+    const out = stripAnsi(
+      dnsHandoffNothingToAdd("example.com", { dns: true, ssl: false, mail: true }, undefined, {
+        oauthNext: false,
+      }).join("\n"),
+    );
+    expect(out).toContain("on the Domains page in the Clerk Dashboard.");
+    expect(out).not.toContain("undefined");
+  });
+});
+
+describe("dnsDashboardHandoff", () => {
+  const DOMAINS_URL = "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains";
+
+  test("links the Domains page and says how to resume if the check is skipped", () => {
+    const output = dnsDashboardHandoff("example.com", DOMAINS_URL, { oauthNext: true }).join("\n");
+
+    expect(output).toContain(`Clerk Dashboard:\n  ${DOMAINS_URL}`);
+    // "wizard" appears nowhere else the user can see, so it isn't introduced here.
+    expect(output).not.toContain("wizard");
+    expect(flat(output)).toContain(
+      "Next you'll set up OAuth, then this command checks that these records have taken effect at your DNS provider.",
+    );
+    // A failed check is not a dead end: "Check again" is the other choice on
+    // the prompt that follows, and the sentence names it.
+    expect(flat(output)).toContain(
+      "you can either wait a few minutes and check again, or skip the check",
+    );
+    expect(flat(output)).toContain("run `clerk deploy` again later to finish");
+    // "skip and finish" read as though skipping completed the deploy.
+    expect(output).not.toContain("skip and finish");
+  });
+
+  test("does not promise an OAuth step when none is coming", () => {
+    // On resume OAuth already ran, and a fresh run with no providers skips it.
+    // Under a checklist showing OAuth done, "you'll set up OAuth" was wrong.
+    const output = dnsDashboardHandoff("example.com", DOMAINS_URL, { oauthNext: false }).join("\n");
+
+    expect(flat(output)).toContain(
+      "Next, this command checks that these records have taken effect at your DNS provider.",
+    );
+    expect(output).not.toContain("set up OAuth");
+    expect(output).toContain("run `clerk deploy` again later to finish");
+  });
+
+  test("ends the sentence cleanly when no Dashboard URL is known", () => {
+    const output = dnsDashboardHandoff("example.com", undefined, { oauthNext: true }).join("\n");
+
+    expect(flat(output)).toContain("on the Domains page in the Clerk Dashboard.");
+    expect(output).not.toContain("undefined");
+  });
+});
+
+describe("every wizard screen fits inside the frame", () => {
+  // The wizard prefixes each printed line with a 3-column gutter, added per
+  // line the code emits; the terminal's own soft wrap lands outside it. So
+  // every line a screen emits must fit 76 visible columns. The one allowed
+  // overflow is a lone unbreakable token, optionally after a "Label:" (a URL
+  // on its own line, or "Reference: <url>"); a sentence that merely contains
+  // a URL still has to wrap.
+  const DOMAIN = "auth.my-long-company-name.co.uk";
+  const URL = "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains";
+  const STATUSES = [
+    { dns: false, ssl: false, mail: false },
+    { dns: true, ssl: false, mail: false },
+    { dns: false, ssl: false, mail: true },
+    { dns: true, ssl: false, mail: true },
+    { dns: true, ssl: true, mail: true },
+  ];
+  const targets: CnameTarget[] = [
+    { host: `clerk.${DOMAIN}`, value: "frontend-api.clerk.services", required: true },
+    { host: `accounts.${DOMAIN}`, value: "accounts.clerk.services", required: false },
+    { host: `clk2._domainkey.${DOMAIN}`, value: "dkim2.clerk.services", required: true },
+  ];
+  const screens: Record<string, string[]> = {
+    INTRO_PREAMBLE: [INTRO_PREAMBLE],
+    OAUTH_SECTION_INTRO: [OAUTH_SECTION_INTRO],
+    dnsIntro: dnsIntro(DOMAIN),
+    domainAssociationSummary: domainAssociationSummary(DOMAIN),
+    dnsRecords: dnsRecords(targets),
+    "dnsRecords afterCheck": dnsRecords(targets, { afterCheck: true }),
+    "productionSummary verified": productionSummary(DOMAIN, ["Google"], "verified"),
+    "productionSummary pending": productionSummary(DOMAIN, [], "pending"),
+    "nextStepsBody verified": [nextStepsBody("app_1", "ins_prod", DOMAIN, "verified")],
+    "nextStepsBody pending": [nextStepsBody("app_1", "ins_prod", DOMAIN, "pending")],
+  };
+  for (const oauthNext of [true, false]) {
+    screens[`dnsDashboardHandoff oauthNext=${oauthNext}`] = dnsDashboardHandoff(DOMAIN, URL, {
+      oauthNext,
+    });
+    for (const status of STATUSES) {
+      const key = JSON.stringify(status);
+      screens[`dnsHandoffNothingToAdd ${key} oauthNext=${oauthNext}`] = dnsHandoffNothingToAdd(
+        DOMAIN,
+        status,
+        URL,
+        { oauthNext },
+      );
+    }
+  }
+  for (const status of STATUSES) {
+    for (const hasRecords of [true, false]) {
+      screens[`deployStatusPendingFooter ${JSON.stringify(status)} records=${hasRecords}`] =
+        deployStatusPendingFooter(DOMAIN, status, URL, hasRecords);
+    }
+  }
+
+  const loneToken = /^\s*(\S+:\s+)?\S+$/;
+  // Deliberately not imported from wrap.ts: this asserts "fits an 80-column
+  // terminal", and sharing the constant would let a wider default pass the
+  // test while breaking the frame.
+  const FRAME_WIDTH = 76;
+
+  test.each(Object.entries(screens).map(([name, lines]) => ({ name, lines })))(
+    "$name",
+    ({ lines }) => {
+      const tooWide = lines
+        .join("\n")
+        .split("\n")
+        .map((line) => stripAnsi(line))
+        .filter((line) => line.length > FRAME_WIDTH && !loneToken.test(line));
+      expect(tooWide).toEqual([]);
+    },
+  );
+
+  test("step 3 keeps its numbered indent across wrapped lines", () => {
+    for (const status of ["verified", "pending"] as const) {
+      const lines = nextStepsBody("app_1", "ins_prod", DOMAIN, status).split("\n");
+      const start = lines.findIndex((line) => line.startsWith("  3. "));
+      expect(start).toBeGreaterThan(0);
+      // Continuation lines align under the text after "3. ", like steps 1 and 2.
+      let next = start + 1;
+      while (lines[next] !== "") {
+        expect(lines[next]).toMatch(/^ {5}\S/);
+        next++;
+      }
+      expect(next).toBeGreaterThan(start + 1);
+    }
   });
 });

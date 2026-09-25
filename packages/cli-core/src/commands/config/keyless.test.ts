@@ -285,7 +285,7 @@ describe("keyless config", () => {
       const { resolveKeylessTarget } = await import("../../lib/keyless-target.ts");
 
       await expect(resolveKeylessTarget({ instance: "prod", cwd: projectDir })).rejects.toThrow(
-        /--instance is not supported for an unclaimed keyless application/,
+        /--instance is not supported for an unclaimed accountless application/,
       );
     });
 
@@ -761,7 +761,7 @@ describe("keyless config", () => {
 
       const written = await Bun.file(join(projectDir, ".env.written")).text();
       expect(written).toContain(`CLERK_SECRET_KEY=${SECRET_KEY}`);
-      expect(captured.err).toContain("Keyless application keys");
+      expect(captured.err).toContain("Accountless application keys");
     });
 
     test("enable billing explains that billing needs a claimed application", async () => {

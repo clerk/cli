@@ -2,9 +2,9 @@
 
 Pulls Clerk API keys for the linked instance and merges them into the project's `.env` file.
 
-For an unclaimed **keyless** application there is no account to pull from — its keys only exist on this machine. When the directory isn't linked and no `--app` is passed, `env pull` instead copies the keys it finds locally (env var, `.env`/`.env.local`, or the `.clerk/.tmp/keyless.json` an SDK wrote for itself) into the env file the framework reads. This is what materializes an SDK-created keyless app into `.env.local`. If only the secret key can be found, it's written and a warning names the missing publishable key. Resolution order lives in [`lib/keyless-target.ts`](../../lib/keyless-target.ts).
+For an unclaimed **accountless** application there is no account to pull from — its keys only exist on this machine. When the directory isn't linked and no `--app` is passed, `env pull` instead copies the keys it finds locally (env var, `.env`/`.env.local`, or the `.clerk/.tmp/keyless.json` an SDK wrote for itself) into the env file the framework reads. This is what materializes an SDK-created accountless app into `.env.local`. If only the secret key can be found, it's written and a warning names the missing publishable key. Resolution order lives in [`lib/keyless-target.ts`](../../lib/keyless-target.ts).
 
-The secret key and publishable key are found independently and can each belong to a _different_ application (e.g. leftovers from two keyless apps in the same `.env.local`). Before writing, `env pull` calls `GET /v1/domains` with the secret key and confirms the publishable key's Frontend API host (decoded via `decodePublishableKey` in `lib/fapi.ts`) matches one of that instance's own domains. A mismatch aborts the pull with an error and writes nothing — a wrong pair on disk produces an app that fails at runtime in a way that's very hard to trace, so this is stricter than `clerk whoami`, which only warns about the same mismatch (see [`commands/whoami/README.md`](../whoami/README.md)).
+The secret key and publishable key are found independently and can each belong to a _different_ application (e.g. leftovers from two accountless apps in the same `.env.local`). Before writing, `env pull` calls `GET /v1/domains` with the secret key and confirms the publishable key's Frontend API host (decoded via `decodePublishableKey` in `lib/fapi.ts`) matches one of that instance's own domains. A mismatch aborts the pull with an error and writes nothing — a wrong pair on disk produces an app that fails at runtime in a way that's very hard to trace, so this is stricter than `clerk whoami`, which only warns about the same mismatch (see [`commands/whoami/README.md`](../whoami/README.md)).
 
 ## Usage
 
@@ -44,7 +44,7 @@ sequenceDiagram
         CLI->>API: GET /v1/platform/applications/{appId}
         API-->>CLI: { instances: [{ instance_id, publishable_key, secret_key }] }
         CLI->>CLI: Find matching instance by instance_id
-    else Unclaimed keyless application (no --app, not linked)
+    else Unclaimed accountless application (no --app, not linked)
         CLI->>FS: Find local keys (env vars, .env/.env.local, .clerk/.tmp/keyless.json)
         FS-->>CLI: { secret_key, publishable_key? }
         opt Publishable key found locally
@@ -82,11 +82,11 @@ sequenceDiagram
 
 ## API Endpoints
 
-| Step                                       | Method | Endpoint                            | Notes                                                                          |
-| ------------------------------------------ | ------ | ----------------------------------- | ------------------------------------------------------------------------------ |
-| Auth                                       | —      | Local config                        | Uses `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or human-mode prompt        |
-| Fetch application                          | `GET`  | `/v1/platform/applications/{appId}` | Returns all instances with keys                                                |
-| Verify keyless pairing (keyless path only) | `GET`  | `/v1/domains`                       | Only when a local publishable key was found; authenticated with the secret key |
+| Step                                               | Method | Endpoint                            | Notes                                                                          |
+| -------------------------------------------------- | ------ | ----------------------------------- | ------------------------------------------------------------------------------ |
+| Auth                                               | —      | Local config                        | Uses `CLERK_PLATFORM_API_KEY`, `clerk auth login`, or human-mode prompt        |
+| Fetch application                                  | `GET`  | `/v1/platform/applications/{appId}` | Returns all instances with keys                                                |
+| Verify accountless pairing (accountless path only) | `GET`  | `/v1/domains`                       | Only when a local publishable key was found; authenticated with the secret key |
 
 ## Framework Detection
 

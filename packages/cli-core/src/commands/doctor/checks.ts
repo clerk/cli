@@ -67,7 +67,7 @@ function defineCheck(name: string, fixFactory?: () => FixAction): CheckBuilder {
   };
 }
 
-/** How to refer to an unclaimed keyless application in check output. */
+/** How to refer to an unclaimed accountless application in check output. */
 function keylessLabel(keyless: KeylessTarget, instance: KeylessInstanceInfo | null): string {
   const name = instance?.id ? `\`${instance.id}\`` : "this application";
   const env = instance?.environmentType ? ` (${instance.environmentType})` : "";
@@ -114,11 +114,11 @@ export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
   }
 
   // No account session doesn't mean the project is broken: an unclaimed
-  // keyless application is a legitimate, healthy way to run the CLI.
+  // accountless application is a legitimate, healthy way to run the CLI.
   if (keyless) {
     const instance = await ctx.getKeylessInstance();
     return check.pass(
-      `Not logged in — running on the unclaimed keyless application ${keylessLabel(keyless, instance)}. ${await claimHint(ctx)}`,
+      `Not logged in — running on the unclaimed accountless application ${keylessLabel(keyless, instance)}. ${await claimHint(ctx)}`,
     );
   }
 
@@ -162,7 +162,7 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
   if (!storedToken) {
     const keyless = await ctx.getKeylessTarget();
     return keyless
-      ? check.pass("No account session — not required for this keyless application")
+      ? check.pass("No account session — not required for this accountless application")
       : check.skip("no token");
   }
 
@@ -179,10 +179,10 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
       if (keyless) {
         const instance = await ctx.getKeylessInstance();
         return check.warn(
-          `Stored session is expired — falling back to the keyless application ${keylessLabel(keyless, instance)}`,
+          `Stored session is expired — falling back to the accountless application ${keylessLabel(keyless, instance)}`,
           {
             remedy:
-              "Run `clerk auth login` to re-authenticate your account (optional for keyless work).",
+              "Run `clerk auth login` to re-authenticate your account (optional for accountless work).",
             fixable: false,
           },
         );
@@ -221,7 +221,7 @@ export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResul
   }
 
   // Unlinked isn't automatically broken: a project running on an unclaimed
-  // keyless application has nothing to link yet.
+  // accountless application has nothing to link yet.
   const keyless = await ctx.getKeylessTarget();
   if (keyless) {
     const instance = await ctx.getKeylessInstance();
@@ -231,7 +231,7 @@ export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResul
     // the full account configuration — say so, unlike the fully unclaimed case.
     if (await hasAccountCredentials()) {
       return check.warn(
-        `Not linked — using the keyless application ${label}, which covers fewer settings`,
+        `Not linked — using the accountless application ${label}, which covers fewer settings`,
         {
           remedy: "Run `clerk link` to use the full account configuration.",
           fixable: true,
@@ -240,7 +240,7 @@ export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResul
     }
 
     return check.pass(
-      `Not linked — running on the unclaimed keyless application ${label}. ${await claimHint(ctx)}`,
+      `Not linked — running on the unclaimed accountless application ${label}. ${await claimHint(ctx)}`,
     );
   }
 
@@ -258,7 +258,7 @@ export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckRes
     // *over*, just nothing to verify.
     const keyless = await ctx.getKeylessTarget();
     return check.skip(
-      keyless ? "keyless application, no linked app to verify" : "not authenticated",
+      keyless ? "accountless application, no linked app to verify" : "not authenticated",
     );
   }
 
@@ -292,7 +292,7 @@ export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
     // the secret key on disk already addresses its one instance directly.
     const keyless = await ctx.getKeylessTarget();
     return check.skip(
-      keyless ? "keyless application, no linked instances to verify" : "not authenticated",
+      keyless ? "accountless application, no linked instances to verify" : "not authenticated",
     );
   }
 

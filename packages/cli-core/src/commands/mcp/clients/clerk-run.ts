@@ -1,5 +1,6 @@
 /**
- * The stdio descriptor every client now installs: each config launches
+ * The stdio descriptor every client except fx installs (fx speaks Streamable
+ * HTTP natively and stores the URL directly): each config launches
  * `clerk mcp run`, the bridge in `../run.ts`. Centralized here so the command
  * shape and its reverse parser stay in lockstep across clients.
  *

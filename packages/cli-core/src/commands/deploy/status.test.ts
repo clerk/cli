@@ -19,8 +19,14 @@ mock.module("../../lib/plapi.ts", () => ({
     mockTriggerApplicationDomainDNSCheck(...args),
 }));
 
-const { buildDeployStatusReport, resolveDeployState, waitForDeployStatus } =
-  await import("./status.ts");
+const {
+  agentNextAction,
+  buildDeployStatusReport,
+  buildInterruptedDeployStatusReport,
+  deployNextStep,
+  resolveDeployState,
+  waitForDeployStatus,
+} = await import("./status.ts");
 
 const ctx = {
   profileKey: "/tmp/x",
@@ -251,6 +257,7 @@ describe("buildDeployStatusReport", () => {
       type: "CNAME",
       host: "clerk.example.com",
       value: "frontend-api.clerk.services",
+      required: true,
     });
     expect(report.oauth.pending).toEqual(["github"]);
   });
@@ -266,6 +273,7 @@ describe("buildDeployStatusReport", () => {
         type: "CNAME",
         host: "clkmail.example.com",
         value: "mail.clerk.services",
+        required: true,
       },
     ]);
   });
@@ -278,9 +286,9 @@ describe("buildDeployStatusReport", () => {
 
     expect(report.state).toBe("oauth_pending");
     expect(report.complete).toBe(false);
-    expect(report.nextAction).toContain(
-      "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
-    );
+    expect(report.nextAction).toContain("missing production credentials: github");
+    // The domain is verified, so there is nothing to monitor on the Domains page.
+    expect(report.nextAction).not.toContain("/domains");
     expect(report.oauth).toMatchObject({
       complete: false,
       configured: ["google"],
@@ -302,9 +310,112 @@ describe("buildDeployStatusReport", () => {
     expect(report.complete).toBe(true);
     expect(report.domainStatus).toEqual({ dns: "complete", ssl: "complete", mail: "complete" });
     expect(report.nextAction).toContain("https://example.com");
+    // Nothing left to monitor on the Domains page once complete; the pointer
+    // is the instance root, where users, settings, and billing live.
     expect(report.nextAction).toContain(
-      "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+      "Manage users, settings, and billing for this instance: https://dashboard.clerk.com/apps/app_1/instances/ins_prod",
     );
+    expect(report.nextAction).not.toContain("/domains");
+    expect(report.nextAction).not.toContain("Ask the user to visit");
+  });
+
+  test("complete next action says the keys still have to reach the host", () => {
+    // Complete on Clerk's side only: the app runs on development keys until
+    // the production keys are set on the host, and the report can't tell
+    // whether that happened — so "if you haven't already", never "no action".
+    const allDone = {
+      ...activeSnapshot,
+      completedOAuthProviders: ["google", "github"],
+    } satisfies LiveDeploySnapshot;
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: allDone },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.nextAction).toContain(
+      "Clerk's production setup for https://example.com is verified. If you haven't already:",
+    );
+    expect(report.nextAction).toContain("clerk env pull --instance prod");
+    expect(report.nextAction).toContain("alongside the other Clerk variables from your env file");
+    expect(report.nextAction).toContain("sign up at https://example.com to confirm");
+    expect(report.nextAction).not.toContain("No action needed");
+  });
+
+  test("pending DNS records tell the agent to add them, not to keep polling", () => {
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: activeSnapshot },
+      { verified: false, status: { dns: false, ssl: false, mail: true } },
+    );
+
+    expect(report.state).toBe("domain_pending");
+    expect(report.nextAction).toContain("DNS records not found yet for example.com.");
+    expect(report.nextAction).toContain("Add the records in `pendingDnsRecords`");
+    expect(report.nextAction).toContain("re-run `clerk deploy status --wait`");
+    expect(report.nextAction).not.toContain("still provisioning");
+  });
+
+  test("pending email DNS records are named on their own when the Frontend API is verified", () => {
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: activeSnapshot },
+      { verified: false, status: { dns: true, ssl: true, mail: false } },
+    );
+
+    expect(report.nextAction).toContain("Email DNS records not found yet for example.com.");
+    expect(report.nextAction).not.toContain("email DNS records not found");
+    expect(report.nextAction).not.toContain("DNS and email DNS");
+  });
+
+  test("SSL-only pending keeps the wait instruction, since there is nothing to add", () => {
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: activeSnapshot },
+      { verified: false, status: { dns: true, ssl: false, mail: true } },
+    );
+
+    expect(report.state).toBe("domain_pending");
+    expect(report.nextAction).toContain(
+      "SSL certificate still pending for example.com. Clerk issues it automatically now that DNS is verified; re-run `clerk deploy status` in a few minutes.",
+    );
+    expect(report.nextAction).not.toContain("not found yet");
+    // DNS is verified in this state, so the old "DNS propagation can take
+    // time" clause would be wrong here.
+    expect(report.nextAction).not.toContain("DNS propagation");
+  });
+
+  test("pending DNS with no record list says so instead of pointing at an empty array", () => {
+    // cname_targets is optional on the API's domain object. When it's absent,
+    // "add the records in pendingDnsRecords" would send the agent to [].
+    const noTargets = { ...activeSnapshot, cnameTargets: [] } satisfies LiveDeploySnapshot;
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: noTargets },
+      { verified: false, status: { dns: false, ssl: false, mail: true } },
+    );
+
+    expect(report.state).toBe("domain_pending");
+    expect(report.pendingDnsRecords).toEqual([]);
+    expect(report.nextAction).toContain(
+      "DNS records not found yet for example.com, but this report has no record list.",
+    );
+    expect(report.nextAction).toContain("Find the records to add on the Domains page");
+    expect(report.nextAction).toContain("re-run `clerk deploy status --wait`");
+    expect(report.nextAction).not.toContain("Add the records in `pendingDnsRecords`");
+    expect(report.nextAction).not.toContain("still provisioning");
+    // The Dashboard URL appears once, via the shared trailing clause.
+    expect(report.nextAction.match(/\/domains/g)).toHaveLength(1);
+  });
+
+  test("all components verified but not yet complete says Clerk is still finalizing", () => {
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: activeSnapshot },
+      { verified: false, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.state).toBe("domain_pending");
+    expect(report.pendingDnsRecords).toEqual([]);
+    expect(report.nextAction).toContain(
+      "Production setup for example.com is still finalizing on Clerk's side.",
+    );
+    expect(report.nextAction).not.toContain("not found yet");
+    expect(report.nextAction).not.toContain("SSL");
   });
 
   test("unsupported OAuth providers surface without blocking completion", () => {
@@ -321,5 +432,180 @@ describe("buildDeployStatusReport", () => {
 
     expect(report.complete).toBe(true);
     expect(report.oauth.unsupported).toEqual(["discord"]);
+  });
+
+  test.each<{ label: string; completed: string[] }>([
+    { label: "complete", completed: ["google", "github"] },
+    { label: "oauth_pending", completed: ["google"] },
+  ])(
+    "names providers the CLI could not configure so the agent does not call OAuth done ($label)",
+    ({ completed }) => {
+      // In development Clerk supplies shared OAuth credentials; in production
+      // it doesn't. A provider the CLI skipped has a sign-in button that fails
+      // for real users, and `oauth.complete` only covers what the CLI manages.
+      const withUnsupported = {
+        ...activeSnapshot,
+        completedOAuthProviders: completed,
+        unsupportedOAuthProviders: ["discord"],
+        unsupportedOAuthProviderCount: 1,
+      } satisfies LiveDeploySnapshot;
+      const report = buildDeployStatusReport(
+        { kind: "active", snapshot: withUnsupported },
+        { verified: true, status: { dns: true, ssl: true, mail: true } },
+      );
+
+      expect(report.nextAction).toContain(
+        "These providers are enabled in development but the CLI could not configure them for production: discord.",
+      );
+      expect(report.nextAction).toContain("users signing in with them will fail");
+    },
+  );
+
+  test("does not mention unsupported providers when there are none", () => {
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: { ...activeSnapshot, completedOAuthProviders: ["google", "github"] },
+      },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.nextAction).not.toContain("could not configure");
+  });
+
+  test.each([
+    { label: "complete", verified: true, status: { dns: true, ssl: true, mail: true } },
+    { label: "records pending", verified: false, status: { dns: false, ssl: false, mail: false } },
+    { label: "SSL pending", verified: false, status: { dns: true, ssl: false, mail: true } },
+  ])(
+    "omits Dashboard links cleanly when the production instance id is unknown ($label)",
+    ({ verified, status }) => {
+      const noInstance = {
+        ...activeSnapshot,
+        productionInstanceId: undefined,
+        completedOAuthProviders: ["google", "github"],
+      } satisfies LiveDeploySnapshot;
+      const report = buildDeployStatusReport(
+        { kind: "active", snapshot: noInstance },
+        { verified, status },
+      );
+
+      expect(report.productionInstanceId).toBeNull();
+      expect(report.nextAction).not.toContain("dashboard.clerk.com");
+      expect(report.nextAction).not.toContain("undefined");
+      expect(report.nextAction).not.toContain("Clerk Dashboard domains page");
+    },
+  );
+});
+
+describe("report urls", () => {
+  const snapshot = {
+    appId: "app_1",
+    developmentInstanceId: "ins_dev",
+    productionInstanceId: "ins_prod",
+    productionDomainId: "dmn_1",
+    domain: "example.com",
+    oauthProviders: [],
+    oauthProviderDescriptors: [],
+    completedOAuthProviders: [],
+    cnameTargets: [],
+    domainComplete: false,
+    componentStatus: { dns: false, ssl: false, mail: false },
+    unsupportedOAuthProviderCount: 0,
+    unsupportedOAuthProviders: [],
+    pending: undefined,
+  } satisfies LiveDeploySnapshot;
+
+  test("carries the instance and Domains page URLs once a production instance exists", () => {
+    // Agents used to have to pull the URL out of the `nextAction` prose.
+    const report = buildDeployStatusReport({ kind: "active", snapshot }, null);
+    expect(report.urls).toEqual({
+      instance: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod",
+      domains: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+    });
+    expect(
+      buildDeployStatusReport(
+        { kind: "domain_provisioning", appId: "app_1", productionInstanceId: "ins_prod" },
+        null,
+      ).urls,
+    ).toEqual(report.urls);
+  });
+
+  test("is null when there is no production instance to point at", () => {
+    expect(buildDeployStatusReport({ kind: "not_started" }, null).urls).toBeNull();
+    expect(buildInterruptedDeployStatusReport().urls).toBeNull();
+    expect(
+      buildDeployStatusReport(
+        { kind: "active", snapshot: { ...snapshot, productionInstanceId: undefined } },
+        null,
+      ).urls,
+    ).toBeNull();
+  });
+});
+
+describe("deployNextStep", () => {
+  // The step is derived from the report's own fields, so a report and the
+  // sentence stored in it can't describe different situations.
+  const base = {
+    complete: false,
+    state: "domain_pending" as const,
+    domain: "example.com",
+    productionInstanceId: "ins_prod",
+    domainStatus: { dns: "pending", ssl: "pending", mail: "pending" } as const,
+    pendingDnsRecords: [
+      { type: "CNAME" as const, host: "clerk.example.com", value: "v", required: true },
+    ],
+    oauth: { complete: true, configured: [], pending: [], unsupported: [] },
+    urls: {
+      domains: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+      instance: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod",
+    },
+  };
+
+  test.each([
+    {
+      label: "records to add",
+      domainStatus: { dns: "pending", ssl: "pending", mail: "pending" } as const,
+      records: 1,
+      kind: "records_available",
+      phrase: "DNS and email DNS",
+    },
+    {
+      label: "records missing from the report",
+      domainStatus: { dns: "pending", ssl: "pending", mail: "complete" } as const,
+      records: 0,
+      kind: "records_unavailable",
+      phrase: "DNS",
+    },
+    {
+      label: "only SSL pending",
+      domainStatus: { dns: "complete", ssl: "pending", mail: "complete" } as const,
+      records: 0,
+      kind: "ssl_pending",
+      phrase: "",
+    },
+    {
+      label: "everything verified, Clerk finalizing",
+      domainStatus: { dns: "complete", ssl: "complete", mail: "complete" } as const,
+      records: 0,
+      kind: "finalizing",
+      phrase: "",
+    },
+  ])("classifies a pending domain: $label", ({ domainStatus, records, kind, phrase }) => {
+    const step = deployNextStep({
+      ...base,
+      domainStatus,
+      pendingDnsRecords: base.pendingDnsRecords.slice(0, records),
+    });
+    expect(step.kind).toBe(kind);
+    if (step.kind === "records_available" || step.kind === "records_unavailable") {
+      expect(step.records).toBe(phrase);
+      expect(step.domainsUrl).toBe(base.urls.domains);
+    }
+  });
+
+  test("the agent sentence is rendered from the step the report classifies", () => {
+    const report = buildDeployStatusReport({ kind: "not_started" }, null);
+    expect(report.nextAction).toBe(agentNextAction(deployNextStep(report)));
   });
 });

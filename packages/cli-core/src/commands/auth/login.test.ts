@@ -1,6 +1,8 @@
 import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import { AuthError } from "../../lib/errors.ts";
 import { useCaptureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
+import type { AutoclaimResult } from "../../lib/autoclaim.ts";
+import type { Application } from "../../lib/plapi.ts";
 
 const actualConstants = await import("../../lib/constants.ts");
 const actualEnvironment = await import("../../lib/environment.ts");
@@ -92,8 +94,12 @@ mock.module("../../lib/first-application.ts", () => ({
   ensureFirstApplication: () => mockEnsureFirstApplication(),
 }));
 
+const mockAttemptAutoclaim = mock(async (_cwd: string): Promise<AutoclaimResult> => ({
+  status: "not_keyless",
+}));
+
 mock.module("../../lib/autoclaim.ts", () => ({
-  attemptAutoclaim: async () => ({ status: "not_keyless" }),
+  attemptAutoclaim: (cwd: string) => mockAttemptAutoclaim(cwd),
 }));
 
 const { setLogLevel } = await import("../../lib/log.ts");
@@ -127,6 +133,8 @@ describe("login", () => {
     mockOpenBrowser.mockReset();
     mockEnsureFirstApplication.mockReset();
     mockEnsureFirstApplication.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockReset();
+    mockAttemptAutoclaim.mockResolvedValue({ status: "not_keyless" });
     mockIsHuman.mockReturnValue(false);
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
     mockRevokeToken.mockResolvedValue("revoked");
@@ -521,6 +529,89 @@ describe("login", () => {
     expect(captured.err).toContain("Linked to `app_abc123`");
   });
 
+  test("prints where the claimed app now lives in the Dashboard", async () => {
+    // First time this app has a home in an account; nothing else in the flow
+    // says where it is, so the claim line has to.
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "claimed",
+      envPulled: true,
+      app: {
+        application_id: "app_claimed",
+        name: "bad-agent",
+        instances: [
+          {
+            instance_id: "ins_dev_claimed",
+            environment_type: "development",
+            publishable_key: "pk_test_claimed",
+          },
+        ],
+      },
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain("Claimed and linked application: `bad-agent`");
+    // The URL sits on its own indented line so the sentence fits the frame.
+    expect(captured.err).toMatch(
+      /Your app now lives in your Clerk account:\n[^\n]*? {2}https:\/\/dashboard\.clerk\.com\/apps\/app_claimed\/instances\/ins_dev_claimed/,
+    );
+  });
+
+  test("links to the development instance even when production is listed first", async () => {
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "claimed",
+      envPulled: true,
+      app: {
+        application_id: "app_claimed",
+        name: "bad-agent",
+        instances: [
+          {
+            instance_id: "ins_prod_claimed",
+            environment_type: "production",
+            publishable_key: "pk_live_claimed",
+          },
+          {
+            instance_id: "ins_dev_claimed",
+            environment_type: "development",
+            publishable_key: "pk_test_claimed",
+          },
+        ],
+      },
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "https://dashboard.clerk.com/apps/app_claimed/instances/ins_dev_claimed",
+    );
+    expect(captured.err).not.toContain("ins_prod_claimed");
+  });
+
+  test("a claim response without instances still reports the claim and does not throw", async () => {
+    // The Dashboard line is a nice-to-have; a missing array in API JSON must
+    // not turn a claim that already succeeded server-side into a failed login.
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "claimed",
+      envPulled: true,
+      // Deliberately shaped like API JSON that dropped the array.
+      app: { application_id: "app_claimed", name: "bad-agent" } as Application,
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain("Claimed and linked application: `bad-agent`");
+    expect(captured.err).not.toContain("Your app now lives");
+  });
+
   test("shows default next steps when not linked", async () => {
     mockGetValidToken.mockResolvedValue(null);
     mockOAuthSuccess();
@@ -586,6 +677,38 @@ describe("login", () => {
     await runLogin({ showNextSteps: false });
 
     expect(mockEnsureFirstApplication).toHaveBeenCalledTimes(1);
+  });
+
+  test("explains a managed-workspace claim rejection with the provider named by the API", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "managed_workspace",
+      longMessage:
+        "The target application cannot be claimed into the current workspace. Select a different workspace and try again.",
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Unable to claim - The target application cannot be claimed into the current workspace. Select a different workspace and try again.",
+    );
+    expect(captured.err).not.toContain("claim the application there");
+    expect(captured.err).not.toContain("does not have an active organization");
+  });
+
+  test("falls back to a generic provider when the managed-workspace rejection has no long message", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    mockAttemptAutoclaim.mockResolvedValue({ status: "managed_workspace", longMessage: null });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Unable to claim - this workspace is managed by an integration provider.",
+    );
   });
 
   test("does not call ensureFirstApplication when existing session is reused", async () => {

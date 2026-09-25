@@ -329,7 +329,7 @@ describe("bapi-command", () => {
     resolveKeylessTargetSpy.mockResolvedValue({ secretKey: "sk_test_123", source: ".env.local" });
 
     await expect(describeBapiTarget({})).resolves.toBe(
-      "this keyless application (secret key from .env.local)",
+      "this accountless application (secret key from .env.local)",
     );
 
     expect(resolveAppContextSpy).not.toHaveBeenCalled();

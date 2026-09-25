@@ -135,7 +135,7 @@ export async function writeKeylessBreadcrumb(cwd: string, claimToken: string): P
   };
 
   await Bun.write(breadcrumbPath(cwd), JSON.stringify(breadcrumb, null, 2) + "\n");
-  log.debug(`Wrote keyless breadcrumb to ${BREADCRUMB_DIR}/${BREADCRUMB_FILE}`);
+  log.debug(`Wrote accountless breadcrumb to ${BREADCRUMB_DIR}/${BREADCRUMB_FILE}`);
 }
 
 export async function readKeylessBreadcrumb(cwd: string): Promise<KeylessBreadcrumb | undefined> {
@@ -168,7 +168,7 @@ export async function peekKeylessBreadcrumb(cwd: string): Promise<KeylessBreadcr
 export async function clearKeylessBreadcrumb(cwd: string): Promise<void> {
   try {
     await unlink(breadcrumbPath(cwd));
-    log.debug("Cleared keyless breadcrumb");
+    log.debug("Cleared accountless breadcrumb");
   } catch {
     // idempotent
   }
