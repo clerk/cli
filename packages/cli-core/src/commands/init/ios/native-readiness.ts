@@ -1,7 +1,13 @@
 import { associatedDomainMatches, type IOSAssociatedDomainPlan } from "./associated-domain.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
 import { normalizeBundleIdentifierIdentity } from "../../../lib/apple-native-identity.ts";
-import type { IOSAppTarget, IOSProjectInspectionResult, IOSSetupStepStatus } from "./types.ts";
+import type {
+  IOSAppTarget,
+  IOSNativePlatform,
+  IOSProjectInspectionResult,
+  IOSSetupStepStatus,
+} from "./types.ts";
+import type { IOSPlatformViewsSnapshot } from "./platform-views.ts";
 
 export const IOS_NATIVE_READINESS_PLAPI_BRIDGE_REQUIREMENT = {
   applicationId: "linked-application-id",
@@ -58,12 +64,13 @@ export type IOSNativeReadinessTarget =
       projectPath: string;
       targetId: string;
       targetName: string;
+      platform: IOSNativePlatform;
       bundleIdentifier: IOSNativeReadinessBundleIdentifier;
       appIdPrefix: IOSNativeReadinessAppIdPrefix;
     }
   | {
       status: "blocked";
-      reason: "target-not-selected" | "selected-target-not-found";
+      reason: "target-not-selected" | "selected-target-not-found" | "target-platform-unresolved";
     };
 
 export type IOSAssociatedDomainAutomationBlockerCode =
@@ -83,7 +90,7 @@ export interface IOSAssociatedDomainAutomationBlocker {
 
 export interface IOSAssociatedDomainReadiness {
   /** The local status from the canonical iOS setup plan. */
-  status: IOSSetupStepStatus;
+  status: IOSSetupStepStatus | "not-applicable";
   /** Exact entitlement value derived from redacted publishable-key metadata. */
   expectedDomain?: string;
   /** Existing, inspected XML entitlements files owned by the selected target. */
@@ -108,6 +115,8 @@ export interface IOSNativeReadinessAudit {
 
 export interface BuildIOSNativeReadinessAuditOptions {
   associatedDomainPlan?: IOSAssociatedDomainPlan;
+  /** Exhaustive cross-platform identity evidence for a multiplatform target. */
+  platformViews?: IOSPlatformViewsSnapshot;
 }
 
 function selectedTarget(inspection: IOSProjectInspectionResult): IOSAppTarget | undefined {
@@ -185,10 +194,18 @@ function appIdPrefix(target: IOSAppTarget): IOSNativeReadinessAppIdPrefix {
       (configuration) => configuration.entitlements?.literalAppIdentifierPrefix === candidates[0],
     )
   ) {
-    return { status: "resolved", source: "literal-entitlements", value: candidates[0]! };
+    return {
+      status: "resolved",
+      source: "literal-entitlements",
+      value: candidates[0]!,
+    };
   }
   if (candidates.length > 1) {
-    return { status: "conflicting", source: "literal-entitlements", candidates };
+    return {
+      status: "conflicting",
+      source: "literal-entitlements",
+      candidates,
+    };
   }
   return { status: "missing", source: "literal-entitlements", candidates };
 }
@@ -201,12 +218,16 @@ function targetIdentity(
     return { status: "blocked", reason: "target-not-selected" };
   }
   if (!target) return { status: "blocked", reason: "selected-target-not-found" };
+  if (!target.platformEvidenceComplete) {
+    return { status: "blocked", reason: "target-platform-unresolved" };
+  }
 
   return {
     status: "selected",
     projectPath: target.projectPath,
     targetId: target.id,
     targetName: target.name,
+    platform: target.platform,
     bundleIdentifier: bundleIdentifier(target),
     appIdPrefix: appIdPrefix(target),
   };
@@ -217,6 +238,14 @@ function associatedDomainReadiness(
   target: IOSAppTarget | undefined,
   associatedDomainPlan: IOSAssociatedDomainPlan | undefined,
 ): IOSAssociatedDomainReadiness {
+  if (target?.platform === "macos") {
+    return {
+      status: "not-applicable",
+      files: [],
+      automatable: false,
+      blockers: [],
+    };
+  }
   const plan = buildIOSSetupPlan(inspection, { associatedDomainPlan });
   const planStep = plan.steps.find((step) => step.id === "add-associated-domain");
   const host =
@@ -349,11 +378,28 @@ export function buildIOSNativeReadinessAudit(
   options: BuildIOSNativeReadinessAuditOptions = {},
 ): IOSNativeReadinessAudit {
   const target = selectedTarget(inspection);
+  let identity = targetIdentity(inspection, target);
+  const platformPrefix = options.platformViews?.appIdPrefix;
+  if (
+    platformPrefix &&
+    identity.status === "selected" &&
+    identity.appIdPrefix.status === "missing"
+  ) {
+    identity = {
+      ...identity,
+      appIdPrefix: {
+        ...identity.appIdPrefix,
+        candidates: [
+          ...new Set([...(identity.appIdPrefix.candidates ?? []), platformPrefix]),
+        ].sort(),
+      },
+    };
+  }
   return {
     schemaVersion: 1,
     kind: "clerk-ios-native-readiness",
     root: inspection.root,
-    target: targetIdentity(inspection, target),
+    target: identity,
     associatedDomain: associatedDomainReadiness(inspection, target, options.associatedDomainPlan),
     remote: {
       status: "not-inspected",

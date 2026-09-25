@@ -11,6 +11,9 @@ function target(): IOSAppTarget {
   return {
     id: "TARGET",
     name: "MyApp",
+    platform: "ios",
+    supportedPlatforms: ["ios"],
+    platformEvidenceComplete: true,
     projectPath: "MyApp.xcodeproj",
     configurations: [],
     packages: { package: "absent", clerkKit: "absent", clerkKitUI: "absent" },
@@ -47,6 +50,7 @@ function inspection(selected: IOSAppTarget): IOSProjectInspectionResult {
       targetId: selected.id,
       targetName: selected.name,
       projectPath: selected.projectPath,
+      platform: selected.platform,
     },
     localPublishableKey: { state: "missing" },
     generatedProject: null,

@@ -43,6 +43,9 @@ const IDS = {
 
 export interface IOSFixtureOptions {
   complete?: boolean;
+  platform?: "ios" | "macos";
+  /** Override one configuration to exercise cross-configuration platform certainty. */
+  releasePlatform?: "ios" | "macos" | "unresolved";
   secondTarget?: boolean | "watchos";
   conflictingBundle?: boolean;
   includeKey?: boolean;
@@ -51,6 +54,8 @@ export interface IOSFixtureOptions {
   generated?: "xcodegen" | "tuist";
   xcconfig?: boolean;
   localSecrets?: boolean;
+  /** Include the canonical native Apple entitlement in the macOS fixture. */
+  macOSAppleEntitlement?: boolean;
   /** Include a fully linked clerk-ios package graph. Defaults to both products. */
   clerkSDK?: boolean | "core-only";
 }
@@ -89,6 +94,27 @@ function secondTargetObjects(platform: "ios" | "watchos"): string {
 }
 
 function pbxproj(options: IOSFixtureOptions): string {
+  const platform = options.platform ?? "ios";
+  const sdkRoot = platform === "macos" ? "macosx" : "iphoneos";
+  const supportedPlatforms = platform === "macos" ? "macosx" : "iphoneos iphonesimulator";
+  const releasePlatform = options.releasePlatform ?? platform;
+  const releaseSDKRoot =
+    releasePlatform === "unresolved"
+      ? '"$(UNKNOWN_SDKROOT)"'
+      : releasePlatform === "macos"
+        ? "macosx"
+        : "iphoneos";
+  const releaseSupportedPlatforms =
+    releasePlatform === "unresolved"
+      ? "$(UNKNOWN_PLATFORMS)"
+      : releasePlatform === "macos"
+        ? "macosx"
+        : "iphoneos iphonesimulator";
+  const deploymentTargetSetting =
+    platform === "macos"
+      ? "MACOSX_DEPLOYMENT_TARGET = 14.0;"
+      : "IPHONEOS_DEPLOYMENT_TARGET = 17.0;";
+  const sandboxSettings = platform === "macos" ? "ENABLE_APP_SANDBOX = YES;" : "";
   const includeClerkSDK = options.clerkSDK !== false;
   const includeClerkKitUI = includeClerkSDK && options.clerkSDK !== "core-only";
   const releaseBundle = options.conflictingBundle
@@ -158,11 +184,11 @@ function pbxproj(options: IOSFixtureOptions): string {
     ${includeClerkSDK ? `${IDS.clerkKit} = { isa = XCSwiftPackageProductDependency; package = ${IDS.clerkPackage}; productName = ClerkKit; };` : ""}
     ${includeClerkKitUI ? `${IDS.clerkKitUI} = { isa = XCSwiftPackageProductDependency; package = ${IDS.clerkPackage}; productName = ClerkKitUI; };` : ""}
     ${IDS.projectConfigList} = { isa = XCConfigurationList; buildConfigurations = ( ${IDS.projectDebug}, ${IDS.projectRelease}, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-    ${IDS.projectDebug} = { isa = XCBuildConfiguration; buildSettings = { SDKROOT = iphoneos; }; name = Debug; };
-    ${IDS.projectRelease} = { isa = XCBuildConfiguration; buildSettings = { SDKROOT = iphoneos; }; name = Release; };
+    ${IDS.projectDebug} = { isa = XCBuildConfiguration; buildSettings = { SDKROOT = ${sdkRoot}; }; name = Debug; };
+    ${IDS.projectRelease} = { isa = XCBuildConfiguration; buildSettings = { SDKROOT = ${releaseSDKRoot}; }; name = Release; };
     ${IDS.targetConfigList} = { isa = XCConfigurationList; buildConfigurations = ( ${IDS.targetDebug}, ${IDS.targetRelease}, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-    ${IDS.targetDebug} = { isa = XCBuildConfiguration; ${baseConfigurationReference} buildSettings = { GENERATE_INFOPLIST_FILE = YES; CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements; ${debugIdentitySettings} IPHONEOS_DEPLOYMENT_TARGET = 17.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Debug; };
-    ${IDS.targetRelease} = { isa = XCBuildConfiguration; ${baseConfigurationReference} buildSettings = { GENERATE_INFOPLIST_FILE = YES; ${releaseEntitlements} ${releaseIdentitySettings} IPHONEOS_DEPLOYMENT_TARGET = 17.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Release; };
+    ${IDS.targetDebug} = { isa = XCBuildConfiguration; ${baseConfigurationReference} buildSettings = { GENERATE_INFOPLIST_FILE = YES; CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements; ${debugIdentitySettings} ${deploymentTargetSetting} ${sandboxSettings} SUPPORTED_PLATFORMS = "${supportedPlatforms}"; }; name = Debug; };
+    ${IDS.targetRelease} = { isa = XCBuildConfiguration; ${baseConfigurationReference} buildSettings = { GENERATE_INFOPLIST_FILE = YES; ${releaseEntitlements} ${releaseIdentitySettings} ${deploymentTargetSetting} ${sandboxSettings} SUPPORTED_PLATFORMS = "${releaseSupportedPlatforms}"; }; name = Release; };
     ${options.secondTarget ? secondTargetObjects(options.secondTarget === "watchos" ? "watchos" : "ios") : ""}
   };
   rootObject = ${IDS.project};
@@ -235,6 +261,17 @@ const ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
 </dict></plist>
 `;
 
+function macOSEntitlements(includeApple: boolean): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>com.apple.security.app-sandbox</key><true/>
+<key>com.apple.security.network.client</key><true/>
+${includeApple ? "<key>com.apple.developer.applesignin</key><array><string>Default</string></array>" : ""}
+</dict></plist>
+`;
+}
+
 export async function createIOSFixture(
   root: string,
   options: IOSFixtureOptions = {},
@@ -244,7 +281,12 @@ export async function createIOSFixture(
   await mkdir(join(root, "MyApp"), { recursive: true });
   await Bun.write(join(project, "project.pbxproj"), pbxproj(options));
   await Bun.write(join(root, "MyApp", "MyAppApp.swift"), swiftSource(options.complete === true));
-  await Bun.write(join(root, "MyApp", "MyApp.entitlements"), ENTITLEMENTS);
+  await Bun.write(
+    join(root, "MyApp", "MyApp.entitlements"),
+    options.platform === "macos"
+      ? macOSEntitlements(options.macOSAppleEntitlement !== false)
+      : ENTITLEMENTS,
+  );
   if (options.secondTarget) {
     const platform = options.secondTarget === "watchos" ? "watchos" : "ios";
     const directoryName = platform === "watchos" ? "WatchApp" : "AdminApp";
@@ -290,9 +332,7 @@ export async function createIOSFixture(
 }
 
 /** Converts the classic fixture into the modern synchronized-root shape used by new Xcode apps. */
-export async function convertIOSFixtureToSynchronizedMissingEntitlements(
-  root: string,
-): Promise<void> {
+export async function convertIOSFixtureToSynchronizedRoot(root: string): Promise<void> {
   const synchronizedRootId = "515151515151515151515151";
   const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
   const project = parsePbxProject(await readFile(projectPath, "utf8"));
@@ -309,6 +349,16 @@ export async function convertIOSFixtureToSynchronizedMissingEntitlements(
   };
   objects[IDS.appTarget]!.fileSystemSynchronizedGroups = [synchronizedRootId];
   delete objects[IDS.entitlementsFile];
+  await writeFile(projectPath, buildPbxProject(project));
+}
+
+export async function convertIOSFixtureToSynchronizedMissingEntitlements(
+  root: string,
+): Promise<void> {
+  await convertIOSFixtureToSynchronizedRoot(root);
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = parsePbxProject(await readFile(projectPath, "utf8"));
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
   for (const id of [IDS.targetDebug, IDS.targetRelease]) {
     const settings = objects[id]!.buildSettings as Record<string, unknown>;
     delete settings.CODE_SIGN_ENTITLEMENTS;
@@ -316,6 +366,161 @@ export async function convertIOSFixtureToSynchronizedMissingEntitlements(
   }
   await writeFile(projectPath, buildPbxProject(project));
   await rm(join(root, "MyApp", "MyApp.entitlements"), { force: true });
+}
+
+/** Converts the selected fixture target into Xcode's common single-target iOS + macOS shape. */
+export async function convertIOSFixtureToMultiplatform(root: string): Promise<void> {
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = parsePbxProject(await readFile(projectPath, "utf8"));
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
+  const macOSEntitlementsExists = await Bun.file(
+    join(root, "MyApp", "MyApp.mac.entitlements"),
+  ).exists();
+
+  for (const id of [IDS.projectDebug, IDS.projectRelease]) {
+    const settings = objects[id]!.buildSettings as Record<string, unknown>;
+    settings.SDKROOT = "auto";
+  }
+
+  for (const id of [IDS.targetDebug, IDS.targetRelease]) {
+    const settings = objects[id]!.buildSettings as Record<string, unknown>;
+    const existingEntitlements = settings.CODE_SIGN_ENTITLEMENTS;
+    delete settings.CODE_SIGN_ENTITLEMENTS;
+    settings.SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+    settings.IPHONEOS_DEPLOYMENT_TARGET = "17.0";
+    settings.MACOSX_DEPLOYMENT_TARGET = "14.0";
+    settings.ENABLE_APP_SANDBOX = "YES";
+    if (typeof existingEntitlements === "string" && existingEntitlements.length > 0) {
+      settings["CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]"] = existingEntitlements;
+      settings["CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]"] = existingEntitlements;
+      settings["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"] = "MyApp/MyApp.mac.entitlements";
+    }
+    if (!macOSEntitlementsExists) delete settings["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"];
+  }
+
+  await writeFile(projectPath, buildPbxProject(project));
+}
+
+/** Adds the destinations used by Xcode's standard visionOS-capable Multiplatform template. */
+export async function addVisionOSDestinationsToFixture(root: string): Promise<void> {
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = parsePbxProject(await readFile(projectPath, "utf8"));
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
+  for (const id of [IDS.targetDebug, IDS.targetRelease]) {
+    const settings = objects[id]!.buildSettings as Record<string, unknown>;
+    settings.SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+    settings.XROS_DEPLOYMENT_TARGET = "2.0";
+  }
+  await writeFile(projectPath, buildPbxProject(project));
+}
+
+export interface IOSPlatformFilteredSourceFixture {
+  platform: "ios" | "macos";
+  relativePath: string;
+  source: string;
+  fileReferenceId: string;
+  buildFileId: string;
+}
+
+/** Adds one classic-group Swift member that is compiled for only one Apple platform. */
+export async function addIOSFixturePlatformFilteredSource(
+  root: string,
+  fixture: IOSPlatformFilteredSourceFixture,
+): Promise<void> {
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = parsePbxProject(await readFile(projectPath, "utf8"));
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
+  objects[fixture.fileReferenceId] = {
+    isa: "PBXFileReference",
+    lastKnownFileType: "sourcecode.swift",
+    path: fixture.relativePath,
+    sourceTree: "<group>",
+  };
+  objects[fixture.buildFileId] = {
+    isa: "PBXBuildFile",
+    fileRef: fixture.fileReferenceId,
+    platformFilter: fixture.platform,
+  };
+  (objects[IDS.appGroup]!.children as string[]).push(fixture.fileReferenceId);
+  (objects[IDS.sourcesPhase]!.files as string[]).push(fixture.buildFileId);
+  await writeFile(projectPath, buildPbxProject(project));
+  await writeFile(join(root, "MyApp", fixture.relativePath), fixture.source);
+}
+
+export interface IOSPlatformFilteredAppRootsFixture {
+  sharedAppRoot?: boolean;
+  iosSource?: string;
+  macOSSource?: string;
+  iosBundleIdentifier?: string;
+  macOSBundleIdentifier?: string;
+  iosAppIdPrefix?: string;
+  macOSAppIdPrefix?: string;
+}
+
+/**
+ * Converts one fixture target into an iOS/macOS target with distinct, filtered
+ * @main sources and optionally conditioned Bundle IDs/App ID Prefix evidence.
+ */
+export async function convertIOSFixtureToPlatformFilteredAppRoots(
+  root: string,
+  fixture: IOSPlatformFilteredAppRootsFixture = {},
+): Promise<void> {
+  await convertIOSFixtureToMultiplatform(root);
+  const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
+  const project = parsePbxProject(await readFile(projectPath, "utf8"));
+  const objects = (project as unknown as { objects: PbxObjects }).objects;
+  if (!fixture.sharedAppRoot) objects[IDS.sourceBuildFile]!.platformFilter = "ios";
+  for (const configurationId of [IDS.targetDebug, IDS.targetRelease]) {
+    const settings = objects[configurationId]!.buildSettings as Record<string, unknown>;
+    delete settings.PRODUCT_BUNDLE_IDENTIFIER;
+    settings["PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]"] =
+      fixture.iosBundleIdentifier ?? "com.example.MyApp";
+    settings["PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*]"] =
+      fixture.iosBundleIdentifier ?? "com.example.MyApp";
+    settings["PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]"] =
+      fixture.macOSBundleIdentifier ?? "com.example.MyApp";
+    if (fixture.macOSAppIdPrefix) {
+      settings["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"] = "MyApp/MyApp.mac.entitlements";
+    }
+  }
+  await writeFile(projectPath, buildPbxProject(project));
+
+  if (!fixture.sharedAppRoot) {
+    await addIOSFixturePlatformFilteredSource(root, {
+      platform: "macos",
+      relativePath: "MyAppMacApp.swift",
+      source: fixture.macOSSource ?? swiftSource(false).replaceAll("MyApp", "MyAppMac"),
+      fileReferenceId: "616161616161616161616161",
+      buildFileId: "626262626262626262626262",
+    });
+  }
+  if (fixture.iosSource) {
+    await writeFile(join(root, "MyApp", "MyAppApp.swift"), fixture.iosSource);
+  }
+  if (fixture.iosAppIdPrefix) {
+    const path = join(root, "MyApp", "MyApp.entitlements");
+    const bundleIdentifier = fixture.iosBundleIdentifier ?? "com.example.MyApp";
+    await writeFile(
+      path,
+      (await readFile(path, "utf8")).replace(
+        /<key>application-identifier<\/key><string>[^<]*<\/string>/,
+        `<key>application-identifier</key><string>${fixture.iosAppIdPrefix}.${bundleIdentifier}</string>`,
+      ),
+    );
+  }
+  if (fixture.macOSAppIdPrefix) {
+    const bundleIdentifier = fixture.macOSBundleIdentifier ?? "com.example.MyApp";
+    await writeFile(
+      join(root, "MyApp", "MyApp.mac.entitlements"),
+      `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>com.apple.application-identifier</key><string>${fixture.macOSAppIdPrefix}.${bundleIdentifier}</string>
+<key>com.apple.security.app-sandbox</key><true/>
+<key>com.apple.security.network.client</key><true/>
+</dict></plist>
+`,
+    );
+  }
 }
 
 async function digestEntry(root: string, path: string): Promise<string[]> {

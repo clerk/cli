@@ -1,6 +1,7 @@
 import type { IOSProjectInspectionResult, IOSSetupPlan, IOSSetupStepStatus } from "./types.ts";
 import { buildIOSNativeReadinessAudit, type IOSNativeReadinessAudit } from "./native-readiness.ts";
 import type { IOSAssociatedDomainPlan } from "./associated-domain.ts";
+import type { IOSPlatformViewsSnapshot } from "./platform-views.ts";
 import { hasSupportedIOSCustomConfigure } from "./products.ts";
 
 const STATUS_MARKER: Record<IOSSetupStepStatus, string> = {
@@ -23,6 +24,7 @@ export interface IOSOutputOptions {
   associatedDomainPlan?: IOSAssociatedDomainPlan;
   /** Exact readiness audit from the shared local setup proposal. */
   nativeReadiness?: IOSNativeReadinessAudit;
+  platformViews?: IOSPlatformViewsSnapshot;
 }
 
 export function createIOSDryRunOutput(
@@ -45,7 +47,25 @@ export function formatIOSSetupPlan(
   plan: IOSSetupPlan,
   options: IOSOutputOptions = {},
 ): string {
-  const lines = ["", "iOS setup plan (read-only)", `  Root: ${inspection.root}`];
+  const selection = inspection.selection;
+  const selected =
+    selection.state === "selected"
+      ? inspection.appTargets.find(
+          (target) =>
+            target.id === selection.targetId && target.projectPath === selection.projectPath,
+        )
+      : undefined;
+  const platform = selected
+    ? selected.platformEvidenceComplete
+      ? selected.platform
+      : undefined
+    : inspection.platform === "ios" || inspection.platform === "macos"
+      ? inspection.platform
+      : undefined;
+  const platformLabel =
+    platform === "macos" ? "macOS" : platform === "ios" ? "iOS" : "native Apple";
+  const readinessLabel = platform == null ? "Native Apple" : `Native ${platformLabel}`;
+  const lines = ["", `${platformLabel} setup plan (read-only)`, `  Root: ${inspection.root}`];
 
   if (inspection.selection.state === "selected") {
     lines.push(
@@ -60,14 +80,6 @@ export function formatIOSSetupPlan(
     }
   }
 
-  const selection = inspection.selection;
-  const selected =
-    selection.state === "selected"
-      ? inspection.appTargets.find(
-          (target) =>
-            target.id === selection.targetId && target.projectPath === selection.projectPath,
-        )
-      : undefined;
   if (selected) {
     const bundles = [
       ...new Set(
@@ -118,17 +130,19 @@ export function formatIOSSetupPlan(
 
   const nativeReadiness =
     options.nativeReadiness ?? buildIOSNativeReadinessAudit(inspection, options);
-  lines.push("", "  Native iOS readiness:");
-  lines.push(
-    `    - Associated Domains: ${nativeReadiness.associatedDomain.status}${nativeReadiness.associatedDomain.automatable ? " (clerk init can apply)" : ""}`,
-  );
-  if (!nativeReadiness.associatedDomain.automatable) {
-    for (const blocker of nativeReadiness.associatedDomain.blockers) {
-      lines.push(`      ${blocker.message}`);
+  lines.push("", `  ${readinessLabel} readiness:`);
+  if (platform === "ios") {
+    lines.push(
+      `    - Associated Domains: ${nativeReadiness.associatedDomain.status}${nativeReadiness.associatedDomain.automatable ? " (clerk init can apply)" : ""}`,
+    );
+    if (!nativeReadiness.associatedDomain.automatable) {
+      for (const blocker of nativeReadiness.associatedDomain.blockers) {
+        lines.push(`      ${blocker.message}`);
+      }
     }
   }
   lines.push(
-    "    - Native API and Dashboard iOS registration: not inspected during this local-only dry-run. Regular `clerk init` audits and safely reconciles both on the linked development instance after authentication.",
+    `    - Native API and Dashboard ${platformLabel} registration: not inspected during this local-only dry-run. Regular \`clerk init\` audits and safely reconciles both on the linked development instance after authentication.`,
   );
 
   lines.push(

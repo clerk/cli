@@ -93,17 +93,17 @@ type InitOptions = {
   template?: KeylessTemplate;
   /** Replace an existing unclaimed accountless application instead of keeping it. */
   fresh?: boolean;
-  /** Inspect an iOS project and print the setup plan without changing local or remote state. */
+  /** Inspect a native Apple project and print the setup plan without changing local or remote state. */
   dryRun?: boolean;
-  /** Emit the read-only iOS inspection and setup plan as JSON. */
+  /** Emit the read-only native Apple inspection and setup plan as JSON. */
   json?: boolean;
-  /** iOS application target name or PBX object ID. */
+  /** Native Apple application target name or PBX object ID. */
   target?: string;
-  /** Allow an iOS apply action to update a project file that already has local changes. */
+  /** Allow native Apple setup to update a project file that already has local changes. */
   allowDirty?: boolean;
-  /** Apple App ID Prefix used when a new Clerk iOS registration is required. */
+  /** Apple App ID Prefix used when a new Clerk native application registration is required. */
   appIdPrefix?: string;
-  /** Opt into native Sign in with Apple setup for the selected iOS target. */
+  /** Opt into native Sign in with Apple setup for the selected native Apple target. */
   signInWithApple?: boolean;
   /** Opt into ClerkKitUI's prebuilt AuthView flow for a proven pristine SwiftUI target. */
   prebuiltAuthUI?: boolean;
@@ -150,7 +150,7 @@ export async function init(options: InitOptions = {}) {
     options.prebuiltAuthUI === true;
   if (requiresExistingIOSProject && frameworkOverride && frameworkOverride.dep !== "ios") {
     throwUsageError(
-      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native iOS projects.",
+      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native Apple projects.",
     );
   }
 
@@ -192,7 +192,7 @@ export async function init(options: InitOptions = {}) {
       options.prebuiltAuthUI)
   ) {
     throwUsageError(
-      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native iOS projects.",
+      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native Apple projects.",
     );
   }
   let iosTarget = options.target;
@@ -209,7 +209,7 @@ export async function init(options: InitOptions = {}) {
   if (options.dryRun) {
     if (ctx.framework.dep !== "ios") {
       throwUsageError(
-        `--dry-run currently supports native iOS projects only; detected ${ctx.framework.name}.`,
+        `--dry-run currently supports native Apple projects only; detected ${ctx.framework.name}.`,
       );
     }
     await runAppleNativeDryRun({
@@ -238,6 +238,10 @@ export async function init(options: InitOptions = {}) {
       validateAgentAuthentication,
     });
     validatedAgentAuthLabel = appleNativeSetup.validatedAgentAuthLabel;
+    ctx.framework = {
+      ...ctx.framework,
+      name: appleNativeSetup.frameworkName,
+    };
   }
 
   await enrichProjectContext(ctx);
@@ -351,7 +355,7 @@ export async function init(options: InitOptions = {}) {
     authenticatedKeysHandled,
   });
 
-  // Native platforms (iOS/Android) have no npx/Node toolchain to run `skills add` with.
+  // Native platforms (Apple/Android) have no npx/Node toolchain to run `skills add` with.
   if (options.skills !== false && isNpmFramework(ctx.framework)) {
     setTelemetryStage("skills");
     bar();
@@ -405,7 +409,7 @@ function assertUsableFlags(options: InitOptions, accountless: boolean): void {
       options.prebuiltAuthUI)
   ) {
     throwUsageError(
-      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui require an existing native iOS project and cannot be combined with --starter.",
+      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui require an existing native Apple project and cannot be combined with --starter.",
     );
   }
   if (
@@ -437,24 +441,24 @@ function assertUsableFlags(options: InitOptions, accountless: boolean): void {
 }
 
 /**
- * Rejects accountless-only flags before the iOS apply phase. Native iOS does not
- * consume Clerk's accountless bootstrap, so letting strategy resolution reject
+ * Rejects accountless-only flags before the native Apple apply phase. Native Apple projects do
+ * not consume Clerk's accountless bootstrap, so letting strategy resolution reject
  * these later could otherwise modify the Xcode project before a usage error.
  */
 function assertIOSUsableFlags(options: InitOptions): void {
   if (options.accountless || options.keyless) {
     throwUsageError(
-      "--accountless is not supported for iOS (Swift). Run `clerk auth login` and use `clerk init --app <app_id>` instead.",
+      "--accountless is not supported for native Apple projects. Run `clerk auth login` and use `clerk init --app <app_id>` instead.",
     );
   }
   if (options.template) {
     throwUsageError(
-      "--template only applies to accountless applications, but iOS (Swift) does not support accountless mode. Drop --template.",
+      "--template only applies to accountless applications, but native Apple projects do not support accountless mode. Drop --template.",
     );
   }
   if (options.fresh) {
     throwUsageError(
-      "--fresh only applies to accountless applications, but iOS (Swift) does not support accountless mode. Drop --fresh.",
+      "--fresh only applies to accountless applications, but native Apple projects do not support accountless mode. Drop --fresh.",
     );
   }
 }
@@ -620,7 +624,7 @@ async function resolveExistingProjectContext(
   );
   if (!ctx) {
     throw new CliError(
-      "Could not detect an existing native iOS project. --target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui never bootstrap a new project.",
+      "Could not detect an existing native Apple project. --target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui never bootstrap a new project.",
       { code: ERROR_CODE.FRAMEWORK_UNDETECTED },
     );
   }
@@ -1029,16 +1033,25 @@ export function registerInit(program: Program): void {
     )
     .option(
       "--dry-run",
-      "Inspect an existing iOS project and print a setup plan without changing local or remote state",
+      "Inspect an existing Xcode project and print an iOS/macOS setup plan without changing local or remote state",
     )
-    .option("--json", "Output the read-only iOS inspection and setup plan as JSON")
-    .option("--target <name-or-id>", "Select an iOS application target by name or PBX object ID")
-    .option("--allow-dirty", "Allow an iOS project file with existing local changes to be updated")
+    .option("--json", "Output the read-only native Apple inspection and setup plan as JSON")
+    .option(
+      "--target <name-or-id>",
+      "Select a native Apple application target by name or PBX object ID",
+    )
+    .option(
+      "--allow-dirty",
+      "Allow a native Apple project file with existing local changes to be updated",
+    )
     .option(
       "--app-id-prefix <prefix>",
-      "10-character Apple App ID Prefix to use when Clerk needs to register the selected iOS Bundle ID",
+      "10-character Apple App ID Prefix to use when Clerk needs to register the selected Bundle ID",
     )
-    .option("--sign-in-with-apple", "Enable native Sign in with Apple for the selected iOS target")
+    .option(
+      "--sign-in-with-apple",
+      "Enable native Sign in with Apple for the selected native Apple target",
+    )
     .option(
       "--prebuilt-auth-ui",
       "Add ClerkKitUI's prebuilt AuthView flow to a proven pristine SwiftUI target",
@@ -1084,11 +1097,11 @@ export function registerInit(program: Program): void {
       },
       {
         command: "clerk init --dry-run",
-        description: "Inspect an iOS project and print its setup plan without changes",
+        description: "Inspect a native Apple project and print its setup plan without changes",
       },
       {
         command: "clerk init --dry-run --target MyApp --json",
-        description: "Inspect one iOS app target and emit a machine-readable plan",
+        description: "Inspect one native Apple app target and emit a machine-readable plan",
       },
       {
         command: "clerk init -y",

@@ -7,7 +7,13 @@ import { discoverIOSContainers, discoverLocalIOSProjects, inspectWorkspace } fro
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
 import { recoverIOSFileTransactions } from "./file-transaction.ts";
 import type { PbxObject, PbxObjects } from "./pbx.ts";
-import { createIOSFixture, IOS_FIXTURE_IDS, treeDigest } from "./test-helpers.ts";
+import {
+  addVisionOSDestinationsToFixture,
+  convertIOSFixtureToMultiplatform,
+  createIOSFixture,
+  IOS_FIXTURE_IDS,
+  treeDigest,
+} from "./test-helpers.ts";
 
 const temporaryDirectories: string[] = [];
 const FILE_TRANSACTION_MODULE = `${import.meta.dir}/file-transaction.ts`;
@@ -109,6 +115,37 @@ async function transformProjectAt(
   const objects = (project as unknown as { objects: PbxObjects }).objects;
   transform(objects);
   await Bun.write(projectPath, buildPbxProject(project));
+}
+
+async function addSynchronizedPlatformFilteredSources(root: string): Promise<void> {
+  const synchronizedRootId = "404040404040404040404040";
+  const exceptionId = "414141414141414141414141";
+  await transformProject(root, (objects) => {
+    objects[synchronizedRootId] = {
+      isa: "PBXFileSystemSynchronizedRootGroup",
+      exceptions: [exceptionId],
+      path: "Synced",
+      sourceTree: "<group>",
+    };
+    objects[exceptionId] = {
+      isa: "PBXFileSystemSynchronizedBuildFileExceptionSet",
+      platformFiltersByRelativePath: {
+        "IOSOnly.swift": ["ios"],
+        "MacOnly.swift": ["macos"],
+      },
+      target: IOS_FIXTURE_IDS.appTarget,
+    };
+    objects[IOS_FIXTURE_IDS.appTarget]!.fileSystemSynchronizedGroups = [synchronizedRootId];
+  });
+  await mkdir(join(root, "Synced"), { recursive: true });
+  await Bun.write(
+    join(root, "Synced", "IOSOnly.swift"),
+    "import ClerkKitUI\nstruct IOSOnly { let view = AuthView() }\n",
+  );
+  await Bun.write(
+    join(root, "Synced", "MacOnly.swift"),
+    "import ClerkKit\nfunc macOnly() { Clerk.configure(publishableKey: key) }\n",
+  );
 }
 
 async function addProjectReference(
@@ -739,6 +776,7 @@ describe("inspectIOSProject", () => {
       targetId: IOS_FIXTURE_IDS.appTarget,
       targetName: "MyApp",
       projectPath: "MyApp.xcodeproj",
+      platform: "ios",
     });
     expect(inspection.workspaces).toEqual([
       { path: "MyApp.xcworkspace", projectPaths: ["MyApp.xcodeproj"] },
@@ -1492,6 +1530,140 @@ let package = Package(
     expect(inspection.selection).toMatchObject({ state: "selected", targetName: "MyApp" });
   });
 
+  test("selects a pure macOS SwiftUI application as an Apple native target", async () => {
+    const root = await fixture({ complete: true, platform: "macos", includeKey: false });
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.platform).toBe("macos");
+    expect(inspection.selection).toMatchObject({
+      state: "selected",
+      targetName: "MyApp",
+      platform: "macos",
+    });
+    expect(inspection.appTargets).toHaveLength(1);
+    expect(inspection.appTargets[0]).toMatchObject({
+      platform: "macos",
+      configurations: [
+        {
+          deploymentTarget: { state: "resolved", value: "14.0" },
+        },
+        {
+          deploymentTarget: { state: "resolved", value: "14.0" },
+        },
+      ],
+      swift: {
+        status: "complete",
+      },
+    });
+    expect(inspection.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "xcode.no-ios-app-target" }),
+    );
+  });
+
+  test("retains a macOS target but marks unresolved configuration platform evidence incomplete", async () => {
+    const root = await fixture({
+      complete: true,
+      platform: "macos",
+      releasePlatform: "unresolved",
+    });
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.selection).toMatchObject({
+      state: "selected",
+      targetName: "MyApp",
+      platform: "macos",
+    });
+    expect(inspection.appTargets[0]).toMatchObject({
+      platform: "macos",
+      platformEvidenceComplete: false,
+    });
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.unresolved-target-platform",
+        severity: "error",
+        message: expect.stringContaining("Debug=macOS, Release=unresolved"),
+      }),
+    );
+  });
+
+  test("names the visionOS boundary while preserving read-only inspection", async () => {
+    const root = await fixture({ complete: true });
+    await convertIOSFixtureToMultiplatform(root);
+    await addVisionOSDestinationsToFixture(root);
+
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.selection).toMatchObject({ state: "selected", targetName: "MyApp" });
+    expect(inspection.appTargets[0]?.platformEvidenceComplete).toBe(false);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.unresolved-target-platform",
+        message: "MyApp also ships visionOS, which Clerk CLI can inspect but does not automate.",
+        remedy: expect.stringContaining("Read-only inspection completed"),
+      }),
+    );
+    expect(inspection.diagnostics.map((diagnostic) => diagnostic.message).join("\n")).not.toContain(
+      "xros",
+    );
+  });
+
+  test("keeps concrete cross-configuration platform conflicts discoverable but unsafe", async () => {
+    const root = await fixture({
+      complete: true,
+      platform: "macos",
+      releasePlatform: "ios",
+    });
+    const inspection = await inspectIOSProject(root);
+
+    expect(inspection.selection.state).toBe("selected");
+    expect(inspection.appTargets[0]?.platformEvidenceComplete).toBe(false);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.unresolved-target-platform",
+        message: expect.stringContaining("Debug=macOS, Release=iOS"),
+      }),
+    );
+  });
+
+  test("ignores iOS-only Clerk UI evidence for a macOS target", async () => {
+    const root = await fixture({ complete: true, platform: "macos", includeKey: false });
+    await Bun.write(
+      join(root, "MyApp", "MyAppApp.swift"),
+      `#if os(iOS)
+import ClerkKitUI
+let authentication = AuthView()
+#elseif os(macOS)
+import ClerkKit
+func configureClerk() { Clerk.configure(publishableKey: key) }
+#endif
+`,
+    );
+
+    const inspection = await inspectIOSProject(root);
+    const swift = inspection.appTargets[0]?.swift;
+
+    expect(inspection.platform).toBe("macos");
+    expect(swift?.importsClerkKitUI).toEqual([]);
+    expect(swift?.authViewReferences).toEqual([]);
+    expect(swift?.authFlowReferences).toEqual([]);
+    expect(swift?.importsClerkKit).toEqual([{ path: "MyApp/MyAppApp.swift" }]);
+    expect(swift?.configureCalls).toHaveLength(1);
+  });
+
+  test("requires target selection when a root contains separate iOS and macOS apps", async () => {
+    const root = await fixture({ platform: "macos", secondTarget: true });
+    const ambiguous = await inspectIOSProject(root);
+    const macOS = await inspectIOSProject(root, { target: "MyApp" });
+    const iOS = await inspectIOSProject(root, { target: "AdminApp" });
+
+    expect(ambiguous.platform).toBe("apple-native");
+    expect(ambiguous.selection.state).toBe("ambiguous");
+    expect(macOS.selection).toMatchObject({ state: "selected", platform: "macos" });
+    expect(macOS.platform).toBe("macos");
+    expect(iOS.selection).toMatchObject({ state: "selected", platform: "ios" });
+    expect(iOS.platform).toBe("ios");
+  });
+
   test("preserves conflicting configuration values instead of guessing", async () => {
     const root = await fixture({ conflictingBundle: true });
     const inspection = await inspectIOSProject(root);
@@ -1707,6 +1879,87 @@ struct MyApp: App {
     expect(swift?.authViewReferences).toEqual([{ path: "Synced/Included/Auth.swift" }]);
     expect(swift?.authFlowReferences).toEqual([{ path: "Synced/Included/Auth.swift" }]);
     expect(swift?.configureCalls).toEqual([]);
+  });
+
+  test("honors macOS platform filters for a selected synchronized target", async () => {
+    const root = await fixture({ complete: false, platform: "macos", includeKey: false });
+    await addSynchronizedPlatformFilteredSources(root);
+
+    const inspection = await inspectIOSProject(root);
+    const target = inspection.appTargets[0];
+    const synchronizedAuthViews = target?.swift.authViewReferences
+      .map((reference) => reference.path)
+      .filter((path) => path.startsWith("Synced/"));
+    const synchronizedConfigureCalls = target?.swift.configureCalls
+      .map((call) => call.path)
+      .filter((path) => path.startsWith("Synced/"));
+
+    expect(target?.platform).toBe("macos");
+    expect(synchronizedAuthViews).toEqual([]);
+    expect(synchronizedConfigureCalls).toEqual(["Synced/MacOnly.swift"]);
+  });
+
+  test("includes every recognized synchronized platform filter in ownership discovery", async () => {
+    const root = await fixture({ complete: false, platform: "macos", includeKey: false });
+    await addSynchronizedPlatformFilteredSources(root);
+
+    const memberships = await inspectIOSSourceMembership(root);
+    const target = memberships.find(
+      (membership) => membership.targetId === IOS_FIXTURE_IDS.appTarget,
+    );
+    const synchronizedSources = target?.files
+      .map((file) => file.relativePath)
+      .filter((path) => path.startsWith("Synced/"));
+
+    expect(synchronizedSources).toEqual(["Synced/IOSOnly.swift", "Synced/MacOnly.swift"]);
+  });
+
+  test("keeps unknown synchronized filters visible while marking evidence incomplete", async () => {
+    const root = await fixture({ complete: false, includeKey: false });
+    const synchronizedRootId = "404040404040404040404040";
+    const exceptionId = "414141414141414141414141";
+    await transformProject(root, (objects) => {
+      objects[synchronizedRootId] = {
+        isa: "PBXFileSystemSynchronizedRootGroup",
+        exceptions: [exceptionId],
+        path: "Synced",
+        sourceTree: "<group>",
+      };
+      objects[exceptionId] = {
+        isa: "PBXFileSystemSynchronizedBuildFileExceptionSet",
+        platformFiltersByRelativePath: {
+          "FutureOnly.swift": ["futureos"],
+          "Malformed.swift": "macos",
+        },
+        target: IOS_FIXTURE_IDS.appTarget,
+      };
+      objects[IOS_FIXTURE_IDS.appTarget]!.fileSystemSynchronizedGroups = [synchronizedRootId];
+    });
+    await mkdir(join(root, "Synced"), { recursive: true });
+    await Bun.write(
+      join(root, "Synced", "FutureOnly.swift"),
+      "import ClerkKitUI\nstruct FutureOnly { let view = AuthView() }\n",
+    );
+    await Bun.write(
+      join(root, "Synced", "Malformed.swift"),
+      "import ClerkKit\nfunc malformed() { Clerk.configure(publishableKey: key) }\n",
+    );
+
+    const inspection = await inspectIOSProject(root);
+    const memberships = await inspectIOSSourceMembership(root);
+    const membership = memberships.find(
+      (candidate) => candidate.targetId === IOS_FIXTURE_IDS.appTarget,
+    );
+    const synchronizedSources = membership?.files
+      .map((file) => file.relativePath)
+      .filter((path) => path.startsWith("Synced/"));
+
+    expect(inspection.appTargets[0]?.swift.evidenceComplete).toBe(false);
+    expect(inspection.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "xcode.incomplete-source-membership" }),
+    );
+    expect(membership?.complete).toBe(false);
+    expect(synchronizedSources).toEqual(["Synced/FutureOnly.swift", "Synced/Malformed.swift"]);
   });
 
   test("does not use Catalyst-only classic build-file membership as native iOS evidence", async () => {

@@ -8,6 +8,7 @@ import {
   asString,
   asStringArray,
   asStringRecord,
+  isRecord,
   resolvePbxFilePath,
   type PbxObject,
   type PbxObjects,
@@ -16,6 +17,7 @@ import {
 import type {
   IOSBuildConfiguration,
   IOSDiagnostic,
+  IOSNativePlatform,
   IOSSourceEvidence,
   IOSValueResolution,
 } from "./types.ts";
@@ -31,17 +33,25 @@ const INSPECTED_BUILD_SETTING_KEYS = [
   "DEVELOPMENT_TEAM",
   "CODE_SIGN_ENTITLEMENTS",
   "IPHONEOS_DEPLOYMENT_TARGET",
+  "MACOSX_DEPLOYMENT_TARGET",
+  "ENABLE_APP_SANDBOX",
+  "ENABLE_OUTGOING_NETWORK_CONNECTIONS",
   "SDKROOT",
   "SUPPORTED_PLATFORMS",
+  "SUPPORTS_MACCATALYST",
 ] as const;
+const MODELED_SUPPORTED_PLATFORM_TOKENS = new Set(["iphoneos", "iphonesimulator", "macosx"]);
 
 interface BuildContext {
   label: string;
-  sdk: "iphoneos" | "iphonesimulator";
+  platform: IOSNativePlatform;
+  sdk: "iphoneos" | "iphonesimulator" | "macosx";
   arch: "arm64" | "x86_64" | "undefined_arch";
 }
 
 interface BuildSettingsEvaluation {
+  /** Includes assignments in inactive and unmodeled contexts. Never cleared by overrides. */
+  mayAssignEntitlements?: boolean;
   settings: Record<string, string>;
   /** Unknown inputs are tracked independently for each inspected setting. */
   settingTaints: Map<string, string[]>;
@@ -58,9 +68,21 @@ type XCConfigOperation =
   | { kind: "unresolved-continuation" };
 
 const BUILD_CONTEXTS: BuildContext[] = [
-  { label: "iphoneos/arm64", sdk: "iphoneos", arch: "arm64" },
-  { label: "iphonesimulator/arm64", sdk: "iphonesimulator", arch: "arm64" },
-  { label: "iphonesimulator/x86_64", sdk: "iphonesimulator", arch: "x86_64" },
+  { label: "iphoneos/arm64", platform: "ios", sdk: "iphoneos", arch: "arm64" },
+  {
+    label: "iphonesimulator/arm64",
+    platform: "ios",
+    sdk: "iphonesimulator",
+    arch: "arm64",
+  },
+  {
+    label: "iphonesimulator/x86_64",
+    platform: "ios",
+    sdk: "iphonesimulator",
+    arch: "x86_64",
+  },
+  { label: "macosx/arm64", platform: "macos", sdk: "macosx", arch: "arm64" },
+  { label: "macosx/x86_64", platform: "macos", sdk: "macosx", arch: "x86_64" },
 ];
 
 // Xcode processes the bundle's Info.plist outside a concrete compiler architecture.
@@ -150,6 +172,7 @@ function applySettings(base: Record<string, string>, next: Record<string, string
 function cloneEvaluation(evaluation: BuildSettingsEvaluation): BuildSettingsEvaluation {
   return {
     settings: { ...evaluation.settings },
+    mayAssignEntitlements: evaluation.mayAssignEntitlements,
     settingTaints: cloneSettingTaints(evaluation.settingTaints),
     globalTaints: [...evaluation.globalTaints],
     globalTaintOverrides: new Set(evaluation.globalTaintOverrides),
@@ -395,6 +418,9 @@ async function readXCConfigSettings(
   let evaluation = cloneEvaluation(inherited);
 
   for (const operation of parseXCConfigOperations(content)) {
+    if ("key" in operation && operation.key === "CODE_SIGN_ENTITLEMENTS") {
+      evaluation.mayAssignEntitlements = true;
+    }
     if (operation.kind === "unresolved-continuation") {
       taintInspectedSettings(evaluation, "unsupported xcconfig continuation");
       addDiagnosticOnce(diagnostics, {
@@ -797,6 +823,17 @@ async function settingsForConfiguration(
       });
     }
   }
+  // Inspect raw keys before coercing values or filtering conditions. An
+  // unsupported platform can still own an entitlements file.
+  if (
+    configuration.buildSettings !== undefined &&
+    (!isRecord(configuration.buildSettings) ||
+      Object.keys(configuration.buildSettings).some((key) =>
+        /^CODE_SIGN_ENTITLEMENTS(?:\[|$)/.test(key),
+      ))
+  ) {
+    evaluation.mayAssignEntitlements = true;
+  }
   applyInlineBuildSettings(
     evaluation,
     asStringRecord(configuration.buildSettings),
@@ -807,9 +844,20 @@ async function settingsForConfiguration(
 }
 
 export interface InspectedTargetConfiguration {
+  /** Every inspected layer proves there is no entitlement assignment, even in inactive contexts. */
+  entitlementsAssignmentAbsent: boolean;
   model: IOSBuildConfiguration;
   entitlementContexts: EntitlementBuildContext[];
   sourceFilters: IOSSourceFilterContext[];
+  /** Modeled native platforms declared or inferred for this configuration. */
+  supportedPlatforms: IOSNativePlatform[];
+  /** Declared Xcode platforms that this CLI does not model for automatic setup. */
+  unmodeledPlatforms: string[];
+  /** Undefined when resolved platform evidence excludes iOS and macOS. */
+  platform?: IOSNativePlatform;
+  /** True only when concrete build settings prove this configuration's platform. */
+  platformEvidenceComplete: boolean;
+  /** Compatibility flag for existing iOS-only mutation planners. */
   isIOS: boolean;
 }
 
@@ -846,6 +894,7 @@ function resolveSettingAcrossContexts(
   targetName: string,
   configurationName: string,
   diagnostics: IOSDiagnostic[],
+  reportConflict = true,
 ): IOSValueResolution {
   const variants = contexts.map(({ context, evaluation, builtins }) => ({
     context,
@@ -858,6 +907,7 @@ function resolveSettingAcrossContexts(
     targetName,
     configurationName,
     diagnostics,
+    reportConflict,
   );
 }
 
@@ -868,21 +918,24 @@ function resolveContextVariants(
   targetName: string,
   configurationName: string,
   diagnostics: IOSDiagnostic[],
+  reportConflict = true,
 ): IOSValueResolution {
   const signatures = new Set(variants.map(({ resolution }) => resolutionSignature(resolution)));
   if (signatures.size <= 1)
     return variants[0]?.resolution ?? { state: "missing", evidence: [evidence] };
 
-  addDiagnosticOnce(diagnostics, {
-    code: "xcode.conflicting-build-setting",
-    severity: "warning",
-    message: `${targetName} ${configurationName} has different ${key} values by SDK and architecture: ${variants
-      .map(({ context, resolution }) => `${context.label}=${resolutionDisplay(resolution)}`)
-      .join(", ")}`,
-    remedy:
-      "Make device and simulator architecture values consistent or select the intended SDK and architecture explicitly.",
-    evidence: variants.flatMap(({ resolution }) => resolution.evidence),
-  });
+  if (reportConflict) {
+    addDiagnosticOnce(diagnostics, {
+      code: "xcode.conflicting-build-setting",
+      severity: "warning",
+      message: `${targetName} ${configurationName} has different ${key} values by SDK and architecture: ${variants
+        .map(({ context, resolution }) => `${context.label}=${resolutionDisplay(resolution)}`)
+        .join(", ")}`,
+      remedy:
+        "Make device and simulator architecture values consistent or select the intended SDK and architecture explicitly.",
+      evidence: variants.flatMap(({ resolution }) => resolution.evidence),
+    });
+  }
 
   return {
     state: "unresolved",
@@ -903,6 +956,7 @@ function missingConfiguration(
   root: string,
   projectPath: string,
   configurationId: string,
+  platform: IOSNativePlatform = "ios",
 ): InspectedTargetConfiguration {
   const evidence: IOSSourceEvidence = {
     path: relativeIOSPath(root, resolve(projectPath, "project.pbxproj")),
@@ -918,11 +972,16 @@ function missingConfiguration(
       entitlementsPath: missing,
       deploymentTarget: missing,
     },
+    entitlementsAssignmentAbsent: false,
     entitlementContexts: [],
     sourceFilters: [],
-    // The product type identifies this as an application target, but the
-    // dangling configuration does not contain enough evidence to exclude iOS.
-    isIOS: true,
+    supportedPlatforms: [],
+    unmodeledPlatforms: [],
+    // Preserve the selected fail-closed platform view for a dangling
+    // application configuration whose evidence cannot be resolved.
+    platform,
+    platformEvidenceComplete: false,
+    isIOS: platform === "ios",
   };
 }
 
@@ -936,6 +995,8 @@ export async function inspectTargetBuildConfigurations(options: {
   objects: PbxObjects;
   parents: PbxParentIndex;
   diagnostics: IOSDiagnostic[];
+  /** Resolve settings through one platform view while preserving all declared platforms. */
+  platform?: IOSNativePlatform;
 }): Promise<InspectedTargetConfiguration[]> {
   const {
     root,
@@ -947,6 +1008,7 @@ export async function inspectTargetBuildConfigurations(options: {
     objects,
     parents,
     diagnostics,
+    platform: requestedPlatform,
   } = options;
   const projectDirectory = dirname(projectPath);
   const pbxprojRelativePath = relativeIOSPath(root, resolve(projectPath, "project.pbxproj"));
@@ -977,7 +1039,9 @@ export async function inspectTargetBuildConfigurations(options: {
   )) {
     const targetConfig = targetReference.object;
     if (!targetConfig) {
-      inspected.push(missingConfiguration(root, projectPath, targetReference.id));
+      inspected.push(
+        missingConfiguration(root, projectPath, targetReference.id, requestedPlatform ?? "ios"),
+      );
       continue;
     }
     const name = asString(targetConfig.name) ?? "Unnamed";
@@ -1045,35 +1109,181 @@ export async function inspectTargetBuildConfigurations(options: {
       });
     }
 
-    const deviceContext = evaluatedContexts[0];
-    if (!deviceContext) continue;
+    if (evaluatedContexts.length === 0) continue;
     const evidence = (setting: string): IOSSourceEvidence => ({
       path: pbxprojRelativePath,
       objectId: targetId,
       keyPath: `buildConfigurations.${name}.buildSettings.${setting}`,
     });
-    const supportedPlatformsResolution = resolveSettingAcrossContexts(
+    // Select the automation platform without emitting cross-platform
+    // conflicts. Once selected, every inspected setting is resolved only
+    // across that platform's device/architecture contexts.
+    const initialSupportedPlatformsResolution = resolveSettingAcrossContexts(
       "SUPPORTED_PLATFORMS",
       evaluatedContexts,
       evidence("SUPPORTED_PLATFORMS"),
       targetName,
       name,
       diagnostics,
+      false,
     );
     const supportedPlatforms =
-      supportedPlatformsResolution.state === "resolved" ? supportedPlatformsResolution.value : "";
+      initialSupportedPlatformsResolution.state === "resolved"
+        ? initialSupportedPlatformsResolution.value
+        : "";
+    const initialMacCatalystResolution = resolveSettingAcrossContexts(
+      "SUPPORTS_MACCATALYST",
+      evaluatedContexts,
+      evidence("SUPPORTS_MACCATALYST"),
+      targetName,
+      name,
+      diagnostics,
+      false,
+    );
+    const normalizedMacCatalystValue =
+      initialMacCatalystResolution.state === "resolved"
+        ? initialMacCatalystResolution.value.trim().toUpperCase()
+        : undefined;
+    const macCatalystResolution: IOSValueResolution =
+      initialMacCatalystResolution.state === "resolved" &&
+      normalizedMacCatalystValue !== "YES" &&
+      normalizedMacCatalystValue !== "NO"
+        ? {
+            state: "unresolved",
+            raw: initialMacCatalystResolution.value,
+            missingVariables: ["invalid Boolean value"],
+            evidence: initialMacCatalystResolution.evidence,
+          }
+        : initialMacCatalystResolution;
     const supportedPlatformTokens = new Set(
       supportedPlatforms
         .toLowerCase()
         .split(/\s+/)
         .filter((value) => value !== ""),
     );
-    const hasModeledIOSPlatform =
+    const hasIOSPlatform =
       supportedPlatformTokens.has("iphoneos") || supportedPlatformTokens.has("iphonesimulator");
-    const activeContexts =
-      supportedPlatformsResolution.state === "resolved" && hasModeledIOSPlatform
-        ? evaluatedContexts.filter(({ context }) => supportedPlatformTokens.has(context.sdk))
-        : evaluatedContexts;
+    const hasMacOSPlatform = supportedPlatformTokens.has("macosx");
+    const declaredPlatforms: IOSNativePlatform[] = [
+      ...(hasIOSPlatform ? (["ios"] as const) : []),
+      ...(hasMacOSPlatform ? (["macos"] as const) : []),
+    ];
+    const supportedPlatform: IOSNativePlatform | undefined =
+      requestedPlatform ?? (hasIOSPlatform ? "ios" : hasMacOSPlatform ? "macos" : undefined);
+    const platformCandidateContexts = supportedPlatform
+      ? evaluatedContexts.filter(({ context }) => context.platform === supportedPlatform)
+      : evaluatedContexts;
+    const initialSDKRootResolution = resolveSettingAcrossContexts(
+      "SDKROOT",
+      platformCandidateContexts,
+      evidence("SDKROOT"),
+      targetName,
+      name,
+      diagnostics,
+      false,
+    );
+    const initialSDKRoot =
+      initialSDKRootResolution.state === "resolved"
+        ? initialSDKRootResolution.value.toLowerCase()
+        : "";
+    const sdkRootIsAuto = initialSDKRoot === "auto";
+    const hasIOSSDK = /iphone(?:os|simulator)/.test(initialSDKRoot);
+    const hasMacOSSDK = initialSDKRoot.includes("macosx");
+    const hasIOSCapabilityEvidence = hasIOSPlatform || hasIOSSDK;
+    const supportsMacCatalyst =
+      hasIOSCapabilityEvidence &&
+      macCatalystResolution.state === "resolved" &&
+      normalizedMacCatalystValue === "YES";
+    const unmodeledPlatforms = [
+      ...new Set([
+        ...[...supportedPlatformTokens].filter(
+          (token) => !MODELED_SUPPORTED_PLATFORM_TOKENS.has(token),
+        ),
+        ...(supportsMacCatalyst ? ["maccatalyst"] : []),
+      ]),
+    ].sort();
+    const hasUnknownPlatformEvidence =
+      initialSDKRootResolution.state === "unresolved" ||
+      initialSupportedPlatformsResolution.state === "unresolved" ||
+      (hasIOSCapabilityEvidence && macCatalystResolution.state === "unresolved");
+    const hasResolvedUnsupportedEvidence =
+      (initialSDKRootResolution.state === "resolved" &&
+        initialSDKRoot !== "" &&
+        !sdkRootIsAuto &&
+        !hasIOSSDK &&
+        !hasMacOSSDK) ||
+      (initialSupportedPlatformsResolution.state === "resolved" &&
+        supportedPlatforms !== "" &&
+        !hasIOSPlatform &&
+        !hasMacOSPlatform);
+    // Existing iOS-capable multiplatform targets intentionally retain the iOS
+    // setup path by default. A capability planner may request a macOS view;
+    // unknown or contradictory evidence stays incomplete so mutations refuse.
+    const supportedClassification: IOSNativePlatform | "unsupported" | undefined =
+      initialSupportedPlatformsResolution.state === "resolved" && supportedPlatforms !== ""
+        ? requestedPlatform
+          ? declaredPlatforms.includes(requestedPlatform)
+            ? requestedPlatform
+            : "unsupported"
+          : (supportedPlatform ?? "unsupported")
+        : undefined;
+    const sdkClassification: IOSNativePlatform | "unsupported" | undefined =
+      initialSDKRootResolution.state === "resolved" && initialSDKRoot !== "" && !sdkRootIsAuto
+        ? hasIOSSDK
+          ? "ios"
+          : hasMacOSSDK
+            ? "macos"
+            : "unsupported"
+        : undefined;
+    const concreteClassifications = new Set(
+      [supportedClassification, sdkClassification].filter(
+        (value): value is IOSNativePlatform | "unsupported" => value !== undefined,
+      ),
+    );
+    const hasMixedUnmodeledPlatforms =
+      (declaredPlatforms.length > 0 && unmodeledPlatforms.length > 0) || supportsMacCatalyst;
+    const platformEvidenceComplete = requestedPlatform
+      ? concreteClassifications.size === 1 &&
+        concreteClassifications.has(requestedPlatform) &&
+        !hasUnknownPlatformEvidence &&
+        !hasMixedUnmodeledPlatforms
+      : concreteClassifications.size === 1 &&
+        !hasUnknownPlatformEvidence &&
+        !hasMixedUnmodeledPlatforms;
+    const platform: IOSNativePlatform | undefined = requestedPlatform
+      ? requestedPlatform
+      : concreteClassifications.has("ios")
+        ? "ios"
+        : concreteClassifications.has("macos")
+          ? "macos"
+          : hasUnknownPlatformEvidence
+            ? (requestedPlatform ?? "ios")
+            : concreteClassifications.has("unsupported")
+              ? undefined
+              : !hasResolvedUnsupportedEvidence
+                ? (requestedPlatform ?? "ios")
+                : undefined;
+    const supportedNativePlatforms: IOSNativePlatform[] = [
+      ...declaredPlatforms,
+      ...(sdkClassification === "ios" || sdkClassification === "macos" ? [sdkClassification] : []),
+    ].filter((value, index, values): value is IOSNativePlatform => values.indexOf(value) === index);
+    const platformContexts = platform
+      ? evaluatedContexts.filter(({ context }) => context.platform === platform)
+      : evaluatedContexts;
+    const hasExplicitContextFilter =
+      initialSupportedPlatformsResolution.state === "resolved" &&
+      platformContexts.some(({ context }) => supportedPlatformTokens.has(context.sdk));
+    const activeContexts = hasExplicitContextFilter
+      ? platformContexts.filter(({ context }) => supportedPlatformTokens.has(context.sdk))
+      : platformContexts;
+    const supportedPlatformsResolution = resolveSettingAcrossContexts(
+      "SUPPORTED_PLATFORMS",
+      activeContexts,
+      evidence("SUPPORTED_PLATFORMS"),
+      targetName,
+      name,
+      diagnostics,
+    );
     const sdkRootResolution = resolveSettingAcrossContexts(
       "SDKROOT",
       activeContexts,
@@ -1082,32 +1292,16 @@ export async function inspectTargetBuildConfigurations(options: {
       name,
       diagnostics,
     );
+    const deploymentTargetSetting =
+      platform === "macos" ? "MACOSX_DEPLOYMENT_TARGET" : "IPHONEOS_DEPLOYMENT_TARGET";
     const deploymentTarget = resolveSettingAcrossContexts(
-      "IPHONEOS_DEPLOYMENT_TARGET",
+      deploymentTargetSetting,
       activeContexts,
-      evidence("IPHONEOS_DEPLOYMENT_TARGET"),
+      evidence(deploymentTargetSetting),
       targetName,
       name,
       diagnostics,
     );
-    const sdkRoot = sdkRootResolution.state === "resolved" ? sdkRootResolution.value : "";
-    const hasIOSSDK = sdkRootResolution.state === "resolved" && sdkRoot.includes("iphoneos");
-    const hasIOSPlatform =
-      supportedPlatformsResolution.state === "resolved" &&
-      /iphone(?:os|simulator)/.test(supportedPlatforms);
-    const hasUnknownPlatformEvidence =
-      sdkRootResolution.state === "unresolved" ||
-      supportedPlatformsResolution.state === "unresolved";
-    const hasResolvedNonIOSEvidence =
-      (sdkRootResolution.state === "resolved" && sdkRoot !== "" && !hasIOSSDK) ||
-      (supportedPlatformsResolution.state === "resolved" &&
-        supportedPlatforms !== "" &&
-        !hasIOSPlatform);
-    // SDKROOT and SUPPORTED_PLATFORMS describe the target platform directly.
-    // IPHONEOS_DEPLOYMENT_TARGET can remain as a stale setting on a non-iOS
-    // target, so it must not override resolved platform evidence.
-    const explicitlyNonIOS =
-      !hasUnknownPlatformEvidence && !hasIOSSDK && !hasIOSPlatform && hasResolvedNonIOSEvidence;
 
     // Product settings must agree with Xcode's architecture-independent packaging phase.
     const productContexts = [
@@ -1155,15 +1349,44 @@ export async function inspectTargetBuildConfigurations(options: {
         diagnostics,
       ),
       deploymentTarget,
+      ...(platform === "macos"
+        ? {
+            appSandbox: resolveSettingAcrossContexts(
+              "ENABLE_APP_SANDBOX",
+              productContexts,
+              evidence("ENABLE_APP_SANDBOX"),
+              targetName,
+              name,
+              diagnostics,
+            ),
+            outgoingNetworkConnections: resolveSettingAcrossContexts(
+              "ENABLE_OUTGOING_NETWORK_CONNECTIONS",
+              productContexts,
+              evidence("ENABLE_OUTGOING_NETWORK_CONNECTIONS"),
+              targetName,
+              name,
+              diagnostics,
+            ),
+          }
+        : {}),
     };
     const relevantSettings: Array<[string, IOSValueResolution]> = [
       ["PRODUCT_BUNDLE_IDENTIFIER", model.bundleIdentifier],
       ["DEVELOPMENT_TEAM", model.developmentTeam],
       ["CODE_SIGN_ENTITLEMENTS", model.entitlementsPath],
-      ["IPHONEOS_DEPLOYMENT_TARGET", model.deploymentTarget],
+      [deploymentTargetSetting, model.deploymentTarget],
       ["SDKROOT", sdkRootResolution],
       ["SUPPORTED_PLATFORMS", supportedPlatformsResolution],
     ];
+    if (hasIOSCapabilityEvidence) {
+      relevantSettings.push(["SUPPORTS_MACCATALYST", macCatalystResolution]);
+    }
+    if (platform === "macos") {
+      relevantSettings.push(
+        ["ENABLE_APP_SANDBOX", model.appSandbox!],
+        ["ENABLE_OUTGOING_NETWORK_CONNECTIONS", model.outgoingNetworkConnections!],
+      );
+    }
     for (const [setting, resolution] of relevantSettings) {
       if (resolution.state !== "unresolved") continue;
       addDiagnosticOnce(diagnostics, {
@@ -1177,6 +1400,12 @@ export async function inspectTargetBuildConfigurations(options: {
 
     inspected.push({
       model,
+      entitlementsAssignmentAbsent: [...evaluatedContexts, ...packagingContexts].every(
+        ({ evaluation }) =>
+          !evaluation.mayAssignEntitlements &&
+          evaluation.globalTaints.length === 0 &&
+          !evaluation.settingTaints.has("CODE_SIGN_ENTITLEMENTS"),
+      ),
       sourceFilters: activeContexts.map(({ evaluation, builtins }) => ({
         excluded: resolveSetting(
           "EXCLUDED_SOURCE_FILE_NAMES",
@@ -1201,7 +1430,11 @@ export async function inspectTargetBuildConfigurations(options: {
         globalTaintOverrides: new Set(evaluation.globalTaintOverrides),
         builtins: { ...builtins },
       })),
-      isIOS: !explicitlyNonIOS,
+      supportedPlatforms: supportedNativePlatforms,
+      unmodeledPlatforms,
+      platform,
+      platformEvidenceComplete,
+      isIOS: platform === "ios",
     });
   }
 

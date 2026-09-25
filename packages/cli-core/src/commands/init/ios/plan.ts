@@ -7,13 +7,14 @@ import type {
   IOSSourceEvidence,
   IOSValueResolution,
 } from "./types.ts";
-import { clerkKitUIInstallDecision } from "./products.ts";
+import { clerkKitUIInstallDecision, type ClerkKitUIInstallDecision } from "./products.ts";
 import type { IOSDirectConfigPlan } from "./direct-config.ts";
 import { associatedDomainMatches, type IOSAssociatedDomainPlan } from "./associated-domain.ts";
 import type { IOSAppleEntitlementPlan } from "./apple-entitlement.ts";
 import type { IOSPrebuiltAuthPlan } from "./prebuilt-auth.ts";
 import type { IOSSDKInstallPlan } from "./install-sdk.ts";
 import { normalizeBundleIdentifierIdentity } from "../../../lib/apple-native-identity.ts";
+import type { MacOSNetworkCapabilityPlan } from "./macos-network.ts";
 
 const NATIVE_APPLICATIONS_URL = "https://dashboard.clerk.com/~/native-applications";
 const QUICKSTART_URL = "https://clerk.com/docs/ios/getting-started/quickstart";
@@ -30,6 +31,26 @@ function selectedTarget(inspection: IOSProjectInspectionResult): IOSAppTarget | 
 
 function selectedEvidence(target: IOSAppTarget | undefined): IOSSourceEvidence[] {
   return target ? [{ path: target.projectPath, objectId: target.id }] : [];
+}
+
+export function selectedTargetPlatformBlockerDescription(
+  inspection: IOSProjectInspectionResult,
+  target: IOSAppTarget,
+): string {
+  const diagnostic = inspection.diagnostics.find(
+    (candidate) =>
+      candidate.code === "xcode.unresolved-target-platform" &&
+      candidate.evidence.some(
+        (evidence) =>
+          evidence.objectId === target.id &&
+          (evidence.path === target.projectPath ||
+            evidence.path.startsWith(`${target.projectPath}/`)),
+      ),
+  );
+  if (diagnostic) {
+    return `${diagnostic.message}${diagnostic.remedy ? ` ${diagnostic.remedy}` : ""}`;
+  }
+  return `${target.name} was found, but its platform is not proven consistently across every build configuration. Resolve SDKROOT and SUPPORTED_PLATFORMS before Clerk changes the project or remote application.`;
 }
 
 function distinctResolvedBundleIdentifiers(target: IOSAppTarget): string[] {
@@ -63,6 +84,10 @@ function step(
 }
 
 export interface BuildIOSSetupPlanOptions {
+  /** Aggregate product choice after inspecting every supported Apple platform view. */
+  productDecision?: ClerkKitUIInstallDecision;
+  /** Fail-closed target-wide blockers shared by init, dry-run, and Doctor. */
+  platformCompatibilityBlockers?: readonly string[];
   /** Strict SDK/package compatibility from the same planner used by apply. */
   sdkInstallPlan?: Pick<IOSSDKInstallPlan, "status" | "blockers">;
   /** Strict, publishable-key-redacted Swift source readiness from the apply planner. */
@@ -79,6 +104,11 @@ export interface BuildIOSSetupPlanOptions {
   >;
   /** Optional native Apple capability requested or already present locally. */
   appleEntitlementPlan?: Pick<IOSAppleEntitlementPlan, "status" | "actions" | "blockers">;
+  /** App Sandbox network access required by a native macOS target. */
+  macOSNetworkCapabilityPlan?: Pick<
+    MacOSNetworkCapabilityPlan,
+    "status" | "actions" | "blockers" | "files"
+  >;
   /** Strict source readiness for the optional prebuilt AuthView scaffold. */
   prebuiltAuthPlan?: Pick<IOSPrebuiltAuthPlan, "status" | "sourcePath" | "actions" | "blockers">;
   /** Whether this invocation explicitly selected the optional AuthView scaffold. */
@@ -91,44 +121,85 @@ export function buildIOSSetupPlan(
 ): IOSSetupPlan {
   const target = selectedTarget(inspection);
   const targetEvidence = selectedEvidence(target);
+  const platformBlocker =
+    target && !target.platformEvidenceComplete
+      ? selectedTargetPlatformBlockerDescription(inspection, target)
+      : undefined;
   const steps: IOSSetupStep[] = [];
+  const platform =
+    target?.platform ??
+    (inspection.platform === "ios" || inspection.platform === "macos"
+      ? inspection.platform
+      : undefined);
+  const selectTargetTitle =
+    platform === "macos"
+      ? "Select the macOS application target"
+      : platform === "ios"
+        ? "Select the iOS application target"
+        : "Select the native Apple application target";
 
   steps.push(
     step(
       "select-target",
-      "Select the iOS application target",
-      target ? "satisfied" : "blocked",
-      target
-        ? `Using ${target.name} in ${target.projectPath}.`
-        : inspection.selection.state === "ambiguous"
-          ? "More than one iOS app target is eligible. Rerun with --target <name-or-id>; the CLI will not guess."
-          : inspection.selection.state === "not-found"
-            ? `The requested target "${inspection.selection.requested}" was not found.${inspection.selection.candidates.length > 0 ? ` Available targets: ${inspection.selection.candidates.join(", ")}.` : ""}`
-            : "No usable iOS application target was found.",
+      selectTargetTitle,
+      target?.platformEvidenceComplete ? "satisfied" : "blocked",
+      target && !target.platformEvidenceComplete
+        ? platformBlocker!
+        : target
+          ? `Using ${target.name} in ${target.projectPath}.`
+          : inspection.selection.state === "ambiguous"
+            ? "More than one native Apple app target is eligible. Rerun with --target <name-or-id>; the CLI will not guess."
+            : inspection.selection.state === "not-found"
+              ? `The requested target "${inspection.selection.requested}" was not found.${
+                  inspection.selection.candidates.length > 0
+                    ? ` Available targets: ${inspection.selection.candidates.join(", ")}.`
+                    : ""
+                }`
+              : "No usable iOS or macOS application target was found.",
       targetEvidence,
     ),
   );
 
-  if (!target) {
+  if (!target || !target.platformEvidenceComplete) {
     const blockedSteps: Array<[IOSSetupStep["id"], string]> = [
-      ["install-clerk-sdk", "Install Clerk's iOS SDK"],
+      [
+        "install-clerk-sdk",
+        platform === "macos"
+          ? "Install Clerk's Swift SDK"
+          : platform === "ios"
+            ? "Install Clerk's iOS SDK"
+            : "Install Clerk's native SDK",
+      ],
       ["configure-publishable-key", "Configure Clerk"],
       ["inject-clerk-environment", "Inject Clerk into SwiftUI"],
-      ["register-native-application", "Register the native application"],
-      ["add-associated-domain", "Add the associated domain"],
+      [
+        "register-native-application",
+        platform === "macos"
+          ? "Register the macOS application"
+          : platform === "ios"
+            ? "Register the iOS application"
+            : "Register the native application",
+      ],
       ["add-authentication-flow", "Add an authentication flow"],
       ["verify-integration", "Verify the integration"],
     ];
     for (const [id, title] of blockedSteps) {
       steps.push(
-        step(id, title, "blocked", "Select an iOS application target before planning this step."),
+        step(
+          id,
+          title,
+          "blocked",
+          target
+            ? "Clerk cannot safely automate this target. See the target-selection step and platform diagnostic above."
+            : "Select a native Apple application target before planning this step.",
+        ),
       );
     }
     return finishPlan(inspection, steps);
   }
 
   const usesClerkKitUI = target.swift.importsClerkKitUI.length > 0;
-  const productDecision = clerkKitUIInstallDecision(target);
+  const productDecision = options.productDecision ?? clerkKitUIInstallDecision(target);
   const includeClerkKitUI =
     productDecision === "prebuilt" ||
     options.prebuiltAuthSelected === true ||
@@ -161,16 +232,26 @@ export function buildIOSSetupPlan(
   steps.push(
     step(
       "install-clerk-sdk",
-      "Install Clerk's iOS SDK for the selected target",
+      target.platform === "macos"
+        ? "Install Clerk's Swift SDK for the selected target"
+        : "Install Clerk's iOS SDK for the selected target",
       sdkStatus,
       strictSDKBlocked
-        ? `The selected Clerk iOS SDK cannot support this approved setup safely: ${strictSDKBlocker ?? "Update the clerk-ios package and rerun the plan."}`
+        ? `The selected Clerk ${target.platform === "macos" ? "Swift" : "iOS"} SDK cannot support this approved setup safely: ${
+            strictSDKBlocker ?? "Update the clerk-ios package and rerun the plan."
+          }`
         : productDecision === "unknown"
           ? `Swift source membership for ${target.name} is incomplete, so the CLI cannot safely choose between the prebuilt ClerkKitUI path and a core-only custom flow. Resolve the source-membership diagnostics or make the product choice manually.`
           : sdkStatus === "satisfied"
-            ? `ClerkKit is linked to ${target.name}${target.packages.clerkKitUI === "linked" ? "; ClerkKitUI is linked too" : ""}.`
+            ? `ClerkKit is linked to ${target.name}${
+                target.packages.clerkKitUI === "linked" ? "; ClerkKitUI is linked too" : ""
+              }.`
             : sdkStatus === "review"
-              ? `ClerkKit${target.packages.clerkKitUI === "linked" ? " and ClerkKitUI are" : " is"} linked to ${target.name}, but the package reference could not be verified as clerk-ios. Confirm the linked products come from Clerk's remote or local package.`
+              ? `ClerkKit${
+                  target.packages.clerkKitUI === "linked" ? " and ClerkKitUI are" : " is"
+                } linked to ${
+                  target.name
+                }, but the package reference could not be verified as clerk-ios. Confirm the linked products come from Clerk's remote or local package.`
               : includeClerkKitUI && target.packages.clerkKitUI !== "linked"
                 ? usesClerkKitUI
                   ? `${target.name} imports ClerkKitUI, but that product is not linked to the target. Link both ClerkKit and ClerkKitUI from the clerk-ios Swift package.`
@@ -236,7 +317,10 @@ export function buildIOSSetupPlan(
       publishableKeyBlocked
         ? "The inline Clerk publishable key is malformed. Replace it before relying on Clerk.configure(...)."
         : directConfigBlocked
-          ? `Automatic direct configuration stopped because the selected Swift startup source is not safe to edit: ${directConfigBlocker ?? "Review the selected target's @main App initializer and root Scene manually."}`
+          ? `Automatic direct configuration stopped because the selected Swift startup source is not safe to edit: ${
+              directConfigBlocker ??
+              "Review the selected target's @main App initializer and root Scene manually."
+            }`
           : configured
             ? target.swift.configureCalls.length > 1
               ? "More than one Clerk.configure(...) call is present. Confirm which call configures the shipping app before continuing."
@@ -250,7 +334,10 @@ export function buildIOSSetupPlan(
             : !target.swift.evidenceComplete
               ? "No Clerk.configure(...) call was found in the safely inspected source subset. Complete source membership inspection or confirm startup setup manually."
               : directConfigAutomationReady
-                ? `clerk init can add Clerk.configure(publishableKey:) directly to ${options.directConfigPlan?.sourcePath ?? "the single shipping @main App initializer"} with the selected application's development key. The preview and result keep the value redacted.`
+                ? `clerk init can add Clerk.configure(publishableKey:) directly to ${
+                    options.directConfigPlan?.sourcePath ??
+                    "the single shipping @main App initializer"
+                  } with the selected application's development key. The preview and result keep the value redacted.`
                 : "Select a Clerk application and call Clerk.configure(publishableKey:) with its development publishable key directly in the selected target's @main App initializer.",
       target.swift.configureCalls,
       undefined,
@@ -293,14 +380,18 @@ export function buildIOSSetupPlan(
       injected
         ? "Clerk.shared is injected into the proven shipping WindowGroup root."
         : directEnvironmentBlocked
-          ? `Automatic SwiftUI environment injection stopped because the selected startup source is not safe to edit: ${directConfigBlocker ?? "Review the selected target's WindowGroup root manually."}`
+          ? `Automatic SwiftUI environment injection stopped because the selected startup source is not safe to edit: ${
+              directConfigBlocker ?? "Review the selected target's WindowGroup root manually."
+            }`
           : hasUnprovenInjection
             ? "A Clerk.shared environment modifier exists in target source, but it is not proven on the shipping WindowGroup root. Confirm the mounted root manually."
             : requiresSwiftUIEnvironment && !provenAppRoot
               ? "The shipping SwiftUI root could not be proven structurally. Confirm that its mounted root injects Clerk.shared."
               : target.swift.evidenceComplete && requiresSwiftUIEnvironment
                 ? directEnvironmentAutomationReady
-                  ? `clerk init can add \`.environment(Clerk.shared)\` to the proven WindowGroup root in ${options.directConfigPlan?.sourcePath ?? "the single shipping @main App source"}.`
+                  ? `clerk init can add \`.environment(Clerk.shared)\` to the proven WindowGroup root in ${
+                      options.directConfigPlan?.sourcePath ?? "the single shipping @main App source"
+                    }.`
                   : "At the app's root view, add `.environment(Clerk.shared)` so Clerk-aware views receive the configured client."
                 : requiresSwiftUIEnvironment
                   ? "Clerk.shared injection was not found in the safely inspected source subset. Confirm the shipping root manually."
@@ -328,7 +419,9 @@ export function buildIOSSetupPlan(
   steps.push(
     step(
       "register-native-application",
-      "Register the iOS app in Clerk Dashboard",
+      target.platform === "macos"
+        ? "Register the macOS app in Clerk Dashboard"
+        : "Register the iOS app in Clerk Dashboard",
       registrationBlocked ? "blocked" : "review",
       registrationBlocked
         ? "A single Bundle ID could not be resolved across build configurations. Make it explicit or consistent before registering the app."
@@ -352,7 +445,9 @@ export function buildIOSSetupPlan(
         ? "Add the native Sign in with Apple entitlement with the exact Default value. After authentication, clerk init will separately audit and enable the matching Clerk Apple connection without requesting hosted/web Apple credentials."
         : options.appleEntitlementPlan.status === "satisfied"
           ? "The selected target has the exact native Sign in with Apple entitlement. Regular clerk init will verify the matching Clerk Apple connection after authentication."
-          : `Native Sign in with Apple needs review: ${options.appleEntitlementPlan.blockers.map((item) => item.message).join(" ")}`;
+          : `Native Sign in with Apple needs review: ${options.appleEntitlementPlan.blockers
+              .map((item) => item.message)
+              .join(" ")}`;
     steps.push(
       step(
         "enable-native-apple",
@@ -362,6 +457,34 @@ export function buildIOSSetupPlan(
         target.configurations.flatMap((configuration) => configuration.entitlementsPath.evidence),
         [{ kind: "documentation", url: NATIVE_APPLE_URL }],
         options.appleEntitlementPlan.status === "ready",
+      ),
+    );
+  }
+
+  if (target.supportedPlatforms.includes("macos") && options.macOSNetworkCapabilityPlan) {
+    const networkPlan = options.macOSNetworkCapabilityPlan;
+    const networkStatus: IOSSetupStepStatus =
+      networkPlan.status === "satisfied"
+        ? "satisfied"
+        : networkPlan.status === "ready"
+          ? "required"
+          : "blocked";
+    const networkDescription =
+      networkPlan.status === "satisfied"
+        ? "The selected macOS target can make outgoing network connections when App Sandbox is enabled."
+        : networkPlan.status === "ready"
+          ? networkPlan.actions.join(" ")
+          : networkPlan.blockers.map((item) => item.message).join(" ") ||
+            "Outgoing network access could not be verified for the selected macOS target.";
+    steps.push(
+      step(
+        "enable-macos-network",
+        "Allow outgoing network access for macOS",
+        networkStatus,
+        networkDescription,
+        networkPlan.files.map((file) => ({ path: file.path })),
+        undefined,
+        networkPlan.status === "ready",
       ),
     );
   }
@@ -406,13 +529,19 @@ export function buildIOSSetupPlan(
     associatedDomainPlan?.status === "ready"
       ? associatedDomainPlan.expectedDomain
         ? associatedDomainPlan.missingEntitlementsSettings
-          ? `Create and attach ${associatedDomainPlan.files[0]?.path ?? "an entitlements file"} only to iPhone and iPad builds, then add ${associatedDomainPlan.expectedDomain}. clerk init can apply this safely.`
+          ? `Create and attach ${
+              associatedDomainPlan.files[0]?.path ?? "an entitlements file"
+            } only to iPhone and iPad builds, then add ${
+              associatedDomainPlan.expectedDomain
+            }. clerk init can apply this safely.`
           : `Add ${associatedDomainPlan.expectedDomain} to every selected-target entitlements configuration. clerk init can apply the exact existing-file edits safely.`
         : associatedDomainPlan.missingEntitlementsSettings
           ? `The selected target has one safe synchronized destination for a new entitlements file. clerk init will create and attach it only to iPhone and iPad builds, then add the linked development application's exact webcredentials host without exposing the publishable key.`
           : "The existing selected-target entitlements files are safe to edit. clerk init will derive the exact webcredentials host from the linked development application after authentication and add it without exposing the publishable key."
       : associatedDomainPlan?.status === "blocked"
-        ? `Automatic Associated Domains setup needs review: ${associatedDomainPlan.blockers.map((blocker) => blocker.message).join(" ")}`
+        ? `Automatic Associated Domains setup needs review: ${associatedDomainPlan.blockers
+            .map((blocker) => blocker.message)
+            .join(" ")}`
         : expectedDomain && !expectedDomainIsSelectedTargetRuntime
           ? domainPresent
             ? `${expectedDomain} matches every inspected entitlements configuration, but the key is only available to copy and is not proven to be the selected target's runtime key. Confirm the runtime key before treating this domain as final.`
@@ -424,17 +553,19 @@ export function buildIOSSetupPlan(
                 ? `Some associated-domain values use unresolved build settings. Confirm they expand to ${expectedDomain} in every selected-target configuration.`
                 : `Enable Associated Domains for ${target.name} and add ${expectedDomain} to every selected-target entitlements configuration.`
               : "A valid local publishable key is needed to derive the exact `webcredentials:` Frontend API host. Add the key, then rerun this plan.";
-  steps.push(
-    step(
-      "add-associated-domain",
-      "Add Clerk's associated domain",
-      associatedDomainStatus,
-      associatedDomainDescription,
-      target.configurations.flatMap((configuration) => configuration.entitlementsPath.evidence),
-      undefined,
-      associatedDomainPlan?.status === "ready",
-    ),
-  );
+  if (target.platform === "ios") {
+    steps.push(
+      step(
+        "add-associated-domain",
+        "Add Clerk's associated domain",
+        associatedDomainStatus,
+        associatedDomainDescription,
+        target.configurations.flatMap((configuration) => configuration.entitlementsPath.evidence),
+        undefined,
+        associatedDomainPlan?.status === "ready",
+      ),
+    );
+  }
 
   const hasAuthFlow = target.swift.authFlowReferences.length > 0;
   const prebuiltAuthReady = options.prebuiltAuthPlan?.status === "ready" && !strictSDKBlocked;
@@ -459,7 +590,11 @@ export function buildIOSSetupPlan(
       "Add an authentication flow",
       authFlowStatus,
       selectedPrebuiltAuthBlocked
-        ? `The prebuilt AuthView scaffold was requested, but this app is not safe to rewrite automatically: ${strictSDKBlocker ?? options.prebuiltAuthPlan?.blockers.map((blocker) => blocker.message).join(" ") ?? "Review the existing signed-out route and integrate AuthView manually."} Linked AuthView providers are not inspected by this network-free local plan.`
+        ? `The prebuilt AuthView scaffold was requested, but this app is not safe to rewrite automatically: ${
+            strictSDKBlocker ??
+            options.prebuiltAuthPlan?.blockers.map((blocker) => blocker.message).join(" ") ??
+            "Review the existing signed-out route and integrate AuthView manually."
+          } Linked AuthView providers are not inspected by this network-free local plan.`
         : hasAuthFlow || prebuiltAuthSatisfied
           ? sourceEntryPointIsAmbiguous
             ? "A Clerk authentication flow is referenced, but multiple @main entry points make the shipping route ambiguous."
@@ -468,7 +603,9 @@ export function buildIOSSetupPlan(
               : "A Clerk authentication UI or sign-in/sign-up flow is referenced in target source."
           : prebuiltAuthReady
             ? options.prebuiltAuthSelected
-              ? `Add ClerkKitUI's documented UserButton entry, AuthView sheet, and image prefetching to ${options.prebuiltAuthPlan?.sourcePath ?? "the proven placeholder SwiftUI view"}. Linked AuthView providers are not inspected by this network-free local plan; regular clerk init will add or verify the local Sign in with Apple entitlement only if Apple is enabled for the linked instance.`
+              ? `Add ClerkKitUI's documented UserButton entry, AuthView sheet, and image prefetching to ${
+                  options.prebuiltAuthPlan?.sourcePath ?? "the proven placeholder SwiftUI view"
+                }. Linked AuthView providers are not inspected by this network-free local plan; regular clerk init will add or verify the local Sign in with Apple entitlement only if Apple is enabled for the linked instance.`
               : `This target's pristine placeholder is eligible for the optional prebuilt AuthView scaffold. Run clerk init with --prebuilt-auth-ui or select it when prompted; existing application UI is never replaced automatically.`
             : target.swift.evidenceComplete
               ? productDecision === "core-only"
@@ -481,15 +618,21 @@ export function buildIOSSetupPlan(
     ),
   );
 
-  const actionable = steps.some((item) => item.status === "required" || item.status === "blocked");
+  const platformCompatibilityDetail = options.platformCompatibilityBlockers?.join(" ");
+  const actionable =
+    platformCompatibilityDetail != null ||
+    steps.some((item) => item.status === "required" || item.status === "blocked");
   steps.push(
     step(
       "verify-integration",
-      "Build and verify sign-in",
-      "review",
-      actionable
-        ? "After completing the required steps, build the selected target and verify sign-in, sign-out, app relaunch, and any redirect-based method you enabled."
-        : "The local evidence looks complete. Build the selected target and verify sign-in, sign-out, app relaunch, and any redirect-based method you enabled.",
+      platformCompatibilityDetail
+        ? "Validate the multiplatform target"
+        : "Build and verify sign-in",
+      platformCompatibilityDetail ? "blocked" : "review",
+      platformCompatibilityDetail ??
+        (actionable
+          ? "After completing the required steps, build the selected target and verify sign-in, sign-out, app relaunch, and any redirect-based method you enabled."
+          : "The local evidence looks complete. Build the selected target and verify sign-in, sign-out, app relaunch, and any redirect-based method you enabled."),
       targetEvidence,
       [{ kind: "documentation", url: QUICKSTART_URL }],
     ),

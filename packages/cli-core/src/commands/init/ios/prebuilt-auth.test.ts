@@ -9,7 +9,11 @@ import {
   planIOSPrebuiltAuth,
   prepareIOSPrebuiltAuthMutation,
 } from "./prebuilt-auth.ts";
-import { createIOSFixture, IOS_FIXTURE_IDS } from "./test-helpers.ts";
+import {
+  convertIOSFixtureToMultiplatform,
+  createIOSFixture,
+  IOS_FIXTURE_IDS,
+} from "./test-helpers.ts";
 
 const CONTENT_FILE_ID = "616161616161616161616161";
 const CONTENT_BUILD_FILE_ID = "626262626262626262626262";
@@ -86,7 +90,12 @@ afterEach(async () => {
 });
 
 async function createFixture(
-  options: { shared?: boolean; secondTarget?: boolean; crlf?: boolean } = {},
+  options: {
+    shared?: boolean;
+    secondTarget?: boolean;
+    crlf?: boolean;
+    platform?: "ios" | "macos";
+  } = {},
 ): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "clerk-prebuilt-auth-"));
   temporaryDirectories.push(root);
@@ -94,6 +103,7 @@ async function createFixture(
     clerkSDK: true,
     includeKey: false,
     secondTarget: options.shared === true || options.secondTarget === true,
+    platform: options.platform,
   });
   const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
   const project = parsePbxProject(await readFile(projectPath, "utf8"));
@@ -123,11 +133,12 @@ async function createFixture(
   return root;
 }
 
-function options(root: string) {
+function options(root: string, platform: "ios" | "macos" = "ios") {
   return {
     root,
     projectPath: "MyApp.xcodeproj",
     targetId: IOS_FIXTURE_IDS.appTarget,
+    platform,
     allowDirty: true,
   } as const;
 }
@@ -150,6 +161,55 @@ async function updateDeploymentTargets(
 }
 
 describe("prebuilt AuthView source setup", () => {
+  test("supports a pristine macOS 14 SwiftUI app", async () => {
+    const root = await createFixture({ platform: "macos" });
+
+    const plan = await planIOSPrebuiltAuth(options(root, "macos"));
+
+    expect(plan).toMatchObject({
+      status: "ready",
+      platform: "macos",
+      sourcePath: "MyApp/ContentView.swift",
+      blockers: [],
+    });
+  });
+
+  test("supports a multiplatform AuthView target at both deployment floors", async () => {
+    const root = await createFixture();
+    await convertIOSFixtureToMultiplatform(root);
+
+    const plan = await planIOSPrebuiltAuth(options(root));
+
+    expect(plan).toMatchObject({
+      status: "ready",
+      platform: "ios",
+      sourcePath: "MyApp/ContentView.swift",
+      blockers: [],
+    });
+  });
+
+  test("blocks a multiplatform AuthView target below the macOS deployment floor", async () => {
+    const root = await createFixture();
+    await convertIOSFixtureToMultiplatform(root);
+    await updateDeploymentTargets(root, (settings) => {
+      settings.MACOSX_DEPLOYMENT_TARGET = "13.0";
+    });
+
+    const plan = await planIOSPrebuiltAuth(options(root));
+
+    expect(plan).toMatchObject({
+      status: "blocked",
+      platform: "ios",
+      blockers: [
+        {
+          code: "incompatible-deployment-target",
+          message:
+            "ClerkKitUI's native components require macOS 14.0 or newer. Set MACOSX_DEPLOYMENT_TARGET to 14.0 or newer for every selected-target build configuration, make architecture values consistent, then rerun clerk init.",
+        },
+      ],
+    });
+  });
+
   test("plans only an exact target-owned untouched SwiftUI placeholder", async () => {
     const root = await createFixture();
     const plan = await planIOSPrebuiltAuth(options(root));
