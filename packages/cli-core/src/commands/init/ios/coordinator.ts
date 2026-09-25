@@ -23,6 +23,7 @@ import { inspectIOSProject } from "./inspect.ts";
 import { type IOSLocalSetupResult } from "./apply.ts";
 import { createIOSDryRunOutput, formatIOSSetupPlan } from "./output.ts";
 import { buildIOSLocalSetupProposal, createIOSLocalSetupContext } from "./local-plan.ts";
+import { iosPlatformViewsIdentityMatches, reinspectIOSPlatformViews } from "./platform-views.ts";
 
 type LinkedProfile = Awaited<ReturnType<typeof resolveProfile>>;
 
@@ -64,6 +65,7 @@ export type AppleNativeSetupCoordinator = {
   linkedProfile: LinkedProfile;
   validatedAgentAuthLabel?: string;
   preauthenticatedLabel?: string;
+  frameworkName: string;
   targetName: string;
   requiresLinkedApp: boolean;
   requiresExplicitApplication: boolean;
@@ -103,6 +105,7 @@ export async function runAppleNativeDryRun(options: AppleNativeDryRunOptions): P
         createIOSDryRunOutput(inspection, plan, {
           associatedDomainPlan,
           nativeReadiness: proposal.nativeReadiness,
+          platformViews: proposal.platformViews,
         }),
         null,
         2,
@@ -113,6 +116,7 @@ export async function runAppleNativeDryRun(options: AppleNativeDryRunOptions): P
       formatIOSSetupPlan(inspection, plan, {
         associatedDomainPlan,
         nativeReadiness: proposal.nativeReadiness,
+        platformViews: proposal.platformViews,
       }),
     );
     await outro(plan.status === "ready" ? "Setup looks ready" : "Setup incomplete");
@@ -137,7 +141,7 @@ export async function prepareAppleNativeSetup(
   }
   if (options.agent && validatedAgentAuthLabel === null) {
     throwUsageError(
-      "Native iOS setup in agent mode requires valid Clerk authentication before any Xcode files can be changed. Ask the user to run `clerk auth login` or provide a valid Platform API key, then rerun `clerk init`.",
+      "Native Apple setup in agent mode requires valid Clerk authentication before any Xcode files can be changed. Ask the user to run `clerk auth login` or provide a valid Platform API key, then rerun `clerk init`.",
     );
   }
 
@@ -153,7 +157,7 @@ export async function prepareAppleNativeSetup(
   });
   if (options.agent && localSetup.requiresExplicitApplication && !options.requestedApplicationId) {
     throwUsageError(
-      "This iOS target already contains a publishable-key configuration that requires explicit Clerk application selection. Ask the developer which existing application it belongs to, then rerun with --app <app_id>. No local files were changed.",
+      "This native Apple target already contains a publishable-key configuration that requires explicit Clerk application selection. Ask the developer which existing application it belongs to, then rerun with --app <app_id>. No local files were changed.",
     );
   }
 
@@ -162,6 +166,7 @@ export async function prepareAppleNativeSetup(
     linkedProfile,
     validatedAgentAuthLabel: authLabel,
     preauthenticatedLabel: options.agent ? authLabel : undefined,
+    frameworkName: localSetup.platform === "macos" ? "macOS (Swift)" : "iOS (Swift)",
     targetName: localSetup.targetName,
     requiresLinkedApp: localSetup.requiresLinkedApp,
     requiresExplicitApplication: localSetup.requiresExplicitApplication,
@@ -207,7 +212,7 @@ async function completeAppleNativeSetup(
   }
   if (!options.authenticationCompleted) {
     throw new CliError(
-      "The approved iOS configuration requires a linked Clerk application, but authentication did not complete. No local setup changes were written.",
+      "The approved native Apple configuration requires a linked Clerk application, but authentication did not complete. No local setup changes were written.",
       { code: ERROR_CODE.NOT_LINKED },
     );
   }
@@ -224,7 +229,7 @@ async function completeAppleNativeSetup(
   );
   if (keys.applicationId !== options.applicationId) {
     throw new CliError(
-      "The linked Clerk application changed while its iOS publishable key was being resolved. No local setup changes were written; rerun clerk init.",
+      "The linked Clerk application changed while its native publishable key was being resolved. No local setup changes were written; rerun clerk init.",
       { code: ERROR_CODE.IOS_SETUP_STALE },
     );
   }
@@ -287,7 +292,7 @@ async function completeAppleNativeSetup(
     const target = localSetup.nativeReadiness.target;
     if (target.status !== "selected" || target.bundleIdentifier.status !== "resolved") {
       throw new CliError(
-        "The selected iOS Bundle ID could not be revalidated for native Sign in with Apple. No local or Apple connection changes were written.",
+        "The selected Bundle ID could not be revalidated for native Sign in with Apple. No local or Apple connection changes were written.",
         { code: ERROR_CODE.IOS_TARGET_UNRESOLVED },
       );
     }
@@ -301,6 +306,7 @@ async function completeAppleNativeSetup(
     const preparedApple = await prepareIOSNativeAppleConnection({
       applicationId: keys.applicationId,
       instanceId: keys.instanceId,
+      platform: target.platform,
       bundleIdentifier: nativeRemotePlan.bundleIdentifier,
       nativeApplicationReady:
         nativeRemotePlan.status !== "blocked" && nativeRemotePlan.registration !== "blocked",
@@ -320,7 +326,7 @@ async function completeAppleNativeSetup(
   const commitProfile = await resolveProfile(preparation.root);
   if (commitProfile?.profile.appId !== options.applicationId) {
     throw new CliError(
-      "The local Clerk application link changed before the approved iOS setup could be committed. No local or remote setup changes were written; rerun clerk init.",
+      "The local Clerk application link changed before the approved native Apple setup could be committed. No local or remote setup changes were written; rerun clerk init.",
       { code: ERROR_CODE.IOS_SETUP_STALE },
     );
   }
@@ -340,7 +346,7 @@ async function completeAppleNativeSetup(
     }
     if (authEnvironment.apple !== inspectedAuthViewAppleRequirement) {
       throw new CliError(
-        "The linked Clerk application's AuthView methods changed while the approved iOS setup was being prepared. No local or remote setup changes were written; rerun clerk init.",
+        "The linked Clerk application's AuthView methods changed while the approved native Apple setup was being prepared. No local or remote setup changes were written; rerun clerk init.",
         { code: ERROR_CODE.IOS_SETUP_STALE },
       );
     }
@@ -370,30 +376,44 @@ async function completeAppleNativeSetup(
     setupForCommit,
     setupForCommit.requiresDevelopmentKey ? keys.publishableKey : undefined,
   );
-  await assertApplicationLinkStillMatches({
-    root: preparation.root,
-    applicationId: nativeRemotePlan.applicationId,
-    phase: "native-application",
-  });
-  await applyRemoteStep(
-    "ios_native_setup",
-    async () => applyIOSNativeRemoteSetup(nativeRemotePlan),
-    "Could not reconcile Clerk Native Application settings; underlying error details were omitted.",
-    "The local iOS setup completed, but Clerk Native Application settings could not be completed remotely. Local changes remain intact; rerun clerk init to safely reconcile the additive remote steps.",
-  );
-  log.success("Clerk Native API and iOS application registration verified");
-
-  if (nativeApplePlan) {
+  const revalidateNativeApplicationPreconditions = async (): Promise<void> => {
+    await assertPlatformIdentityStillMatches(setupForCommit.platformViews, "native-application");
     await assertApplicationLinkStillMatches({
       root: preparation.root,
-      applicationId: nativeApplePlan.applicationId,
-      phase: "native-apple",
+      applicationId: nativeRemotePlan.applicationId,
+      phase: "native-application",
     });
+  };
+  await revalidateNativeApplicationPreconditions();
+  await applyRemoteStep(
+    "ios_native_setup",
+    async () =>
+      applyIOSNativeRemoteSetup(nativeRemotePlan, {
+        revalidateLocalPreconditions: revalidateNativeApplicationPreconditions,
+      }),
+    "Could not reconcile Clerk Native Application settings; underlying error details were omitted.",
+    "The local native Apple setup completed, but Clerk Native Application settings could not be completed remotely. Local changes remain intact; rerun clerk init to safely reconcile the additive remote steps.",
+  );
+  log.success("Clerk Native API and application registration verified");
+
+  if (nativeApplePlan) {
+    const revalidateNativeApplePreconditions = async (): Promise<void> => {
+      await assertPlatformIdentityStillMatches(setupForCommit.platformViews, "native-apple");
+      await assertApplicationLinkStillMatches({
+        root: preparation.root,
+        applicationId: nativeApplePlan.applicationId,
+        phase: "native-apple",
+      });
+    };
+    await revalidateNativeApplePreconditions();
     await applyRemoteStep(
       "ios_apple_setup",
-      async () => applyIOSNativeAppleConnection(nativeApplePlan),
+      async () =>
+        applyIOSNativeAppleConnection(nativeApplePlan, {
+          revalidateLocalPreconditions: revalidateNativeApplePreconditions,
+        }),
       "Could not reconcile the native Apple connection; underlying error details were omitted.",
-      "The local iOS setup and Clerk Native Application registration completed, but the native Apple connection could not be completed. Those completed changes remain intact; rerun clerk init to reconcile Sign in with Apple safely.",
+      "The local native Apple setup and Clerk Native Application registration completed, but the native Apple connection could not be completed. Those completed changes remain intact; rerun clerk init to reconcile Sign in with Apple safely.",
     );
   }
 
@@ -456,7 +476,23 @@ async function assertApplicationLinkStillMatches(options: {
 
   const message =
     options.phase === "native-application"
-      ? "The local Clerk application link changed after the approved iOS setup was committed. Local changes remain intact, but no Clerk Native Application changes were made; rerun clerk init."
+      ? "The local Clerk application link changed after the approved native Apple setup was committed. Local changes remain intact, but no Clerk Native Application changes were made; rerun clerk init."
       : "The local Clerk application link changed after Clerk Native Application setup completed. The completed local and Clerk Native Application changes remain intact, but no native Apple connection changes were made; rerun clerk init.";
+  throw new CliError(message, { code: ERROR_CODE.IOS_SETUP_STALE });
+}
+
+async function assertPlatformIdentityStillMatches(
+  approved: IOSLocalSetupResult["platformViews"],
+  phase: "native-application" | "native-apple",
+): Promise<void> {
+  const current = await reinspectIOSPlatformViews(approved);
+  if (current.status === "ready" && iosPlatformViewsIdentityMatches(approved, current.snapshot)) {
+    return;
+  }
+
+  const message =
+    phase === "native-application"
+      ? "The selected target's supported platforms or native identity changed after the local setup completed. Local changes remain intact, but no Clerk Native Application changes were made; rerun clerk init."
+      : "The selected target's supported platforms or native identity changed after Clerk Native Application setup completed. Completed local and registration changes remain intact, but no native Apple connection changes were made; rerun clerk init.";
   throw new CliError(message, { code: ERROR_CODE.IOS_SETUP_STALE });
 }

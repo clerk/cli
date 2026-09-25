@@ -14,6 +14,7 @@ afterEach(async () => {
 
 async function fixture(options: {
   synchronized?: boolean;
+  platform?: "ios" | "macos";
   filename?: string;
   settings?: Record<string, string | readonly string[] | undefined>;
   releaseSettings?: Record<string, string | undefined>;
@@ -21,7 +22,10 @@ async function fixture(options: {
 }) {
   const root = await mkdtemp(join(tmpdir(), "clerk source-filters-"));
   roots.push(root);
-  await createIOSFixture(root, { xcconfig: options.xcconfig !== undefined });
+  await createIOSFixture(root, {
+    xcconfig: options.xcconfig !== undefined,
+    platform: options.platform,
+  });
   const filename = options.filename ?? "Nested/LegacyApp.swift";
   const source = join(root, "MyApp", filename);
   await mkdir(dirname(source), { recursive: true });
@@ -194,6 +198,18 @@ test("resolves CURRENT_ARCH when every supported architecture excludes the same 
     },
   });
   const result = await inspectIOSProject(root, { target: "MyApp" });
+  expect(result.appTargets[0]?.swift.entryPoints).toHaveLength(1);
+  expect(result.appTargets[0]?.swift.evidenceComplete).toBe(true);
+});
+
+test("applies source filters to native macOS app inspection", async () => {
+  const root = await fixture({
+    platform: "macos",
+    synchronized: true,
+    settings: { EXCLUDED_SOURCE_FILE_NAMES: "LegacyApp.swift" },
+  });
+  const result = await inspectIOSProject(root, { target: "MyApp", platform: "macos" });
+  expect(result.appTargets[0]?.platform).toBe("macos");
   expect(result.appTargets[0]?.swift.entryPoints).toHaveLength(1);
   expect(result.appTargets[0]?.swift.evidenceComplete).toBe(true);
 });

@@ -20,9 +20,11 @@ import {
   nativeRemoteMod,
   nativeAppleMod,
   iosDevelopmentKeyMod,
+  iosPlatformViewsMod,
   plapiMod,
   fapiMod,
   FAKE_IOS_NATIVE_READINESS,
+  FAKE_IOS_PLATFORM_VIEWS,
 } from "../../test/lib/init-harness.ts";
 import * as telemetryMod from "../../lib/telemetry.ts";
 import { getLogLevel, setLogLevel } from "../../lib/log.ts";
@@ -63,6 +65,7 @@ function iosRemotePlan(overrides: Partial<IOSNativeRemotePlan> = {}): IOSNativeR
     status: "ready",
     applicationId: "app_test",
     instanceId: "ins_test",
+    platform: "ios",
     bundleIdentifier: "com.example.MyApp",
     appIdPrefix: "LEGACY1234",
     nativeApi: "required",
@@ -124,6 +127,7 @@ function iosPrebuiltAuthPlan(overrides: Partial<IOSPrebuiltAuthPlan> = {}): IOSP
     root: "/tmp/test",
     projectPath: "MyApp.xcodeproj",
     targetId: "TARGET",
+    platform: "ios",
     allowDirty: false,
     appSourcePath: "MyApp/MyAppApp.swift",
     expectedAppSourceHash: "app-hash",
@@ -138,6 +142,9 @@ function iosPrebuiltAuthPlan(overrides: Partial<IOSPrebuiltAuthPlan> = {}): IOSP
 function iosSetupResult(overrides: Partial<IOSLocalSetupResult> = {}): IOSLocalSetupResult {
   return {
     targetName: "MyApp",
+    platform: "ios",
+    supportedPlatforms: ["ios"],
+    platformViews: FAKE_IOS_PLATFORM_VIEWS,
     setupPlan: {
       schemaVersion: 1,
       kind: "clerk-ios-setup",
@@ -148,6 +155,7 @@ function iosSetupResult(overrides: Partial<IOSLocalSetupResult> = {}): IOSLocalS
         targetId: "TARGET",
         targetName: "MyApp",
         projectPath: "MyApp.xcodeproj",
+        platform: "ios",
       },
       summary: { satisfied: 0, required: 0, review: 0, blocked: 0 },
       steps: [],
@@ -249,12 +257,39 @@ describe("init iOS", () => {
     return () => stage.mock.calls.map((call) => call[0]);
   }
 
+  test("labels the selected macOS target before final scaffolding", async () => {
+    const { captured } = setup({ email: "test@test.com" });
+    const ctx = nativeIOSContext();
+    spyOn(context, "gatherContext").mockResolvedValue(ctx);
+    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(
+      iosSetupResult({
+        platform: "macos",
+        nativeReadiness: {
+          ...FAKE_IOS_NATIVE_READINESS,
+          target: selectedNativeTarget({ platform: "macos" }),
+        },
+      }),
+    );
+
+    await init({ yes: true });
+
+    expect(ctx.framework.name).toBe("macOS (Swift)");
+    expect(scaffoldMod.scaffold).toHaveBeenCalledWith(
+      expect.objectContaining({
+        framework: expect.objectContaining({ name: "macOS (Swift)" }),
+      }),
+    );
+    expect(captured.err).toContain("Detected");
+    expect(captured.err).toContain("macOS (Swift)");
+    expect(captured.err).not.toContain("iOS (Swift)");
+  });
+
   test("rejects iOS-only apply flags for a non-iOS project before authentication", async () => {
     setup({ email: "test@test.com" });
     spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
 
     await expect(init({ target: "MyApp" })).rejects.toThrow(
-      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native iOS projects",
+      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native Apple projects",
     );
 
     expect(loginMod.login).not.toHaveBeenCalled();
@@ -333,7 +368,7 @@ describe("init iOS", () => {
       spyOn(context, "gatherContext").mockResolvedValue(nativeIOSContext());
 
       await expect(init({ yes: true })).rejects.toThrow(
-        "Native iOS setup in agent mode requires valid Clerk authentication",
+        "Native Apple setup in agent mode requires valid Clerk authentication",
       );
 
       expect(iosApplyMod.applyIOSLocalSetup).not.toHaveBeenCalled();
@@ -550,7 +585,7 @@ describe("init iOS", () => {
     spyOn(frameworkMod, "lookupFramework").mockReturnValue(FAKE_CTX.framework);
 
     await expect(init({ framework: "next", target: "MyApp" })).rejects.toThrow(
-      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native iOS projects",
+      "--target, --allow-dirty, --app-id-prefix, --sign-in-with-apple, and --prebuilt-auth-ui apply only to native Apple projects",
     );
 
     expect(context.gatherContext).not.toHaveBeenCalled();
@@ -562,7 +597,7 @@ describe("init iOS", () => {
     spyOn(context, "gatherContext").mockResolvedValue(null);
 
     await expect(init({ target: "MyApp" })).rejects.toThrow(
-      "Could not detect an existing native iOS project",
+      "Could not detect an existing native Apple project",
     );
 
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
@@ -572,7 +607,7 @@ describe("init iOS", () => {
     setup();
 
     await expect(init({ starter: true, target: "MyApp" })).rejects.toThrow(
-      "require an existing native iOS project",
+      "require an existing native Apple project",
     );
 
     expect(context.gatherContext).not.toHaveBeenCalled();
@@ -580,8 +615,8 @@ describe("init iOS", () => {
   });
 
   test.each([
-    [{ accountless: true }, "--accountless is not supported for iOS"],
-    [{ keyless: true }, "--accountless is not supported for iOS"],
+    [{ accountless: true }, "--accountless is not supported for native Apple projects"],
+    [{ keyless: true }, "--accountless is not supported for native Apple projects"],
     [{ template: "native" as const }, "--template only applies to accountless applications"],
     [{ fresh: true }, "--fresh only applies to accountless applications"],
   ])("rejects iOS-incompatible flags before Xcode apply", async (flags, message) => {
@@ -824,7 +859,7 @@ describe("init iOS", () => {
       } as never);
 
     await expect(init({ yes: true, prebuiltAuthUI: true })).rejects.toThrow(
-      "AuthView methods changed while the approved iOS setup was being prepared",
+      "AuthView methods changed while the approved native Apple setup was being prepared",
     );
 
     expect(environment).toHaveBeenCalledTimes(2);
@@ -1090,7 +1125,10 @@ describe("init iOS", () => {
       yes: true,
     });
     expect(commitLocal).toHaveBeenCalledWith(setupResult, undefined);
-    expect(applyRemote).toHaveBeenCalledWith(expect.objectContaining({ status: "ready" }));
+    expect(applyRemote).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "ready" }),
+      expect.objectContaining({ revalidateLocalPreconditions: expect.any(Function) }),
+    );
     expect(resolveKeys.mock.invocationCallOrder[0]).toBeLessThan(
       prepareRemote.mock.invocationCallOrder[0]!,
     );
@@ -1148,6 +1186,7 @@ describe("init iOS", () => {
     expect(prepareApple).toHaveBeenCalledWith({
       applicationId: "app_test",
       instanceId: "ins_test",
+      platform: "ios",
       bundleIdentifier: "com.Example.MyApp",
       nativeApplicationReady: true,
       requested: true,
@@ -1341,6 +1380,45 @@ describe("init iOS", () => {
     expect(nativeAppleMod.applyIOSNativeAppleConnection).not.toHaveBeenCalled();
   });
 
+  test("does not mutate native state when a secondary platform identity changes during local commit", async () => {
+    setup({ email: "test@test.com" });
+    const iosCtx = nativeIOSContext();
+    const setupResult = iosSetupResult({
+      requiresLinkedApp: true,
+      requiresDevelopmentKey: false,
+    });
+    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(config, "resolveProfile").mockResolvedValue({
+      profile: { appId: "app_test" },
+    } as never);
+    spyOn(iosApplyMod, "applyIOSLocalSetup").mockResolvedValue(setupResult);
+    spyOn(nativeRemoteMod, "prepareIOSNativeRemoteSetup").mockResolvedValue(iosRemotePlan());
+    const commitLocal = spyOn(iosApplyMod, "applyIOSPlannedLocalSetup").mockResolvedValue(
+      undefined,
+    );
+    spyOn(iosPlatformViewsMod, "reinspectIOSPlatformViews").mockResolvedValue({
+      status: "ready",
+      snapshot: {
+        ...FAKE_IOS_PLATFORM_VIEWS,
+        bundleIdentifier: "com.example.changed",
+      },
+    });
+    const applyRemote = spyOn(nativeRemoteMod, "applyIOSNativeRemoteSetup").mockResolvedValue(
+      undefined,
+    );
+
+    await expect(init({ yes: true })).rejects.toMatchObject({
+      code: ERROR_CODE.IOS_SETUP_STALE,
+      message: expect.stringContaining(
+        "Local changes remain intact, but no Clerk Native Application changes were made",
+      ),
+    });
+
+    expect(commitLocal).toHaveBeenCalledTimes(1);
+    expect(applyRemote).not.toHaveBeenCalled();
+    expect(nativeAppleMod.applyIOSNativeAppleConnection).not.toHaveBeenCalled();
+  });
+
   test("reports partial remote failure without claiming the local setup was rolled back", async () => {
     const { captured } = setup({ email: "test@test.com" });
     const stages = trackStages();
@@ -1412,7 +1490,7 @@ describe("init iOS", () => {
     });
 
     await expect(init({ yes: true })).rejects.toThrow(
-      "linked Clerk application changed while its iOS publishable key was being resolved",
+      "linked Clerk application changed while its native publishable key was being resolved",
     );
 
     expect(iosApplyMod.applyIOSLocalSetup).toHaveBeenCalledTimes(1);
@@ -1460,7 +1538,7 @@ describe("init iOS", () => {
     });
 
     await expect(init({ yes: true })).rejects.toThrow(
-      "local Clerk application link changed before the approved iOS setup",
+      "local Clerk application link changed before the approved native Apple setup",
     );
 
     expect(iosApplyMod.applyIOSPlannedLocalSetup).not.toHaveBeenCalled();

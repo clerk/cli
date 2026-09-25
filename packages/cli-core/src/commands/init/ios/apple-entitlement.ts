@@ -27,6 +27,7 @@ import {
   validateIOSMissingEntitlementsSettingsPostcondition,
   type IOSMissingEntitlementsSettingsPlan,
 } from "./entitlements-settings.ts";
+import type { IOSNativePlatform } from "./types.ts";
 
 const APPLE_SIGN_IN_KEY = "com.apple.developer.applesignin";
 const APPLE_SIGN_IN_VALUE = "Default";
@@ -56,6 +57,12 @@ export interface IOSAppleEntitlementPlan {
   root: string;
   projectPath: string;
   targetId: string;
+  /** Defaults to iOS for older serialized plans. */
+  platform?: IOSNativePlatform;
+  /** Every platform covered by this plan. Omitted by older single-platform plans. */
+  supportedPlatforms?: readonly IOSNativePlatform[];
+  /** Platform-scoped plans retained for safe preparation and post-write validation. */
+  platformPlans?: IOSAppleEntitlementPlan[];
   targetName?: string;
   files: IOSAppleEntitlementPlanFile[];
   /** PBX settings needed only when the target has no entitlements file yet. */
@@ -69,6 +76,10 @@ export interface IOSAppleEntitlementPlanOptions {
   /** Invocation-root-relative selected .xcodeproj path. */
   projectPath: string;
   targetId: string;
+  /** Defaults to iOS. */
+  platform?: IOSNativePlatform;
+  /** When provided, plan the entitlement for every supported target platform. */
+  supportedPlatforms?: readonly IOSNativePlatform[];
   /** Allows the strict synchronized-root planner to create and attach a new file. */
   allowMissingEntitlementsCreation?: boolean;
 }
@@ -128,6 +139,8 @@ function planBase(options: IOSAppleEntitlementPlanOptions) {
     root: resolve(options.root),
     projectPath: options.projectPath.replaceAll("\\", "/"),
     targetId: options.targetId,
+    platform: options.platform ?? "ios",
+    ...(options.supportedPlatforms ? { supportedPlatforms: [...options.supportedPlatforms] } : {}),
   };
 }
 
@@ -367,16 +380,22 @@ function candidateWithApple(root: string, document: EntitlementsDocument): Uint8
  * Plans the exact native Sign in with Apple entitlement across every selected
  * target entitlements variant. No Apple or Clerk credentials are retained.
  */
-export async function planIOSAppleEntitlement(
+async function planIOSAppleEntitlementForPlatform(
   options: IOSAppleEntitlementPlanOptions,
 ): Promise<IOSAppleEntitlementPlan> {
-  const normalized = { ...options, root: resolve(options.root) };
+  const normalized = {
+    ...options,
+    root: resolve(options.root),
+    platform: options.platform ?? "ios",
+  };
   const entitlementProbe = await planIOSAssociatedDomain({
     root: normalized.root,
     projectPath: normalized.projectPath,
     targetId: normalized.targetId,
+    platform: normalized.platform,
     deferToPublishableKey: true,
     allowMissingEntitlementsCreation: normalized.allowMissingEntitlementsCreation,
+    allowSelectedTargetPlatformSharing: true,
   });
   if (entitlementProbe.status === "blocked") {
     return blockedPlan(
@@ -426,11 +445,155 @@ export async function planIOSAppleEntitlement(
       ? []
       : [
           files.some((file) => file.operation === "create")
-            ? "Create and attach an iOS entitlements file with the Sign in with Apple entitlement set to Default."
-            : "Set the Sign in with Apple entitlement to Default in every selected-target iOS entitlements configuration.",
+            ? `Create and attach a ${normalized.platform === "macos" ? "macOS" : "iOS"} entitlements file with the Sign in with Apple entitlement set to Default.`
+            : `Set the Sign in with Apple entitlement to Default in every selected-target ${normalized.platform === "macos" ? "macOS" : "iOS"} entitlements configuration.`,
         ],
     blockers: [],
   };
+}
+
+function orderedPlatforms(options: IOSAppleEntitlementPlanOptions): IOSNativePlatform[] {
+  const primary = options.platform ?? "ios";
+  return [
+    primary,
+    ...new Set((options.supportedPlatforms ?? [primary]).filter((item) => item !== primary)),
+  ];
+}
+
+function samePlanFile(left: IOSAppleEntitlementPlanFile, right: IOSAppleEntitlementPlanFile) {
+  return (
+    left.path === right.path &&
+    left.operation === right.operation &&
+    left.expectedHash === right.expectedHash
+  );
+}
+
+/** Plans the native Apple entitlement for every supported platform of one target. */
+export async function planIOSAppleEntitlement(
+  options: IOSAppleEntitlementPlanOptions,
+): Promise<IOSAppleEntitlementPlan> {
+  const platforms = orderedPlatforms(options);
+  if (platforms.length === 1) {
+    return planIOSAppleEntitlementForPlatform({
+      ...options,
+      platform: platforms[0],
+      supportedPlatforms: undefined,
+    });
+  }
+
+  const platformPlans = await Promise.all(
+    platforms.map(async (platform) =>
+      planIOSAppleEntitlementForPlatform({
+        ...options,
+        platform,
+        supportedPlatforms: undefined,
+      }),
+    ),
+  );
+  const filesByPath = new Map<string, IOSAppleEntitlementPlanFile>();
+  for (const plan of platformPlans) {
+    for (const file of plan.files) {
+      const existing = filesByPath.get(file.path);
+      if (existing && !samePlanFile(existing, file)) {
+        return blockedPlan(options, [
+          blocker(
+            "invalid-plan",
+            `${file.path} resolved inconsistently across the selected target's supported platforms.`,
+          ),
+        ]);
+      }
+      filesByPath.set(file.path, file);
+    }
+  }
+  const blocked = platformPlans.filter((plan) => plan.status === "blocked");
+  const status =
+    blocked.length > 0
+      ? "blocked"
+      : platformPlans.some((plan) => plan.status === "ready")
+        ? "ready"
+        : "satisfied";
+  return {
+    ...planBase({ ...options, supportedPlatforms: platforms }),
+    status,
+    supportedPlatforms: platforms,
+    platformPlans,
+    ...(platformPlans.find((plan) => plan.targetName)?.targetName
+      ? { targetName: platformPlans.find((plan) => plan.targetName)?.targetName }
+      : {}),
+    files: [...filesByPath.values()],
+    ...(platformPlans.find((plan) => plan.missingEntitlementsSettings)?.missingEntitlementsSettings
+      ? {
+          missingEntitlementsSettings: platformPlans.find(
+            (plan) => plan.missingEntitlementsSettings,
+          )?.missingEntitlementsSettings,
+        }
+      : {}),
+    actions: platformPlans.flatMap((plan) => plan.actions),
+    blockers: blocked.flatMap((plan) =>
+      plan.blockers.map((item) => ({
+        ...item,
+        message: `${plan.platform === "macos" ? "macOS" : "iOS"}: ${item.message}`,
+      })),
+    ),
+  };
+}
+
+async function prepareMultiplatformAppleEntitlement(
+  plan: IOSAppleEntitlementPlan,
+  options: IOSAppleEntitlementPrepareOptions,
+): Promise<PreparedIOSAppleEntitlementMutation> {
+  const platformPlans = plan.platformPlans ?? [];
+  if (platformPlans.length < 2 || platformPlans.some((item) => item.platformPlans != null)) {
+    return blockPrepared(
+      plan,
+      "invalid-plan",
+      "The multiplatform Apple entitlement plan is incomplete.",
+    );
+  }
+
+  const initial = [...(options.baseMutations ?? [])];
+  const initialByPath = new Map(initial.map((mutation) => [resolve(mutation.path), mutation]));
+  let composed = initial;
+  let needsValidation = false;
+  for (const platformPlan of platformPlans) {
+    const prepared = await prepareIOSAppleEntitlementMutation(platformPlan, {
+      baseMutations: composed,
+    });
+    if (prepared.status === "stale") return { status: "stale", plan };
+    if (prepared.status === "blocked") {
+      return {
+        status: "blocked",
+        plan: {
+          ...plan,
+          status: "blocked",
+          actions: [],
+          blockers: prepared.plan.blockers,
+        },
+      };
+    }
+    if (prepared.status === "satisfied") continue;
+    needsValidation = true;
+    const consumed = new Set(prepared.consumedBaseMutationPaths.map((path) => resolve(path)));
+    composed = [
+      ...composed.filter((mutation) => !consumed.has(resolve(mutation.path))),
+      ...prepared.mutations,
+    ];
+  }
+  if (!needsValidation) return { status: "satisfied", plan };
+
+  const mutations: IOSFileMutation[] = [];
+  const consumedBaseMutationPaths: string[] = [];
+  for (const mutation of composed) {
+    const path = resolve(mutation.path);
+    const original = initialByPath.get(path);
+    if (!original) {
+      mutations.push(mutation);
+    } else if (!isDeepStrictEqual(original, mutation)) {
+      mutations.push(mutation);
+      consumedBaseMutationPaths.push(path);
+    }
+  }
+  return preparedWithHiddenMutations(plan, mutations, consumedBaseMutationPaths);
 }
 
 export async function prepareIOSAppleEntitlementMutation(
@@ -452,6 +615,7 @@ export async function prepareIOSAppleEntitlementMutation(
       "The serialized Apple entitlement plan is incomplete.",
     );
   }
+  if (plan.platformPlans) return prepareMultiplatformAppleEntitlement(plan, options);
 
   const baseByPath = new Map<string, IOSFileMutation>();
   for (const mutation of options.baseMutations ?? []) {
@@ -505,6 +669,7 @@ export async function prepareIOSAppleEntitlementMutation(
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
     allowMissingEntitlementsCreation: plan.missingEntitlementsSettings != null,
   });
   if (replanned.status === "blocked") return { status: "blocked", plan: replanned };
@@ -705,6 +870,8 @@ export async function validatePreparedIOSAppleEntitlement(
     root: prepared.plan.root,
     projectPath: prepared.plan.projectPath,
     targetId: prepared.plan.targetId,
+    platform: prepared.plan.platform,
+    supportedPlatforms: prepared.plan.supportedPlatforms,
   });
   const expectedPaths = prepared.plan.files.map((file) => file.path).sort();
   return (

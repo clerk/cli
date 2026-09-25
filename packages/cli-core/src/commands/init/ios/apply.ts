@@ -18,7 +18,7 @@ import {
   type IOSSDKInstallPlan,
   type PreparedIOSSDKInstallMutation,
 } from "./install-sdk.ts";
-import { buildIOSSetupPlan } from "./plan.ts";
+import { buildIOSSetupPlan, selectedTargetPlatformBlockerDescription } from "./plan.ts";
 import {
   prepareIOSDirectConfigMutation,
   validatePreparedIOSDirectConfig,
@@ -45,6 +45,13 @@ import {
   type PreparedIOSAppleEntitlementMutation,
 } from "./apple-entitlement.ts";
 import {
+  planMacOSNetworkCapability,
+  prepareMacOSNetworkCapabilityMutation,
+  validatePreparedMacOSNetworkCapability,
+  type MacOSNetworkCapabilityPlan,
+  type PreparedMacOSNetworkCapabilityMutation,
+} from "./macos-network.ts";
+import {
   planIOSPrebuiltAuth,
   prepareIOSPrebuiltAuthMutation,
   validatePreparedIOSPrebuiltAuth,
@@ -57,6 +64,11 @@ import {
   planIOSPrebuiltAuthRuntimeBlockers,
   type IOSLocalSetupProposal,
 } from "./local-plan.ts";
+import {
+  iosPlatformViewsIdentityMatches,
+  iosPlatformViewsSnapshotsEqual,
+  reinspectIOSPlatformViews,
+} from "./platform-views.ts";
 
 function iosSetupError(message: string, code: ErrorCode = ERROR_CODE.IOS_SETUP_BLOCKED): CliError {
   return new CliError(message, { code });
@@ -82,6 +94,7 @@ export type IOSLocalSetupResult = Pick<
   | "sdkInstallPlan"
   | "directConfigPlan"
   | "associatedDomainPlan"
+  | "macOSNetworkCapabilityPlan"
   | "appleEntitlementPlan"
   | "prebuiltAuthPlan"
   | "prebuiltAuthAppleEntitlementPlan"
@@ -90,6 +103,9 @@ export type IOSLocalSetupResult = Pick<
   | "nativeAppleRequested"
 > & {
   targetName: string;
+  platform: NonNullable<IOSLocalSetupProposal["platform"]>;
+  supportedPlatforms: NonNullable<IOSLocalSetupProposal["supportedPlatforms"]>;
+  platformViews: NonNullable<IOSLocalSetupProposal["platformViews"]>;
   /** Authentication must return an exact app ID and development key before commit. */
   requiresLinkedApp: boolean;
   /** The approved local transaction consumes the linked development publishable key. */
@@ -208,6 +224,7 @@ async function validatePrebuiltAuthRuntimePostcondition(
   const target = setup.nativeReadiness.target;
   const inspection = await inspectIOSProject(setup.nativeReadiness.root, {
     target: target.targetId,
+    platform: setup.platform,
     exhaustiveContainerDiscovery: true,
   });
   if (
@@ -222,6 +239,14 @@ async function validatePrebuiltAuthRuntimePostcondition(
   const configureStep = setupPlan.steps.find((step) => step.id === "configure-publishable-key");
   const environmentStep = setupPlan.steps.find((step) => step.id === "inject-clerk-environment");
   return configureStep?.status === "satisfied" && environmentStep?.status === "satisfied";
+}
+
+async function validatePlatformViewsPostcondition(setup: IOSLocalSetupResult): Promise<boolean> {
+  const current = await reinspectIOSPlatformViews(setup.platformViews);
+  return (
+    current.status === "ready" &&
+    iosPlatformViewsIdentityMatches(setup.platformViews, current.snapshot)
+  );
 }
 
 /**
@@ -241,7 +266,7 @@ export async function applyIOSLocalSetup(
   const context = createIOSLocalSetupContext(inspection);
   if (hasIncompleteIOSContainerDiscovery(inspection)) {
     throw iosSetupError(
-      "Xcode project discovery was incomplete, so Clerk cannot safely select an iOS application target. Run the command from the intended project's directory, make nested project directories readable, or reduce excessive project nesting or count.",
+      "Xcode project discovery was incomplete, so Clerk cannot safely select a native Apple application target. Run the command from the intended project's directory, make nested project directories readable, or reduce excessive project nesting or count.",
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
@@ -255,18 +280,18 @@ export async function applyIOSLocalSetup(
         )
         .join(", ");
       throwUsageError(
-        `More than one iOS application target is eligible: ${candidates}. Rerun with --target <name-or-id>; if IDs collide across copied projects, run the command from the intended project's directory.`,
+        `More than one native Apple application target is eligible: ${candidates}. Rerun with --target <name-or-id>; if IDs collide across copied projects, run the command from the intended project's directory.`,
       );
     }
     if (selection.state === "not-found") {
       throwUsageError(
-        `The iOS target "${selection.requested}" was not found. Available targets: ${
+        `The native Apple target "${selection.requested}" was not found. Available targets: ${
           selection.candidates.join(", ") || "none"
         }.`,
       );
     }
     throw iosSetupError(
-      "No usable iOS application target was found.",
+      "No usable iOS or macOS application target was found.",
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
@@ -274,23 +299,20 @@ export async function applyIOSLocalSetup(
   const selectedTarget = context.selectedTarget;
   if (!selectedTarget) {
     throw iosSetupError(
-      "The selected iOS target could not be resolved safely.",
+      "The selected native Apple target could not be resolved safely.",
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
-  const productDecision = context.productDecision;
-  if (!productDecision) {
+  if (!selectedTarget.platformEvidenceComplete) {
     throw iosSetupError(
-      "The selected iOS target could not be planned safely.",
+      `${selectedTargetPlatformBlockerDescription(
+        inspection,
+        selectedTarget,
+      )} No new Clerk setup changes were applied, and no remote state was changed.`,
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
-  if (productDecision === "unknown") {
-    throw iosSetupError(
-      "The selected target's Swift source membership could not be inspected completely, so Clerk cannot safely choose between the prebuilt ClerkKitUI path and a core-only custom flow. Resolve the Xcode source-membership diagnostics, then rerun clerk init.",
-      ERROR_CODE.IOS_TARGET_UNRESOLVED,
-    );
-  }
+  const platformLabel = selectedTarget.platform === "macos" ? "macOS" : "iOS";
 
   const proposal = await buildIOSLocalSetupProposal(context, {
     root: options.root,
@@ -313,6 +335,9 @@ export async function applyIOSLocalSetup(
       : {}),
   });
   const {
+    productDecision,
+    platformViews,
+    platformCompatibilityBlockers,
     inspectedPrebuiltAuthPlan,
     prebuiltAuthPlan,
     prebuiltAuthRequested,
@@ -322,6 +347,7 @@ export async function applyIOSLocalSetup(
     directConfigPlan,
     plannedAssociatedDomain,
     associatedDomainPlan,
+    macOSNetworkCapabilityPlan,
     appleEntitlementPlan,
     prebuiltAuthAppleEntitlementPlan,
     nativeAppleRequested,
@@ -330,9 +356,35 @@ export async function applyIOSLocalSetup(
     hasSupportedCustomConfigure,
     prebuiltRuntimeBlockers,
   } = proposal;
-  if (!installPlan || !plannedAssociatedDomain || !inspectedPrebuiltAuthPlan) {
+  if (!platformViews) {
     throw iosSetupError(
-      "The selected iOS target did not produce one complete local setup proposal.",
+      `The selected target could not be configured safely across every supported Apple platform. No local or remote changes were made${
+        platformCompatibilityBlockers.length > 0
+          ? `:\n${platformCompatibilityBlockers.map((message) => `  • ${message}`).join("\n")}`
+          : "."
+      }`,
+      ERROR_CODE.IOS_TARGET_UNRESOLVED,
+    );
+  }
+  if (!productDecision) {
+    throw iosSetupError(
+      "The selected native Apple target could not be planned safely.",
+      ERROR_CODE.IOS_TARGET_UNRESOLVED,
+    );
+  }
+  if (productDecision === "unknown") {
+    throw iosSetupError(
+      "The selected target's Swift source membership could not be inspected completely, so Clerk cannot safely choose between the prebuilt ClerkKitUI path and a core-only custom flow. Resolve the Xcode source-membership diagnostics, then rerun clerk init.",
+      ERROR_CODE.IOS_TARGET_UNRESOLVED,
+    );
+  }
+  if (
+    !installPlan ||
+    !inspectedPrebuiltAuthPlan ||
+    (selectedTarget.platform === "ios" && !plannedAssociatedDomain)
+  ) {
+    throw iosSetupError(
+      `The selected ${platformLabel} target did not produce one complete local setup proposal.`,
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
@@ -349,8 +401,15 @@ export async function applyIOSLocalSetup(
     directConfigPlan?.sourcePath === prebuiltAuthPlan.sourcePath
   ) {
     throw iosSetupError(
-      "The approved iOS setup resolved the Clerk initializer and prebuilt AuthView scaffold to the same Swift source unexpectedly. No local files were changed; review the app root and rerun clerk init.",
+      `The approved ${platformLabel} setup resolved the Clerk initializer and prebuilt AuthView scaffold to the same Swift source unexpectedly. No local files were changed; review the app root and rerun clerk init.`,
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
+    );
+  }
+  if (macOSNetworkCapabilityPlan?.status === "blocked") {
+    throw iosSetupError(
+      `Outgoing network access could not be configured safely for the selected macOS target. No local files were changed:\n${blockerList(
+        macOSNetworkCapabilityPlan.blockers,
+      )}`,
     );
   }
   if (
@@ -358,7 +417,7 @@ export async function applyIOSLocalSetup(
     nativeReadiness.target.bundleIdentifier.status !== "resolved"
   ) {
     throw iosSetupError(
-      "The selected iOS target does not have one proven Bundle ID across all build configurations. No local files were changed; resolve PRODUCT_BUNDLE_IDENTIFIER, then rerun clerk init.",
+      `The selected ${platformLabel} target does not have one proven Bundle ID across all build configurations. No local files were changed; resolve PRODUCT_BUNDLE_IDENTIFIER, then rerun clerk init.`,
       ERROR_CODE.IOS_TARGET_UNRESOLVED,
     );
   }
@@ -421,7 +480,7 @@ export async function applyIOSLocalSetup(
     );
   } else if (installPlan.status === "blocked") {
     throw iosSetupError(
-      `The Clerk iOS SDK could not be installed automatically:\n${blockerList(
+      `The Clerk ${selectedTarget.platform === "macos" ? "Swift" : "iOS"} SDK could not be installed automatically:\n${blockerList(
         installPlan.blockers,
       )}`,
     );
@@ -453,6 +512,20 @@ export async function applyIOSLocalSetup(
       });
     }
     for (const file of associatedDomainPlan.files) {
+      plannedPaths.push({
+        absolutePath: resolve(options.root, file.path),
+        displayPath: file.path,
+      });
+    }
+  }
+  if (macOSNetworkCapabilityPlan?.status === "ready") {
+    if (macOSNetworkCapabilityPlan.missingEntitlementsSettings) {
+      plannedPaths.push({
+        absolutePath: resolve(options.root, selection.projectPath, "project.pbxproj"),
+        displayPath: `${selection.projectPath}/project.pbxproj`,
+      });
+    }
+    for (const file of macOSNetworkCapabilityPlan.files) {
       plannedPaths.push({
         absolutePath: resolve(options.root, file.path),
         displayPath: file.path,
@@ -516,12 +589,18 @@ export async function applyIOSLocalSetup(
     directConfigNeedsWrite(directConfigPlan) ||
     prebuiltAuthPlan?.status === "ready" ||
     associatedDomainNeedsWrite(associatedDomainPlan) ||
+    macOSNetworkCapabilityPlan?.status === "ready" ||
     appleEntitlementPlan?.status === "ready" ||
     prebuiltAuthAppleEntitlementPlan?.status === "ready";
   if (hasLocalWrites) {
-    log.info("\nclerk init will make the following local iOS changes:\n");
-  } else if (directConfigPlan || appleEntitlementPlan || prebuiltAuthPlan) {
-    log.info("\nclerk init will perform the following read-only iOS verification:\n");
+    log.info(`\nclerk init will make the following local ${platformLabel} changes:\n`);
+  } else if (
+    directConfigPlan ||
+    macOSNetworkCapabilityPlan ||
+    appleEntitlementPlan ||
+    prebuiltAuthPlan
+  ) {
+    log.info(`\nclerk init will perform the following read-only ${platformLabel} verification:\n`);
   }
   if (installPlan.status === "ready") {
     log.info(`  ${yellow("MODIFY")}  ${selection.projectPath}/project.pbxproj`);
@@ -565,16 +644,35 @@ export async function applyIOSLocalSetup(
       );
     }
   }
+  if (macOSNetworkCapabilityPlan?.status === "ready") {
+    if (
+      macOSNetworkCapabilityPlan.missingEntitlementsSettings &&
+      installPlan.status !== "ready" &&
+      !associatedDomainPlan?.missingEntitlementsSettings
+    ) {
+      log.info(`  ${yellow("MODIFY")}  ${selection.projectPath}/project.pbxproj`);
+    }
+    for (const file of macOSNetworkCapabilityPlan.files) {
+      log.info(`  ${yellow(file.operation === "create" ? "CREATE" : "MODIFY")}  ${file.path}`);
+    }
+    for (const action of macOSNetworkCapabilityPlan.actions) log.info(`          ${action}`);
+  } else if (macOSNetworkCapabilityPlan?.status === "satisfied") {
+    log.info(dim("\n  Outgoing network access is already available to the selected macOS target."));
+  }
   if (appleEntitlementPlan?.status === "ready") {
-    const alreadyPreviewedEntitlements = new Set(
-      associatedDomainNeedsWrite(associatedDomainPlan)
+    const alreadyPreviewedEntitlements = new Set([
+      ...(associatedDomainNeedsWrite(associatedDomainPlan)
         ? associatedDomainPlan.files.map((file) => file.path)
-        : [],
-    );
+        : []),
+      ...(macOSNetworkCapabilityPlan?.status === "ready"
+        ? macOSNetworkCapabilityPlan.files.map((file) => file.path)
+        : []),
+    ]);
     if (
       appleEntitlementPlan.missingEntitlementsSettings &&
       installPlan.status !== "ready" &&
-      !associatedDomainPlan?.missingEntitlementsSettings
+      !associatedDomainPlan?.missingEntitlementsSettings &&
+      !macOSNetworkCapabilityPlan?.missingEntitlementsSettings
     ) {
       log.info(`  ${yellow("MODIFY")}  ${selection.projectPath}/project.pbxproj`);
     }
@@ -606,6 +704,14 @@ export async function applyIOSLocalSetup(
       }
       for (const file of associatedDomainPlan.files) alreadyPreviewedPaths.add(file.path);
     }
+    if (macOSNetworkCapabilityPlan?.status === "ready") {
+      if (macOSNetworkCapabilityPlan.missingEntitlementsSettings) {
+        alreadyPreviewedPaths.add(`${selection.projectPath}/project.pbxproj`);
+      }
+      for (const file of macOSNetworkCapabilityPlan.files) {
+        alreadyPreviewedPaths.add(file.path);
+      }
+    }
     if (prebuiltAuthAppleEntitlementPlan.missingEntitlementsSettings) {
       const projectFile = `${selection.projectPath}/project.pbxproj`;
       if (!alreadyPreviewedPaths.has(projectFile)) {
@@ -634,8 +740,8 @@ export async function applyIOSLocalSetup(
   log.info(
     dim(
       nativeAppleRequested
-        ? "\n  After authentication, clerk init will inspect Native API, iOS registration, and the native Apple connection before separately previewing additive remote changes."
-        : "\n  After authentication, clerk init will inspect Native API and iOS registration state and separately preview any additive remote changes.",
+        ? `\n  After authentication, clerk init will inspect Native API, ${platformLabel} registration, and the native Apple connection before separately previewing additive remote changes.`
+        : `\n  After authentication, clerk init will inspect Native API and ${platformLabel} registration state and separately preview any additive remote changes.`,
     ),
   );
   log.blank();
@@ -647,7 +753,7 @@ export async function applyIOSLocalSetup(
   }
   if (hasLocalWrites && !options.yes) {
     const proceed = await confirm({
-      message: "Apply these local iOS changes?",
+      message: `Apply these local ${platformLabel} changes?`,
       default: false,
     });
     if (!proceed) throwUserAbort();
@@ -656,6 +762,9 @@ export async function applyIOSLocalSetup(
   return {
     ...proposal,
     targetName: selection.targetName,
+    platform: selectedTarget.platform,
+    supportedPlatforms: [...selectedTarget.supportedPlatforms],
+    platformViews,
     requiresLinkedApp: true,
     requiresDevelopmentKey:
       directConfigPlan != null || associatedDomainPlan?.requiresPublishableKey === true,
@@ -709,7 +818,7 @@ async function prepareSDKForCommit(
   }
   if (prepared.status === "blocked") {
     throw iosSetupError(
-      `The Clerk iOS SDK could no longer be prepared safely. No local setup changes were written:\n${preparedSDKBlockers(
+      `The Clerk ${prepared.plan.platform === "macos" ? "Swift" : "iOS"} SDK could no longer be prepared safely. No local setup changes were written:\n${preparedSDKBlockers(
         prepared,
       )}`,
     );
@@ -774,7 +883,7 @@ async function prepareAppleEntitlementForCommit(
   });
   if (prepared.status === "stale") {
     throw iosSetupError(
-      "An iOS entitlements file changed after the Sign in with Apple preview. No local setup changes were written; rerun clerk init.",
+      "A native Apple entitlements file changed after the Sign in with Apple preview. No local setup changes were written; rerun clerk init.",
       ERROR_CODE.IOS_SETUP_STALE,
     );
   }
@@ -786,6 +895,40 @@ async function prepareAppleEntitlementForCommit(
     );
   }
   return prepared;
+}
+
+async function prepareMacOSNetworkForCommit(
+  plan: MacOSNetworkCapabilityPlan | undefined,
+  baseMutations: readonly IOSFileMutation[],
+): Promise<PreparedMacOSNetworkCapabilityMutation | undefined> {
+  if (!plan) return undefined;
+  const prepared = await prepareMacOSNetworkCapabilityMutation(plan, { baseMutations });
+  if (prepared.status === "stale") {
+    throw iosSetupError(
+      "The macOS sandbox or entitlements configuration changed after the preview. No local setup changes were written; rerun clerk init.",
+      ERROR_CODE.IOS_SETUP_STALE,
+    );
+  }
+  if (prepared.status === "blocked") {
+    throw iosSetupError(
+      `Outgoing network access could no longer be prepared safely. No local setup changes were written:\n${blockerList(
+        prepared.plan.blockers,
+      )}`,
+    );
+  }
+  return prepared;
+}
+
+function composeMacOSNetworkMutations(
+  baseMutations: readonly IOSFileMutation[],
+  prepared: PreparedMacOSNetworkCapabilityMutation | undefined,
+): IOSFileMutation[] {
+  if (prepared?.status !== "ready") return [...baseMutations];
+  const consumed = new Set(prepared.consumedBaseMutationPaths);
+  return [
+    ...baseMutations.filter((mutation) => !consumed.has(resolve(mutation.path))),
+    ...prepared.mutations,
+  ];
 }
 
 function composeAppleMutations(
@@ -804,7 +947,7 @@ function assertUniqueMutationPaths(mutations: readonly IOSFileMutation[]): void 
   const paths = mutations.map((mutation) => resolve(mutation.path));
   if (new Set(paths).size !== paths.length) {
     throw iosSetupError(
-      "The approved iOS setup produced overlapping file mutations. No local setup changes were written; rerun clerk init.",
+      "The approved native Apple setup produced overlapping file mutations. No local setup changes were written; rerun clerk init.",
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
@@ -815,6 +958,7 @@ async function validateSatisfiedAssociatedDomain(plan: IOSAssociatedDomainPlan):
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
   });
   return (
     current.status === "satisfied" &&
@@ -827,6 +971,17 @@ async function validateSatisfiedAppleEntitlement(plan: IOSAppleEntitlementPlan):
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
+    supportedPlatforms: plan.supportedPlatforms,
+  });
+  return current.status === "satisfied";
+}
+
+async function validateSatisfiedMacOSNetwork(plan: MacOSNetworkCapabilityPlan): Promise<boolean> {
+  const current = await planMacOSNetworkCapability({
+    root: plan.root,
+    projectPath: plan.projectPath,
+    targetId: plan.targetId,
   });
   return current.status === "satisfied";
 }
@@ -836,6 +991,7 @@ async function validateSatisfiedPrebuiltAuth(plan: IOSPrebuiltAuthPlan): Promise
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
     allowDirty: true,
   });
   return current.status === "satisfied" && current.sourcePath === plan.sourcePath;
@@ -850,7 +1006,7 @@ function requireDevelopmentKey(
   );
   if (planNeedsKey !== setup.requiresDevelopmentKey) {
     throw iosSetupError(
-      "The approved iOS setup plan is internally inconsistent. No local setup changes were written; rerun clerk init.",
+      "The approved native Apple setup plan is internally inconsistent. No local setup changes were written; rerun clerk init.",
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
@@ -867,7 +1023,7 @@ function requireDevelopmentKey(
 function assertCoherentLocalSetup(setup: IOSLocalSetupResult): void {
   if (setup.prebuiltAuthRequested && !setup.prebuiltAuthPlan) {
     throw iosSetupError(
-      "The approved iOS setup selected prebuilt authentication without a validated source plan. No local setup changes were written; rerun clerk init.",
+      "The approved native Apple setup selected prebuilt authentication without a validated source plan. No local setup changes were written; rerun clerk init.",
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
@@ -875,13 +1031,13 @@ function assertCoherentLocalSetup(setup: IOSLocalSetupResult): void {
     setup.prebuiltAuthRequested || setup.prebuiltAuthPlan?.status === "satisfied";
   if (setup.prebuiltAuthActive !== expectedPrebuiltAuthActive) {
     throw iosSetupError(
-      "The approved iOS setup contains inconsistent prebuilt authentication state. No local setup changes were written; rerun clerk init.",
+      "The approved native Apple setup contains inconsistent prebuilt authentication state. No local setup changes were written; rerun clerk init.",
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
   if (setup.prebuiltAuthAppleEntitlementPlan && !setup.prebuiltAuthActive) {
     throw iosSetupError(
-      "The approved iOS setup contains an unselected AuthView capability plan. No local setup changes were written; rerun clerk init.",
+      "The approved native Apple setup contains an unselected AuthView capability plan. No local setup changes were written; rerun clerk init.",
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
@@ -891,7 +1047,7 @@ function assertCoherentLocalSetup(setup: IOSLocalSetupResult): void {
     setup.directConfigPlan.sourcePath === setup.prebuiltAuthPlan.sourcePath
   ) {
     throw iosSetupError(
-      "The approved iOS setup contains overlapping Swift source mutations. No local setup changes were written; rerun clerk init.",
+      "The approved native Apple setup contains overlapping Swift source mutations. No local setup changes were written; rerun clerk init.",
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
@@ -902,13 +1058,45 @@ function assertCoherentLocalSetup(setup: IOSLocalSetupResult): void {
   ].filter((plan) => plan != null);
   if (setup.prebuiltAuthPlan) plans.push(setup.prebuiltAuthPlan);
   if (setup.associatedDomainPlan) plans.push(setup.associatedDomainPlan);
+  if (setup.macOSNetworkCapabilityPlan) plans.push(setup.macOSNetworkCapabilityPlan);
   if (setup.appleEntitlementPlan) plans.push(setup.appleEntitlementPlan);
   if (setup.prebuiltAuthAppleEntitlementPlan) {
     plans.push(setup.prebuiltAuthAppleEntitlementPlan);
   }
   if (setup.nativeReadiness.target.status !== "selected") {
     throw iosSetupError(
-      "The approved iOS setup no longer identifies one selected native target. No local setup changes were written; rerun clerk init.",
+      "The approved native Apple setup no longer identifies one selected target. No local setup changes were written; rerun clerk init.",
+      ERROR_CODE.IOS_SETUP_PLAN_INVALID,
+    );
+  }
+  if (
+    setup.platformViews.root !== setup.nativeReadiness.root ||
+    setup.platformViews.projectPath !== setup.nativeReadiness.target.projectPath ||
+    setup.platformViews.targetId !== setup.nativeReadiness.target.targetId ||
+    setup.platformViews.primaryPlatform !== setup.platform ||
+    JSON.stringify(setup.platformViews.supportedPlatforms) !==
+      JSON.stringify(setup.supportedPlatforms)
+  ) {
+    throw iosSetupError(
+      "The approved native Apple setup contains inconsistent multiplatform target evidence. No local setup changes were written; rerun clerk init.",
+      ERROR_CODE.IOS_SETUP_PLAN_INVALID,
+    );
+  }
+  if (setup.nativeReadiness.target.platform !== setup.platform) {
+    throw iosSetupError(
+      "The approved native Apple setup no longer identifies one consistent platform. No local setup changes were written; rerun clerk init.",
+      ERROR_CODE.IOS_SETUP_PLAN_INVALID,
+    );
+  }
+  if (!setup.supportedPlatforms.includes(setup.platform)) {
+    throw iosSetupError(
+      "The approved native Apple setup contains inconsistent supported-platform state. No local setup changes were written; rerun clerk init.",
+      ERROR_CODE.IOS_SETUP_PLAN_INVALID,
+    );
+  }
+  if (setup.supportedPlatforms.includes("macos") !== (setup.macOSNetworkCapabilityPlan != null)) {
+    throw iosSetupError(
+      "The approved native Apple setup contains inconsistent macOS network-capability state. No local setup changes were written; rerun clerk init.",
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
@@ -928,7 +1116,7 @@ function assertCoherentLocalSetup(setup: IOSLocalSetupResult): void {
     )
   ) {
     throw iosSetupError(
-      "The approved iOS setup no longer identifies one consistent Xcode target. No local setup changes were written; rerun clerk init.",
+      "The approved native Apple setup no longer identifies one consistent Xcode target. No local setup changes were written; rerun clerk init.",
       ERROR_CODE.IOS_SETUP_PLAN_INVALID,
     );
   }
@@ -946,22 +1134,35 @@ export async function applyIOSPlannedLocalSetup(
   options: ApplyIOSPlannedLocalSetupOptions = {},
 ): Promise<void> {
   assertCoherentLocalSetup(setup);
+  const currentPlatformViews = await reinspectIOSPlatformViews(setup.platformViews);
+  if (
+    currentPlatformViews.status !== "ready" ||
+    !iosPlatformViewsSnapshotsEqual(setup.platformViews, currentPlatformViews.snapshot)
+  ) {
+    throw iosSetupError(
+      "The selected target's multiplatform Swift setup or native identity changed after the approved preview. No local setup changes were written; rerun clerk init.",
+      ERROR_CODE.IOS_SETUP_STALE,
+    );
+  }
+  const platformLabel = setup.platform === "macos" ? "macOS" : "iOS";
   if (setup.prebuiltAuthActive) {
     if (setup.nativeReadiness.target.status !== "selected") {
       throw iosSetupError(
-        "The approved prebuilt AuthView setup no longer identifies one selected iOS target. No local setup changes were written; rerun clerk init.",
+        "The approved prebuilt AuthView setup no longer identifies one selected native Apple target. No local setup changes were written; rerun clerk init.",
         ERROR_CODE.IOS_SETUP_PLAN_INVALID,
       );
     }
     const inspection = await inspectIOSProject(setup.nativeReadiness.root, {
       target: setup.nativeReadiness.target.targetId,
+      platform: setup.platform,
       exhaustiveContainerDiscovery: true,
     });
     if (
       hasIncompleteIOSContainerDiscovery(inspection) ||
       inspection.selection.state !== "selected" ||
       inspection.selection.targetId !== setup.nativeReadiness.target.targetId ||
-      inspection.selection.projectPath !== setup.nativeReadiness.target.projectPath
+      inspection.selection.projectPath !== setup.nativeReadiness.target.projectPath ||
+      inspection.selection.platform !== setup.platform
     ) {
       throw iosSetupError(
         "The approved prebuilt AuthView setup no longer identifies the same exhaustively discovered Xcode target. No local setup changes were written; rerun clerk init.",
@@ -1037,11 +1238,21 @@ export async function applyIOSPlannedLocalSetup(
         validateSatisfiedAssociatedDomain(preparedAssociatedDomain.plan),
       );
     }
-    const preparedAppleEntitlement = await prepareAppleEntitlementForCommit(
-      setup.appleEntitlementPlan,
+    const preparedMacOSNetwork = await prepareMacOSNetworkForCommit(
+      setup.macOSNetworkCapabilityPlan,
       baseMutations,
     );
-    const mutations = composeAppleMutations(baseMutations, preparedAppleEntitlement);
+    const networkMutations = composeMacOSNetworkMutations(baseMutations, preparedMacOSNetwork);
+    if (preparedMacOSNetwork?.status === "ready") {
+      postconditions.push(async () => validatePreparedMacOSNetworkCapability(preparedMacOSNetwork));
+    } else if (preparedMacOSNetwork?.status === "satisfied") {
+      postconditions.push(async () => validateSatisfiedMacOSNetwork(preparedMacOSNetwork.plan));
+    }
+    const preparedAppleEntitlement = await prepareAppleEntitlementForCommit(
+      setup.appleEntitlementPlan,
+      networkMutations,
+    );
+    const mutations = composeAppleMutations(networkMutations, preparedAppleEntitlement);
     if (preparedAppleEntitlement?.status === "ready") {
       postconditions.push(async () =>
         validatePreparedIOSAppleEntitlement(preparedAppleEntitlement),
@@ -1073,21 +1284,22 @@ export async function applyIOSPlannedLocalSetup(
     if (setup.prebuiltAuthActive) {
       postconditions.push(async () => validatePrebuiltAuthRuntimePostcondition(setup));
     }
+    postconditions.push(async () => validatePlatformViewsPostcondition(setup));
     assertUniqueMutationPaths(mutations);
 
     if (mutations.length > 0) {
-      const result = await withSpinner("Applying the local iOS setup...", async () =>
+      const result = await withSpinner(`Applying the local ${platformLabel} setup...`, async () =>
         applyIOSFileTransaction(mutations, postconditions),
       );
       if (result.status === "stale") {
         throw iosSetupError(
-          "An iOS setup file changed while the approved changes were being committed. Any partial write was restored; rerun clerk init.",
+          "A native Apple setup file changed while the approved changes were being committed. Any partial write was restored; rerun clerk init.",
           ERROR_CODE.IOS_SETUP_STALE,
         );
       }
       if (result.status === "rolled-back") {
         throw iosSetupError(
-          "The local iOS setup failed post-write validation and was restored byte-for-byte.",
+          "The local native Apple setup failed post-write validation and was restored byte-for-byte.",
           ERROR_CODE.IOS_LOCAL_APPLY_FAILED,
         );
       }
@@ -1106,6 +1318,9 @@ export async function applyIOSPlannedLocalSetup(
     }
     if (preparedAssociatedDomain?.status === "ready") {
       log.success("Clerk Associated Domain added to the selected target entitlements");
+    }
+    if (preparedMacOSNetwork?.status === "ready") {
+      log.success("Outgoing network access enabled for the selected macOS target");
     }
     if (preparedAppleEntitlement?.status === "ready") {
       log.success("Sign in with Apple entitlement added to the selected target");
@@ -1131,11 +1346,16 @@ export async function applyIOSPlannedLocalSetup(
       ? [prebuiltAuthFileMutation(preparedPrebuiltAuth)]
       : []),
   ];
-  const preparedAppleEntitlement = await prepareAppleEntitlementForCommit(
-    setup.appleEntitlementPlan,
+  const preparedMacOSNetwork = await prepareMacOSNetworkForCommit(
+    setup.macOSNetworkCapabilityPlan,
     baseMutations,
   );
-  const localMutations = composeAppleMutations(baseMutations, preparedAppleEntitlement);
+  const networkMutations = composeMacOSNetworkMutations(baseMutations, preparedMacOSNetwork);
+  const preparedAppleEntitlement = await prepareAppleEntitlementForCommit(
+    setup.appleEntitlementPlan,
+    networkMutations,
+  );
+  const localMutations = composeAppleMutations(networkMutations, preparedAppleEntitlement);
   assertUniqueMutationPaths(localMutations);
 
   // SDK-only and custom-runtime routes apply their local candidates together
@@ -1147,6 +1367,11 @@ export async function applyIOSPlannedLocalSetup(
         ? [async () => validatePreparedIOSAssociatedDomain(preparedAssociatedDomain)]
         : preparedAssociatedDomain?.status === "satisfied"
           ? [async () => validateSatisfiedAssociatedDomain(preparedAssociatedDomain.plan)]
+          : []),
+      ...(preparedMacOSNetwork?.status === "ready"
+        ? [async () => validatePreparedMacOSNetworkCapability(preparedMacOSNetwork)]
+        : preparedMacOSNetwork?.status === "satisfied"
+          ? [async () => validateSatisfiedMacOSNetwork(preparedMacOSNetwork.plan)]
           : []),
       ...(preparedAppleEntitlement?.status === "ready"
         ? [async () => validatePreparedIOSAppleEntitlement(preparedAppleEntitlement)]
@@ -1161,6 +1386,7 @@ export async function applyIOSPlannedLocalSetup(
       ...(setup.prebuiltAuthActive
         ? [async () => validatePrebuiltAuthRuntimePostcondition(setup)]
         : []),
+      async () => validatePlatformViewsPostcondition(setup),
     ];
     if (options.beforePostWriteValidation) {
       postconditions.push(async () => {
@@ -1168,7 +1394,7 @@ export async function applyIOSPlannedLocalSetup(
         return true;
       });
     }
-    const result = await withSpinner("Applying the local iOS setup...", async () =>
+    const result = await withSpinner(`Applying the local ${platformLabel} setup...`, async () =>
       applyIOSFileTransaction(localMutations, postconditions),
     );
     if (result.status === "stale") {
@@ -1179,7 +1405,7 @@ export async function applyIOSPlannedLocalSetup(
     }
     if (result.status === "rolled-back") {
       throw iosSetupError(
-        "The local iOS setup changed during post-write validation. The Clerk iOS SDK change was restored byte-for-byte; rerun clerk init.",
+        "The local native Apple setup changed during post-write validation. The Clerk SDK change was restored byte-for-byte; rerun clerk init.",
         ERROR_CODE.IOS_LOCAL_APPLY_FAILED,
       );
     }
@@ -1188,6 +1414,9 @@ export async function applyIOSPlannedLocalSetup(
     }
     if (preparedAssociatedDomain?.status === "ready") {
       log.success("Clerk Associated Domain added to the selected target entitlements");
+    }
+    if (preparedMacOSNetwork?.status === "ready") {
+      log.success("Outgoing network access enabled for the selected macOS target");
     }
     if (preparedAppleEntitlement?.status === "ready") {
       log.success("Sign in with Apple entitlement added to the selected target");

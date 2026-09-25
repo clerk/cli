@@ -15,7 +15,44 @@ const IOS_FRAMEWORK: FrameworkInfo = {
   ecosystem: "swift",
 };
 
-const IOS_INSPECTION = {} as IOSProjectInspectionResult;
+const IOS_INSPECTION = {
+  platform: "ios",
+  appTargets: [{ platform: "ios" }],
+  selection: { state: "selected", platform: "ios" },
+} as IOSProjectInspectionResult;
+const MACOS_INSPECTION = {
+  platform: "macos",
+  appTargets: [{ platform: "macos" }],
+  selection: { state: "selected", platform: "macos" },
+} as IOSProjectInspectionResult;
+const UNSUPPORTED_XCODE_INSPECTION = {
+  schemaVersion: 1,
+  platform: "apple-native",
+  root: "/fixture",
+  workspaces: [],
+  projects: [],
+  appTargets: [],
+  selection: { state: "none" },
+  localPublishableKey: { state: "missing" },
+  generatedProject: null,
+  diagnostics: [
+    {
+      code: "xcode.no-ios-app-target",
+      severity: "error",
+      message: "No supported iOS or macOS application target was found.",
+      evidence: [],
+    },
+  ],
+} as IOSProjectInspectionResult;
+const MISSING_TARGET_INSPECTION = {
+  ...UNSUPPORTED_XCODE_INSPECTION,
+  platform: "ios",
+  selection: {
+    state: "not-found",
+    requested: "MissingApp",
+    candidates: ["MyApp (APP_TARGET)"],
+  },
+} as IOSProjectInspectionResult;
 const DOCTOR_CONTEXT = {} as DoctorContext;
 
 function passingResult(name: string): CheckResult {
@@ -25,6 +62,7 @@ function passingResult(name: string): CheckResult {
 function runDependencies(overrides: Partial<DoctorRunDependencies> = {}): DoctorRunDependencies {
   return {
     detectFramework: async () => IOS_FRAMEWORK,
+    inspectIOSProject: async () => IOS_INSPECTION,
     getDoctorChecks: () => [async () => passingResult("Common")],
     runIOSDoctorChecks: async () => ({
       inspection: IOS_INSPECTION,
@@ -41,6 +79,144 @@ describe("getDoctorChecks", () => {
   });
 });
 
+describe("Apple-native framework routing", () => {
+  test("keeps a pure macOS application on native Clerk checks", async () => {
+    let nativeChecks = false;
+    const results = await runChecks(
+      DOCTOR_CONTEXT,
+      {},
+      {
+        dependencies: runDependencies({
+          inspectIOSProject: async () => MACOS_INSPECTION,
+          getDoctorChecks: (native) => {
+            nativeChecks = native;
+            return [async () => passingResult("Common")];
+          },
+          runIOSDoctorChecks: async (_ctx, options) => ({
+            inspection: options.preparedInspection ?? MACOS_INSPECTION,
+            results: [passingResult("macOS")],
+          }),
+        }),
+      },
+    );
+
+    expect(nativeChecks).toBeTrue();
+    expect(results.map((result) => result.name)).toEqual(["Common", "macOS"]);
+  });
+
+  test("uses ordinary checks for an unsupported Xcode-only project", async () => {
+    let nativeChecks = true;
+    let nativeAuditCalls = 0;
+    const results = await runChecks(
+      DOCTOR_CONTEXT,
+      {},
+      {
+        dependencies: runDependencies({
+          inspectIOSProject: async () => UNSUPPORTED_XCODE_INSPECTION,
+          getDoctorChecks: (native) => {
+            nativeChecks = native;
+            return [async () => passingResult(native ? "Native" : "Environment variables")];
+          },
+          runIOSDoctorChecks: async () => {
+            nativeAuditCalls++;
+            return { inspection: UNSUPPORTED_XCODE_INSPECTION, results: [] };
+          },
+        }),
+      },
+    );
+
+    expect(nativeChecks).toBeFalse();
+    expect(nativeAuditCalls).toBe(0);
+    expect(results.map((result) => result.name)).toEqual(["Environment variables"]);
+  });
+
+  test.each([
+    ["xcode.malformed-project", "Could not parse App.xcodeproj/project.pbxproj."],
+    ["xcode.missing-project-file", "App.xcodeproj does not contain project.pbxproj."],
+  ] as const)("fails native inspection for %s", async (code, message) => {
+    const failedInspection = {
+      ...UNSUPPORTED_XCODE_INSPECTION,
+      diagnostics: [
+        {
+          code,
+          severity: "error" as const,
+          message,
+          remedy: "Repair the Xcode project file.",
+          evidence: [],
+        },
+      ],
+    } as IOSProjectInspectionResult;
+    let nativeChecks = false;
+    let nativeAuditCalls = 0;
+
+    const results = await runChecks(
+      DOCTOR_CONTEXT,
+      {},
+      {
+        dependencies: runDependencies({
+          inspectIOSProject: async () => failedInspection,
+          getDoctorChecks: (native) => {
+            nativeChecks = native;
+            return [async () => passingResult(native ? "Native" : "Environment variables")];
+          },
+          runIOSDoctorChecks: async () => {
+            nativeAuditCalls++;
+            return { inspection: failedInspection, results: [] };
+          },
+        }),
+      },
+    );
+
+    expect(nativeChecks).toBeTrue();
+    expect(nativeAuditCalls).toBe(0);
+    expect(results).toEqual([
+      passingResult("Native"),
+      {
+        name: "Apple-native inspection",
+        status: "fail",
+        message: "Apple-native project inspection failed",
+        detail: message,
+        remedy: "Repair the Xcode project file.",
+      },
+    ]);
+  });
+
+  test("routes a missing explicit target through the native audit", async () => {
+    let nativeChecks = false;
+    let nativeAuditCalls = 0;
+    const results = await runChecks(
+      DOCTOR_CONTEXT,
+      { target: "MissingApp" },
+      {
+        dependencies: runDependencies({
+          inspectIOSProject: async () => MISSING_TARGET_INSPECTION,
+          getDoctorChecks: (native) => {
+            nativeChecks = native;
+            return [async () => passingResult("Common")];
+          },
+          runIOSDoctorChecks: async (_ctx, options) => {
+            nativeAuditCalls++;
+            expect(options.preparedInspection).toBe(MISSING_TARGET_INSPECTION);
+            return {
+              inspection: MISSING_TARGET_INSPECTION,
+              results: [
+                {
+                  name: "iOS: Select the iOS application target",
+                  status: "fail",
+                  message: 'The requested target "MissingApp" was not found.',
+                },
+              ],
+            };
+          },
+        }),
+      },
+    );
+
+    expect(nativeChecks).toBeTrue();
+    expect(nativeAuditCalls).toBe(1);
+    expect(results.some((result) => result.status === "fail")).toBeTrue();
+  });
+});
 describe("doctor telemetry stages", () => {
   test("reports the ordered native diagnostic boundaries", async () => {
     const stage = spyOn(telemetryMod, "setTelemetryStage");

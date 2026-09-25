@@ -23,11 +23,12 @@ import {
   type PbxObject,
   type PbxObjects,
 } from "./pbx.ts";
-import type { IOSDiagnostic } from "./types.ts";
+import type { IOSDiagnostic, IOSNativePlatform } from "./types.ts";
 
 const APP_PRODUCT_TYPE = "com.apple.product-type.application";
 const DEVICE_SETTING = "CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]";
 const SIMULATOR_SETTING = "CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]";
+const MACOS_SETTING = "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]";
 const MAX_PBXPROJ_BYTES = 15_000_000;
 
 export interface IOSMissingEntitlementsSettingsOptions {
@@ -35,6 +36,8 @@ export interface IOSMissingEntitlementsSettingsOptions {
   /** Invocation-root-relative selected .xcodeproj path. */
   projectPath: string;
   targetId: string;
+  /** Defaults to iOS for existing callers. */
+  platform?: IOSNativePlatform;
 }
 
 export type IOSMissingEntitlementsSettingsBlockerCode =
@@ -68,6 +71,7 @@ interface IOSMissingEntitlementsSettingsPlanBase {
   root: string;
   projectPath: string;
   targetId: string;
+  platform: IOSNativePlatform;
   /** Exact target configuration IDs authorized by this plan, when inspectable. */
   configurationIds: string[];
   actions: string[];
@@ -152,7 +156,7 @@ function planBase(
   options: IOSMissingEntitlementsSettingsOptions,
 ): Pick<
   IOSMissingEntitlementsSettingsPlanBase,
-  "schemaVersion" | "kind" | "root" | "projectPath" | "targetId"
+  "schemaVersion" | "kind" | "root" | "projectPath" | "targetId" | "platform"
 > {
   return {
     schemaVersion: 1,
@@ -160,6 +164,7 @@ function planBase(
     root: resolve(options.root),
     projectPath: options.projectPath.replaceAll("\\", "/"),
     targetId: options.targetId,
+    platform: options.platform ?? "ios",
   };
 }
 
@@ -661,9 +666,18 @@ async function entitlementsDestinationIsExclusive(
   projectPaths: readonly string[],
   selectedProjectPath: string,
   selectedTargetId: string,
+  selectedPlatform: IOSNativePlatform,
   destination: string,
 ): Promise<boolean> {
   const normalizedDestination = resolve(destination).toLocaleLowerCase("en-US");
+  let canonicalDestination: string;
+  try {
+    canonicalDestination = (
+      await canonicalPathWithPossibleMissingLeaf(destination)
+    ).toLocaleLowerCase("en-US");
+  } catch {
+    return false;
+  }
   for (const absoluteProjectPath of projectPaths) {
     const pbxprojPath = resolve(absoluteProjectPath, "project.pbxproj");
     if (!(await pathIsSafelyWithinIOSRoot(root, pbxprojPath))) return false;
@@ -688,12 +702,11 @@ async function entitlementsDestinationIsExclusive(
       asString(projectObject.projectDirPath) ?? "",
     );
     for (const targetId of targetIds) {
-      if (absoluteProjectPath === selectedProjectPath && targetId === selectedTargetId) continue;
       const targetObject = objects[targetId];
       if (!targetObject) return false;
       if (targetObject.isa !== "PBXNativeTarget") continue;
-      const diagnostics: IOSDiagnostic[] = [];
-      const configurations = await inspectTargetBuildConfigurations({
+      const primaryDiagnostics: IOSDiagnostic[] = [];
+      const primaryConfigurations = await inspectTargetBuildConfigurations({
         root,
         projectPath: absoluteProjectPath,
         groupRootDirectory,
@@ -702,21 +715,84 @@ async function entitlementsDestinationIsExclusive(
         targetObject,
         objects,
         parents,
-        diagnostics,
+        diagnostics: primaryDiagnostics,
       });
       if (
-        configurations.length === 0 ||
-        diagnostics.some((diagnostic) => diagnostic.severity === "error")
+        primaryConfigurations.length === 0 ||
+        primaryConfigurations.some((configuration) => !configuration.platformEvidenceComplete) ||
+        primaryDiagnostics.some((diagnostic) => diagnostic.severity === "error")
       ) {
         return false;
       }
-      for (const configuration of configurations) {
-        const resolution = configuration.model.entitlementsPath;
-        if (resolution.state === "unresolved") return false;
-        if (resolution.state !== "resolved") continue;
-        const siblingPath = resolve(dirname(absoluteProjectPath), resolution.value);
-        if (!(await pathIsSafelyWithinIOSRoot(root, siblingPath))) return false;
-        if (siblingPath.toLocaleLowerCase("en-US") === normalizedDestination) return false;
+      const primaryPlatforms = new Set(
+        primaryConfigurations
+          .map((configuration) => configuration.platform)
+          .filter((platform): platform is IOSNativePlatform => platform !== undefined),
+      );
+      if (primaryPlatforms.size > 1) return false;
+      const primaryPlatform = [...primaryPlatforms][0];
+      const supportedPlatforms = new Set(
+        primaryConfigurations.flatMap((configuration) => configuration.supportedPlatforms),
+      );
+      const views: Array<{
+        platform?: IOSNativePlatform;
+        configurations: typeof primaryConfigurations;
+      }> = [{ platform: primaryPlatform, configurations: primaryConfigurations }];
+      for (const platform of supportedPlatforms) {
+        if (platform === primaryPlatform) continue;
+        const diagnostics: IOSDiagnostic[] = [];
+        const configurations = await inspectTargetBuildConfigurations({
+          root,
+          projectPath: absoluteProjectPath,
+          groupRootDirectory,
+          projectObject,
+          targetId,
+          targetObject,
+          objects,
+          parents,
+          diagnostics,
+          platform,
+        });
+        if (
+          configurations.length !== primaryConfigurations.length ||
+          configurations.length === 0 ||
+          configurations.some(
+            (configuration) =>
+              !configuration.platformEvidenceComplete || configuration.platform !== platform,
+          ) ||
+          diagnostics.some((diagnostic) => diagnostic.severity === "error")
+        ) {
+          return false;
+        }
+        views.push({ platform, configurations });
+      }
+      for (const view of views) {
+        if (
+          absoluteProjectPath === selectedProjectPath &&
+          targetId === selectedTargetId &&
+          view.platform === selectedPlatform
+        ) {
+          continue;
+        }
+        for (const configuration of view.configurations) {
+          const resolution = configuration.model.entitlementsPath;
+          if (resolution.state === "unresolved") return false;
+          if (resolution.state !== "resolved") continue;
+          const siblingPath = resolve(dirname(absoluteProjectPath), resolution.value);
+          if (!(await pathIsSafelyWithinIOSRoot(root, siblingPath))) return false;
+          if (siblingPath.toLocaleLowerCase("en-US") === normalizedDestination) return false;
+          try {
+            if (
+              (await canonicalPathWithPossibleMissingLeaf(siblingPath)).toLocaleLowerCase(
+                "en-US",
+              ) === canonicalDestination
+            ) {
+              return false;
+            }
+          } catch {
+            return false;
+          }
+        }
       }
     }
   }
@@ -736,6 +812,8 @@ function destinationForRoot(
   root: string,
   absoluteProjectPath: string,
   synchronizedRoot: SynchronizedRoot,
+  platform: IOSNativePlatform,
+  platformSpecific: boolean,
 ):
   | { absolutePath: string; relativePath: string; buildSettingPath: string }
   | { blocker: IOSMissingEntitlementsSettingsBlocker } {
@@ -754,7 +832,8 @@ function destinationForRoot(
       ),
     };
   }
-  const absolutePath = resolve(synchronizedRoot.absolutePath, `${rootName}.entitlements`);
+  const suffix = platform === "macos" && platformSpecific ? ".mac.entitlements" : ".entitlements";
+  const absolutePath = resolve(synchronizedRoot.absolutePath, `${rootName}${suffix}`);
   const projectDirectory = dirname(absoluteProjectPath);
   const buildSettingPath = relative(projectDirectory, absolutePath).split(sep).join("/");
   if (
@@ -808,13 +887,19 @@ function settingsDictionary(
   return isRecord(settings) ? settings : undefined;
 }
 
-function rawSettingsAreExact(graph: ProjectGraph, buildSettingPath: string): boolean {
+function entitlementsSettingKeys(platform: IOSNativePlatform): readonly string[] {
+  return platform === "macos" ? [MACOS_SETTING] : [DEVICE_SETTING, SIMULATOR_SETTING];
+}
+
+function rawSettingsAreExact(
+  graph: ProjectGraph,
+  buildSettingPath: string,
+  platform: IOSNativePlatform,
+): boolean {
+  const keys = entitlementsSettingKeys(platform);
   return graph.configurationIds.every((id) => {
     const settings = settingsDictionary(graph, id);
-    return (
-      settings?.[DEVICE_SETTING] === buildSettingPath &&
-      settings?.[SIMULATOR_SETTING] === buildSettingPath
-    );
+    return keys.every((key) => settings?.[key] === buildSettingPath);
   });
 }
 
@@ -822,6 +907,7 @@ async function buildSettingState(
   root: string,
   snapshot: ProjectSnapshot,
   buildSettingPath: string,
+  platform: IOSNativePlatform,
 ): Promise<"missing" | "exact" | "conflicting" | "incomplete"> {
   const diagnostics: IOSDiagnostic[] = [];
   const parents = buildPbxParentIndex(snapshot.graph.objects);
@@ -839,11 +925,13 @@ async function buildSettingState(
     objects: snapshot.graph.objects,
     parents,
     diagnostics,
+    platform,
   });
   if (
     inspected.length !== snapshot.graph.configurationIds.length ||
     inspected.length === 0 ||
-    !inspected.some((configuration) => configuration.isIOS) ||
+    inspected.some((configuration) => !configuration.platformEvidenceComplete) ||
+    !inspected.every((configuration) => configuration.platform === platform) ||
     diagnostics.some((diagnostic) => diagnostic.severity === "error")
   ) {
     return "incomplete";
@@ -854,7 +942,7 @@ async function buildSettingState(
     return "missing";
   }
   if (
-    rawSettingsAreExact(snapshot.graph, buildSettingPath) &&
+    rawSettingsAreExact(snapshot.graph, buildSettingPath, platform) &&
     inspected.every(
       (configuration) =>
         configuration.model.entitlementsPath.state === "resolved" &&
@@ -870,10 +958,20 @@ async function inspectSelectedTarget(
   root: string,
   projectPath: string,
   targetId: string,
-): Promise<string | undefined> {
+  platform: IOSNativePlatform,
+): Promise<
+  | {
+      name: string;
+      platform: IOSNativePlatform;
+      supportedPlatforms: IOSNativePlatform[];
+      platformEvidenceComplete: boolean;
+    }
+  | undefined
+> {
   const inspection = await inspectIOSProject(root, {
     target: targetId,
     exhaustiveContainerDiscovery: true,
+    platform,
   });
   if (
     inspection.selection.state !== "selected" ||
@@ -882,9 +980,17 @@ async function inspectSelectedTarget(
   ) {
     return undefined;
   }
-  return inspection.appTargets.find(
+  const target = inspection.appTargets.find(
     (target) => target.id === targetId && target.projectPath === projectPath,
-  )?.name;
+  );
+  return target
+    ? {
+        name: target.name,
+        platform: target.platform,
+        supportedPlatforms: target.supportedPlatforms,
+        platformEvidenceComplete: target.platformEvidenceComplete,
+      }
+    : undefined;
 }
 
 export async function planIOSMissingEntitlementsSettings(
@@ -892,7 +998,12 @@ export async function planIOSMissingEntitlementsSettings(
 ): Promise<IOSMissingEntitlementsSettingsPlan> {
   const root = resolve(options.root);
   const normalizedProjectPath = options.projectPath.replaceAll("\\", "/");
-  const normalizedOptions = { ...options, root, projectPath: normalizedProjectPath };
+  const normalizedOptions = {
+    ...options,
+    root,
+    projectPath: normalizedProjectPath,
+    platform: options.platform ?? "ios",
+  };
   if (!validSuppliedSelection(normalizedOptions)) {
     return blockedPlan(
       normalizedOptions,
@@ -923,13 +1034,22 @@ export async function planIOSMissingEntitlementsSettings(
       ),
     );
   }
-  const targetName = await inspectSelectedTarget(root, normalizedProjectPath, options.targetId);
-  if (!targetName) {
+  const selectedTarget = await inspectSelectedTarget(
+    root,
+    normalizedProjectPath,
+    options.targetId,
+    normalizedOptions.platform,
+  );
+  if (
+    !selectedTarget ||
+    selectedTarget.platform !== normalizedOptions.platform ||
+    !selectedTarget.supportedPlatforms.includes(normalizedOptions.platform)
+  ) {
     return blockedPlan(
       normalizedOptions,
       blocker(
         "target-not-found",
-        "The selected object is not the exact inspected native iOS application target.",
+        `The selected object is not the exact inspected native ${normalizedOptions.platform === "macos" ? "macOS" : "iOS"} application target.`,
       ),
       {
         expectedPbxprojHash: snapshot.hash,
@@ -938,6 +1058,22 @@ export async function planIOSMissingEntitlementsSettings(
       },
     );
   }
+  if (!selectedTarget.platformEvidenceComplete) {
+    return blockedPlan(
+      normalizedOptions,
+      blocker(
+        "incomplete-build-configurations",
+        `Every selected-target build configuration must prove ${normalizedOptions.platform === "macos" ? "macOS" : "iOS"} support before adding entitlements settings.`,
+      ),
+      {
+        targetName: selectedTarget.name,
+        expectedPbxprojHash: snapshot.hash,
+        expectedPbxprojMode: snapshot.mode,
+        configurationIds: snapshot.graph.configurationIds,
+      },
+    );
+  }
+  const targetName = selectedTarget.name;
   const synchronized = await selectedSynchronizedRoot(root, snapshot);
   if (!synchronized.root) {
     return blockedPlan(normalizedOptions, synchronized.blocker!, {
@@ -947,7 +1083,13 @@ export async function planIOSMissingEntitlementsSettings(
       configurationIds: snapshot.graph.configurationIds,
     });
   }
-  const destination = destinationForRoot(root, snapshot.absoluteProjectPath, synchronized.root);
+  const destination = destinationForRoot(
+    root,
+    snapshot.absoluteProjectPath,
+    synchronized.root,
+    normalizedOptions.platform,
+    normalizedOptions.platform === "macos" && selectedTarget.supportedPlatforms.includes("ios"),
+  );
   if ("blocker" in destination) {
     return blockedPlan(normalizedOptions, destination.blocker, {
       targetName,
@@ -1065,6 +1207,7 @@ export async function planIOSMissingEntitlementsSettings(
       inventory.projectPaths,
       snapshot.absoluteProjectPath,
       options.targetId,
+      normalizedOptions.platform,
       destination.absolutePath,
     ))
   ) {
@@ -1090,7 +1233,12 @@ export async function planIOSMissingEntitlementsSettings(
       },
     );
   }
-  const settingState = await buildSettingState(root, snapshot, destination.buildSettingPath);
+  const settingState = await buildSettingState(
+    root,
+    snapshot,
+    destination.buildSettingPath,
+    normalizedOptions.platform,
+  );
   const sharedPlanFields: IOSMissingEntitlementsSettingsResolvedFields & {
     configurationIds: string[];
   } = {
@@ -1112,7 +1260,7 @@ export async function planIOSMissingEntitlementsSettings(
       normalizedOptions,
       blocker(
         "incomplete-build-configurations",
-        "Every selected-target build configuration and iOS build context must be inspectable before adding entitlements settings.",
+        `Every selected-target build configuration and ${normalizedOptions.platform === "macos" ? "macOS" : "iOS"} build context must be inspectable before adding entitlements settings.`,
       ),
       sharedPlanFields,
     );
@@ -1122,7 +1270,7 @@ export async function planIOSMissingEntitlementsSettings(
       normalizedOptions,
       blocker(
         "conflicting-entitlements-settings",
-        "The selected target already has partial, inherited, unresolved, or conflicting iOS entitlements settings.",
+        `The selected target already has partial, inherited, unresolved, or conflicting ${normalizedOptions.platform === "macos" ? "macOS" : "iOS"} entitlements settings.`,
       ),
       sharedPlanFields,
     );
@@ -1170,7 +1318,9 @@ export async function planIOSMissingEntitlementsSettings(
       settingState === "exact"
         ? []
         : [
-            `Add iOS device and simulator CODE_SIGN_ENTITLEMENTS settings for ${destination.relativePath} to every selected-target build configuration.`,
+            normalizedOptions.platform === "macos"
+              ? `Add a macOS CODE_SIGN_ENTITLEMENTS setting for ${destination.relativePath} to every selected-target build configuration.`
+              : `Add iOS device and simulator CODE_SIGN_ENTITLEMENTS settings for ${destination.relativePath} to every selected-target build configuration.`,
           ],
     blockers: [],
   };
@@ -1188,6 +1338,7 @@ function sameResolvedPlanIdentity(
     left.root === right.root &&
     left.projectPath === right.projectPath &&
     left.targetId === right.targetId &&
+    left.platform === right.platform &&
     left.entitlementsPath === right.entitlementsPath &&
     left.buildSettingPath === right.buildSettingPath &&
     left.synchronizedRootPath === right.synchronizedRootPath &&
@@ -1250,11 +1401,19 @@ export async function prepareIOSMissingEntitlementsSettingsMutation(
   baseMutation?: IOSExistingFileMutation,
 ): Promise<PreparedIOSMissingEntitlementsSettingsMutation> {
   if (plan.status === "blocked") return { status: "blocked", plan };
+  if (plan.platform !== "ios" && plan.platform !== "macos") {
+    return blockPrepared(
+      plan,
+      "unsupported-project",
+      "The serialized entitlements-settings plan has no supported target platform.",
+    );
+  }
   if (plan.status === "satisfied") {
     const current = await planIOSMissingEntitlementsSettings({
       root: plan.root,
       projectPath: plan.projectPath,
       targetId: plan.targetId,
+      platform: plan.platform,
     });
     if (current.status === "blocked") return { status: "blocked", plan: current };
     return current.status === "satisfied" && sameResolvedPlanIdentity(plan, current)
@@ -1326,6 +1485,7 @@ export async function prepareIOSMissingEntitlementsSettingsMutation(
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
   });
   if (replanned.status === "blocked") return { status: "blocked", plan: replanned };
   if (
@@ -1400,19 +1560,18 @@ export async function prepareIOSMissingEntitlementsSettingsMutation(
         "A selected-target build configuration has no mutable build-settings dictionary.",
       );
     }
-    const device = settings[DEVICE_SETTING];
-    const simulator = settings[SIMULATOR_SETTING];
-    const absent = device == null && simulator == null;
-    const exact = device === plan.buildSettingPath && simulator === plan.buildSettingPath;
+    const settingKeys = entitlementsSettingKeys(plan.platform);
+    const values = settingKeys.map((key) => settings[key]);
+    const absent = values.every((value) => value == null);
+    const exact = values.every((value) => value === plan.buildSettingPath);
     if (!absent && !exact) {
       return blockPrepared(
         plan,
         "conflicting-entitlements-settings",
-        "The prepared Xcode candidate introduced partial or conflicting iOS entitlements settings.",
+        `The prepared Xcode candidate introduced partial or conflicting ${plan.platform === "macos" ? "macOS" : "iOS"} entitlements settings.`,
       );
     }
-    settings[DEVICE_SETTING] = plan.buildSettingPath;
-    settings[SIMULATOR_SETTING] = plan.buildSettingPath;
+    for (const key of settingKeys) settings[key] = plan.buildSettingPath;
   }
 
   let candidate: string;
@@ -1438,12 +1597,12 @@ export async function prepareIOSMissingEntitlementsSettingsMutation(
   if (
     !candidateGraph ||
     !sameStringArray(candidateGraph.configurationIds, plan.configurationIds) ||
-    !rawSettingsAreExact(candidateGraph, plan.buildSettingPath)
+    !rawSettingsAreExact(candidateGraph, plan.buildSettingPath, plan.platform)
   ) {
     return blockPrepared(
       plan,
       "unsupported-project",
-      "The proposed Xcode project did not retain every required iOS entitlements setting.",
+      `The proposed Xcode project did not retain every required ${plan.platform === "macos" ? "macOS" : "iOS"} entitlements setting.`,
     );
   }
   const candidateBytes = new TextEncoder().encode(candidate);
@@ -1466,6 +1625,7 @@ export async function validateIOSMissingEntitlementsSettingsPostcondition(
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
   });
   return (
     current.status === "satisfied" &&

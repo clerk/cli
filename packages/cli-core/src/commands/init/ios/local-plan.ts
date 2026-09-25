@@ -10,6 +10,12 @@ import { planIOSDirectConfig, type IOSDirectConfigPlan } from "./direct-config.t
 import { planIOSAssociatedDomain, type IOSAssociatedDomainPlan } from "./associated-domain.ts";
 import { planIOSAppleEntitlement, type IOSAppleEntitlementPlan } from "./apple-entitlement.ts";
 import { planIOSSDKInstall, type IOSSDKInstallPlan } from "./install-sdk.ts";
+import { planMacOSNetworkCapability, type MacOSNetworkCapabilityPlan } from "./macos-network.ts";
+import {
+  inspectIOSPlatformViews,
+  iosPlatformViewsHaveAppleEntitlementIntent,
+  type IOSPlatformViewsSnapshot,
+} from "./platform-views.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
 import {
   buildIOSNativeReadinessAudit,
@@ -41,13 +47,21 @@ export interface BuildIOSLocalSetupProposalOptions {
 }
 
 /**
- * One credential-free, mutation-free proposal shared by dry-run and apply.
- * Candidate bytes and prepared mutations never enter this structure.
+ * A credential-free, mutation-free aggregate proposal model rebuilt from the
+ * current inspection for dry-run, approval, and apply preparation. Candidate
+ * bytes and prepared mutations never enter this structure.
  */
 export interface IOSLocalSetupProposal {
   inspection: IOSProjectInspectionResult;
   selectedTarget?: IOSAppTarget;
   productDecision?: ProductDecision;
+  /** Platform selected for local native Apple automation. */
+  platform?: IOSAppTarget["platform"];
+  /** Native Apple platforms declared or inferred for the selected target. */
+  supportedPlatforms?: IOSAppTarget["supportedPlatforms"];
+  /** Exhaustive, credential-free evidence shared by local and remote safety checks. */
+  platformViews?: IOSPlatformViewsSnapshot;
+  platformCompatibilityBlockers: string[];
   setupPlan: IOSSetupPlan;
   nativeReadiness: IOSNativeReadinessAudit;
   unverifiedAppIdPrefixSuggestion?: IOSUnverifiedAppIdPrefixSuggestion;
@@ -63,6 +77,7 @@ export interface IOSLocalSetupProposal {
   directConfigPlan?: IOSDirectConfigPlan;
   plannedAssociatedDomain?: IOSAssociatedDomainPlan;
   associatedDomainPlan?: IOSAssociatedDomainPlan;
+  macOSNetworkCapabilityPlan?: MacOSNetworkCapabilityPlan;
   inspectedAppleEntitlementPlan?: IOSAppleEntitlementPlan;
   appleEntitlementPlan?: IOSAppleEntitlementPlan;
   prebuiltAuthAppleEntitlementPlan?: IOSAppleEntitlementPlan;
@@ -146,18 +161,21 @@ export async function buildIOSLocalSetupProposal(
   context: IOSLocalSetupContext,
   options: BuildIOSLocalSetupProposalOptions,
 ): Promise<IOSLocalSetupProposal> {
-  const { inspection, selectedTarget, productDecision } = context;
+  const { inspection, selectedTarget, productDecision: contextProductDecision } = context;
   const selection = inspection.selection;
-  if (selection.state !== "selected" || !selectedTarget || !productDecision) {
+  if (selection.state !== "selected" || !selectedTarget || !contextProductDecision) {
     const setupPlan = buildIOSSetupPlan(inspection, {
       prebuiltAuthSelected: options.prebuiltAuthUI === true,
     });
     return {
       inspection,
       selectedTarget,
-      productDecision,
+      productDecision: contextProductDecision,
+      ...(selectedTarget ? { platform: selectedTarget.platform } : {}),
+      ...(selectedTarget ? { supportedPlatforms: [...selectedTarget.supportedPlatforms] } : {}),
       setupPlan,
       nativeReadiness: buildIOSNativeReadinessAudit(inspection),
+      platformCompatibilityBlockers: [],
       prebuiltAuthRequested: options.prebuiltAuthUI === true,
       prebuiltAuthActive: false,
       prebuiltRuntimeBlockers: [],
@@ -168,10 +186,44 @@ export async function buildIOSLocalSetupProposal(
     };
   }
 
+  let productDecision = contextProductDecision;
+
+  const platformViewsAudit = await inspectIOSPlatformViews(inspection);
+  if (platformViewsAudit.status === "blocked") {
+    const platformCompatibilityBlockers = platformViewsAudit.blockers.map(
+      (blocker) => blocker.message,
+    );
+    const setupPlan = buildIOSSetupPlan(inspection, {
+      productDecision,
+      platformCompatibilityBlockers,
+      prebuiltAuthSelected: options.prebuiltAuthUI === true,
+    });
+    return {
+      inspection,
+      selectedTarget,
+      productDecision,
+      platform: selectedTarget.platform,
+      supportedPlatforms: [...selectedTarget.supportedPlatforms],
+      setupPlan,
+      nativeReadiness: buildIOSNativeReadinessAudit(inspection),
+      platformCompatibilityBlockers,
+      prebuiltAuthRequested: options.prebuiltAuthUI === true,
+      prebuiltAuthActive: false,
+      prebuiltRuntimeBlockers: [],
+      reviewOnlyUnattributedInstall: false,
+      nativeAppleRequested: options.signInWithApple === true,
+      hasCustomConfigure: false,
+      hasSupportedCustomConfigure: false,
+    };
+  }
+  const platformViews = platformViewsAudit.snapshot;
+  productDecision = platformViews.productDecision;
+
   const inspectedPrebuiltAuthPlan = await planIOSPrebuiltAuth({
     root: options.root,
     projectPath: selection.projectPath,
     targetId: selection.targetId,
+    platform: selectedTarget.platform,
     allowDirty: options.allowDirty,
   });
   let prebuiltAuthRequested = options.prebuiltAuthUI === true;
@@ -190,13 +242,16 @@ export async function buildIOSLocalSetupProposal(
     inspectedPrebuiltAuthPlan.status !== "blocked" &&
     (prebuiltAuthRequested || inspectedPrebuiltAuthPlan.status === "satisfied");
 
-  const includeClerkKitUI = productDecision === "prebuilt" || prebuiltAuthActive;
+  const includeClerkKitUI = platformViews.requiresClerkKitUI || prebuiltAuthActive;
   const installPlan = await planIOSSDKInstall({
     root: options.root,
     projectPath: selection.projectPath,
     targetId: selection.targetId,
+    platform: selectedTarget.platform,
+    supportedPlatforms: selectedTarget.supportedPlatforms,
     includeClerkKitUI,
-    requirePrebuiltAuthCompatibility: prebuiltAuthActive,
+    requirePrebuiltAuthCompatibility:
+      platformViews.requiresAuthViewCompatibility || prebuiltAuthActive,
   });
 
   const hasCustomConfigure = selectedTarget.swift.configureCalls.some(
@@ -212,6 +267,7 @@ export async function buildIOSLocalSetupProposal(
         root: options.root,
         projectPath: selection.projectPath,
         targetId: selection.targetId,
+        platform: selectedTarget.platform,
         allowDirty: options.allowDirty,
       })
     : undefined;
@@ -236,24 +292,33 @@ export async function buildIOSLocalSetupProposal(
       : inspectedPrebuiltAuthPlan;
   const prebuiltAuthPlan = prebuiltAuthActive ? prebuiltAuthPlanForSetup : undefined;
 
-  const plannedAssociatedDomain = await planIOSAssociatedDomain({
-    root: options.root,
-    projectPath: selection.projectPath,
-    targetId: selection.targetId,
-    deferToPublishableKey: directConfigPlan?.status === "ready" || hasSupportedCustomConfigure,
-    allowMissingEntitlementsCreation: true,
-  });
+  const plannedAssociatedDomain =
+    selectedTarget.platform === "ios"
+      ? await planIOSAssociatedDomain({
+          root: options.root,
+          projectPath: selection.projectPath,
+          targetId: selection.targetId,
+          deferToPublishableKey:
+            directConfigPlan?.status === "ready" || hasSupportedCustomConfigure,
+          allowMissingEntitlementsCreation: true,
+        })
+      : undefined;
   const associatedDomainPlan =
-    plannedAssociatedDomain.status === "blocked" ? undefined : plannedAssociatedDomain;
+    plannedAssociatedDomain?.status === "blocked" ? undefined : plannedAssociatedDomain;
   const nativeReadiness = buildIOSNativeReadinessAudit(inspection, {
     associatedDomainPlan: plannedAssociatedDomain,
+    platformViews,
   });
+  const macOSNetworkCapabilityPlan = selectedTarget.supportedPlatforms.includes("macos")
+    ? await planMacOSNetworkCapability({
+        root: options.root,
+        projectPath: selection.projectPath,
+        targetId: selection.targetId,
+        allowMissingEntitlementsCreation: true,
+      })
+    : undefined;
 
-  const hasLocalAppleEntitlement = selectedTarget.configurations.some(
-    (configuration) =>
-      configuration.entitlements !== undefined &&
-      configuration.entitlements.signInWithAppleState !== "absent",
-  );
+  const hasLocalAppleEntitlement = iosPlatformViewsHaveAppleEntitlementIntent(platformViews);
   let nativeAppleRequested = options.signInWithApple === true;
   if (
     !nativeAppleRequested &&
@@ -273,6 +338,8 @@ export async function buildIOSLocalSetupProposal(
           root: options.root,
           projectPath: selection.projectPath,
           targetId: selection.targetId,
+          platform: selectedTarget.platform,
+          supportedPlatforms: selectedTarget.supportedPlatforms,
           allowMissingEntitlementsCreation: true,
         })
       : undefined;
@@ -283,6 +350,12 @@ export async function buildIOSLocalSetupProposal(
       : inspectedAppleEntitlementPlan?.status === "satisfied"
         ? inspectedAppleEntitlementPlan
         : undefined;
+  // Surface incomplete Apple capability state in previews without authorizing
+  // the mutating path to finish it unless this invocation explicitly opted in.
+  const appleEntitlementPlanForSetup =
+    nativeAppleRequested || hasLocalAppleEntitlement
+      ? inspectedAppleEntitlementPlan
+      : appleEntitlementPlan;
   const prebuiltAuthAppleEntitlementPlan = prebuiltAuthActive
     ? inspectedAppleEntitlementPlan
     : undefined;
@@ -293,10 +366,12 @@ export async function buildIOSLocalSetupProposal(
     prebuiltAuthActive,
   });
   const setupPlan = buildIOSSetupPlan(inspection, {
+    productDecision,
     sdkInstallPlan,
     directConfigPlan,
     associatedDomainPlan: plannedAssociatedDomain,
-    appleEntitlementPlan,
+    macOSNetworkCapabilityPlan,
+    appleEntitlementPlan: appleEntitlementPlanForSetup,
     prebuiltAuthPlan: prebuiltAuthPlanForSetup,
     prebuiltAuthSelected: prebuiltAuthRequested,
   });
@@ -306,6 +381,10 @@ export async function buildIOSLocalSetupProposal(
     inspection,
     selectedTarget,
     productDecision,
+    platform: selectedTarget.platform,
+    supportedPlatforms: [...selectedTarget.supportedPlatforms],
+    platformViews,
+    platformCompatibilityBlockers: [],
     setupPlan,
     nativeReadiness,
     ...(unverifiedAppIdPrefixSuggestion ? { unverifiedAppIdPrefixSuggestion } : {}),
@@ -321,6 +400,7 @@ export async function buildIOSLocalSetupProposal(
     directConfigPlan,
     plannedAssociatedDomain,
     associatedDomainPlan,
+    macOSNetworkCapabilityPlan,
     inspectedAppleEntitlementPlan,
     appleEntitlementPlan,
     prebuiltAuthAppleEntitlementPlan,

@@ -18,10 +18,15 @@ import {
 } from "../../../lib/plapi.ts";
 import { confirm } from "../../../lib/prompts.ts";
 import { withSpinner } from "../../../lib/spinner.ts";
+import type { IOSNativePlatform } from "./types.ts";
 
 const APPLE_CONNECTION_KEY = "connection_oauth_apple";
 const CONFIG_VERSION_PATTERN = /^v1_[0-9a-f]{8}$/;
 const NATIVE_APPLE_PATCH_FIELDS = new Set(["enabled", "authenticatable", "bundle_id"]);
+
+function platformName(platform: IOSNativePlatform | undefined): "iOS" | "macOS" {
+  return platform === "macos" ? "macOS" : "iOS";
+}
 
 function iosAppleError(
   message: string,
@@ -63,6 +68,7 @@ export type IOSNativeApplePlan = {
   status: "ready" | "satisfied" | "blocked";
   applicationId: string;
   instanceId: string;
+  platform?: IOSNativePlatform;
   bundleIdentifier: string;
   configVersion?: string;
   connection: "required" | "satisfied" | "blocked";
@@ -112,6 +118,12 @@ export interface IOSNativeAppleAPI {
   ): Promise<Record<string, unknown>>;
 }
 
+export interface ApplyIOSNativeAppleConnectionOptions {
+  api?: IOSNativeAppleAPI;
+  /** Rechecks caller-owned local state immediately before the remote mutation. */
+  revalidateLocalPreconditions?: () => Promise<void>;
+}
+
 /** GET-only Apple connection API surface used by read-only diagnostics. */
 export type IOSNativeAppleReadAPI = Pick<
   IOSNativeAppleAPI,
@@ -121,6 +133,7 @@ export type IOSNativeAppleReadAPI = Pick<
 export interface AuditIOSNativeAppleHealthOptions {
   applicationId: string;
   instanceId: string;
+  platform?: IOSNativePlatform;
   bundleIdentifier: string;
 }
 
@@ -134,6 +147,7 @@ export interface IOSNativeAppleHealthAudit {
   kind: "clerk-ios-native-apple-health";
   applicationId: string;
   instanceId: string;
+  platform?: IOSNativePlatform;
   bundleIdentifier: string;
   runtime: {
     status: "required" | "satisfied" | "blocked";
@@ -180,6 +194,7 @@ const defaultPrompts: IOSNativeApplePrompts = {
 export interface IOSNativeAppleOptions {
   applicationId: string;
   instanceId: string;
+  platform?: IOSNativePlatform;
   bundleIdentifier: string;
   /**
    * The exact selected target's registration is already satisfied or is an
@@ -311,7 +326,7 @@ function buildIOSNativeAppleHealthAudit(
     runtimeBlockers.push(
       blocker(
         "bundle-identifier-unavailable",
-        "Resolve one Bundle ID for the selected iOS target before verifying native Sign in with Apple.",
+        `Resolve one Bundle ID for the selected ${platformName(options.platform)} target before verifying native Sign in with Apple.`,
       ),
     );
   }
@@ -334,7 +349,7 @@ function buildIOSNativeAppleHealthAudit(
     runtimeBlockers.push(
       blocker(
         "apple-bundle-identifier-conflict",
-        "The existing Apple connection references a different iOS Bundle ID. clerk init will not replace it.",
+        `The existing Apple connection references a different ${platformName(options.platform)} Bundle ID. clerk init will not replace it.`,
       ),
     );
   }
@@ -399,6 +414,7 @@ function buildIOSNativeAppleHealthAudit(
     kind: "clerk-ios-native-apple-health",
     applicationId: options.applicationId,
     instanceId: options.instanceId,
+    ...(options.platform ? { platform: options.platform } : {}),
     bundleIdentifier,
     runtime: {
       status: runtimeStatus,
@@ -452,7 +468,7 @@ export function buildIOSNativeApplePlan(
     blockers.push(
       blocker(
         "bundle-identifier-unavailable",
-        "Resolve one Bundle ID for the selected iOS target before enabling native Sign in with Apple.",
+        `Resolve one Bundle ID for the selected ${platformName(options.platform)} target before enabling native Sign in with Apple.`,
       ),
     );
   }
@@ -460,7 +476,7 @@ export function buildIOSNativeApplePlan(
     blockers.push(
       blocker(
         "native-application-not-ready",
-        "Verify the exact selected iOS target's Clerk Native Application registration before enabling native Sign in with Apple.",
+        `Verify the exact selected ${platformName(options.platform)} target's Clerk Native Application registration before enabling native Sign in with Apple.`,
       ),
     );
   }
@@ -502,7 +518,7 @@ export function buildIOSNativeApplePlan(
     blockers.push(
       blocker(
         "apple-bundle-identifier-conflict",
-        "The existing Apple connection references a different iOS Bundle ID. clerk init will not replace it.",
+        `The existing Apple connection references a different ${platformName(options.platform)} Bundle ID. clerk init will not replace it.`,
       ),
     );
   }
@@ -563,6 +579,7 @@ export function buildIOSNativeApplePlan(
     status,
     applicationId: options.applicationId,
     instanceId: options.instanceId,
+    ...(options.platform ? { platform: options.platform } : {}),
     bundleIdentifier,
     ...(configVersion.status === "valid" ? { configVersion: configVersion.value } : {}),
     connection,
@@ -800,6 +817,7 @@ function planIdentityMatches(approved: IOSNativeApplePlan, current: IOSNativeApp
   return (
     current.applicationId === approved.applicationId &&
     current.instanceId === approved.instanceId &&
+    current.platform === approved.platform &&
     bundleIdentifiersEqual(current.bundleIdentifier, approved.bundleIdentifier)
   );
 }
@@ -810,8 +828,9 @@ function planVersionMatches(approved: IOSNativeApplePlan, current: IOSNativeAppl
 
 export async function applyIOSNativeAppleConnection(
   plan: IOSNativeApplePlan,
-  api: IOSNativeAppleAPI = defaultAPI,
+  options: ApplyIOSNativeAppleConnectionOptions = {},
 ): Promise<void> {
+  const { api = defaultAPI, revalidateLocalPreconditions } = options;
   if (
     plan.status === "blocked" ||
     !plan.current ||
@@ -831,6 +850,7 @@ export async function applyIOSNativeAppleConnection(
       {
         applicationId: plan.applicationId,
         instanceId: plan.instanceId,
+        platform: plan.platform,
         bundleIdentifier: plan.bundleIdentifier,
         nativeApplicationReady: true,
       },
@@ -857,9 +877,13 @@ export async function applyIOSNativeAppleConnection(
         ERROR_CODE.IOS_SETUP_STALE,
       );
     }
+    await revalidateLocalPreconditions?.();
     return;
   }
-  if (current.status === "satisfied") return;
+  if (current.status === "satisfied") {
+    await revalidateLocalPreconditions?.();
+    return;
+  }
   if (
     current.status !== "ready" ||
     !current.current ||
@@ -874,6 +898,7 @@ export async function applyIOSNativeAppleConnection(
   }
 
   await preflightIOSNativeAppleConnection(current, api);
+  await revalidateLocalPreconditions?.();
 
   try {
     await withSpinner("Enabling native Sign in with Apple in Clerk...", async () =>
@@ -892,6 +917,7 @@ export async function applyIOSNativeAppleConnection(
       {
         applicationId: plan.applicationId,
         instanceId: plan.instanceId,
+        platform: plan.platform,
         bundleIdentifier: plan.bundleIdentifier,
         nativeApplicationReady: true,
       },

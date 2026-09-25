@@ -48,6 +48,19 @@ afterEach(async () => {
 });
 
 describe("buildIOSNativeReadinessAudit", () => {
+  test("blocks remote identity planning when any configuration platform is unresolved", async () => {
+    const inspection = await inspectionFor({
+      complete: true,
+      platform: "macos",
+      releasePlatform: "unresolved",
+    });
+
+    expect(buildIOSNativeReadinessAudit(inspection).target).toEqual({
+      status: "blocked",
+      reason: "target-platform-unresolved",
+    });
+  });
+
   test("reports a redacted selected-target identity and the exact authenticated PLAPI bridge", async () => {
     const inspection = await inspectionFor({ complete: true });
     const selected = inspection.appTargets[0]!;
@@ -73,6 +86,7 @@ describe("buildIOSNativeReadinessAudit", () => {
         projectPath: "MyApp.xcodeproj",
         targetId: IOS_FIXTURE_IDS.appTarget,
         targetName: "MyApp",
+        platform: "ios",
         bundleIdentifier: { status: "resolved", value: "com.example.MyApp" },
         appIdPrefix: {
           status: "resolved",
@@ -237,6 +251,7 @@ describe("buildIOSNativeReadinessAudit", () => {
       root: inspection.root,
       projectPath: "MyApp.xcodeproj",
       targetId: IOS_FIXTURE_IDS.appTarget,
+      platform: "ios",
       targetName: "MyApp",
       requiresPublishableKey: false,
       files: [],

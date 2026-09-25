@@ -7,7 +7,11 @@ import { planIOSAssociatedDomain } from "./associated-domain.ts";
 import { inspectIOSProject } from "./inspect.ts";
 import { formatIOSSetupPlan } from "./output.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
-import { createIOSFixture } from "./test-helpers.ts";
+import {
+  addVisionOSDestinationsToFixture,
+  convertIOSFixtureToMultiplatform,
+  createIOSFixture,
+} from "./test-helpers.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -24,6 +28,104 @@ afterEach(async () => {
 });
 
 describe("buildIOSSetupPlan", () => {
+  test("adds an explicitly labeled macOS network step for a multiplatform target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-multiplatform-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true });
+    const inspection = await inspectIOSProject(root);
+    const target = inspection.appTargets[0];
+    if (!target) throw new Error("Expected an application target");
+    target.supportedPlatforms = ["ios", "macos"];
+
+    const plan = buildIOSSetupPlan(inspection, {
+      macOSNetworkCapabilityPlan: {
+        status: "satisfied",
+        actions: [],
+        blockers: [],
+        files: [],
+      },
+    });
+
+    expect(plan.selection).toMatchObject({ state: "selected", platform: "ios" });
+    expect(plan.steps.find((step) => step.id === "enable-macos-network")).toMatchObject({
+      title: "Allow outgoing network access for macOS",
+      status: "satisfied",
+    });
+    expect(plan.steps.map((step) => step.id)).toContain("add-associated-domain");
+  });
+
+  test("does not add a macOS network step to a pure iOS target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-only-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true });
+    const inspection = await inspectIOSProject(root);
+
+    const plan = buildIOSSetupPlan(inspection, {
+      macOSNetworkCapabilityPlan: {
+        status: "satisfied",
+        actions: [],
+        blockers: [],
+        files: [],
+      },
+    });
+
+    expect(inspection.appTargets[0]?.supportedPlatforms).toEqual(["ios"]);
+    expect(plan.steps.map((step) => step.id)).not.toContain("enable-macos-network");
+  });
+
+  test("uses macOS labels and omits the iOS Associated Domain step", async () => {
+    const plan = await planFor({ platform: "macos", complete: true });
+
+    expect(plan.selection).toMatchObject({ state: "selected", platform: "macos" });
+    expect(plan.steps.map((step) => step.id)).not.toContain("add-associated-domain");
+    expect(plan.steps.find((step) => step.id === "select-target")?.title).toBe(
+      "Select the macOS application target",
+    );
+    expect(plan.steps.find((step) => step.id === "register-native-application")?.title).toBe(
+      "Register the macOS app in Clerk Dashboard",
+    );
+  });
+
+  test("blocks every setup step when a configuration platform is unresolved", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-native-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, {
+      platform: "macos",
+      releasePlatform: "unresolved",
+      complete: true,
+    });
+    const inspection = await inspectIOSProject(root);
+    const plan = buildIOSSetupPlan(inspection);
+    const output = formatIOSSetupPlan(inspection, plan);
+
+    expect(plan.selection).toMatchObject({ state: "selected", platform: "macos" });
+    expect(plan.status).toBe("blocked");
+    expect(plan.steps.every((item) => item.status === "blocked")).toBe(true);
+    expect(plan.steps[0]?.description).toContain("does not have one proven native platform");
+    expect(output).toContain("native Apple setup plan (read-only)");
+    expect(output).toContain("Native Apple readiness:");
+    expect(output).not.toContain("Associated Domains:");
+  });
+
+  test("explains that a visionOS-bearing target was inspected but is not mutated", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-visionos-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { complete: true });
+    await convertIOSFixtureToMultiplatform(root);
+    await addVisionOSDestinationsToFixture(root);
+
+    const inspection = await inspectIOSProject(root);
+    const plan = buildIOSSetupPlan(inspection);
+    const output = formatIOSSetupPlan(inspection, plan);
+
+    expect(plan.status).toBe("blocked");
+    expect(plan.steps.every((item) => item.status === "blocked")).toBe(true);
+    expect(output).toContain("also ships visionOS");
+    expect(output).toContain("Read-only inspection completed");
+    expect(output).not.toContain("xros");
+    expect(output).not.toContain("Resolve SDKROOT and SUPPORTED_PLATFORMS");
+  });
+
   test("returns stable ordered steps while preserving a custom project key source", async () => {
     const plan = await planFor({ complete: true });
 
@@ -832,6 +934,34 @@ import SwiftUI
 
     expect(plan.steps[0]?.status).toBe("blocked");
     expect(plan.steps.slice(1).every((step) => step.status === "blocked")).toBe(true);
+  });
+
+  test("uses native Apple labels for an ambiguous mixed-platform selection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-native-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { platform: "macos", secondTarget: true });
+    const inspection = await inspectIOSProject(root);
+    const output = formatIOSSetupPlan(inspection, buildIOSSetupPlan(inspection));
+
+    expect(inspection.selection.state).toBe("ambiguous");
+    expect(inspection.platform).toBe("apple-native");
+    expect(output).toContain("native Apple setup plan (read-only)");
+    expect(output).toContain("Native Apple readiness:");
+    expect(output).not.toContain("Associated Domains:");
+  });
+
+  test("uses the inspected macOS platform when the requested target is missing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-macos-plan-"));
+    temporaryDirectories.push(root);
+    await createIOSFixture(root, { platform: "macos" });
+    const inspection = await inspectIOSProject(root, { target: "MissingApp" });
+    const output = formatIOSSetupPlan(inspection, buildIOSSetupPlan(inspection));
+
+    expect(inspection.selection.state).toBe("not-found");
+    expect(inspection.platform).toBe("macos");
+    expect(output).toContain("macOS setup plan (read-only)");
+    expect(output).toContain("Native macOS readiness:");
+    expect(output).not.toContain("Associated Domains:");
   });
 
   test("includes usable choices when the requested target is missing", async () => {

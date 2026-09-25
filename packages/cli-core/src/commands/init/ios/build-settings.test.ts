@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { inspectTargetBuildConfigurations } from "./build-settings.ts";
 import type { PbxObject, PbxObjects } from "./pbx.ts";
 import { buildIOSSetupPlan } from "./plan.ts";
-import type { IOSDiagnostic, IOSProjectInspectionResult } from "./types.ts";
+import type { IOSDiagnostic, IOSNativePlatform, IOSProjectInspectionResult } from "./types.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -17,9 +17,12 @@ interface BuildSettingsFixtureOptions {
   xcconfig?: string;
   includedXCConfig?: string;
   projectDirPath?: string;
+  projectBuildSettings?: Record<string, string>;
+  omitSupportedPlatforms?: boolean;
   targetBuildSettings?: Record<string, string>;
   projectConfigurationIds?: string[];
   targetConfigurationIds?: string[];
+  inspectionPlatform?: IOSNativePlatform;
 }
 
 async function inspectFixture(options: BuildSettingsFixtureOptions = {}) {
@@ -37,7 +40,7 @@ async function inspectFixture(options: BuildSettingsFixtureOptions = {}) {
     "project-debug": {
       isa: "XCBuildConfiguration",
       name: "Debug",
-      buildSettings: { SDKROOT: "iphoneos" },
+      buildSettings: { SDKROOT: "iphoneos", ...options.projectBuildSettings },
     },
     "target-list": {
       isa: "XCConfigurationList",
@@ -55,7 +58,9 @@ async function inspectFixture(options: BuildSettingsFixtureOptions = {}) {
         PRODUCT_BUNDLE_IDENTIFIER: "com.example.Example",
         DEVELOPMENT_TEAM: "ABCDE12345",
         IPHONEOS_DEPLOYMENT_TARGET: "17.0",
-        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+        ...(options.omitSupportedPlatforms
+          ? {}
+          : { SUPPORTED_PLATFORMS: "iphoneos iphonesimulator" }),
         ...options.targetBuildSettings,
       },
     },
@@ -113,6 +118,7 @@ async function inspectFixture(options: BuildSettingsFixtureOptions = {}) {
     objects,
     parents: new Map(),
     diagnostics,
+    platform: options.inspectionPlatform,
   });
   return { configurations, diagnostics, root };
 }
@@ -813,7 +819,10 @@ describe("inspectTargetBuildConfigurations", () => {
       },
     });
 
-    expect(configurations[0]?.isIOS).toBe(true);
+    expect(configurations[0]).toMatchObject({
+      platform: "ios",
+      platformEvidenceComplete: false,
+    });
     expect(diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -842,7 +851,7 @@ describe("inspectTargetBuildConfigurations", () => {
       },
     });
 
-    expect(configurations[0]?.isIOS).toBe(true);
+    expect(configurations[0]?.platform).toBe("ios");
   });
 
   test("still rejects targets with fully resolved non-iOS platform evidence", async () => {
@@ -854,7 +863,7 @@ describe("inspectTargetBuildConfigurations", () => {
       },
     });
 
-    expect(configurations[0]?.isIOS).toBe(false);
+    expect(configurations[0]?.platform).toBeUndefined();
   });
 
   test("rejects resolved non-iOS targets despite a stale iOS deployment target", async () => {
@@ -866,7 +875,7 @@ describe("inspectTargetBuildConfigurations", () => {
       },
     });
 
-    expect(configurations[0]?.isIOS).toBe(false);
+    expect(configurations[0]?.platform).toBeUndefined();
   });
 
   test("keeps targets when some non-iOS platform evidence remains unresolved", async () => {
@@ -878,7 +887,255 @@ describe("inspectTargetBuildConfigurations", () => {
       },
     });
 
-    expect(configurations[0]?.isIOS).toBe(true);
+    expect(configurations[0]?.platform).toBe("ios");
+  });
+
+  test("keeps macOS packaging identity conflicts unresolved", async () => {
+    const { configurations } = await inspectFixture({
+      targetBuildSettings: {
+        SDKROOT: "macosx",
+        SUPPORTED_PLATFORMS: "macosx",
+        PRODUCT_BUNDLE_IDENTIFIER: "com.clerk.Packaged",
+        "PRODUCT_BUNDLE_IDENTIFIER[arch=arm64]": "com.clerk.Compiled",
+        "PRODUCT_BUNDLE_IDENTIFIER[arch=x86_64]": "com.clerk.Compiled",
+      },
+    });
+    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+      state: "unresolved",
+      raw: expect.stringContaining("macosx/packaging=com.clerk.Packaged"),
+    });
+  });
+
+  test("classifies Clerk's native macOS app settings and resolves both architectures", async () => {
+    const { configurations, diagnostics } = await inspectFixture({
+      targetBuildSettings: {
+        SDKROOT: "macosx",
+        SUPPORTED_PLATFORMS: "macosx",
+        MACOSX_DEPLOYMENT_TARGET: "14.0",
+        IPHONEOS_DEPLOYMENT_TARGET: "",
+        PRODUCT_BUNDLE_IDENTIFIER: "com.clerk.MacExampleApp",
+        "PRODUCT_BUNDLE_IDENTIFIER[arch=arm64]": "com.clerk.MacExampleApp",
+        "PRODUCT_BUNDLE_IDENTIFIER[arch=x86_64]": "com.clerk.MacExampleApp",
+        ENABLE_APP_SANDBOX: "YES",
+        "ENABLE_APP_SANDBOX[arch=arm64]": "YES",
+        "ENABLE_APP_SANDBOX[arch=x86_64]": "YES",
+        ENABLE_OUTGOING_NETWORK_CONNECTIONS: "YES",
+        "ENABLE_OUTGOING_NETWORK_CONNECTIONS[arch=arm64]": "YES",
+        "ENABLE_OUTGOING_NETWORK_CONNECTIONS[arch=x86_64]": "YES",
+      },
+    });
+
+    expect(configurations[0]).toMatchObject({
+      platform: "macos",
+      platformEvidenceComplete: true,
+      model: {
+        bundleIdentifier: { state: "resolved", value: "com.clerk.MacExampleApp" },
+        deploymentTarget: { state: "resolved", value: "14.0" },
+        appSandbox: { state: "resolved", value: "YES" },
+        outgoingNetworkConnections: { state: "resolved", value: "YES" },
+      },
+    });
+    expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
+      "macosx/arm64",
+      "macosx/x86_64",
+      "macosx/packaging",
+    ]);
+    expect(diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "xcode.conflicting-build-setting" }),
+    );
+  });
+
+  test("keeps an iOS-capable multiplatform target on the iOS automation path", async () => {
+    const { configurations } = await inspectFixture({
+      targetBuildSettings: {
+        SDKROOT: "iphoneos",
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator macosx",
+        MACOSX_DEPLOYMENT_TARGET: "14.0",
+      },
+    });
+
+    expect(configurations[0]?.platform).toBe("ios");
+    expect(configurations[0]?.platformEvidenceComplete).toBe(true);
+    expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
+      "iphoneos/arm64",
+      "iphonesimulator/arm64",
+      "iphonesimulator/x86_64",
+      "iphoneos/packaging",
+      "iphonesimulator/packaging",
+    ]);
+  });
+
+  test("marks modeled platform evidence incomplete when the target also declares visionOS", async () => {
+    const { configurations } = await inspectFixture({
+      targetBuildSettings: {
+        SDKROOT: "auto",
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator macosx xros xrsimulator",
+        MACOSX_DEPLOYMENT_TARGET: "14.0",
+      },
+    });
+
+    expect(configurations[0]).toMatchObject({
+      platform: "ios",
+      supportedPlatforms: ["ios", "macos"],
+      unmodeledPlatforms: ["xros", "xrsimulator"],
+      platformEvidenceComplete: false,
+    });
+    expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
+      "iphoneos/arm64",
+      "iphonesimulator/arm64",
+      "iphonesimulator/x86_64",
+      "iphoneos/packaging",
+      "iphonesimulator/packaging",
+    ]);
+  });
+
+  test("marks an explicitly Catalyst-enabled target as unmodeled", async () => {
+    const { configurations } = await inspectFixture({
+      targetBuildSettings: { SUPPORTS_MACCATALYST: "YES" },
+    });
+
+    expect(configurations[0]).toMatchObject({
+      platform: "ios",
+      supportedPlatforms: ["ios"],
+      unmodeledPlatforms: ["maccatalyst"],
+      platformEvidenceComplete: false,
+    });
+  });
+
+  test.each([
+    { name: "absent", targetBuildSettings: {} },
+    { name: "disabled", targetBuildSettings: { SUPPORTS_MACCATALYST: "NO" } },
+  ] as Array<{ name: string; targetBuildSettings: Record<string, string> }>)(
+    "keeps Catalyst $name targets on the iOS automation path",
+    async ({ targetBuildSettings }) => {
+      const { configurations } = await inspectFixture({ targetBuildSettings });
+
+      expect(configurations[0]).toMatchObject({
+        platform: "ios",
+        supportedPlatforms: ["ios"],
+        unmodeledPlatforms: [],
+        platformEvidenceComplete: true,
+      });
+    },
+  );
+
+  test("fails platform evidence closed when Catalyst support is unresolved", async () => {
+    const { configurations, diagnostics } = await inspectFixture({
+      targetBuildSettings: { SUPPORTS_MACCATALYST: "$(UNKNOWN_CATALYST_SETTING)" },
+    });
+
+    expect(configurations[0]).toMatchObject({
+      platform: "ios",
+      unmodeledPlatforms: [],
+      platformEvidenceComplete: false,
+    });
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "xcode.unresolved-build-setting",
+        message: expect.stringContaining("SUPPORTS_MACCATALYST"),
+      }),
+    );
+  });
+
+  test.each([
+    { name: "enabled", value: "YES", expectedPlatforms: ["maccatalyst"] },
+    {
+      name: "unresolved",
+      value: "$(UNKNOWN_CATALYST_SETTING)",
+      expectedPlatforms: [],
+    },
+  ])(
+    "blocks an SDKROOT-proven iOS target with $name Catalyst support when SUPPORTED_PLATFORMS is absent",
+    async ({ value, expectedPlatforms }) => {
+      const { configurations, diagnostics } = await inspectFixture({
+        omitSupportedPlatforms: true,
+        targetBuildSettings: { SUPPORTS_MACCATALYST: value },
+      });
+
+      expect(configurations[0]).toMatchObject({
+        platform: "ios",
+        supportedPlatforms: ["ios"],
+        unmodeledPlatforms: expectedPlatforms,
+        platformEvidenceComplete: false,
+      });
+      expect(
+        diagnostics.some(
+          (diagnostic) =>
+            diagnostic.code === "xcode.unresolved-build-setting" &&
+            diagnostic.message.includes("SUPPORTS_MACCATALYST"),
+        ),
+      ).toBe(value !== "YES");
+    },
+  );
+
+  test.each([
+    { name: "enabled", value: "YES" },
+    { name: "unresolved", value: "$(UNKNOWN_CATALYST_SETTING)" },
+  ])(
+    "ignores an inherited $name Catalyst setting for a native macOS-only target",
+    async ({ value }) => {
+      const { configurations, diagnostics } = await inspectFixture({
+        projectBuildSettings: { SUPPORTS_MACCATALYST: value },
+        targetBuildSettings: {
+          SDKROOT: "macosx",
+          SUPPORTED_PLATFORMS: "macosx",
+          MACOSX_DEPLOYMENT_TARGET: "14.0",
+        },
+      });
+
+      expect(configurations[0]).toMatchObject({
+        platform: "macos",
+        supportedPlatforms: ["macos"],
+        unmodeledPlatforms: [],
+        platformEvidenceComplete: true,
+      });
+      expect(diagnostics).not.toContainEqual(
+        expect.objectContaining({
+          code: "xcode.unresolved-build-setting",
+          message: expect.stringContaining("SUPPORTS_MACCATALYST"),
+        }),
+      );
+    },
+  );
+
+  test("inspects a proven macOS view without changing the multiplatform primary platform", async () => {
+    const settings = {
+      SDKROOT: "auto",
+      SUPPORTED_PLATFORMS: "iphoneos iphonesimulator macosx",
+      MACOSX_DEPLOYMENT_TARGET: "14.0",
+    };
+    const primary = await inspectFixture({ targetBuildSettings: settings });
+    const macOS = await inspectFixture({
+      targetBuildSettings: settings,
+      inspectionPlatform: "macos",
+    });
+
+    expect(primary.configurations[0]).toMatchObject({
+      platform: "ios",
+      supportedPlatforms: ["ios", "macos"],
+      platformEvidenceComplete: true,
+    });
+    expect(macOS.configurations[0]).toMatchObject({
+      platform: "macos",
+      supportedPlatforms: ["ios", "macos"],
+      platformEvidenceComplete: true,
+      model: { deploymentTarget: { state: "resolved", value: "14.0" } },
+    });
+    expect(macOS.configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
+      "macosx/arm64",
+      "macosx/x86_64",
+      "macosx/packaging",
+    ]);
+  });
+
+  test("marks a forced macOS view incomplete when the configuration only supports iOS", async () => {
+    const { configurations } = await inspectFixture({ inspectionPlatform: "macos" });
+
+    expect(configurations[0]).toMatchObject({
+      platform: "macos",
+      supportedPlatforms: ["ios"],
+      platformEvidenceComplete: false,
+    });
   });
 
   test("preserves dangling target configurations as blocking placeholders", async () => {
@@ -909,6 +1166,9 @@ describe("inspectTargetBuildConfigurations", () => {
         {
           id: "target",
           name: "Example",
+          platform: "ios",
+          supportedPlatforms: ["ios"],
+          platformEvidenceComplete: false,
           projectPath: "Example.xcodeproj",
           configurations: configurations.map(({ model }) => model),
           packages: { package: "absent", clerkKit: "absent", clerkKitUI: "absent" },
@@ -936,6 +1196,7 @@ describe("inspectTargetBuildConfigurations", () => {
         targetId: "target",
         targetName: "Example",
         projectPath: "Example.xcodeproj",
+        platform: "ios",
       },
       localPublishableKey: { state: "missing" },
       generatedProject: null,

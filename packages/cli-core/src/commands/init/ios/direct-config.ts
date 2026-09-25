@@ -27,12 +27,14 @@ import {
   type SwiftUIRootExpression,
 } from "./swift-app-root.ts";
 import { sanitizeSwiftSourceWithStatus } from "./swift.ts";
+import type { IOSNativePlatform } from "./types.ts";
 
 export interface IOSDirectConfigPlanOptions {
   root: string;
   /** Project-root-relative path selected by the iOS inspector. */
   projectPath: string;
   targetId: string;
+  platform?: IOSNativePlatform;
   /** Low-level escape hatch. The aggregate init flow also checks every local mutation. */
   allowDirty?: boolean;
 }
@@ -42,6 +44,7 @@ export type IOSDirectConfigBlockerCode =
   | "external-path"
   | "generated-project"
   | "target-not-found"
+  | "unresolved-platform"
   | "incomplete-source-membership"
   | "shared-source"
   | "ambiguous-entry-point"
@@ -85,6 +88,7 @@ export interface IOSDirectConfigPlan {
   root: string;
   projectPath: string;
   targetId: string;
+  platform: IOSNativePlatform;
   allowDirty: boolean;
   sourcePath?: string;
   /** SHA-256 of the exact source bytes inspected by this plan. */
@@ -157,8 +161,18 @@ interface AppStructure {
   existingPublishableKey?: string;
   hasEnvironment: boolean;
   configurationInsertion:
-    | { kind: "new-initializer"; index: number; memberIndent: string; statementIndent: string }
-    | { kind: "existing-initializer"; index: number; statementIndent: string; multiline: boolean }
+    | {
+        kind: "new-initializer";
+        index: number;
+        memberIndent: string;
+        statementIndent: string;
+      }
+    | {
+        kind: "existing-initializer";
+        index: number;
+        statementIndent: string;
+        multiline: boolean;
+      }
     | { kind: "existing-literal" };
   environmentInsertion?: { index: number; textBeforeKey: string };
 }
@@ -199,6 +213,7 @@ function makePlan(
     root,
     projectPath,
     targetId: options.targetId,
+    platform: options.platform ?? "ios",
     allowDirty: options.allowDirty === true,
     sourcePath: details.sourcePath,
     expectedSourceHash: details.expectedSourceHash,
@@ -1011,6 +1026,7 @@ async function prepareDirectConfig(
   const projectPath = relativeIOSPath(root, absoluteProjectPath);
   const inspection = await inspectIOSProject(root, {
     target: options.targetId,
+    platform: options.platform,
     exhaustiveContainerDiscovery: true,
   });
   if (hasIncompleteIOSContainerDiscovery(inspection)) {
@@ -1032,7 +1048,7 @@ async function prepareDirectConfig(
       root,
       projectPath,
       "target-not-found",
-      "The selected native iOS application target could not be proven.",
+      "The selected native Apple application target could not be proven.",
     );
   }
   const generator =
@@ -1043,7 +1059,9 @@ async function prepareDirectConfig(
       root,
       projectPath,
       "generated-project",
-      `This is a ${generator === "xcodegen" ? "XcodeGen" : "Tuist"} project; update its source manifest instead of generated Swift sources.`,
+      `This is a ${
+        generator === "xcodegen" ? "XcodeGen" : "Tuist"
+      } project; update its source manifest instead of generated Swift sources.`,
     );
   }
   const target = inspection.appTargets.find(
@@ -1055,7 +1073,25 @@ async function prepareDirectConfig(
       root,
       projectPath,
       "target-not-found",
-      "The selected native iOS application target disappeared during inspection.",
+      "The selected native Apple application target disappeared during inspection.",
+    );
+  }
+  if (!target.platformEvidenceComplete) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "unresolved-platform",
+      "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently across every selected-target build configuration before changing Swift startup code.",
+    );
+  }
+  if (options.platform && target.platform !== options.platform) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "target-not-found",
+      "The selected application target changed platforms during inspection.",
     );
   }
   if (!target.swift.evidenceComplete) {
@@ -1265,7 +1301,12 @@ function redactedKeyBlocker(
   code: IOSDirectConfigBlockerCode,
   message: string,
 ): IOSDirectConfigPlan {
-  return { ...plan, status: "blocked", actions: [], blockers: [{ code, message }] };
+  return {
+    ...plan,
+    status: "blocked",
+    actions: [],
+    blockers: [{ code, message }],
+  };
 }
 
 function mutationWithHiddenBytes(
@@ -1293,7 +1334,10 @@ function readyPreparedMutation(
   validator: () => Promise<boolean>,
 ): IOSDirectConfigPreparedMutation {
   const prepared = { status: "ready", plan } as IOSDirectConfigPreparedMutation;
-  Object.defineProperty(prepared, "mutation", { value: mutation, enumerable: false });
+  Object.defineProperty(prepared, "mutation", {
+    value: mutation,
+    enumerable: false,
+  });
   preparedValidators.set(prepared, validator);
   return prepared;
 }
@@ -1307,6 +1351,7 @@ async function exactPostcondition(
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
     allowDirty: true,
   });
   return (
@@ -1343,7 +1388,7 @@ export async function prepareIOSDirectConfigMutation(
       plan: redactedKeyBlocker(
         plan,
         "invalid-selection",
-        "The direct iOS configuration plan is incomplete or unsupported.",
+        "The direct native Apple configuration plan is incomplete or unsupported.",
       ),
     };
   }
@@ -1361,7 +1406,7 @@ export async function prepareIOSDirectConfigMutation(
         plan,
         production ? "production-publishable-key" : "invalid-publishable-key",
         production
-          ? "Automatic direct iOS configuration accepts a development publishable key only."
+          ? "Automatic direct native Apple configuration accepts a development publishable key only."
           : "A valid Clerk development publishable key is required.",
       ),
     };
@@ -1371,6 +1416,7 @@ export async function prepareIOSDirectConfigMutation(
     root: plan.root,
     projectPath: plan.projectPath,
     targetId: plan.targetId,
+    platform: plan.platform,
     allowDirty: plan.allowDirty,
   });
   if (
@@ -1472,7 +1518,7 @@ export async function applyIOSDirectConfig(
     return {
       status: "rolled-back",
       plan,
-      message: "The direct iOS source update failed and the original file was restored.",
+      message: "The direct native Apple source update failed and the original file was restored.",
     };
   }
 
@@ -1483,6 +1529,6 @@ export async function applyIOSDirectConfig(
     message:
       result.status === "stale"
         ? "The selected Swift entry source changed while the update was being committed."
-        : "The direct iOS source update failed validation and the original file was restored.",
+        : "The direct native Apple source update failed validation and the original file was restored.",
   };
 }

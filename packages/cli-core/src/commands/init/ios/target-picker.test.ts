@@ -8,7 +8,12 @@ import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { applyIOSLocalSetup } from "./apply.ts";
 import { inspectIOSProject } from "./inspect.ts";
 import { pickAppleNativeTarget } from "./target-picker.ts";
-import { createIOSFixture, IOS_FIXTURE_IDS, treeDigest } from "./test-helpers.ts";
+import {
+  createIOSFixture,
+  convertIOSFixtureToMultiplatform,
+  IOS_FIXTURE_IDS,
+  treeDigest,
+} from "./test-helpers.ts";
 
 useCaptureLog();
 const directories: string[] = [];
@@ -36,10 +41,13 @@ afterEach(async () => {
   );
 });
 
-async function fixture(secondTarget: boolean | "watchos" = true) {
+async function fixture(
+  secondTarget: boolean | "watchos" = true,
+  platform: "ios" | "macos" = "ios",
+) {
   const root = await mkdtemp(join(tmpdir(), "clerk-target-picker-"));
   directories.push(root);
-  await createIOSFixture(root, { complete: true, secondTarget });
+  await createIOSFixture(root, { complete: true, secondTarget, platform });
   return root;
 }
 
@@ -67,6 +75,23 @@ test("offers app names, platform, and project, selecting the chosen ID without w
   });
   expect(await treeDigest(root)).toEqual(before);
 });
+
+test.each(["macos", "shared"] as const)(
+  "labels %s targets from their inspected platforms",
+  async (platform) => {
+    const root = await fixture(true, platform === "macos" ? "macos" : "ios");
+    if (platform === "shared") await convertIOSFixtureToMultiplatform(root);
+
+    await pickAppleNativeTarget({ root, interactive: true });
+
+    expect(picker.mock.calls[0]?.[0].choices).toContainEqual(
+      expect.objectContaining({
+        value: IOS_FIXTURE_IDS.appTarget,
+        name: `MyApp — ${platform === "macos" ? "macOS" : "iOS + macOS"} — MyApp.xcodeproj`,
+      }),
+    );
+  },
+);
 
 test.each([false, "watchos"] as const)(
   "keeps automatic selection for one eligible app (%s)",
