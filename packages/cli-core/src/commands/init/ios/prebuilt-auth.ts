@@ -1,4 +1,4 @@
-import { lstat, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
 import { readIOSSourceSnapshot, newlineStyle, type IOSSourceSnapshot } from "./source-snapshot.ts";
 import { generatedProjectKind } from "./project-selection.ts";
