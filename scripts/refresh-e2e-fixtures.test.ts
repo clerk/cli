@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { fixtures } from "../test/e2e/fixtures.manifest.ts";
 import type { FixtureConfig } from "../test/e2e/lib/types.ts";
-import { normalizeProjectSymlinks, refreshFixtures } from "./refresh-e2e-fixtures.ts";
+import {
+  copyProjectIntoFixture,
+  normalizeProjectSymlinks,
+  refreshFixtures,
+} from "./refresh-e2e-fixtures.ts";
 
 describe("react-router fixture scaffold command", () => {
   test("disables git initialization", () => {
@@ -110,6 +114,35 @@ describe("normalizeProjectSymlinks", () => {
     const links = ["CLAUDE.md", "docs/CLAUDE.md", "RULES.md"];
     const targets = await Promise.all(links.map((link) => readlink(join(dir, link))));
     expect(targets.every((target) => !isAbsolute(target))).toBe(true);
+  });
+});
+
+describe("copyProjectIntoFixture", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(async () => {
+    for (const dir of tempDirs) {
+      await rm(dir, { recursive: true, force: true });
+    }
+    tempDirs.length = 0;
+  });
+
+  test("keeps normalized relative symlinks relative in the fixture", async () => {
+    // GIVEN a scaffolded project whose absolute link was normalized
+    const root = await mkdtemp(join(tmpdir(), "copy-fixture-test-"));
+    tempDirs.push(root);
+    const project = join(root, "project");
+    const fixture = join(root, "fixture");
+    await mkdir(project, { recursive: true });
+    await Bun.write(join(project, "AGENTS.md"), "agents\n");
+    await symlink(join(project, "AGENTS.md"), join(project, "CLAUDE.md"));
+    await normalizeProjectSymlinks(project);
+
+    // WHEN it is copied into the fixture directory
+    await copyProjectIntoFixture(project, fixture);
+
+    // THEN the link still points at the fixture's own file, not the temp project
+    expect(await readlink(join(fixture, "CLAUDE.md"))).toBe("AGENTS.md");
   });
 });
 

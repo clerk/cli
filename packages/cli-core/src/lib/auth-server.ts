@@ -26,7 +26,6 @@ const CLERK_LOGO = `<span class="clerk-logo-frame"><svg class="clerk-logo" width
 `;
 
 const PAGE_STYLE = `
-  @property --glow-angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   :root {
     color-scheme: light dark;
@@ -44,12 +43,7 @@ const PAGE_STYLE = `
     --cli-accent: #6c47ff;
     --cli-logo-bg: linear-gradient(180deg, rgba(10,10,10,0) 0%, rgba(10,10,10,0.02) 100%);
     --cli-logo-shadow: 0px 11px 28px -10px #00000026, 0px 4px 14px -10px #0000001a, 0px 1px 2px 0px #0000000a, 0px 0px 0px 0.5px #1313161a, inset 0px -4px 16px 0px #fff, inset 0px -4px 4px 0px #ffffff80, inset 0px 3px 5px 0px #fff, inset 0px 4px 35px -6px #0000000f;
-    --cli-cards-bg: rgb(246, 246, 247);
-    --cli-brand-purple: #6c47ff;
-    --cli-brand-purple-soft: #9785ff;
-    --cli-brand-sky: #00aee3;
-    --cli-brand-sky-soft: #3ad4fd;
-    --cli-glow-opacity: 0.7;
+    --cli-focus-outline: #131316;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -67,43 +61,30 @@ const PAGE_STYLE = `
       --cli-accent: #9c87ff;
       --cli-logo-bg: linear-gradient(180deg, rgba(245,245,247,0.08) 0%, rgba(245,245,247,0) 100%);
       --cli-logo-shadow: 0px 11px 28px -10px #00000080, 0px 4px 14px -10px #00000059, 0px 1px 2px 0px #00000059, inset 0 0 0 1px rgba(255 255 255 / 0.04), inset 0 1px 0 0 rgba(255 255 255 / 0.04), 0 0 0 1px rgba(0 0 0 / 1);
-      --cli-cards-bg: #17171a;
-      --cli-glow-opacity: 0.22;
+      --cli-focus-outline: #fff;
     }
   }
-  .page-glow { position: fixed; z-index: 0; inset: -1.5rem; pointer-events: none; border: solid 0; border-image: conic-gradient(from var(--glow-angle), var(--cli-brand-purple), var(--cli-brand-purple-soft), var(--cli-brand-sky-soft), var(--cli-brand-sky), var(--cli-brand-sky-soft), var(--cli-brand-purple-soft), var(--cli-brand-purple)) 1; opacity: var(--cli-glow-opacity); filter: blur(3rem); animation: glow-sweep 2.8s cubic-bezier(0.4, 0.36, 0, 1) both, glow-spin 2.8s linear both; }
-  @keyframes glow-sweep { 0% { border-width: 0; } 40% { border-width: 2.5rem; } 100% { border-width: 0; } }
-  @keyframes glow-spin { to { --glow-angle: 1turn; } }
   body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; min-height: 100vh; background: var(--cli-bg); color: var(--cli-fg); }
-  .auth-page { position: relative; z-index: 1; min-height: 100dvh; text-align: center; padding-inline: 1rem; }
-  .auth-hero { min-height: 100dvh; display: grid; place-content: center; }
+  ::selection { background: var(--cli-fg); color: var(--cli-bg); }
+  .auth-page { min-height: 100dvh; text-align: center; padding-block: 3rem 2rem; padding-inline: 1rem; }
   .auth-headline { position: relative; }
-  .intro { --intro-drop: 2rem; }
-  .intro h1 { animation: settle-up 0.7s cubic-bezier(0.4, 0.36, 0, 1) 1.87s both; }
-  .intro > p { color: var(--cli-fg-muted); animation: sub-in 0.7s cubic-bezier(0.4, 0.36, 0, 1) 1.94s both; }
-  .intro .clerk-logo-frame { animation: logo-in 0.6s cubic-bezier(0.4, 0.36, 0, 1) both, settle-up-logo 0.7s cubic-bezier(0.4, 0.36, 0, 1) 1.8s both; }
-  .clerk-logo-frame { position: absolute; left: 50%; bottom: 100%; translate: -50% 0; margin-bottom: 1.25rem; display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: var(--cli-logo-bg); box-shadow: var(--cli-logo-shadow); }
+  .intro > p { --stagger: 4; color: var(--cli-fg-muted); }
+  .intro .clerk-logo-frame { --stagger: 0; }
+  .clerk-logo-frame { margin-bottom: 1.25rem; display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: var(--cli-logo-bg); box-shadow: var(--cli-logo-shadow); }
   .clerk-logo { color: var(--cli-fg); }
   .auth-page h1 { font-size: clamp(1.875rem, 4vw, 2.5rem); }
-  .auth-headline > p { margin-top: 0.75rem; }
-  @keyframes word-in { from { opacity: 0; filter: blur(14px); transform: scale(1.12); } to { opacity: 1; filter: blur(0px); transform: scale(1); } }
-  .word-in { display: inline-block; animation: word-in 0.9s cubic-bezier(0.4, 0.36, 0, 1) both; }
-  @keyframes fade-in { from { opacity: 0; filter: blur(2px); } to { opacity: 1; filter: blur(0px); } }
-  @keyframes cards-in { from { opacity: 0; filter: blur(14px); transform: scale(1.05); } to { opacity: 1; filter: blur(0px); transform: scale(1); } }
-  @keyframes settle-up { from { transform: translateY(var(--intro-drop)); } to { transform: translateY(0); } }
-  @keyframes settle-up-logo { from { translate: -50% var(--intro-drop); } to { translate: -50% 0; } }
-  @keyframes logo-in { from { opacity: 0; scale: 1.12; } to { opacity: 1; scale: 1; } }
-  @keyframes sub-in { from { opacity: 0; filter: blur(6px); transform: translateY(var(--intro-drop)); } to { opacity: 1; filter: blur(0px); transform: translateY(0); } }
-  .cli-cards { --cli-cards-width: 68rem; margin-top: 2rem; margin-bottom: 1.5rem; opacity: 0; transform-origin: 50% -20rem; animation: cards-in 0.9s cubic-bezier(0.4, 0.36, 0, 1) 0.22s both; }
-  .cli-cards-intro { align-self: center; padding-left: 1.5rem; text-align: left; }
-  .cli-cards-intro h2 { text-wrap: balance; font-size: 1.25rem; line-height: 1.75rem; font-weight: 600; color: var(--cli-fg); }
-  .cli-cards-intro p { max-width: 30ch; text-wrap: balance; margin-top: 0.75rem; font-size: 0.8125rem; line-height: 1.25rem; color: var(--cli-fg-muted); }
-  .cli-cards-grid { margin-inline: auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem; padding: 0.5rem; width: var(--cli-cards-width); max-width: 100%; background: var(--cli-cards-bg); border-radius: 24px; }
-  @media (max-width: 1100px) { .cli-cards { --cli-cards-width: 52rem; } .cli-cards-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .cli-cards-intro { grid-column: 1 / -1; padding-block: 1.5rem 1rem; } }
-  @media (max-width: 860px) { .auth-hero { min-height: 72dvh; } .auth-page { padding-bottom: 2rem; } .cli-cards { --cli-cards-width: 100%; margin-top: 1.5rem; } .cli-cards-grid { grid-template-columns: 1fr; } .cli-cards-intro { padding-inline: 1rem; } .cli-card-desc { max-width: 36ch; } }
-  @media (min-width: 861px) and (min-height: 700px) { .cli-cards { position: absolute; left: 1rem; right: 1rem; bottom: 1.5rem; margin: 0; } }
-  @media (min-width: 861px) and (min-height: 700px) { body { overflow: clip; } }
-  .cli-card { display: flex; flex-direction: column; gap: 0.5rem; border: 1px solid var(--cli-border); border-radius: 1rem; padding: 1rem; text-align: left; background: var(--cli-bg); }
+  .auth-headline > p { max-width: 42ch; margin-inline: auto; margin-top: 0.75rem; text-wrap: balance; font-size: 0.875rem; line-height: 1.5rem; }
+  @keyframes enter { from { opacity: 0; transform: translateY(0.5rem); } }
+  .intro .clerk-logo-frame, .word-in, .intro > p, .cli-card { animation: enter 450ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both; animation-delay: calc(var(--delay, 45ms) * var(--stagger, 0)); }
+  .word-in { display: inline-block; }
+  .cli-cards { --cli-cards-width: 52rem; margin-top: 4rem; margin-bottom: 1.5rem; }
+  .cli-cards-grid { margin-inline: auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; width: var(--cli-cards-width); max-width: 100%; }
+  @media (min-width: 861px) and (min-height: 700px) { .auth-page { padding-block: 0; } .auth-hero { min-height: 100dvh; display: grid; place-content: center; } .clerk-logo-frame { position: absolute; left: 50%; bottom: 100%; translate: -50% 0; } .cli-cards { position: absolute; top: 100%; left: 50%; translate: -50% 0; width: var(--cli-cards-width); max-width: calc(100vw - 2rem); margin: 4rem 0 0; } body { overflow: clip; } }
+  @media (max-width: 860px) { .cli-cards { --cli-cards-width: 100%; margin-top: 2.5rem; } .cli-cards-grid { grid-template-columns: 1fr; } .cli-card-desc { max-width: 36ch; } }
+  .cli-card { animation-delay: calc(260ms + var(--index, 0) * 75ms); display: flex; flex-direction: column; gap: 0.5rem; border: 1px solid var(--cli-border); border-radius: 1rem; padding: 1rem; text-align: left; background: var(--cli-bg); }
+  .cli-card:nth-child(1) { --index: 0; }
+  .cli-card:nth-child(2) { --index: 1; }
+  .cli-card:nth-child(3) { --index: 2; }
   .cli-card-head { display: flex; align-items: center; }
   .cli-card-title { margin-top: 0.25rem; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 500; }
   .cli-card-icon { width: 14px; height: 14px; flex: none; color: var(--cli-fg-dim); }
@@ -114,6 +95,8 @@ const PAGE_STYLE = `
   .cli-bin { color: var(--cli-syntax-mid); }
   .copy-btn { background: transparent; border: 0; width: 1.75rem; height: 1.75rem; cursor: pointer; color: var(--cli-fg-dim); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; flex: none; transition: color 0.3s cubic-bezier(0.4,0.36,0,1), background 0.15s, transform 0.15s; }
   .copy-btn:hover { color: var(--cli-fg); background: var(--cli-hover-bg); }
+  .copy-btn:focus { outline: none; }
+  .copy-btn:focus-visible { outline: 2px solid var(--cli-focus-outline); outline-offset: 2px; }
   .copy-btn:active { transform: scale(0.92); }
   .copy-btn .icon-check { display: none; color: #16a34a; }
   .copy-btn.copied .icon-copy { display: none; }
@@ -127,8 +110,7 @@ function animatedText(text: string): string {
   return text
     .split(" ")
     .map((word, i) => {
-      const delay = (0.15 + i * 0.14).toFixed(3);
-      return `<span class="word-in" style="animation-delay:${delay}s;">${escapeHtml(word)}</span>`;
+      return `<span class="word-in" style="--stagger:${i + 1};">${escapeHtml(word)}</span>`;
     })
     .join(" ");
 }
@@ -140,11 +122,21 @@ const COPY_ICON_SVG = `<svg class="icon-copy" width="13" height="13" viewBox="0 
 const CHECK_ICON_SVG = `<svg class="icon-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 
 const COPY_SCRIPT = `
+  const copyTimers = new WeakMap();
   function copyCmd(btn) {
     const cmd = btn.parentElement.querySelector('.cli-cmd-text').textContent.replace(/\\s+/g, ' ').trim();
+    // Each click restarts the window. Without this, an earlier click's timer
+    // fires mid-spam and flashes the button back to the copy icon.
     const done = function () {
+      clearTimeout(copyTimers.get(btn));
       btn.classList.add('copied');
-      setTimeout(function () { btn.classList.remove('copied'); }, 1500);
+      copyTimers.set(
+        btn,
+        setTimeout(function () {
+          copyTimers.delete(btn);
+          btn.classList.remove('copied');
+        }, 1500),
+      );
     };
     const fallback = function () {
       const ta = document.createElement('textarea');
@@ -177,21 +169,14 @@ const SUCCESS_HTML = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Clerk CLI</title><style>${PAGE_STYLE}</style></head>
 <body>
-  <div class="page-glow"></div>
   <div class="auth-page">
     <div class="auth-hero">
       <div class="auth-headline intro">
         ${CLERK_LOGO}
         <h1>${animatedText("Authentication successful")}</h1>
-        <p>You may close this window.</p>
-      </div>
-    </div>
-    <div class="cli-cards">
-      <div class="cli-cards-grid">
-        <div class="cli-cards-intro">
-          <h2>One CLI, from setup to production.</h2>
-          <p>Install Clerk, configure it, and deploy from your agent or your terminal.</p>
-        </div>
+        <p>Setup, configure and ship Clerk straight from your agent or terminal. You may close this window.</p>
+        <div class="cli-cards">
+          <div class="cli-cards-grid">
         ${commandCard(
           "Install",
           "Detects your framework and sets up API keys automatically.",
@@ -207,6 +192,8 @@ const SUCCESS_HTML = `<!DOCTYPE html>
           "Register your domain, configure DNS, and go live with your app.",
           `clerk deploy`,
         )}
+          </div>
+        </div>
       </div>
     </div>
   </div>
