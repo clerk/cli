@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   convertIOSFixtureToSynchronizedMissingEntitlements,
   createIOSFixture,
+  createIOSJSONFixture,
   IOS_FIXTURE_IDS,
   treeDigest,
 } from "./test-helpers.ts";
@@ -72,6 +73,33 @@ async function runCLI(root: string, args: string[], env: Record<string, string |
 }
 
 describe("clerk init --dry-run", () => {
+  test("inspects an Xcode JSON project without changing its bytes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-dry-run-"));
+    temporaryDirectories.push(root);
+    await createIOSJSONFixture(root);
+    const configDir = await createIsolatedCLIState();
+    const before = await treeDigest(root);
+
+    const result = await runCLI(
+      root,
+      ["--mode", "human", "init", "--dry-run", "--json"],
+      isolatedCLIEnvironment(configDir),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      schemaVersion: 1,
+      mode: "read-only",
+      inspection: {
+        platform: "ios",
+        projects: [{ projectFormat: "xcproj" }],
+        selection: { state: "selected", targetName: "MyApp" },
+      },
+      plan: { kind: "clerk-ios-setup", status: "action-required" },
+    });
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
   test("non-TTY mode emits JSON without network requests or local/global writes", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-cli-"));
     temporaryDirectories.push(root);

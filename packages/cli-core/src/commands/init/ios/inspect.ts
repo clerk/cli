@@ -1,12 +1,9 @@
-import { readdir } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
 import { dirname, extname, relative, resolve, sep } from "node:path";
 import { parse as parsePbxProject } from "@bacons/xcode/json";
-import { bundleIdentifiersEqual } from "../../../lib/apple-native-identity.ts";
 import {
   addBuildSettingConflictDiagnostics,
   inspectTargetBuildConfigurations,
-  resolveEntitlementsAbsolutePath,
-  type EntitlementBuildContext,
 } from "./build-settings.ts";
 import { readBoundedRegularFile } from "./bounded-file.ts";
 import {
@@ -16,8 +13,11 @@ import {
   pathIsSafelyWithinIOSRoot,
   relativeIOSPath,
 } from "./discovery.ts";
+import { attachEntitlements } from "./entitlements-inspection.ts";
 import { hasInterruptedIOSFileTransaction } from "./file-transaction.ts";
 import { localClerkIOSPackageIsStructurallyValid } from "./local-package.ts";
+import type { IOSTargetSourceMembership, ParsedIOSProject } from "./project-adapter.ts";
+import { resolveXcodeProjectDocument } from "./project-document.ts";
 import {
   asString,
   asStringArray,
@@ -31,52 +31,27 @@ import {
   type PbxObjects,
   type PbxParentIndex,
 } from "./pbx.ts";
-import { parseIOSPlist } from "./plist.ts";
 import { inspectSwiftSources } from "./swift.ts";
 import { filterIOSSwiftSources } from "./source-filters.ts";
 import { shouldTraverseSynchronizedSourceDirectory } from "./source-directories.ts";
+import { inspectXCProjProject } from "./xcproj-inspect.ts";
+import { MAX_XCPROJ_BYTES, parseXCProjSource, XCProjError } from "./xcproj.ts";
 import type {
   IOSAppTarget,
-  IOSBuildConfiguration,
   IOSClerkPackageState,
   IOSDiagnostic,
-  IOSEntitlementsInspection,
   IOSNativePlatform,
   IOSPackageReference,
   IOSProductLinkState,
   IOSProjectInspection,
   IOSProjectInspectionResult,
-  IOSSourceEvidence,
   IOSTargetSelection,
 } from "./types.ts";
 
 const APP_PRODUCT_TYPE = "com.apple.product-type.application";
-const APPLE_SIGN_IN_KEY = "com.apple.developer.applesignin";
-const MAX_ENTITLEMENTS_BYTES = 2_000_000;
 const MAX_PBXPROJ_BYTES = 15_000_000;
 const MAX_SOURCE_FILES = 2_500;
 const MAX_SOURCE_DEPTH = 24;
-
-interface ParsedProject {
-  inspection: IOSProjectInspection;
-  appTargets: IOSAppTarget[];
-  appTargetCandidates: Array<{
-    targetId: string;
-    targetName: string;
-    projectPath: string;
-    platform: IOSNativePlatform;
-  }>;
-  diagnostics: IOSDiagnostic[];
-  sourceMemberships?: IOSTargetSourceMembership[];
-}
-
-export interface IOSTargetSourceMembership {
-  targetId: string;
-  targetName: string;
-  projectPath: string;
-  files: Array<{ absolutePath: string; relativePath: string }>;
-  complete: boolean;
-}
 
 const sourceMembershipByInspection = new WeakMap<
   IOSProjectInspectionResult,
@@ -356,242 +331,6 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
-}
-
-function appleEntitlementState(
-  parsed: Record<string, unknown>,
-): IOSEntitlementsInspection["signInWithAppleState"] {
-  if (!Object.hasOwn(parsed, APPLE_SIGN_IN_KEY)) return "absent";
-  const value = parsed[APPLE_SIGN_IN_KEY];
-  return Array.isArray(value) && value.length === 1 && value[0] === "Default" ? "exact" : "invalid";
-}
-
-async function inspectEntitlements(
-  root: string,
-  absolutePath: string,
-  platform: IOSNativePlatform,
-  evidence: IOSSourceEvidence[],
-  diagnostics: IOSDiagnostic[],
-): Promise<IOSEntitlementsInspection | undefined> {
-  const relativePath = relativeIOSPath(root, absolutePath);
-  const file = await readBoundedRegularFile(absolutePath, MAX_ENTITLEMENTS_BYTES);
-  if (file.status === "missing") {
-    diagnostics.push({
-      code: "xcode.missing-entitlements",
-      severity: "warning",
-      message: `The configured entitlements file does not exist: ${relativePath}`,
-      remedy: "Create the file in Xcode or update CODE_SIGN_ENTITLEMENTS.",
-      evidence,
-    });
-    return undefined;
-  }
-
-  try {
-    if (file.status !== "ok") throw new Error("unreadable entitlements");
-    const bytes = file.bytes;
-    if (new TextDecoder().decode(bytes.slice(0, 8)).startsWith("bplist")) {
-      throw new Error("binary plist");
-    }
-    const parsed = parseIOSPlist(new TextDecoder().decode(bytes));
-    if (!isRecord(parsed)) throw new Error("plist root is not a dictionary");
-
-    const associatedDomainsKey = "com.apple.developer.associated-domains";
-    const rawAssociatedDomains = parsed[associatedDomainsKey];
-    if (
-      Object.hasOwn(parsed, associatedDomainsKey) &&
-      (!Array.isArray(rawAssociatedDomains) ||
-        !rawAssociatedDomains.every((value): value is string => typeof value === "string"))
-    ) {
-      diagnostics.push({
-        code: "xcode.invalid-associated-domains",
-        severity: "warning",
-        message: `${relativePath} has an invalid Associated Domains entitlement value.`,
-        remedy: `Set ${associatedDomainsKey} to an array containing only strings, then rerun the inspector.`,
-        evidence: [{ path: relativePath, keyPath: associatedDomainsKey }],
-      });
-    }
-    const associatedDomains =
-      Array.isArray(rawAssociatedDomains) &&
-      rawAssociatedDomains.every((value): value is string => typeof value === "string")
-        ? rawAssociatedDomains
-        : [];
-    const applicationIdentifier = asString(
-      parsed[platform === "macos" ? "com.apple.application-identifier" : "application-identifier"],
-    );
-    const signInWithAppleState = appleEntitlementState(parsed);
-    if (signInWithAppleState === "invalid") {
-      diagnostics.push({
-        code: "xcode.invalid-apple-entitlement",
-        severity: "warning",
-        message: `${relativePath} has an invalid Sign in with Apple entitlement value.`,
-        remedy: `Set ${APPLE_SIGN_IN_KEY} to an array containing only Default, then rerun the inspector.`,
-        evidence: [{ path: relativePath, keyPath: APPLE_SIGN_IN_KEY }],
-      });
-    }
-    return {
-      path: relativePath,
-      associatedDomains: associatedDomains.sort((left, right) => left.localeCompare(right)),
-      unresolvedAssociatedDomains: [],
-      applicationIdentifier,
-      teamIdentifier: asString(parsed["com.apple.developer.team-identifier"]),
-      signInWithAppleState,
-      signInWithApple: signInWithAppleState === "exact",
-    };
-  } catch {
-    diagnostics.push({
-      code: "xcode.unreadable-entitlements",
-      severity: "warning",
-      message: `Could not inspect entitlements at ${relativePath}. Only XML plist entitlements are read in portable mode.`,
-      remedy: "Open the file in Xcode and save it as XML, then rerun the inspector.",
-      evidence,
-    });
-    return undefined;
-  }
-}
-
-async function attachEntitlements(
-  root: string,
-  projectPath: string,
-  platform: IOSNativePlatform,
-  configurations: IOSBuildConfiguration[],
-  contextsByConfiguration: Map<string, EntitlementBuildContext[]>,
-  diagnostics: IOSDiagnostic[],
-): Promise<void> {
-  const cache = new Map<string, IOSEntitlementsInspection | undefined>();
-  for (const configuration of configurations) {
-    if (configuration.entitlementsPath.state !== "resolved") continue;
-    const absolutePath = resolveEntitlementsAbsolutePath(
-      root,
-      projectPath,
-      configuration.entitlementsPath,
-    );
-    if (!absolutePath) {
-      diagnostics.push({
-        code: "xcode.external-path",
-        severity: "warning",
-        message: `${configuration.name} resolves CODE_SIGN_ENTITLEMENTS outside the inspected root.`,
-        evidence: configuration.entitlementsPath.evidence,
-      });
-      continue;
-    }
-    if (!(await pathIsSafelyWithinIOSRoot(root, absolutePath))) {
-      diagnostics.push({
-        code: "xcode.external-path",
-        severity: "warning",
-        message: `${configuration.name} resolves CODE_SIGN_ENTITLEMENTS through a path outside the inspected root.`,
-        evidence: configuration.entitlementsPath.evidence,
-      });
-      continue;
-    }
-    if (!cache.has(absolutePath)) {
-      cache.set(
-        absolutePath,
-        await inspectEntitlements(
-          root,
-          absolutePath,
-          platform,
-          configuration.entitlementsPath.evidence,
-          diagnostics,
-        ),
-      );
-    }
-    const entitlements = cache.get(absolutePath);
-    if (!entitlements) continue;
-
-    const contexts = contextsByConfiguration.get(configuration.name) ?? [];
-    const resolvedAssociatedDomains: string[] = [];
-    const unresolvedAssociatedDomains: string[] = [];
-    for (const domain of entitlements.associatedDomains) {
-      const expansions = contexts.map((context) => expandEntitlementDomain(domain, context));
-      const resolved = expansions.filter((value): value is string => value != null);
-      if (
-        contexts.length > 0 &&
-        resolved.length === contexts.length &&
-        new Set(resolved).size === 1
-      ) {
-        resolvedAssociatedDomains.push(resolved[0]!);
-      } else {
-        unresolvedAssociatedDomains.push(domain);
-      }
-    }
-    if (unresolvedAssociatedDomains.length > 0) {
-      diagnostics.push({
-        code: "xcode.unresolved-build-setting",
-        severity: "warning",
-        message: `${configuration.name} has associated-domain values with unresolved build settings.`,
-        remedy:
-          "Resolve the variables in the entitlements configuration before relying on domain checks.",
-        evidence: configuration.entitlementsPath.evidence,
-      });
-    }
-
-    const applicationIdentifier = entitlements.applicationIdentifier;
-    const prefixMatch = /^([A-Z0-9]{10})\.(.+)$/.exec(applicationIdentifier ?? "");
-    const literalAppIdentifierPrefix =
-      prefixMatch &&
-      configuration.bundleIdentifier.state === "resolved" &&
-      bundleIdentifiersEqual(prefixMatch[2], configuration.bundleIdentifier.value)
-        ? prefixMatch[1]
-        : undefined;
-    configuration.entitlements = {
-      ...entitlements,
-      associatedDomains: resolvedAssociatedDomains.sort(),
-      unresolvedAssociatedDomains: unresolvedAssociatedDomains.sort(),
-      ...(literalAppIdentifierPrefix ? { literalAppIdentifierPrefix } : {}),
-    };
-  }
-}
-
-function expandEntitlementDomain(
-  raw: string,
-  context: EntitlementBuildContext,
-): string | undefined {
-  const variable = /\$\(([^)]+)\)|\$\{([^}]+)\}/g;
-  const resolving = new Set<string>();
-  const expand = (value: string, depth: number): string | undefined => {
-    if (depth > 20) return undefined;
-    let unresolved = false;
-    variable.lastIndex = 0;
-    const expanded = value.replace(variable, (_match, parenthesized, braced) => {
-      const name = String(parenthesized ?? braced);
-      if (name.includes(":")) {
-        unresolved = true;
-        return "";
-      }
-      const settingName =
-        context.settings[name] == null && name === "CFBundleIdentifier"
-          ? "PRODUCT_BUNDLE_IDENTIFIER"
-          : name;
-      if (resolving.has(settingName)) {
-        unresolved = true;
-        return "";
-      }
-      const taints = [
-        ...(context.settingTaints.get(settingName) ?? []),
-        ...(context.globalTaintOverrides.has(settingName) ? [] : context.globalTaints),
-      ];
-      if (taints.length > 0) {
-        unresolved = true;
-        return "";
-      }
-      const replacement = context.settings[settingName] ?? context.builtins[settingName];
-      if (replacement == null) {
-        unresolved = true;
-        return "";
-      }
-      resolving.add(settingName);
-      const nested = expand(replacement, depth + 1);
-      resolving.delete(settingName);
-      if (nested == null) unresolved = true;
-      return nested ?? "";
-    });
-    variable.lastIndex = 0;
-    return unresolved || variable.test(expanded) ? undefined : expanded;
-  };
-
-  const expanded = expand(raw, 0)?.trim();
-  if (!expanded || /pk_(?:test|live)_/i.test(expanded)) return undefined;
-  return expanded;
 }
 
 function normalizeSynchronizedPath(path: string): string {
@@ -939,19 +678,20 @@ async function sourceFilesForTarget(options: {
   };
 }
 
-async function parseProject(
+async function parsePBXProject(
   root: string,
   projectPath: string,
   requestedTarget?: string,
   requestedPlatform?: IOSNativePlatform,
-): Promise<ParsedProject> {
+): Promise<ParsedIOSProject> {
   const projectRelativePath = relativeIOSPath(root, projectPath);
   const pbxprojPath = resolve(projectPath, "project.pbxproj");
   const pbxprojRelativePath = relativeIOSPath(root, pbxprojPath);
   const diagnostics: IOSDiagnostic[] = [];
   const emptyInspection = (objectVersion?: string): IOSProjectInspection => ({
     path: projectRelativePath,
-    pbxprojPath: pbxprojRelativePath,
+    projectFilePath: pbxprojRelativePath,
+    projectFormat: "pbxproj",
     objectVersion,
     packages: [],
     appTargetIds: [],
@@ -1051,7 +791,7 @@ async function parseProject(
   );
   const packages = await inspectPackageReferences(root, projectPath, projectObject, objects);
   const appTargets: IOSAppTarget[] = [];
-  const appTargetCandidates: ParsedProject["appTargetCandidates"] = [];
+  const appTargetCandidates: ParsedIOSProject["appTargetCandidates"] = [];
   const targetIds = asStringArray(projectObject.targets).sort();
   const sourceMemberships: IOSTargetSourceMembership[] = [];
   const sourceMembershipById = new Map<
@@ -1292,7 +1032,8 @@ async function parseProject(
   return {
     inspection: {
       path: projectRelativePath,
-      pbxprojPath: pbxprojRelativePath,
+      projectFilePath: pbxprojRelativePath,
+      projectFormat: "pbxproj",
       objectVersion,
       packages,
       appTargetIds: appTargetCandidates.map((target) => target.targetId),
@@ -1305,8 +1046,118 @@ async function parseProject(
   };
 }
 
+async function parseProject(
+  root: string,
+  projectPath: string,
+  requestedTarget?: string,
+  requestedPlatform?: IOSNativePlatform,
+): Promise<ParsedIOSProject> {
+  const projectRelativePath = relativeIOSPath(root, projectPath);
+  const resolution = await resolveXcodeProjectDocument(projectPath);
+  if (resolution.status === "found" && resolution.document.format === "pbxproj") {
+    return parsePBXProject(root, projectPath, requestedTarget, requestedPlatform);
+  }
+
+  const documentPath =
+    resolution.status === "found"
+      ? resolution.document.absolutePath
+      : resolve(projectPath, "project.xcproj");
+  const documentRelativePath = relativeIOSPath(root, documentPath);
+  const diagnostics: IOSDiagnostic[] = [];
+  const emptyInspection: IOSProjectInspection = {
+    path: projectRelativePath,
+    projectFilePath: documentRelativePath,
+    projectFormat: "xcproj",
+    packages: [],
+    appTargetIds: [],
+    diagnostics,
+  };
+  if (resolution.status === "ambiguous") {
+    diagnostics.push({
+      code: "xcode.malformed-project",
+      severity: "error",
+      message: `${projectRelativePath} contains both project.pbxproj and project.xcproj.`,
+      remedy: "Keep exactly one Xcode project document in the project wrapper.",
+      evidence: [{ path: projectRelativePath }],
+    });
+    return { inspection: emptyInspection, appTargets: [], appTargetCandidates: [], diagnostics };
+  }
+  if (resolution.status === "missing") {
+    let hasUnsafeProjectDocument = false;
+    for (const candidate of ["project.pbxproj", "project.xcproj"]) {
+      try {
+        const info = await lstat(resolve(projectPath, candidate));
+        hasUnsafeProjectDocument ||= !info.isSymbolicLink();
+      } catch {
+        // Missing candidates are handled by the ordinary diagnostic below.
+      }
+    }
+    diagnostics.push({
+      code: hasUnsafeProjectDocument ? "xcode.malformed-project" : "xcode.missing-project-file",
+      severity: "error",
+      message: hasUnsafeProjectDocument
+        ? `${projectRelativePath} contains project metadata that cannot be read safely.`
+        : `${projectRelativePath} does not contain project.pbxproj or project.xcproj.`,
+      evidence: [{ path: projectRelativePath }],
+    });
+    return { inspection: emptyInspection, appTargets: [], appTargetCandidates: [], diagnostics };
+  }
+  if (!(await pathIsSafelyWithinIOSRoot(root, documentPath))) {
+    diagnostics.push({
+      code: "xcode.external-path",
+      severity: "error",
+      message: `${projectRelativePath} resolves its project document outside the inspected root.`,
+      evidence: [{ path: documentRelativePath }],
+    });
+    return { inspection: emptyInspection, appTargets: [], appTargetCandidates: [], diagnostics };
+  }
+  const file = await readBoundedRegularFile(documentPath, MAX_XCPROJ_BYTES);
+  if (file.status !== "ok") {
+    diagnostics.push({
+      code: file.status === "missing" ? "xcode.missing-project-file" : "xcode.malformed-project",
+      severity: "error",
+      message:
+        file.status === "too-large"
+          ? `${documentRelativePath} is too large to inspect safely.`
+          : `Could not read ${documentRelativePath} safely.`,
+      evidence: [{ path: documentRelativePath }],
+    });
+    return { inspection: emptyInspection, appTargets: [], appTargetCandidates: [], diagnostics };
+  }
+  try {
+    const parsed = parseXCProjSource(file.bytes);
+    return await inspectXCProjProject({
+      root,
+      projectPath,
+      documentPath,
+      document: parsed.root,
+      requestedTarget,
+      requestedPlatform,
+    });
+  } catch (error) {
+    if (error instanceof XCProjError && error.code === "noncanonical-json5") {
+      diagnostics.push({
+        code: "xcode.noncanonical-json5",
+        severity: "error",
+        message: `${documentRelativePath} uses valid JSON5 syntax that must be canonicalized before Clerk can inspect or modify it.`,
+        remedy:
+          "Run `xcprojformatter --update <path-to-project.xcodeproj>`, review the resulting project diff, then retry.",
+        evidence: [{ path: documentRelativePath }],
+      });
+      return { inspection: emptyInspection, appTargets: [], appTargetCandidates: [], diagnostics };
+    }
+    diagnostics.push({
+      code: "xcode.malformed-project",
+      severity: "error",
+      message: `Could not parse ${documentRelativePath} safely.`,
+      evidence: [{ path: documentRelativePath }],
+    });
+    return { inspection: emptyInspection, appTargets: [], appTargetCandidates: [], diagnostics };
+  }
+}
+
 function selectTarget(
-  candidates: ParsedProject["appTargetCandidates"],
+  candidates: ParsedIOSProject["appTargetCandidates"],
   requestedTarget: string | undefined,
   diagnostics: IOSDiagnostic[],
 ): IOSTargetSelection {
@@ -1490,7 +1341,7 @@ export async function inspectIOSProject(
 
   const projects: IOSProjectInspection[] = [];
   const appTargets: IOSAppTarget[] = [];
-  const appTargetCandidates: ParsedProject["appTargetCandidates"] = [];
+  const appTargetCandidates: ParsedIOSProject["appTargetCandidates"] = [];
   const sourceMemberships: IOSTargetSourceMembership[] = [];
   for (const projectPath of [...projectPaths].sort()) {
     const parsed = await parseProject(root, projectPath, options.target, options.platform);

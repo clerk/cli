@@ -24,7 +24,14 @@ import {
   type IOSDirectConfigBlockerCode,
 } from "./direct-config.ts";
 import type { PbxObjects } from "./pbx.ts";
-import { createIOSFixture, IOS_FIXTURE_IDS, treeDigest } from "./test-helpers.ts";
+import {
+  addNestedSharedEntryToIOSJSONFixture,
+  createIOSFixture,
+  createIOSJSONFixture,
+  IOS_FIXTURE_IDS,
+  treeDigest,
+} from "./test-helpers.ts";
+import { applyXCProjValue } from "./xcproj.ts";
 
 const DEVELOPMENT_KEY = `pk_test_${Buffer.from("direct-config.clerk.accounts.dev$").toString("base64")}`;
 const OTHER_DEVELOPMENT_KEY = `pk_test_${Buffer.from("other-app.clerk.accounts.dev$").toString("base64")}`;
@@ -863,6 +870,622 @@ struct MyApp: App {
     expect(blockerCodes(plan)).toContain("shared-source");
     expect(await readFile(appSourcePath(root))).toEqual(before);
   });
+
+  test("refuses a nested JSON folder inclusion shared with another target", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-shared-");
+    await createIOSJSONFixture(root);
+    const { primaryTargetId, sharedSourcePath } = await addNestedSharedEntryToIOSJSONFixture(root);
+    const absoluteSharedSourcePath = join(root, sharedSourcePath);
+    const before = await readFile(absoluteSharedSourcePath);
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: primaryTargetId,
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("shared-source");
+    expect(await readFile(absoluteSharedSourcePath)).toEqual(before);
+  });
+
+  test("ignores an @main Swift template below an opaque JSON folder", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-opaque-folder-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    const templateDirectory = join(root, "MyApp", "Templates");
+    await mkdir(templateDirectory, { recursive: true });
+    await writeFile(
+      join(templateDirectory, "TemplateApp.swift"),
+      `import SwiftUI
+
+@main
+struct TemplateApp: App {
+  var body: some Scene { WindowGroup { Text("Template") } }
+}
+`,
+    );
+    await writeFile(
+      projectPath,
+      applyXCProjValue(
+        await readFile(projectPath, "utf8"),
+        ["files", 0, "opaque-folders"],
+        ["Templates"],
+      ),
+    );
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.sourcePath).toBe("MyApp/MyAppApp.swift");
+  });
+
+  test.each([
+    "Templates.bundle",
+    "Docs.docc",
+    "en.lproj",
+    "Demo.playground",
+    "Assets.xcassets",
+    "Model.xcdatamodeld",
+    "Page.xcplaygroundpage",
+  ])("ignores an @main Swift template inside the JSON resource package %s", async (packageName) => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-resource-bundle-");
+    await createIOSJSONFixture(root);
+    const templateDirectory = join(root, "MyApp", packageName);
+    await mkdir(templateDirectory, { recursive: true });
+    await writeFile(
+      join(templateDirectory, "TemplateApp.swift"),
+      `import SwiftUI
+
+@main
+struct TemplateApp: App {
+  var body: some Scene { WindowGroup { Text("Template") } }
+}
+`,
+    );
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.sourcePath).toBe("MyApp/MyAppApp.swift");
+  });
+
+  test.each(["Pods", "build", ".generated"])(
+    "keeps JSON synchronized Swift sources below the compile-eligible directory %s",
+    async (directoryName) => {
+      const root = await temporaryRoot("clerk-xcproj-direct-config-compile-directory-");
+      await createIOSJSONFixture(root);
+      const generatedDirectory = join(root, "MyApp", directoryName);
+      await mkdir(generatedDirectory, { recursive: true });
+      await writeFile(
+        join(generatedDirectory, "GeneratedApp.swift"),
+        `import SwiftUI
+
+@main
+struct GeneratedApp: App {
+  var body: some Scene { WindowGroup { Text("Generated") } }
+}
+`,
+      );
+
+      const plan = await planIOSDirectConfig({
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: "C1E000000000000000000001",
+      });
+
+      expect(plan.status).toBe("blocked");
+      expect(blockerCodes(plan)).toContain("ambiguous-entry-point");
+    },
+  );
+
+  test.each([
+    ["build", "none"],
+    [".hidden", "none"],
+    ["build", "file"],
+    [".hidden", "file"],
+    ["build", "directory"],
+    [".hidden", "directory"],
+  ])(
+    "protects JSON configuration calls below %s with %s exclusion",
+    async (directory, exclusion) => {
+      const root = await temporaryRoot("clerk-xcproj-synchronized-configuration-");
+      await createIOSJSONFixture(root);
+      const sourcePath = join(root, "MyApp", directory!, "Bootstrap.swift");
+      await mkdir(dirname(sourcePath), { recursive: true });
+      await writeFile(
+        sourcePath,
+        `import ClerkKit\nfunc startClerk() { Clerk.configure(publishableKey: "${DEVELOPMENT_KEY}") }\n`,
+      );
+      if (exclusion !== "none") {
+        const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+        await writeFile(
+          projectPath,
+          applyXCProjValue(
+            await readFile(projectPath, "utf8"),
+            ["files", 0, "membership-exceptions"],
+            [
+              {
+                target: "MyApp",
+                exclusions: [exclusion === "file" ? `${directory}/Bootstrap.swift` : directory],
+              },
+            ],
+          ),
+        );
+      }
+      const options = {
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: "C1E000000000000000000001",
+      };
+      const before = await treeDigest(root);
+      const plan = await planIOSDirectConfig(options);
+      if (exclusion === "file") {
+        expect(plan.status).toBe("ready");
+        const sourceBefore = await readFile(sourcePath);
+        expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("applied");
+        expect(await readFile(sourcePath)).toEqual(sourceBefore);
+        const applied = await treeDigest(root);
+        expect(
+          (await applyIOSDirectConfig(await planIOSDirectConfig(options), DEVELOPMENT_KEY)).status,
+        ).toBe("satisfied");
+        expect(await treeDigest(root)).toEqual(applied);
+      } else {
+        expect(blockerCodes(plan)).toContain(
+          exclusion === "directory" ? "incomplete-source-membership" : "conflicting-configuration",
+        );
+        expect((await applyIOSDirectConfig(plan, DEVELOPMENT_KEY)).status).toBe("blocked");
+        expect(await treeDigest(root)).toEqual(before);
+      }
+    },
+  );
+
+  test("recognizes mixed-case Swift extensions in a JSON synchronized folder", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-swift-case-");
+    await createIOSJSONFixture(root);
+    await writeFile(
+      join(root, "MyApp", "GeneratedApp.SwIfT"),
+      `import SwiftUI
+
+@main
+struct GeneratedApp: App {
+  var body: some Scene { WindowGroup { Text("Generated") } }
+}
+`,
+    );
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("ambiguous-entry-point");
+  });
+
+  test("honors JSON file-type overrides that exclude a .swift file from compilation", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-nonswift-override-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    await writeFile(
+      join(root, "MyApp", "TemplateApp.swift"),
+      `import SwiftUI
+
+@main
+struct TemplateApp: App {
+  var body: some Scene { WindowGroup { Text("Template") } }
+}
+`,
+    );
+    await writeFile(
+      projectPath,
+      applyXCProjValue(await readFile(projectPath, "utf8"), ["files", 0, "file-types"], {
+        "TemplateApp.swift": "text",
+      }),
+    );
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.sourcePath).toBe("MyApp/MyAppApp.swift");
+  });
+
+  test("honors JSON file-type overrides that compile a non-.swift file", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-swift-override-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    await writeFile(
+      join(root, "MyApp", "GeneratedApp.txt"),
+      `import SwiftUI
+
+@main
+struct GeneratedApp: App {
+  var body: some Scene { WindowGroup { Text("Generated") } }
+}
+`,
+    );
+    await writeFile(
+      projectPath,
+      applyXCProjValue(await readFile(projectPath, "utf8"), ["files", 0, "file-types"], {
+        "GeneratedApp.txt": "sourcecode.swift",
+      }),
+    );
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("ambiguous-entry-point");
+  });
+
+  test("refuses mutation when JSON file-type metadata is malformed", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-malformed-file-types-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    await writeFile(
+      projectPath,
+      applyXCProjValue(await readFile(projectPath, "utf8"), ["files", 0, "file-types"], {
+        "MyAppApp.swift": 42,
+      }),
+    );
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+  });
+
+  test.each([
+    ["TemplateApp.swift", "text", "ready"],
+    ["GeneratedApp.txt", "sourcecode.swift", "blocked"],
+  ] as const)(
+    "honors the %s explicit JSON file-reference type %s",
+    async (fileName, fileType, expectedStatus) => {
+      const root = await temporaryRoot("clerk-xcproj-direct-config-reference-type-");
+      await createIOSJSONFixture(root);
+      const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+      const generatedDirectory = join(root, "Generated");
+      await mkdir(generatedDirectory, { recursive: true });
+      await writeFile(
+        join(generatedDirectory, fileName),
+        `import SwiftUI
+
+@main
+struct GeneratedApp: App {
+  var body: some Scene { WindowGroup { Text("Generated") } }
+}
+`,
+      );
+      await writeFile(
+        projectPath,
+        applyXCProjValue(await readFile(projectPath, "utf8"), ["files", 2], {
+          kind: "file-reference",
+          path: `<PROJECT>/Generated/${fileName}`,
+          type: fileType,
+          "target-membership": ["MyApp/compile-sources"],
+        }),
+      );
+
+      const plan = await planIOSDirectConfig({
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: "C1E000000000000000000001",
+      });
+
+      expect(plan.status).toBe(expectedStatus);
+      if (expectedStatus === "ready") {
+        expect(plan.sourcePath).toBe("MyApp/MyAppApp.swift");
+      } else {
+        expect(blockerCodes(plan)).toContain("ambiguous-entry-point");
+      }
+    },
+  );
+
+  test("refuses mutation when JSON opaque-folder metadata is malformed", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-malformed-opaque-folder-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    await writeFile(
+      projectPath,
+      applyXCProjValue(
+        await readFile(projectPath, "utf8"),
+        ["files", 0, "opaque-folders"],
+        "Templates",
+      ),
+    );
+    const before = await readFile(appSourcePath(root));
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+    expect(await readFile(appSourcePath(root))).toEqual(before);
+  });
+
+  test.each([
+    ["named", "SharedTarget/compile-sources/Shared Sources"],
+    ["ID-based", "id:SHARED-SOURCES-PHASE"],
+    ["component-array", ["SharedTarget", "compile-sources", { name: "Shared/Sources" }]],
+  ] as const)(
+    "refuses an entry source shared through a %s JSON source-phase reference",
+    async (_description, phaseReference) => {
+      const root = await temporaryRoot("clerk-xcproj-direct-config-phase-reference-");
+      await createIOSJSONFixture(root);
+      const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+      let project = await readFile(projectPath, "utf8");
+      project = applyXCProjValue(project, ["files", 2], {
+        path: "<PROJECT>/MyApp/MyAppApp.swift",
+        "target-membership": [
+          Array.isArray(phaseReference) ? { "build-phase": phaseReference } : phaseReference,
+        ],
+      });
+      project = applyXCProjValue(project, ["targets", 1], {
+        name: "SharedTarget",
+        id: "C1E000000000000000000099",
+        "product-type": "application",
+        "build-phases": [
+          {
+            kind: "compile-sources",
+            name: Array.isArray(phaseReference) ? "Shared/Sources" : "Shared Sources",
+            id: "SHARED-SOURCES-PHASE",
+          },
+        ],
+        "build-settings": {
+          DEVELOPMENT_TEAM: "ABCDE12345",
+          IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+          PRODUCT_BUNDLE_IDENTIFIER: "com.example.SharedTarget",
+          SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+        },
+      });
+      await writeFile(projectPath, project);
+      const before = await readFile(appSourcePath(root));
+
+      const plan = await planIOSDirectConfig({
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: "C1E000000000000000000001",
+      });
+
+      expect(plan.status).toBe("blocked");
+      expect(blockerCodes(plan)).toContain("shared-source");
+      expect(await readFile(appSourcePath(root))).toEqual(before);
+    },
+  );
+
+  test("refuses an entry source added to another target by a JSON folder build-phase exception", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-phase-exception-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    let project = await readFile(projectPath, "utf8");
+    project = applyXCProjValue(
+      project,
+      ["files", 0, "membership-exceptions"],
+      [
+        {
+          "build-phase": "SharedTarget/compile-sources",
+          inclusions: ["MyAppApp.swift"],
+        },
+      ],
+    );
+    project = applyXCProjValue(project, ["targets", 1], {
+      name: "SharedTarget",
+      id: "C1E000000000000000000099",
+      "product-type": "application",
+      "build-phases": ["compile-sources"],
+      "build-settings": {
+        DEVELOPMENT_TEAM: "ABCDE12345",
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+        PRODUCT_BUNDLE_IDENTIFIER: "com.example.SharedTarget",
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+      },
+    });
+    await writeFile(projectPath, project);
+    const before = await readFile(appSourcePath(root));
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("shared-source");
+    expect(await readFile(appSourcePath(root))).toEqual(before);
+  });
+
+  test("refuses an entry source toggled into a non-default JSON folder target", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-target-exception-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    let project = await readFile(projectPath, "utf8");
+    project = applyXCProjValue(
+      project,
+      ["files", 0, "membership-exceptions"],
+      [{ target: "SharedTarget", exclusions: ["MyAppApp.swift"] }],
+    );
+    project = applyXCProjValue(project, ["targets", 1], {
+      name: "SharedTarget",
+      id: "C1E000000000000000000099",
+      "product-type": "application",
+      "build-phases": ["compile-sources"],
+      "build-settings": {
+        DEVELOPMENT_TEAM: "ABCDE12345",
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+        PRODUCT_BUNDLE_IDENTIFIER: "com.example.SharedTarget",
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+      },
+    });
+    await writeFile(projectPath, project);
+    const before = await readFile(appSourcePath(root));
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("shared-source");
+    expect(await readFile(appSourcePath(root))).toEqual(before);
+  });
+
+  test("follows a JSON file platform override inside an excluded folder", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-platform-override-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    const nestedDirectory = join(root, "MyApp", "Nested");
+    await mkdir(nestedDirectory, { recursive: true });
+    await rename(join(root, "MyApp", "MyAppApp.swift"), join(nestedDirectory, "MyAppApp.swift"));
+    await writeFile(
+      projectPath,
+      applyXCProjValue(
+        await readFile(projectPath, "utf8"),
+        ["files", 0, "membership-exceptions"],
+        [
+          {
+            target: "MyApp",
+            platforms: { Nested: ["macos"], "Nested/MyAppApp.swift": ["ios"] },
+          },
+        ],
+      ),
+    );
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan).toMatchObject({
+      status: "ready",
+      sourcePath: "MyApp/Nested/MyAppApp.swift",
+    });
+  });
+
+  test("preserves a JSON Compile Sources inclusion that overrides a target exclusion", async () => {
+    const root = await temporaryRoot("clerk-xcproj-direct-config-inclusion-precedence-");
+    await createIOSJSONFixture(root);
+    const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+    let project = await readFile(projectPath, "utf8");
+    project = applyXCProjValue(
+      project,
+      ["files", 0, "target-membership"],
+      ["MyApp", "SharedTarget"],
+    );
+    project = applyXCProjValue(
+      project,
+      ["files", 0, "membership-exceptions"],
+      [
+        { target: "SharedTarget", exclusions: ["MyAppApp.swift"] },
+        {
+          "build-phase": "SharedTarget/compile-sources",
+          inclusions: ["MyAppApp.swift"],
+        },
+      ],
+    );
+    project = applyXCProjValue(project, ["targets", 1], {
+      name: "SharedTarget",
+      id: "C1E000000000000000000099",
+      "product-type": "application",
+      "build-phases": ["compile-sources"],
+      "build-settings": {
+        DEVELOPMENT_TEAM: "ABCDE12345",
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+        PRODUCT_BUNDLE_IDENTIFIER: "com.example.SharedTarget",
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+      },
+    });
+    await writeFile(projectPath, project);
+    const before = await readFile(appSourcePath(root));
+
+    const plan = await planIOSDirectConfig({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: "C1E000000000000000000001",
+    });
+
+    expect(plan.status).toBe("blocked");
+    expect(blockerCodes(plan)).toContain("shared-source");
+    expect(await readFile(appSourcePath(root))).toEqual(before);
+  });
+
+  test.each(["folder", "group"] as const)(
+    "refuses mutation when another target's JSON %s uses an unresolved source-root path",
+    async (kind) => {
+      const root = await temporaryRoot("clerk-xcproj-direct-config-unresolved-source-root-");
+      await createIOSJSONFixture(root);
+      const projectPath = join(root, "MyApp.xcodeproj", "project.xcproj");
+      let project = await readFile(projectPath, "utf8");
+      project = applyXCProjValue(
+        project,
+        ["files", 2],
+        kind === "folder"
+          ? {
+              kind,
+              path: "<USER:SRCROOT>/MyApp",
+              "target-membership": ["SharedTarget"],
+            }
+          : {
+              kind,
+              path: "<USER:SRCROOT>/MyApp",
+              children: [
+                {
+                  path: "MyAppApp.swift",
+                  "target-membership": ["SharedTarget/compile-sources"],
+                },
+              ],
+            },
+      );
+      project = applyXCProjValue(project, ["targets", 1], {
+        name: "SharedTarget",
+        id: "C1E000000000000000000099",
+        "product-type": "application",
+        "build-phases": ["compile-sources"],
+        "build-settings": {
+          DEVELOPMENT_TEAM: "ABCDE12345",
+          IPHONEOS_DEPLOYMENT_TARGET: "17.0",
+          PRODUCT_BUNDLE_IDENTIFIER: "com.example.SharedTarget",
+          SUPPORTED_PLATFORMS: "iphoneos iphonesimulator",
+        },
+      });
+      await writeFile(projectPath, project);
+      const before = await readFile(appSourcePath(root));
+
+      const plan = await planIOSDirectConfig({
+        root,
+        projectPath: "MyApp.xcodeproj",
+        targetId: "C1E000000000000000000001",
+      });
+
+      expect(plan.status).toBe("blocked");
+      expect(blockerCodes(plan)).toContain("incomplete-source-membership");
+      expect(await readFile(appSourcePath(root))).toEqual(before);
+    },
+  );
 
   test.each(["build-phases", "source-phase-files"] as const)(
     "refuses mutation when shared-source ownership uses malformed %s",

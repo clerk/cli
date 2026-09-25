@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { inspectIOSProject, inspectIOSSourceMembership } from "./inspect.ts";
 import type { PbxObjects } from "./pbx.ts";
-import { createIOSFixture, IOS_FIXTURE_IDS as IDS } from "./test-helpers.ts";
+import { applyXCProjValue } from "./xcproj.ts";
+import { createIOSFixture, createIOSJSONFixture, IOS_FIXTURE_IDS as IDS } from "./test-helpers.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -213,3 +214,31 @@ test("applies source filters to native macOS app inspection", async () => {
   expect(result.appTargets[0]?.swift.entryPoints).toHaveLength(1);
   expect(result.appTargets[0]?.swift.evidenceComplete).toBe(true);
 });
+
+test.each([false, true])(
+  "filters JSON project sources before deriving startup evidence (uncertain: %s)",
+  async (uncertain) => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-json-source-filter-"));
+    roots.push(root);
+    await createIOSJSONFixture(root);
+    await Bun.write(
+      join(root, "LegacyApp.swift"),
+      'import SwiftUI\n@main struct LegacyApp: App { var body: some Scene { WindowGroup { Text("Legacy") } } }\n',
+    );
+    const path = join(root, "MyApp.xcodeproj/project.xcproj");
+    let source = await Bun.file(path).text();
+    source = applyXCProjValue(source, ["files", 1], {
+      path: "LegacyApp.swift",
+      "target-membership": ["MyApp/compile-sources"],
+    });
+    source = applyXCProjValue(
+      source,
+      ["targets", 0, "build-settings", "EXCLUDED_SOURCE_FILE_NAMES"],
+      uncertain ? "$(CUSTOM_EXCLUSIONS)" : "LegacyApp.swift",
+    );
+    await Bun.write(path, source);
+    const result = await inspectIOSProject(root, { target: "MyApp" });
+    expect(result.appTargets[0]?.swift.entryPoints).toHaveLength(uncertain ? 2 : 1);
+    expect(result.appTargets[0]?.swift.evidenceComplete).toBe(!uncertain);
+  },
+);

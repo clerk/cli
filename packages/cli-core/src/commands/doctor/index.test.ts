@@ -132,6 +132,7 @@ describe("Apple-native framework routing", () => {
 
   test.each([
     ["xcode.malformed-project", "Could not parse App.xcodeproj/project.pbxproj."],
+    ["xcode.noncanonical-json5", "App.xcodeproj/project.xcproj needs canonicalization."],
     ["xcode.missing-project-file", "App.xcodeproj does not contain project.pbxproj."],
   ] as const)("fails native inspection for %s", async (code, message) => {
     const failedInspection = {

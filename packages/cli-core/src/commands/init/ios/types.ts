@@ -14,6 +14,7 @@ export interface IOSDiagnostic {
   code:
     | "xcode.no-project"
     | "xcode.malformed-project"
+    | "xcode.noncanonical-json5"
     | "xcode.missing-project-file"
     | "xcode.dangling-reference"
     | "xcode.no-ios-app-target"
@@ -168,7 +169,9 @@ export interface IOSAppTarget {
 
 export interface IOSProjectInspection {
   path: string;
-  pbxprojPath: string;
+  /** Project document selected inside the .xcodeproj wrapper. */
+  projectFilePath: string;
+  projectFormat: "pbxproj" | "xcproj";
   objectVersion?: string;
   packages: IOSPackageReference[];
   appTargetIds: string[];

@@ -15,6 +15,7 @@ import {
   convertIOSFixtureToSynchronizedMissingEntitlements,
   convertIOSFixtureToSynchronizedRoot,
   createIOSFixture,
+  createIOSJSONFixture,
   IOS_FIXTURE_IDS,
   treeDigest,
 } from "./test-helpers.ts";
@@ -44,6 +45,55 @@ setDefaultTimeout(15_000);
 
 beforeEach(resetApplyCLITestRemoteState);
 afterEach(cleanupApplyCLITestState);
+
+test("keeps Xcode JSON init, rerun, and Doctor in agreement", async () => {
+  const root = await mkdtemp(join(tmpdir(), "clerk-xcproj-apply-"));
+  temporaryDirectories.push(root);
+  await createIOSJSONFixture(root);
+  const configDir = await createIsolatedCLIState();
+  const args = [
+    "--mode",
+    "agent",
+    "init",
+    "--yes",
+    "--target",
+    "MyApp",
+    "--app",
+    "app_ios_apply",
+    "--app-id-prefix",
+    "LEGACY1234",
+  ];
+
+  const first = await runCLI(root, args, configDir);
+  if (first.exitCode !== 0) throw new Error(`${first.stdout}\n${first.stderr}`);
+  expect(first.exitCode).toBe(0);
+  expect(`${first.stdout}\n${first.stderr}`).not.toContain(authFixtureKey);
+
+  const applied = await treeDigest(root);
+  const inspection = await inspectIOSProject(root);
+  expect(inspection.projects[0]).toMatchObject({ projectFormat: "xcproj" });
+  expect(inspection.appTargets[0]).toMatchObject({
+    packages: { package: "remote", clerkKit: "linked" },
+    swift: { status: "complete" },
+  });
+  const remoteAfterFirst = currentNativeRemoteState();
+  expect(remoteAfterFirst).toMatchObject({
+    nativeAPIEnabled: true,
+    iosApplications: [{ app_id_prefix: "LEGACY1234", bundle_id: "com.example.MyApp" }],
+    mutations: {
+      nativeSettingsPatchCount: 1,
+      iosApplicationPostCount: 1,
+      appleConfigPatchCount: 0,
+    },
+  });
+  expectCanonicalIOSDoctorChecksToPass((await auditCurrentNativeFixture(root)).results);
+
+  const second = await runCLI(root, args, configDir);
+  expect(second.exitCode).toBe(0);
+  expect(await treeDigest(root)).toEqual(applied);
+  expect(currentNativeRemoteState()).toEqual(remoteAfterFirst);
+  expectCanonicalIOSDoctorChecksToPass((await auditCurrentNativeFixture(root)).results);
+});
 
 async function convertFixtureToUnsandboxedMultiplatform(root: string): Promise<void> {
   const projectPath = join(root, "MyApp.xcodeproj", "project.pbxproj");
@@ -127,7 +177,7 @@ async function auditCurrentNativeFixture(root: string) {
   return runIOSDoctorChecks(doctorContext(), { root, target: "MyApp" }, dependencies);
 }
 
-function expectAutomatedDoctorChecksToPass(
+function expectCanonicalIOSDoctorChecksToPass(
   results: Awaited<ReturnType<typeof auditCurrentNativeFixture>>["results"],
 ): void {
   for (const expectedName of [
@@ -135,7 +185,6 @@ function expectAutomatedDoctorChecksToPass(
     "iOS: Configure Clerk with a publishable key",
     "iOS: Inject Clerk into the SwiftUI environment",
     "iOS: Add Clerk's associated domain",
-    "macOS: Allow outgoing network access",
     "iOS: Linked development key",
     "iOS: Native Application",
   ]) {
@@ -151,6 +200,15 @@ function expectAutomatedDoctorChecksToPass(
   expect(results.find((result) => result.name.includes("authentication flow"))).toMatchObject({
     status: "fail",
   });
+}
+
+function expectAutomatedDoctorChecksToPass(
+  results: Awaited<ReturnType<typeof auditCurrentNativeFixture>>["results"],
+): void {
+  expectCanonicalIOSDoctorChecksToPass(results);
+  expect(
+    results.find((result) => result.name === "macOS: Allow outgoing network access"),
+  ).toMatchObject({ status: "pass" });
 }
 
 async function linkedProductFilters(root: string, productName: "ClerkKit" | "ClerkKitUI") {
