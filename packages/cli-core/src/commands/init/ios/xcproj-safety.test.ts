@@ -122,3 +122,32 @@ test.each([false, true])(
     expect(await validateIOSSDKInstallPostcondition(original)).toBe(false);
   },
 );
+
+test.each([false, true])(
+  "checks a visionOS-only sibling before creating JSON entitlements (assignment: %s)",
+  async (assignment) => {
+    const options = await fixture();
+    await edit(options.root, (document, target) => {
+      delete (target["build-settings"] as XCProjRecord).CODE_SIGN_ENTITLEMENTS;
+      (document.targets as XCProjRecord[]).push({
+        name: "VisionApp",
+        id: "C1E000000000000000000099",
+        "product-type": "application",
+        "build-phases": ["compile-sources", "frameworks"],
+        "build-settings": {
+          SDKROOT: "xros",
+          SUPPORTED_PLATFORMS: "xros xrsimulator",
+          PRODUCT_BUNDLE_IDENTIFIER: "com.example.VisionApp",
+          GENERATE_INFOPLIST_FILE: "YES",
+          ...(assignment
+            ? { "CODE_SIGN_ENTITLEMENTS[sdk=xros*]": "MyApp/MyApp.entitlements" }
+            : {}),
+        },
+      });
+    });
+    await rm(join(options.root, "MyApp", "MyApp.entitlements"));
+    const plan = await planIOSMissingEntitlementsSettings(options);
+    expect(plan.status).toBe(assignment ? "blocked" : "ready");
+    if (assignment) expect(plan.blockers[0]?.message).toContain("entitlements destination");
+  },
+);

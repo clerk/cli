@@ -825,6 +825,7 @@ async function xcprojTargetEntitlementsConfigurations(
       configurations.some(
         (configuration) =>
           !configuration.platformEvidenceComplete ||
+          (configuration.platform === undefined && !configuration.entitlementsAssignmentAbsent) ||
           (platform !== undefined && configuration.platform !== platform) ||
           configuration.model.entitlementsPath.state === "unresolved",
       ) ||
