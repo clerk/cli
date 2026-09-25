@@ -916,8 +916,10 @@ describe("inspectTargetBuildConfigurations", () => {
         PRODUCT_BUNDLE_IDENTIFIER: "com.clerk.MacExampleApp",
         "PRODUCT_BUNDLE_IDENTIFIER[arch=arm64]": "com.clerk.MacExampleApp",
         "PRODUCT_BUNDLE_IDENTIFIER[arch=x86_64]": "com.clerk.MacExampleApp",
+        ENABLE_APP_SANDBOX: "YES",
         "ENABLE_APP_SANDBOX[arch=arm64]": "YES",
         "ENABLE_APP_SANDBOX[arch=x86_64]": "YES",
+        ENABLE_OUTGOING_NETWORK_CONNECTIONS: "YES",
         "ENABLE_OUTGOING_NETWORK_CONNECTIONS[arch=arm64]": "YES",
         "ENABLE_OUTGOING_NETWORK_CONNECTIONS[arch=x86_64]": "YES",
       },
@@ -936,6 +938,7 @@ describe("inspectTargetBuildConfigurations", () => {
     expect(configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
       "macosx/arm64",
       "macosx/x86_64",
+      "macosx/packaging",
     ]);
     expect(diagnostics).not.toContainEqual(
       expect.objectContaining({ code: "xcode.conflicting-build-setting" }),
@@ -957,6 +960,8 @@ describe("inspectTargetBuildConfigurations", () => {
       "iphoneos/arm64",
       "iphonesimulator/arm64",
       "iphonesimulator/x86_64",
+      "iphoneos/packaging",
+      "iphonesimulator/packaging",
     ]);
   });
 
@@ -979,6 +984,8 @@ describe("inspectTargetBuildConfigurations", () => {
       "iphoneos/arm64",
       "iphonesimulator/arm64",
       "iphonesimulator/x86_64",
+      "iphoneos/packaging",
+      "iphonesimulator/packaging",
     ]);
   });
 
@@ -1117,6 +1124,7 @@ describe("inspectTargetBuildConfigurations", () => {
     expect(macOS.configurations[0]?.entitlementContexts.map((context) => context.label)).toEqual([
       "macosx/arm64",
       "macosx/x86_64",
+      "macosx/packaging",
     ]);
   });
 

@@ -1332,7 +1332,7 @@ export async function inspectTargetBuildConfigurations(options: {
         ? {
             appSandbox: resolveSettingAcrossContexts(
               "ENABLE_APP_SANDBOX",
-              activeContexts,
+              productContexts,
               evidence("ENABLE_APP_SANDBOX"),
               targetName,
               name,
@@ -1340,7 +1340,7 @@ export async function inspectTargetBuildConfigurations(options: {
             ),
             outgoingNetworkConnections: resolveSettingAcrossContexts(
               "ENABLE_OUTGOING_NETWORK_CONNECTIONS",
-              activeContexts,
+              productContexts,
               evidence("ENABLE_OUTGOING_NETWORK_CONNECTIONS"),
               targetName,
               name,
