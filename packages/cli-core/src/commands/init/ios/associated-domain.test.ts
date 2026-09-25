@@ -304,6 +304,24 @@ struct MyApp: App {
     expect(updated).toContain(`webcredentials:${HOST}`);
   });
 
+  test("matches only the associated-domain hostname case-insensitively", async () => {
+    const root = await directFixture();
+    const path = join(root, "MyApp", "MyApp.entitlements");
+    const source = await readFile(path, "utf8");
+    await writeFile(
+      path,
+      source.replace("webcredentials:clerk.example.test", `webcredentials:${HOST.toUpperCase()}`),
+    );
+
+    expect((await planIOSAssociatedDomain(planOptions(root))).status).toBe("satisfied");
+
+    await writeFile(
+      path,
+      source.replace("webcredentials:clerk.example.test", `WEBCREDENTIALS:${HOST}`),
+    );
+    expect((await planIOSAssociatedDomain(planOptions(root))).status).toBe("ready");
+  });
+
   test("preserves a comment immediately before a self-closing Associated Domains array", async () => {
     const root = await directFixture();
     const path = join(root, "MyApp", "MyApp.entitlements");

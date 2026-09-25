@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
 import semver from "semver";
-import { inspectIOSProject } from "./inspect.ts";
+import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import { localClerkIOSPackageIsStructurallyValid } from "./local-package.ts";
 import {
@@ -56,6 +56,7 @@ export type IOSSDKInstallBlockerCode =
   | "malformed-project"
   | "target-not-found"
   | "ambiguous-target"
+  | "incomplete-container-discovery"
   | "ambiguous-package"
   | "duplicate-package"
   | "unattributed-product"
@@ -831,9 +832,22 @@ async function prepareInstall(options: IOSSDKInstallOptions): Promise<PreparedIn
     );
   }
 
-  const inspection = await inspectIOSProject(root, { target: options.targetId });
+  const inspection = await inspectIOSProject(root, {
+    target: options.targetId,
+    exhaustiveContainerDiscovery: true,
+  });
   const generator =
     inspection.generatedProject ?? (await generatedProjectKind(root, absoluteProjectPath));
+  if (hasIncompleteIOSContainerDiscovery(inspection)) {
+    return blocked(
+      options,
+      root,
+      projectPath,
+      "incomplete-container-discovery",
+      "Complete local Xcode container discovery could not be proven.",
+      source,
+    );
+  }
   if (inspection.selection.state === "ambiguous") {
     return blocked(
       options,
@@ -1261,7 +1275,11 @@ export async function validateIOSSDKInstallPostcondition(
     return false;
   }
 
-  const inspection = await inspectIOSProject(plan.root, { target: plan.targetId });
+  const inspection = await inspectIOSProject(plan.root, {
+    target: plan.targetId,
+    exhaustiveContainerDiscovery: true,
+  });
+  if (hasIncompleteIOSContainerDiscovery(inspection)) return false;
   if (inspection.generatedProject || (await generatedProjectKind(plan.root, absoluteProjectPath))) {
     return false;
   }

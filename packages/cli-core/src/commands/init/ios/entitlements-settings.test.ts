@@ -392,10 +392,12 @@ describe("missing iOS entitlements build settings", () => {
     const secondaryRoot = join(root, "a", "b", "c", "d");
     await createIOSFixture(secondaryRoot, { includeKey: false });
     const secondaryProjectPath = join(secondaryRoot, "MyApp.xcodeproj", "project.pbxproj");
-    const secondaryProject = (await readFile(secondaryProjectPath, "utf8")).replaceAll(
-      "CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements;",
-      "CODE_SIGN_ENTITLEMENTS = ../../../../MyApp/MyApp.entitlements;",
-    );
+    const secondaryProject = (await readFile(secondaryProjectPath, "utf8"))
+      .replaceAll(IOS_FIXTURE_IDS.appTarget, IOS_FIXTURE_IDS.secondTarget)
+      .replaceAll(
+        "CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements;",
+        "CODE_SIGN_ENTITLEMENTS = ../../../../MyApp/MyApp.entitlements;",
+      );
     await writeFile(secondaryProjectPath, secondaryProject);
 
     expect(blockerCodes(await planIOSMissingEntitlementsSettings(options(root)))).toContain(

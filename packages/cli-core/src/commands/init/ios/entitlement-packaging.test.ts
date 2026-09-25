@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { inspectIOSProject } from "./inspect.ts";
 import { createIOSFixture, IOS_FIXTURE_IDS as IDS, treeDigest } from "./test-helpers.ts";
 import { planIOSAssociatedDomain, applyIOSAssociatedDomain } from "./associated-domain.ts";
+import { planIOSAppleEntitlement, applyIOSAppleEntitlement } from "./apple-entitlement.ts";
 import type { PbxObjects } from "./pbx.ts";
 
 const roots: string[] = [];
@@ -133,6 +134,31 @@ test.each(["path", "value"])(
       expect.objectContaining({ code: "unresolved-entitlements" }),
     );
     expect((await applyIOSAssociatedDomain(plan)).status).toBe("blocked");
+    expect(await treeDigest(root)).toEqual(before);
+  },
+);
+
+test.each([false, true])(
+  "Apple sign-in requires agreement with the packaging file (matching: %s)",
+  async (matching) => {
+    const root = await fixture({
+      CODE_SIGN_ENTITLEMENTS: matching ? "MyApp/Other.entitlements" : "MyApp/Signing.entitlements",
+      "CODE_SIGN_ENTITLEMENTS[arch=arm64]": "MyApp/Other.entitlements",
+      "CODE_SIGN_ENTITLEMENTS[arch=x86_64]": "MyApp/Other.entitlements",
+    });
+    const entitlements = join(root, "MyApp/Other.entitlements");
+    await Bun.write(
+      entitlements,
+      (await Bun.file(entitlements).text()).replace("$(CLERK_DOMAIN)", "clerk.example.test"),
+    );
+    const before = await treeDigest(root);
+    const plan = await planIOSAppleEntitlement({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: IDS.appTarget,
+    });
+    expect(plan.status).toBe(matching ? "satisfied" : "blocked");
+    expect((await applyIOSAppleEntitlement(plan)).status).toBe(matching ? "satisfied" : "blocked");
     expect(await treeDigest(root)).toEqual(before);
   },
 );
