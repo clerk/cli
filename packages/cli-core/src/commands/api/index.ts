@@ -27,15 +27,6 @@ export interface ApiOptions {
   fapi?: boolean;
   dryRun?: boolean;
   yes?: boolean;
-  /**
-   * Internal, not a flag. Who wrote the request path, for telemetry's 404
-   * classification. Unset means the command line, so the person — safe only
-   * while Commander's registration and the interactive builder are the only
-   * callers. A caller that builds its own path must pass false, as the
-   * builder does for an endpoint chosen from the CLI's own catalog, so a 404
-   * on it is recorded as the CLI's failure.
-   */
-  userSuppliedPath?: boolean;
 }
 
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -73,10 +64,16 @@ async function resolveApiTarget(
   return { baseUrl, runRequest: async (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
 }
 
+/**
+ * `userSuppliedPath` says who wrote the request path, for telemetry's 404
+ * classification. The default is the command line, so the person; a caller
+ * that builds its own path passes false.
+ */
 export async function api(
   endpoint: string | undefined,
   filter: string | undefined,
   options: ApiOptions,
+  { userSuppliedPath = true }: { userSuppliedPath?: boolean } = {},
 ): Promise<void> {
   const nested = isInsideGutter();
   if (!nested) intro("Calling Clerk API");
@@ -165,7 +162,7 @@ export async function api(
           log.info(`If the endpoint path was a guess, search with: clerk api ls <keyword>${scope}`);
         }
         // Handled here, so telemetry never sees the throw it would classify.
-        declareSoftExitError(error, { userSuppliedPath: options.userSuppliedPath ?? true });
+        declareSoftExitError(error, { userSuppliedPath });
         process.exitCode = 1;
         closeStatus = "failed";
         return;
@@ -322,5 +319,7 @@ export function registerApi(program: Program): void {
         description: "GET the public FAPI environment payload",
       },
     ])
-    .action(api);
+    // Wrapped because Commander passes the Command itself as a fourth argument,
+    // which must not land in `api`'s caller options.
+    .action(async (endpoint, filter, options) => api(endpoint, filter, options));
 }

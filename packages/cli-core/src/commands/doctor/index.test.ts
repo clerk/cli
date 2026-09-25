@@ -101,6 +101,9 @@ describe("doctor", () => {
     const error = await runDoctor();
 
     expect(error?.code).toBe(ERROR_CODE.DOCTOR_CHECK_CRASHED);
+    // The message must not send the reader to their project for a CLI bug.
+    expect(error?.message).toContain("bug in the Clerk CLI");
+    expect(error?.message).not.toContain("issues with your Clerk integration");
   });
 
   // A crash outranks a finding: the run can no longer claim to have checked

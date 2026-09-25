@@ -75,7 +75,7 @@ import {
   type DiscoveredOAuthProviders,
   type LiveDeploySnapshot,
 } from "./status.ts";
-import { clearTelemetryStage } from "../../lib/telemetry.ts";
+import { setTelemetryStage } from "../../lib/telemetry.ts";
 import { resolveActiveReportState, type OAuthSetupFacts } from "./report-state.ts";
 import {
   recordDeployObservation,
@@ -186,11 +186,9 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
 
   const productionOrExists = await createProductionInstance(ctx, domain);
   if (productionOrExists === "exists") {
-    // An observation that disproves the stage without establishing a new one:
-    // `not_started` is now false, and whether that instance has a domain, or
-    // how far it got, is unknown until the resume below reads it. If that read
-    // fails, or substitutes, the run ends with no stage rather than a false one.
-    clearTelemetryStage();
+    // `not_started` is now false and the resume has not read anything yet, so
+    // the run sends no stage unless the resume below observes one.
+    setTelemetryStage(null);
     log.blank();
     log.info(
       "A production instance already exists for this application. Resuming the existing deploy.",
@@ -286,7 +284,10 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
 
   const snapshot = await resolveLiveDeploySnapshot(ctx);
   if (!snapshot) {
-    recordDeployStage("domain_provisioning");
+    // No snapshot also means no production instance id, which only happens when
+    // a create said one exists and the refresh could not find it. The run knows
+    // nothing then, so it records nothing.
+    if (ctx.productionInstanceId) recordDeployStage("domain_provisioning");
     log.blank();
     log.info("A production instance exists, but Clerk did not return a production domain yet.");
     log.info("Run `clerk deploy` again after the domain is available from the API.");

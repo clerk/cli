@@ -2653,6 +2653,7 @@ describe("deploy", () => {
 
         const { payload } = await deployTelemetry(async () => runDeploy({}));
 
+        expect(payload.outcome).toBe("abort");
         expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_CANCELLED);
         expect(payload.pause_step).toBe("oauth");
         expect(payload.stage).toBe("oauth_pending");
@@ -2720,6 +2721,7 @@ describe("deploy", () => {
 
         const { payload } = await deployTelemetry(async () => runDeploy({}));
 
+        expect(payload.outcome).toBe("abort");
         expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_CANCELLED);
         expect(payload.pause_step).toBe("dns");
         expect(payload.stage).toBe("domain_pending");
@@ -2737,6 +2739,7 @@ describe("deploy", () => {
 
         const { payload } = await deployTelemetry(async () => runDeploy({}));
 
+        expect(payload.outcome).toBe("abort");
         expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_CANCELLED);
         expect(payload.pause_step).toBe("dns");
         expect(payload.stage).toBe("domain_pending");
@@ -2988,6 +2991,31 @@ describe("deploy", () => {
           new PlapiError(500, JSON.stringify({ errors: [{ code: "server_error" }] }), "https://x"),
         );
         mockSelect.mockResolvedValueOnce("skip");
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.stage).toBeNull();
+      });
+
+      // Create says an instance exists, then the refresh finds no production
+      // instance id: the run never identified an instance, so it claims no
+      // state for one.
+      test("a create conflict whose refresh finds no instance records no stage", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockCreateConflict();
+        mockFetchApplication.mockResolvedValue({
+          application_id: "app_xyz789",
+          name: "my-saas-app",
+          instances: [
+            {
+              instance_id: "ins_dev_123",
+              environment_type: "development",
+              publishable_key: "pk_test_123",
+            },
+          ],
+        });
 
         const { payload } = await deployTelemetry(async () => runDeploy({}));
 

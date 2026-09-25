@@ -886,8 +886,15 @@ describe("api command", () => {
   describe("what telemetry records as the error code", () => {
     const clerkBody = (code: string) => JSON.stringify({ errors: [{ code, message: "" }] });
 
-    function recordedFor(endpoint: string, options: Record<string, unknown> = {}) {
-      return captureTelemetryPayload("api", () => runApi(endpoint, options));
+    function recordedFor(
+      endpoint: string,
+      options: Record<string, unknown> = {},
+      caller: { userSuppliedPath?: boolean } = {},
+    ) {
+      return captureTelemetryPayload("api", async () => {
+        const { api } = await import("./index.ts");
+        await api(endpoint, undefined, options, caller);
+      });
     }
 
     test("a Clerk error code in the response body", async () => {
@@ -944,13 +951,13 @@ describe("api command", () => {
     // filed with the typed ones.
     test("an uncoded 404 on a catalog endpoint is cli_endpoint_not_found", async () => {
       stubFetch(async () => new Response("404 page not found", { status: 404 }));
-      const { payload } = await recordedFor("/organization_role", { userSuppliedPath: false });
+      const { payload } = await recordedFor("/organization_role", {}, { userSuppliedPath: false });
       expect(payload.outcome).toBe("error");
       expect(payload.exit_code).toBe(1);
       expect(payload.error_code).toBe("cli_endpoint_not_found");
       // A coded 404 names the resource, whoever wrote the path.
       stubFetch(async () => new Response(clerkBody("resource_not_found"), { status: 404 }));
-      const coded = await recordedFor("/users/bad_id", { userSuppliedPath: false });
+      const coded = await recordedFor("/users/bad_id", {}, { userSuppliedPath: false });
       expect(coded.payload.error_code).toBe("resource_not_found");
     });
 

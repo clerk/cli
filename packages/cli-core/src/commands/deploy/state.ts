@@ -58,12 +58,7 @@ const PAUSE_REASONS: Record<
   {
     code: ErrorCode;
     exitCode: typeof EXIT_CODE.GENERAL | typeof EXIT_CODE.SIGINT;
-    /**
-     * Whether the person stopped at a step. The CLI's own call: the warehouse
-     * validates the step value but only alarms on its absence for the codes
-     * it knows (as of data-platform#604), so a new reason that should carry a
-     * step also needs adding there.
-     */
+    /** Whether the person stopped at a step, so `pause_step` is recorded. */
     recordsPauseStep: boolean;
   }
 > = {

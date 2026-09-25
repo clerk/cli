@@ -100,14 +100,18 @@ export async function apiInteractive(options: ApiOptions): Promise<void> {
 
   // 7. Delegate to the main api handler
   const { api } = await import("./index.ts");
-  await api(resolvedPath, undefined, {
-    ...options,
-    method: endpoint.method,
-    data: body,
-    yes: true, // skip double-confirmation
+  await api(
+    resolvedPath,
+    undefined,
+    {
+      ...options,
+      method: endpoint.method,
+      data: body,
+      yes: true, // skip double-confirmation
+    },
     // The endpoint is the catalog's, so a bare 404 is recorded as the CLI's.
     // A typed parameter goes into the route as typed, so a malformed value
     // (a slash, a dot segment) can be misfiled the same way; accepted as rare.
-    userSuppliedPath: false,
-  });
+    { userSuppliedPath: false },
+  );
 }

@@ -37,27 +37,17 @@ import { getMode } from "../mode.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
 
 /**
- * What happened to the command, not to the thing it acted on.
- *
- * `incomplete` says the command ran and the thing it reports on is not
- * finished — nobody is being asked to do anything, and nothing failed. Only
- * `clerk deploy status` sends it, and only by declaring it (see
- * {@link declareSoftExitOutcome}); it is never a mapping of nonzero exits.
- *
- * `success` is not "the deploy is done" either: `clerk deploy` under an agent
- * prints a status report and exits 0 with nothing started. How far a deploy
- * got is `stage` and `components`, never `outcome`.
+ * What happened to the command, not to the thing it acted on. `incomplete`
+ * means the command answered and the thing it reports on is not finished; only
+ * `clerk deploy status` sends it, by declaring it. How far a deploy got is
+ * `stage` and `components`, never `outcome`.
  */
 export type TelemetryOutcome = "success" | "error" | "abort" | "incomplete";
 
 /**
- * What a command may declare for itself on the soft-exit path.
- *
- * Deliberately narrower than {@link TelemetryOutcome}. `success` is excluded
- * because the warehouse classifies a row by `outcome` before it looks at
- * anything else (as of data-platform#604), so declaring it on a run that then
- * exits nonzero would file a failure as a success. `abort` is excluded because
- * it belongs to the interrupt path, which reports itself.
+ * What a command may declare for a nonzero soft exit. Not `success`, which
+ * would file a failure as a success, and not `abort`, which the interrupt path
+ * reports itself.
  */
 export type SoftExitOutcome = "incomplete" | "error";
 
@@ -67,19 +57,12 @@ export type TelemetryResult = {
   errorCode?: string;
 };
 
-/**
- * Where a `clerk deploy` run stopped when the user has something left to do.
- * Narrower than `stage`: on a fresh deploy the DNS handoff runs before OAuth
- * setup, so someone who skips a provider is at `stage: "domain_pending"` and
- * `pauseStep: "oauth"`. Set by the deploy wizard (GROW-1233).
- */
+/** The step a `clerk deploy` run stopped on when the person has something left to do. */
 export type TelemetryPauseStep = "dns" | "oauth";
 
 /**
- * Per-component readiness at the time the run ended. `null` means never
- * observed — no successful status read established it — and must never be
- * read as `false`: a failed status call is not a DNS failure. Filled by the
- * deploy wizard and `clerk deploy status` (GROW-1233).
+ * Per-component readiness when the run ended. `null` means never observed,
+ * which is not `false`: a failed status read is not a DNS failure.
  */
 export type TelemetryComponents = {
   dns: boolean | null;
@@ -116,21 +99,9 @@ export type TelemetryStage =
   | "token_exchange"
   | "store"
   | "first_application"
-  // `clerk deploy` and `clerk deploy status`
-  //
-  // Unlike the groups above, these are not control-flow positions: each is a
-  // state of the deploy itself, as `resolveActiveReportState` in
-  // `commands/deploy/report-state.ts` would compute it at that moment. So the stage
-  // a wizard run reports and the stage `clerk deploy status` reports a second
-  // later agree about the same deploy. One value per run — the last state
-  // observed, not every state the run passed through — and a run that ends
-  // before any state resolves sends null rather than defaulting: "never
-  // established" is a distinct answer from "not started".
-  //
-  // A finished deploy is `complete`, never the shared `done` marker below:
-  // the warehouse's payload contract test accepts exactly these five values
-  // on `deploy run` and `deploy status`, so `done` there trips it on every
-  // finished deploy.
+  // `clerk deploy` and `clerk deploy status`: the state of the deploy itself,
+  // the value `clerk deploy status` reports, not a control-flow position. A
+  // finished deploy is `complete`, never `done`; see commands/deploy/README.md.
   | "not_started"
   | "domain_provisioning"
   | "domain_pending"
@@ -161,12 +132,7 @@ type TelemetryContext = {
   components: TelemetryComponents;
 };
 
-/**
- * What a command wants recorded when it reports failure through
- * `process.exitCode` rather than by throwing. The error code is optional
- * because `clerk deploy status` has none to give: nothing was thrown, so
- * there is no code, and `incomplete` is the whole answer.
- */
+/** What a command wants recorded for its soft exit. `deploy status` declares no code: nothing was thrown. */
 type SoftExitDeclaration = {
   outcome: SoftExitOutcome;
   errorCode?: string;
@@ -289,19 +255,8 @@ export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
  * an error-only dimension: a user declining the scaffold preview and a
  * failure inside the generator are both legible, and distinguishable.
  */
-export function setTelemetryStage(stage: TelemetryStage): void {
+export function setTelemetryStage(stage: TelemetryStage | null): void {
   if (context) context.stage = stage;
-}
-
-/**
- * Forget the stage. For the one case where an observation disproves the
- * stage last set without establishing a new one — a fresh deploy's create
- * call answering that an instance already exists, in `commands/deploy/index.ts`,
- * is the only caller. Not a general reset: a command that wants a different
- * stage sets it.
- */
-export function clearTelemetryStage(): void {
-  if (context) context.stage = null;
 }
 
 /** Read the stage a caller had set, so a nested flow can hand it back. */
@@ -309,28 +264,12 @@ export function currentTelemetryStage(): TelemetryStage | null {
   return context?.stage ?? null;
 }
 
-/**
- * Record the step a `clerk deploy` run stopped on. Set where the pause itself
- * is constructed, which is the one place that knows both that the run is
- * stopping and which step it stopped on — a caller that set it earlier would
- * have to unset it on every path that then carried on.
- *
- * Only set it for a step the *person* stopped on. A wait on Clerk's backend
- * ends the run at no step at all, and leaving the last step in place there
- * would count it as a drop-off nobody made.
- */
+/** Record the step a `clerk deploy` run stopped on. Only for a step the person stopped on. */
 export function setTelemetryPauseStep(step: TelemetryPauseStep): void {
   if (context) context.pauseStep = step;
 }
 
-/**
- * Record what a successful domain-status read said about DNS, SSL and email
- * DNS. Only ever called with a live read's answer: the wizard's substituted
- * "everything pending" status and its fresh-run placeholder are not
- * observations, and recording either would file a network blip as a DNS
- * failure. Leaves `oauth` alone — it comes from a different read, and a
- * domain poll must not erase a good OAuth observation or re-send a stale one.
- */
+/** Record DNS, SSL and email DNS from a successful domain-status read. Leaves `oauth` alone. */
 export function setTelemetryDomainComponents(status: {
   dns: boolean;
   ssl: boolean;
@@ -345,59 +284,21 @@ export function setTelemetryDomainComponents(status: {
   };
 }
 
-/**
- * Record whether every required OAuth provider has production credentials,
- * from a successful production-configuration read or a credential save.
- * "Required" is the CLI's rule as it stands — the providers enabled in
- * development that the wizard knows how to configure. GROW-1236 changes that
- * rule to read production configuration; this value follows automatically,
- * because it is computed from the same report. Leaves the domain group alone.
- */
+/** Record whether every required OAuth provider has production credentials. Leaves the domain components alone. */
 export function setTelemetryOAuthComplete(complete: boolean): void {
   if (context) context.components = { ...context.components, oauth: complete };
 }
 
 /**
- * Declare what this run should be recorded as when it ends by setting
- * `process.exitCode` instead of throwing.
- *
- * Commands that catch their own failure never reach `telemetryResultForError`,
- * so without this the soft-exit branch in `cli-program.ts` can only say
- * "nonzero, therefore error". That is wrong in both directions: `clerk deploy
- * status` exits 1 on a deploy that simply is not finished, and `clerk api`
- * exits 1 holding an error code a throw would have recorded (see
- * {@link declareSoftExitError} for that side).
- *
- * Why this is a declaration and not a rule about exit codes: the exit code is
- * a per-command transport detail — 1 means "not done" from `deploy status`
- * and "request failed" from `api` — so only the command knows what its own
- * nonzero exit meant. A general mapping would relabel every command at once.
- *
- * Ignored when the run throws: a thrown error is the more specific fact, and
- * `runProgram` classifies it through {@link telemetryResultForError}.
- *
- * Two rules for callers:
- *
- * - **The last call wins.** Call this once, with the fact you want recorded.
- *   A command that aggregates failures across several targets and means to
- *   report the first one must select that error before calling, not call from
- *   inside its loop — which would record the last target's failure instead,
- *   with no test failing and telemetry naming the wrong thing.
- * - **It applies to whatever nonzero code the run ends with,** not only the
- *   one in force when it was called. Declare it under the same condition that
- *   sets the exit code, so the two cannot diverge.
+ * Declare how a run that exits nonzero without throwing should be recorded.
+ * Last call wins; ignored if the run throws or exits 0. Declare it under the
+ * same condition that sets the exit code.
  */
 export function declareSoftExitOutcome(outcome: SoftExitOutcome, errorCode?: string): void {
   if (context) context.softExit = { outcome, errorCode };
 }
 
-/**
- * How a run that set `process.exitCode` and returned is recorded. Honors a
- * declaration only on a nonzero exit: a command that declared an outcome and
- * then succeeded anyway (a retry that worked, a later branch clearing the
- * code) is a success, and reporting the stale declaration would invent a
- * failure the user never saw.
- */
+/** How a run that set `process.exitCode` and returned is recorded. A declaration applies only to a nonzero exit. */
 export function telemetryResultForSoftExit(exitCode: number): TelemetryResult {
   if (exitCode === EXIT_CODE.SUCCESS) return { outcome: "success", exitCode };
   const declared = context?.softExit;
@@ -410,38 +311,12 @@ export function telemetryResultForSoftExit(exitCode: number): TelemetryResult {
 }
 
 /**
- * Declare a failure the command caught and reported itself, carrying the code
- * a throw would have.
- *
- * `clerk api`, `clerk users create` and `clerk mcp install --json` each catch
- * their own error for a reason that stays as it is — the raw response body has
- * to reach stdout for piping, or a second JSON document must not follow the
- * first — and set the exit code instead. `telemetryResultForError` then never
- * runs, and the code the error was holding is lost. This is the same
- * classification, applied where the error is still in hand: a `CliError`
- * keeps its named code, anything unrecognised is `unexpected_error`, so
- * `mcp install --json` records what human mode records when it rethrows.
- *
- * The one difference from a throw: an `ApiError` with no parsed Clerk code is
- * split by HTTP status rather than collapsed onto `api_error`. See
- * {@link uncodedApiErrorCode} for why. Thrown `ApiError`s keep `api_error`
- * because that code is on the warehouse's reviewed failure list as it is.
- *
- * `userSuppliedPath` says who wrote the request path, which only the call
- * site knows and which decides what an uncoded 404 means: a person's typo, or
- * the CLI asking for a route the API does not serve. It is required rather
- * than defaulted so a new call site cannot mis-file a 404 by omission: the
- * BAPI commands build their own paths and pass false; `clerk api` passes true
- * for a path typed on the command line and false for one its interactive
- * builder chose from the endpoint catalog.
- *
- * Call it under the same condition that sets the exit code, and with the
- * error the run means to report — the last-call-wins rule on
- * {@link declareSoftExitOutcome} applies. Never hand it a `UserAbortError`:
- * a declaration cannot express an abort, so it would be recorded as
- * `unexpected_error`. A command that prompts inside a caught section must let
- * the abort throw instead. (No caller can reach this today; the MCP client
- * picker runs before any client is settled.)
+ * Declare a failure the command caught and reported itself, with the code a
+ * throw would have carried. An uncoded `ApiError` is split by status (see
+ * {@link uncodedApiErrorCode}); thrown ones keep `api_error`. `userSuppliedPath`
+ * says who wrote the request path, which decides whether an uncoded 404 is the
+ * person's or the CLI's. Never pass a `UserAbortError`: it would be recorded as
+ * `unexpected_error`.
  */
 export function declareSoftExitError(error: unknown, options: { userSuppliedPath: boolean }): void {
   const code =
@@ -452,34 +327,13 @@ export function declareSoftExitError(error: unknown, options: { userSuppliedPath
 }
 
 /**
- * An API response with no Clerk error code in its body has one HTTP status and
- * no single meaning, so each code names exactly what was observed and nothing
- * more. Telemetry carries no status and no endpoint, so this split is the only
- * thing that makes the uncoded population measurable.
- *
- * - 429 → `api_rate_limited`, not the existing `too_many_requests`: that one
- *   arrives parsed from Clerk's error body, so it means Clerk itself said so.
- *   An uncoded 429 means no body said so — an empty body or an unexpected
- *   shape from Clerk parses the same as a proxy's answer, so the origin is
- *   unknown. Merging the two would erase the only distinction observable at
- *   the point of record.
- * - 404 with a path the person typed → `api_not_found`: the path did not
- *   reach a Clerk route, and the person chose it. The hint `clerk api`
- *   prints on this branch is a heuristic, so the code claims the status and
- *   who wrote the path, not the cause.
- * - 404 with a path the CLI built → `cli_endpoint_not_found`: the CLI asked
- *   for a route and nothing served it — a stale endpoint catalog, a hardcoded
- *   path the API dropped, or something in front of the API answering for it
- *   (`CLERK_BACKEND_API_URL` is overridable), the same ambiguity the 5xx
- *   bullet carries. The warehouse counts it as a failure. Kept apart from
- *   `api_not_found` because the same status means opposite things depending
- *   on who wrote the path, and the row cannot say which afterwards.
- * - other 4xx → `api_client_error`: 400, 401 and 403 collapsed. Cause and
- *   frequency unknown; the status cannot be recovered afterwards, so no
- *   finer mapping is promised.
- * - anything else → `api_error`: a 5xx is a failed request whoever caused it,
- *   Clerk or a customer's proxy — the same ambiguity every thrown `ApiError`
- *   carries today.
+ * The code for an API response with no Clerk error code, from its status alone:
+ * - 429: `api_rate_limited`, kept apart from `too_many_requests`, which Clerk's
+ *   own error body names; an uncoded 429's origin is unknown.
+ * - 404: `api_not_found` on a path the person typed, `cli_endpoint_not_found`
+ *   on one the CLI built (a stale catalog, a dropped route, or a proxy).
+ * - other 4xx: `api_client_error`.
+ * - anything else: `api_error`.
  */
 function uncodedApiErrorCode(status: number, userSuppliedPath: boolean): string {
   if (status === 429) return "api_rate_limited";
@@ -493,7 +347,10 @@ export function telemetryResultForError(error: unknown): TelemetryResult {
     return { outcome: "abort", exitCode: EXIT_CODE.SUCCESS };
   }
   if (error instanceof CliError) {
-    return { outcome: "error", exitCode: error.exitCode, errorCode: error.code ?? "cli_error" };
+    // Exit 130 is Ctrl-C (a cancelled deploy prompt), the same keypress the
+    // interrupt path records as an abort; the code still says which.
+    const outcome = error.exitCode === EXIT_CODE.SIGINT ? "abort" : "error";
+    return { outcome, exitCode: error.exitCode, errorCode: error.code ?? "cli_error" };
   }
   if (error instanceof ApiError) {
     return { outcome: "error", exitCode: EXIT_CODE.GENERAL, errorCode: error.code ?? "api_error" };
@@ -521,10 +378,8 @@ export async function finalizeAndSendTelemetry(
 ): Promise<void> {
   if (finalized || !context) return;
 
-  // A copy, not the live context: the send awaits config reads before it
-  // builds the event, and a deploy read still in flight when the command
-  // failed could land in that window. The event says what was known when
-  // the command ended, whatever finishes afterwards.
+  // A copy, so a read that finishes after the command ended cannot change
+  // the event while the send is still building it.
   const current = { ...context, components: { ...context.components } };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deadlineMs);
@@ -580,19 +435,9 @@ async function buildAndSend(
       outcome: result.outcome,
       exit_code: result.exitCode,
       error_code: result.errorCode ?? null,
-      // `stage` is shared (init, login and deploy each write their own group).
-      // `pause_step` and `components` are deploy's and ride on every other
-      // command's event as null members. They sit at the top level because the
-      // warehouse staging model already reads these exact paths (as of
-      // data-platform#604), so nesting them under a per-command key now would
-      // cost a warehouse change for no visible gain. That is a cost call, not
-      // a shape to copy: a command that needs its own structured detail can
-      // still add a namespaced object, with a contract-test arm to match.
+      // `pause_step` and `components` are deploy's; null on other commands.
       stage: current.stage,
       pause_step: current.pauseStep,
-      // Nested rather than four flat keys: it is one JSON path per component
-      // in the warehouse, and the group is obviously one thing. A null member
-      // means never observed — see TelemetryComponents.
       components: current.components,
       duration_ms: Date.now() - current.startedAt,
       machine_uuid: machineUuid,

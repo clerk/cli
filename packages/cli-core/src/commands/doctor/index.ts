@@ -84,24 +84,18 @@ async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
 }
 
 /**
- * What to throw for a set of results that includes a failure. A crashed check
- * and a real finding are both exit 1, but they send the reader to different
- * places — one is a CLI bug, the other is the user's integration — and a
- * single code left them indistinguishable in telemetry and on screen.
- *
- * Decided from one result set. After `--fix`, that is the verify pass alone:
- * it re-runs every check, so it is the complete answer and the screen the
- * user last saw. The cost is that a first-pass crash the verify pass does not
- * reproduce is recorded nowhere — a transient one is superseded by whatever
- * durable finding remained, which is why `doctor_check_crashed` rows can be
- * rarer than crashes people report.
+ * The error for a set of results that includes a failure. A crashed check is a
+ * CLI bug, not a problem with the user's project, so both the message and the
+ * code say so. After `--fix` this is decided from the verify pass alone.
  */
-function failureCodeFor(
-  results: CheckResult[],
-): typeof ERROR_CODE.DOCTOR_CHECK_CRASHED | typeof ERROR_CODE.DOCTOR_FAILED {
-  return results.some((r) => r.crashed)
-    ? ERROR_CODE.DOCTOR_CHECK_CRASHED
-    : ERROR_CODE.DOCTOR_FAILED;
+function failureFor(results: CheckResult[], findingsMessage: string): CliError {
+  const crashed = results.some((r) => r.crashed);
+  return new CliError(
+    crashed
+      ? "A doctor check crashed. This is a bug in the Clerk CLI, not your project; see the check marked as crashed above."
+      : findingsMessage,
+    { code: crashed ? ERROR_CODE.DOCTOR_CHECK_CRASHED : ERROR_CODE.DOCTOR_FAILED },
+  );
 }
 
 function printResults(results: CheckResult[], options: DoctorOptions): void {
@@ -176,9 +170,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
 
       const hasVerifyFailure = verifyResults.some((r) => r.status === "fail");
       if (hasVerifyFailure) {
-        throw new CliError("Some checks still failing after auto-fix", {
-          code: failureCodeFor(verifyResults),
-        });
+        throw failureFor(verifyResults, "Some checks still failing after auto-fix");
       }
       await outro("All checks passing");
       return;
@@ -187,9 +179,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
 
   const hasFailure = allResults.some((r) => r.status === "fail");
   if (hasFailure) {
-    throw new CliError("Doctor found issues with your Clerk integration", {
-      code: failureCodeFor(allResults),
-    });
+    throw failureFor(allResults, "Doctor found issues with your Clerk integration");
   }
   await outro("All checks passing");
 }

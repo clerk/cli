@@ -142,6 +142,20 @@ describe("telemetryResultForError", () => {
     expect(telemetryResultForError(new CliError("nope")).errorCode).toBe("cli_error");
   });
 
+  // A cancelled deploy prompt is Ctrl-C, the same keypress the interrupt path
+  // records as an abort; the code still says which prompt.
+  test("maps a CliError that exits 130 to abort, keeping its code", () => {
+    const error = new CliError("paused", {
+      code: ERROR_CODE.DEPLOY_CANCELLED,
+      exitCode: EXIT_CODE.SIGINT,
+    });
+    expect(telemetryResultForError(error)).toEqual({
+      outcome: "abort",
+      exitCode: EXIT_CODE.SIGINT,
+      errorCode: "deploy_cancelled",
+    });
+  });
+
   test("maps ApiError (code is null for a non-JSON body → api_error fallback)", () => {
     const error = new ApiError(500, "boom");
     expect(telemetryResultForError(error)).toEqual({
