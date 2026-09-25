@@ -51,6 +51,7 @@ import {
   finalizeAndSendTelemetry,
   startCommandTelemetry,
   telemetryResultForError,
+  telemetryResultForSoftExit,
 } from "./lib/telemetry.ts";
 
 /**
@@ -263,12 +264,11 @@ export async function runProgram(
     // the exit for that case; racing it here would report the wrong outcome.
     if (interruptedExitCode() !== null) return;
     // Some commands report failure via process.exitCode instead of throwing —
-    // read it back so telemetry doesn't record them as successes.
+    // read it back so telemetry doesn't record them as successes. What a
+    // nonzero code there *meant* is the command's to say, via
+    // `declareSoftExitOutcome`; absent a declaration this is still an error.
     const softExitCode = Number(process.exitCode ?? EXIT_CODE.SUCCESS);
-    await finalizeAndSendTelemetry({
-      outcome: softExitCode === EXIT_CODE.SUCCESS ? "success" : "error",
-      exitCode: softExitCode,
-    });
+    await finalizeAndSendTelemetry(telemetryResultForSoftExit(softExitCode));
   } catch (error) {
     if (interruptedExitCode() !== null) return;
     // Started before rendering so the message is printed before we block on the

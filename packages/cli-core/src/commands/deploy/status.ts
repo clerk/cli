@@ -32,7 +32,9 @@ import {
   type OAuthProvider,
   type OAuthProviderDescriptor,
 } from "./providers.ts";
+import { pendingOAuthProviders, resolveActiveReportState } from "./report-state.ts";
 import type { DeployContext, DeployOperationState } from "./state.ts";
+import { recordDomainObservation, recordOAuthObservation } from "./telemetry.ts";
 
 const DEPLOY_STATUS_INITIAL_RETRY_DELAY_MS = 3000;
 const DEPLOY_STATUS_MAX_RETRIES = 5;
@@ -48,8 +50,10 @@ export interface DeployProgressHandlers {
    * Fires every time a poll resolves a fresh status. Ctrl-C rejects out of the
    * next poll or its countdown, discarding the loop's local status, so a caller
    * that wants to report partial progress on interrupt has to capture it here.
+   * Carries the poll's verdict on the domain as well as its components: all
+   * three can be verified while Clerk is still finalizing.
    */
-  onStatus?(status: DeployComponentStatus): void;
+  onStatus?(outcome: DeployStatusOutcome): void;
 }
 
 export type DeployStatusOutcome = { verified: boolean; status: DeployComponentStatus };
@@ -133,6 +137,15 @@ export type LiveDeploySnapshot = Omit<
   completedOAuthProviders: OAuthProvider[];
   domainComplete: boolean;
   componentStatus: DeployComponentStatus;
+  /**
+   * Whether `domainComplete` and `componentStatus` come from a domain-status
+   * read that succeeded. The wizard's resume path substitutes "everything
+   * pending" when that read fails so the user can retry from the screen, and
+   * the substitute is byte-identical to a genuine all-pending answer; this is
+   * the only thing that tells them apart. Nothing about the domain may be
+   * recorded from a snapshot that is not live.
+   */
+  live: boolean;
   unsupportedOAuthProviderCount: number;
   unsupportedOAuthProviders: string[];
 };
@@ -207,7 +220,11 @@ export async function resolveDeployState(ctx: DeployContext): Promise<DeployStat
 
   // The read-only status path surfaces domain-status read failures instead of
   // masking them as pending, so a transient API error is not reported as
-  // legitimate progress.
+  // legitimate progress. Telemetry guards itself — components are recorded
+  // only by a read that succeeded, and `recordDeployObservation` records a
+  // stage only from a live snapshot — but the printed report reads
+  // `componentStatus` unconditionally and would need `snapshot.live` as well
+  // if this ever stopped throwing.
   const snapshot = await resolveLiveDeploySnapshot(
     {
       ...ctx,
@@ -244,6 +261,19 @@ export async function loadDevelopmentOAuthProviders(
   });
 }
 
+/**
+ * Read the deploy's live state: the production domain, the providers enabled
+ * in development, the production configuration and the domain status.
+ *
+ * Recording telemetry is a side effect of the last two reads, not of a caller
+ * deciding to record: each is written the moment it succeeds, whatever the
+ * other does. That is what keeps a successful configuration read when the
+ * domain-status endpoint 500s a moment later — the ordinary shape of a
+ * partial outage — instead of the run ending with four nulls after one read
+ * observed something. It rests on every caller consuming the snapshot it
+ * asked for, which both callers today do; a speculative call, to check
+ * whether a deploy exists, say, would record too.
+ */
 export async function resolveLiveDeploySnapshot(
   ctx: DeployContext,
   options: SnapshotOptions = {},
@@ -259,15 +289,40 @@ export async function resolveLiveDeploySnapshot(
 
   const { descriptors: oauthProviderDescriptors, unsupported } = oauth;
   const oauthProviders = oauthProviderDescriptors.map((descriptor) => descriptor.provider);
-  const { productionConfig, deployStatus } = await loadProductionState(
-    ctx,
-    productionInstanceId,
-    domain.id,
-    options,
+  const completedProvidersIn = (config: Record<string, unknown>): OAuthProvider[] =>
+    oauthProviderDescriptors
+      .filter((descriptor) => hasProviderRequiredCredentials(config, descriptor))
+      .map((descriptor) => descriptor.provider);
+
+  const { productionConfig, deployStatus, live } = await withSpinner(
+    "Reading production configuration...",
+    async () => {
+      const configRead = Promise.resolve(fetchInstanceConfig(ctx.appId, productionInstanceId)).then(
+        (config) => {
+          recordOAuthObservation({
+            oauthProviders,
+            completedOAuthProviders: completedProvidersIn(config),
+          });
+          return config;
+        },
+      );
+      const statusRead = loadInitialDeployStatus(ctx.appId, domain.id, options).then((read) => {
+        if (read.live) recordDomainObservation(deployComponentStatusFromDomainStatus(read.status));
+        return read;
+      });
+      // Fail-fast on purpose: a `.then` on the slower read may still land
+      // after the run has built its event, in which case that observation is
+      // dropped — never wrong, just absent. Waiting for the slower read to
+      // settle would hold a real error behind a hanging request, and nothing
+      // bounds how long that is.
+      const [productionConfig, { status: deployStatus, live }] = await Promise.all([
+        configRead,
+        statusRead,
+      ]);
+      return { productionConfig, deployStatus, live };
+    },
   );
-  const completedOAuthProviders = oauthProviderDescriptors
-    .filter((descriptor) => hasProviderRequiredCredentials(productionConfig, descriptor))
-    .map((descriptor) => descriptor.provider);
+  const completedOAuthProviders = completedProvidersIn(productionConfig);
   const pendingOAuthDescriptor = oauthProviderDescriptors.find(
     (descriptor) => !completedOAuthProviders.includes(descriptor.provider),
   );
@@ -284,6 +339,7 @@ export async function resolveLiveDeploySnapshot(
     completedOAuthProviders,
     cnameTargets: domain.cname_targets ?? [],
     componentStatus: deployComponentStatusFromDomainStatus(deployStatus),
+    live,
     unsupportedOAuthProviderCount: unsupported.length,
     unsupportedOAuthProviders: unsupported,
   };
@@ -313,36 +369,17 @@ export async function loadInitialDeployStatus(
   appId: string,
   domainIdOrName: string,
   options: SnapshotOptions = {},
-): Promise<DomainStatusResponse> {
-  const status = mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
-  if (options.throwOnStatusError) return status;
-
+): Promise<{ status: DomainStatusResponse; live: boolean }> {
   try {
-    return await status;
+    const status = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
+    return { status, live: true };
   } catch (error) {
+    if (options.throwOnStatusError) throw error;
     log.debug(
       `deploy: snapshot domain-status read failed, treating DNS as pending: ${error instanceof Error ? error.message : String(error)}`,
     );
-    return pendingDomainStatus();
+    return { status: pendingDomainStatus(), live: false };
   }
-}
-
-export async function loadProductionState(
-  ctx: DeployContext,
-  productionInstanceId: string,
-  domainIdOrName: string,
-  options: SnapshotOptions = {},
-): Promise<{
-  productionConfig: Record<string, unknown>;
-  deployStatus: DomainStatusResponse;
-}> {
-  return withSpinner("Reading production configuration...", async () => {
-    const [productionConfig, deployStatus] = await Promise.all([
-      fetchInstanceConfig(ctx.appId, productionInstanceId),
-      loadInitialDeployStatus(ctx.appId, domainIdOrName, options),
-    ]);
-    return { productionConfig, deployStatus };
-  });
 }
 
 export function pendingDomainStatus(): DomainStatusResponse {
@@ -404,12 +441,9 @@ function buildDeployStatusFacts(
   const { snapshot } = state;
   const componentStatus = outcome?.status ?? snapshot.componentStatus;
   const domainComplete = outcome ? outcome.verified : snapshot.domainComplete;
-  const oauthPending = snapshot.oauthProviders.filter(
-    (provider) => !snapshot.completedOAuthProviders.includes(provider),
-  );
-  const oauthComplete = oauthPending.length === 0;
-  const complete = domainComplete && oauthComplete;
-  const reportState = resolveActiveReportState(domainComplete, complete);
+  const oauthPending = pendingOAuthProviders(snapshot);
+  const reportState = resolveActiveReportState(snapshot, domainComplete);
+  const complete = reportState === "complete";
 
   const pendingDnsRecords: DeployStatusReport["pendingDnsRecords"] = !domainComplete
     ? pendingCnameTargets(snapshot.cnameTargets ?? [], componentStatus).map((target) => ({
@@ -432,7 +466,7 @@ function buildDeployStatusFacts(
     },
     pendingDnsRecords,
     oauth: {
-      complete: oauthComplete,
+      complete: oauthPending.length === 0,
       configured: [...snapshot.completedOAuthProviders],
       pending: oauthPending,
       unsupported: [...snapshot.unsupportedOAuthProviders],
@@ -470,12 +504,6 @@ export function buildInterruptedDeployStatusReport(): DeployStatusReport {
     oauth: { complete: false, configured: [], pending: [], unsupported: [] },
     urls: null,
   });
-}
-
-function resolveActiveReportState(domainComplete: boolean, complete: boolean): DeployStatusState {
-  if (complete) return "complete";
-  if (!domainComplete) return "domain_pending";
-  return "oauth_pending";
 }
 
 /**
@@ -646,7 +674,7 @@ export async function waitForDeployStatus(
   }
   let response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
   let status = deployComponentStatusFromDomainStatus(response);
-  handlers.onStatus?.(status);
+  handlers.onStatus?.({ verified: response.status === "complete", status });
 
   const labels = deployComponentLabels("dns", domain);
   const verified = await handlers.runVerification(labels.progress, async (spinner) => {
@@ -666,7 +694,7 @@ export async function waitForDeployStatus(
       nextRetryDelay *= DEPLOY_STATUS_BACKOFF_FACTOR;
       response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
       status = deployComponentStatusFromDomainStatus(response);
-      handlers.onStatus?.(status);
+      handlers.onStatus?.({ verified: response.status === "complete", status });
       if (response.status === "complete") return true;
     }
     return false;

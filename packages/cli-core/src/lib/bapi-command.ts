@@ -3,6 +3,7 @@ import { BapiError, CliError, ERROR_CODE, throwUsageError, withApiContext } from
 import { resolveKeylessTarget } from "./keyless-target.ts";
 import { log } from "./log.ts";
 import { fetchApplication, validateKeyPrefix } from "./plapi.ts";
+import { declareSoftExitError } from "./telemetry.ts";
 
 export function normalizeBapiPath(path: string): string {
   let normalized = path;
@@ -151,6 +152,7 @@ export function handleBapiError(error: unknown): boolean {
     log.data(error.body);
   }
 
+  declareSoftExitError(error, { userSuppliedPath: false });
   process.exitCode = 1;
   return true;
 }

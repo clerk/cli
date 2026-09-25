@@ -18,6 +18,7 @@ import {
 } from "../../lib/update-check.ts";
 import { formatHostStateProbeFailures, getAgentHostStateProbe } from "../../lib/host-execution.ts";
 import { isAgent } from "../../mode.ts";
+import { CHECK_NAME } from "./types.ts";
 import type { CheckResult, DoctorContext, FixAction, KeylessInstanceInfo } from "./types.ts";
 
 interface CheckOptions {
@@ -92,7 +93,7 @@ async function claimHint(ctx: DoctorContext): Promise<string> {
 }
 
 export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Logged in", ctx.fixes.login);
+  const check = defineCheck(CHECK_NAME.loggedIn, ctx.fixes.login);
   const token = await ctx.getToken();
 
   // Malformed-key detection is a side effect of resolving the keyless target
@@ -138,7 +139,7 @@ export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
 }
 
 export async function checkHostExecution(): Promise<CheckResult> {
-  const check = defineCheck("Host execution");
+  const check = defineCheck(CHECK_NAME.hostExecution);
   if (!isAgent()) {
     return check.pass("Skipped (human mode)");
   }
@@ -157,7 +158,7 @@ export async function checkHostExecution(): Promise<CheckResult> {
 }
 
 export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Authentication valid", ctx.fixes.login);
+  const check = defineCheck(CHECK_NAME.tokenValid, ctx.fixes.login);
   const storedToken = await ctx.getToken();
   if (!storedToken) {
     const keyless = await ctx.getKeylessTarget();
@@ -204,7 +205,7 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
 }
 
 export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Project linked", ctx.fixes.link);
+  const check = defineCheck(CHECK_NAME.projectLinked, ctx.fixes.link);
   const resolved = await ctx.getProfile();
   if (resolved) {
     const RESOLUTION_LABELS: Record<string, string> = {
@@ -250,7 +251,7 @@ export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResul
 }
 
 export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Application reachable", ctx.fixes.link);
+  const check = defineCheck(CHECK_NAME.linkedAppExists, ctx.fixes.link);
   const token = await ctx.getToken();
   if (!token) {
     // This check is account-only — the Platform API application record has no
@@ -285,7 +286,7 @@ export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckRes
 }
 
 export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Instance IDs", ctx.fixes.link);
+  const check = defineCheck(CHECK_NAME.instances, ctx.fixes.link);
   const token = await ctx.getToken();
   if (!token) {
     // A linked profile's dev/prod instance IDs are an account-only concept —
@@ -356,7 +357,7 @@ async function findEnvFile(
 }
 
 export async function checkEnvVars(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("Environment variables", ctx.fixes.envPull);
+  const check = defineCheck(CHECK_NAME.envVars, ctx.fixes.envPull);
   const cwd = process.cwd();
   const found = await findEnvFile(cwd);
 
@@ -414,7 +415,7 @@ async function identifyEnvironment(
 }
 
 export async function checkConfigFile(ctx: DoctorContext): Promise<CheckResult> {
-  const check = defineCheck("CLI configuration", ctx.fixes.login);
+  const check = defineCheck(CHECK_NAME.configFile, ctx.fixes.login);
   const configFile = getConfigFile();
   const file = Bun.file(configFile);
   if (!(await file.exists())) {
@@ -446,7 +447,7 @@ export async function checkConfigFile(ctx: DoctorContext): Promise<CheckResult> 
 // ── CLI version check ─────────────────────────────────────────────────────────
 
 export async function checkCliVersion(): Promise<CheckResult> {
-  const check = defineCheck("CLI version");
+  const check = defineCheck(CHECK_NAME.cliVersion);
   if (IS_DEV_BUILD) {
     return check.pass("Running development build");
   }
@@ -524,7 +525,7 @@ const SHELL_COMPLETION: Record<
 };
 
 export async function checkShellCompletion(): Promise<CheckResult> {
-  const check = defineCheck("Shell completion");
+  const check = defineCheck(CHECK_NAME.shellCompletion);
   const shell = detectShell();
   if (!shell) return check.pass("Shell completion (could not detect shell, skipped)");
 

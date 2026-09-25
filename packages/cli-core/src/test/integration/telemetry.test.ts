@@ -5,7 +5,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { clerk, http, useIntegrationTestHarness } from "./lib/harness.ts";
+import {
+  clerk,
+  getInstance,
+  http,
+  MOCK_APP_DEV_ONLY,
+  setProfile,
+  useIntegrationTestHarness,
+} from "./lib/harness.ts";
 import { useCaptureLog } from "../lib/stubs.ts";
 
 useIntegrationTestHarness();
@@ -116,6 +123,110 @@ test("records failures with error code and reuses the machine uuid", async () =>
   expect(event.payload.machine_uuid).toBe(firstUuid);
 });
 
+// The counterpart to the soft-failure test below: `clerk deploy status` exits
+// 1 on a deploy that is merely unfinished, and declares what that 1 meant.
+// Driven through the real program so the whole seam is covered — the
+// declaration, the soft-exit branch reading it back, and the emitted event —
+// which no unit test of the classifier can do on its own.
+test("an unfinished `deploy status` is recorded as incomplete, not an error", async () => {
+  await markNoticeAlreadyShown();
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+  await setProfile("github.com/test/project", {
+    workspaceId: "",
+    appId: MOCK_APP_DEV_ONLY.application_id,
+    instances: { development: getInstance(MOCK_APP_DEV_ONLY, "development").instance_id },
+  });
+  // Development-only: no production instance, so the report is `not_started`
+  // and no domain or config call follows.
+  http.mock({
+    [`/applications/${MOCK_APP_DEV_ONLY.application_id}`]: MOCK_APP_DEV_ONLY,
+    "test-telemetry.clerk.com": {},
+  });
+
+  try {
+    await clerk.raw("deploy", "status");
+    // Set by the command rather than thrown, so the harness's own result
+    // reports 0 — the soft exit is on the process, which is what the run
+    // would exit with and what the event has to carry.
+    expect(process.exitCode).toBe(1);
+
+    const bodies = telemetryEvents();
+    expect(bodies).toHaveLength(1);
+    const event = bodies[0]!.events[0]!;
+    expect(event.payload.command).toBe("deploy status");
+    expect(event.payload.outcome).toBe("incomplete");
+    expect(event.payload.exit_code).toBe(1);
+    expect(event.payload.stage).toBe("not_started");
+    // Nothing was thrown, so there is no code to carry — the two fields are
+    // unrelated, and `incomplete` is the whole answer.
+    expect(event.payload.error_code).toBeNull();
+  } finally {
+    // Bun ignores `process.exitCode = undefined`; only a number resets it.
+    process.exitCode = 0;
+  }
+});
+
+// `clerk api` catches the API error to print its body, so the code reaches
+// the event only through the soft-exit declaration. The `incomplete` test above proves a
+// declared outcome survives the real program; this proves a declared *code*
+// does, and covers the status split end to end — the unit tests model the
+// final step, this runs it.
+test("a caught uncoded 404 from `clerk api` is recorded as api_not_found", async () => {
+  await markNoticeAlreadyShown();
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+  http.stub(async (url) => {
+    if (url.startsWith(TELEMETRY_URL)) return new Response("{}");
+    return new Response("404 page not found", { status: 404 });
+  });
+
+  try {
+    await clerk.raw("api", "/organization_role", "--secret-key", "sk_test_123");
+    // Set by the command rather than thrown, so the harness's own result
+    // reports 0; the soft exit is on the process.
+    expect(process.exitCode).toBe(1);
+
+    const bodies = telemetryEvents();
+    expect(bodies).toHaveLength(1);
+    const event = bodies[0]!.events[0]!;
+    expect(event.payload.command).toBe("api");
+    expect(event.payload.outcome).toBe("error");
+    expect(event.payload.exit_code).toBe(1);
+    expect(event.payload.error_code).toBe("api_not_found");
+  } finally {
+    process.exitCode = 0;
+  }
+});
+
+// Drives the real program rather than the unit tests' capture helper, so it
+// pins two things only `runProgram` can: the command name Commander gives the
+// hidden default subcommand — the warehouse contract keys on `deploy run` —
+// and that the stage set inside the command reaches the event it sends.
+test("`clerk deploy` under an agent with no production instance records stage not_started", async () => {
+  await markNoticeAlreadyShown();
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+  await setProfile("github.com/test/project", {
+    workspaceId: "",
+    appId: MOCK_APP_DEV_ONLY.application_id,
+    instances: { development: getInstance(MOCK_APP_DEV_ONLY, "development").instance_id },
+  });
+  http.mock({
+    [`/applications/${MOCK_APP_DEV_ONLY.application_id}`]: MOCK_APP_DEV_ONLY,
+    "test-telemetry.clerk.com": {},
+  });
+
+  const result = await clerk("--mode", "agent", "deploy");
+
+  expect(JSON.parse(result.stdout).state).toBe("not_started");
+  const bodies = telemetryEvents();
+  expect(bodies).toHaveLength(1);
+  const event = bodies[0]!.events[0]!;
+  expect(event.payload.command).toBe("deploy run");
+  expect(event.payload.outcome).toBe("success");
+  expect(event.payload.exit_code).toBe(0);
+  expect(event.payload.stage).toBe("not_started");
+  expect(event.payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+});
+
 test("maps a soft failure (process.exitCode set without throwing) to outcome error", async () => {
   await markNoticeAlreadyShown();
   process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
@@ -132,7 +243,8 @@ test("maps a soft failure (process.exitCode set without throwing) to outcome err
     expect(event.payload.outcome).toBe("error");
     expect(event.payload.exit_code).toBe(1);
   } finally {
-    process.exitCode = undefined;
+    // Bun ignores `process.exitCode = undefined`; only a number resets it.
+    process.exitCode = 0;
   }
 });
 
@@ -314,4 +426,23 @@ test("`clerk telemetry status` explains the dev-build guard", async () => {
   const result = await clerk("telemetry", "status");
   expect(result.stdout.trim()).toBe("disabled");
   expect(result.stderr).toContain("dev build");
+});
+
+// The other half of the doctor change: a check that ran and found a real
+// problem still reports `doctor_failed`. Only a crash may claim the new code,
+// and nothing here crashes.
+test("`doctor` with failing checks still reports doctor_failed", async () => {
+  await markNoticeAlreadyShown();
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+  http.mock({ "test-telemetry.clerk.com": {} });
+
+  const result = await clerk.raw("doctor");
+  expect(result.exitCode).toBe(1);
+
+  const bodies = telemetryEvents();
+  expect(bodies).toHaveLength(1);
+  const event = bodies[0]!.events[0]!;
+  expect(event.payload.command).toBe("doctor");
+  expect(event.payload.outcome).toBe("error");
+  expect(event.payload.error_code).toBe("doctor_failed");
 });

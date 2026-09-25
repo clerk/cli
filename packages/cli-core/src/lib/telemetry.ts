@@ -36,10 +36,39 @@ import { log } from "./log.ts";
 import { getMode } from "../mode.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
 
+/**
+ * What happened to the command, not to the thing it acted on. `incomplete`
+ * means the command answered and the thing it reports on is not finished; only
+ * `clerk deploy status` sends it, by declaring it. How far a deploy got is
+ * `stage` and `components`, never `outcome`.
+ */
+export type TelemetryOutcome = "success" | "error" | "abort" | "incomplete";
+
+/**
+ * What a command may declare for a nonzero soft exit. Not `success`, which
+ * would file a failure as a success, and not `abort`, which the interrupt path
+ * reports itself.
+ */
+export type SoftExitOutcome = "incomplete" | "error";
+
 export type TelemetryResult = {
-  outcome: "success" | "error" | "abort";
+  outcome: TelemetryOutcome;
   exitCode: number;
   errorCode?: string;
+};
+
+/** The step a `clerk deploy` run stopped on when the person has something left to do. */
+export type TelemetryPauseStep = "dns" | "oauth";
+
+/**
+ * Per-component readiness when the run ended. `null` means never observed,
+ * which is not `false`: a failed status read is not a DNS failure.
+ */
+export type TelemetryComponents = {
+  dns: boolean | null;
+  ssl: boolean | null;
+  mail: boolean | null;
+  oauth: boolean | null;
 };
 
 /**
@@ -70,6 +99,14 @@ export type TelemetryStage =
   | "token_exchange"
   | "store"
   | "first_application"
+  // `clerk deploy` and `clerk deploy status`: the state of the deploy itself,
+  // the value `clerk deploy status` reports, not a control-flow position. A
+  // finished deploy is `complete`, never `done`; see commands/deploy/README.md.
+  | "not_started"
+  | "domain_provisioning"
+  | "domain_pending"
+  | "oauth_pending"
+  | "complete"
   // shared terminal marker
   | "done";
 
@@ -87,7 +124,23 @@ type TelemetryContext = {
   startedAt: number;
   /** Last stage set — see setTelemetryStage. */
   stage: TelemetryStage | null;
+  /** Declared by the command for the soft-exit path — see declareSoftExitOutcome. */
+  softExit: SoftExitDeclaration | null;
+  /** Where the deploy wizard stopped — see TelemetryPauseStep. */
+  pauseStep: TelemetryPauseStep | null;
+  /** Per-component readiness, each field written only by an observation. */
+  components: TelemetryComponents;
 };
+
+/** What a command wants recorded for its soft exit. `deploy status` declares no code: nothing was thrown. */
+type SoftExitDeclaration = {
+  outcome: SoftExitOutcome;
+  errorCode?: string;
+};
+
+function emptyComponents(): TelemetryComponents {
+  return { dns: null, ssl: null, mail: null, oauth: null };
+}
 
 let context: TelemetryContext | null = null;
 
@@ -186,6 +239,9 @@ export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
       flags: collectSetFlagNames(actionCommand).join(","),
       startedAt: Date.now(),
       stage: null,
+      softExit: null,
+      pauseStep: null,
+      components: emptyComponents(),
     };
   } catch (error) {
     log.debug(`telemetry: failed to start context: ${error}`);
@@ -199,7 +255,7 @@ export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
  * an error-only dimension: a user declining the scaffold preview and a
  * failure inside the generator are both legible, and distinguishable.
  */
-export function setTelemetryStage(stage: TelemetryStage): void {
+export function setTelemetryStage(stage: TelemetryStage | null): void {
   if (context) context.stage = stage;
 }
 
@@ -208,12 +264,93 @@ export function currentTelemetryStage(): TelemetryStage | null {
   return context?.stage ?? null;
 }
 
+/** Record the step a `clerk deploy` run stopped on. Only for a step the person stopped on. */
+export function setTelemetryPauseStep(step: TelemetryPauseStep): void {
+  if (context) context.pauseStep = step;
+}
+
+/** Record DNS, SSL and email DNS from a successful domain-status read. Leaves `oauth` alone. */
+export function setTelemetryDomainComponents(status: {
+  dns: boolean;
+  ssl: boolean;
+  mail: boolean;
+}): void {
+  if (!context) return;
+  context.components = {
+    ...context.components,
+    dns: status.dns,
+    ssl: status.ssl,
+    mail: status.mail,
+  };
+}
+
+/** Record whether every required OAuth provider has production credentials. Leaves the domain components alone. */
+export function setTelemetryOAuthComplete(complete: boolean): void {
+  if (context) context.components = { ...context.components, oauth: complete };
+}
+
+/**
+ * Declare how a run that exits nonzero without throwing should be recorded.
+ * Last call wins; ignored if the run throws or exits 0. Declare it under the
+ * same condition that sets the exit code.
+ */
+export function declareSoftExitOutcome(outcome: SoftExitOutcome, errorCode?: string): void {
+  if (context) context.softExit = { outcome, errorCode };
+}
+
+/** How a run that set `process.exitCode` and returned is recorded. A declaration applies only to a nonzero exit. */
+export function telemetryResultForSoftExit(exitCode: number): TelemetryResult {
+  if (exitCode === EXIT_CODE.SUCCESS) return { outcome: "success", exitCode };
+  const declared = context?.softExit;
+  if (!declared) return { outcome: "error", exitCode };
+  return {
+    outcome: declared.outcome,
+    exitCode,
+    ...(declared.errorCode ? { errorCode: declared.errorCode } : {}),
+  };
+}
+
+/**
+ * Declare a failure the command caught and reported itself, with the code a
+ * throw would have carried. An uncoded `ApiError` is split by status (see
+ * {@link uncodedApiErrorCode}); thrown ones keep `api_error`. `userSuppliedPath`
+ * says who wrote the request path, which decides whether an uncoded 404 is the
+ * person's or the CLI's. Never pass a `UserAbortError`: it would be recorded as
+ * `unexpected_error`.
+ */
+export function declareSoftExitError(error: unknown, options: { userSuppliedPath: boolean }): void {
+  const code =
+    error instanceof ApiError
+      ? (error.code ?? uncodedApiErrorCode(error.status, options.userSuppliedPath))
+      : (telemetryResultForError(error).errorCode ?? "unexpected_error");
+  declareSoftExitOutcome("error", code);
+}
+
+/**
+ * The code for an API response with no Clerk error code, from its status alone:
+ * - 429: `api_rate_limited`, kept apart from `too_many_requests`, which Clerk's
+ *   own error body names; an uncoded 429's origin is unknown.
+ * - 404: `api_not_found` on a path the person typed, `cli_endpoint_not_found`
+ *   on one the CLI built (a stale catalog, a dropped route, or a proxy).
+ * - other 4xx: `api_client_error`.
+ * - anything else: `api_error`.
+ */
+function uncodedApiErrorCode(status: number, userSuppliedPath: boolean): string {
+  if (status === 429) return "api_rate_limited";
+  if (status === 404) return userSuppliedPath ? "api_not_found" : "cli_endpoint_not_found";
+  if (status >= 400 && status < 500) return "api_client_error";
+  return "api_error";
+}
+
 export function telemetryResultForError(error: unknown): TelemetryResult {
   if (error instanceof UserAbortError) {
     return { outcome: "abort", exitCode: EXIT_CODE.SUCCESS };
   }
   if (error instanceof CliError) {
-    return { outcome: "error", exitCode: error.exitCode, errorCode: error.code ?? "cli_error" };
+    // Exit 130 is Ctrl-C (a cancelled deploy prompt), the same keypress the
+    // interrupt path records as an abort; the code still says which.
+    const outcome = error.exitCode === EXIT_CODE.SIGINT ? "abort" : "error";
+    return { outcome, exitCode: error.exitCode, errorCode: error.code ?? "cli_error" };
   }
   if (error instanceof ApiError) {
     return { outcome: "error", exitCode: EXIT_CODE.GENERAL, errorCode: error.code ?? "api_error" };
@@ -241,7 +378,9 @@ export async function finalizeAndSendTelemetry(
 ): Promise<void> {
   if (finalized || !context) return;
 
-  const current = context;
+  // A copy, so a read that finishes after the command ended cannot change
+  // the event while the send is still building it.
+  const current = { ...context, components: { ...context.components } };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deadlineMs);
   try {
@@ -296,7 +435,10 @@ async function buildAndSend(
       outcome: result.outcome,
       exit_code: result.exitCode,
       error_code: result.errorCode ?? null,
+      // `pause_step` and `components` are deploy's; null on other commands.
       stage: current.stage,
+      pause_step: current.pauseStep,
+      components: current.components,
       duration_ms: Date.now() - current.startedAt,
       machine_uuid: machineUuid,
       install_method: detectInstallMethod(process.env, process.execPath),

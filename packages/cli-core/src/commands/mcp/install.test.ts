@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import * as realOs from "node:os";
 import { join } from "node:path";
-import { useCaptureLog } from "../../test/lib/stubs.ts";
+import { captureTelemetryPayload, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 mock.module("../../mode.ts", () => ({
@@ -35,6 +35,7 @@ mock.module("./clients/cli-exec.ts", () => ({
 afterAll(() => mock.restore());
 
 const { mcpInstall } = await import("./install.ts");
+const { _setConfigDir } = await import("../../lib/config.ts");
 
 // The URL the default env profile resolves to.
 const DEFAULT_URL = "https://mcp.clerk.com/mcp";
@@ -350,5 +351,70 @@ describe("mcp install", () => {
       code: "mcp_client_cli_failed",
     });
     expect(captured.err).toContain("unexpected flag");
+  });
+
+  // `--json` sets the exit code where human mode throws, so it used to record
+  // a bare error while human mode recorded the code. Both modes are driven
+  // here and must agree — that discrepancy is what GROW-1252 is about.
+  describe("what telemetry records as the error code", () => {
+    beforeEach(() => _setConfigDir(cwd));
+    afterEach(() => _setConfigDir(undefined));
+
+    function recordedFor(options: Parameters<typeof mcpInstall>[0]) {
+      return captureTelemetryPayload("mcp install", () => mcpInstall(options), {
+        captureError: !options?.json,
+      });
+    }
+
+    async function corruptCursorConfig() {
+      await mkdir(join(cwd, ".cursor"), { recursive: true });
+      await writeFile(join(cwd, ".cursor", "mcp.json"), "{ not json");
+    }
+
+    test("a local config failure records the named CliError code in both modes", async () => {
+      await corruptCursorConfig();
+      const json = await recordedFor({ client: ["cursor"], json: true });
+      expect(json.payload.outcome).toBe("error");
+      expect(json.payload.exit_code).toBe(1);
+      expect(json.payload.error_code).toBe("mcp_client_config_invalid");
+
+      const human = await recordedFor({ client: ["cursor"] });
+      expect(human.error).toMatchObject({ code: "mcp_client_config_invalid" });
+      expect(human.payload.error_code).toBe("mcp_client_config_invalid");
+      expect(human.payload.exit_code).toBe(1);
+    });
+
+    test("a plain exception records unexpected_error in both modes", async () => {
+      mockRun.mockRejectedValue(new Error("spawn EAGAIN"));
+      const json = await recordedFor({ client: ["claude"], json: true });
+      expect(json.payload.outcome).toBe("error");
+      expect(json.payload.error_code).toBe("unexpected_error");
+
+      const human = await recordedFor({ client: ["claude"] });
+      expect(human.error).toBeInstanceOf(Error);
+      expect(human.payload.error_code).toBe("unexpected_error");
+    });
+
+    // The first client's error is the one reported, in either mode.
+    test("with several failed clients the first one's code is recorded", async () => {
+      await corruptCursorConfig();
+      mockRun.mockRejectedValue(new Error("spawn EAGAIN"));
+      const { payload } = await recordedFor({ client: ["cursor", "claude"], json: true });
+      expect(payload.error_code).toBe("mcp_client_config_invalid");
+    });
+
+    test("a partial failure is still a success with no code", async () => {
+      await corruptCursorConfig();
+      const { payload } = await recordedFor({ client: ["cursor", "windsurf"], json: true });
+      expect(payload.outcome).toBe("success");
+      expect(payload.exit_code).toBe(0);
+      expect(payload.error_code).toBeNull();
+    });
+
+    test("an install into every client is a success with no code", async () => {
+      const { payload } = await recordedFor({ client: ["cursor"], json: true });
+      expect(payload.outcome).toBe("success");
+      expect(payload.error_code).toBeNull();
+    });
   });
 });

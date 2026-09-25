@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { useCaptureLog, listageStubs } from "../../test/lib/stubs.ts";
+import { useCaptureLog, listageStubs, captureTelemetryPayload } from "../../test/lib/stubs.ts";
 import { CliError, ERROR_CODE, EXIT_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
 
 const mockIsAgent = mock();
@@ -69,7 +69,9 @@ mock.module("../../lib/open.ts", () => ({
 }));
 
 const { _setConfigDir, readConfig, setProfile } = await import("../../lib/config.ts");
+const { beginInterrupt, _resetInterruptState } = await import("../../lib/signals.ts");
 const { deploy } = await import("./index.ts");
+const { deployStatus } = await import("./status-command.ts");
 const { providerSetupIntro, showOAuthWalkthrough } = await import("./providers.ts");
 const { collectCustomDomain } = await import("./prompts.ts");
 
@@ -255,6 +257,7 @@ describe("deploy", () => {
   });
 
   afterEach(async () => {
+    _resetInterruptState();
     _setConfigDir(undefined);
     if (tempDir) {
       await rm(tempDir, { recursive: true, force: true });
@@ -333,6 +336,22 @@ describe("deploy", () => {
     );
   }
 
+  /**
+   * The Platform API answered, but the instance it returned has no id to write
+   * to — the one shape that reaches the wizard's "production instance could
+   * not be resolved" guards.
+   */
+  function stubCreateProductionInstanceWithoutId() {
+    stubCreateProductionInstance();
+    const withId = mockCreateProductionInstance.getMockImplementation() as (
+      appId: string,
+      params: { domain: string },
+    ) => Record<string, unknown>;
+    mockCreateProductionInstance.mockImplementation(
+      (appId: string, params: { domain: string }) => ({ ...withId(appId, params), id: "" }),
+    );
+  }
+
   async function runDeployUntilPause(options: Parameters<typeof deploy>[0] = {}) {
     try {
       await runDeploy(options);
@@ -343,9 +362,14 @@ describe("deploy", () => {
     }
   }
 
-  async function linkedProject(profile: Record<string, unknown> = {}) {
+  /** A config dir with no profile for this directory. */
+  async function unlinkedProject() {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-deploy-test-"));
     _setConfigDir(tempDir);
+  }
+
+  async function linkedProject(profile: Record<string, unknown> = {}) {
+    await unlinkedProject();
     const nextProfile = {
       workspaceId: "workspace_123",
       appId: "app_xyz789",
@@ -2585,6 +2609,676 @@ describe("deploy", () => {
       expect(mockFetchApplication.mock.calls.length).toBeGreaterThanOrEqual(2);
       const config = await readConfig();
       expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_recovered");
+    });
+
+    // What the warehouse sees for each way a deploy run can end. These assert
+    // the payload rather than the thrown error, because the error code and the
+    // pause step travel by different routes — the code on the error, the step
+    // through the telemetry context — and only the payload proves both arrive
+    // together.
+    describe("what telemetry records for each ending", () => {
+      /** The event a `clerk deploy` run would post, plus whatever it threw. */
+      async function deployTelemetry(run: () => Promise<void>) {
+        const { payload, error } = await captureTelemetryPayload("deploy", run, {
+          captureError: true,
+        });
+        return { payload, error: error as CliError | undefined };
+      }
+
+      // `runDnsHandoff` leaves a production instance behind, so these two are
+      // resumes: the live read finds the domain verified and OAuth pending,
+      // which is `oauth_pending` — the stage is the deploy's state, and the
+      // pause step is where the user was.
+      test("a skipped OAuth provider is a paused deploy at the oauth step", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        await runDnsHandoff();
+        mockSelect.mockResolvedValueOnce("skip");
+
+        const { payload, error } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(error?.message).toContain("Deploy paused at: Google OAuth credential setup");
+        expect(payload.outcome).toBe("error");
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_PAUSED);
+        expect(payload.pause_step).toBe("oauth");
+        expect(payload.stage).toBe("oauth_pending");
+        expect(payload.exit_code).toBe(EXIT_CODE.GENERAL);
+      });
+
+      test("Ctrl-C at the OAuth prompt is a cancelled deploy at the oauth step", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        await runDnsHandoff();
+        mockSelect.mockRejectedValueOnce(promptExitError());
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("abort");
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_CANCELLED);
+        expect(payload.pause_step).toBe("oauth");
+        expect(payload.stage).toBe("oauth_pending");
+        expect(payload.exit_code).toBe(EXIT_CODE.SIGINT);
+      });
+
+      // On a fresh deploy the DNS handoff comes before OAuth setup, so someone
+      // who skips a provider has never had DNS checked: the deploy is at
+      // `domain_pending`, whatever the wizard was doing. A control-flow value
+      // of `oauth_pending` here would contradict what `clerk deploy status`
+      // says about the same deploy a second later, and that agreement is the
+      // invariant.
+      test("a fresh run that skips OAuth is at domain_pending, and `deploy status` agrees", async () => {
+        await linkedProject();
+        mockHumanFlow();
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_PAUSED);
+        expect(payload.pause_step).toBe("oauth");
+        expect(payload.stage).toBe("domain_pending");
+        // Nothing was read and nothing was saved, so no component is observed
+        // — not even OAuth, which the wizard knows is unconfigured but has
+        // not read from the production configuration.
+        expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+
+        // The same deploy, read back: instance present, DNS unverified, OAuth
+        // unconfigured.
+        mockLiveProduction();
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        );
+        mockIsAgent.mockReturnValue(true);
+        const status = await captureTelemetryPayload("deploy status", () => deployStatus());
+
+        expect(status.payload.stage).toBe("domain_pending");
+        expect(status.payload.outcome).toBe("incomplete");
+        expect(status.payload.components).toEqual({
+          dns: false,
+          ssl: false,
+          mail: false,
+          oauth: false,
+        });
+      });
+
+      test("Ctrl-C at the DNS retry prompt is a cancelled deploy at the dns step", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockLiveProduction({
+          instanceId: "ins_prod_123",
+          productionConfig: {
+            connection_oauth_google: {
+              enabled: true,
+              client_id: "google-client-id.apps.googleusercontent.com",
+              client_secret: "REDACTED",
+            },
+          },
+        });
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        );
+        mockSelect.mockResolvedValueOnce("check").mockRejectedValueOnce(promptExitError());
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("abort");
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_CANCELLED);
+        expect(payload.pause_step).toBe("dns");
+        expect(payload.stage).toBe("domain_pending");
+        expect(payload.exit_code).toBe(EXIT_CODE.SIGINT);
+      });
+
+      test("Ctrl-C at the BIND zone export is a cancelled deploy at the dns step", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm
+          .mockResolvedValueOnce(true)
+          .mockResolvedValueOnce(true)
+          .mockRejectedValueOnce(promptExitError());
+        mockInput.mockResolvedValueOnce("example.com");
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("abort");
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_CANCELLED);
+        expect(payload.pause_step).toBe("dns");
+        expect(payload.stage).toBe("domain_pending");
+        expect(payload.exit_code).toBe(EXIT_CODE.SIGINT);
+      });
+
+      // Every DNS component passed and the user has nothing left to do, so
+      // this is a wait on Clerk rather than a step anyone stopped on — which
+      // is why it reports no pause step at all.
+      test("waiting on Clerk after every component verified is finalizing, at no step", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockLiveProduction({
+          instanceId: "ins_prod_123",
+          developmentConfig: {},
+          productionConfig: {},
+        });
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "incomplete", dns: true, ssl: true, mail: true }),
+        );
+        mockConfirm.mockResolvedValueOnce(false);
+        mockSelect.mockResolvedValueOnce("check");
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_FINALIZING);
+        expect(payload.pause_step).toBeNull();
+        // Every component passed, but the domain-status verdict is what
+        // counts, and Clerk has not given it.
+        expect(payload.stage).toBe("domain_pending");
+        expect(payload.exit_code).toBe(EXIT_CODE.GENERAL);
+      });
+
+      // The exit-0 endings are the control: "skip" at DNS verification is a
+      // finished command, and a code here would move real successes into the
+      // failure series.
+      test("choosing skip at DNS verification is a success with no code", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockFetchInstanceConfig.mockResolvedValue({}); // no OAuth providers to configure
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+        mockSelect.mockResolvedValueOnce("skip");
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        );
+
+        const { payload, error } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(error).toBeUndefined();
+        expect(stripAnsi(captured.err)).toContain("Skipping DNS verification for now.");
+        expect(payload.outcome).toBe("success");
+        expect(payload.exit_code).toBe(0);
+        expect(payload.error_code).toBeNull();
+        expect(payload.pause_step).toBeNull();
+        expect(payload.stage).toBe("domain_pending");
+      });
+
+      // A pause is not the only way this path fails, and the pause codes must
+      // not swallow the ones that name a real failure.
+      test("a failure that is not a pause keeps its own code", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+        mockCreateProductionInstance.mockResolvedValueOnce({
+          object: "instance",
+          id: "ins_prod_mock",
+          environment_type: "production" as const,
+          active_domain: null,
+          publishable_key: "pk_live_test",
+          secret_key: "sk_live_test",
+          created_at: 1770000000000,
+          updated_at: 1770000000000,
+        });
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_DOMAIN_MISSING);
+        expect(payload.pause_step).toBeNull();
+        // The instance exists and its domain does not: what `deploy status`
+        // reports for that, not the `domain_pending` the wizard was heading for.
+        expect(payload.stage).toBe("domain_provisioning");
+      });
+
+      // Both sites fire when the instance the wizard is about to write to
+      // cannot be named. That is a failure, not the malformed-input `clerk`
+      // was given, so it is no longer filed under `usage_error` — the exit
+      // code stays 2.
+      test("an unnameable production instance during OAuth setup is deploy_instance_unresolved", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+        stubCreateProductionInstanceWithoutId();
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+        expect(payload.exit_code).toBe(EXIT_CODE.USAGE);
+        expect(payload.stage).toBe("domain_pending");
+      });
+
+      test("an unnameable production instance at the next steps is deploy_instance_unresolved", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockFetchInstanceConfig.mockResolvedValue({}); // skip OAuth setup, reach finishDeploy
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+        mockSelect.mockResolvedValueOnce("skip");
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+        );
+        stubCreateProductionInstanceWithoutId();
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+        expect(payload.exit_code).toBe(EXIT_CODE.USAGE);
+        expect(payload.stage).toBe("domain_pending");
+      });
+    });
+
+    // Where each run left the deploy. `stage` is the state `clerk deploy
+    // status` would report at that moment, never the wizard's own position,
+    // and null when the run ended before any state was established — which is
+    // a different answer from `not_started`.
+    describe("what telemetry records as the stage", () => {
+      const noComponents = { dns: null, ssl: null, mail: null, oauth: null };
+
+      async function deployTelemetry(run: () => Promise<void>) {
+        return captureTelemetryPayload("deploy", run, { captureError: true });
+      }
+
+      // The three endings before an instance exists. Nothing was read, but
+      // the wizard knows there is no production instance, which is exactly
+      // the condition `deploy status` reports as `not_started`. Without this
+      // the largest interrupt cohort would report nothing at all.
+      test("declining the plan is a success at not_started", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm.mockResolvedValueOnce(false);
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.exit_code).toBe(EXIT_CODE.SUCCESS);
+        expect(payload.stage).toBe("not_started");
+        expect(payload.components).toEqual(noComponents);
+      });
+
+      test("declining instance creation is a success at not_started", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+        mockInput.mockResolvedValueOnce("example.com");
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.stage).toBe("not_started");
+        expect(payload.components).toEqual(noComponents);
+      });
+
+      test("Ctrl-C before the instance exists is an abort at not_started", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm.mockRejectedValueOnce(promptExitError());
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("abort");
+        expect(payload.exit_code).toBe(EXIT_CODE.SUCCESS);
+        expect(payload.error_code).toBeNull();
+        expect(payload.stage).toBe("not_started");
+        expect(payload.components).toEqual(noComponents);
+      });
+
+      // The stage comes from the create response, before the instance id is
+      // written to the local config: Clerk returned a domain, so the deploy is
+      // at `domain_pending`, and a failed local write must not file it under
+      // provisioning.
+      test("a failed local write after creation records the state the create response established", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+
+        const { payload, error } = await deployTelemetry(async () => {
+          // The next write is `persistProductionInstance` saving the profile.
+          writeSpy.mockImplementationOnce(() => Promise.reject(new Error("EACCES: read-only")));
+          await runDeploy({});
+        });
+
+        expect((error as Error).message).toContain("EACCES");
+        expect(payload.outcome).toBe("error");
+        expect(payload.stage).toBe("domain_pending");
+      });
+
+      /**
+       * The create call answers that a production instance already exists, so
+       * the wizard resumes it. The first application read (during context
+       * resolution) saw no production instance; every later read sees one.
+       */
+      function mockCreateConflict() {
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+        mockCreateProductionInstance.mockReset();
+        mockCreateProductionInstance.mockRejectedValueOnce(
+          new PlapiError(
+            409,
+            JSON.stringify({ errors: [{ code: "production_instance_exists", message: "exists" }] }),
+          ),
+        );
+        mockFetchApplication.mockResolvedValueOnce({
+          application_id: "app_xyz789",
+          name: "my-saas-app",
+          instances: [
+            {
+              instance_id: "ins_dev_123",
+              environment_type: "development",
+              publishable_key: "pk_test_123",
+            },
+          ],
+        });
+        mockLiveProduction({
+          instanceId: "ins_prod_recovered",
+          productionConfig: {
+            connection_oauth_google: {
+              enabled: true,
+              client_id: "google-client-id.apps.googleusercontent.com",
+              client_secret: "REDACTED",
+            },
+          },
+        });
+      }
+
+      // "Instance already exists" disproves the `not_started` recorded on
+      // entry without saying anything about that instance's domain. If the
+      // resume then cannot observe a state, the run sends null — the same
+      // answer an ordinary resume gives — not the stale `not_started`.
+      test("a create conflict whose resume cannot read the domain records no stage", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockCreateConflict();
+        mockGetApplicationDomainStatus.mockRejectedValue(
+          new PlapiError(500, JSON.stringify({ errors: [{ code: "server_error" }] }), "https://x"),
+        );
+        mockSelect.mockResolvedValueOnce("skip");
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.stage).toBeNull();
+      });
+
+      // Create says an instance exists, then the refresh finds no production
+      // instance id: the run never identified an instance, so it claims no
+      // state for one.
+      test("a create conflict whose refresh finds no instance records no stage", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockCreateConflict();
+        mockFetchApplication.mockResolvedValue({
+          application_id: "app_xyz789",
+          name: "my-saas-app",
+          instances: [
+            {
+              instance_id: "ins_dev_123",
+              environment_type: "development",
+              publishable_key: "pk_test_123",
+            },
+          ],
+        });
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.stage).toBeNull();
+      });
+
+      test("a create conflict whose resume reads the deploy records what it observed", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockCreateConflict();
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.stage).toBe("complete");
+        expect(payload.components).toEqual({ dns: true, ssl: true, mail: true, oauth: true });
+      });
+
+      test("completing the last OAuth provider on a verified domain ends at complete", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockLiveProduction({ instanceId: "ins_prod_123" }); // Google enabled, no credentials
+        mockOAuthCompletion();
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.stage).toBe("complete");
+        // The domain group from the live resume read; oauth from the save that
+        // followed it, overriding the `false` the read observed.
+        expect(payload.components).toEqual({ dns: true, ssl: true, mail: true, oauth: true });
+      });
+
+      // A save proves only the provider it saved. Until every required one is
+      // saved nothing has read the production configuration, so a fresh run
+      // that pauses mid-way sends null — `deploy status` on the same deploy
+      // would read it and say false, and null is the documented exception.
+      test("a fresh run that saves one provider and skips the next observes nothing yet", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockFetchInstanceConfig.mockResolvedValue({
+          connection_oauth_google: { enabled: true },
+          connection_oauth_github: { enabled: true },
+        });
+        mockFetchInstanceConfigSchema.mockResolvedValue(
+          schemaResponse({
+            connection_oauth_google: basicOAuthSchema,
+            connection_oauth_github: basicOAuthSchema,
+          }),
+        );
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+        mockOAuthCompletion();
+        mockSelect.mockResolvedValueOnce("skip");
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_PAUSED);
+        expect(payload.pause_step).toBe("oauth");
+        expect(payload.stage).toBe("domain_pending");
+        expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+      });
+
+      test("a fresh run that saves every provider and skips DNS observes oauth alone", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockInput.mockResolvedValueOnce("example.com");
+        mockOAuthCompletion();
+        mockSelect.mockResolvedValueOnce("skip");
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.stage).toBe("domain_pending");
+        expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: true });
+      });
+
+      test("a failed poll after a live resume read keeps what the read observed", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockGetApplicationDomainStatus
+          .mockResolvedValueOnce(
+            domainStatus({ status: "incomplete", dns: false, ssl: true, mail: true }),
+          )
+          .mockRejectedValue(
+            new PlapiError(
+              500,
+              JSON.stringify({ errors: [{ code: "server_error" }] }),
+              "https://x",
+            ),
+          );
+        mockConfirm.mockResolvedValueOnce(false);
+        mockSelect.mockResolvedValueOnce("check");
+
+        const { payload, error } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(error).toBeInstanceOf(PlapiError);
+        expect(payload.stage).toBe("domain_pending");
+        expect(payload.components).toEqual({ dns: false, ssl: true, mail: true, oauth: true });
+      });
+
+      // The resume path substitutes "everything pending" when the domain-status
+      // read fails, so the user can retry from the screen. That is not an
+      // observation: recording `domain_pending` from it would file a network
+      // blip as a DNS stall.
+      // The only stage a resume can establish without a domain read: Clerk
+      // listed no production domain, so the deploy is still provisioning one.
+      test("a resume with no production domain yet records domain_provisioning", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockListApplicationDomains.mockResolvedValue({ data: [] });
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.stage).toBe("domain_provisioning");
+        expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+      });
+
+      test("a resume whose domain read failed records no stage when DNS is then skipped", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockGetApplicationDomainStatus.mockRejectedValue(
+          new PlapiError(500, JSON.stringify({ errors: [{ code: "server_error" }] }), "https://x"),
+        );
+        mockConfirm.mockResolvedValueOnce(false);
+        mockSelect.mockResolvedValueOnce("skip");
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.stage).toBeNull();
+        // The configuration read succeeded and the domain read did not: one
+        // observation, not four falses for a network blip.
+        expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: true });
+        // And the user still gets the normal retry screen.
+        expect(mockSelect).toHaveBeenCalledWith(
+          expect.objectContaining({ message: "DNS verification" }),
+        );
+      });
+
+      test("a resume whose domain read failed records what a later successful poll observes", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockGetApplicationDomainStatus
+          .mockRejectedValueOnce(
+            new PlapiError(
+              500,
+              JSON.stringify({ errors: [{ code: "server_error" }] }),
+              "https://x",
+            ),
+          )
+          .mockResolvedValue(
+            domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
+          );
+        mockConfirm.mockResolvedValueOnce(false);
+        mockSelect.mockResolvedValueOnce("check");
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.stage).toBe("complete");
+        expect(payload.components).toEqual({ dns: true, ssl: true, mail: true, oauth: true });
+      });
+
+      // The stage is recorded per poll, not once the wait returns: the signal
+      // handler reports a Ctrl-C with the stage as it stands at that moment.
+      // Starting from a failed resume read, so the only way `domain_pending`
+      // can get there is from the poll that completed before the interrupt.
+      test("Ctrl-C mid-poll records what the last completed poll observed", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_123" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        let reads = 0;
+        mockGetApplicationDomainStatus.mockImplementation(() => {
+          reads++;
+          if (reads === 1) {
+            throw new PlapiError(
+              500,
+              JSON.stringify({ errors: [{ code: "server_error" }] }),
+              "https://x",
+            );
+          }
+          if (reads === 2) {
+            return domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false });
+          }
+          beginInterrupt();
+          throw new DOMException("The operation was aborted.", "AbortError");
+        });
+        mockConfirm.mockResolvedValueOnce(false);
+        mockSelect.mockResolvedValueOnce("check");
+
+        const { payload, error } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(error).toBeInstanceOf(DOMException);
+        expect(payload.stage).toBe("domain_pending");
+      });
+
+      test("not linked fails before any state and records null", async () => {
+        await unlinkedProject();
+        mockIsAgent.mockReturnValue(false);
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.error_code).toBe(ERROR_CODE.NOT_LINKED);
+        expect(payload.stage).toBeNull();
+      });
+
+      test("a failure before the wizard starts records null", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(false);
+        mockFetchApplication.mockRejectedValue(
+          new PlapiError(
+            401,
+            JSON.stringify({ errors: [{ code: "authentication_invalid" }] }),
+            "https://x",
+          ),
+        );
+
+        const { payload, error } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(error).toBeInstanceOf(PlapiError);
+        expect(payload.stage).toBeNull();
+      });
+
+      // The agent handoff is a successful command whatever the deploy's state,
+      // so the stage is the only thing that says how far the deploy got.
+      test("agent mode with no production instance is a success at not_started", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(true);
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.exit_code).toBe(EXIT_CODE.SUCCESS);
+        expect(payload.stage).toBe("not_started");
+        expect(payload.components).toEqual(noComponents);
+      });
+
+      test("agent mode on a finished deploy is a success at complete", async () => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+        });
+        mockIsAgent.mockReturnValue(true);
+
+        const { payload } = await deployTelemetry(async () => runDeploy({}));
+
+        expect(payload.outcome).toBe("success");
+        expect(payload.stage).toBe("complete");
+      });
     });
   });
 });

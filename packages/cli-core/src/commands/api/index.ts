@@ -7,6 +7,7 @@ import { bapiRequest } from "../../lib/bapi.ts";
 import { fapiRequest } from "../../lib/fapi.ts";
 import { resolveFapiHost } from "./fapi.ts";
 import { ApiError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
+import { declareSoftExitError } from "../../lib/telemetry.ts";
 import { validateJsonBody } from "../../lib/json-body.ts";
 import { isHuman } from "../../mode.ts";
 import { confirm } from "../../lib/prompts.ts";
@@ -63,10 +64,16 @@ async function resolveApiTarget(
   return { baseUrl, runRequest: async (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
 }
 
+/**
+ * `userSuppliedPath` says who wrote the request path, for telemetry's 404
+ * classification. The default is the command line, so the person; a caller
+ * that builds its own path passes false.
+ */
 export async function api(
   endpoint: string | undefined,
   filter: string | undefined,
   options: ApiOptions,
+  { userSuppliedPath = true }: { userSuppliedPath?: boolean } = {},
 ): Promise<void> {
   const nested = isInsideGutter();
   if (!nested) intro("Calling Clerk API");
@@ -154,6 +161,8 @@ export async function api(
           const scope = options.platform ? " --platform" : "";
           log.info(`If the endpoint path was a guess, search with: clerk api ls <keyword>${scope}`);
         }
+        // Handled here, so telemetry never sees the throw it would classify.
+        declareSoftExitError(error, { userSuppliedPath });
         process.exitCode = 1;
         closeStatus = "failed";
         return;
@@ -310,5 +319,7 @@ export function registerApi(program: Program): void {
         description: "GET the public FAPI environment payload",
       },
     ])
-    .action(api);
+    // Wrapped because Commander passes the Command itself as a fourth argument,
+    // which must not land in `api`'s caller options.
+    .action(async (endpoint, filter, options) => api(endpoint, filter, options));
 }

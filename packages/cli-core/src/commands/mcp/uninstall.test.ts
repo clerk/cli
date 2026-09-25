@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import * as realOs from "node:os";
 import { join } from "node:path";
-import { useCaptureLog } from "../../test/lib/stubs.ts";
+import { captureTelemetryPayload, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 mock.module("../../mode.ts", () => ({
@@ -34,6 +34,7 @@ afterAll(() => mock.restore());
 
 const { mcpInstall } = await import("./install.ts");
 const { mcpUninstall } = await import("./uninstall.ts");
+const { _setConfigDir } = await import("../../lib/config.ts");
 
 const URL = "https://mcp.clerk.com/mcp";
 const RUN_SHAPE = { command: "clerk", args: ["mcp", "run"] };
@@ -254,5 +255,23 @@ describe("mcp uninstall", () => {
       mcpServers?: Record<string, unknown>;
     };
     expect(cursorCfg.mcpServers?.clerk).toBeUndefined();
+  });
+
+  // Shares `failWhenAllFailed` with install, so the same fix reaches it: a
+  // total failure under `--json` records the code human mode would throw.
+  test("a total failure in JSON mode records the first client's error code", async () => {
+    _setConfigDir(cwd);
+    try {
+      await mkdir(join(cwd, ".cursor"), { recursive: true });
+      await writeFile(join(cwd, ".cursor", "mcp.json"), "{ not json");
+      const { payload } = await captureTelemetryPayload("mcp uninstall", () =>
+        mcpUninstall({ client: ["cursor"] }),
+      );
+      expect(payload.outcome).toBe("error");
+      expect(payload.exit_code).toBe(1);
+      expect(payload.error_code).toBe("mcp_client_config_invalid");
+    } finally {
+      _setConfigDir(undefined);
+    }
   });
 });
