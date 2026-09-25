@@ -4,7 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspectIOSProject } from "./inspect.ts";
-import { createIOSFixture, IOS_FIXTURE_IDS as IDS } from "./test-helpers.ts";
+import { createIOSFixture, IOS_FIXTURE_IDS as IDS, treeDigest } from "./test-helpers.ts";
+import { planIOSAssociatedDomain, applyIOSAssociatedDomain } from "./associated-domain.ts";
 import type { PbxObjects } from "./pbx.ts";
 
 const roots: string[] = [];
@@ -102,3 +103,36 @@ for (const source of ["inline", "xcconfig"]) {
     },
   );
 }
+
+test.each(["path", "value"])(
+  "Associated Domains refuses packaging %s conflicts without editing files",
+  async (conflict) => {
+    const root = await fixture(
+      conflict === "path"
+        ? {
+            CODE_SIGN_ENTITLEMENTS: "MyApp/Signing.entitlements",
+            "CODE_SIGN_ENTITLEMENTS[arch=arm64]": "MyApp/Other.entitlements",
+            "CODE_SIGN_ENTITLEMENTS[arch=x86_64]": "MyApp/Other.entitlements",
+          }
+        : {
+            CODE_SIGN_ENTITLEMENTS: "MyApp/Other.entitlements",
+            CLERK_DOMAIN: "other.example.test",
+            "CLERK_DOMAIN[arch=arm64]": "clerk.example.test",
+            "CLERK_DOMAIN[arch=x86_64]": "clerk.example.test",
+          },
+    );
+    const before = await treeDigest(root);
+    const plan = await planIOSAssociatedDomain({
+      root,
+      projectPath: "MyApp.xcodeproj",
+      targetId: IDS.appTarget,
+      deferToPublishableKey: true,
+    });
+    expect(plan.status).toBe("blocked");
+    expect(plan.blockers).toContainEqual(
+      expect.objectContaining({ code: "unresolved-entitlements" }),
+    );
+    expect((await applyIOSAssociatedDomain(plan)).status).toBe("blocked");
+    expect(await treeDigest(root)).toEqual(before);
+  },
+);
