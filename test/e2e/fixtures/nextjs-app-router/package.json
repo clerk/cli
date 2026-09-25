@@ -8,15 +8,15 @@
     "start": "next start"
   },
   "dependencies": {
-    "next": "16.3.2",
+    "next": "16.3.6",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "@clerk/nextjs": "latest"
   },
   "devDependencies": {
     "@types/node": "20.19.43",
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "typescript": "5.9.3"
   }
 }

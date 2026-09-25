@@ -4,11 +4,11 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "fastify": "5.12.1",
+    "fastify": "5.12.5",
     "@clerk/fastify": "latest"
   },
   "devDependencies": {
-    "@types/node": "26.2.0",
+    "@types/node": "26.6.2",
     "typescript": "7.0.2"
   }
 }
