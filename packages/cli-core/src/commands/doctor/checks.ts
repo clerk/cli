@@ -17,6 +17,7 @@ import {
   formatChannelLabel,
 } from "../../lib/update-check.ts";
 import { formatHostStateProbeFailures, getAgentHostStateProbe } from "../../lib/host-execution.ts";
+import { getCurrentEnvName, getPlapiBaseUrl } from "../../lib/environment.ts";
 import { isAgent } from "../../mode.ts";
 import type { CheckResult, DoctorContext, FixAction, KeylessInstanceInfo } from "./types.ts";
 
@@ -110,7 +111,9 @@ export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
         fixable: false,
       });
     }
-    return check.pass("Logged in (token found in credential store)");
+    return check.pass(
+      `Logged in (token found in credential store) — environment "${getCurrentEnvName()}", API ${getPlapiBaseUrl()}`,
+    );
   }
 
   // No account session doesn't mean the project is broken: an unclaimed

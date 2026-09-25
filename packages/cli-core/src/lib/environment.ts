@@ -39,6 +39,19 @@ const DEFAULT_PROFILES: Record<string, EnvProfileConfig> = {
 let currentEnvName: string | undefined;
 let profilesSourceLogged = false;
 
+/**
+ * Test-only fields shallow-merged into every resolved profile. The integration
+ * harness uses this to align the active profile's `platformApiUrl` with the
+ * test `CLERK_PLATFORM_API_URL`, so it stops tripping the override warning it
+ * never means to exercise. Mirrors config.ts's `_setConfigDir`.
+ */
+let testProfileOverride: Partial<EnvProfileConfig> | undefined;
+
+/** @internal Test-only. Pass `undefined` to restore normal profile resolution. */
+export function _setProfileOverrideForTest(override: Partial<EnvProfileConfig> | undefined): void {
+  testProfileOverride = override;
+}
+
 function loadFileProfiles(): Record<string, EnvProfileConfig> | undefined {
   // Try repo root (cwd) first, then fall back to path relative to this source file
   const candidates = [
@@ -62,6 +75,15 @@ function loadFileProfiles(): Record<string, EnvProfileConfig> | undefined {
 }
 
 function getProfiles(): Record<string, EnvProfileConfig> {
+  const base = resolveProfiles();
+  if (!testProfileOverride) return base;
+  const override = testProfileOverride;
+  return Object.fromEntries(
+    Object.entries(base).map(([name, profile]) => [name, { ...profile, ...override }]),
+  );
+}
+
+function resolveProfiles(): Record<string, EnvProfileConfig> {
   if (typeof CLI_ENV_PROFILES !== "undefined" && CLI_ENV_PROFILES) {
     if (!profilesSourceLogged) {
       profilesSourceLogged = true;
@@ -140,6 +162,42 @@ export function getOAuthConfig() {
 
 export function getPlapiBaseUrl(): string {
   return process.env.CLERK_PLATFORM_API_URL ?? getCurrentEnv().platformApiUrl;
+}
+
+/**
+ * Checks whether CLERK_PLATFORM_API_URL is set to a URL that differs from the
+ * active environment's configured platform URL, along with both URLs so the
+ * caller can surface a warning.
+ *
+ * Comparison normalises both URLs via `new URL().href` so trailing-slash and
+ * case differences are ignored; falls back to raw string comparison if either
+ * value is not a valid URL.
+ */
+export function getPlatformApiUrlOverride():
+  | {
+      overridden: false;
+    }
+  | {
+      overridden: true;
+      overrideUrl: string;
+      profileUrl: string;
+      envName: string;
+    } {
+  const override = process.env.CLERK_PLATFORM_API_URL;
+  if (!override) return { overridden: false };
+
+  const profileUrl = getCurrentEnv().platformApiUrl;
+  const normalize = (u: string) => {
+    try {
+      return new URL(u).href;
+    } catch {
+      return u;
+    }
+  };
+
+  if (normalize(override) === normalize(profileUrl)) return { overridden: false };
+
+  return { overridden: true, overrideUrl: override, profileUrl, envName: getCurrentEnvName() };
 }
 
 export function getBapiBaseUrl(): string {
