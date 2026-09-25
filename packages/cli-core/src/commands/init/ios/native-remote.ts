@@ -282,6 +282,7 @@ function copyTargetSnapshot(
 const defaultTargetReader: IOSNativeRemoteTargetReader = async (snapshot) => {
   const inspection = await inspectIOSProject(snapshot.root, {
     target: snapshot.targetId,
+    platform: snapshot.platform,
     exhaustiveContainerDiscovery: true,
   });
   if (hasIncompleteIOSContainerDiscovery(inspection)) {
