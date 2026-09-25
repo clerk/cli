@@ -401,6 +401,16 @@ async function ownershipIsExclusive(
           parents,
           diagnostics: primaryDiagnostics,
         });
+        // A sibling with no entitlement assignment cannot share this file.
+        // Do not infer absence from modeled platform values alone.
+        if (
+          !(absoluteProject === selectedProject && targetId === selectedTargetId) &&
+          primaryConfigurations.length > 0 &&
+          !primaryDiagnostics.some((diagnostic) => diagnostic.severity === "error") &&
+          primaryConfigurations.every((configuration) => configuration.entitlementsAssignmentAbsent)
+        ) {
+          continue;
+        }
         if (
           primaryConfigurations.length === 0 ||
           primaryConfigurations.some((configuration) => !configuration.platformEvidenceComplete) ||

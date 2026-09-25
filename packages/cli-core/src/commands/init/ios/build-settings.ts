@@ -8,6 +8,7 @@ import {
   asString,
   asStringArray,
   asStringRecord,
+  isRecord,
   resolvePbxFilePath,
   type PbxObject,
   type PbxObjects,
@@ -49,6 +50,8 @@ interface BuildContext {
 }
 
 interface BuildSettingsEvaluation {
+  /** Includes assignments in inactive and unmodeled contexts. Never cleared by overrides. */
+  mayAssignEntitlements?: boolean;
   settings: Record<string, string>;
   /** Unknown inputs are tracked independently for each inspected setting. */
   settingTaints: Map<string, string[]>;
@@ -169,6 +172,7 @@ function applySettings(base: Record<string, string>, next: Record<string, string
 function cloneEvaluation(evaluation: BuildSettingsEvaluation): BuildSettingsEvaluation {
   return {
     settings: { ...evaluation.settings },
+    mayAssignEntitlements: evaluation.mayAssignEntitlements,
     settingTaints: cloneSettingTaints(evaluation.settingTaints),
     globalTaints: [...evaluation.globalTaints],
     globalTaintOverrides: new Set(evaluation.globalTaintOverrides),
@@ -414,6 +418,9 @@ async function readXCConfigSettings(
   let evaluation = cloneEvaluation(inherited);
 
   for (const operation of parseXCConfigOperations(content)) {
+    if ("key" in operation && operation.key === "CODE_SIGN_ENTITLEMENTS") {
+      evaluation.mayAssignEntitlements = true;
+    }
     if (operation.kind === "unresolved-continuation") {
       taintInspectedSettings(evaluation, "unsupported xcconfig continuation");
       addDiagnosticOnce(diagnostics, {
@@ -816,6 +823,17 @@ async function settingsForConfiguration(
       });
     }
   }
+  // Inspect raw keys before coercing values or filtering conditions. An
+  // unsupported platform can still own an entitlements file.
+  if (
+    configuration.buildSettings !== undefined &&
+    (!isRecord(configuration.buildSettings) ||
+      Object.keys(configuration.buildSettings).some((key) =>
+        /^CODE_SIGN_ENTITLEMENTS(?:\[|$)/.test(key),
+      ))
+  ) {
+    evaluation.mayAssignEntitlements = true;
+  }
   applyInlineBuildSettings(
     evaluation,
     asStringRecord(configuration.buildSettings),
@@ -826,6 +844,8 @@ async function settingsForConfiguration(
 }
 
 export interface InspectedTargetConfiguration {
+  /** Every inspected layer proves there is no entitlement assignment, even in inactive contexts. */
+  entitlementsAssignmentAbsent: boolean;
   model: IOSBuildConfiguration;
   entitlementContexts: EntitlementBuildContext[];
   sourceFilters: IOSSourceFilterContext[];
@@ -952,6 +972,7 @@ function missingConfiguration(
       entitlementsPath: missing,
       deploymentTarget: missing,
     },
+    entitlementsAssignmentAbsent: false,
     entitlementContexts: [],
     sourceFilters: [],
     supportedPlatforms: [],
@@ -1379,6 +1400,12 @@ export async function inspectTargetBuildConfigurations(options: {
 
     inspected.push({
       model,
+      entitlementsAssignmentAbsent: [...evaluatedContexts, ...packagingContexts].every(
+        ({ evaluation }) =>
+          !evaluation.mayAssignEntitlements &&
+          evaluation.globalTaints.length === 0 &&
+          !evaluation.settingTaints.has("CODE_SIGN_ENTITLEMENTS"),
+      ),
       sourceFilters: activeContexts.map(({ evaluation, builtins }) => ({
         excluded: resolveSetting(
           "EXCLUDED_SOURCE_FILE_NAMES",

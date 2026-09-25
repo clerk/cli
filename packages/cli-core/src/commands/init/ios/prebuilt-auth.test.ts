@@ -90,7 +90,12 @@ afterEach(async () => {
 });
 
 async function createFixture(
-  options: { shared?: boolean; secondTarget?: boolean; crlf?: boolean; platform?: "ios" | "macos" } = {},
+  options: {
+    shared?: boolean;
+    secondTarget?: boolean;
+    crlf?: boolean;
+    platform?: "ios" | "macos";
+  } = {},
 ): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "clerk-prebuilt-auth-"));
   temporaryDirectories.push(root);
