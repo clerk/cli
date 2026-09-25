@@ -52,7 +52,9 @@ test.each(["path", "value", "matching"])(
       if (scenario !== "value") {
         const apple = await planIOSAppleEntitlement(options);
         expect(apple.status).toBe(scenario === "path" ? "blocked" : "satisfied");
-        expect((await applyIOSAppleEntitlement(apple)).status).toBe(apple.status);
+        expect((await applyIOSAppleEntitlement(apple)).status).toBe(
+          scenario === "path" ? "blocked" : "satisfied",
+        );
       }
       if (scenario !== "matching") {
         const domains = await planIOSAssociatedDomain({ ...options, deferToPublishableKey: true });
