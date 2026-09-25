@@ -1,26 +1,16 @@
+import { lstat } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { decodePublishableKey } from "../../../lib/fapi.ts";
 import {
   bytesWithOptionalBOM,
   newEntitlementsBytes,
   lineIndentAt,
   stripXMLCommentsPreservingOffsets,
   entitlementKeyStructure,
-  decodeEntitlementsXML,
 } from "./entitlements-xml.ts";
-import {
-  generatedProjectKind,
-  selectedIOSAppTarget as selectedTarget,
-} from "./project-selection.ts";
-import { lstat, readFile, realpath } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { parse as parsePbxProject } from "@bacons/xcode/json";
-import { decodePublishableKey } from "../../../lib/fapi.ts";
+import { selectedIOSAppTarget as selectedTarget } from "./project-selection.ts";
 import { readBoundedRegularFile } from "./bounded-file.ts";
-import { inspectTargetBuildConfigurations } from "./build-settings.ts";
-import {
-  discoverLocalIOSProjects,
-  pathIsSafelyWithinIOSRoot,
-  relativeIOSPath,
-} from "./discovery.ts";
+import { relativeIOSPath } from "./discovery.ts";
 import {
   applyIOSFileTransaction,
   hashIOSFileBytes,
@@ -30,39 +20,26 @@ import {
   type IOSFileMutation,
 } from "./file-transaction.ts";
 import {
-  planIOSMissingEntitlementsSettings,
   prepareIOSMissingEntitlementsSettingsMutation,
   validateIOSMissingEntitlementsSettingsPostcondition,
   type IOSMissingEntitlementsSettingsPlan,
 } from "./entitlements-settings.ts";
 import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
-import { asString, buildPbxParentIndex, isRecord, type PbxObject, type PbxObjects } from "./pbx.ts";
-import { resolveXcodeProjectDocument } from "./project-document.ts";
-import type {
-  IOSAppTarget,
-  IOSDiagnostic,
-  IOSNativePlatform,
-  IOSProjectInspectionResult,
-} from "./types.ts";
-import { inspectXCProjTargetBuildConfigurations } from "./xcproj-build-settings.ts";
-import { parseXCProjSource, xcprojTargets } from "./xcproj.ts";
+import type { IOSAppTarget, IOSNativePlatform, IOSProjectInspectionResult } from "./types.ts";
+
+import {
+  inspectIOSEntitlementsFile,
+  selectIOSEntitlementsFiles,
+  type IOSEntitlementsFile,
+  type IOSEntitlementsFileBlockerCode,
+} from "./entitlements-files.ts";
 
 const ASSOCIATED_DOMAINS_KEY = "com.apple.developer.associated-domains";
 const MAX_ENTITLEMENTS_BYTES = 1_000_000;
 
 export type IOSAssociatedDomainBlockerCode =
-  | "invalid-selection"
-  | "generated-project"
-  | "unresolved-platform"
-  | "runtime-key-unproven"
-  | "missing-entitlements"
-  | "mixed-entitlements"
-  | "unresolved-entitlements"
-  | "unsafe-entitlements"
-  | "unreadable-entitlements"
-  | "unsupported-entitlements"
-  | "shared-entitlements"
-  | "stale-entitlements";
+  | IOSEntitlementsFileBlockerCode
+  | "runtime-key-unproven";
 
 export interface IOSAssociatedDomainBlocker {
   code: IOSAssociatedDomainBlockerCode;
@@ -101,7 +78,7 @@ export interface IOSAssociatedDomainPlanOptions {
   /** Invocation-root-relative selected .xcodeproj path. */
   projectPath: string;
   targetId: string;
-  /** Defaults to iOS; capability planners may share these ownership checks on macOS. */
+  /** Defaults to iOS. */
   platform?: IOSNativePlatform;
   /** A separately proven direct Swift configuration will supply the runtime key after auth. */
   deferToPublishableKey?: boolean;
@@ -135,14 +112,7 @@ export interface IOSAssociatedDomainApplyResult {
   message?: string;
 }
 
-interface EntitlementsFile {
-  absolutePath: string;
-  relativePath: string;
-  bytes: Uint8Array;
-  hash: string;
-  mode: number;
-  source: string;
-  bom: boolean;
+interface EntitlementsFile extends IOSEntitlementsFile {
   domains: string[];
 }
 
@@ -199,410 +169,57 @@ async function inspectEntitlementsFile(
   root: string,
   absolutePath: string,
 ): Promise<{ file?: EntitlementsFile; blocker?: IOSAssociatedDomainBlocker }> {
-  if (!(await pathIsSafelyWithinIOSRoot(root, absolutePath))) {
+  const inspected = await inspectIOSEntitlementsFile(root, absolutePath);
+  if (!inspected.file) return { blocker: inspected.blocker };
+  const { file } = inspected;
+  const source = file.source;
+  const parsed = file.values;
+  const rawDomains = parsed[ASSOCIATED_DOMAINS_KEY];
+  const semanticKeyStructure = entitlementKeyStructure(source, ASSOCIATED_DOMAINS_KEY);
+  const structuralKeyCount = semanticKeyStructure.literalCount;
+  if (
+    rawDomains !== undefined &&
+    (!Array.isArray(rawDomains) || rawDomains.some((value) => typeof value !== "string"))
+  ) {
     return {
       blocker: blocker(
-        "unsafe-entitlements",
-        `${relativeIOSPath(root, absolutePath)} resolves outside the inspected project root.`,
+        "unsupported-entitlements",
+        `${relativeIOSPath(root, absolutePath)} has a non-string Associated Domains value.`,
       ),
     };
   }
-
-  const file = await readBoundedRegularFile(absolutePath, MAX_ENTITLEMENTS_BYTES);
-  if (file.status === "not-regular" || file.status === "too-large") {
+  if (
+    !semanticKeyStructure.safelyDecoded ||
+    semanticKeyStructure.semanticCount > 1 ||
+    structuralKeyCount > 1 ||
+    (rawDomains !== undefined &&
+      (structuralKeyCount !== 1 || semanticKeyStructure.semanticCount !== 1)) ||
+    (rawDomains === undefined &&
+      (structuralKeyCount !== 0 || semanticKeyStructure.semanticCount !== 0))
+  ) {
     return {
       blocker: blocker(
         "unsupported-entitlements",
         `${relativeIOSPath(
           root,
           absolutePath,
-        )} must be a regular, non-symlink XML plist no larger than 1 MB.`,
+        )} does not contain one safely editable literal Associated Domains key.`,
       ),
     };
   }
-  if (file.status !== "ok") {
-    try {
-      const info = await lstat(absolutePath);
-      if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_ENTITLEMENTS_BYTES) {
-        return {
-          blocker: blocker(
-            "unsupported-entitlements",
-            `${relativeIOSPath(
-              root,
-              absolutePath,
-            )} must be a regular, non-symlink XML plist no larger than 1 MB.`,
-          ),
-        };
-      }
-    } catch {
-      // Preserve the unreadable classification below when the current path
-      // cannot explain the bounded reader's failure.
-    }
+  const domains = (rawDomains as string[] | undefined) ?? [];
+  if (domains.some(hasUnresolvedDomain)) {
     return {
       blocker: blocker(
-        "unreadable-entitlements",
-        `${relativeIOSPath(root, absolutePath)} could not be read as a UTF-8 XML plist dictionary.`,
+        "unresolved-entitlements",
+        `${relativeIOSPath(
+          root,
+          absolutePath,
+        )} contains Associated Domains entries with unresolved build settings.`,
       ),
     };
   }
-
-  try {
-    const bytes = file.bytes;
-    if (new TextDecoder().decode(bytes.slice(0, 8)).startsWith("bplist")) {
-      return {
-        blocker: blocker(
-          "unsupported-entitlements",
-          `${relativeIOSPath(
-            root,
-            absolutePath,
-          )} is a binary plist. Save it as XML before automatic setup.`,
-        ),
-      };
-    }
-    const { source, bom, values: parsed } = decodeEntitlementsXML(bytes);
-    const rawDomains = parsed[ASSOCIATED_DOMAINS_KEY];
-    const semanticKeyStructure = entitlementKeyStructure(source, ASSOCIATED_DOMAINS_KEY);
-    const structuralKeyCount = semanticKeyStructure.literalCount;
-    if (
-      rawDomains !== undefined &&
-      (!Array.isArray(rawDomains) || rawDomains.some((value) => typeof value !== "string"))
-    ) {
-      return {
-        blocker: blocker(
-          "unsupported-entitlements",
-          `${relativeIOSPath(root, absolutePath)} has a non-string Associated Domains value.`,
-        ),
-      };
-    }
-    if (
-      !semanticKeyStructure.safelyDecoded ||
-      semanticKeyStructure.semanticCount > 1 ||
-      structuralKeyCount > 1 ||
-      (rawDomains !== undefined &&
-        (structuralKeyCount !== 1 || semanticKeyStructure.semanticCount !== 1)) ||
-      (rawDomains === undefined &&
-        (structuralKeyCount !== 0 || semanticKeyStructure.semanticCount !== 0))
-    ) {
-      return {
-        blocker: blocker(
-          "unsupported-entitlements",
-          `${relativeIOSPath(
-            root,
-            absolutePath,
-          )} does not contain one safely editable literal Associated Domains key.`,
-        ),
-      };
-    }
-    const domains = (rawDomains as string[] | undefined) ?? [];
-    if (domains.some(hasUnresolvedDomain)) {
-      return {
-        blocker: blocker(
-          "unresolved-entitlements",
-          `${relativeIOSPath(
-            root,
-            absolutePath,
-          )} contains Associated Domains entries with unresolved build settings.`,
-        ),
-      };
-    }
-    return {
-      file: {
-        absolutePath,
-        relativePath: relativeIOSPath(root, absolutePath),
-        bytes,
-        hash: hashIOSFileBytes(bytes),
-        mode: file.mode,
-        source,
-        bom,
-        domains,
-      },
-    };
-  } catch {
-    return {
-      blocker: blocker(
-        "unreadable-entitlements",
-        `${relativeIOSPath(root, absolutePath)} could not be read as a UTF-8 XML plist dictionary.`,
-      ),
-    };
-  }
-}
-
-function normalizeObjects(value: unknown): PbxObjects | undefined {
-  if (!isRecord(value)) return undefined;
-  const objects: PbxObjects = {};
-  for (const [id, object] of Object.entries(value)) {
-    if (isRecord(object)) objects[id] = object as PbxObject;
-  }
-  return objects;
-}
-
-function exactStringArray(value: unknown): string[] | undefined {
-  return Array.isArray(value) && value.every((item) => typeof item === "string")
-    ? value
-    : undefined;
-}
-
-async function ownershipIsExclusive(
-  root: string,
-  projectPath: string,
-  selectedTargetId: string,
-  selectedFiles: readonly EntitlementsFile[],
-  selectedPlatform: IOSNativePlatform,
-  allowSelectedTargetPlatformSharing = false,
-): Promise<boolean> {
-  try {
-    const selectedCanonical = new Set<string>();
-    const selectedInodes = new Set<string>();
-    for (const file of selectedFiles) {
-      const canonical = await realpath(file.absolutePath);
-      const info = await lstat(file.absolutePath);
-      const inode = `${info.dev}:${info.ino}`;
-      // Two selected configuration paths that resolve to the same file are
-      // not independent transaction targets. Refuse both symlink/canonical
-      // aliases and hard-link aliases rather than silently splitting them.
-      if (selectedCanonical.has(canonical) || selectedInodes.has(inode)) return false;
-      selectedCanonical.add(canonical);
-      selectedInodes.add(inode);
-    }
-
-    const selectedProject = resolve(root, projectPath);
-    const inventory = await discoverLocalIOSProjects(root, [selectedProject]);
-    if (!inventory.complete) return false;
-    for (const absoluteProject of inventory.projectPaths) {
-      const documentResolution = await resolveXcodeProjectDocument(absoluteProject);
-      if (documentResolution.status !== "found") return false;
-      if (documentResolution.document.format === "xcproj") {
-        if (!(await pathIsSafelyWithinIOSRoot(root, documentResolution.document.absolutePath))) {
-          return false;
-        }
-        const projectFile = await readBoundedRegularFile(
-          documentResolution.document.absolutePath,
-          15_000_000,
-        );
-        if (projectFile.status !== "ok") return false;
-        const project = parseXCProjSource(projectFile.bytes).root;
-        const targets = xcprojTargets(project);
-        // The canonical JSON project path is safe when it has only the
-        // selected app target. Additional JSON targets are preserved but left
-        // for manual review until their non-application entitlement ownership
-        // can be modeled with the same guarantees as PBX targets.
-        if (
-          absoluteProject !== selectedProject ||
-          targets.length !== 1 ||
-          targets[0]?.id !== selectedTargetId
-        ) {
-          return false;
-        }
-
-        const target = targets[0];
-        if (!target) return false;
-        const primaryDiagnostics: IOSDiagnostic[] = [];
-        const primaryConfigurations = await inspectXCProjTargetBuildConfigurations({
-          root,
-          projectPath: absoluteProject,
-          projectDocumentPath: documentResolution.document.absolutePath,
-          project,
-          target,
-          diagnostics: primaryDiagnostics,
-        });
-        if (
-          primaryConfigurations.length === 0 ||
-          primaryConfigurations.some((configuration) => !configuration.platformEvidenceComplete) ||
-          primaryDiagnostics.some((diagnostic) => diagnostic.severity === "error")
-        ) {
-          return false;
-        }
-        if (
-          !primaryConfigurations.every(
-            (configuration) => configuration.platform === primaryConfigurations[0]?.platform,
-          )
-        ) {
-          return false;
-        }
-
-        const primaryPlatform = primaryConfigurations[0]?.platform;
-        const supportedPlatforms = (["ios", "macos"] as const).filter((platform) =>
-          primaryConfigurations.some((configuration) =>
-            configuration.supportedPlatforms.includes(platform),
-          ),
-        );
-        const views: Array<{
-          platform?: IOSNativePlatform;
-          configurations: typeof primaryConfigurations;
-        }> = [{ platform: primaryPlatform, configurations: primaryConfigurations }];
-        for (const platform of supportedPlatforms) {
-          if (platform === primaryPlatform) continue;
-          const diagnostics: IOSDiagnostic[] = [];
-          const configurations = await inspectXCProjTargetBuildConfigurations({
-            root,
-            projectPath: absoluteProject,
-            projectDocumentPath: documentResolution.document.absolutePath,
-            project,
-            target,
-            diagnostics,
-            platform,
-          });
-          if (
-            configurations.length !== primaryConfigurations.length ||
-            configurations.some(
-              (configuration) =>
-                !configuration.platformEvidenceComplete || configuration.platform !== platform,
-            ) ||
-            diagnostics.some((diagnostic) => diagnostic.severity === "error")
-          ) {
-            return false;
-          }
-          views.push({ platform, configurations });
-        }
-
-        for (const view of views) {
-          if (view.platform === selectedPlatform || allowSelectedTargetPlatformSharing) {
-            continue;
-          }
-          for (const configuration of view.configurations) {
-            const resolution = configuration.model.entitlementsPath;
-            if (resolution.state === "unresolved") return false;
-            if (resolution.state !== "resolved") continue;
-            const siblingPath = resolve(dirname(absoluteProject), resolution.value);
-            if (!(await pathIsSafelyWithinIOSRoot(root, siblingPath))) return false;
-            try {
-              const canonical = await realpath(siblingPath);
-              const info = await lstat(siblingPath);
-              if (
-                selectedCanonical.has(canonical) ||
-                selectedInodes.has(`${info.dev}:${info.ino}`)
-              ) {
-                return false;
-              }
-            } catch {
-              // A missing sibling entitlements path cannot currently alias an existing selected file.
-            }
-          }
-        }
-        continue;
-      }
-      const pbxprojPath = resolve(absoluteProject, "project.pbxproj");
-      if (!(await pathIsSafelyWithinIOSRoot(root, pbxprojPath))) return false;
-      const info = await lstat(pbxprojPath);
-      if (!info.isFile() || info.isSymbolicLink() || info.size > 15_000_000) return false;
-      const bytes = new Uint8Array(await readFile(pbxprojPath));
-      const archive = parsePbxProject(new TextDecoder().decode(bytes));
-      const objects = normalizeObjects(archive.objects);
-      if (!objects) return false;
-      const rootObjectId = asString(archive.rootObject);
-      const projectObject = rootObjectId ? objects[rootObjectId] : undefined;
-      if (projectObject?.isa !== "PBXProject") return false;
-      const targetIds = exactStringArray(projectObject.targets);
-      if (!targetIds) return false;
-      const parents = buildPbxParentIndex(objects);
-      const groupRootDirectory = resolve(
-        dirname(absoluteProject),
-        asString(projectObject.projectDirPath) ?? "",
-      );
-
-      for (const targetId of targetIds) {
-        const targetObject = objects[targetId];
-        if (!targetObject) return false;
-        if (targetObject.isa !== "PBXNativeTarget") continue;
-        const primaryDiagnostics: IOSDiagnostic[] = [];
-        const primaryConfigurations = await inspectTargetBuildConfigurations({
-          root,
-          projectPath: absoluteProject,
-          groupRootDirectory,
-          projectObject,
-          targetId,
-          targetObject,
-          objects,
-          parents,
-          diagnostics: primaryDiagnostics,
-        });
-        if (
-          primaryConfigurations.length === 0 ||
-          primaryConfigurations.some((configuration) => !configuration.platformEvidenceComplete) ||
-          primaryDiagnostics.some((diagnostic) => diagnostic.severity === "error")
-        ) {
-          return false;
-        }
-
-        if (
-          !primaryConfigurations.every(
-            (configuration) => configuration.platform === primaryConfigurations[0]?.platform,
-          )
-        ) {
-          return false;
-        }
-        const primaryPlatform = primaryConfigurations[0]?.platform;
-        const supportedPlatforms = (["ios", "macos"] as const).filter((platform) =>
-          primaryConfigurations.some((configuration) =>
-            configuration.supportedPlatforms.includes(platform),
-          ),
-        );
-        const views: Array<{
-          platform?: IOSNativePlatform;
-          configurations: typeof primaryConfigurations;
-        }> = [{ platform: primaryPlatform, configurations: primaryConfigurations }];
-        for (const platform of supportedPlatforms) {
-          if (platform === primaryPlatform) continue;
-          const diagnostics: IOSDiagnostic[] = [];
-          const configurations = await inspectTargetBuildConfigurations({
-            root,
-            projectPath: absoluteProject,
-            groupRootDirectory,
-            projectObject,
-            targetId,
-            targetObject,
-            objects,
-            parents,
-            diagnostics,
-            platform,
-          });
-          if (
-            configurations.length !== primaryConfigurations.length ||
-            configurations.some(
-              (configuration) =>
-                !configuration.platformEvidenceComplete || configuration.platform !== platform,
-            ) ||
-            diagnostics.some((diagnostic) => diagnostic.severity === "error")
-          ) {
-            return false;
-          }
-          views.push({ platform, configurations });
-        }
-
-        for (const view of views) {
-          if (
-            absoluteProject === selectedProject &&
-            targetId === selectedTargetId &&
-            (view.platform === selectedPlatform || allowSelectedTargetPlatformSharing)
-          ) {
-            continue;
-          }
-          for (const configuration of view.configurations) {
-            const resolution = configuration.model.entitlementsPath;
-            if (resolution.state === "unresolved") return false;
-            if (resolution.state !== "resolved") continue;
-            const siblingPath = resolve(dirname(absoluteProject), resolution.value);
-            if (!(await pathIsSafelyWithinIOSRoot(root, siblingPath))) return false;
-            try {
-              const canonical = await realpath(siblingPath);
-              const info = await lstat(siblingPath);
-              if (
-                selectedCanonical.has(canonical) ||
-                selectedInodes.has(`${info.dev}:${info.ino}`)
-              ) {
-                return false;
-              }
-            } catch {
-              // A missing sibling entitlements path cannot currently alias an existing selected file.
-            }
-          }
-        }
-      }
-    }
-    return true;
-  } catch {
-    return false;
-  }
+  return { file: { ...file, domains } };
 }
 
 export function associatedDomainMatches(actual: string, expected: string): boolean {
@@ -627,10 +244,7 @@ function exactDomainPresent(domains: readonly string[], expectedDomain: string):
   return domains.some((domain) => associatedDomainMatches(domain, expectedDomain));
 }
 
-/**
- * Plans the conservative v1 Associated Domains edit. It only patches existing
- * XML entitlements files that cover every selected-target configuration.
- */
+/** Plans only the Associated Domains value after capability-neutral file selection. */
 export async function planIOSAssociatedDomain(
   options: IOSAssociatedDomainPlanOptions,
 ): Promise<IOSAssociatedDomainPlan> {
@@ -641,42 +255,11 @@ export async function planIOSAssociatedDomain(
     exhaustiveContainerDiscovery: true,
     platform,
   });
-  const target = selectedTarget(inspection, options.projectPath, options.targetId);
-  if (!target) {
-    return blockedPlan(options, [
-      blocker("invalid-selection", "The selected iOS target could not be resolved exactly."),
-    ]);
+  const selection = await selectIOSEntitlementsFiles(options, inspection);
+  if (selection.status === "blocked") {
+    return blockedPlan(options, selection.blockers, selection.targetName);
   }
-  if (!target.platformEvidenceComplete) {
-    return blockedPlan(
-      options,
-      [
-        blocker(
-          "unresolved-platform",
-          "Resolve SDKROOT and SUPPORTED_PLATFORMS consistently across every selected-target build configuration before changing entitlements.",
-        ),
-      ],
-      target.name,
-    );
-  }
-  const generator =
-    inspection.generatedProject ??
-    (await generatedProjectKind(root, resolve(root, options.projectPath)));
-  if (generator) {
-    return blockedPlan(
-      options,
-      [
-        blocker(
-          "generated-project",
-          `This is a ${
-            generator === "xcodegen" ? "XcodeGen" : "Tuist"
-          } project; update its source manifest instead of generated entitlements.`,
-        ),
-      ],
-      target.name,
-    );
-  }
-
+  const target = selectedTarget(inspection, options.projectPath, options.targetId)!;
   const host = runtimeFrontendHost(inspection, target);
   if (!host && !options.deferToPublishableKey) {
     return blockedPlan(
@@ -690,166 +273,26 @@ export async function planIOSAssociatedDomain(
       target.name,
     );
   }
-
-  if (target.configurations.length === 0) {
-    return blockedPlan(
-      options,
-      [
-        blocker(
-          "missing-entitlements",
-          "The selected target has no inspectable build configurations.",
-        ),
-      ],
-      target.name,
-    );
-  }
   const expectedDomain = host ? `webcredentials:${host}` : undefined;
-  const resolvedPaths = target.configurations.flatMap((configuration) =>
-    configuration.entitlementsPath.state === "resolved"
-      ? [configuration.entitlementsPath.value]
-      : [],
-  );
-  if (resolvedPaths.length === 0) {
-    if (
-      target.configurations.some(
-        (configuration) => configuration.entitlementsPath.state !== "missing",
-      )
-    ) {
+  const files: EntitlementsFile[] = [];
+  for (const selected of selection.files) {
+    if (selected.operation === "create") continue;
+    const inspected = await inspectEntitlementsFile(root, resolve(root, selected.path));
+    if (inspected.blocker) return blockedPlan(options, [inspected.blocker], target.name);
+    if (!inspected.file || inspected.file.hash !== selected.expectedHash) {
       return blockedPlan(
         options,
-        [
-          blocker(
-            "unresolved-entitlements",
-            "One or more CODE_SIGN_ENTITLEMENTS settings could not be resolved exactly.",
-          ),
-        ],
+        [blocker("stale-entitlements", `${selected.path} changed while setup was inspected.`)],
         target.name,
       );
     }
-    if (options.allowMissingEntitlementsCreation) {
-      const settingsPlan = await planIOSMissingEntitlementsSettings({
-        root,
-        projectPath: options.projectPath,
-        targetId: options.targetId,
-        platform,
-      });
-      if (settingsPlan.status === "ready" && settingsPlan.entitlementsPath) {
-        return {
-          schemaVersion: 1,
-          kind: "clerk-ios-associated-domain",
-          status: "ready",
-          root,
-          projectPath: options.projectPath,
-          targetId: options.targetId,
-          platform,
-          targetName: target.name,
-          ...(expectedDomain ? { expectedDomain } : {}),
-          requiresPublishableKey: expectedDomain == null,
-          files: [{ path: settingsPlan.entitlementsPath, operation: "create" }],
-          missingEntitlementsSettings: settingsPlan,
-          actions: [
-            expectedDomain
-              ? `Create ${settingsPlan.entitlementsPath} with ${expectedDomain}.`
-              : `Create ${settingsPlan.entitlementsPath} with the linked development instance's exact webcredentials host (resolved after authentication).`,
-            platform === "macos"
-              ? `Attach ${settingsPlan.entitlementsPath} only to macOS SDK builds for every selected-target configuration.`
-              : `Attach ${settingsPlan.entitlementsPath} only to iPhone and iPad SDK builds for every selected-target configuration.`,
-          ],
-          blockers: [],
-        };
-      }
-      return blockedPlan(
-        options,
-        settingsPlan.blockers.length > 0
-          ? settingsPlan.blockers.map((item) => blocker("missing-entitlements", item.message))
-          : [
-              blocker(
-                "missing-entitlements",
-                "The missing-entitlements plan did not identify one safe destination.",
-              ),
-            ],
-        target.name,
-      );
-    }
-    return blockedPlan(
-      options,
-      [
-        blocker(
-          "missing-entitlements",
-          "No selected-target configuration has an existing entitlements file, and this runtime route cannot safely create one automatically.",
-        ),
-      ],
-      target.name,
-    );
+    files.push(inspected.file);
   }
-  if (resolvedPaths.length !== target.configurations.length) {
-    return blockedPlan(
-      options,
-      [
-        blocker(
-          "mixed-entitlements",
-          "Some selected-target configurations have entitlements while others do not. Choose the intended files in Xcode before automatic setup.",
-        ),
-      ],
-      target.name,
-    );
-  }
-  if (
-    target.configurations.some(
-      (configuration) => configuration.entitlementsPath.state !== "resolved",
-    )
-  ) {
-    return blockedPlan(
-      options,
-      [
-        blocker(
-          "unresolved-entitlements",
-          "One or more CODE_SIGN_ENTITLEMENTS settings could not be resolved exactly.",
-        ),
-      ],
-      target.name,
-    );
-  }
-
-  const filesByPath = new Map<string, EntitlementsFile>();
-  const blockers: IOSAssociatedDomainBlocker[] = [];
-  for (const configuredPath of new Set(resolvedPaths)) {
-    const absolutePath = resolve(root, options.projectPath, "..", configuredPath);
-    const inspected = await inspectEntitlementsFile(root, absolutePath);
-    if (inspected.blocker) blockers.push(inspected.blocker);
-    if (inspected.file) filesByPath.set(inspected.file.absolutePath, inspected.file);
-  }
-  if (blockers.length > 0 || filesByPath.size !== new Set(resolvedPaths).size) {
-    return blockedPlan(options, blockers, target.name);
-  }
-  const files = [...filesByPath.values()].sort((a, b) =>
-    a.relativePath.localeCompare(b.relativePath),
-  );
-  if (
-    !(await ownershipIsExclusive(
-      root,
-      options.projectPath,
-      options.targetId,
-      files,
-      platform,
-      options.allowSelectedTargetPlatformSharing,
-    ))
-  ) {
-    return blockedPlan(
-      options,
-      [
-        blocker(
-          "shared-entitlements",
-          "An entitlements file may be shared with another target, or exclusive ownership could not be proven.",
-        ),
-      ],
-      target.name,
-    );
-  }
-
   const satisfied =
     expectedDomain != null &&
+    selection.files.every((file) => file.operation === "modify") &&
     files.every((file) => exactDomainPresent(file.domains, expectedDomain));
+  const settingsPlan = selection.missingEntitlementsSettings;
   return {
     schemaVersion: 1,
     kind: "clerk-ios-associated-domain",
@@ -861,18 +304,24 @@ export async function planIOSAssociatedDomain(
     targetName: target.name,
     ...(expectedDomain ? { expectedDomain } : {}),
     requiresPublishableKey: expectedDomain == null,
-    files: files.map((file) => ({
-      path: file.relativePath,
-      operation: "modify" as const,
-      expectedHash: file.hash,
-    })),
+    files: selection.files,
+    ...(settingsPlan ? { missingEntitlementsSettings: settingsPlan } : {}),
     actions: satisfied
       ? []
-      : [
-          expectedDomain
-            ? `Add ${expectedDomain} to every selected-target entitlements configuration.`
-            : "Add the linked development instance's exact webcredentials host to every selected-target entitlements configuration (host resolved after authentication).",
-        ],
+      : settingsPlan
+        ? [
+            expectedDomain
+              ? `Create ${settingsPlan.entitlementsPath} with ${expectedDomain}.`
+              : `Create ${settingsPlan.entitlementsPath} with the linked development instance's exact webcredentials host (resolved after authentication).`,
+            platform === "macos"
+              ? `Attach ${settingsPlan.entitlementsPath} only to macOS SDK builds for every selected-target configuration.`
+              : `Attach ${settingsPlan.entitlementsPath} only to iPhone and iPad SDK builds for every selected-target configuration.`,
+          ]
+        : [
+            expectedDomain
+              ? `Add ${expectedDomain} to every selected-target entitlements configuration.`
+              : "Add the linked development instance's exact webcredentials host to every selected-target entitlements configuration (host resolved after authentication).",
+          ],
     blockers: [],
   };
 }
@@ -1146,15 +595,6 @@ export async function validatePreparedIOSAssociatedDomain(
   if (hasIncompleteIOSContainerDiscovery(inspection)) return false;
   const target = selectedTarget(inspection, prepared.plan.projectPath, prepared.plan.targetId);
   if (!target?.platformEvidenceComplete) return false;
-  if (
-    inspection.generatedProject != null ||
-    (await generatedProjectKind(
-      prepared.plan.root,
-      resolve(prepared.plan.root, prepared.plan.projectPath),
-    )) != null
-  ) {
-    return false;
-  }
   const expectedHost = prepared.expectedDomain.slice("webcredentials:".length);
   if (
     !prepared.plan.requiresPublishableKey &&
@@ -1162,29 +602,29 @@ export async function validatePreparedIOSAssociatedDomain(
   ) {
     return false;
   }
-  if (target.configurations.length === 0) return false;
-  const files: EntitlementsFile[] = [];
-  for (const configuration of target.configurations) {
-    if (configuration.entitlementsPath.state !== "resolved") return false;
-    const absolutePath = resolve(
-      prepared.plan.root,
-      prepared.plan.projectPath,
-      "..",
-      configuration.entitlementsPath.value,
-    );
-    const inspected = await inspectEntitlementsFile(prepared.plan.root, absolutePath);
-    if (!inspected.file || !exactDomainPresent(inspected.file.domains, prepared.expectedDomain)) {
-      return false;
-    }
-    files.push(inspected.file);
-  }
-  return ownershipIsExclusive(
-    prepared.plan.root,
-    prepared.plan.projectPath,
-    prepared.plan.targetId,
-    [...new Map(files.map((file) => [file.absolutePath, file])).values()],
-    prepared.plan.platform,
+  const selection = await selectIOSEntitlementsFiles(
+    {
+      root: prepared.plan.root,
+      projectPath: prepared.plan.projectPath,
+      targetId: prepared.plan.targetId,
+      platform: prepared.plan.platform,
+    },
+    inspection,
   );
+  if (selection.status === "blocked") return false;
+  for (const file of selection.files) {
+    const inspected = await inspectEntitlementsFile(
+      prepared.plan.root,
+      resolve(prepared.plan.root, file.path),
+    );
+    if (
+      !inspected.file ||
+      inspected.file.hash !== file.expectedHash ||
+      !exactDomainPresent(inspected.file.domains, prepared.expectedDomain)
+    )
+      return false;
+  }
+  return true;
 }
 
 export async function applyIOSAssociatedDomain(

@@ -157,6 +157,28 @@ describe("link", () => {
     return link(options);
   }
 
+  test("embedded linking keeps the outer flow open and omits env-pull instructions", async () => {
+    mockIsAgent.mockReturnValue(false);
+    mockGetToken.mockResolvedValue("token");
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockFetchApplication.mockResolvedValue(mockApp);
+    const spinner = await import("../../lib/spinner.ts");
+    const introSpy = spyOn(spinner, "intro");
+    const outroSpy = spyOn(spinner, "outro");
+    try {
+      await link({ app: "app_123", embedded: true });
+      expect(introSpy).not.toHaveBeenCalled();
+      expect(outroSpy).not.toHaveBeenCalled();
+      expect(mockSetProfile).toHaveBeenCalled();
+      expect(captured.err).not.toContain("Linking project");
+      expect(captured.err).not.toContain("clerk env pull");
+      expect(captured.err).toContain("Linked to");
+    } finally {
+      introSpy.mockRestore();
+      outroSpy.mockRestore();
+    }
+  });
+
   describe("agent mode", () => {
     test("links directly with --app", async () => {
       mockIsAgent.mockReturnValue(true);

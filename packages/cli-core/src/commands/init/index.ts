@@ -66,6 +66,12 @@ import { type PackageManager, PACKAGE_MANAGERS } from "../../lib/package-manager
 import { validateAppIdPrefix } from "./ios/native-remote.ts";
 import { pickAppleNativeTarget } from "./ios/target-picker.ts";
 import {
+  compactNativeOutput,
+  withNativeSpinner,
+  withNativeProgress,
+  stopNativeProgress,
+} from "./ios/presentation.ts";
+import {
   prepareAppleNativeSetup,
   runAppleNativeDryRun,
   type AppleNativeSetupCoordinator,
@@ -112,6 +118,10 @@ type InitOptions = {
 };
 
 export async function init(options: InitOptions = {}) {
+  return withNativeProgress(async () => runInit(options));
+}
+
+async function runInit(options: InitOptions) {
   if (options.prebuiltAuthUI == null && options.prebuiltAuthUi != null) {
     options = { ...options, prebuiltAuthUI: options.prebuiltAuthUi };
   }
@@ -177,6 +187,7 @@ export async function init(options: InitOptions = {}) {
   if (!resolved) return;
 
   const { ctx, bootstrap } = resolved;
+  if (ctx.framework.dep !== "ios") stopNativeProgress();
 
   if (bootstrap) {
     ctx.isBootstrap = true;
@@ -244,6 +255,7 @@ export async function init(options: InitOptions = {}) {
     };
   }
 
+  stopNativeProgress();
   await enrichProjectContext(ctx);
 
   // Skip auth-related I/O entirely when the user opted into accountless setup — those
@@ -321,6 +333,7 @@ export async function init(options: InitOptions = {}) {
         appIdPrefix: options.appIdPrefix,
       })
     : undefined;
+  stopNativeProgress();
   const authenticatedKeysHandled = appleNativeResult?.authenticatedKeysHandled ?? false;
   if (appleNativeResult?.nativeRemoteReady) {
     ctx.iosNativeRemoteReady = true;
@@ -369,7 +382,7 @@ export async function init(options: InitOptions = {}) {
   }
 
   setTelemetryStage("done");
-  await outro("Done");
+  await outro(ctx.framework.dep === "ios" ? "Automatic setup complete" : "Done");
 }
 
 /**
@@ -555,6 +568,7 @@ async function bootstrapAndDetect(
   frameworkOverride: FrameworkInfo | undefined,
   overrides: BootstrapOverrides,
 ): Promise<ResolvedContext> {
+  stopNativeProgress();
   setTelemetryStage("bootstrap");
   const bootstrap = await promptAndBootstrap(cwd, frameworkOverride, overrides);
 
@@ -597,7 +611,7 @@ async function resolveProjectContext(
     return bootstrapAndDetect(cwd, frameworkOverride, overrides);
   }
 
-  const ctx = await withSpinner("Detecting framework...", async () =>
+  const ctx = await withNativeSpinner("Inspecting project...", async () =>
     gatherContext(cwd, frameworkOverride, overrides.pmOverride),
   );
   if (ctx) return { ctx, bootstrap: null };
@@ -619,7 +633,7 @@ async function resolveExistingProjectContext(
   frameworkOverride: FrameworkInfo | undefined,
   overrides: BootstrapOverrides,
 ): Promise<ResolvedContext> {
-  const ctx = await withSpinner("Detecting framework...", async () =>
+  const ctx = await withNativeSpinner("Inspecting project...", async () =>
     gatherContext(cwd, frameworkOverride, overrides.pmOverride),
   );
   if (!ctx) {
@@ -638,7 +652,9 @@ async function resolveReadOnlyProjectContext(
   machineOutput: boolean,
 ): Promise<ResolvedContext> {
   const detect = async () => gatherContext(cwd, frameworkOverride, overrides.pmOverride);
-  const ctx = machineOutput ? await detect() : await withSpinner("Detecting framework...", detect);
+  const ctx = machineOutput
+    ? await detect()
+    : await withNativeSpinner("Inspecting project...", detect);
   if (!ctx) {
     throw new CliError(
       "Could not detect an existing project. Read-only mode never bootstraps or modifies a directory.",
@@ -768,14 +784,14 @@ async function runStrategy(
 
 // --- Auth ---
 
-async function resolveAuthLabel(): Promise<string> {
+async function resolveAuthLabel(embedded = false): Promise<string> {
   const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
   if (hasApiKey) return "Using API key";
 
   const email = await getAuthenticatedEmail();
   if (email) return `Logged in as ${email}`;
 
-  await login({ showNextSteps: false });
+  await login({ showNextSteps: false, ...(embedded && { embedded: true }) });
   return "";
 }
 
@@ -790,7 +806,7 @@ async function authenticateAndLink(
   applicationId?: string;
   applicationLinkChange?: "created-and-linked" | "link-updated";
 }> {
-  const label = preauthenticatedLabel ?? (await resolveAuthLabel());
+  const label = preauthenticatedLabel ?? (await resolveAuthLabel(requireLinkedAppId));
   const profile = await resolveProfile(cwd);
 
   const alreadyOnRequestedApp = profile && (!app || profile.profile.appId === app);
@@ -809,7 +825,7 @@ async function authenticateAndLink(
     app,
     cwd,
     createIfMissing,
-    ...(requireLinkedAppId && { skipAutolink: true }),
+    ...(requireLinkedAppId && { skipAutolink: true, embedded: true }),
     ...(requireExplicitApplication && { requireExistingAppSelection: true }),
   });
 
@@ -927,7 +943,9 @@ async function detectAndInstall(
   skipConfirm: boolean,
 ): Promise<{ alreadySetUp: boolean }> {
   const variantLabel = ctx.variant ? ` (${ctx.variant})` : "";
-  log.info(`\nDetected ${bold(ctx.framework.name)}${variantLabel}`);
+  if (ctx.framework.dep !== "ios" || !compactNativeOutput()) {
+    log.info(`\nDetected ${bold(ctx.framework.name)}${variantLabel}`);
+  }
 
   detectAuthLibraries(ctx.deps);
   log.blank();
@@ -960,7 +978,12 @@ async function scaffoldAndWrite(
   }
 
   if (!hasChanges) {
-    log.info(dim("\nNo files to scaffold, but:"));
+    if (ctx.framework.dep === "ios" && compactNativeOutput()) {
+      log.info("\nNext steps:");
+      log.info("  • Open your Xcode project, build, and test sign-in.");
+    } else {
+      log.info(dim("\nNo files to scaffold, but:"));
+    }
     for (const instr of plan.postInstructions) {
       log.info(dim(`  • ${instr}`));
     }

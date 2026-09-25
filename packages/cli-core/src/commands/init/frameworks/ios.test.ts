@@ -1,11 +1,12 @@
 import { afterAll, afterEach, test, expect, spyOn } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ios } from "./ios.ts";
 import type { ProjectContext } from "./types.ts";
 import { createIOSFixture } from "../ios/test-helpers.ts";
 import * as associatedDomain from "../ios/associated-domain.ts";
+import * as entitlementsFiles from "../ios/entitlements-files.ts";
 import * as directConfig from "../ios/direct-config.ts";
 
 const temporaryRoots: string[] = [];
@@ -66,10 +67,8 @@ test("writes no files and prints the quickstart steps", async () => {
     plan.postInstructions.some((i) => i.includes("dashboard.clerk.com/~/native-applications")),
   ).toBe(true);
   expect(plan.postInstructions.some((i) => i.includes("Clerk.configure"))).toBe(true);
-  expect(plan.postInstructions.some((i) => i.includes("signed-out authentication route"))).toBe(
-    true,
-  );
-  expect(plan.postInstructions.some((i) => i.includes("--prebuilt-auth-ui"))).toBe(true);
+  expect(plan.postInstructions).toContain("Add a sign-in screen using ClerkKitUI’s `AuthView`.");
+  expect(plan.postInstructions.some((i) => i.includes("--prebuilt-auth-ui"))).toBe(false);
   expect(plan.postInstructions.some((i) => i.includes(".onOpenURL"))).toBe(false);
   // With no inspectable target, keep the guidance explicitly conditional.
   expect(plan.postInstructions.some((i) => i.includes(".environment(Clerk.shared)"))).toBe(true);
@@ -123,6 +122,7 @@ test("uses the selected macOS platform for final planning and guidance", async (
   await createIOSFixture(root, { complete: false, clerkSDK: false, platform: "macos" });
   const directPlanner = spyOn(directConfig, "planIOSDirectConfig");
   const domainPlanner = spyOn(associatedDomain, "planIOSAssociatedDomain");
+  const fileSelector = spyOn(entitlementsFiles, "selectIOSEntitlementsFiles");
 
   try {
     const plan = await ios.scaffold({
@@ -135,9 +135,8 @@ test("uses the selected macOS platform for final planning and guidance", async (
     expect(directPlanner).toHaveBeenCalledWith(
       expect.objectContaining({ root, platform: "macos" }),
     );
-    expect(domainPlanner).toHaveBeenCalledWith(
-      expect.objectContaining({ root, platform: "macos" }),
-    );
+    expect(domainPlanner).not.toHaveBeenCalled();
+    expect(fileSelector).toHaveBeenCalledWith(expect.objectContaining({ root, platform: "macos" }));
 
     const instructions = plan.postInstructions.join("\n");
     expect(instructions).toContain("Clerk Swift SDK");
@@ -150,6 +149,7 @@ test("uses the selected macOS platform for final planning and guidance", async (
   } finally {
     directPlanner.mockRestore();
     domainPlanner.mockRestore();
+    fileSelector.mockRestore();
   }
 });
 
@@ -201,14 +201,27 @@ test("preserves a custom LocalSecrets loader without interpreting its value", as
   expect(plan.postInstructions.some((i) => i.includes(".env"))).toBe(false);
 });
 
-test("includes SwiftUI environment injection for the default prebuilt path", async () => {
+test("offers the prebuilt command only for an eligible starter screen", async () => {
   const root = await makeIOSFixture(false);
+  await cp(join(import.meta.dir, "../../../../../../test/e2e/fixtures/ios"), root, {
+    recursive: true,
+  });
   const plan = await ios.scaffold({ ...makeCtx(), cwd: root, iosTarget: "MyApp" });
 
   expect(plan.postInstructions.some((i) => i.includes(".environment(Clerk.shared)"))).toBe(true);
-  expect(plan.postInstructions.some((i) => i.includes("signed-out authentication route"))).toBe(
-    true,
+  expect(plan.postInstructions).toContain(
+    "To add Clerk’s sign-in screen, run `clerk init --prebuilt-auth-ui`.",
   );
+  const contentPath = join(root, "MyApp/ContentView.swift");
+  const existingScreen = (await Bun.file(contentPath).text()).replace("Hello, world!", "My notes");
+  await Bun.write(contentPath, existingScreen);
+  const established = await ios.scaffold({ ...makeCtx(), cwd: root, iosTarget: "MyApp" });
+  expect(established.postInstructions).toContain(
+    "Add a sign-in screen using ClerkKitUI’s `AuthView`.",
+  );
+  expect(established.postInstructions.join("\n")).not.toContain("--prebuilt-auth-ui");
+  expect(established.postInstructions.join("\n")).toContain("docs/ios/getting-started/quickstart");
+  expect(await Bun.file(contentPath).text()).toBe(existingScreen);
 });
 
 test("keeps existing custom-flow installation and environment guidance core-only", async () => {
@@ -260,9 +273,8 @@ test("does not derive setup state from a LocalSecrets value", async () => {
   expect(plan.postInstructions.some((i) => i.includes("github.com/clerk/clerk-ios"))).toBe(false);
   expect(plan.postInstructions.some((i) => i.includes("Associated Domains"))).toBe(true);
   expect(plan.postInstructions.some((i) => i.includes("Configure Clerk"))).toBe(false);
-  expect(plan.postInstructions.some((i) => i.includes("signed-out authentication route"))).toBe(
-    false,
-  );
+  expect(plan.postInstructions.join("\n")).not.toContain("Add a sign-in screen");
+  expect(plan.postInstructions.join("\n")).not.toContain("--prebuilt-auth-ui");
   expect(plan.postInstructions.some((i) => i.includes(".environment(Clerk.shared)"))).toBe(false);
   expect(plan.postInstructions.some((i) => i.includes(".onOpenURL"))).toBe(false);
   expect(

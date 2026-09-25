@@ -1,5 +1,5 @@
 import { select } from "../../../lib/listage.ts";
-import { withSpinner } from "../../../lib/spinner.ts";
+import { withNativeSpinner as withSpinner, stopNativeProgress } from "./presentation.ts";
 import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 
 /** Choose a target using the same selector and discovery rules as explicit --target. */
@@ -55,5 +55,6 @@ export async function pickAppleNativeTarget(options: {
   if (choices.every((choice) => choice.disabled)) return undefined;
 
   // Planning inspects again after the prompt; this inventory never authorizes edits.
+  stopNativeProgress();
   return select({ message: "Which application target would you like to set up?", choices });
 }

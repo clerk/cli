@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   convertIOSFixtureToMultiplatform,
   convertIOSFixtureToPlatformFilteredAppRoots,
@@ -1933,5 +1933,113 @@ struct MyApp: App {
     expect(apple?.remedy).toContain("applications:manage");
     expect(apple?.remedy).not.toContain("applications:read");
     expect(JSON.stringify(audit.results)).not.toContain("apple-secret-value");
+  });
+});
+
+describe("established apps with incomplete source discovery", () => {
+  async function establishedFixture(conflictingBundle = false) {
+    const root = await mkdtemp(join(tmpdir(), "clerk-established-doctor-"));
+    roots.push(root);
+    await cp(resolve(import.meta.dir, "../../../../../test/fixtures/ios-established"), root, {
+      recursive: true,
+    });
+    const path = join(root, "ClerkCorpusIOS.xcodeproj", "project.pbxproj");
+    let project = await readFile(path, "utf8");
+    // A missing build-file record leaves additional Swift membership unknown,
+    // while the selected target's build settings and entitlements remain readable.
+    project = project.replace(
+      /(isa = PBXSourcesBuildPhase;[\s\S]*?files = \()/,
+      "$1 FEFEFEFEFEFEFEFEFEFEFEFE,",
+    );
+    if (conflictingBundle) {
+      project = project.replace(
+        "PRODUCT_BUNDLE_IDENTIFIER = com.clerk.ClerkCorpusIOS;",
+        "PRODUCT_BUNDLE_IDENTIFIER = com.clerk.OtherApp;",
+      );
+    }
+    await writeFile(path, project);
+    return root;
+  }
+
+  test.each([true, false])(
+    "checks registration independently when registered=%s",
+    async (registered) => {
+      const root = await establishedFixture();
+      let registrationReads = 0;
+      const unexpected = async (): Promise<never> => {
+        throw new Error("Source-dependent inspection must remain blocked");
+      };
+      const { inspection, results } = await runIOSDoctorChecks(
+        context(),
+        { root },
+        dependencies({
+          fetchApplication: unexpected,
+          fetchUserSettings: unexpected,
+          planIOSSDKInstall: unexpected,
+          planMacOSNetworkCapability: unexpected,
+          auditIOSNativeAppleHealth: unexpected,
+          planIOSAppleEntitlement: unexpected,
+          listIOSApplications: async () => {
+            registrationReads += 1;
+            return registered
+              ? [
+                  {
+                    object: "ios_application",
+                    id: "iosapp_test",
+                    app_id_prefix: "LEGACY1234",
+                    bundle_id: "com.clerk.ClerkCorpusIOS",
+                    created_at: 1,
+                    updated_at: 1,
+                  },
+                ]
+              : [];
+          },
+        }),
+      );
+      expect(inspection.appTargets[0]!.swift.evidenceComplete).toBe(false);
+      expect(registrationReads).toBe(1);
+      expect(results).toContainEqual(
+        expect.objectContaining({
+          name: "iOS: Native Application",
+          status: registered ? "pass" : "fail",
+          message: registered
+            ? "Native API and iOS registration: configured"
+            : "Native API or iOS registration: setup required",
+        }),
+      );
+      expect(
+        results.some(
+          (result) =>
+            result.status === "fail" &&
+            `${result.message} ${result.detail}`.includes("could not be inspected completely"),
+        ),
+      ).toBe(true);
+      expect(results.some((result) => result.name.includes("Linked development key"))).toBe(false);
+      expect(results.some((result) => result.name.includes("Linked Clerk application"))).toBe(
+        false,
+      );
+    },
+  );
+
+  test("still refuses remote reads when incomplete sources accompany conflicting target identity", async () => {
+    const root = await establishedFixture(true);
+    let remoteReads = 0;
+    const { results } = await runIOSDoctorChecks(
+      context(),
+      { root },
+      dependencies({
+        getNativeSettings: async () => {
+          remoteReads += 1;
+          return { object: "native_settings", api_enabled: true };
+        },
+        listIOSApplications: async () => {
+          remoteReads += 1;
+          return [];
+        },
+      }),
+    );
+    expect(remoteReads).toBe(0);
+    expect(results.some((result) => result.name === "iOS: Native Application")).toBe(false);
+    expect(results.some((result) => result.status === "fail")).toBe(true);
   });
 });

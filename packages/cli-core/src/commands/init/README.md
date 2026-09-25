@@ -72,6 +72,8 @@ For a safely inspectable fresh SwiftUI target, the same command selects or creat
 
 An existing custom `Clerk.configure(...)` source is never migrated or rewritten. The developer must explicitly select the existing Clerk application it belongs to; agents do this with `--app <app_id>`. That choice authorizes linked-app and Native Application setup, but the CLI does not inspect the custom value or claim that it matches the selected application.
 
+When custom startup execution remains unproven, SDK linkage and native registration may still proceed if their own prerequisites are satisfied, including when AuthView already exists. Runtime verification remains a manual follow-up; explicitly requesting AuthView setup still requires its runtime prerequisites.
+
 The CLI previews every planned local path and asks once before writing. Human users can pass `--yes` to skip that confirmation. Agent/non-TTY mode must pass `--yes` explicitly for native Apple mutations; agent mode never implies consent here. A planned file with existing Git changes is refused unless `--allow-dirty` is also explicit, and `--yes` does not imply `--allow-dirty`.
 
 The package graph and direct Swift edits are prepared in memory, staged beside their destination files, committed together after exact app/key resolution, and re-inspected as one rollback-aware local transaction. Re-running an already-complete target is byte-for-byte a no-op. The command does not run Xcode, resolve package versions, build the app, edit `Package.resolved`, change signing, or request a secret key. XcodeGen and Tuist output is not edited; update the generator's source specification instead.

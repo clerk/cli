@@ -1,8 +1,8 @@
-import { generatedProjectKind } from "./project-selection.ts";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { build as buildPbxProject, parse as parsePbxProject } from "@bacons/xcode/json";
+import { generatedProjectKind } from "./project-selection.ts";
 import { inspectTargetBuildConfigurations } from "./build-settings.ts";
 import { inspectXCProjTargetBuildConfigurations } from "./xcproj-build-settings.ts";
 import {

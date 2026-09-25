@@ -279,8 +279,7 @@ describe("init iOS", () => {
         framework: expect.objectContaining({ name: "macOS (Swift)" }),
       }),
     );
-    expect(captured.err).toContain("Detected");
-    expect(captured.err).toContain("macOS (Swift)");
+    expect(captured.err).not.toContain("Detected");
     expect(captured.err).not.toContain("iOS (Swift)");
   });
 
@@ -461,6 +460,7 @@ describe("init iOS", () => {
       cwd: iosCtx.cwd,
       createIfMissing: "AnotherPromptTest",
       skipAutolink: true,
+      embedded: true,
     });
     expect(nativeRemoteMod.prepareIOSNativeRemoteSetup).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -515,6 +515,7 @@ describe("init iOS", () => {
       cwd: iosCtx.cwd,
       createIfMissing: undefined,
       skipAutolink: true,
+      embedded: true,
     });
     expect(nativeRemoteMod.prepareIOSNativeRemoteSetup).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -546,6 +547,7 @@ describe("init iOS", () => {
       cwd: iosCtx.cwd,
       createIfMissing: undefined,
       skipAutolink: true,
+      embedded: true,
     });
     expect(iosDevelopmentKeyMod.resolveIOSDevelopmentPublicKey).not.toHaveBeenCalled();
   });
@@ -1581,6 +1583,7 @@ describe("init iOS", () => {
       cwd: iosCtx.cwd,
       createIfMissing: undefined,
       skipAutolink: true,
+      embedded: true,
       requireExistingAppSelection: true,
     });
     expect(iosApplyMod.applyIOSPlannedLocalSetup).toHaveBeenCalledWith(setupResult, linkedKey);
@@ -1628,6 +1631,7 @@ describe("init iOS", () => {
       cwd: iosCtx.cwd,
       createIfMissing: undefined,
       skipAutolink: true,
+      embedded: true,
       requireExistingAppSelection: true,
     });
     expect(resolveKeys).toHaveBeenCalledTimes(1);

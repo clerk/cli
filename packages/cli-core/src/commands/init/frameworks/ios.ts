@@ -47,7 +47,7 @@ export const ios: FrameworkScaffold = {
     const sdkLabel = platform === "ios" ? "Clerk iOS SDK" : "Clerk Swift SDK";
     const productDecision = proposal.productDecision ?? "prebuilt";
     const includeClerkKitUI = productDecision === "prebuilt";
-    const hasCustomConfigure = proposal.hasSupportedCustomConfigure;
+    const hasCustomConfigure = proposal.hasCustomConfigure;
     const setupPlan = proposal.setupPlan;
     const platformCompatibilityBlockers = proposal.platformCompatibilityBlockers;
     if (platformCompatibilityBlockers.length > 0) {
@@ -122,7 +122,7 @@ export const ios: FrameworkScaffold = {
         ? [configureStep.description]
         : hasCustomConfigure
           ? [
-              "Keep the existing custom Clerk.configure(...) source unchanged. Select the Clerk application it belongs to during setup, or pass --app <app_id> in agent mode; clerk init does not inspect or rewrite the custom key value.",
+              "Keep the existing custom Clerk.configure(...) source unchanged. Verify that it runs at startup and that its runtime key belongs to the selected Clerk application; --app selects the application for setup but does not prove a runtime key match. clerk init does not inspect or rewrite the custom key value.",
             ]
           : [
               'Configure Clerk directly in the single shipping `@main` App initializer with the selected application\'s development publishable key: `Clerk.configure(publishableKey: "<development-publishable-key>")`. For a safely inspectable SwiftUI target, `clerk init` applies this with the value redacted from previews and output.',
@@ -130,11 +130,13 @@ export const ios: FrameworkScaffold = {
       : [];
     const authFlowInstructions = needsAttention("add-authentication-flow")
       ? [
-          productDecision === "core-only"
-            ? "Complete the signed-out authentication route with the existing custom ClerkKit sign-in/sign-up flow"
-            : productDecision === "unknown"
-              ? "Confirm whether the signed-out route should use ClerkKitUI's AuthView or a custom ClerkKit flow"
-              : "For a pristine SwiftUI placeholder, rerun `clerk init --prebuilt-auth-ui` to add ClerkKitUI's documented UserButton and AuthView sheet; otherwise add a signed-out authentication route with AuthView or a custom ClerkKit flow without replacing existing application UI",
+          proposal.prebuiltAuthPlanForSetup?.status === "ready"
+            ? "To add Clerk’s sign-in screen, run `clerk init --prebuilt-auth-ui`."
+            : productDecision === "core-only"
+              ? "Add a sign-in screen using a custom ClerkKit flow."
+              : productDecision === "unknown"
+                ? "Choose ClerkKitUI’s `AuthView` or a custom ClerkKit flow for your sign-in screen."
+                : "Add a sign-in screen using ClerkKitUI’s `AuthView`.",
         ]
       : [];
     const nativeAppleInstructions = ctx.iosNativeAppleReady

@@ -73,6 +73,11 @@ in human or JSON output. AuthView, Native Application, and Apple remote checks
 are GET-only. Their remedies point back to `clerk init`; `doctor --fix` never
 enables an auth strategy or changes Native Application state.
 
+Incomplete Swift source discovery remains a diagnostic failure, but does not
+suppress a Native Application check when target identity is independently proven
+across all supported platforms. That registration-only check does not establish
+runtime-key matching, AuthView compatibility, or Apple authentication readiness.
+
 `clerk doctor` inspects configuration and remote Clerk state without invoking
 Xcode package resolution, builds, or Simulator execution. Build and runtime
 verification remain with Xcode and the project's existing test workflow.

@@ -116,7 +116,7 @@ export interface IOSNativeReadinessAudit {
 export interface BuildIOSNativeReadinessAuditOptions {
   associatedDomainPlan?: IOSAssociatedDomainPlan;
   /** Exhaustive cross-platform identity evidence for a multiplatform target. */
-  platformViews?: IOSPlatformViewsSnapshot;
+  platformViews?: Pick<IOSPlatformViewsSnapshot, "appIdPrefix">;
 }
 
 function selectedTarget(inspection: IOSProjectInspectionResult): IOSAppTarget | undefined {

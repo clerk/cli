@@ -10,7 +10,12 @@ import {
 } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
 import { confirm } from "../../../lib/prompts.ts";
-import { withSpinner } from "../../../lib/spinner.ts";
+import {
+  withNativeSpinner as withSpinner,
+  compactNativeOutput,
+  printNativeLocalPreview,
+  stopNativeProgress,
+} from "./presentation.ts";
 import { hasIncompleteIOSContainerDiscovery, inspectIOSProject } from "./inspect.ts";
 import {
   prepareIOSSDKInstallMutation,
@@ -324,6 +329,14 @@ export async function applyIOSLocalSetup(
     );
   }
   const platformLabel = selectedTarget.platform === "macos" ? "macOS" : "iOS";
+  stopNativeProgress();
+  if (compactNativeOutput()) {
+    const platforms = selectedTarget.supportedPlatforms
+      .map((p) => (p === "ios" ? "iOS" : "macOS"))
+      .join(" + ");
+    log.success(`Found ${platforms} app: ${selection.targetName}`);
+    log.info(dim(`Project: ${selection.projectPath}`));
+  }
 
   const proposal = await buildIOSLocalSetupProposal(context, {
     root: options.root,
@@ -332,14 +345,14 @@ export async function applyIOSLocalSetup(
     signInWithApple: options.signInWithApple,
     ...(!options.agent && !options.yes
       ? {
-          resolvePrebuiltAuthRequest: async ({ targetName }: { targetName: string }) =>
+          resolvePrebuiltAuthRequest: async () =>
             confirm({
-              message: `Add ClerkKitUI's prebuilt authentication UI to ${targetName}?`,
+              message: "Add Clerk’s prebuilt sign-in screen?",
               default: false,
             }),
-          resolveNativeAppleRequest: async ({ bundleIdentifier }: { bundleIdentifier: string }) =>
+          resolveNativeAppleRequest: async () =>
             confirm({
-              message: `Enable native Sign in with Apple for ${bundleIdentifier}?`,
+              message: "Enable native Sign in with Apple?",
               default: false,
             }),
         }
@@ -453,11 +466,6 @@ export async function applyIOSLocalSetup(
   ) {
     throw iosSetupError(
       "The fresh SwiftUI target was not edited because the selected runtime configuration could not be proven. Configure Clerk directly in the @main initializer, then rerun clerk init. No local files were changed.",
-    );
-  }
-  if (hasCustomConfigure && !hasSupportedCustomConfigure) {
-    throw iosSetupError(
-      "A custom Clerk.configure(...) source was found, but it is not one unambiguous call in the selected app's startup initializer. clerk init preserved it and made no local or remote changes. Confirm the shipping configuration manually, then rerun the command.",
     );
   }
   if (prebuiltAuthActive) {
@@ -603,159 +611,174 @@ export async function applyIOSLocalSetup(
     macOSNetworkCapabilityPlan?.status === "ready" ||
     appleEntitlementPlan?.status === "ready" ||
     prebuiltAuthAppleEntitlementPlan?.status === "ready";
-  if (hasLocalWrites) {
-    log.info(`\nclerk init will make the following local ${platformLabel} changes:\n`);
-  } else if (
-    directConfigPlan ||
-    macOSNetworkCapabilityPlan ||
-    appleEntitlementPlan ||
-    prebuiltAuthPlan
-  ) {
-    log.info(`\nclerk init will perform the following read-only ${platformLabel} verification:\n`);
-  }
-  if (installPlan.status === "ready") {
-    log.info(`  ${yellow("MODIFY")}  ${projectDocumentDisplayPath}`);
-    for (const action of installPlan.actions) log.info(`          ${action}`);
-  }
-  if (directConfigPlan) {
-    const operation = directConfigNeedsWrite(directConfigPlan) ? "MODIFY" : "VERIFY";
-    log.info(`  ${yellow(operation)}  ${directConfigPlan.sourcePath}`);
-    for (const action of directConfigPlan.actions) log.info(`          ${action}`);
+  if (compactNativeOutput()) {
+    printNativeLocalPreview(proposal, projectDocumentDisplayPath);
+  } else {
+    if (hasLocalWrites) {
+      log.info(`\nclerk init will make the following local ${platformLabel} changes:\n`);
+    } else if (
+      directConfigPlan ||
+      macOSNetworkCapabilityPlan ||
+      appleEntitlementPlan ||
+      prebuiltAuthPlan
+    ) {
+      log.info(
+        `\nclerk init will perform the following read-only ${platformLabel} verification:\n`,
+      );
+    }
+    if (installPlan.status === "ready") {
+      log.info(`  ${yellow("MODIFY")}  ${projectDocumentDisplayPath}`);
+      for (const action of installPlan.actions) log.info(`          ${action}`);
+    }
+    if (directConfigPlan) {
+      const operation = directConfigNeedsWrite(directConfigPlan) ? "MODIFY" : "VERIFY";
+      log.info(`  ${yellow(operation)}  ${directConfigPlan.sourcePath}`);
+      for (const action of directConfigPlan.actions) log.info(`          ${action}`);
+      log.info(
+        dim(
+          "          The linked development publishable key will remain in memory and is redacted from the preview and command output.",
+        ),
+      );
+    }
+    if (prebuiltAuthPlan) {
+      const operation = prebuiltAuthPlan.status === "ready" ? "MODIFY" : "VERIFY";
+      log.info(`  ${yellow(operation)}  ${prebuiltAuthPlan.sourcePath}`);
+      for (const action of prebuiltAuthPlan.actions) log.info(`          ${action}`);
+    }
+    if (associatedDomainNeedsWrite(associatedDomainPlan)) {
+      if (associatedDomainPlan.missingEntitlementsSettings && installPlan.status !== "ready") {
+        log.info(`  ${yellow("MODIFY")}  ${projectDocumentDisplayPath}`);
+      }
+      for (const file of associatedDomainPlan.files) {
+        log.info(`  ${yellow(file.operation === "create" ? "CREATE" : "MODIFY")}  ${file.path}`);
+      }
+      for (const action of associatedDomainPlan.actions) log.info(`          ${action}`);
+      if (associatedDomainPlan.requiresPublishableKey) {
+        log.info(
+          dim(
+            "          The exact linked development host will be resolved after authentication and is redacted from this preview.",
+          ),
+        );
+      }
+    }
+    if (macOSNetworkCapabilityPlan?.status === "ready") {
+      if (
+        macOSNetworkCapabilityPlan.missingEntitlementsSettings &&
+        installPlan.status !== "ready" &&
+        !associatedDomainPlan?.missingEntitlementsSettings
+      ) {
+        log.info(`  ${yellow("MODIFY")}  ${projectDocumentDisplayPath}`);
+      }
+      for (const file of macOSNetworkCapabilityPlan.files) {
+        log.info(`  ${yellow(file.operation === "create" ? "CREATE" : "MODIFY")}  ${file.path}`);
+      }
+      for (const action of macOSNetworkCapabilityPlan.actions) log.info(`          ${action}`);
+    } else if (macOSNetworkCapabilityPlan?.status === "satisfied") {
+      log.info(
+        dim("\n  Outgoing network access is already available to the selected macOS target."),
+      );
+    }
+    if (appleEntitlementPlan?.status === "ready") {
+      const alreadyPreviewedEntitlements = new Set([
+        ...(associatedDomainNeedsWrite(associatedDomainPlan)
+          ? associatedDomainPlan.files.map((file) => file.path)
+          : []),
+        ...(macOSNetworkCapabilityPlan?.status === "ready"
+          ? macOSNetworkCapabilityPlan.files.map((file) => file.path)
+          : []),
+      ]);
+      if (
+        appleEntitlementPlan.missingEntitlementsSettings &&
+        installPlan.status !== "ready" &&
+        !associatedDomainPlan?.missingEntitlementsSettings &&
+        !macOSNetworkCapabilityPlan?.missingEntitlementsSettings
+      ) {
+        log.info(`  ${yellow("MODIFY")}  ${projectDocumentDisplayPath}`);
+      }
+      for (const file of appleEntitlementPlan.files) {
+        if (!alreadyPreviewedEntitlements.has(file.path)) {
+          log.info(`  ${yellow(file.operation === "create" ? "CREATE" : "MODIFY")}  ${file.path}`);
+        }
+      }
+      for (const action of appleEntitlementPlan.actions) log.info(`          ${action}`);
+    } else if (appleEntitlementPlan?.status === "satisfied") {
+      log.info(
+        dim("\n  The selected target already has the native Sign in with Apple entitlement."),
+      );
+    }
+    if (
+      prebuiltAuthAppleEntitlementPlan?.status === "ready" &&
+      prebuiltAuthAppleEntitlementPlan !== appleEntitlementPlan
+    ) {
+      log.info(
+        dim(
+          "\n  Conditional AuthView capability change (only if Apple is enabled for the linked instance):",
+        ),
+      );
+      const alreadyPreviewedPaths = new Set<string>();
+      if (installPlan.status === "ready") {
+        alreadyPreviewedPaths.add(projectDocumentDisplayPath);
+      }
+      if (associatedDomainNeedsWrite(associatedDomainPlan)) {
+        if (associatedDomainPlan.missingEntitlementsSettings) {
+          alreadyPreviewedPaths.add(projectDocumentDisplayPath);
+        }
+        for (const file of associatedDomainPlan.files) alreadyPreviewedPaths.add(file.path);
+      }
+      if (macOSNetworkCapabilityPlan?.status === "ready") {
+        if (macOSNetworkCapabilityPlan.missingEntitlementsSettings) {
+          alreadyPreviewedPaths.add(projectDocumentDisplayPath);
+        }
+        for (const file of macOSNetworkCapabilityPlan.files) {
+          alreadyPreviewedPaths.add(file.path);
+        }
+      }
+      if (prebuiltAuthAppleEntitlementPlan.missingEntitlementsSettings) {
+        const projectFile = projectDocumentDisplayPath;
+        if (!alreadyPreviewedPaths.has(projectFile)) {
+          log.info(`  ${yellow("MODIFY")}  ${projectFile}`);
+        }
+      }
+      for (const file of prebuiltAuthAppleEntitlementPlan.files) {
+        if (!alreadyPreviewedPaths.has(file.path)) {
+          log.info(`  ${yellow(file.operation === "create" ? "CREATE" : "MODIFY")}  ${file.path}`);
+        }
+      }
+      for (const action of prebuiltAuthAppleEntitlementPlan.actions) {
+        log.info(`          If Apple is enabled: ${action}`);
+      }
+    }
+    if (prebuiltAuthActive) {
+      log.info(
+        dim(
+          "\n  After authentication, clerk init will inspect the methods available to AuthView. If Apple is enabled for this instance, it will add or verify the required local Sign in with Apple entitlement without enabling or changing the Clerk Apple connection.",
+        ),
+      );
+    }
+    if (installPlan.status === "ready") {
+      log.info(dim("\n  Package resolution and xcodebuild will not run."));
+    }
     log.info(
       dim(
-        "          The linked development publishable key will remain in memory and is redacted from the preview and command output.",
+        nativeAppleRequested
+          ? `\n  After authentication, clerk init will inspect Native API, ${platformLabel} registration, and the native Apple connection before separately previewing additive remote changes.`
+          : `\n  After authentication, clerk init will inspect Native API and ${platformLabel} registration state and separately preview any additive remote changes.`,
       ),
     );
+    log.blank();
   }
-  if (hasSupportedCustomConfigure) {
+  if (hasCustomConfigure) {
     log.info(
       dim(
         "  PRESERVE  Custom Clerk.configure(...) publishable-key source. Its value will not be inspected; the developer must select the existing Clerk application it belongs to.",
       ),
     );
-  }
-  if (prebuiltAuthPlan) {
-    const operation = prebuiltAuthPlan.status === "ready" ? "MODIFY" : "VERIFY";
-    log.info(`  ${yellow(operation)}  ${prebuiltAuthPlan.sourcePath}`);
-    for (const action of prebuiltAuthPlan.actions) log.info(`          ${action}`);
-  }
-  if (associatedDomainNeedsWrite(associatedDomainPlan)) {
-    if (associatedDomainPlan.missingEntitlementsSettings && installPlan.status !== "ready") {
-      log.info(`  ${yellow("MODIFY")}  ${projectDocumentDisplayPath}`);
-    }
-    for (const file of associatedDomainPlan.files) {
-      log.info(`  ${yellow(file.operation === "create" ? "CREATE" : "MODIFY")}  ${file.path}`);
-    }
-    for (const action of associatedDomainPlan.actions) log.info(`          ${action}`);
-    if (associatedDomainPlan.requiresPublishableKey) {
-      log.info(
-        dim(
-          "          The exact linked development host will be resolved after authentication and is redacted from this preview.",
-        ),
+    if (!hasSupportedCustomConfigure) {
+      log.warn(
+        "Custom Clerk configuration: startup execution and runtime key match remain unverified. SDK linkage and native registration can proceed for the explicitly selected Clerk app; verify runtime initialization and the custom key's application manually.",
       );
     }
   }
-  if (macOSNetworkCapabilityPlan?.status === "ready") {
-    if (
-      macOSNetworkCapabilityPlan.missingEntitlementsSettings &&
-      installPlan.status !== "ready" &&
-      !associatedDomainPlan?.missingEntitlementsSettings
-    ) {
-      log.info(`  ${yellow("MODIFY")}  ${projectDocumentDisplayPath}`);
-    }
-    for (const file of macOSNetworkCapabilityPlan.files) {
-      log.info(`  ${yellow(file.operation === "create" ? "CREATE" : "MODIFY")}  ${file.path}`);
-    }
-    for (const action of macOSNetworkCapabilityPlan.actions) log.info(`          ${action}`);
-  } else if (macOSNetworkCapabilityPlan?.status === "satisfied") {
-    log.info(dim("\n  Outgoing network access is already available to the selected macOS target."));
-  }
-  if (appleEntitlementPlan?.status === "ready") {
-    const alreadyPreviewedEntitlements = new Set([
-      ...(associatedDomainNeedsWrite(associatedDomainPlan)
-        ? associatedDomainPlan.files.map((file) => file.path)
-        : []),
-      ...(macOSNetworkCapabilityPlan?.status === "ready"
-        ? macOSNetworkCapabilityPlan.files.map((file) => file.path)
-        : []),
-    ]);
-    if (
-      appleEntitlementPlan.missingEntitlementsSettings &&
-      installPlan.status !== "ready" &&
-      !associatedDomainPlan?.missingEntitlementsSettings &&
-      !macOSNetworkCapabilityPlan?.missingEntitlementsSettings
-    ) {
-      log.info(`  ${yellow("MODIFY")}  ${projectDocumentDisplayPath}`);
-    }
-    for (const file of appleEntitlementPlan.files) {
-      if (!alreadyPreviewedEntitlements.has(file.path)) {
-        log.info(`  ${yellow(file.operation === "create" ? "CREATE" : "MODIFY")}  ${file.path}`);
-      }
-    }
-    for (const action of appleEntitlementPlan.actions) log.info(`          ${action}`);
-  } else if (appleEntitlementPlan?.status === "satisfied") {
-    log.info(dim("\n  The selected target already has the native Sign in with Apple entitlement."));
-  }
-  if (
-    prebuiltAuthAppleEntitlementPlan?.status === "ready" &&
-    prebuiltAuthAppleEntitlementPlan !== appleEntitlementPlan
-  ) {
-    log.info(
-      dim(
-        "\n  Conditional AuthView capability change (only if Apple is enabled for the linked instance):",
-      ),
-    );
-    const alreadyPreviewedPaths = new Set<string>();
-    if (installPlan.status === "ready") {
-      alreadyPreviewedPaths.add(projectDocumentDisplayPath);
-    }
-    if (associatedDomainNeedsWrite(associatedDomainPlan)) {
-      if (associatedDomainPlan.missingEntitlementsSettings) {
-        alreadyPreviewedPaths.add(projectDocumentDisplayPath);
-      }
-      for (const file of associatedDomainPlan.files) alreadyPreviewedPaths.add(file.path);
-    }
-    if (macOSNetworkCapabilityPlan?.status === "ready") {
-      if (macOSNetworkCapabilityPlan.missingEntitlementsSettings) {
-        alreadyPreviewedPaths.add(projectDocumentDisplayPath);
-      }
-      for (const file of macOSNetworkCapabilityPlan.files) {
-        alreadyPreviewedPaths.add(file.path);
-      }
-    }
-    if (prebuiltAuthAppleEntitlementPlan.missingEntitlementsSettings) {
-      const projectFile = projectDocumentDisplayPath;
-      if (!alreadyPreviewedPaths.has(projectFile)) {
-        log.info(`  ${yellow("MODIFY")}  ${projectFile}`);
-      }
-    }
-    for (const file of prebuiltAuthAppleEntitlementPlan.files) {
-      if (!alreadyPreviewedPaths.has(file.path)) {
-        log.info(`  ${yellow(file.operation === "create" ? "CREATE" : "MODIFY")}  ${file.path}`);
-      }
-    }
-    for (const action of prebuiltAuthAppleEntitlementPlan.actions) {
-      log.info(`          If Apple is enabled: ${action}`);
-    }
-  }
-  if (prebuiltAuthActive) {
-    log.info(
-      dim(
-        "\n  After authentication, clerk init will inspect the methods available to AuthView. If Apple is enabled for this instance, it will add or verify the required local Sign in with Apple entitlement without enabling or changing the Clerk Apple connection.",
-      ),
-    );
-  }
-  if (installPlan.status === "ready") {
-    log.info(dim("\n  Package resolution and xcodebuild will not run."));
-  }
-  log.info(
-    dim(
-      nativeAppleRequested
-        ? `\n  After authentication, clerk init will inspect Native API, ${platformLabel} registration, and the native Apple connection before separately previewing additive remote changes.`
-        : `\n  After authentication, clerk init will inspect Native API and ${platformLabel} registration state and separately preview any additive remote changes.`,
-    ),
-  );
-  log.blank();
 
   if (hasLocalWrites && options.agent && !options.yes) {
     throwUsageError(
@@ -764,7 +787,9 @@ export async function applyIOSLocalSetup(
   }
   if (hasLocalWrites && !options.yes) {
     const proceed = await confirm({
-      message: `Apply these local ${platformLabel} changes?`,
+      message: compactNativeOutput()
+        ? "Continue with these local changes?"
+        : `Apply these local ${platformLabel} changes?`,
       default: false,
     });
     if (!proceed) throwUserAbort();
@@ -780,7 +805,7 @@ export async function applyIOSLocalSetup(
     requiresDevelopmentKey:
       directConfigPlan != null || associatedDomainPlan?.requiresPublishableKey === true,
     requiresExplicitApplication:
-      hasSupportedCustomConfigure || directConfigPlan?.changes?.configuration === "verify-existing",
+      hasCustomConfigure || directConfigPlan?.changes?.configuration === "verify-existing",
   };
 }
 
@@ -1316,6 +1341,7 @@ export async function applyIOSPlannedLocalSetup(
       }
     }
 
+    stopNativeProgress();
     if (preparedSDK?.status === "ready") {
       log.success(`${formatProducts(preparedSDK.plan.products)} linked to ${setup.targetName}`);
     }
@@ -1420,6 +1446,7 @@ export async function applyIOSPlannedLocalSetup(
         ERROR_CODE.IOS_LOCAL_APPLY_FAILED,
       );
     }
+    stopNativeProgress();
     if (preparedSDK?.status === "ready") {
       log.success(`${formatProducts(preparedSDK.plan.products)} linked to ${setup.targetName}`);
     }

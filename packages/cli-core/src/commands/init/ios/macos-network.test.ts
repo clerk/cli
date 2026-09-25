@@ -113,6 +113,160 @@ afterEach(async () => {
   );
 });
 
+for (const format of ["pbx", "json"] as const) {
+  async function networkFixture() {
+    const root = await mkdtemp(join(tmpdir(), "clerk-network-revalidation-"));
+    temporaryDirectories.push(root);
+    if (format === "json") await createIOSJSONFixture(root);
+    else
+      await createIOSFixture(root, {
+        platform: "macos",
+        macOSAppleEntitlement: false,
+        secondTarget: true,
+      });
+    if (format === "pbx") {
+      const path = pbxprojPath(root);
+      const project = parsePbxProject(await readFile(path, "utf8"));
+      const objects = (project as unknown as { objects: PbxObjects }).objects;
+      // The sibling is iOS; do not let it inherit the primary macOS SDKROOT.
+      for (const id of [IOS_FIXTURE_IDS.secondDebug, IOS_FIXTURE_IDS.secondRelease]) {
+        (objects[id]!.buildSettings as Record<string, unknown>).SDKROOT = "iphoneos";
+      }
+      await Bun.write(path, buildPbxProject(project));
+    }
+    const update = async (key: string, value: string) => {
+      if (format === "pbx") {
+        await updateBuildSettings(root, (settings) => {
+          settings[key] = value;
+        });
+      } else {
+        const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+        await Bun.write(
+          path,
+          applyXCProjValue(
+            await Bun.file(path).text(),
+            ["targets", 0, "build-settings", key],
+            value,
+          ),
+        );
+      }
+    };
+    for (const [key, value] of Object.entries({
+      SDKROOT: "macosx",
+      SUPPORTED_PLATFORMS: "macosx",
+      MACOSX_DEPLOYMENT_TARGET: "14.0",
+      ENABLE_APP_SANDBOX: "YES",
+    })) {
+      await update(key, value);
+    }
+    await Bun.write(
+      entitlementsPath(root),
+      '<?xml version="1.0"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/></dict></plist>',
+    );
+    const plan = await planMacOSNetworkCapability({
+      ...options(root),
+      targetId: format === "json" ? "C1E000000000000000000001" : IOS_FIXTURE_IDS.appTarget,
+    });
+    expect(plan.status, JSON.stringify(plan.blockers)).toBe("ready");
+    return { root, plan, update };
+  }
+
+  test(`${format} network preparation rereads settings after planning`, async () => {
+    const { root, plan, update } = await networkFixture();
+    await update("ENABLE_OUTGOING_NETWORK_CONNECTIONS", "NO");
+    const before = await treeDigest(root);
+    const result = await applyMacOSNetworkCapability(plan);
+    expect(result.status).toBe("blocked");
+    expect(result.plan.blockers).toContainEqual(
+      expect.objectContaining({ code: "conflicting-network-setting" }),
+    );
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test(`${format} network preparation rereads generator markers after planning`, async () => {
+    const { root, plan } = await networkFixture();
+    await Bun.write(join(root, "Project.swift"), "import ProjectDescription\n");
+    const before = await treeDigest(root);
+    const result = await applyMacOSNetworkCapability(plan);
+    expect(result.status).toBe("blocked");
+    expect(result.plan.blockers).toContainEqual(
+      expect.objectContaining({
+        code: "unsupported-entitlements",
+        message: expect.stringContaining("Tuist"),
+      }),
+    );
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test(`${format} network preparation preserves a newer entitlement edit`, async () => {
+    const { root, plan } = await networkFixture();
+    const path = entitlementsPath(root);
+    await Bun.write(
+      path,
+      (await Bun.file(path).text()).replace("<dict>", "<dict><!-- new edit -->"),
+    );
+    const before = await treeDigest(root);
+    expect((await applyMacOSNetworkCapability(plan)).status).toBe("stale");
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test(`${format} network preparation rechecks newly shared entitlement ownership`, async () => {
+    const { root, plan } = await networkFixture();
+    if (format === "pbx") {
+      const path = pbxprojPath(root);
+      const project = parsePbxProject(await readFile(path, "utf8"));
+      const objects = (project as unknown as { objects: PbxObjects }).objects;
+      for (const id of [IOS_FIXTURE_IDS.secondDebug, IOS_FIXTURE_IDS.secondRelease]) {
+        (objects[id]!.buildSettings as Record<string, unknown>).CODE_SIGN_ENTITLEMENTS =
+          "MyApp/MyApp.entitlements";
+      }
+      await Bun.write(path, buildPbxProject(project));
+    } else {
+      const path = join(root, "MyApp.xcodeproj", "project.xcproj");
+      await Bun.write(
+        path,
+        applyXCProjValue(await Bun.file(path).text(), ["targets", 1], {
+          name: "OtherApp",
+          id: "C1E000000000000000000099",
+          "product-type": "application",
+          "build-phases": ["compile-sources", "frameworks"],
+          "build-settings": {
+            SDKROOT: "macosx",
+            SUPPORTED_PLATFORMS: "macosx",
+            MACOSX_DEPLOYMENT_TARGET: "14.0",
+            PRODUCT_BUNDLE_IDENTIFIER: "com.example.OtherApp",
+            CODE_SIGN_ENTITLEMENTS: "MyApp/MyApp.entitlements",
+          },
+        }),
+      );
+    }
+    const before = await treeDigest(root);
+    const result = await applyMacOSNetworkCapability(plan);
+    expect(result.status).toBe("blocked");
+    expect(result.plan.blockers).toContainEqual(
+      expect.objectContaining({
+        code: "unsafe-entitlements",
+        message: expect.stringContaining("shared"),
+      }),
+    );
+    expect(await treeDigest(root)).toEqual(before);
+  });
+
+  test(`${format} network postcondition rereads settings and rolls back`, async () => {
+    const { root, plan, update } = await networkFixture();
+    const prepared = await prepareMacOSNetworkCapabilityMutation(plan);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") throw new Error("Expected network mutation");
+    await update("ENABLE_OUTGOING_NETWORK_CONNECTIONS", "NO");
+    const before = await treeDigest(root);
+    const result = await applyIOSFileTransaction(prepared.mutations, [
+      () => validatePreparedMacOSNetworkCapability(prepared),
+    ]);
+    expect(result.status).toBe("rolled-back");
+    expect(await treeDigest(root)).toEqual(before);
+  });
+}
+
 describe("macOS outgoing network capability", () => {
   test("does nothing for a provably unsandboxed macOS app", async () => {
     const root = await temporaryRoot();

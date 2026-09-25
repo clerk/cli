@@ -17,7 +17,11 @@ import {
   type InstanceConfigSchema,
 } from "../../../lib/plapi.ts";
 import { confirm } from "../../../lib/prompts.ts";
-import { withSpinner } from "../../../lib/spinner.ts";
+import {
+  withNativeSpinner as withSpinner,
+  compactNativeOutput,
+  stopNativeProgress,
+} from "./presentation.ts";
 import type { IOSNativePlatform } from "./types.ts";
 
 const APPLE_CONNECTION_KEY = "connection_oauth_apple";
@@ -186,7 +190,9 @@ const defaultPrompts: IOSNativeApplePrompts = {
     }),
   confirmChanges: async () =>
     confirm({
-      message: "Apply this remote Clerk Sign in with Apple change?",
+      message: compactNativeOutput()
+        ? "Enable Sign in with Apple in Clerk?"
+        : "Apply this remote Clerk Sign in with Apple change?",
       default: false,
     }),
 };
@@ -776,6 +782,7 @@ export async function prepareIOSNativeAppleConnection(
   if (options.requested === false || (options.requested == null && options.agent)) {
     return skipped("not-requested");
   }
+  if (options.requested == null) stopNativeProgress();
   if (
     options.requested == null &&
     !(await prompts.enableNativeApple(options.bundleIdentifier.trim()))
@@ -784,6 +791,7 @@ export async function prepareIOSNativeAppleConnection(
   }
 
   const plan = await auditIOSNativeAppleConnection(options, api);
+  stopNativeProgress();
   if (plan.status === "blocked") {
     throw iosAppleError(
       `Native Sign in with Apple could not be enabled safely. No remote Apple connection changes were made:\n${formatBlockers(plan)}`,
@@ -795,14 +803,20 @@ export async function prepareIOSNativeAppleConnection(
     return plan;
   }
 
-  log.info("\nclerk init will make the following remote Clerk change:\n");
-  for (const action of plan.actions) log.info(`  ${yellow("REMOTE")}  ${action}`);
-  log.info(
-    dim(
-      "\n  This native-only setup will not request, replace, or print an Apple Services ID, Team ID, Key ID, or private key.",
-    ),
-  );
-  log.blank();
+  if (compactNativeOutput()) {
+    log.info(`\nEnable native Sign in with Apple for ${plan.bundleIdentifier} in Clerk.`);
+    log.info(dim("Existing web sign-in settings will be preserved."));
+    log.blank();
+  } else {
+    log.info("\nclerk init will make the following remote Clerk change:\n");
+    for (const action of plan.actions) log.info(`  ${yellow("REMOTE")}  ${action}`);
+    log.info(
+      dim(
+        "\n  This native-only setup will not request, replace, or print an Apple Services ID, Team ID, Key ID, or private key.",
+      ),
+    );
+    log.blank();
+  }
 
   if (options.agent && !options.yes) {
     throwUsageError(
@@ -936,5 +950,6 @@ export async function applyIOSNativeAppleConnection(
       ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
     );
   }
+  stopNativeProgress();
   log.success("Native Sign in with Apple enabled in Clerk");
 }

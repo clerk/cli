@@ -25,6 +25,7 @@ import {
   inspectIOSPlatformViews,
   iosPlatformViewsHaveAppleEntitlementIntent,
   iosPlatformViewsHaveNativeAppleIntent,
+  type IOSPlatformNativeIdentity,
   type IOSPlatformViewsSnapshot,
 } from "../init/ios/platform-views.ts";
 import { hasSupportedIOSCustomConfigure } from "../init/ios/products.ts";
@@ -471,8 +472,12 @@ async function remoteResults(
   inspection: IOSProjectInspectionResult,
   dependencies: IOSDoctorDependencies,
   platformViews?: IOSPlatformViewsSnapshot,
+  registrationIdentity?: IOSPlatformNativeIdentity,
 ): Promise<CheckResult[]> {
-  const readiness = buildIOSNativeReadinessAudit(inspection, { platformViews });
+  const registrationOnly = registrationIdentity != null;
+  const readiness = buildIOSNativeReadinessAudit(inspection, {
+    platformViews: platformViews ?? registrationIdentity,
+  });
   const target = selectedTarget(inspection);
   const platform = target?.platform ?? (inspection.platform === "macos" ? "macos" : "ios");
   const nativeApplicationName = `${platformLabel(platform)}: Native Application`;
@@ -499,7 +504,7 @@ async function remoteResults(
 
   const profile = await ctx.getProfile();
   if (!profile) {
-    if (target) {
+    if (target && !registrationOnly) {
       const authView = await authViewEnvironmentResult(target, dependencies, {
         root: inspection.root,
         configureStatus: configureStep?.status,
@@ -537,9 +542,9 @@ async function remoteResults(
   const instanceId = profile.profile.instances.development;
   try {
     const [application, remotePlan] = await Promise.all([
-      dependencies.fetchApplication(applicationId, {
-        includeSecretKeys: false,
-      }),
+      registrationOnly
+        ? undefined
+        : dependencies.fetchApplication(applicationId, { includeSecretKeys: false }),
       auditIOSNativeRemoteSetup(
         { applicationId, instanceId, target: readiness.target },
         {
@@ -548,12 +553,13 @@ async function remoteResults(
         },
       ),
     ]);
-    const customApplication = customSource
-      ? linkedCustomApplicationResult(application, instanceId, platform)
-      : undefined;
+    const customApplication =
+      customSource && application
+        ? linkedCustomApplicationResult(application, instanceId, platform)
+        : undefined;
     const linkedResult =
       customApplication?.result ??
-      (configureStep?.status === "satisfied"
+      (application && configureStep?.status === "satisfied"
         ? linkedDevelopmentKeyResult(inspection, application, instanceId)
         : undefined);
     const localPublishableKey = inspection.localPublishableKey;
@@ -562,7 +568,7 @@ async function remoteResults(
       (!customSource && linkedResult?.status === "pass" && localPublishableKey.state === "valid"
         ? localPublishableKey.frontendApiHost
         : undefined);
-    if (target) {
+    if (target && !registrationOnly) {
       const authView = await authViewEnvironmentResult(target, dependencies, {
         root: inspection.root,
         configureStatus: configureStep?.status,
@@ -603,9 +609,15 @@ async function remoteResults(
             ? `Native API or ${platformLabel(platform)} registration: setup required`
             : `Native API or ${platformLabel(platform)} registration: blocked`,
         ...(detail ? { detail } : {}),
-        remedy: REMOTE_REMEDY,
+        remedy: registrationOnly
+          ? "Resolve the reported source-discovery issue, then run `clerk init --target <target>`; native registration can also be completed in the Clerk Dashboard."
+          : REMOTE_REMEDY,
       });
     }
+
+    // Source discovery is incomplete: registration does not establish runtime
+    // key matching, AuthView compatibility, or Sign in with Apple readiness.
+    if (registrationOnly) return results;
 
     const bundleIdentifier = readiness.target.bundleIdentifier;
     const hasAppleEntitlement = platformViews
@@ -824,6 +836,17 @@ export async function runIOSDoctorChecks(
     platformCompatibilityBlockers,
   );
   if (platformViewsAudit?.status === "blocked") {
+    if (platformViewsAudit.nativeIdentity) {
+      results.push(
+        ...(await remoteResults(
+          ctx,
+          inspection,
+          dependencies,
+          undefined,
+          platformViewsAudit.nativeIdentity,
+        )),
+      );
+    }
     return { inspection, results };
   }
   if (target && !target.platformEvidenceComplete) {
