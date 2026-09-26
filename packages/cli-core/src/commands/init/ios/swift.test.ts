@@ -517,6 +517,36 @@ Clerk.configure(publishableKey: key)`,
     expect(JSON.stringify(inspection)).not.toContain("must-not-leak");
   });
 
+  test("rejects EnvironmentValues overloads as Clerk environment injections", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-environment-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "App.swift");
+
+    for (const keyPath of ["\\.self", ".self"]) {
+      await Bun.write(
+        path,
+        `import ClerkKit
+         import SwiftUI
+         @main struct AppMain: App {
+           var body: some Scene {
+             WindowGroup {
+               ContentView().environment(${keyPath}, Clerk.shared)
+             }
+           }
+         }`,
+      );
+
+      const inspection = await inspectSwiftSources([
+        { absolutePath: path, relativePath: "App.swift" },
+      ]);
+
+      expect(inspection.appRootEvidence).toEqual([{ path: "App.swift" }]);
+      expect(inspection.environmentInjections).toEqual([]);
+      expect(inspection.rootEnvironmentInjections).toEqual([]);
+      expect(inspection.status).toBe("partial");
+    }
+  });
+
   test("retains only decoded metadata for a valid inline publishable key", async () => {
     const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-"));
     temporaryDirectories.push(root);
@@ -722,6 +752,207 @@ Clerk.configure(publishableKey: key)`,
     ]);
 
     expect(inspection.openURLHandlers).toEqual([{ path: "ClerkCallback.swift" }]);
+  });
+
+  test("distinguishes broad Clerk modifiers from the proven shipping SwiftUI root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-root-"));
+    temporaryDirectories.push(root);
+    const appPath = join(root, "App.swift");
+    const helperPath = join(root, "UnusedHelper.swift");
+    await Bun.write(
+      appPath,
+      `import ClerkKit
+       import SwiftUI
+       @main struct AppMain: App {
+         var body: some Scene {
+           WindowGroup { ContentView() }
+         }
+       }`,
+    );
+    await Bun.write(
+      helperPath,
+      `import ClerkKit
+       import SwiftUI
+       struct UnusedHelper: View {
+         var body: some View {
+           Text("Unused")
+             .environment(Clerk.shared)
+             .onOpenURL { url in Task { try await Clerk.shared.handle(url) } }
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: appPath, relativePath: "App.swift" },
+      { absolutePath: helperPath, relativePath: "UnusedHelper.swift" },
+    ]);
+
+    expect(inspection.appRootEvidence).toEqual([{ path: "App.swift" }]);
+    expect(inspection.environmentInjections).toEqual([{ path: "UnusedHelper.swift" }]);
+    expect(inspection.rootEnvironmentInjections).toEqual([]);
+    expect(inspection.openURLHandlers).toEqual([{ path: "UnusedHelper.swift" }]);
+    expect(inspection.status).toBe("partial");
+  });
+
+  test("proves Clerk environment injection only on the unique WindowGroup root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-root-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "App.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       import SwiftUI
+       @main struct AppMain: App {
+         init() { Clerk.configure(publishableKey: "pk_test_redacted") }
+         var body: some Scene {
+           WindowGroup {
+             ContentView()
+               .environment(Clerk.shared)
+               .onOpenURL { url in Task { try await Clerk.shared.handle(url) } }
+           }
+         }
+       }
+       func beginMagicLink(_ signIn: SignIn) async throws {
+         try await signIn.sendEmailLink()
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "App.swift" },
+    ]);
+
+    expect(inspection.appRootEvidence).toEqual([{ path: "App.swift" }]);
+    expect(inspection.rootEnvironmentInjections).toEqual([{ path: "App.swift" }]);
+    expect(inspection.authFlowReferences).toEqual([{ path: "App.swift" }]);
+    expect(inspection.openURLHandlers).toEqual([{ path: "App.swift" }]);
+    expect(inspection.status).toBe("complete");
+  });
+
+  test("proves the WindowGroup root through a macOS scene modifier", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-macos-swift-root-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "App.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       import SwiftUI
+       @main struct AppMain: App {
+         var body: some Scene {
+           WindowGroup {
+             ContentView()
+               .environment(Clerk.shared)
+           }
+           .defaultSize(width: 1100, height: 800)
+           .windowResizability(.contentSize)
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "App.swift" },
+    ]);
+
+    expect(inspection.appRootEvidence).toEqual([{ path: "App.swift" }]);
+    expect(inspection.rootEnvironmentInjections).toEqual([{ path: "App.swift" }]);
+  });
+
+  test("does not prove a root when selected-target source evidence is incomplete", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-root-incomplete-"));
+    temporaryDirectories.push(root);
+    const appPath = join(root, "App.swift");
+    await Bun.write(
+      appPath,
+      `import ClerkKit
+       import SwiftUI
+       @main struct AppMain: App {
+         var body: some Scene {
+           WindowGroup {
+             ContentView()
+               .environment(Clerk.shared)
+               .onOpenURL { url in Task { try await Clerk.shared.handle(url) } }
+           }
+         }
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: appPath, relativePath: "App.swift" },
+      { absolutePath: join(root, "Missing.swift"), relativePath: "Missing.swift" },
+    ]);
+
+    expect(inspection.evidenceComplete).toBe(false);
+    expect(inspection.appRootEvidence).toEqual([]);
+    expect(inspection.rootEnvironmentInjections).toEqual([]);
+  });
+
+  test("recognizes the Auth email-link convenience API as an authentication flow", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-magic-link-"));
+    temporaryDirectories.push(root);
+    const path = join(root, "MagicLink.swift");
+    await Bun.write(
+      path,
+      `import ClerkKit
+       func beginMagicLink() async throws {
+         try await Clerk.shared.auth.signInWithEmailLink(emailAddress: "person@example.com")
+       }`,
+    );
+
+    const inspection = await inspectSwiftSources([
+      { absolutePath: path, relativePath: "MagicLink.swift" },
+    ]);
+
+    expect(inspection.authFlowReferences).toEqual([{ path: "MagicLink.swift" }]);
+  });
+
+  test("does not prove an ambiguous, unsupported, or sanitized-decoy app root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clerk-ios-swift-root-"));
+    temporaryDirectories.push(root);
+    const firstPath = join(root, "First.swift");
+    const secondPath = join(root, "Second.swift");
+    await Bun.write(
+      firstPath,
+      `import ClerkKit
+       import SwiftUI
+       // .environment(Clerk.shared).onOpenURL { try await Clerk.shared.handle(url) }
+       let decoy = #/signIn.sendEmailLink()/#
+       @main struct First: App {
+         var body: some Scene { WindowGroup { ContentView().environment(Clerk.shared) } }
+       }`,
+    );
+    await Bun.write(
+      secondPath,
+      `import ClerkKit
+       import SwiftUI
+       @main struct Second: App {
+         var body: some Scene { WindowGroup { ContentView() } }
+       }`,
+    );
+
+    const ambiguous = await inspectSwiftSources([
+      { absolutePath: firstPath, relativePath: "First.swift" },
+      { absolutePath: secondPath, relativePath: "Second.swift" },
+    ]);
+    expect(ambiguous.status).toBe("ambiguous");
+    expect(ambiguous.appRootEvidence).toEqual([]);
+    expect(ambiguous.rootEnvironmentInjections).toEqual([]);
+
+    await Bun.write(
+      secondPath,
+      `import ClerkKit
+       import SwiftUI
+       @main struct Unsupported: App {
+         var body: some Scene {
+           WindowGroup { ContentView() }
+             .defaultSize(width: 1100, height: 800)
+           Settings { Text("Settings") }
+         }
+       }`,
+    );
+    const unsupported = await inspectSwiftSources([
+      { absolutePath: secondPath, relativePath: "Second.swift" },
+    ]);
+    expect(unsupported.appRootEvidence).toEqual([]);
+    expect(unsupported.rootEnvironmentInjections).toEqual([]);
   });
 
   test("recognizes native Clerk auth calls without matching unrelated sign-in APIs", async () => {
