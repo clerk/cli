@@ -176,7 +176,7 @@ The releaser accepts these flags:
 - `--tag <tag>` -- publish with a specific npm dist-tag (e.g., `canary`, `snapshot`); defaults to `latest`
 - `--version <version>` -- override the version read from `package.json`
 
-All publishes are idempotent -- the script checks the registry before publishing and skips already-published versions, and a publish that npm rejects because the version already exists counts as done. The check reads the per-version document (`registry.npmjs.org/<name>/<version>`), which the registry CDN does not cache, so a version published seconds earlier is visible right away. Before publishing the `clerk` wrapper, the script waits (up to five minutes) for every platform package to be readable. If one platform publish fails, the others still run to completion before the job exits, so a re-run only has to publish what is actually missing.
+All publishes are idempotent -- the script checks the registry before publishing and skips already-published versions, and a publish that npm rejects because the version already exists counts as done. The check reads the per-version document (`registry.npmjs.org/<name>/<version>`), which the registry CDN does not cache, but npm can still take several minutes to serve a new version back. Before publishing the `clerk` wrapper, the script waits up to two minutes for every platform package to be readable; if one is still unreadable after that, it logs a warning and publishes the wrapper anyway, because npm already accepted every platform publish. If one platform publish fails, the others still run to completion before the job exits, so a re-run only has to publish what is actually missing.
 
 #### Environment Variables
 

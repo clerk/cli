@@ -105,12 +105,21 @@ await publishDependenciesBeforePackage(
       waitUntilAvailable: dryRun
         ? undefined
         : async () => {
+            // Best effort. npm accepted the publish, so the version exists; the
+            // registry can take several minutes to serve it back (observed
+            // >5 min on the uncached per-version endpoint). Failing here only
+            // strands the wrapper, which is subject to the same read lag.
             console.log(`Waiting for ${name}@${version} to become available on npm...`);
-            await waitUntilPublished(name, version, {
-              intervalMs: 5_000,
-              timeoutMs: 300_000,
-              isPublished,
-            });
+            try {
+              await waitUntilPublished(name, version, {
+                intervalMs: 5_000,
+                timeoutMs: 120_000,
+                isPublished,
+              });
+            } catch (error) {
+              const reason = error instanceof Error ? error.message : String(error);
+              console.log(`::warning::${reason}; continuing because npm accepted the publish`);
+            }
           },
     };
   }),
