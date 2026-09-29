@@ -473,9 +473,51 @@ and every 10 pages during the user fetch. `withSpinner` hands a no-op to
 anything that is not a TTY, so without this an agent exporting a large tenant
 would see nothing at all until the run finished.
 
+### `clerk migrate undo`
+
+Deletes the users an import run created. The import run is the whole record of
+what to delete: every source ID whose latest line is `created`, by the Clerk ID
+recorded beside it. Nothing is matched by searching the instance, so a user the
+import did not create is never in scope.
+
+```sh
+clerk migrate undo 20260929-141502-a1b2 --dry-run   # preview, delete nothing
+clerk migrate undo 20260929-141502-a1b2             # confirms first
+clerk migrate undo 20260929-141502-a1b2 --yes       # no prompt
+```
+
+| Flag                | Description                                              |
+| ------------------- | -------------------------------------------------------- |
+| `<run-id>`          | The import run to undo                                   |
+| `--dry-run`         | Show the preview and delete nothing                      |
+| `-y, --yes`         | Delete without prompting                                 |
+| `--json`            | Output as JSON. Never prompts, so deleting needs `--yes` |
+| `--runs-dir <path>` | Read runs from somewhere else                            |
+
+Plus the targeting flags: `--secret-key`, `--app` and `--instance`.
+
+It prints the target first, then a preview: how many users will be deleted, and
+how many of them have signed in since the import (from each user's
+`last_sign_in_at`). Nothing is deleted without consent: a yes at the prompt, or
+`--yes`. Without either — an agent, a non-TTY run, or `--json` — it prints the
+preview and exits 2 with the command to run.
+
+It refuses with exit 2, and deletes nothing, when:
+
+- the resolved key addresses a different instance than the run imported into
+  (the error names both)
+- the run is an export or undo run
+- the run has already been undone
+
+Deletes go through the same scheduler and `429` backoff as the import. A user
+already gone from the instance counts as deleted. The undo is a run of its own,
+`kind: "undo"` with `undoes: <id>`. The import is marked `undone` only when
+every user is deleted. A partial undo exits 1, and running `undo` again retries
+the users that failed, in the same undo run.
+
 ### `clerk migrate runs`
 
-Every import and export is a **run**, and the run store is the one place
+Every import, export and undo is a **run**, and the run store is the one place
 `clerk migrate` keeps state. `runs` reads it.
 
 ```sh
@@ -517,7 +559,7 @@ Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 | `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error` or `code` when present |
 | `lock`         | The PID of the process writing the run, while it runs                                                    |
 
-A user's status is `created`, `failed`, `skipped` or `exported`. The last line
+A user's status is `created`, `failed`, `skipped`, `deleted` or `exported`. The last line
 for each `sourceId` wins. A `429` retry, an extra email or phone that did not
 attach, and a validation failure all land in `error`.
 
@@ -935,10 +977,10 @@ those are reachable through has no route for any of these settings, so
 
 ## Artifacts
 
-| Path                                       | Contents                                            |
-| ------------------------------------------ | --------------------------------------------------- |
-| `<runs dir>/<run-id>/`                     | One [run](#what-a-run-holds) per import or export   |
-| `./exports/<platform>-export-<stamp>.json` | The export itself, unless `--output` says otherwise |
+| Path                                       | Contents                                                |
+| ------------------------------------------ | ------------------------------------------------------- |
+| `<runs dir>/<run-id>/`                     | One [run](#what-a-run-holds) per import, export or undo |
+| `./exports/<platform>-export-<stamp>.json` | The export itself, unless `--output` says otherwise     |
 
 `users.ndjson` writes are synchronous appends, so a run interrupted with Ctrl-C
 still leaves a complete record of everything already processed.

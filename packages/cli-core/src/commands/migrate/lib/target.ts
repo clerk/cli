@@ -10,6 +10,7 @@
 
 import { createHash } from "node:crypto";
 import { bapiRequest } from "../../../lib/bapi.ts";
+import { dim } from "../../../lib/color.ts";
 import { resolveBapiSecretKey } from "../../../lib/bapi-command.ts";
 import { resolveAppContext } from "../../../lib/config.ts";
 import { resolveKeylessTarget } from "../../../lib/keyless-target.ts";
@@ -113,4 +114,10 @@ export function describeTarget(target: RunTarget): string {
   const where = [target.env, target.instanceId].filter(Boolean).join(", ");
   const name = target.appLabel ?? (target.platform ? `${target.platform}` : "instance");
   return where ? `${name} (${where})` : name;
+}
+
+/** The header every command that acts on an instance prints first. */
+export function printTarget(target: RunTarget): void {
+  log.info(`Target: ${describeTarget(target)}`);
+  if (target.keySource) log.info(dim(`Key from: ${target.keySource}`));
 }

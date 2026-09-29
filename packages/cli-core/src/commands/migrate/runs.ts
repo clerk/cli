@@ -93,6 +93,18 @@ function errorBreakdown(lines: UserLine[]): { error: string; count: number }[] {
   return [...counts].map(([error, count]) => ({ error, count })).sort((a, b) => b.count - a.count);
 }
 
+/** What to run after reading about this run. */
+export function nextCommands(record: RunRecord, state: RunState): string[] {
+  if (state === "running") return [];
+  if (record.kind === "import" && state !== "undone") {
+    return [`Run \`clerk migrate undo ${record.id}\` to delete the users it created`];
+  }
+  if (record.kind === "undo" && state !== "complete" && record.undoes) {
+    return [`Run \`clerk migrate undo ${record.undoes}\` to retry the users that failed`];
+  }
+  return [];
+}
+
 function listJson(runsDir: string, records: RunRecord[]) {
   return {
     runsDir,
@@ -131,6 +143,7 @@ function showJson(runsDir: string, record: RunRecord) {
   return {
     runsDir,
     run: { ...record, state: runState(runsDir, record) },
+    next: nextCommands(record, runState(runsDir, record)),
     errors: errorBreakdown(lines),
     failed: lines.filter((line) => line.status === "failed"),
     skipped: lines.filter((line) => line.status === "skipped"),
@@ -199,6 +212,7 @@ function printRun(runsDir: string, record: RunRecord): void {
 
   log.blank();
   log.info(dim(`Every outcome: ${usersFile}`));
+  for (const step of nextCommands(record, state)) log.info(`  → ${step}`);
 }
 
 export async function runs(id: string | undefined, options: RunsOptions = {}): Promise<void> {

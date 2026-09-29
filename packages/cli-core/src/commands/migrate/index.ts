@@ -6,10 +6,11 @@ import { registerMigrateExport } from "./export/index.ts";
 import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "./lib/run-store.ts";
 import { run } from "./run.ts";
 import { runs } from "./runs.ts";
+import { undo } from "./undo.ts";
 import { list as transformersList } from "./transformers/list.ts";
 import { transformerKeys } from "./transformers/registry.ts";
 
-const migrate = { run, runs, transformersList };
+const migrate = { run, runs, undo, transformersList };
 
 export function registerMigrate(program: Program): void {
   const migrateCommand = program
@@ -30,6 +31,10 @@ export function registerMigrate(program: Program): void {
         description: "Export users from Supabase, ready to import",
       },
       { command: "clerk migrate runs", description: "List every migration run" },
+      {
+        command: "clerk migrate undo 20260929-141502-a1b2",
+        description: "Delete the users an import created",
+      },
       { command: "clerk migrate transformers list", description: "Show the built-in transformers" },
     ]);
 
@@ -105,6 +110,33 @@ export function registerMigrate(program: Program): void {
     );
 
   registerMigrateExport(migrateCommand);
+
+  // Flat, not under a noun group: this is the one command in the tree that
+  // destroys data in Clerk, and it is worth keeping short and prominent.
+  migrateCommand
+    .command("undo")
+    .description("Delete the users an import run created")
+    .argument("<run-id>", "The import run to undo (see `clerk migrate runs`)")
+    .option("--dry-run", "Show what would be deleted, and delete nothing")
+    .option("-y, --yes", "Delete without prompting")
+    .option("--json", "Output as JSON; never prompts, so pair it with --yes to delete")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
+    .setExamples([
+      {
+        command: "clerk migrate undo 20260929-141502-a1b2 --dry-run",
+        description: "Preview what would be deleted",
+      },
+      {
+        command: "clerk migrate undo 20260929-141502-a1b2 --yes",
+        description: "Delete without prompting",
+      },
+    ])
+    .action(async (runId, _opts, cmd) =>
+      migrate.undo(runId, cmd.optsWithGlobals() as Parameters<typeof migrate.undo>[1]),
+    );
 
   migrateCommand
     .command("runs")

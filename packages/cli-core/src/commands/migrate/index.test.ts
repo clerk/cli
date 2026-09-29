@@ -143,6 +143,20 @@ describe("registerMigrate", () => {
     expect(runs?.options.map((option) => option.long)).toEqual(["--json", "--runs-dir"]);
   });
 
+  test("registers undo with a required run ID and its flags", () => {
+    const undo = findCommand(["migrate", "undo"]);
+    expect(undo?.registeredArguments[0]?.required).toBe(true);
+    expect(undo?.options.map((option) => option.long)).toEqual([
+      "--dry-run",
+      "--yes",
+      "--json",
+      "--secret-key",
+      "--app",
+      "--instance",
+      "--runs-dir",
+    ]);
+  });
+
   test("the logs group is gone: runs replaces it", () => {
     expect(findCommand(["migrate", "logs"])).toBeUndefined();
   });
@@ -152,6 +166,7 @@ describe("registerMigrate", () => {
   test.each([
     [["import"]],
     [["runs"]],
+    [["undo"]],
     [["export"]],
     ...exportPlatformKeys().map((platform) => [["export", platform]]),
   ])("migrate %p accepts --runs-dir", (names) => {

@@ -73,9 +73,11 @@ export const NEXT_STEPS = {
   ],
   MIGRATE_DONE: (runId: string) => [
     `Run \`clerk migrate runs ${runId}\` to see what happened to each user`,
+    `Run \`clerk migrate undo ${runId}\` to delete the users it created`,
   ],
   MIGRATE_DONE_WITH_ERRORS: (runId: string) => [
     `Run \`clerk migrate runs ${runId}\` to see every user that failed and why`,
+    `Run \`clerk migrate undo ${runId}\` to delete the users it created`,
   ],
 } as const;
 
