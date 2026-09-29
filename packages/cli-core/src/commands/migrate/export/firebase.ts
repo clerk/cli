@@ -32,6 +32,7 @@ import { password as passwordPrompt } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
+import { printTarget } from "../lib/target.ts";
 import type { FirebaseHashConfig } from "../types.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
 import { finishExport, startExportRun } from "./shared.ts";
@@ -515,6 +516,7 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
   const resolved = await resolveServiceAccount(options);
 
   await withGutter("Exporting users from Firebase", async () => {
+    if (!options.json) printTarget({ platform: "firebase" });
     // Only Google can say whether a well-formed key is still a valid one, so a
     // revoked or deleted key fails here and is asked for again.
     const { value: token, input: account } = await withInputRetry(

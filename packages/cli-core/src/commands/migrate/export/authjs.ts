@@ -14,6 +14,7 @@
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import { log } from "../../../lib/log.ts";
 import type { UserLine } from "../lib/run-store.ts";
+import { printTarget } from "../lib/target.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 import {
@@ -122,6 +123,7 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
   const dbUrl = await resolveDbUrl(options, AUTHJS_DB);
 
   await withGutter("Exporting users from Auth.js", async () => {
+    if (!options.json) printTarget({ platform: "authjs" });
     const {
       value: { rows, table },
     } = await withInputRetry(

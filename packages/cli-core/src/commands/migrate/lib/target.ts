@@ -68,7 +68,7 @@ async function describeKeySource(
  * same key always addresses the same instance, so it still tells two
  * instances apart, and nothing is sent anywhere.
  */
-async function fetchInstanceIdentity(
+export async function fetchInstanceIdentity(
   secretKey: string,
 ): Promise<{ instanceId: string; env: string }> {
   const fallbackEnv = detectInstanceType(secretKey) === "prod" ? "production" : "development";
@@ -116,8 +116,23 @@ export function describeTarget(target: RunTarget): string {
   return where ? `${name} (${where})` : name;
 }
 
-/** The header every command that acts on an instance prints first. */
+/**
+ * The header every command prints first: which instance it acts on, and where
+ * the key came from. An export names its source platform instead, plus the
+ * Clerk instance when that is what it reads.
+ *
+ * `--json` carries the same facts as `target`, so this is for humans only.
+ */
 export function printTarget(target: RunTarget): void {
-  log.info(`Target: ${describeTarget(target)}`);
+  const heading = target.platform ? "Source" : "Target";
+  const instance = target.instanceId
+    ? `${target.env ?? "unknown"} instance ${target.instanceId}`
+    : undefined;
+  const app = target.appLabel
+    ? `${target.appLabel}${target.appId ? ` (${target.appId})` : ""}`
+    : undefined;
+  const platform = target.platform && target.platform !== "clerk" ? target.platform : undefined;
+  const parts = [platform ?? (target.platform === "clerk" ? "Clerk" : undefined), app, instance];
+  log.info(`${heading}: ${parts.filter(Boolean).join(", ")}`);
   if (target.keySource) log.info(dim(`Key from: ${target.keySource}`));
 }

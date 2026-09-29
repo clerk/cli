@@ -49,6 +49,10 @@ afterEach(() => {
 function stubPages(pages: unknown[][]) {
   let call = 0;
   globalThis.fetch = (async (input: string | URL | Request) => {
+    // The export names the instance it reads before paging through it.
+    if (new URL(input.toString()).pathname === "/v1/instance") {
+      return Response.json({ object: "instance", id: "ins_src", environment_type: "production" });
+    }
     requests.push(input.toString());
     return Response.json(pages[call++] ?? []);
   }) as unknown as typeof fetch;
@@ -267,6 +271,23 @@ describe("exportClerk", () => {
       setMode(originalMode);
     }
     expect(captured.err).toMatch(/clerk migrate import \d{8}-\d{6}-[0-9a-f]{4}/);
+  });
+
+  test("names the instance it reads from first, and records it on the run", async () => {
+    stubPages([[user()], []]);
+
+    await exportClerk({ secretKey: "sk_test_x" });
+
+    expect(Bun.stripANSI(captured.err)).toContain("Source: Clerk, production instance ins_src");
+    expect(
+      JSON.parse(fs.readFileSync(onlyExportFile().replace("export.json", "run.json"), "utf-8")),
+    ).toMatchObject({
+      target: {
+        platform: "clerk",
+        instanceId: "ins_src",
+        keySource: "the instance behind --secret-key",
+      },
+    });
   });
 
   test("--output controls the destination, relative to the working directory", async () => {

@@ -20,7 +20,23 @@ from `clerk link`.
 
 The **instance type is read from the key**: `sk_live_…` is treated as
 production, anything else as development. That choice drives the throughput
-defaults and the hard development-instance cap below.
+defaults and the development-instance user limit below.
+
+**Every command prints its target first.** `import` and `undo` name the
+instance — its environment, its app when the key came from one, and its ID from
+`GET /v1/instance` — and where the key came from: `--secret-key`, `--app`, the
+`CLERK_SECRET_KEY` env var, an accountless app's `.env.local`, or the linked
+profile. An export names its source platform instead, and `export clerk` the
+instance it reads. `runs` names the runs folder. `--json` carries the same
+facts as `target`.
+
+```
+Target: My App (app_2x9k…), production instance ins_2x9k…
+Key from: linked profile
+```
+
+The instance ID is what a run records, so `undo` and re-runs can tell whether
+the key now in use still addresses the same instance.
 
 ## Commands
 

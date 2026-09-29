@@ -18,6 +18,7 @@
 import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
+import { printTarget } from "../lib/target.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 import {
@@ -172,6 +173,7 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
   const dbUrl = await resolveDbUrl(options, BETTERAUTH_DB);
 
   await withGutter("Exporting users from Better Auth", async () => {
+    if (!options.json) printTarget({ platform: "betterauth" });
     const {
       value: { rows, plugins },
     } = await withInputRetry(

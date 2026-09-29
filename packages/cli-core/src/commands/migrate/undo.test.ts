@@ -143,7 +143,7 @@ describe("--dry-run", () => {
 
     await undo(record.id, withDir({ dryRun: true }));
 
-    expect(captured.err).toContain("Target: instance (development, ins_1)");
+    expect(captured.err).toContain("Target: development instance ins_1");
     expect(captured.err).toContain("Will delete 2 users");
     expect(captured.err).toContain("1 of them has signed in since the import");
     expect(deletes()).toHaveLength(0);

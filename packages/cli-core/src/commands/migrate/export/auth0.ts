@@ -22,6 +22,7 @@ import { password as passwordPrompt, text } from "../../../lib/prompts.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import type { UserLine } from "../lib/run-store.ts";
+import { printTarget } from "../lib/target.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 
@@ -333,6 +334,7 @@ export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
   const resolved = await resolveAuth0Credentials(options);
 
   await withGutter("Exporting users from Auth0", async () => {
+    if (!options.json) printTarget({ platform: "auth0" });
     // Only Auth0 can say whether these three go together, and whether the
     // application carries the `read:users` scope, so a rejected set is asked
     // for again here.

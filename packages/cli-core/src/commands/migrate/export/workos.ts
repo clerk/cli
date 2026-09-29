@@ -24,6 +24,7 @@ import { confirm, password as passwordPrompt } from "../../../lib/prompts.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import type { UserLine } from "../lib/run-store.ts";
+import { printTarget } from "../lib/target.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
 import { createApiScheduler } from "../lib/scheduler.ts";
@@ -440,6 +441,7 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
   const resolved = await resolveWorkOsApiKey(options);
 
   await withGutter("Exporting users from WorkOS", async () => {
+    if (!options.json) printTarget({ platform: "workos" });
     // Only WorkOS can say whether the key is live, for the right environment,
     // and not revoked — so a rejected key is asked for again here. The page it
     // fetches is kept and reused, so proving the key costs no extra request.

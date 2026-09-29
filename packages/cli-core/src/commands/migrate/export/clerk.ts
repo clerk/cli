@@ -19,6 +19,7 @@ import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { retryOn429 } from "../lib/retry.ts";
+import { fetchInstanceIdentity, printTarget } from "../lib/target.ts";
 import { resolveClerkSource } from "./clerk-source.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 
@@ -240,13 +241,20 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
   });
 
   await withGutter("Exporting users from Clerk", async () => {
-    log.info(`Exporting from ${source.target ?? "the resolved instance"}.`);
+    const identity = await fetchInstanceIdentity(source.secretKey);
+    const target = {
+      platform: "clerk",
+      env: identity.env,
+      instanceId: identity.instanceId,
+      ...(source.target ? { keySource: source.target } : {}),
+    };
+    if (!options.json) printTarget(target);
 
     const users = await withSpinner("Fetching users from Clerk...", async (spinner) =>
       fetchAllClerkUsers({ secretKey: source.secretKey, spinner }),
     );
 
-    const run = await startExportRun(options, { platform: "clerk", appLabel: source.target });
+    const run = await startExportRun(options, target);
     const { users: exported, coverage } = buildClerkExport(users, run.append);
     finishExport({ run, options, users: exported, coverage });
 

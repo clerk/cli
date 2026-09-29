@@ -199,7 +199,7 @@ describe("run", () => {
 
   test("prints the target first", async () => {
     await run(baseOptions);
-    expect(captured.err).toContain("Target: instance (development, ins_1)");
+    expect(captured.err).toContain("Target: development instance ins_1");
     expect(captured.err.indexOf("Target:")).toBeLessThan(captured.err.indexOf("Checks"));
   });
 

@@ -297,7 +297,7 @@ describe("bapi-command", () => {
     expect(fetchApplicationSpy).not.toHaveBeenCalled();
   });
 
-  test("describes the resolved app and instance target", async () => {
+  test("describes the app and instance --app resolves, and says so", async () => {
     resolveAppContextSpy.mockResolvedValue({
       appId: "app_123",
       appLabel: "My App",
@@ -306,7 +306,7 @@ describe("bapi-command", () => {
     });
 
     await expect(describeBapiTarget({ app: "app_123", instance: "prod" })).resolves.toBe(
-      "My App (production)",
+      "My App (production) via --app",
     );
 
     expect(resolveAppContextSpy).toHaveBeenCalledWith({
@@ -315,14 +315,41 @@ describe("bapi-command", () => {
     });
   });
 
-  test("returns no target description when only a secret key is available", async () => {
-    resolveAppContextSpy.mockRejectedValue(
-      new CliError("linked profile missing", {
-        code: ERROR_CODE.NOT_LINKED,
-      }),
-    );
+  test("names the linked profile as the key's source", async () => {
+    resolveAppContextSpy.mockResolvedValue({
+      appId: "app_123",
+      appLabel: "My App",
+      instanceId: "ins_dev",
+      instanceLabel: "development",
+    });
 
-    await expect(describeBapiTarget({ secretKey: "sk_test_123" })).resolves.toBeUndefined();
+    await expect(describeBapiTarget({})).resolves.toBe(
+      "My App (development) via the linked profile",
+    );
+  });
+
+  test("names --secret-key rather than describing nothing", async () => {
+    await expect(describeBapiTarget({ secretKey: "sk_test_123" })).resolves.toBe(
+      "the instance behind --secret-key",
+    );
+    expect(resolveAppContextSpy).not.toHaveBeenCalled();
+  });
+
+  // resolveBapiSecretKey takes an exported key before the linked profile, so
+  // naming the linked app here would point at an instance the key may not be for.
+  test("an exported CLERK_SECRET_KEY wins over the linked profile, matching resolveBapiSecretKey", async () => {
+    process.env.CLERK_SECRET_KEY = "sk_test_env";
+    resolveAppContextSpy.mockResolvedValue({
+      appId: "app_123",
+      appLabel: "Linked App",
+      instanceId: "ins_dev",
+      instanceLabel: "development",
+    });
+
+    await expect(describeBapiTarget({})).resolves.toBe(
+      "the instance behind the CLERK_SECRET_KEY env var",
+    );
+    expect(resolveAppContextSpy).not.toHaveBeenCalled();
   });
 
   test("describes an unclaimed keyless target without querying the account", async () => {
@@ -338,9 +365,19 @@ describe("bapi-command", () => {
   test("an explicit --secret-key wins over a keyless target on disk, matching resolveBapiSecretKey", async () => {
     resolveKeylessTargetSpy.mockResolvedValue({ secretKey: "sk_test_disk", source: ".env.local" });
 
-    await expect(describeBapiTarget({ secretKey: "sk_test_explicit" })).resolves.toBeUndefined();
+    await expect(describeBapiTarget({ secretKey: "sk_test_explicit" })).resolves.toBe(
+      "the instance behind --secret-key",
+    );
 
     expect(resolveKeylessTargetSpy).not.toHaveBeenCalled();
+  });
+
+  test("describes nothing when nothing is linked, leaving the error to the key lookup", async () => {
+    resolveAppContextSpy.mockRejectedValue(
+      new CliError("linked profile missing", { code: ERROR_CODE.NOT_LINKED }),
+    );
+
+    await expect(describeBapiTarget({})).resolves.toBeUndefined();
   });
 
   test("throws instance-not-found when the resolved instance is missing from the application", async () => {
