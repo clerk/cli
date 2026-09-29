@@ -1,10 +1,10 @@
 /**
- * Loading a user-authored transformer at runtime.
+ * Loading a user-authored source at runtime.
  *
  * In the standalone migration-tool, supporting a new platform meant adding a
  * file to `src/transformers/` and one line to the registry — the user had the
  * source tree. A compiled binary has neither a source tree to edit nor a way
- * for an end user to rebuild it, so `--transformer-file` restores that
+ * for an end user to rebuild it, so `--source <path>` restores that
  * extensibility by importing a file from the user's own project instead.
  *
  * **Verified before this was built on:** a `bun build --compile` executable can
@@ -21,13 +21,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
-import type { TransformerRegistryEntry } from "../types.ts";
-import { transformers } from "./registry.ts";
+import type { CarryLevel, SourceEntry } from "../types.ts";
 
 const DOCS_URL = "https://clerk.com/docs/guides/development/migrating/overview";
 
+const LEVELS: readonly CarryLevel[] = ["yes", "no", "partial"];
+
 function invalid(problem: string, file: string): never {
-  throw new CliError(`${file} is not a valid transformer: ${problem}`, {
+  throw new CliError(`${file} is not a valid source: ${problem}`, {
     code: ERROR_CODE.USAGE_ERROR,
     docsUrl: DOCS_URL,
   });
@@ -40,8 +41,13 @@ function invalid(problem: string, file: string): never {
  * author is writing this file by hand against a shape they cannot see.
  *
  * @param file - Path as the user typed it, for the error message.
+ * @param reservedKeys - The built-in keys, which a custom source may not reuse.
  */
-export function validateTransformer(value: unknown, file: string): TransformerRegistryEntry {
+export function validateSource(
+  value: unknown,
+  file: string,
+  reservedKeys: readonly string[] = [],
+): SourceEntry {
   if (value === null || typeof value !== "object") {
     invalid(`the default export is ${value === null ? "null" : typeof value}, not an object`, file);
   }
@@ -94,42 +100,64 @@ export function validateTransformer(value: unknown, file: string): TransformerRe
     invalid("`defaults` must be an object when present", file);
   }
 
+  // What a source brings across is the first thing `sources` shows, and the
+  // author is the only one who knows it.
+  const carries = entry.carries as Record<string, unknown> | undefined;
+  if (!carries || typeof carries !== "object" || Array.isArray(carries)) {
+    invalid(
+      "`carries` must say what the source brings across: { passwords, mfa, metadata }, each { level, note }",
+      file,
+    );
+  }
+  for (const kind of ["passwords", "mfa", "metadata"] as const) {
+    const carry = carries[kind] as { level?: unknown; note?: unknown } | undefined;
+    if (!carry || !LEVELS.includes(carry.level as CarryLevel) || typeof carry.note !== "string") {
+      invalid(
+        `\`carries.${kind}\` must be { level: "yes" | "no" | "partial", note: string }`,
+        file,
+      );
+    }
+  }
+
   for (const hook of ["preTransform", "postTransform"] as const) {
     if (entry[hook] !== undefined && typeof entry[hook] !== "function") {
       invalid(`\`${hook}\` must be a function when present`, file);
     }
   }
 
-  if (transformers.some((builtIn) => builtIn.key === entry.key)) {
+  if (reservedKeys.includes(entry.key as string)) {
     invalid(
-      `\`key\` is "${String(entry.key)}", which is already a built-in transformer. Choose another key`,
+      `\`key\` is "${String(entry.key)}", which is already a built-in source. Choose another key`,
       file,
     );
   }
 
   return {
-    ...(entry as unknown as TransformerRegistryEntry),
-    description: (entry.description as string | undefined) ?? "Custom transformer",
+    ...(entry as unknown as SourceEntry),
+    description: (entry.description as string | undefined) ?? "Custom source",
   };
 }
 
 /**
- * Imports and validates a user-authored transformer.
+ * Imports and validates a user-authored source.
  *
  * @throws CliError when the path is missing, the module fails to load, or the
  *   exported value does not match the registry entry shape.
  */
-export async function loadCustomTransformer(file: string): Promise<TransformerRegistryEntry> {
+export async function loadCustomSource(
+  file: string,
+  reservedKeys: readonly string[] = [],
+): Promise<SourceEntry> {
   const resolved = path.resolve(process.cwd(), file);
 
   if (!fs.existsSync(resolved)) {
-    throw new CliError(`No transformer file at ${resolved}.`, {
+    throw new CliError(`No source file at ${resolved}.`, {
       code: ERROR_CODE.FILE_NOT_FOUND,
       docsUrl: DOCS_URL,
     });
   }
   if (fs.statSync(resolved).isDirectory()) {
-    throw new CliError(`${resolved} is a directory, not a transformer file.`, {
+    throw new CliError(`${resolved} is a directory, not a source file.`, {
       code: ERROR_CODE.USAGE_ERROR,
     });
   }
@@ -160,5 +188,5 @@ export async function loadCustomTransformer(file: string): Promise<TransformerRe
     });
   }
 
-  return validateTransformer(module.default, file);
+  return validateSource(module.default, file, reservedKeys);
 }

@@ -1,4 +1,4 @@
-import type { TransformerRegistryEntry } from "../types.ts";
+import type { SourceEntry } from "../types.ts";
 import { routeByVerification } from "./shared.ts";
 
 /**
@@ -17,11 +17,19 @@ import { routeByVerification } from "./shared.ts";
  * WorkOS has no phone number and no username, which is why the map is short:
  * those fields have nothing to come from.
  */
-const workosTransformer = {
+const workosSource = {
   key: "workos",
   label: "WorkOS",
   description:
     "Works with WorkOS's User Management API. WorkOS returns no password hashes, so imported users sign in by reset or SSO.",
+  carries: {
+    passwords: {
+      level: "no",
+      note: "WorkOS never returns password hashes. Users reset their password, or sign in with SSO.",
+    },
+    mfa: { level: "no", note: "WorkOS returns TOTP secrets at enrolment only." },
+    metadata: { level: "yes", note: "`metadata` → public metadata." },
+  },
   transformer: {
     id: "userId",
     email: "email",
@@ -34,6 +42,6 @@ const workosTransformer = {
   postTransform: (user) => {
     routeByVerification(user, "email", "emailVerified", "boolean");
   },
-} satisfies TransformerRegistryEntry;
+} satisfies SourceEntry;
 
-export default workosTransformer;
+export default workosSource;

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
-import type { PreTransformResult, TransformerRegistryEntry } from "../types.ts";
+import type { PreTransformResult, SourceEntry } from "../types.ts";
 import { routeByVerification, splitName, toIsoDate } from "./shared.ts";
 
 /**
@@ -30,7 +30,7 @@ const FIREBASE_CSV_HEADERS =
  *
  * See https://clerk.com/docs/guides/development/migrating/firebase
  */
-const firebaseTransformer = {
+const firebaseSource = {
   key: "firebase",
   label: "Firebase",
   description:
@@ -65,6 +65,14 @@ const firebaseTransformer = {
     return { filePath };
   },
 
+  carries: {
+    passwords: {
+      level: "yes",
+      note: "scrypt hashes come across with the project's hash parameters, read by the export or passed as `--firebase-*`.",
+    },
+    mfa: { level: "no", note: "Firebase exports no MFA enrolments. Users enrol again in Clerk." },
+    metadata: { level: "no", note: "Custom claims are not exported." },
+  },
   transformer: {
     localId: "userId",
     email: "email",
@@ -117,6 +125,6 @@ const firebaseTransformer = {
   defaults: {
     passwordHasher: "scrypt_firebase" as const,
   },
-} satisfies TransformerRegistryEntry;
+} satisfies SourceEntry;
 
-export default firebaseTransformer;
+export default firebaseSource;

@@ -220,6 +220,12 @@ describe("generateCompletions", () => {
       expect(names).toContain("DELETE");
     });
 
+    test("completes --source with the built-in migrate sources", () => {
+      const names = completionNames("migrate", "import", "--source", "");
+      expect(names).toContain("clerk");
+      expect(names).toContain("betterauth");
+    });
+
     test("returns empty for options with unknown values (file paths)", () => {
       const result = complete("config", "pull", "--output", "");
       expect(result.completions).toEqual([]);
@@ -270,6 +276,12 @@ describe("generateCompletions", () => {
       expect(names).toContain("users");
       expect(names).toContain("api-keys");
       expect(names).toContain("settings");
+    });
+
+    test("migrate sources: suggests the built-in sources", () => {
+      const names = completionNames("migrate", "sources", "");
+      expect(names).toContain("supabase");
+      expect(names).toContain("workos");
     });
 
     test("open dashboard: filters subpaths by prefix", () => {

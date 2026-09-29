@@ -14,11 +14,11 @@ import { log } from "../../lib/log.ts";
 import { text } from "../../lib/prompts.ts";
 import { resolveFirebaseHashConfig, type FirebaseHashFlags } from "./lib/firebase-hash.ts";
 import { fileExists, getFileType } from "./lib/transform.ts";
-import { transformers } from "./transformers/registry.ts";
+import { sources } from "./sources/registry.ts";
 import type { FirebaseHashConfig } from "./types.ts";
 
 export type WizardResult = {
-  transformer: string;
+  source: string;
   file: string;
   firebaseHashConfig?: FirebaseHashConfig;
 };
@@ -29,12 +29,12 @@ function hint(description: string): string {
   return firstSentence.length > 96 ? `${firstSentence.slice(0, 93)}...` : firstSentence;
 }
 
-async function pickTransformer(): Promise<string> {
+async function pickSource(): Promise<string> {
   // Built from the registry, so a new platform appears here with no second
   // place to update.
   return select<string>({
     message: "Which platform are you migrating from?",
-    choices: transformers.map((entry) => ({
+    choices: sources.map((entry) => ({
       name: entry.label,
       value: entry.key,
       description: hint(entry.description),
@@ -102,27 +102,27 @@ async function askNumber(label: string): Promise<number> {
 }
 
 /**
- * Fills in whichever of transformer and file were not passed as flags.
+ * Fills in whichever of source and file were not passed.
  *
  * @param provided - Flags the caller already supplied; those are not asked for.
  */
 export async function runWizard(
   provided: {
-    transformer?: string;
+    source?: string;
     file?: string;
     firebaseHashConfig?: FirebaseHashConfig;
   } & FirebaseHashFlags,
 ): Promise<WizardResult> {
-  const transformer = provided.transformer ?? (await pickTransformer());
+  const source = provided.source ?? (await pickSource());
   const file = provided.file ?? (await askFile());
 
   let firebaseHashConfig = provided.firebaseHashConfig;
-  if (transformer === "firebase" && !firebaseHashConfig) {
+  if (source === "firebase" && !firebaseHashConfig) {
     firebaseHashConfig =
       resolveFirebaseHashConfig(provided, "firebase") ?? (await askFirebaseHashConfig());
   }
 
-  return { transformer, file, ...(firebaseHashConfig ? { firebaseHashConfig } : {}) };
+  return { source, file, ...(firebaseHashConfig ? { firebaseHashConfig } : {}) };
 }
 
 /**
@@ -131,10 +131,10 @@ export async function runWizard(
  * Names exactly the flags that are missing, so the caller can retry without
  * guessing which of the two it forgot.
  */
-export function throwAgentFlagsRequired(missing: { transformer: boolean; file: boolean }): never {
+export function throwAgentFlagsRequired(missing: { source: boolean; file: boolean }): never {
   const flags = [
-    missing.transformer ? "--transformer <platform>" : undefined,
-    missing.file ? "--file <path>" : undefined,
+    missing.file ? "the file (or an export run ID)" : undefined,
+    missing.source ? "--source <platform>" : undefined,
   ].filter(Boolean);
 
   throwUsageError(
@@ -143,7 +143,7 @@ export function throwAgentFlagsRequired(missing: { transformer: boolean; file: b
     undefined,
     [
       {
-        command: `clerk migrate import -y --transformer ${transformers[0]?.key ?? "clerk"} --file users.json`,
+        command: `clerk migrate import users.json --source ${sources[0]?.key ?? "clerk"} -y`,
         description: "Run non-interactively",
       },
     ],

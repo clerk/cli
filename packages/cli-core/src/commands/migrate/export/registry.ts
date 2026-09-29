@@ -2,7 +2,7 @@
  * Export registry.
  *
  * The picker behind a bare `clerk migrate export` is built from this array, so
- * adding a platform is one file plus one entry — the same shape the transformer
+ * adding a platform is one file plus one entry — the same shape the source
  * registry uses.
  *
  * `run` takes no arguments on purpose: each platform resolves its own flags,
@@ -22,8 +22,8 @@ export type ExportRegistryEntry = {
   key: string;
   label: string;
   description: string;
-  /** Which `--transformer` reads the file this export writes. */
-  transformerKey: string;
+  /** Which source reads the file this export writes. */
+  sourceKey: string;
   run: (options: Record<string, unknown>) => Promise<void>;
 };
 
@@ -32,49 +32,49 @@ export const exportPlatforms: ExportRegistryEntry[] = [
     key: "clerk",
     label: "Clerk",
     description: "Another Clerk instance, e.g. development → production",
-    transformerKey: "clerk",
+    sourceKey: "clerk",
     run: async (options) => exportClerk(options),
   },
   {
     key: "auth0",
     label: "Auth0",
     description: "An Auth0 tenant, via the Management API",
-    transformerKey: "auth0",
+    sourceKey: "auth0",
     run: async (options) => exportAuth0(options),
   },
   {
     key: "supabase",
     label: "Supabase",
     description: "A Supabase Postgres database — includes password hashes",
-    transformerKey: "supabase",
+    sourceKey: "supabase",
     run: async (options) => exportSupabase(options),
   },
   {
     key: "authjs",
     label: "Auth.js (NextAuth)",
     description: "An Auth.js database — Postgres, MySQL or SQLite",
-    transformerKey: "authjs",
+    sourceKey: "authjs",
     run: async (options) => exportAuthJs(options),
   },
   {
     key: "firebase",
     label: "Firebase",
     description: "A Firebase project, via Identity Toolkit",
-    transformerKey: "firebase",
+    sourceKey: "firebase",
     run: async (options) => exportFirebase(options),
   },
   {
     key: "betterauth",
     label: "Better Auth",
     description: "A Better Auth database — plugin columns detected automatically",
-    transformerKey: "betterauth",
+    sourceKey: "betterauth",
     run: async (options) => exportBetterAuth(options),
   },
   {
     key: "workos",
     label: "WorkOS",
     description: "A WorkOS tenant, via the User Management API — no password hashes",
-    transformerKey: "workos",
+    sourceKey: "workos",
     run: async (options) => exportWorkOs(options),
   },
 ];

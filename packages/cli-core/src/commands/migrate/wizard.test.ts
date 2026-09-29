@@ -60,7 +60,7 @@ beforeEach(() => {
 const textCall = (index: number): Prompt | undefined => mockText.mock.calls[index]?.[0];
 const selectCall = (index: number): SelectPrompt | undefined => mockSelect.mock.calls[index]?.[0];
 
-describe("transformer picker", () => {
+describe("source picker", () => {
   test("is built from the registry, so every platform appears", async () => {
     mockSelect.mockResolvedValue("auth0");
     mockText.mockResolvedValue("users.json");
@@ -78,7 +78,7 @@ describe("transformer picker", () => {
     ]);
   });
 
-  test("labels each choice with the transformer's display name", async () => {
+  test("labels each choice with the source's display name", async () => {
     mockSelect.mockResolvedValue("clerk");
     mockText.mockResolvedValue("users.json");
 
@@ -87,13 +87,13 @@ describe("transformer picker", () => {
     expect(selectCall(0)?.choices.map((choice) => choice.name)).toContain("Better Auth");
   });
 
-  test("is skipped when --transformer was already passed", async () => {
+  test("is skipped when --source was already passed", async () => {
     mockText.mockResolvedValue("users.json");
 
-    const result = await runWizard({ transformer: "clerk" });
+    const result = await runWizard({ source: "clerk" });
 
     expect(mockSelect).not.toHaveBeenCalled();
-    expect(result.transformer).toBe("clerk");
+    expect(result.source).toBe("clerk");
   });
 });
 
@@ -127,7 +127,7 @@ describe("file prompt validation", () => {
 });
 
 describe("firebase hash parameters", () => {
-  test("are asked for when the firebase transformer is picked", async () => {
+  test("are asked for when the firebase source is picked", async () => {
     mockSelect.mockResolvedValue("firebase");
     mockText
       .mockResolvedValueOnce("users.json")
@@ -175,7 +175,7 @@ describe("firebase hash parameters", () => {
     expect(textCall(3)?.default).toBeUndefined();
   });
 
-  test("are not asked for on a non-firebase transformer", async () => {
+  test("are not asked for on a non-firebase source", async () => {
     mockSelect.mockResolvedValue("auth0");
     mockText.mockResolvedValue("users.json");
 
@@ -217,15 +217,15 @@ describe("firebase hash parameters", () => {
 
 describe("throwAgentFlagsRequired", () => {
   test.each([
-    [{ transformer: true, file: true }, /--transformer <platform> and --file <path>/],
-    [{ transformer: true, file: false }, /--transformer <platform>\./],
-    [{ transformer: false, file: true }, /--file <path>\./],
+    [{ source: true, file: true }, /the file \(or an export run ID\) and --source <platform>/],
+    [{ source: true, file: false }, /Pass --source <platform>\./],
+    [{ source: false, file: true }, /Pass the file \(or an export run ID\)\./],
   ])("names only the flags that are missing (%p)", (missing, expected) => {
     expect(() => throwAgentFlagsRequired(missing)).toThrow(expected);
   });
 
   test("says why it cannot prompt", () => {
-    expect(() => throwAgentFlagsRequired({ transformer: true, file: true })).toThrow(
+    expect(() => throwAgentFlagsRequired({ source: true, file: true })).toThrow(
       /cannot prompt in agent mode/,
     );
   });

@@ -5,7 +5,7 @@ import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
 import { loadUsersFromFile, transformUsers } from "../lib/transform.ts";
 import type { FirebaseHashConfig } from "../types.ts";
-import { getTransformer, transformerKeys, transformers } from "./registry.ts";
+import { getSource, isSourcePath, sourceKeys, sources } from "./registry.ts";
 import { isVerified } from "./shared.ts";
 
 const FIREBASE_HASH: FirebaseHashConfig = {
@@ -20,7 +20,7 @@ let originalCwd: string;
 
 beforeAll(() => {
   originalCwd = process.cwd();
-  workDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-transformers-")));
+  workDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-sources-")));
   process.chdir(workDir);
 });
 
@@ -46,7 +46,7 @@ const one = (key: string, record: Record<string, unknown>, context = {}) =>
 
 describe("registry", () => {
   test("registers all seven platforms", () => {
-    expect(transformerKeys()).toEqual([
+    expect(sourceKeys()).toEqual([
       "clerk",
       "auth0",
       "authjs",
@@ -57,17 +57,37 @@ describe("registry", () => {
     ]);
   });
 
-  test.each([...transformers])("$key maps a source field to userId", (transformer) => {
-    expect(Object.values(transformer.transformer)).toContain("userId");
+  test.each([...sources])("$key maps a source field to userId", (source) => {
+    expect(Object.values(source.transformer)).toContain("userId");
   });
 
-  test.each([...transformers])("$key carries a label and description", (transformer) => {
-    expect(transformer.label.length).toBeGreaterThan(0);
-    expect(transformer.description.length).toBeGreaterThan(0);
+  test.each([...sources])("$key carries a label and description", (source) => {
+    expect(source.label.length).toBeGreaterThan(0);
+    expect(source.description.length).toBeGreaterThan(0);
+  });
+
+  test.each([...sources])("$key says what it carries, with a note for each", (source) => {
+    for (const carry of Object.values(source.carries)) {
+      expect(["yes", "no", "partial"]).toContain(carry.level);
+      expect(carry.note.length).toBeGreaterThan(0);
+    }
   });
 
   test("throws for an unregistered key", () => {
-    expect(() => getTransformer("okta")).toThrow(/Transformer not found/);
+    expect(() => getSource("okta")).toThrow(/Source not found/);
+  });
+});
+
+describe("isSourcePath", () => {
+  test.each([["./mine.ts"], ["../up/mine.js"], ["/abs/mine.mjs"], ["mine.ts"], ["dir/mine.js"]])(
+    "%s is a path",
+    (value) => {
+      expect(isSourcePath(value)).toBe(true);
+    },
+  );
+
+  test.each([["clerk"], ["betterauth"], ["okta"]])("%s is a key", (value) => {
+    expect(isSourcePath(value)).toBe(false);
   });
 });
 
@@ -196,7 +216,7 @@ describe("workos", () => {
   // No other transformer omits it. WorkOS never returns a digest, so naming a
   // hasher would imply a password column that cannot exist.
   test("names no password hasher, because WorkOS returns no hashes", () => {
-    expect(getTransformer("workos").defaults).toBeUndefined();
+    expect(getSource("workos").defaults).toBeUndefined();
   });
 
   // The export carries these so whoever runs the migration can see who used

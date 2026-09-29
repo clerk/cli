@@ -10,7 +10,7 @@ import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 // signed-in check — except the one that asserts what happens without it.
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 import { latestUserLines, listRuns, startRun } from "./lib/run-store.ts";
-import { __resetCustomTransformersForTesting } from "./transformers/registry.ts";
+import { __resetCustomSourcesForTesting } from "./sources/registry.ts";
 import { applyResumeAfter, explainErrors, run, validateRunOptions } from "./run.ts";
 import type { User } from "./types.ts";
 
@@ -41,28 +41,23 @@ afterAll(() => {
 });
 
 describe("validateRunOptions", () => {
-  test("accepts a transformer and an existing JSON file", () => {
-    expect(validateRunOptions({ transformer: "clerk", file: "users.json" })).toEqual({
-      transformer: "clerk",
+  test("accepts a source and an existing JSON file", () => {
+    expect(validateRunOptions({ source: "clerk", file: "users.json" })).toEqual({
+      source: "clerk",
       file: "users.json",
     });
   });
 
   test.each([
-    ["no transformer", { file: "users.json" }, /--transformer/],
-    ["an unknown transformer", { transformer: "okta", file: "users.json" }, /Unknown transformer/],
-    ["no file", { transformer: "clerk" }, /--file/],
-    ["a missing file", { transformer: "clerk", file: "nope.json" }, /File not found/],
-    [
-      "an unsupported extension",
-      { transformer: "clerk", file: "users.txt" },
-      /Unsupported file type/,
-    ],
+    ["no source", { file: "users.json" }, /Missing --source/],
+    ["no file", { source: "clerk" }, /Missing the file to import/],
+    ["a missing file", { source: "clerk", file: "nope.json" }, /File not found/],
+    ["an unsupported extension", { source: "clerk", file: "users.txt" }, /Unsupported file type/],
   ])("rejects %s", (_label, options, message) => {
     expect(() => validateRunOptions(options)).toThrow(message);
   });
 
-  test("names the valid transformers when one is missing", () => {
+  test("names the valid sources when one is missing", () => {
     expect(() => validateRunOptions({ file: "users.json" })).toThrow(/clerk/);
   });
 });
@@ -126,7 +121,7 @@ describe("run", () => {
   });
 
   const baseOptions = {
-    transformer: "clerk",
+    source: "clerk",
     file: "export.json",
     yes: true,
     secretKey: "sk_test_x",
@@ -136,7 +131,7 @@ describe("run", () => {
     const previous = process.env.CLERK_SECRET_KEY;
     delete process.env.CLERK_SECRET_KEY;
     try {
-      await expect(run({ transformer: "clerk", file: "export.json", yes: true })).rejects.toThrow(
+      await expect(run({ source: "clerk", file: "export.json", yes: true })).rejects.toThrow(
         /Not logged in/,
       );
       expect(requests).toHaveLength(0);
@@ -201,7 +196,7 @@ describe("run", () => {
       return { record: run.finish(), file };
     }
 
-    const { transformer: _transformer, file: _file, ...noSource } = baseOptions;
+    const { source: _source, file: _file, ...noSource } = baseOptions;
 
     test("imports by export run ID, with the source the envelope names", async () => {
       const { record } = exportRun("clerk", export2);
@@ -213,7 +208,7 @@ describe("run", () => {
       expect(imported).toMatchObject({ source: "clerk", fromExport: record.id });
     });
 
-    test("imports an envelope file with no transformer named", async () => {
+    test("imports an envelope file with no source named", async () => {
       const { file } = exportRun("clerk", export2);
 
       await run({ ...noSource, file });
@@ -221,11 +216,11 @@ describe("run", () => {
       expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
     });
 
-    test("refuses a transformer that contradicts the envelope", async () => {
+    test("refuses a source that contradicts the envelope", async () => {
       const { record } = exportRun("clerk", export2);
 
-      await expect(run({ ...noSource, transformer: "auth0", input: record.id })).rejects.toThrow(
-        /exported from clerk, but the transformer named is auth0/,
+      await expect(run({ ...noSource, source: "auth0", input: record.id })).rejects.toThrow(
+        /exported from clerk, but --source names auth0/,
       );
       expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
     });
@@ -391,11 +386,11 @@ describe("run", () => {
 
   // Tests run non-TTY, so `isHuman()` is false and the wizard path is never
   // reached — the same guard an agent hits.
-  describe("without --transformer or --file", () => {
+  describe("without --source or a file", () => {
     test.each([
-      [{}, /--transformer <platform> and --file <path>/],
-      [{ transformer: "clerk" }, /--file <path>/],
-      [{ file: "export.json" }, /--transformer <platform>/],
+      [{}, /the file \(or an export run ID\) and --source <platform>/],
+      [{ source: "clerk" }, /Pass the file \(or an export run ID\)\./],
+      [{ file: "export.json" }, /Pass --source <platform>\./],
     ])("names the missing flags rather than prompting (%p)", async (partial, expected) => {
       await expect(run({ ...partial, yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
         expected,
@@ -502,7 +497,7 @@ describe("run", () => {
         ]),
       );
 
-      await run({ ...baseOptions, transformer: "supabase", yes: false });
+      await run({ ...baseOptions, source: "supabase", yes: false });
 
       expect(captured.err).toContain("Social connections");
       expect(captured.err).toContain("Discord");
@@ -529,7 +524,7 @@ describe("run", () => {
         ]),
       );
 
-      await run({ ...baseOptions, transformer: "supabase", yes: false });
+      await run({ ...baseOptions, source: "supabase", yes: false });
 
       const social = captured.err.slice(captured.err.indexOf("Social connections"));
       expect(social).toContain("Discord");
@@ -538,12 +533,17 @@ describe("run", () => {
     });
   });
 
-  describe("--transformer-file", () => {
+  describe("--source <path>", () => {
     const CUSTOM = `export default {
       key: "myplatform",
       label: "My Platform",
       description: "Exports from My Platform.",
       transformer: { account_ref: "userId", contact_email: "email", given: "firstName", pw: "password" },
+      carries: {
+        passwords: { level: "yes", note: "bcrypt." },
+        mfa: { level: "no", note: "None." },
+        metadata: { level: "no", note: "None." },
+      },
       defaults: { passwordHasher: "bcrypt" },
       postTransform: (user) => { if (!user.firstName) delete user.firstName; },
     };`;
@@ -566,15 +566,15 @@ describe("run", () => {
     });
 
     afterEach(() => {
-      __resetCustomTransformersForTesting();
+      __resetCustomSourcesForTesting();
     });
 
     const created = () => requests.filter((r) => r.url.endsWith("/v1/users"));
 
-    test("imports through a user-authored transformer", async () => {
+    test("imports through a user-authored source", async () => {
       await run({
         file: "export.json",
-        transformerFile: customFile,
+        source: customFile,
         yes: true,
         secretKey: "sk_test_x",
       });
@@ -584,13 +584,13 @@ describe("run", () => {
         "mp_2",
       ]);
       expect(captured.err).toContain("myplatform");
-      expect(captured.err).toContain("transformer from");
+      expect(captured.err).toContain("source from");
     });
 
-    test("applies the custom transformer's defaults and postTransform", async () => {
+    test("applies the custom source's defaults and postTransform", async () => {
       await run({
         file: "export.json",
-        transformerFile: customFile,
+        source: customFile,
         yes: true,
         secretKey: "sk_test_x",
       });
@@ -601,17 +601,19 @@ describe("run", () => {
       expect("first_name" in (bodies[1] ?? {})).toBe(false);
     });
 
-    // No sensible precedence between "the one you wrote" and "the one we ship".
-    test("conflicts with --transformer rather than picking one", async () => {
+    // An edited source is a different source, so the run records which one.
+    test("records the custom source's content hash on the run", async () => {
+      await run({ file: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+
+      const [record] = listRuns(runsDir());
+      expect(record?.source).toBe("myplatform");
+      expect(record?.sourceHash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    test("an unknown built-in key is a usage error listing the valid ones", async () => {
       await expect(
-        run({
-          transformer: "clerk",
-          file: "export.json",
-          transformerFile: customFile,
-          yes: true,
-          secretKey: "sk_test_x",
-        }),
-      ).rejects.toThrow(/both name a transformer. Pass one or the other/);
+        run({ file: "export.json", source: "okta", yes: true, secretKey: "sk_test_x" }),
+      ).rejects.toThrow(/Unknown source "okta". Valid sources: clerk, auth0/);
       expect(created()).toHaveLength(0);
     });
 
@@ -619,11 +621,11 @@ describe("run", () => {
       await expect(
         run({
           file: "export.json",
-          transformerFile: "./nope.ts",
+          source: "./nope.ts",
           yes: true,
           secretKey: "sk_test_x",
         }),
-      ).rejects.toThrow(/No transformer file at/);
+      ).rejects.toThrow(/No source file at/);
       expect(requests).toHaveLength(0);
     });
 
@@ -635,15 +637,15 @@ describe("run", () => {
       );
 
       await expect(
-        run({ file: "export.json", transformerFile: bad, yes: true, secretKey: "sk_test_x" }),
+        run({ file: "export.json", source: bad, yes: true, secretKey: "sk_test_x" }),
       ).rejects.toThrow(/no source field maps to `userId`/);
       expect(requests).toHaveLength(0);
     });
 
-    test("still requires --file", async () => {
-      await expect(
-        run({ transformerFile: customFile, yes: true, secretKey: "sk_test_x" }),
-      ).rejects.toThrow(/--file/);
+    test("still requires a file", async () => {
+      await expect(run({ source: customFile, yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
+        /Pass the file \(or an export run ID\)/,
+      );
     });
   });
 
@@ -688,7 +690,7 @@ describe("run", () => {
       async (key, records, externalId) => {
         fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(records));
 
-        await run({ ...baseOptions, transformer: key });
+        await run({ ...baseOptions, source: key });
 
         const created = requests.filter((r) => r.url.endsWith("/v1/users"));
         expect(created).toHaveLength(1);
@@ -716,7 +718,7 @@ describe("run", () => {
 
       await run({
         ...baseOptions,
-        transformer: "firebase",
+        source: "firebase",
         firebaseSignerKey: "SIGNER",
         firebaseSaltSeparator: "Bw==",
         firebaseRounds: 8,
@@ -736,14 +738,14 @@ describe("run", () => {
 
     test("a partial firebase flag set fails before anything is read", async () => {
       await expect(
-        run({ ...baseOptions, transformer: "firebase", firebaseSignerKey: "SIGNER" }),
+        run({ ...baseOptions, source: "firebase", firebaseSignerKey: "SIGNER" }),
       ).rejects.toThrow(/--firebase-salt-separator/);
       expect(requests).toHaveLength(0);
     });
 
-    test("an unknown transformer fails listing the valid keys", async () => {
-      await expect(run({ ...baseOptions, transformer: "okta" })).rejects.toThrow(
-        /Unknown transformer "okta".*clerk.*supabase/s,
+    test("an unknown source fails listing the valid keys", async () => {
+      await expect(run({ ...baseOptions, source: "okta" })).rejects.toThrow(
+        /Unknown source "okta".*clerk.*supabase/s,
       );
     });
   });
@@ -805,7 +807,7 @@ describe("run", () => {
     test("skips only the user whose sole provider is disabled", async () => {
       stubInstance({ oauth_google: { enabled: true }, oauth_discord: { enabled: false } });
 
-      await run({ ...baseOptions, transformer: "supabase", skipUnsupportedProviders: true });
+      await run({ ...baseOptions, source: "supabase", skipUnsupportedProviders: true });
 
       expect(created()).toEqual(["sb_email", "sb_both"]);
       expect(captured.err).toContain("skipping 1 user ");
@@ -815,7 +817,7 @@ describe("run", () => {
     test("imports everyone when the provider is enabled", async () => {
       stubInstance({ oauth_discord: { enabled: true } });
 
-      await run({ ...baseOptions, transformer: "supabase", skipUnsupportedProviders: true });
+      await run({ ...baseOptions, source: "supabase", skipUnsupportedProviders: true });
 
       expect(created()).toHaveLength(3);
     });
@@ -825,13 +827,13 @@ describe("run", () => {
     test("imports everyone when the instance config cannot be read", async () => {
       stubInstance(null);
 
-      await run({ ...baseOptions, transformer: "supabase", skipUnsupportedProviders: true });
+      await run({ ...baseOptions, source: "supabase", skipUnsupportedProviders: true });
 
       expect(created()).toHaveLength(3);
       expect(captured.err).toContain("Could not read the instance's enabled providers");
     });
 
-    test("is a no-op with a warning on a non-supabase transformer", async () => {
+    test("is a no-op with a warning on a non-supabase source", async () => {
       fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(export2));
 
       await run({ ...baseOptions, skipUnsupportedProviders: true });

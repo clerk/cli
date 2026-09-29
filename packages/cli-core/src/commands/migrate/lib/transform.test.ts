@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
-import clerkTransformer from "../transformers/clerk.ts";
+import clerkSource from "../sources/clerk.ts";
 import {
   consolidateClerkIdentifiers,
   flattenObjectSelectively,
@@ -65,7 +65,7 @@ describe("transformKeys", () => {
     expect(
       transformKeys(
         { id: "u1", primary_email_address: "a@example.com", extra: "kept" },
-        clerkTransformer,
+        clerkSource,
       ),
     ).toEqual({ userId: "u1", email: "a@example.com", extra: "kept" });
   });
@@ -75,7 +75,7 @@ describe("transformKeys", () => {
     ["stringified empty object", '"{}"'],
     ["null", null],
   ])("drops fields whose value is %s", (_label, value) => {
-    expect(transformKeys({ id: "u1", first_name: value }, clerkTransformer)).toEqual({
+    expect(transformKeys({ id: "u1", first_name: value }, clerkSource)).toEqual({
       userId: "u1",
     });
   });

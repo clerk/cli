@@ -1,4 +1,4 @@
-import type { TransformerRegistryEntry } from "../types.ts";
+import type { SourceEntry } from "../types.ts";
 import { routeByVerification, toIsoDate } from "./shared.ts";
 
 /**
@@ -20,11 +20,22 @@ function stripDiscriminator(value: unknown): string | undefined {
   return value.replace(DISCORD_DISCRIMINATOR, "").trim() || undefined;
 }
 
-const supabaseTransformer = {
+const supabaseSource = {
   key: "supabase",
   label: "Supabase",
   description:
     "Works with a Supabase `auth.users` export. Use --skip-unsupported-providers to drop users whose only social provider is not enabled in Clerk.",
+  carries: {
+    passwords: { level: "yes", note: "bcrypt `encrypted_password` hashes come across." },
+    mfa: {
+      level: "no",
+      note: "Supabase MFA factors are not exported. Users enrol again in Clerk.",
+    },
+    metadata: {
+      level: "partial",
+      note: "`raw_user_meta_data` → public metadata. `raw_app_meta_data` is not carried.",
+    },
+  },
   transformer: {
     id: "userId",
     email: "email",
@@ -65,6 +76,6 @@ const supabaseTransformer = {
   defaults: {
     passwordHasher: "bcrypt" as const,
   },
-} satisfies TransformerRegistryEntry;
+} satisfies SourceEntry;
 
-export default supabaseTransformer;
+export default supabaseSource;

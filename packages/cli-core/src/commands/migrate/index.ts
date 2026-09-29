@@ -1,4 +1,3 @@
-import { createOption } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
 import { parseIntegerOption } from "../../lib/option-parsers.ts";
 import { setMode } from "../../mode.ts";
@@ -8,10 +7,9 @@ import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "./lib/run-store.ts";
 import { run } from "./run.ts";
 import { runs } from "./runs.ts";
 import { undo } from "./undo.ts";
-import { list as transformersList } from "./transformers/list.ts";
-import { transformerKeys } from "./transformers/registry.ts";
+import { list as sources } from "./sources/list.ts";
 
-const migrate = { run, runs, undo, transformersList };
+const migrate = { run, runs, undo, sources };
 
 export function registerMigrate(program: Program): void {
   const migrateCommand = program
@@ -20,11 +18,12 @@ export function registerMigrate(program: Program): void {
     .setExamples([
       { command: "clerk migrate import", description: "Walk through an import interactively" },
       {
-        command: "clerk migrate import -y --transformer clerk --file users.json",
+        command: "clerk migrate import users.json --source clerk -y",
         description: "Import users from a Clerk export",
       },
       {
-        command: "clerk migrate import -y -t supabase -f users.json --skip-unsupported-providers",
+        command:
+          "clerk migrate import users.json --source supabase --skip-unsupported-providers -y",
         description: "Skip Supabase users whose provider is not enabled",
       },
       {
@@ -36,7 +35,7 @@ export function registerMigrate(program: Program): void {
         command: "clerk migrate undo 20260929-141502-a1b2",
         description: "Delete the users an import created",
       },
-      { command: "clerk migrate transformers list", description: "Show the built-in transformers" },
+      { command: "clerk migrate sources", description: "What each source brings across" },
     ]);
 
   // `-y` is read several layers down — by the credential-retry loop and the
@@ -65,15 +64,9 @@ export function registerMigrate(program: Program): void {
     .command("import")
     .description("Import users from an exported JSON or CSV file")
     .argument("[file|export-run-id]", "The export file, or the ID of the export run that wrote it")
-    .addOption(
-      createOption(
-        "-t, --transformer <transformer>",
-        "Source platform the file was exported from",
-      ).choices(transformerKeys()),
-    )
     .option(
-      "--transformer-file <path>",
-      "Path to a transformer you wrote, for a platform with no built-in",
+      "--source <key|path>",
+      "Where the file came from: a built-in source, or a source you wrote. Not needed for a file from `clerk migrate export`",
     )
     .option("-f, --file <path>", "Path to the exported user data (JSON or CSV)")
     .option("-r, --resume-after <user-id>", "Skip every user up to and including this source ID")
@@ -97,19 +90,24 @@ export function registerMigrate(program: Program): void {
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
     .setExamples([
       {
-        command: "clerk migrate import -y --transformer clerk --file users.json",
+        command: "clerk migrate import 20260929-141502-a1b2 -y",
+        description: "Import what an export run wrote",
+      },
+      {
+        command: "clerk migrate import users.json --source clerk -y",
         description: "Import a Clerk Dashboard export",
       },
       {
-        command: "clerk migrate import -y -t clerk -f users.csv --require-password",
+        command: "clerk migrate import users.csv --source clerk --require-password -y",
         description: "Import only the users that carry a password digest",
       },
       {
-        command: "clerk migrate import -y -t clerk -f users.json -r user_2x9k",
-        description: "Resume a partial migration after the last imported user",
+        command: "clerk migrate import users.json --source ./my-source.ts -y",
+        description: "Import with a source you wrote",
       },
       {
-        command: "clerk migrate import -y -t supabase -f users.json --skip-unsupported-providers",
+        command:
+          "clerk migrate import users.json --source supabase --skip-unsupported-providers -y",
         description: "Skip Supabase users whose only provider is not enabled in Clerk",
       },
     ])
@@ -169,36 +167,20 @@ export function registerMigrate(program: Program): void {
 
   // A compiled binary has no source tree to grep, so the available mappings
   // need a command rather than only appearing in the interactive picker.
-  const transformersCommand = migrateCommand
-    .command("transformers")
-    .description("Inspect the available source-platform transformers")
-    .setExamples([
-      { command: "clerk migrate transformers list", description: "Show the built-in transformers" },
-      {
-        command: "clerk migrate transformers list --json",
-        description: "Machine-readable, including each one's ID field",
-      },
-      {
-        command: "clerk migrate transformers list --transformer-file ./my-transformer.ts",
-        description: "Include one you wrote",
-      },
-    ]);
-
-  transformersCommand
-    .command("list", { isDefault: true })
-    .description("List the built-in transformers, and any loaded from a file")
+  migrateCommand
+    .command("sources")
+    .description("List the sources an import can read, or show one in full")
+    .argument("[source]", "A built-in source, or the path to a source you wrote")
     .option("--json", "Output as JSON")
-    .option("--transformer-file <path>", "Also list a transformer you wrote")
     .setExamples([
-      { command: "clerk migrate transformers list", description: "Show the built-in transformers" },
+      { command: "clerk migrate sources", description: "What each source brings across" },
       {
-        command: "clerk migrate transformers list --transformer-file ./my-transformer.ts",
-        description: "Include one you wrote",
+        command: "clerk migrate sources betterauth",
+        description: "Where each field lands, how to export, and caveats",
       },
+      { command: "clerk migrate sources ./my-source.ts", description: "Check a source you wrote" },
     ])
-    .action(async (_opts, cmd) =>
-      migrate.transformersList(
-        cmd.optsWithGlobals() as Parameters<typeof migrate.transformersList>[0],
-      ),
+    .action(async (source, _opts, cmd) =>
+      migrate.sources(source, cmd.optsWithGlobals() as Parameters<typeof migrate.sources>[1]),
     );
 }

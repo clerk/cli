@@ -11,13 +11,8 @@ import fs from "node:fs";
 import path from "node:path";
 import csvParser from "csv-parser";
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
-import { getTransformer } from "../transformers/registry.ts";
-import {
-  PASSWORD_HASHERS,
-  type TransformContext,
-  type TransformerRegistryEntry,
-  type User,
-} from "../types.ts";
+import { getSource } from "../sources/registry.ts";
+import { PASSWORD_HASHERS, type TransformContext, type SourceEntry, type User } from "../types.ts";
 import { userSchema } from "../validator.ts";
 import { isEnvelope } from "./export-file.ts";
 
@@ -360,7 +355,7 @@ export function validatePreparedUsers(users: Record<string, unknown>[]): {
 
 function addDefaultFields(
   users: Record<string, unknown>[],
-  transformer: TransformerRegistryEntry,
+  transformer: SourceEntry,
 ): Record<string, unknown>[] {
   if (!transformer.defaults) return users;
   return users.map((user) => ({ ...user, ...transformer.defaults }));
@@ -379,7 +374,7 @@ export function transformUsers(
   key: string,
   options: TransformOptions = {},
 ): { transformedData: User[]; validationFailed: number; failures: ValidationFailure[] } {
-  const transformer = getTransformer(key);
+  const transformer = getSource(key);
   const context = options.context ?? {};
   const transformed: Record<string, unknown>[] = [];
 
@@ -421,7 +416,7 @@ async function readCsv(filePath: string): Promise<Record<string, unknown>[]> {
 
 async function readUsersFromFile(
   file: string,
-  transformer: TransformerRegistryEntry,
+  transformer: SourceEntry,
 ): Promise<Record<string, unknown>[]> {
   let filePath = resolveImportFilePath(file);
   const type = getFileType(file);
@@ -470,7 +465,7 @@ async function readUsersFromFile(
  * users are transformed.
  */
 export async function readRawUsers(file: string, key: string): Promise<Record<string, unknown>[]> {
-  return readUsersFromFile(file, getTransformer(key));
+  return readUsersFromFile(file, getSource(key));
 }
 
 /**
@@ -483,7 +478,7 @@ export async function loadUsersFromFile(
   key: string,
   options: TransformOptions = {},
 ): Promise<{ users: User[]; validationFailed: number; failures: ValidationFailure[] }> {
-  const transformer = getTransformer(key);
+  const transformer = getSource(key);
   const raw = await readUsersFromFile(file, transformer);
   const withDefaults = addDefaultFields(raw, transformer);
   const { transformedData, validationFailed, failures } = transformUsers(

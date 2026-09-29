@@ -40,9 +40,6 @@ export const PASSWORD_HASHERS = [
 /** A user that has passed schema validation and is ready to import. */
 export type User = z.infer<typeof userSchema>;
 
-/** Union of all registered transformer keys (e.g. `"clerk"`). */
-export type TransformerKey = string;
-
 /** Totals for a completed import run. */
 export type ImportSummary = {
   totalProcessed: number;
@@ -90,21 +87,37 @@ export type PreTransformResult = {
   data?: Record<string, unknown>[];
 };
 
+/** How much of one kind of data a source brings across. */
+export type CarryLevel = "yes" | "no" | "partial";
+
+export type Carry = { level: CarryLevel; note: string };
+
 /**
- * A platform transformer: how to get from one source export shape to Clerk's
- * import shape.
+ * What a source brings across, per kind of data that is easy to lose without
+ * noticing. Social sign-ins are not listed: no source carries them, and every
+ * source shares one account-linking note instead.
+ */
+export type SourceCarries = { passwords: Carry; mfa: Carry; metadata: Carry };
+
+/**
+ * A source: how to get from one platform's export shape to Clerk's import
+ * shape.
  *
  * @property transformer - Source field path → Clerk field name.
+ * @property carries - What comes across: passwords, MFA and metadata.
+ * @property caveats - Anything else worth knowing before importing.
  * @property defaults - Values merged into every user from this platform.
  * @property preTransform - Runs before field mapping.
  * @property postTransform - Mutates a user after field mapping, given the
  *   run's {@link TransformContext}.
  */
-export type TransformerRegistryEntry = {
+export type SourceEntry = {
   key: string;
   label: string;
   description: string;
   transformer: Record<string, string>;
+  carries: SourceCarries;
+  caveats?: string[];
   defaults?: Record<string, unknown>;
   preTransform?: (
     filePath: string,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { transformerKeys } from "../transformers/registry.ts";
+import { sourceKeys } from "../sources/registry.ts";
 import { exportPlatformKeys, exportPlatforms, getExportPlatform } from "./registry.ts";
 
 describe("export registry", () => {
@@ -23,7 +23,7 @@ describe("export registry", () => {
   // The picker, the docs and the "what next" line all read this, so a typo
   // would send someone to a transformer that does not exist.
   test.each([...exportPlatforms])("$key names a real transformer", (entry) => {
-    expect(transformerKeys()).toContain(entry.transformerKey);
+    expect(sourceKeys()).toContain(entry.sourceKey);
   });
 
   test.each([...exportPlatforms])("$key has something to run", (entry) => {

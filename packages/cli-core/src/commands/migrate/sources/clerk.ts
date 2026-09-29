@@ -1,4 +1,4 @@
-import type { TransformerRegistryEntry } from "../types.ts";
+import type { SourceEntry } from "../types.ts";
 
 /**
  * Clerk → Clerk transformer, for moving users between Clerk instances
@@ -6,11 +6,22 @@ import type { TransformerRegistryEntry } from "../types.ts";
  *
  * Maps the Dashboard's user export format onto the import schema.
  */
-const clerkTransformer = {
+const clerkSource = {
   key: "clerk",
   label: "Clerk",
   description:
     "Migrate between Clerk instances (e.g. development to production, or to another Clerk application). Export your users from the Clerk Dashboard first.",
+  carries: {
+    passwords: {
+      level: "partial",
+      note: "A Dashboard export carries each digest and its hasher. `clerk migrate export clerk` cannot: the Backend API never returns them.",
+    },
+    mfa: {
+      level: "partial",
+      note: "TOTP secrets and backup codes come across from a Dashboard export only.",
+    },
+    metadata: { level: "yes", note: "Public, private and unsafe metadata keep their places." },
+  },
   transformer: {
     id: "userId",
     primary_email_address: "email",
@@ -40,6 +51,6 @@ const clerkTransformer = {
     create_organizations_limit: "createOrganizationsLimit",
     delete_self_enabled: "deleteSelfEnabled",
   },
-} satisfies TransformerRegistryEntry;
+} satisfies SourceEntry;
 
-export default clerkTransformer;
+export default clerkSource;

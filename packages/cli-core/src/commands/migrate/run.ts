@@ -79,8 +79,7 @@ import {
   loadUsersFromFile,
   resolveImportFilePath,
 } from "./lib/transform.ts";
-import { loadCustomTransformer } from "./transformers/load-custom.ts";
-import { registerCustomTransformer, transformerKeys } from "./transformers/registry.ts";
+import { resolveSource, sourceKeys } from "./sources/registry.ts";
 import type { ImportSummary, User } from "./types.ts";
 import { runWizard, throwAgentFlagsRequired } from "./wizard.ts";
 import { login } from "../auth/login.ts";
@@ -89,7 +88,10 @@ import { link } from "../link/index.ts";
 export type MigrateRunOptions = {
   /** An export file, or the ID of the export run that wrote one. */
   input?: string;
-  transformer?: string;
+  /** A built-in source key, or the path to a source you wrote. */
+  source?: string;
+  /** Content hash of a custom `--source`, set once it is loaded. */
+  sourceHash?: string;
   file?: string;
   resumeAfter?: string;
   requirePassword?: boolean;
@@ -97,8 +99,6 @@ export type MigrateRunOptions = {
   secretKey?: string;
   app?: string;
   instance?: string;
-  /** Path to a user-authored transformer, for a platform with no built-in. */
-  transformerFile?: string;
   /** Supabase: drop users whose only social provider is disabled in Clerk. */
   skipUnsupportedProviders?: boolean;
   /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
@@ -108,66 +108,36 @@ export type MigrateRunOptions = {
 /**
  * Validates the flags a run needs before anything is read or sent.
  *
- * @returns The transformer key and file path, both guaranteed present.
+ * `--source` has already been resolved to a registered key by the time this
+ * runs, custom sources included.
+ *
+ * @returns The source key and file path, both guaranteed present.
  */
 export function validateRunOptions(options: MigrateRunOptions): {
-  transformer: string;
+  source: string;
   file: string;
 } {
-  const valid = transformerKeys();
-
-  // A custom transformer has already been loaded and registered by the time
-  // this runs, so its key is resolvable even though it is not in `valid`.
-  if (options.transformerFile) {
-    if (!options.file) {
-      throwUsageError(
-        "Missing required option --file (path to a JSON or CSV export).",
-        undefined,
-        ERROR_CODE.USAGE_ERROR,
-        [
-          {
-            command:
-              "clerk migrate import -y --transformer-file ./my-transformer.ts --file users.json",
-            description: "Import with a custom transformer",
-          },
-        ],
-      );
-    }
-    if (!fileExists(options.file)) {
-      throw new CliError(`File not found: ${options.file}`, { code: ERROR_CODE.FILE_NOT_FOUND });
-    }
-    if (!getFileType(options.file)) {
-      throwUsageError(`Unsupported file type for ${options.file}. Provide a .json or .csv file.`);
-    }
-    return { transformer: options.transformer as string, file: options.file };
-  }
-
-  if (!options.transformer) {
+  if (!options.source) {
     throwUsageError(
-      `Missing required option --transformer. Valid values: ${valid.join(", ")}.`,
+      `Missing --source. Valid values: ${sourceKeys().join(", ")}, or the path to a source you wrote.`,
       undefined,
       ERROR_CODE.USAGE_ERROR,
       [
         {
-          command: "clerk migrate import -y --transformer clerk --file users.json",
+          command: "clerk migrate import users.json --source clerk -y",
           description: "Import a Clerk export",
         },
       ],
     );
   }
-  if (!valid.includes(options.transformer)) {
-    throwUsageError(
-      `Unknown transformer "${options.transformer}". Valid values: ${valid.join(", ")}.`,
-    );
-  }
   if (!options.file) {
     throwUsageError(
-      "Missing required option --file (path to a JSON or CSV export).",
+      "Missing the file to import (a JSON or CSV export, or an export run ID).",
       undefined,
       ERROR_CODE.USAGE_ERROR,
       [
         {
-          command: "clerk migrate import -y --transformer clerk --file users.json",
+          command: "clerk migrate import users.json --source clerk -y",
           description: "Import a Clerk export",
         },
       ],
@@ -180,7 +150,7 @@ export function validateRunOptions(options: MigrateRunOptions): {
     throwUsageError(`Unsupported file type for ${options.file}. Provide a .json or .csv file.`);
   }
 
-  return { transformer: options.transformer, file: options.file };
+  return { source: options.source, file: options.file };
 }
 
 /**
@@ -343,11 +313,11 @@ async function confirmDevUserLimit(
  */
 async function findDisabledProviderUsers(
   file: string,
-  transformer: string,
+  source: string,
   secretKey: string,
 ): Promise<Set<string>> {
   const none = new Set<string>();
-  if (transformer !== "supabase") {
+  if (source !== "supabase") {
     log.warn(`--skip-unsupported-providers only applies to supabase exports; ignoring.`);
     return none;
   }
@@ -391,7 +361,7 @@ async function findDisabledProviderUsers(
 type ReportInput = {
   users: User[];
   file: string;
-  transformer: string;
+  source: string;
   secretKey: string;
   validationFailed: number;
 };
@@ -404,7 +374,7 @@ async function readFileSide(input: ReportInput) {
   // Only Supabase exports record per-user providers, so only they can be
   // cross-referenced against the instance's social connections.
   let providerCounts: Record<string, number> | undefined;
-  if (input.transformer === "supabase") {
+  if (input.source === "supabase") {
     try {
       providerCounts = countSocialProviders(await readSupabaseRows(input.file));
     } catch (error) {
@@ -541,7 +511,7 @@ async function showReadinessReport(
 }
 
 /**
- * Fills in a missing `--transformer`/`--file` interactively, or explains what
+ * Fills in a missing `--source`/file interactively, or explains what
  * to pass.
  *
  * Agent mode is the CLI's existing non-interactive signal, so an agent that
@@ -549,22 +519,22 @@ async function showReadinessReport(
  * prompt it cannot answer.
  */
 async function resolveMissingOptions(options: MigrateRunOptions): Promise<MigrateRunOptions> {
-  const missing = { transformer: !options.transformer, file: !options.file };
-  if (!missing.transformer && !missing.file) return options;
+  const missing = { source: !options.source, file: !options.file };
+  if (!missing.source && !missing.file) return options;
 
   if (isAgent() || !isHuman()) {
     throwAgentFlagsRequired(missing);
   }
 
-  // Resolved before the prompt only when `--transformer firebase` was already
+  // Resolved before the prompt only when `--source firebase` was already
   // passed; otherwise the wizard picks the platform first and looks them up
   // itself, so a non-Firebase migration never reads them at all.
-  const firebaseHashConfig = resolveFirebaseHashConfig(options, options.transformer);
+  const firebaseHashConfig = resolveFirebaseHashConfig(options, options.source);
   const answers = await runWizard({ ...options, firebaseHashConfig });
 
   return {
     ...options,
-    transformer: answers.transformer,
+    source: answers.source,
     file: answers.file,
     ...(answers.firebaseHashConfig
       ? {
@@ -578,40 +548,22 @@ async function resolveMissingOptions(options: MigrateRunOptions): Promise<Migrat
 }
 
 /**
- * Loads and registers a `--transformer-file`, so the rest of the run treats it
- * exactly like a built-in.
+ * Resolves `--source` to a registered key, loading a custom source from its
+ * path so the rest of the run treats it exactly like a built-in.
  *
- * @returns The options with `transformer` set to the loaded entry's key.
+ * @throws UsageError for an unknown key.
  */
-async function applyCustomTransformer(options: MigrateRunOptions): Promise<MigrateRunOptions> {
-  if (!options.transformerFile) return options;
-
-  // Both name a transformer, and there is no sensible precedence between "the
-  // one you wrote" and "the one we ship" — say so rather than picking.
-  if (options.transformer) {
-    throwUsageError(
-      "--transformer and --transformer-file both name a transformer. Pass one or the other.",
-      undefined,
-      undefined,
-      [
-        {
-          command:
-            "clerk migrate import -y --transformer-file ./my-transformer.ts --file users.json",
-          description: "Use a transformer you wrote",
-        },
-        {
-          command: "clerk migrate import -y --transformer clerk --file users.json",
-          description: "Use a built-in transformer",
-        },
-      ],
-    );
+async function applySource(options: MigrateRunOptions): Promise<MigrateRunOptions> {
+  if (!options.source) return options;
+  const resolved = await resolveSource(options.source);
+  if (resolved.path) {
+    log.info(`Loaded the \`${resolved.key}\` source from ${options.source}.`);
   }
-
-  const custom = await loadCustomTransformer(options.transformerFile);
-  registerCustomTransformer(custom);
-  log.info(`Loaded the \`${custom.key}\` transformer from ${options.transformerFile}.`);
-
-  return { ...options, transformer: custom.key };
+  return {
+    ...options,
+    source: resolved.key,
+    ...(resolved.hash ? { sourceHash: resolved.hash } : {}),
+  };
 }
 
 /**
@@ -646,8 +598,7 @@ async function ensureImportTarget(options: MigrateRunOptions): Promise<void> {
         examples: [
           { command: "clerk auth login", description: "Sign in, then re-run the import" },
           {
-            command:
-              "clerk migrate import -y --secret-key sk_test_... --transformer clerk --file users.json",
+            command: "clerk migrate import users.json --source clerk -y --secret-key sk_test_...",
             description: "Import without signing in",
           },
         ],
@@ -704,18 +655,18 @@ function applyEnvelope(
   envelope: ExportEnvelope | undefined,
 ): MigrateRunOptions {
   if (!envelope) return options;
-  if (options.transformer && options.transformer !== envelope.source) {
+  if (options.source && options.source !== envelope.source) {
     throwUsageError(
-      `The file was exported from ${envelope.source}, but the transformer named is ${options.transformer}. ` +
-        "Drop the transformer: the file already says where it came from.",
+      `The file was exported from ${envelope.source}, but --source names ${options.source}. ` +
+        "Drop --source: the file already says where it came from.",
     );
   }
-  return { ...options, transformer: envelope.source };
+  return { ...options, source: envelope.source };
 }
 
 export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   await ensureImportTarget(rawOptions);
-  rawOptions = await applyCustomTransformer(rawOptions);
+  rawOptions = await applySource(rawOptions);
 
   const input = await resolveInput(rawOptions);
   rawOptions = { ...rawOptions, file: input.file, input: undefined };
@@ -727,11 +678,11 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
   const options = await resolveMissingOptions(rawOptions);
 
-  const { transformer, file } = validateRunOptions(options);
+  const { source, file } = validateRunOptions(options);
   // The flags win, so a rotated key can be passed without re-exporting.
   const firebaseHashConfig =
-    resolveFirebaseHashConfig(options, transformer) ??
-    (transformer === "firebase" ? envelope?.firebase : undefined);
+    resolveFirebaseHashConfig(options, source) ??
+    (source === "firebase" ? envelope?.firebase : undefined);
 
   await withGutter("Migrating users to Clerk", async ({ setNextSteps }) => {
     const { secretKey, target } = await resolveClerkTarget(options);
@@ -742,7 +693,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       validationFailed,
       failures,
     } = await withSpinner(`Loading users from ${file}...`, async () =>
-      loadUsersFromFile(file, transformer, { context: { firebaseHashConfig } }),
+      loadUsersFromFile(file, source, { context: { firebaseHashConfig } }),
     );
 
     let users = applyResumeAfter(loaded, options.resumeAfter);
@@ -755,7 +706,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
     const skipped: { user: User; reason: string }[] = [];
 
     if (options.skipUnsupportedProviders) {
-      const excluded = await findDisabledProviderUsers(file, transformer, secretKey);
+      const excluded = await findDisabledProviderUsers(file, source, secretKey);
       for (const user of users.filter((candidate) => excluded.has(candidate.userId))) {
         skipped.push({ user, reason: "only provider is not enabled in Clerk" });
       }
@@ -788,7 +739,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const run = startRun(runsDir, {
         kind: "import",
         target,
-        source: transformer,
+        source,
+        ...(options.sourceHash ? { sourceHash: options.sourceHash } : {}),
         file: { path: filePath, sha256: sha256File(filePath) },
         ...(input.fromExport ? { fromExport: input.fromExport } : {}),
       });
@@ -824,14 +776,14 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         : 0;
 
     log.info(
-      `Importing ${users.length} user${users.length === 1 ? "" : "s"} via the ${transformer} transformer into ` +
+      `Importing ${users.length} user${users.length === 1 ? "" : "s"} from ${source} into ` +
         `${describeTarget(target)}.`,
     );
 
     await showReadinessReport({
       users,
       file,
-      transformer,
+      source,
       secretKey,
       validationFailed,
       skipReport: Boolean(options.yes),

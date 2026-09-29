@@ -81,7 +81,7 @@ const EXPORT = [
   { id: "u2", primary_email_address: "b@x.dev" },
 ];
 
-const baseOptions = { transformer: "clerk", file: "export.json", secretKey: "sk_test_x" };
+const baseOptions = { source: "clerk", file: "export.json", secretKey: "sk_test_x" };
 
 let originalPlatformKey: string | undefined;
 
@@ -168,7 +168,7 @@ function stubInstanceSettings(settings: StubSettings) {
 const created = () => requests.filter((r) => r.url.endsWith("/v1/users"));
 
 describe("the wizard fills in missing flags", () => {
-  test("bare `clerk migrate import` prompts for the transformer and file, then imports", async () => {
+  test("bare `clerk migrate import` prompts for the source and file, then imports", async () => {
     await run({ secretKey: "sk_test_x" });
 
     expect(mockSelect).toHaveBeenCalledTimes(1);
@@ -177,14 +177,14 @@ describe("the wizard fills in missing flags", () => {
   });
 
   test("asks only for what the flags did not supply", async () => {
-    await run({ ...baseOptions, transformer: "clerk" });
+    await run({ ...baseOptions, source: "clerk" });
 
     expect(mockSelect).not.toHaveBeenCalled();
     expect(mockText).not.toHaveBeenCalled();
   });
 
-  test("prompts for the file when only the transformer was passed", async () => {
-    await run({ transformer: "clerk", secretKey: "sk_test_x" });
+  test("prompts for the file when only the source was passed", async () => {
+    await run({ source: "clerk", secretKey: "sk_test_x" });
 
     expect(mockSelect).not.toHaveBeenCalled();
     expect(mockText).toHaveBeenCalledTimes(1);

@@ -38,7 +38,7 @@ demanding flags.
 clerk migrate import
 ```
 
-It picks the transformer from a list built off the registry, asks for the file,
+It picks the source from a list built off the registry, asks for the file,
 and collects Firebase's hash parameters when they are needed. Anything already
 passed as a flag is not asked for.
 
@@ -51,7 +51,7 @@ usage error naming exactly what to pass:
 
 ```
 `clerk migrate import` is interactive and cannot prompt in agent mode.
-Pass --transformer <platform> and --file <path>.
+Pass the file (or an export run ID) and --source <platform>.
 ```
 
 ### `clerk migrate import`
@@ -61,24 +61,23 @@ record, and creates the users through the Backend API.
 
 ```sh
 clerk migrate import 20260929-141502-a1b2 -y        # an export run
-clerk migrate import -y --transformer clerk --file users.json
+clerk migrate import users.json --source clerk -y
 ```
 
-| Flag                                    | Description                                                     |
-| --------------------------------------- | --------------------------------------------------------------- |
-| `[file\|export-run-id]`                 | The export file, or the ID of the export run that wrote it      |
-| `-t, --transformer <name>`              | Source platform the file came from (see below)                  |
-| `--transformer-file <path>`             | A transformer you wrote, for a platform with no built-in        |
-| `-f, --file <path>`                     | Path to the export. `.json` or `.csv`                           |
-| `-r, --resume-after <user-id>`          | Skip every user up to and including this **source** ID          |
-| `--require-password`                    | Import only users that carry a password digest                  |
-| `--skip-unsupported-providers`          | Supabase: skip users whose only social provider is off in Clerk |
-| `--firebase-signer-key <key>`           | Firebase base64 signer key                                      |
-| `--firebase-salt-separator <separator>` | Firebase base64 salt separator                                  |
-| `--firebase-rounds <n>`                 | Firebase scrypt rounds                                          |
-| `--firebase-mem-cost <n>`               | Firebase scrypt memory cost                                     |
-| `-y, --yes`                             | Skip the confirmation prompt                                    |
-| `--runs-dir <path>`                     | Where runs are kept (see [Runs](#clerk-migrate-runs))           |
+| Flag                                    | Description                                                      |
+| --------------------------------------- | ---------------------------------------------------------------- |
+| `[file\|export-run-id]`                 | The export file, or the ID of the export run that wrote it       |
+| `--source <key\|path>`                  | Where the file came from: a [source](#sources), or one you wrote |
+| `-f, --file <path>`                     | Path to the export. `.json` or `.csv`                            |
+| `-r, --resume-after <user-id>`          | Skip every user up to and including this **source** ID           |
+| `--require-password`                    | Import only users that carry a password digest                   |
+| `--skip-unsupported-providers`          | Supabase: skip users whose only social provider is off in Clerk  |
+| `--firebase-signer-key <key>`           | Firebase base64 signer key                                       |
+| `--firebase-salt-separator <separator>` | Firebase base64 salt separator                                   |
+| `--firebase-rounds <n>`                 | Firebase scrypt rounds                                           |
+| `--firebase-mem-cost <n>`               | Firebase scrypt memory cost                                      |
+| `-y, --yes`                             | Skip the confirmation prompt                                     |
+| `--runs-dir <path>`                     | Where runs are kept (see [Runs](#clerk-migrate-runs))            |
 
 Plus the targeting flags from the table above: `--secret-key`, `--app` and
 `--instance`.
@@ -87,9 +86,9 @@ The file is the positional argument or `--file`, not both. An export run ID
 stands for the file that run wrote, and the import records it as `fromExport`.
 
 A file `clerk migrate export` wrote carries its source, so it needs no
-`--transformer`. A `--transformer` that contradicts it exits 2. Any other file
+`--source`. A `--source` that contradicts it exits 2. Any other file
 — a bare JSON array, a CSV, Firebase's own `{ "users": [...] }` — needs
-`--transformer`, and omitting it fails with a usage error that names the valid
+`--source`, and omitting it fails with a usage error that names the valid
 values.
 
 Failures do not stop the run: each user's outcome is written to the
@@ -172,15 +171,15 @@ rest of the export continues against whichever credential worked. Agent mode
 and a non-TTY fail outright instead, having nobody to ask, and `-y` fails too,
 having been told not to.
 
-| Platform     | Source                           | Feeds                      |
-| ------------ | -------------------------------- | -------------------------- |
-| `clerk`      | Clerk Backend API                | `--transformer clerk`      |
-| `auth0`      | Auth0 Management API             | `--transformer auth0`      |
-| `supabase`   | Supabase Postgres (`auth.users`) | `--transformer supabase`   |
-| `authjs`     | Auth.js database                 | `--transformer authjs`     |
-| `betterauth` | Better Auth database             | `--transformer betterauth` |
-| `firebase`   | Firebase Identity Toolkit        | `--transformer firebase`   |
-| `workos`     | WorkOS User Management API       | `--transformer workos`     |
+| Platform     | Source                           | Feeds                 |
+| ------------ | -------------------------------- | --------------------- |
+| `clerk`      | Clerk Backend API                | `--source clerk`      |
+| `auth0`      | Auth0 Management API             | `--source auth0`      |
+| `supabase`   | Supabase Postgres (`auth.users`) | `--source supabase`   |
+| `authjs`     | Auth.js database                 | `--source authjs`     |
+| `betterauth` | Better Auth database             | `--source betterauth` |
+| `firebase`   | Firebase Identity Toolkit        | `--source firebase`   |
+| `workos`     | WorkOS User Management API       | `--source workos`     |
 
 Every export is a [run](#clerk-migrate-runs), and the file lands in the run
 folder as `export.json`. `--output` writes it somewhere else instead,
@@ -200,7 +199,7 @@ The file is an envelope around the users:
 ```
 
 `source` is what lets `clerk migrate import <export-run-id>` run with no
-`--transformer`. A Firebase export adds `firebase`, the project's hash
+`--source`. A Firebase export adds `firebase`, the project's hash
 parameters, so the import needs no `--firebase-*` flags.
 
 `--json` prints the result on stdout instead — `{ target, run, output, users,
@@ -566,74 +565,65 @@ otherwise. A run whose process died, or that never recorded a finish time,
 lists as `interrupted`. A lock held by a live process refuses a second writer
 with exit 2.
 
-## Transformers
+## Sources
 
-A transformer maps one platform's export onto Clerk's user schema. Adding a
-platform is one file in `transformers/` plus one line in `transformers/registry.ts` —
-`--transformer`'s accepted values and its tab-completion both read from that array.
+A source maps one platform's export onto Clerk's user schema, and says what it
+brings across. Adding a platform is one file in `sources/` plus one line in
+`sources/registry.ts`; `--source`'s tab-completion reads from that array.
 
-| Key          | Source                        | Passwords         | Notes                                                            |
-| ------------ | ----------------------------- | ----------------- | ---------------------------------------------------------------- |
-| `clerk`      | Clerk Dashboard export        | as exported       | Instance to instance, e.g. development → production              |
-| `auth0`      | Auth0 Export Users API        | `bcrypt`          | Hashes need a support request to Auth0; not in a standard export |
-| `authjs`     | Auth.js / NextAuth user table | none              | Assumes `SELECT id, name, email, email_verified, created_at`     |
-| `betterauth` | Better Auth export            | `bcrypt`          | Reads the credential account's `password_hash`                   |
-| `firebase`   | `firebase auth:export`        | `scrypt_firebase` | CSV or JSON; needs the four hash parameters below                |
-| `supabase`   | Supabase `auth.users` export  | `bcrypt`          | Supports `--skip-unsupported-providers`                          |
-| `workos`     | WorkOS User Management API    | none              | No hasher default: WorkOS returns no digest to name one for      |
+| Key          | Reads                         | Passwords | MFA     | Metadata |
+| ------------ | ----------------------------- | --------- | ------- | -------- |
+| `clerk`      | Clerk Dashboard export        | partial   | partial | yes      |
+| `auth0`      | Auth0 Export Users API        | partial   | no      | yes      |
+| `authjs`     | Auth.js / NextAuth user table | no        | no      | no       |
+| `betterauth` | Better Auth export            | yes       | no      | no       |
+| `firebase`   | `firebase auth:export`        | yes       | no      | no       |
+| `supabase`   | Supabase `auth.users` export  | yes       | no      | partial  |
+| `workos`     | WorkOS User Management API    | no        | no      | yes      |
 
-### `clerk migrate transformers list`
+There is no column for social sign-ins, because no source copies them and none
+needs to. Every source shows the same note instead: enable the same providers in
+Clerk, and a user who signs in with one is linked to their imported account by
+verified email. See
+[account linking](https://clerk.com/docs/guides/configure/auth-strategies/social-connections/account-linking).
 
-Which mappings are available. New in the CLI: the standalone tool's interactive
-picker was the only place these appeared, which was fine when the user had the
-source tree to grep. A compiled binary's users have neither.
+### `clerk migrate sources`
 
 ```sh
-clerk migrate transformers list
-clerk migrate transformers list --json
-clerk migrate transformers list --transformer-file ./my-transformer.ts
+clerk migrate sources                 # every source, with what it carries
+clerk migrate sources betterauth      # one source in full
+clerk migrate sources ./my-source.ts  # a source you wrote
+clerk migrate sources --json
 ```
 
-| Flag                        | Description                       |
-| --------------------------- | --------------------------------- |
-| `--json`                    | Output as JSON                    |
-| `--transformer-file <path>` | Also list a transformer you wrote |
+| Flag       | Description                                                      |
+| ---------- | ---------------------------------------------------------------- |
+| `[source]` | A built-in key, or the path to a source you wrote, to show fully |
+| `--json`   | The same data, on stdout                                         |
 
-Each entry prints its key, the platform label, and what the transformer assumes
-about the export — wrapped to the terminal, capped at 80 columns so two runs of
-the same command lay out the same way. A backticked span is never broken across
-lines. There is no intro/outro gutter: this reads a static registry rather than
-running anything.
+`sources` alone prints the table above. `sources <source>` shows one source in
+full: its export command, what it carries with a note for each, where each
+field lands (`encrypted_password → password`), its fixed defaults, and any
+caveats. An unknown key exits 2 and lists the valid ones. There is no
+intro/outro gutter: this reads a static registry rather than running anything.
 
-```
-A transformer maps one platform's export onto the fields Clerk imports. Pass the
-one your export came from as `--transformer <key>`.
+### `--source`
 
-Transformers:
-  clerk  Clerk
-    Migrate between Clerk instances (e.g. development to production, or to
-    another Clerk application). Export your users from the Clerk Dashboard
-    first.
+`clerk migrate import` takes `--source <key|path>`:
 
-  …
+- A value starting with `./`, `../` or `/`, or ending in `.ts`, `.js` or
+  `.mjs`, is loaded as a [custom source](#custom-sources).
+- Anything else must be a built-in key. An unknown key exits 2 with the list of
+  valid keys.
 
-  workos  WorkOS
-    Works with WorkOS's User Management API. WorkOS returns no password hashes,
-    so imported users sign in by reset or SSO.
+A file `clerk migrate export` wrote names its own source, so it needs none.
 
-7 built-in transformers
-Migrating from something else? Write a transformer and pass --transformer-file.
-```
-
-`--json` gives an agent the same data, including which source field each
-transformer maps to `userId`.
-
-### Custom transformers (`--transformer-file`)
+### Custom sources
 
 Migrating from a platform with no built-in, without recompiling the CLI:
 
 ```sh
-clerk migrate import --transformer-file ./my-platform.ts --file users.json
+clerk migrate import users.json --source ./my-platform.ts
 ```
 
 The file lives in **your** project, not in the CLI, and is imported at runtime.
@@ -652,6 +642,11 @@ export default {
     family: "lastName",
     pw_bcrypt: "password",
   },
+  carries: {
+    passwords: { level: "yes", note: "bcrypt hashes from the pw_bcrypt column." },
+    mfa: { level: "no", note: "Not exported." },
+    metadata: { level: "no", note: "Not exported." },
+  },
   defaults: { passwordHasher: "bcrypt" },
   postTransform: (user) => {
     if (!user.firstName) delete user.firstName;
@@ -663,23 +658,23 @@ TypeScript is fine — Bun's transpiler is part of the runtime, so `interface`,
 `satisfies` and `as const` all work in a file the compiled binary imports.
 Plain `.js` works too.
 
-`--transformer-file` and `--transformer` together is an error: both name a
-transformer and there is no sensible precedence between the one you wrote and
-the one we ship.
+An import run records a custom source's key and a hash of the file, so an
+edited source counts as a different source.
 
 #### Validation
 
 The file is code the CLI executes, so its shape is checked before use and
 rejected with the specific problem rather than crashing mid-pipeline:
 
-| Problem                            | Message                                                                                              |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Path does not exist                | `No transformer file at /abs/path.ts.`                                                               |
-| No default export, but a named one | ``has no default export. Found named export `myPlatform` — did you mean `export default`?``          |
-| Does not parse                     | `Could not load ./f.ts: Expected identifier but found ","`                                           |
-| Nothing maps to `userId`           | ``no source field maps to `userId`. Every user needs one — it becomes the Clerk user's external_id`` |
-| `key` clashes with a built-in      | `key is "clerk", which is already a built-in transformer`                                            |
-| A hook is not a function           | `postTransform must be a function when present`                                                      |
+| Problem                            | Message                                                                                                    |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Path does not exist                | `No source file at /abs/path.ts.`                                                                          |
+| No default export, but a named one | ``has no default export. Found named export `myPlatform` — did you mean `export default`?``                |
+| Does not parse                     | `Could not load ./f.ts: Expected identifier but found ","`                                                 |
+| Nothing maps to `userId`           | ``no source field maps to `userId`. Every user needs one — it becomes the Clerk user's external_id``       |
+| No `carries`                       | `` `carries` must say what the source brings across: { passwords, mfa, metadata }, each { level, note } `` |
+| `key` clashes with a built-in      | `key is "clerk", which is already a built-in source`                                                       |
+| A hook is not a function           | `postTransform must be a function when present`                                                            |
 
 The `userId` check is the load-bearing one: without it the import would run to
 completion and create every user with no `external_id`, which is what makes a
@@ -687,7 +682,7 @@ migration re-runnable.
 
 ### Verified vs unverified identifiers
 
-Every platform records verification differently, and each transformer declares
+Every platform records verification differently, and each source declares
 which style it uses. An identifier the source never confirmed is routed to
 `unverifiedEmailAddresses` / `unverifiedPhoneNumbers` rather than the primary
 field, because Clerk creates primary identifiers **verified** — sending an
@@ -705,7 +700,7 @@ alongside each digest. Find them in the Firebase console under
 **Authentication → Users → (⋮) → Password hash parameters**.
 
 ```sh
-clerk migrate import -y -t firebase -f users.json \
+clerk migrate import users.json --source firebase -y \
   --firebase-signer-key <key> --firebase-salt-separator <sep> \
   --firebase-rounds 8 --firebase-mem-cost 14
 ```
@@ -738,13 +733,13 @@ printed: a failed lookup must not be mistaken for "no providers are enabled".
 
 ## Schema fields
 
-What a transformer maps _onto_. Every user is validated against this schema
-before any request is made, so a field a transformer produces that is not listed
+What a source maps _onto_. Every user is validated against this schema
+before any request is made, so a field a source produces that is not listed
 here is silently dropped — Zod strips unknown keys — and never reaches Clerk.
-Writing a custom transformer means targeting these names exactly.
+Writing a custom source means targeting these names exactly.
 
-The schema lives in `validator.ts`; adding a source platform means adding a
-transformer, not editing it.
+The schema lives in `validator.ts`; adding a platform means adding a source,
+not editing it.
 
 **Required:** `userId` (`string`). It becomes the Clerk user's `external_id`,
 which is what makes a migration re-runnable.

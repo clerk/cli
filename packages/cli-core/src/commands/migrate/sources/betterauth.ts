@@ -1,4 +1,4 @@
-import type { TransformerRegistryEntry } from "../types.ts";
+import type { SourceEntry } from "../types.ts";
 import { routeByVerification, splitName } from "./shared.ts";
 
 /**
@@ -12,11 +12,22 @@ import { routeByVerification, splitName } from "./shared.ts";
  * no handling: the schema strips anything it does not declare. `banned` is the
  * exception, because that one *is* a Clerk field.
  */
-const betterAuthTransformer = {
+const betterAuthSource = {
   key: "betterauth",
   label: "Better Auth",
   description:
     "Works with the Better Auth export. Supports bcrypt passwords and the admin plugin's banned flag.",
+  carries: {
+    passwords: { level: "yes", note: "bcrypt hashes from the credential account come across." },
+    mfa: {
+      level: "no",
+      note: "The two-factor plugin's secrets are not exported. Users enrol again in Clerk.",
+    },
+    metadata: {
+      level: "no",
+      note: "Plugin columns such as `role` have no Clerk equivalent and are left out.",
+    },
+  },
   transformer: {
     user_id: "userId",
     email: "email",
@@ -41,6 +52,6 @@ const betterAuthTransformer = {
   defaults: {
     passwordHasher: "bcrypt" as const,
   },
-} satisfies TransformerRegistryEntry;
+} satisfies SourceEntry;
 
-export default betterAuthTransformer;
+export default betterAuthSource;

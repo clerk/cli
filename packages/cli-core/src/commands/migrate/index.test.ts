@@ -6,7 +6,6 @@ import { getMode, setMode } from "../../mode.ts";
 import { createProgram } from "../../cli-program.ts";
 import { exportPlatformKeys } from "./export/registry.ts";
 import { isAssumeYes, setAssumeYes } from "./lib/assume-yes.ts";
-import { transformerKeys } from "./transformers/registry.ts";
 
 function findCommand(names: string[]) {
   let current = createProgram().commands.find((cmd) => cmd.name() === names[0]);
@@ -35,7 +34,7 @@ describe("registerMigrate", () => {
   });
 
   test.each([
-    "--transformer",
+    "--source",
     "--file",
     "--resume-after",
     "--require-password",
@@ -53,8 +52,18 @@ describe("registerMigrate", () => {
     expect(flags).toContain(flag);
   });
 
-  test.each([[["transformers"]], [["transformers", "list"]]])("registers migrate %p", (names) => {
-    expect(findCommand(["migrate", ...names])).toBeDefined();
+  test("registers sources with an optional source and --json", () => {
+    const sources = findCommand(["migrate", "sources"]);
+    expect(sources?.registeredArguments[0]?.required).toBe(false);
+    expect(sources?.options.map((option) => option.long)).toEqual(["--json"]);
+  });
+
+  test.each([[["transformers"]], [["transformers", "list"]]])("no longer registers %p", (names) => {
+    expect(findCommand(["migrate", ...names])).toBeUndefined();
+  });
+
+  test.each(["--transformer", "--transformer-file"])("migrate import drops %s", (flag) => {
+    expect(findCommand(["migrate", "import"])?.options.map((o) => o.long)).not.toContain(flag);
   });
 
   test.each([
@@ -128,25 +137,6 @@ describe("registerMigrate", () => {
     expect(flags).toContain("--json");
   });
 
-  test("makes list the default transformers subcommand", () => {
-    const group = findCommand(["migrate", "transformers"]) as unknown as {
-      _defaultCommandName?: string;
-    };
-    expect(group._defaultCommandName).toBe("list");
-  });
-
-  test.each(["--json", "--transformer-file"])("transformers list accepts %s", (flag) => {
-    expect(findCommand(["migrate", "transformers", "list"])?.options.map((o) => o.long)).toContain(
-      flag,
-    );
-  });
-
-  test("migrate import accepts --transformer-file", () => {
-    expect(findCommand(["migrate", "import"])?.options.map((o) => o.long)).toContain(
-      "--transformer-file",
-    );
-  });
-
   test("registers runs with an optional run ID", () => {
     const runs = findCommand(["migrate", "runs"]);
     expect(runs?.registeredArguments[0]?.required).toBe(false);
@@ -185,16 +175,14 @@ describe("registerMigrate", () => {
     );
   });
 
-  test("constrains --transformer to the registered transformers, for validation and completion", () => {
-    const option = findCommand(["migrate", "import"])?.options.find(
-      (o) => o.long === "--transformer",
-    );
-    // Tracks the registry so adding a platform needs no edit here.
-    expect(option?.argChoices).toEqual(transformerKeys());
+  // It also takes a path, so it cannot use `.choices()`: completion offers the
+  // built-in keys through `KNOWN_OPTION_VALUES` instead.
+  test("--source accepts any value, so a path to a source you wrote gets through", () => {
+    const option = findCommand(["migrate", "import"])?.options.find((o) => o.long === "--source");
+    expect(option?.argChoices).toBeUndefined();
   });
 
   test.each([
-    ["-t", "--transformer"],
     ["-f", "--file"],
     ["-r", "--resume-after"],
     ["-y", "--yes"],

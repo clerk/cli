@@ -1,4 +1,4 @@
-import type { TransformerRegistryEntry } from "../types.ts";
+import type { SourceEntry } from "../types.ts";
 import { routeByVerification, splitName } from "./shared.ts";
 
 /**
@@ -16,11 +16,22 @@ import { routeByVerification, splitName } from "./shared.ts";
  * so users arrive without a digest and are imported with
  * `skip_password_requirement`.
  */
-const authjsTransformer = {
+const authjsSource = {
   key: "authjs",
   label: "Auth.js (NextAuth)",
   description:
     "Assumes an export of `SELECT id, name, email, email_verified, created_at FROM users`. `name` is split into firstName and lastName.",
+  carries: {
+    passwords: {
+      level: "no",
+      note: "Auth.js is passwordless (OAuth and email links), so users arrive without one.",
+    },
+    mfa: { level: "no", note: "Auth.js has no MFA of its own." },
+    metadata: {
+      level: "no",
+      note: "Only `id`, `name`, `email`, `email_verified` and `created_at` are read.",
+    },
+  },
   transformer: {
     id: "userId",
     email: "email",
@@ -33,6 +44,6 @@ const authjsTransformer = {
     routeByVerification(user, "email", "emailVerified", "timestamp");
     splitName(user);
   },
-} satisfies TransformerRegistryEntry;
+} satisfies SourceEntry;
 
-export default authjsTransformer;
+export default authjsSource;

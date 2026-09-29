@@ -1,4 +1,4 @@
-import type { TransformerRegistryEntry } from "../types.ts";
+import type { SourceEntry } from "../types.ts";
 import { routeByVerification } from "./shared.ts";
 
 /**
@@ -12,11 +12,22 @@ import { routeByVerification } from "./shared.ts";
  * be requested from Auth0 support. When present they are bcrypt (`$2a$`/`$2b$`,
  * 10 rounds), which is why `passwordHasher` defaults to `bcrypt`.
  */
-const auth0Transformer = {
+const auth0Source = {
   key: "auth0",
   label: "Auth0",
   description:
     "Works with Auth0's Export Users API. Password hashes require a support request to Auth0.",
+  carries: {
+    passwords: {
+      level: "partial",
+      note: "Auth0 releases bcrypt hashes only through a support request. Add each as `passwordHash` before importing.",
+    },
+    mfa: { level: "no", note: "Auth0 exports no MFA enrolments. Users enrol again in Clerk." },
+    metadata: {
+      level: "yes",
+      note: "`user_metadata` → public metadata, `app_metadata` → private metadata.",
+    },
+  },
   transformer: {
     user_id: "userId",
     email: "email",
@@ -38,6 +49,6 @@ const auth0Transformer = {
   defaults: {
     passwordHasher: "bcrypt" as const,
   },
-} satisfies TransformerRegistryEntry;
+} satisfies SourceEntry;
 
-export default auth0Transformer;
+export default auth0Source;
