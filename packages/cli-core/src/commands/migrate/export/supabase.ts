@@ -14,13 +14,7 @@ import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
-import {
-  finishExportRun,
-  reportExport,
-  resolveOutputPath,
-  startExportRun,
-  writeExportOutput,
-} from "./shared.ts";
+import { finishExport, startExportRun } from "./shared.ts";
 import {
   promptDbUrl,
   resolveDbUrl,
@@ -128,8 +122,6 @@ const SUPABASE_DB = {
 export async function exportSupabase(options: DbExportOptions): Promise<void> {
   const dbUrl = await resolveDbUrl(options, SUPABASE_DB);
 
-  const destination = await resolveOutputPath("supabase", options.output);
-
   await withGutter("Exporting users from Supabase", async () => {
     const { value: rows } = await withInputRetry(
       dbUrl,
@@ -141,20 +133,8 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
     );
 
     const run = await startExportRun(options, { platform: "supabase" });
-
     const { users, coverage } = buildSupabaseExport(rows, run.append);
-    const outputPath = writeExportOutput(users, destination);
-
-    const record = finishExportRun(run, outputPath);
-
-    reportExport({
-      platform: "supabase",
-      userCount: users.length,
-      outputPath,
-      coverage,
-      transformerKey: "supabase",
-      runId: record.id,
-    });
+    finishExport({ run, options, users, coverage });
 
     if (users.length > 0) {
       log.info(

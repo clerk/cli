@@ -1,22 +1,18 @@
 /**
- * Shared plumbing for the export modules: where the file lands, and what the
- * user is told about it.
+ * Shared plumbing for the export modules: the run that records each user,
+ * where the file lands, and what the user is told about it.
  *
- * Ported from the standalone migration-tool's `src/lib/export.ts`, with one
- * behavioural change: `--output` resolves against the **current working
- * directory**, the way every other path flag in this CLI does. The original
- * resolved a relative `--output` inside `exports/`, so `--output ./here.json`
- * silently wrote to `exports/here.json`.
+ * Every export is a run. The file lands in that run's folder as
+ * `export.json` unless `--output` names somewhere else, and `--output`
+ * resolves against the **current working directory**, the way every other
+ * path flag in this CLI does.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { dim, green, yellow } from "../../../lib/color.ts";
-import { throwUsageError } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
-import { text } from "../../../lib/prompts.ts";
-import { isHuman } from "../../../mode.ts";
-import { isAssumeYes } from "../lib/assume-yes.ts";
+import { ENVELOPE_VERSION, type ExportEnvelope } from "../lib/export-file.ts";
 import {
   resolveRunsDir,
   sha256File,
@@ -25,83 +21,16 @@ import {
   type RunRecord,
   type RunTarget,
 } from "../lib/run-store.ts";
+import type { FirebaseHashConfig } from "../types.ts";
 
-/**
- * `YYYYMMDD-HHmm`, local time — ISO 8601 basic format, minus seconds.
- *
- * Basic throughout rather than `2026-08-17-1954`, which mixes the extended
- * date form with the basic time form and leaves the trailing group looking
- * like a fourth date component. One separator, and it sorts lexically.
- *
- * Seconds are dropped on purpose. This lands in a filename people read off the
- * screen, type back and tab-complete, and two exports of the same platform
- * inside one minute is not an accident anyone has by surprise.
- *
- * Local rather than UTC because the only reader is the person who just ran the
- * command, deciding which of two files is the one they meant.
- */
-export function outputStamp(now: Date = new Date()): string {
-  const pad = (value: number) => String(value).padStart(2, "0");
-  const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
-  return `${date}-${pad(now.getHours())}${pad(now.getMinutes())}`;
-}
-
-/** Where an export lands when `--output` is not given. */
-export function defaultOutputPath(platform: string, now?: Date): string {
-  return path.join("exports", `${platform}-export-${outputStamp(now)}.json`);
-}
-
-/**
- * Settles where the file lands, before the export runs.
- *
- * Asked up front rather than at write time so a long export can be left
- * unattended — coming back to a stalled prompt with every user held in memory
- * and nothing on disk is the worse half of that trade.
- *
- * One prompt, not a confirm followed by a path prompt: the proposed path is
- * prefilled, so Enter accepts it and typing replaces it.
- *
- * `--output` is an answer already given, and agent mode has nobody to ask, so
- * it takes the proposal.
- *
- * `-y` is neither: somebody is there, and they said not to ask. It fails
- * instead of defaulting, because this is the one prompt whose default cannot
- * be undone by running the command again — a file written to a path nobody
- * chose has to be found and moved, and a second run writes a second copy.
- * Silencing that question is what `--output` is for, so the error hands over
- * the exact line, proposed path and all. (The log-directory question does take
- * its default under `-y`: `./logs` is where the reader would look anyway, and
- * nothing is saved.)
- */
-export async function resolveOutputPath(platform: string, output?: string): Promise<string> {
-  if (output) return output;
-
-  const proposed = defaultOutputPath(platform);
-  // Ordered so agent mode keeps defaulting even when it also passes `-y`:
-  // there was never a prompt on that path to suppress.
-  if (!isHuman()) return proposed;
-
-  if (isAssumeYes()) {
-    throwUsageError(
-      `\`clerk migrate export ${platform}\` needs an export location and will not prompt for one with -y.\nPass --output, then run it again.`,
-      undefined,
-      undefined,
-      [
-        {
-          command: `clerk migrate export ${platform} -y --output ${proposed}`,
-          description: "Re-run with the proposed path",
-        },
-      ],
-    );
-  }
-
-  const chosen = await text({
-    message: "Save the export to:",
-    default: proposed,
-    validate: (value) => (value?.trim() ? undefined : "A path is required"),
-  });
-  return chosen.trim();
-}
+/** What every export command takes on top of its own credentials. */
+export type ExportCommonOptions = {
+  /** Where to write the file, instead of the run folder. */
+  output?: string;
+  /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
+  runsDir?: string;
+  json?: boolean;
+};
 
 /**
  * Starts the export run that records each user as it is exported.
@@ -110,29 +39,27 @@ export async function resolveOutputPath(platform: string, output?: string): Prom
  * behind.
  */
 export async function startExportRun(
-  options: { runsDir?: string },
+  options: ExportCommonOptions,
   target: RunTarget,
 ): Promise<Run> {
   const runsDir = await resolveRunsDir(options.runsDir, { write: true });
   return startRun(runsDir, { kind: "export", target, source: target.platform });
 }
 
-/** Records the written file on the run, and finishes it. */
-export function finishExportRun(run: Run, outputPath: string): RunRecord {
-  run.update({ file: { path: outputPath, sha256: sha256File(outputPath) } });
-  return run.finish();
+/** Where the file lands: `--output`, or `export.json` in the run folder. */
+export function exportPath(run: Run, output: string | undefined): string {
+  return output ? path.resolve(process.cwd(), output) : path.join(run.dir, "export.json");
 }
 
 /**
- * Writes the export, creating any missing parent directories.
+ * Writes the envelope, creating any missing parent directories.
  *
- * @returns The absolute path written, for reporting.
+ * @returns The absolute path written.
  */
-export function writeExportOutput(users: unknown[], outputFile: string): string {
-  const resolved = path.resolve(process.cwd(), outputFile);
-  fs.mkdirSync(path.dirname(resolved), { recursive: true });
-  fs.writeFileSync(resolved, JSON.stringify(users, null, 2));
-  return resolved;
+export function writeExportFile(file: string, envelope: ExportEnvelope): string {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(envelope, null, 2));
+  return file;
 }
 
 export type CoverageField = { label: string; count: number };
@@ -161,66 +88,8 @@ export function formatFieldCoverage(fields: CoverageField[], total: number): str
  */
 export type ExportSection = { title: string; rows: string[] };
 
-export type ExportSummary = {
-  platform: string;
-  userCount: number;
-  outputPath: string;
-  coverage: CoverageField[];
-  /** Extra blocks, printed under the coverage table in order. */
-  sections?: ExportSection[];
-  /** The transformer that reads this file, for the "what next" line. */
-  transformerKey: string;
-  /** The export run that recorded each user. */
-  runId: string;
-};
-
 /**
- * Reports the coverage table and the import command that reads the file.
- *
- * The command prints through `log.info`, alongside the coverage table, rather
- * than being handed back for `setNextSteps`. The gutter's next-steps outro is
- * human-only — `withGutter` and `printNextSteps` both return early for an agent
- * or a non-TTY — and this is the one line that says what to do with the file
- * just written. An agent that cannot see it has to guess the invocation.
- */
-export function reportExport(summary: ExportSummary): void {
-  log.blank();
-  if (summary.userCount === 0) {
-    log.warn(`No users found to export. Wrote an empty file to ${summary.outputPath}.`);
-    log.info(dim(`Run ${summary.runId}`));
-    return;
-  }
-
-  log.info("Field coverage");
-  for (const line of formatFieldCoverage(summary.coverage, summary.userCount)) {
-    log.info(line);
-  }
-
-  for (const section of summary.sections ?? []) {
-    log.blank();
-    log.info(section.title);
-    for (const row of section.rows) log.info(row);
-  }
-
-  log.blank();
-  log.success(
-    `Exported ${summary.userCount} user${summary.userCount === 1 ? "" : "s"} to ${summary.outputPath}`,
-  );
-  log.info(
-    dim(`Run ${summary.runId}. See each user with \`clerk migrate runs ${summary.runId}\`.`),
-  );
-
-  log.blank();
-  for (const line of formatImportCommand(
-    summary.transformerKey,
-    relativeIfInside(summary.outputPath),
-  )) {
-    log.info(line);
-  }
-}
-
-/**
- * The import command for the file just written, and what it will target.
+ * The import command for an export run, and what it will target.
  *
  * One command rather than a development and a production variant, because
  * there is no flag whose absence means "development": the key decides, through
@@ -228,25 +97,94 @@ export function reportExport(summary: ExportSummary): void {
  * linked profile in that order. A line labelled "development" would be wrong
  * for anyone holding `CLERK_SECRET_KEY=sk_live_…`, which is the reader who can
  * least afford it. So the note names what picks the instance instead.
- *
- * `-y` is carried across from this export rather than always printed: on
- * import it also waves through the development-instance user-limit warning, so
- * it is not a flag to suggest to someone who never asked for it.
  */
-export function formatImportCommand(transformerKey: string, file: string): string[] {
-  const yes = isAssumeYes() ? "-y " : "";
+export function formatImportCommand(runId: string): string[] {
   return [
     "Import them with:",
-    dim(`  clerk migrate import ${yes}--transformer ${transformerKey} --file ${file}`),
+    dim(`  clerk migrate import ${runId}`),
     "",
     dim("  Imports into whichever instance the resolved secret key belongs to."),
     dim("  For production, add `--instance prod` or use a production secret key."),
-    ...(isAssumeYes() ? [] : [dim("  Add `-y` to skip the import confirmation prompt.")]),
   ];
 }
 
-/** Shortens a path for display when it sits under the working directory. */
-function relativeIfInside(absolute: string): string {
-  const relative = path.relative(process.cwd(), absolute);
-  return relative.startsWith("..") ? absolute : relative;
+export type FinishExportInput = {
+  run: Run;
+  options: ExportCommonOptions;
+  users: Record<string, unknown>[];
+  coverage: CoverageField[];
+  /** Extra blocks, printed under the coverage table in order. */
+  sections?: ExportSection[];
+  /** Firebase's hash parameters, carried to the import in the envelope. */
+  firebase?: FirebaseHashConfig;
+};
+
+export type FinishedExport = { record: RunRecord; outputPath: string };
+
+/**
+ * Writes the envelope, finishes the run, and reports it.
+ *
+ * The import command prints through `log.info` rather than the gutter's
+ * next-steps outro, which is human-only: this is the one line that says what
+ * to do with the file, and an agent that cannot see it has to guess. `--json`
+ * returns the same facts on stdout instead.
+ */
+export function finishExport(input: FinishExportInput): FinishedExport {
+  const { run, options, users, coverage } = input;
+  const platform = run.record.target.platform ?? run.record.source ?? "";
+  const outputPath = writeExportFile(exportPath(run, options.output), {
+    clerkMigrate: ENVELOPE_VERSION,
+    source: run.record.source ?? platform,
+    exportedAt: new Date().toISOString(),
+    runId: run.record.id,
+    ...(input.firebase ? { firebase: input.firebase } : {}),
+    users,
+  });
+  run.update({ file: { path: outputPath, sha256: sha256File(outputPath) } });
+  const record = run.finish();
+  const next = `clerk migrate import ${record.id}`;
+
+  if (options.json) {
+    log.data(
+      JSON.stringify(
+        {
+          target: record.target,
+          run: record,
+          output: outputPath,
+          users: users.length,
+          coverage,
+          ...(input.sections?.length ? { sections: input.sections } : {}),
+          next,
+        },
+        null,
+        2,
+      ),
+    );
+    return { record, outputPath };
+  }
+
+  log.blank();
+  if (users.length === 0) {
+    log.warn(`No users found to export. Wrote an empty file to ${outputPath}.`);
+    log.info(dim(`Run ${record.id}`));
+    return { record, outputPath };
+  }
+
+  log.info("Field coverage");
+  for (const line of formatFieldCoverage(coverage, users.length)) log.info(line);
+
+  for (const section of input.sections ?? []) {
+    log.blank();
+    log.info(section.title);
+    for (const row of section.rows) log.info(row);
+  }
+
+  log.blank();
+  log.success(`Exported ${users.length} user${users.length === 1 ? "" : "s"} to ${outputPath}`);
+  log.info(dim(`Run ${record.id}. See each user with \`clerk migrate runs ${record.id}\`.`));
+
+  log.blank();
+  for (const line of formatImportCommand(record.id)) log.info(line);
+
+  return { record, outputPath };
 }

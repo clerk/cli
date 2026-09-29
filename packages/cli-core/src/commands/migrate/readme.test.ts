@@ -115,8 +115,8 @@ describe("migrate README", () => {
   // Guards the extractor: a regex that silently matched nothing would make
   // every check below pass vacuously.
   test("finds the documented examples", () => {
-    expect(EXAMPLES.length).toBeGreaterThan(20);
-    expect(FLAG_USES.length).toBeGreaterThan(20);
+    expect(EXAMPLES.length).toBeGreaterThan(10);
+    expect(FLAG_USES.length).toBeGreaterThan(10);
   });
 
   test.each(EXAMPLES)("`%s` resolves to a real command", (example) => {

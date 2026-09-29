@@ -131,6 +131,9 @@ export async function resolveRunsDir(
   return path.join(root, ".clerk", "migrate");
 }
 
+/** The shape of a run ID, so one can be told apart from a file path. */
+export const RUN_ID_PATTERN = /^\d{8}-\d{6}-[0-9a-f]{4}$/;
+
 /** The folder one run lives in. */
 export function runDir(runsDir: string, id: string): string {
   return path.join(runsDir, id);

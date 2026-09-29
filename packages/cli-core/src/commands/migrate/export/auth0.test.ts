@@ -277,11 +277,19 @@ describe("buildAuth0Export", () => {
   });
 });
 
-/** The one file the export just wrote into `exports/`, whatever it stamped it. */
+/** The envelope the one export run in this project wrote. */
 function onlyExportFile(): string {
-  const entries = fs.readdirSync(path.join(workDir, "exports"));
+  const dir = path.join(workDir, ".clerk", "migrate");
+  const entries = fs.readdirSync(dir);
   expect(entries).toHaveLength(1);
-  return path.join(workDir, "exports", entries[0] as string);
+  return path.join(dir, entries[0] as string, "export.json");
+}
+
+/** The users inside that envelope. */
+function exportedUsers(): Record<string, unknown>[] {
+  return (
+    JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8")) as { users: Record<string, unknown>[] }
+  ).users;
 }
 
 describe("exportAuth0", () => {
@@ -289,13 +297,10 @@ describe("exportAuth0", () => {
     stubAuth0([[auth0User(0)], []]);
 
     await exportAuth0({ ...CREDENTIALS });
-
-    // Stamped to the minute, so a second export does not overwrite the first.
-    expect(path.basename(onlyExportFile())).toMatch(/^auth0-export-\d{8}-\d{4}\.json$/);
-    const written = JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8")) as Record<
-      string,
-      unknown
-    >[];
+    expect(JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8"))).toMatchObject({
+      source: "auth0",
+    });
+    const written = exportedUsers();
     expect(written[0]?.user_id).toBe("auth0|a0");
     expect(captured.err).toContain("Field coverage");
   });
@@ -307,13 +312,11 @@ describe("exportAuth0", () => {
     const originalMode = getMode();
     setMode("human");
     try {
-      // --output answers the destination prompt, which human mode would
-      // otherwise stop on.
       await exportAuth0({ ...CREDENTIALS, output: "exports/mine.json" });
     } finally {
       setMode(originalMode);
     }
-    expect(captured.err).toContain("migrate import --transformer auth0 --file exports/mine.json");
+    expect(captured.err).toMatch(/clerk migrate import \d{8}-\d{6}-[0-9a-f]{4}/);
   });
 
   test("--output controls the destination", async () => {

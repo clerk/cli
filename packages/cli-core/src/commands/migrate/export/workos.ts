@@ -27,14 +27,7 @@ import type { UserLine } from "../lib/run-store.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
 import { createApiScheduler } from "../lib/scheduler.ts";
-import {
-  finishExportRun,
-  reportExport,
-  resolveOutputPath,
-  startExportRun,
-  writeExportOutput,
-  type ExportSection,
-} from "./shared.ts";
+import { finishExport, startExportRun, type ExportSection } from "./shared.ts";
 
 const API_BASE = "https://api.workos.com/user_management";
 
@@ -73,6 +66,8 @@ export type ExportWorkOsOptions = {
   output?: string;
   /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
   runsDir?: string;
+  /** Print the result as JSON on stdout; never prompts. */
+  json?: boolean;
 };
 
 export type WorkOsUser = Record<string, unknown> & { id?: string };
@@ -444,8 +439,6 @@ export function buildWorkOsExport(
 export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> {
   const resolved = await resolveWorkOsApiKey(options);
 
-  const destination = await resolveOutputPath("workos", options.output);
-
   await withGutter("Exporting users from WorkOS", async () => {
     // Only WorkOS can say whether the key is live, for the right environment,
     // and not revoked — so a rejected key is asked for again here. The page it
@@ -473,19 +466,14 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
       run.append,
       providers?.identities,
     );
-    const outputPath = writeExportOutput(exported, destination);
-    const record = finishExportRun(run, outputPath);
-
-    reportExport({
-      platform: "workos",
-      userCount: exported.length,
-      outputPath,
+    finishExport({
+      run,
+      options,
+      users: exported,
       coverage,
       sections: providers
         ? [buildIdentityReport(users, providers.identities, providers.failed)]
         : [],
-      transformerKey: "workos",
-      runId: record.id,
     });
 
     if (exported.length > 0) {

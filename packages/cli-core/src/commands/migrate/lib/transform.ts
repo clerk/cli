@@ -19,6 +19,7 @@ import {
   type User,
 } from "../types.ts";
 import { userSchema } from "../validator.ts";
+import { isEnvelope } from "./export-file.ts";
 
 export type FileType = "application/json" | "text/csv";
 
@@ -425,6 +426,22 @@ async function readUsersFromFile(
   let filePath = resolveImportFilePath(file);
   const type = getFileType(file);
   let preExtracted: Record<string, unknown>[] | undefined;
+
+  // An export's envelope already holds the users in the source's own shape,
+  // so there is nothing left for a pre-transform to unwrap.
+  if (type === "application/json") {
+    const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    if (isEnvelope(parsed)) return parsed.users;
+    if (!transformer.preTransform) {
+      if (!Array.isArray(parsed)) {
+        throw new CliError(
+          `Expected ${file} to contain a JSON array of users, got ${typeof parsed}.`,
+          { code: ERROR_CODE.INVALID_JSON },
+        );
+      }
+      return parsed as Record<string, unknown>[];
+    }
+  }
 
   if (transformer.preTransform) {
     const result = await transformer.preTransform(filePath, type ?? "");

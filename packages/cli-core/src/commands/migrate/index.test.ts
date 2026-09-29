@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { getMode, setMode } from "../../mode.ts";
 import { createProgram } from "../../cli-program.ts";
 import { exportPlatformKeys } from "./export/registry.ts";
 import { isAssumeYes, setAssumeYes } from "./lib/assume-yes.ts";
@@ -109,13 +113,19 @@ describe("registerMigrate", () => {
     );
   });
 
-  test("documents the default output location in help", () => {
-    expect(findCommand(["migrate", "export", "clerk"])?.description()).toContain(
-      "./exports/clerk-export-<timestamp>.json",
-    );
-    expect(findCommand(["migrate", "export", "auth0"])?.description()).toContain(
-      "./exports/auth0-export-<timestamp>.json",
-    );
+  test.each(exportPlatformKeys())(
+    "migrate export %s names the run folder as the default output",
+    (platform) => {
+      const output = findCommand(["migrate", "export", platform])?.options.find(
+        (option) => option.long === "--output",
+      );
+      expect(output?.description).toContain("instead of the run folder");
+    },
+  );
+
+  test.each(exportPlatformKeys())("migrate export %s accepts --json", (platform) => {
+    const flags = findCommand(["migrate", "export", platform])?.options.map((o) => o.long);
+    expect(flags).toContain("--json");
   });
 
   test("makes list the default transformers subcommand", () => {
@@ -226,6 +236,21 @@ describe("the migrate group's -y hook", () => {
     expect(await parse(["migrate", "export", "supabase", "-y", "--db-url", "./none.sqlite"])).toBe(
       true,
     );
+  });
+
+  // `--json` means nobody reads a prompt, and agent mode is how every prompt in
+  // this tree already knows to stand down.
+  test("--json runs the command in agent mode", async () => {
+    const original = getMode();
+    const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-json-"));
+    try {
+      setMode("human");
+      await parse(["migrate", "runs", "--json", "--runs-dir", runsDir]);
+      expect(getMode()).toBe("agent");
+    } finally {
+      setMode(original);
+      fs.rmSync(runsDir, { recursive: true, force: true });
+    }
   });
 
   test("records its absence, so a previous run cannot leak into this one", async () => {

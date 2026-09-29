@@ -20,13 +20,7 @@ import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spin
 import type { UserLine } from "../lib/run-store.ts";
 import { retryOn429 } from "../lib/retry.ts";
 import { resolveClerkSource } from "./clerk-source.ts";
-import {
-  finishExportRun,
-  reportExport,
-  resolveOutputPath,
-  startExportRun,
-  writeExportOutput,
-} from "./shared.ts";
+import { finishExport, startExportRun } from "./shared.ts";
 
 /** BAPI's maximum page size for `GET /v1/users`. */
 const PAGE_SIZE = 500;
@@ -38,6 +32,8 @@ export type ExportClerkOptions = {
   instance?: string;
   /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
   runsDir?: string;
+  /** Print the result as JSON on stdout; never prompts. */
+  json?: boolean;
 };
 
 type BapiIdentifier = {
@@ -243,8 +239,6 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
     instance: options.instance,
   });
 
-  const destination = await resolveOutputPath("clerk", options.output);
-
   await withGutter("Exporting users from Clerk", async () => {
     log.info(`Exporting from ${source.target ?? "the resolved instance"}.`);
 
@@ -254,17 +248,7 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
 
     const run = await startExportRun(options, { platform: "clerk", appLabel: source.target });
     const { users: exported, coverage } = buildClerkExport(users, run.append);
-    const outputPath = writeExportOutput(exported, destination);
-    const record = finishExportRun(run, outputPath);
-
-    reportExport({
-      platform: "clerk",
-      userCount: exported.length,
-      outputPath,
-      coverage,
-      transformerKey: "clerk",
-      runId: record.id,
-    });
+    finishExport({ run, options, users: exported, coverage });
 
     if (exported.length > 0) {
       log.warn(

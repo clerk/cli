@@ -17,6 +17,8 @@ export type DbExportOptions = {
   output?: string;
   /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
   runsDir?: string;
+  /** Print the result as JSON on stdout; never prompts. */
+  json?: boolean;
 };
 
 export type ResolveConfig = {

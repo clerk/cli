@@ -1,6 +1,7 @@
 import { createOption } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
 import { parseIntegerOption } from "../../lib/option-parsers.ts";
+import { setMode } from "../../mode.ts";
 import { setAssumeYes } from "./lib/assume-yes.ts";
 import { registerMigrateExport } from "./export/index.ts";
 import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "./lib/run-store.ts";
@@ -42,8 +43,14 @@ export function registerMigrate(program: Program): void {
   // export commands — so it is resolved once here rather than threaded
   // through every export handler. Hooks are inherited, so this fires for every
   // subcommand under `migrate`; one that declares no `-y` resolves to false.
+  //
+  // `--json` means nobody is reading a prompt, so it runs the command in agent
+  // mode: every prompt in this tree already stands down for an agent, with the
+  // usage error naming what to pass instead.
   migrateCommand.hook("preAction", (_thisCommand, actionCommand) => {
-    setAssumeYes(Boolean(actionCommand.opts().yes));
+    const opts = actionCommand.opts();
+    setAssumeYes(Boolean(opts.yes));
+    if (opts.json) setMode("agent");
   });
 
   // Named, not `isDefault`. `import` and `export` are the two directions this
@@ -57,6 +64,7 @@ export function registerMigrate(program: Program): void {
   migrateCommand
     .command("import")
     .description("Import users from an exported JSON or CSV file")
+    .argument("[file|export-run-id]", "The export file, or the ID of the export run that wrote it")
     .addOption(
       createOption(
         "-t, --transformer <transformer>",
@@ -105,8 +113,11 @@ export function registerMigrate(program: Program): void {
         description: "Skip Supabase users whose only provider is not enabled in Clerk",
       },
     ])
-    .action(async (_opts, cmd) =>
-      migrate.run(cmd.optsWithGlobals() as Parameters<typeof migrate.run>[0]),
+    .action(async (input, _opts, cmd) =>
+      migrate.run({
+        ...(cmd.optsWithGlobals() as Parameters<typeof migrate.run>[0]),
+        ...(input ? { input } : {}),
+      }),
     );
 
   registerMigrateExport(migrateCommand);

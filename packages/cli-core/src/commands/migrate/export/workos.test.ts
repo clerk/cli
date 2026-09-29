@@ -383,11 +383,19 @@ describe("buildWorkOsExport", () => {
   });
 });
 
-/** The one file the export just wrote into `exports/`, whatever it stamped it. */
+/** The envelope the one export run in this project wrote. */
 function onlyExportFile(): string {
-  const entries = fs.readdirSync(path.join(workDir, "exports"));
+  const dir = path.join(workDir, ".clerk", "migrate");
+  const entries = fs.readdirSync(dir);
   expect(entries).toHaveLength(1);
-  return path.join(workDir, "exports", entries[0] as string);
+  return path.join(dir, entries[0] as string, "export.json");
+}
+
+/** The users inside that envelope. */
+function exportedUsers(): Record<string, unknown>[] {
+  return (
+    JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8")) as { users: Record<string, unknown>[] }
+  ).users;
 }
 
 describe("exportWorkOs", () => {
@@ -395,13 +403,10 @@ describe("exportWorkOs", () => {
     stubWorkOs([[workosUser(0)]]);
 
     await exportWorkOs({ apiKey: API_KEY });
-
-    // Stamped to the minute, so a second export does not overwrite the first.
-    expect(path.basename(onlyExportFile())).toMatch(/^workos-export-\d{8}-\d{4}\.json$/);
-    const written = JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8")) as Record<
-      string,
-      unknown
-    >[];
+    expect(JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8"))).toMatchObject({
+      source: "workos",
+    });
+    const written = exportedUsers();
     expect(written[0]?.id).toBe("user_00");
     expect(captured.err).toContain("Field coverage");
   });
@@ -419,7 +424,7 @@ describe("exportWorkOs", () => {
     } finally {
       setMode(originalMode);
     }
-    expect(captured.err).toContain("migrate import --transformer workos --file exports/mine.json");
+    expect(captured.err).toMatch(/clerk migrate import \d{8}-\d{6}-[0-9a-f]{4}/);
   });
 
   test("--output controls the destination", async () => {
@@ -443,10 +448,11 @@ describe("exportWorkOs", () => {
 
     await exportWorkOs({ apiKey: API_KEY, output: "rich.json", withIdentities: true });
 
-    const written = JSON.parse(fs.readFileSync(path.join(workDir, "rich.json"), "utf-8")) as Record<
-      string,
-      unknown
-    >[];
+    const written = (
+      JSON.parse(fs.readFileSync(path.join(workDir, "rich.json"), "utf-8")) as {
+        users: Record<string, unknown>[];
+      }
+    ).users;
     expect(written[0]?.identities).toEqual([{ provider: "GoogleOAuth", idp_id: "g1" }]);
   });
 

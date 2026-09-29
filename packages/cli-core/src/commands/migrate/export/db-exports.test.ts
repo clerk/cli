@@ -229,7 +229,8 @@ describe("authjs export", () => {
     await exportAuthJs({ dbUrl: authJsDb("User"), output: "authjs.json" });
 
     const written = JSON.parse(fs.readFileSync(path.join(workDir, "authjs.json"), "utf-8"));
-    expect(written).toHaveLength(2);
+    expect(written).toMatchObject({ clerkMigrate: 1, source: "authjs" });
+    expect(written.users).toHaveLength(2);
     expect(captured.err).toContain("Read 2 rows from");
     expect(captured.err).toContain("stores no passwords");
   });
@@ -309,7 +310,9 @@ describe("betterauth export", () => {
     await exportBetterAuth({ dbUrl: file, output: "ba.json" });
 
     expect(captured.err).toContain("Detected plugin columns: username");
-    expect(JSON.parse(fs.readFileSync(path.join(workDir, "ba.json"), "utf-8"))).toHaveLength(1);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "ba.json"), "utf-8")).users).toHaveLength(
+      1,
+    );
   });
 
   test("says so plainly when no plugins are in use", async () => {

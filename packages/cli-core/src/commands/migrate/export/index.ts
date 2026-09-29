@@ -91,8 +91,8 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     .setExamples([
       { command: "clerk migrate export", description: "Pick a platform interactively" },
       {
-        command: "clerk migrate export clerk --output users.json",
-        description: "Export from a Clerk instance",
+        command: "clerk migrate export clerk",
+        description: "Export from a Clerk instance into a new run",
       },
       {
         command:
@@ -101,18 +101,18 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       },
     ])
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
+    .option("--json", "Print the result as JSON; never prompts")
     .action(async (_opts, cmd) =>
       handlers.picker(cmd.optsWithGlobals() as Record<string, unknown>),
     );
 
   exportCommand
     .command("clerk")
-    .description(
-      "Export users from a Clerk instance (default: ./exports/clerk-export-<timestamp>.json)",
-    )
-    .option("-o, --output <path>", "Where to write the export, relative to the current directory")
-    .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
+    .description("Export users from a Clerk instance")
+    .option("-o, --output <path>", "Write the export here instead of the run folder")
+    .option("-y, --yes", "Do not prompt: fail on a rejected credential")
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
+    .option("--json", "Print the result as JSON; never prompts")
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
@@ -132,15 +132,14 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
 
   exportCommand
     .command("auth0")
-    .description(
-      "Export users from an Auth0 tenant (default: ./exports/auth0-export-<timestamp>.json)",
-    )
+    .description("Export users from an Auth0 tenant")
     .option("--domain <domain>", "Auth0 tenant domain, e.g. my-tenant.us.auth0.com")
     .option("--client-id <id>", "Machine-to-machine application client ID")
     .option("--client-secret <secret>", "Machine-to-machine application client secret")
-    .option("-o, --output <path>", "Where to write the export, relative to the current directory")
-    .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
+    .option("-o, --output <path>", "Write the export here instead of the run folder")
+    .option("-y, --yes", "Do not prompt: fail on a rejected credential")
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
+    .option("--json", "Print the result as JSON; never prompts")
     .setExamples([
       {
         command:
@@ -158,13 +157,12 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
 
   exportCommand
     .command("firebase")
-    .description(
-      "Export users from a Firebase project (default: ./exports/firebase-export-<timestamp>.json)",
-    )
+    .description("Export users from a Firebase project")
     .option("--service-account <path>", "Path to a service account key JSON file")
-    .option("-o, --output <path>", "Where to write the export, relative to the current directory")
-    .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
+    .option("-o, --output <path>", "Write the export here instead of the run folder")
+    .option("-y, --yes", "Do not prompt: fail on a rejected credential")
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
+    .option("--json", "Print the result as JSON; never prompts")
     .setExamples([
       {
         command: "clerk migrate export firebase --service-account ./service-account.json",
@@ -177,21 +175,20 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
 
   exportCommand
     .command("workos")
-    .description(
-      "Export users from a WorkOS tenant (default: ./exports/workos-export-<timestamp>.json)",
-    )
+    .description("Export users from a WorkOS tenant")
     .option("--api-key <key>", "WorkOS secret API key, the one starting `sk_`")
     .option(
       "--with-identities",
       "Also record each user's OAuth providers — one extra request per user",
     )
     .option("--no-with-identities", "Skip the OAuth provider fan-out without being asked")
-    .option("-o, --output <path>", "Where to write the export, relative to the current directory")
+    .option("-o, --output <path>", "Write the export here instead of the run folder")
     .option(
       "-y, --yes",
-      "Do not prompt: require --output, fail on a rejected credential, and assume --with-identities",
+      "Do not prompt: fail on a rejected credential, and assume --with-identities",
     )
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
+    .option("--json", "Print the result as JSON; never prompts")
     .setExamples([
       {
         command: "clerk migrate export workos --api-key sk_…",
@@ -211,13 +208,12 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
   for (const platform of DB_PLATFORMS) {
     exportCommand
       .command(platform.key)
-      .description(
-        `${platform.summary} (default: ./exports/${platform.key}-export-<timestamp>.json)`,
-      )
+      .description(platform.summary)
       .option("--db-url <url>", "Postgres, MySQL, libsql/Turso or SQLite connection string")
-      .option("-o, --output <path>", "Where to write the export, relative to the current directory")
-      .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
+      .option("-o, --output <path>", "Write the export here instead of the run folder")
+      .option("-y, --yes", "Do not prompt: fail on a rejected credential")
       .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
+      .option("--json", "Print the result as JSON; never prompts")
       .setExamples([
         {
           command: `clerk migrate export ${platform.key} --db-url "${platform.example}"`,

@@ -15,13 +15,7 @@ import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import { log } from "../../../lib/log.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
-import {
-  finishExportRun,
-  reportExport,
-  resolveOutputPath,
-  startExportRun,
-  writeExportOutput,
-} from "./shared.ts";
+import { finishExport, startExportRun } from "./shared.ts";
 import {
   promptDbUrl,
   resolveDbUrl,
@@ -127,8 +121,6 @@ const AUTHJS_DB = {
 export async function exportAuthJs(options: DbExportOptions): Promise<void> {
   const dbUrl = await resolveDbUrl(options, AUTHJS_DB);
 
-  const destination = await resolveOutputPath("authjs", options.output);
-
   await withGutter("Exporting users from Auth.js", async () => {
     const {
       value: { rows, table },
@@ -143,20 +135,8 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
     log.info(`Read ${rows.length} row${rows.length === 1 ? "" : "s"} from ${table}.`);
 
     const run = await startExportRun(options, { platform: "authjs" });
-
     const { users, coverage } = buildAuthJsExport(rows, run.append);
-    const outputPath = writeExportOutput(users, destination);
-
-    const record = finishExportRun(run, outputPath);
-
-    reportExport({
-      platform: "authjs",
-      userCount: users.length,
-      outputPath,
-      coverage,
-      transformerKey: "authjs",
-      runId: record.id,
-    });
+    finishExport({ run, options, users, coverage });
 
     if (users.length > 0) {
       log.warn(

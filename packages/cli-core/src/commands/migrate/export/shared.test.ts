@@ -1,168 +1,114 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { type CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { useCaptureLog } from "../../../test/lib/stubs.ts";
+import { readEnvelope } from "../lib/export-file.ts";
+import { latestUserLines, readRun } from "../lib/run-store.ts";
+import { finishExport, formatImportCommand, startExportRun } from "./shared.ts";
 
-const mockText = mock();
-mock.module("../../../lib/prompts.ts", () => ({
-  text: (...args: unknown[]) => mockText(...args),
-}));
+const captured = useCaptureLog();
 
-let human = true;
-mock.module("../../../mode.ts", () => ({
-  isHuman: () => human,
-  isAgent: () => !human,
-  getMode: () => (human ? "human" : "agent"),
-  setMode: () => {},
-}));
-
-const { defaultOutputPath, formatImportCommand, outputStamp, resolveOutputPath } =
-  await import("./shared.ts");
-const { setAssumeYes } = await import("../lib/assume-yes.ts");
+let runsDir: string;
+let originalCwd: string;
 
 beforeEach(() => {
-  human = true;
-  setAssumeYes(false);
-  mockText.mockReset();
+  originalCwd = process.cwd();
+  runsDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-export-shared-")));
+  process.chdir(runsDir);
 });
 
-describe("outputStamp", () => {
-  // Local time, and no seconds: this ends up in a filename someone reads off
-  // the screen and types back.
-  test("stamps to the minute", () => {
-    expect(outputStamp(new Date(2026, 7, 17, 14, 32, 59))).toBe("20260817-1432");
-  });
-
-  test("pads single-digit months, days, hours and minutes", () => {
-    expect(outputStamp(new Date(2026, 0, 3, 9, 5, 0))).toBe("20260103-0905");
-  });
+afterEach(() => {
+  process.chdir(originalCwd);
+  fs.rmSync(runsDir, { recursive: true, force: true });
 });
 
-describe("defaultOutputPath", () => {
-  test("names the platform and the stamp, under exports/", () => {
-    expect(defaultOutputPath("clerk", new Date(2026, 7, 17, 14, 32))).toBe(
-      "exports/clerk-export-20260817-1432.json",
-    );
+const users = [{ id: "u1", email: "a@x.dev" }];
+const coverage = [{ label: "have an email address", count: 1 }];
+
+describe("finishExport", () => {
+  test("writes the envelope into the run folder by default", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "supabase" });
+    run.append({ sourceId: "u1", status: "exported" });
+
+    const { record, outputPath } = finishExport({ run, options: {}, users, coverage });
+
+    expect(outputPath).toBe(path.join(runsDir, record.id, "export.json"));
+    expect(readEnvelope(outputPath)).toMatchObject({
+      clerkMigrate: 1,
+      source: "supabase",
+      runId: record.id,
+      users,
+    });
+    expect(readRun(runsDir, record.id)).toMatchObject({
+      kind: "export",
+      status: "complete",
+      file: { path: outputPath },
+    });
+    expect(latestUserLines(runsDir, record.id).get("u1")?.status).toBe("exported");
   });
 
-  // Two exports of the same platform an hour apart must not collide.
-  test("gives two runs different names", () => {
-    expect(defaultOutputPath("auth0", new Date(2026, 7, 17, 14, 32))).not.toBe(
-      defaultOutputPath("auth0", new Date(2026, 7, 17, 15, 32)),
-    );
-  });
-});
+  test("--output writes somewhere else, and the run still records where", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "auth0" });
 
-describe("resolveOutputPath", () => {
-  test("--output is an answer already given", async () => {
-    expect(await resolveOutputPath("clerk", "somewhere/mine.json")).toBe("somewhere/mine.json");
-    expect(mockText).not.toHaveBeenCalled();
-  });
+    const { record, outputPath } = finishExport({
+      run,
+      options: { output: "mine/users.json" },
+      users,
+      coverage,
+    });
 
-  // One prompt, not a confirm plus a path question: the proposal is prefilled,
-  // so enter accepts it and typing replaces it.
-  test("prefills the proposed path so enter accepts it", async () => {
-    mockText.mockImplementation(async (config: { default: string }) => config.default);
-
-    const chosen = await resolveOutputPath("clerk");
-
-    expect(chosen).toMatch(/^exports\/clerk-export-\d{8}-\d{4}\.json$/);
-    expect(mockText).toHaveBeenCalledTimes(1);
-    expect(mockText.mock.calls[0]?.[0]).toMatchObject({ message: "Save the export to:" });
+    expect(outputPath).toBe(path.join(runsDir, "mine", "users.json"));
+    expect(readRun(runsDir, record.id)?.file?.path).toBe(outputPath);
   });
 
-  test("takes a path typed over the proposal, trimmed", async () => {
-    mockText.mockResolvedValue("  ../elsewhere/users.json  ");
+  test("carries Firebase's hash parameters to the import", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "firebase" });
+    const firebase = {
+      base64_signer_key: "k",
+      base64_salt_separator: "s",
+      rounds: 8,
+      mem_cost: 14,
+    };
 
-    expect(await resolveOutputPath("firebase")).toBe("../elsewhere/users.json");
+    const { outputPath } = finishExport({ run, options: {}, users, coverage, firebase });
+
+    expect(readEnvelope(outputPath)?.firebase).toEqual(firebase);
   });
 
-  test("agent mode takes the proposed path without asking", async () => {
-    human = false;
+  test("prints the import command by run ID", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "clerk" });
 
-    expect(await resolveOutputPath("supabase")).toMatch(
-      /^exports\/supabase-export-\d{8}-\d{4}\.json$/,
-    );
-    expect(mockText).not.toHaveBeenCalled();
+    const { record } = finishExport({ run, options: {}, users, coverage });
+
+    expect(captured.err).toContain(`clerk migrate import ${record.id}`);
   });
 
-  // The one prompt whose default cannot be undone by running the command
-  // again: a file at a path nobody chose has to be found and moved, and a
-  // second run writes a second copy. So `-y` fails here rather than guessing.
-  describe("with -y", () => {
-    beforeEach(() => setAssumeYes(true));
+  test("--json returns the result on stdout instead", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "clerk" });
 
-    test("fails rather than prompting or defaulting", async () => {
-      await expect(resolveOutputPath("supabase")).rejects.toThrow(
-        /needs an export location and will not prompt for one with -y/,
-      );
-      expect(mockText).not.toHaveBeenCalled();
+    const { record, outputPath } = finishExport({ run, options: { json: true }, users, coverage });
+
+    expect(JSON.parse(captured.out)).toMatchObject({
+      run: { id: record.id, kind: "export" },
+      output: outputPath,
+      users: 1,
+      next: `clerk migrate import ${record.id}`,
     });
-
-    test("is a usage error, so the exit code says what to fix", async () => {
-      const error = (await resolveOutputPath("supabase").catch((e: unknown) => e)) as CliError;
-
-      expect(error.code).toBe(ERROR_CODE.USAGE_ERROR);
-      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
-    });
-
-    // The whole point of failing instead of defaulting: the error has to hand
-    // back a line that runs, or it has cost the operator the run for nothing.
-    test("hands back the command to re-run, proposed path and all", async () => {
-      const error = (await resolveOutputPath("supabase").catch((e: unknown) => e)) as CliError;
-
-      expect(error.examples?.[0]?.command).toMatch(
-        /^clerk migrate export supabase -y --output exports\/supabase-export-\d{8}-\d{4}\.json$/,
-      );
-    });
-
-    test("names the platform that was actually run", async () => {
-      const error = (await resolveOutputPath("firebase").catch((e: unknown) => e)) as CliError;
-
-      expect(error.message).toContain("`clerk migrate export firebase`");
-    });
-
-    test("stays quiet when --output already answered it", async () => {
-      expect(await resolveOutputPath("clerk", "somewhere/mine.json")).toBe("somewhere/mine.json");
-    });
-
-    // An agent passes `-y` reflexively and has no prompt to suppress, so the
-    // flag must not turn a working export into a usage error there.
-    test("still defaults in agent mode", async () => {
-      human = false;
-
-      expect(await resolveOutputPath("supabase")).toMatch(
-        /^exports\/supabase-export-\d{8}-\d{4}\.json$/,
-      );
-    });
+    expect(captured.err).not.toContain("Field coverage");
   });
 });
 
 describe("formatImportCommand", () => {
-  const stripAnsi = (value: string): string => value.replace(/\u001b\[[0-9;]*m/g, "");
-  const render = () => stripAnsi(formatImportCommand("supabase", "exports/mine.json").join("\n"));
+  const render = () => Bun.stripANSI(formatImportCommand("20260929-141502-a1b2").join("\n"));
 
-  test("names the transformer and the file just written", () => {
-    expect(render()).toContain(
-      "clerk migrate import --transformer supabase --file exports/mine.json",
-    );
+  test("names the export run, which carries its own source", () => {
+    expect(render()).toContain("clerk migrate import 20260929-141502-a1b2");
   });
 
   // The instance comes from the resolved key, so there is no flag whose
   // absence means development — the note says what actually decides.
   test("says how to reach production", () => {
     expect(render()).toContain("--instance prod");
-  });
-
-  test("offers -y when the export was not given it", () => {
-    expect(render()).toContain("Add `-y` to skip the import confirmation prompt.");
-  });
-
-  // Carried across rather than always printed: on import `-y` also waves
-  // through the development-instance user-limit warning.
-  test("carries -y across from the export that was given it", () => {
-    setAssumeYes(true);
-
-    const text = render();
-    expect(text).toContain("clerk migrate import -y --transformer supabase");
-    expect(text).not.toContain("Add `-y`");
   });
 });

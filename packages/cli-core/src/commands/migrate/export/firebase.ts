@@ -31,16 +31,10 @@ import { log } from "../../../lib/log.ts";
 import { password as passwordPrompt } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
-import { isAssumeYes } from "../lib/assume-yes.ts";
 import type { UserLine } from "../lib/run-store.ts";
+import type { FirebaseHashConfig } from "../types.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
-import {
-  finishExportRun,
-  reportExport,
-  resolveOutputPath,
-  startExportRun,
-  writeExportOutput,
-} from "./shared.ts";
+import { finishExport, startExportRun } from "./shared.ts";
 
 /** Identity Toolkit's maximum for `accounts:batchGet`. */
 const PAGE_SIZE = 1000;
@@ -58,6 +52,8 @@ export type ExportFirebaseOptions = {
   output?: string;
   /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
   runsDir?: string;
+  /** Print the result as JSON on stdout; never prompts. */
+  json?: boolean;
 };
 
 export type ServiceAccount = {
@@ -471,10 +467,14 @@ export function buildFirebaseExport(
   };
 }
 
-/** The exact `migrate import` invocation, with the project's own parameters. */
+/**
+ * What the reader needs to know about the hash parameters.
+ *
+ * When they were read, they are already in the export file, so the import
+ * needs nothing extra. When they were not, the import has to be given them.
+ */
 export function formatHashConfigGuidance(
   config: HashConfig | null,
-  outputPath: string,
   passwordCount: number,
 ): string[] {
   if (passwordCount === 0) {
@@ -486,7 +486,7 @@ export function formatHashConfigGuidance(
       bold("Password hash parameters"),
       "This export carries password hashes, which Clerk can only verify with the project's",
       "scrypt parameters. Find them in the Firebase console under",
-      "Authentication → Users → (⋮) → Password hash parameters, then pass:",
+      "Authentication → Users → (⋮) → Password hash parameters, then pass them to the import:",
       dim(
         "  --firebase-signer-key --firebase-salt-separator --firebase-rounds --firebase-mem-cost",
       ),
@@ -495,27 +495,24 @@ export function formatHashConfigGuidance(
 
   return [
     bold("Password hash parameters"),
-    "Read from the project. Import with:",
-    // One line, however long. Inside the gutter every line printed here is
-    // prefixed with `│`, and backslash continuations put that character in the
-    // middle of the command — copied along with it, and rejected by the shell
-    // as three extra arguments. A line that wraps on screen has no such
-    // character in it and pastes back as what was printed.
-    dim(
-      `  clerk migrate import ${isAssumeYes() ? "-y " : ""}--transformer firebase --file ${outputPath}` +
-        ` --firebase-signer-key "${config.signerKey}"` +
-        ` --firebase-salt-separator "${config.saltSeparator}"` +
-        ` --firebase-rounds ${config.rounds} --firebase-mem-cost ${config.memoryCost}`,
-    ),
+    dim("Read from the project and saved in the export file, so the import needs nothing more."),
   ];
+}
+
+/** The hash parameters in the shape the import reads them. */
+export function toFirebaseHashConfig(config: HashConfig): FirebaseHashConfig {
+  return {
+    base64_signer_key: config.signerKey,
+    base64_salt_separator: config.saltSeparator,
+    rounds: config.rounds,
+    mem_cost: config.memoryCost,
+  };
 }
 
 export async function exportFirebase(options: ExportFirebaseOptions): Promise<void> {
   // Read and validate before anything reaches the network, so a wrong file
   // fails in a second rather than after an auth round-trip.
   const resolved = await resolveServiceAccount(options);
-
-  const destination = await resolveOutputPath("firebase", options.output);
 
   await withGutter("Exporting users from Firebase", async () => {
     // Only Google can say whether a well-formed key is still a valid one, so a
@@ -536,27 +533,24 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
     );
 
     const run = await startExportRun(options, { platform: "firebase" });
-
     const { users: exported, coverage } = buildFirebaseExport(users, run.append);
-    const outputPath = writeExportOutput(exported, destination);
 
-    const record = finishExportRun(run, outputPath);
-
-    reportExport({
-      platform: "firebase",
-      userCount: exported.length,
-      outputPath,
-      coverage,
-      transformerKey: "firebase",
-      runId: record.id,
-    });
-
+    // Read before the file is written, so the envelope carries them and the
+    // import needs no --firebase-* flags.
     const passwordCount = coverage.find((entry) => entry.label.includes("password"))?.count ?? 0;
     const hashConfig = passwordCount > 0 ? await fetchHashConfig(account, token) : null;
 
-    log.blank();
-    for (const line of formatHashConfigGuidance(hashConfig, outputPath, passwordCount)) {
-      log.info(line);
+    finishExport({
+      run,
+      options,
+      users: exported,
+      coverage,
+      ...(hashConfig ? { firebase: toFirebaseHashConfig(hashConfig) } : {}),
+    });
+
+    if (!options.json) {
+      log.blank();
+      for (const line of formatHashConfigGuidance(hashConfig, passwordCount)) log.info(line);
     }
   });
 }

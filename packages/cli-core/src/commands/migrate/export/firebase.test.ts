@@ -4,7 +4,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
-import { setAssumeYes } from "../lib/assume-yes.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import {
@@ -404,61 +403,39 @@ describe("fetchHashConfig", () => {
 describe("formatHashConfigGuidance", () => {
   const config = { signerKey: "KEY==", saltSeparator: "Bw==", rounds: 8, memoryCost: 14 };
 
-  test("prints the exact import command when the parameters are known", () => {
-    const text = formatHashConfigGuidance(config, "exports/firebase-export.json", 3).join("\n");
-    expect(text).toContain('--firebase-signer-key "KEY=="');
-    expect(text).toContain('--firebase-salt-separator "Bw=="');
-    expect(text).toContain("--firebase-rounds 8 --firebase-mem-cost 14");
-  });
-
-  // The command is printed inside the gutter, which prefixes every line it is
-  // given with `│`. Split over lines, that character lands mid-command and is
-  // copied with it — the shell then reads each one as another argument and
-  // rejects the import.
-  test("keeps the command on one line, so it can be copied out of the gutter", () => {
-    const [command] = formatHashConfigGuidance(config, "out.json", 3).slice(-1);
-    expect(command).not.toContain("\n");
-    expect(command).not.toContain("\\");
-  });
-
-  // The shared import block carries `-y` across from the export; this command
-  // is the one a Firebase operator actually copies, so it has to agree.
-  test("carries -y across from the export that was given it", () => {
-    setAssumeYes(true);
-    try {
-      expect(formatHashConfigGuidance(config, "out.json", 3).join("\n")).toContain(
-        "clerk migrate import -y --transformer firebase",
-      );
-    } finally {
-      setAssumeYes(false);
-    }
-  });
-
-  test("leaves -y out when the export was not given it", () => {
-    expect(formatHashConfigGuidance(config, "out.json", 3).join("\n")).toContain(
-      "clerk migrate import --transformer firebase",
-    );
+  // They are in the envelope now, so the import needs no flags for them.
+  test("says the parameters travel in the export file when the project gave them", () => {
+    const text = formatHashConfigGuidance(config, 3).join("\n");
+    expect(text).toContain("saved in the export file");
+    expect(text).not.toContain("--firebase-signer-key");
   });
 
   test("says where to find them when the project would not say", () => {
-    const text = formatHashConfigGuidance(null, "out.json", 3).join("\n");
+    const text = formatHashConfigGuidance(null, 3).join("\n");
     expect(text).toContain("Password hash parameters");
     expect(text).toContain("Authentication → Users");
+    expect(text).toContain("--firebase-signer-key");
   });
 
   // Nothing to configure, so nothing to tell them to configure.
   test("says nothing is needed when the export has no hashes", () => {
-    expect(formatHashConfigGuidance(null, "out.json", 0).join("\n")).toContain(
-      "no hash parameters are needed",
-    );
+    expect(formatHashConfigGuidance(null, 0).join("\n")).toContain("no hash parameters are needed");
   });
 });
 
-/** The one file the export just wrote into `exports/`, whatever it stamped it. */
+/** The envelope the one export run in this project wrote. */
 function onlyExportFile(): string {
-  const entries = fs.readdirSync(path.join(workDir, "exports"));
+  const dir = path.join(workDir, ".clerk", "migrate");
+  const entries = fs.readdirSync(dir);
   expect(entries).toHaveLength(1);
-  return path.join(workDir, "exports", entries[0] as string);
+  return path.join(dir, entries[0] as string, "export.json");
+}
+
+/** The users inside that envelope. */
+function exportedUsers(): Record<string, unknown>[] {
+  return (
+    JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8")) as { users: Record<string, unknown>[] }
+  ).users;
 }
 
 describe("exportFirebase", () => {
@@ -468,13 +445,10 @@ describe("exportFirebase", () => {
     });
 
     await exportFirebase({ serviceAccount: "./sa.json" });
-
-    // Stamped to the minute, so a second export does not overwrite the first.
-    expect(path.basename(onlyExportFile())).toMatch(/^firebase-export-\d{8}-\d{4}\.json$/);
-    const written = JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8")) as Record<
-      string,
-      unknown
-    >[];
+    expect(JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8"))).toMatchObject({
+      source: "firebase",
+    });
+    const written = exportedUsers();
     expect(written).toHaveLength(2);
     expect(captured.err).toContain("Field coverage");
     expect(captured.err).toContain("demo-fb project");
@@ -487,15 +461,11 @@ describe("exportFirebase", () => {
     const originalMode = getMode();
     setMode("human");
     try {
-      // --output answers the destination prompt, which human mode would
-      // otherwise stop on.
       await exportFirebase({ serviceAccount: "./sa.json", output: "exports/mine.json" });
     } finally {
       setMode(originalMode);
     }
-    expect(captured.err).toContain(
-      "migrate import --transformer firebase --file exports/mine.json",
-    );
+    expect(captured.err).toMatch(/clerk migrate import \d{8}-\d{6}-[0-9a-f]{4}/);
   });
 
   test("--output controls the destination", async () => {

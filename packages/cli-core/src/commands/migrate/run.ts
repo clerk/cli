@@ -57,7 +57,15 @@ import {
   type SettingChange,
 } from "./lib/modify-settings.ts";
 import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
-import { resolveRunsDir, sha256File, startRun, type RunRecord } from "./lib/run-store.ts";
+import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
+import {
+  readRun,
+  resolveRunsDir,
+  RUN_ID_PATTERN,
+  sha256File,
+  startRun,
+  type RunRecord,
+} from "./lib/run-store.ts";
 import {
   countSocialProviders,
   findDisabledProviders,
@@ -79,6 +87,8 @@ import { login } from "../auth/login.ts";
 import { link } from "../link/index.ts";
 
 export type MigrateRunOptions = {
+  /** An export file, or the ID of the export run that wrote one. */
+  input?: string;
   transformer?: string;
   file?: string;
   resumeAfter?: string;
@@ -655,13 +665,73 @@ async function ensureImportTarget(options: MigrateRunOptions): Promise<void> {
   }
 }
 
+/**
+ * Settles which file to read: the positional argument or `--file`, where the
+ * argument may name the export run that wrote the file.
+ */
+async function resolveInput(
+  options: MigrateRunOptions,
+): Promise<{ file?: string; fromExport?: string }> {
+  if (options.input && options.file) {
+    throwUsageError("Name the file once: either as the argument or with --file, not both.");
+  }
+  const value = options.input ?? options.file;
+  if (!value) return {};
+  if (!RUN_ID_PATTERN.test(value) || fileExists(value)) return { file: value };
+
+  const runsDir = await resolveRunsDir(options.runsDir);
+  const record = readRun(runsDir, value);
+  if (!record) {
+    throwUsageError(`No run \`${value}\` in ${runsDir}. Run \`clerk migrate runs\` to list them.`);
+  }
+  if (record.kind !== "export" || !record.file) {
+    throwUsageError(
+      `Run ${value} is an ${record.kind} run, which has no file to import. Name an export run, or a file.`,
+    );
+  }
+  return { file: record.file.path, fromExport: record.id };
+}
+
+/**
+ * The source an export file names for itself, checked against the one the
+ * flags name.
+ *
+ * @throws UsageError when the two disagree: importing an Auth0 export through
+ *   the Supabase mapping would create users with the wrong fields.
+ */
+function applyEnvelope(
+  options: MigrateRunOptions,
+  envelope: ExportEnvelope | undefined,
+): MigrateRunOptions {
+  if (!envelope) return options;
+  if (options.transformer && options.transformer !== envelope.source) {
+    throwUsageError(
+      `The file was exported from ${envelope.source}, but the transformer named is ${options.transformer}. ` +
+        "Drop the transformer: the file already says where it came from.",
+    );
+  }
+  return { ...options, transformer: envelope.source };
+}
+
 export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   await ensureImportTarget(rawOptions);
   rawOptions = await applyCustomTransformer(rawOptions);
+
+  const input = await resolveInput(rawOptions);
+  rawOptions = { ...rawOptions, file: input.file, input: undefined };
+  const envelope =
+    input.file && fileExists(input.file)
+      ? readEnvelope(resolveImportFilePath(input.file))
+      : undefined;
+  rawOptions = applyEnvelope(rawOptions, envelope);
+
   const options = await resolveMissingOptions(rawOptions);
 
   const { transformer, file } = validateRunOptions(options);
-  const firebaseHashConfig = resolveFirebaseHashConfig(options, transformer);
+  // The flags win, so a rotated key can be passed without re-exporting.
+  const firebaseHashConfig =
+    resolveFirebaseHashConfig(options, transformer) ??
+    (transformer === "firebase" ? envelope?.firebase : undefined);
 
   await withGutter("Migrating users to Clerk", async ({ setNextSteps }) => {
     const { secretKey, target } = await resolveClerkTarget(options);
@@ -720,6 +790,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         target,
         source: transformer,
         file: { path: filePath, sha256: sha256File(filePath) },
+        ...(input.fromExport ? { fromExport: input.fromExport } : {}),
       });
       for (const failure of failures) {
         run.append({

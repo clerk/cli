@@ -9,7 +9,7 @@ import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 // Every test below names its own `--secret-key`, which short-circuits the
 // signed-in check — except the one that asserts what happens without it.
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
-import { latestUserLines, listRuns } from "./lib/run-store.ts";
+import { latestUserLines, listRuns, startRun } from "./lib/run-store.ts";
 import { __resetCustomTransformersForTesting } from "./transformers/registry.ts";
 import { applyResumeAfter, explainErrors, run, validateRunOptions } from "./run.ts";
 import type { User } from "./types.ts";
@@ -179,6 +179,114 @@ describe("run", () => {
       ["u1", "created", "user_created"],
       ["u2", "created", "user_created"],
     ]);
+  });
+
+  describe("export envelopes", () => {
+    /** An export run whose envelope holds `users`, as `clerk migrate export` writes it. */
+    function exportRun(source: string, rows: unknown[], extra: Record<string, unknown> = {}) {
+      const run = startRun(runsDir(), { kind: "export", target: { platform: source }, source });
+      const file = path.join(run.dir, "export.json");
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          clerkMigrate: 1,
+          source,
+          exportedAt: "2026-09-01T00:00:00.000Z",
+          runId: run.record.id,
+          users: rows,
+          ...extra,
+        }),
+      );
+      run.update({ file: { path: file, sha256: "x" } });
+      return { record: run.finish(), file };
+    }
+
+    const { transformer: _transformer, file: _file, ...noSource } = baseOptions;
+
+    test("imports by export run ID, with the source the envelope names", async () => {
+      const { record } = exportRun("clerk", export2);
+
+      await run({ ...noSource, input: record.id });
+
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+      const imported = listRuns(runsDir()).find((candidate) => candidate.kind === "import");
+      expect(imported).toMatchObject({ source: "clerk", fromExport: record.id });
+    });
+
+    test("imports an envelope file with no transformer named", async () => {
+      const { file } = exportRun("clerk", export2);
+
+      await run({ ...noSource, file });
+
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+    });
+
+    test("refuses a transformer that contradicts the envelope", async () => {
+      const { record } = exportRun("clerk", export2);
+
+      await expect(run({ ...noSource, transformer: "auth0", input: record.id })).rejects.toThrow(
+        /exported from clerk, but the transformer named is auth0/,
+      );
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
+    test("refuses a run ID that is not an export", async () => {
+      await run(baseOptions);
+      const [imported] = listRuns(runsDir());
+
+      await expect(run({ ...noSource, input: imported!.id })).rejects.toThrow(
+        /is an import run, which has no file to import/,
+      );
+    });
+
+    test("reads Firebase's hash parameters from the envelope", async () => {
+      const firebase = {
+        base64_signer_key: "SIGNER",
+        base64_salt_separator: "Bw==",
+        rounds: 8,
+        mem_cost: 14,
+      };
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        { firebase },
+      );
+
+      await run({ ...noSource, input: record.id });
+
+      const created = requests.find((r) => r.url.endsWith("/v1/users"));
+      expect(created?.body).toMatchObject({
+        password_hasher: "scrypt_firebase",
+        password_digest: "HASH$SALT$SIGNER$Bw==$8$14",
+      });
+    });
+
+    test("lets the --firebase-* flags override the envelope", async () => {
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        {
+          firebase: {
+            base64_signer_key: "OLD",
+            base64_salt_separator: "Bw==",
+            rounds: 8,
+            mem_cost: 14,
+          },
+        },
+      );
+
+      await run({
+        ...noSource,
+        input: record.id,
+        firebaseSignerKey: "NEW",
+        firebaseSaltSeparator: "Bw==",
+        firebaseRounds: 8,
+        firebaseMemCost: 14,
+      });
+
+      const created = requests.find((r) => r.url.endsWith("/v1/users"));
+      expect((created!.body as { password_digest: string }).password_digest).toContain("$NEW$");
+    });
   });
 
   test("gitignores the project's .clerk folder before writing a run", async () => {

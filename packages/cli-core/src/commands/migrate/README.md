@@ -60,11 +60,13 @@ Reads an exported user file, maps it onto Clerk's user schema, validates every
 record, and creates the users through the Backend API.
 
 ```sh
+clerk migrate import 20260929-141502-a1b2 -y        # an export run
 clerk migrate import -y --transformer clerk --file users.json
 ```
 
 | Flag                                    | Description                                                     |
 | --------------------------------------- | --------------------------------------------------------------- |
+| `[file\|export-run-id]`                 | The export file, or the ID of the export run that wrote it      |
 | `-t, --transformer <name>`              | Source platform the file came from (see below)                  |
 | `--transformer-file <path>`             | A transformer you wrote, for a platform with no built-in        |
 | `-f, --file <path>`                     | Path to the export. `.json` or `.csv`                           |
@@ -81,8 +83,14 @@ clerk migrate import -y --transformer clerk --file users.json
 Plus the targeting flags from the table above: `--secret-key`, `--app` and
 `--instance`.
 
-`--transformer` and `--file` are required. Omitting either fails with a usage
-error that names the valid values.
+The file is the positional argument or `--file`, not both. An export run ID
+stands for the file that run wrote, and the import records it as `fromExport`.
+
+A file `clerk migrate export` wrote carries its source, so it needs no
+`--transformer`. A `--transformer` that contradicts it exits 2. Any other file
+— a bare JSON array, a CSV, Firebase's own `{ "users": [...] }` — needs
+`--transformer`, and omitting it fails with a usage error that names the valid
+values.
 
 Failures do not stop the run: each user's outcome is written to the
 [run](#clerk-migrate-runs) and the import continues. A `429` backs off — honouring `Retry-After` when the response
@@ -174,42 +182,44 @@ having been told not to.
 | `firebase`   | Firebase Identity Toolkit        | `--transformer firebase`   |
 | `workos`     | WorkOS User Management API       | `--transformer workos`     |
 
-Every export asks where to save the file before it starts, proposing
-`./exports/<platform>-export-<YYYYMMDD-HHmm>.json`. Press enter to take it,
-or type over it to save somewhere else — the proposal is prefilled, so it is
-one prompt rather than a confirm and a path question.
+Every export is a [run](#clerk-migrate-runs), and the file lands in the run
+folder as `export.json`. `--output` writes it somewhere else instead,
+resolved against the **current directory** like every other path flag here;
+the run still records where. Nothing is asked about where the file goes.
 
-The stamp is ISO 8601 basic format in local time, to the minute: it goes in a
-name people read off the screen and tab-complete, and it means a second export
-never silently overwrites the first.
+The file is an envelope around the users:
 
-`--output` answers that prompt up front and skips it, as does agent mode, which
-takes the proposed path. `--output` resolves against the **current directory**,
-like every other path flag here.
+```json
+{
+  "clerkMigrate": 1,
+  "source": "clerk",
+  "exportedAt": "2026-09-29T14:15:02.000Z",
+  "runId": "20260929-141502-a1b2",
+  "users": [ … ]
+}
+```
 
-`-y` does neither: it **fails**, naming `--output` and handing back the whole
-command with the proposed path already in it, to run again. This is the one
-prompt whose default cannot be undone by re-running — a file written where
-nobody chose it has to be found and moved, and the second run writes a second
-copy. Every other question `-y` silences has a default that costs nothing to
-land on. Agent mode keeps defaulting even when it also passes `-y`, since there
-was no prompt on that path to suppress.
+`source` is what lets `clerk migrate import <export-run-id>` run with no
+`--transformer`. A Firebase export adds `firebase`, the project's hash
+parameters, so the import needs no `--firebase-*` flags.
 
-The question comes before any users are fetched, so a long export can be left
-unattended rather than stalling on a prompt with everything held in memory.
+`--json` prints the result on stdout instead — `{ target, run, output, users,
+coverage, next }` — and never prompts, so a missing credential exits 2 naming
+the flag to pass.
 
-| Flag                       | Platforms                          | Description                                                 |
-| -------------------------- | ---------------------------------- | ----------------------------------------------------------- |
-| `-o, --output <path>`      | all                                | Where to write the export                                   |
-| `-y, --yes`                | all                                | Do not prompt: require `--output`, fail on a bad credential |
-| `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Postgres, MySQL, libsql/Turso or SQLite connection string   |
-| `--service-account <path>` | `firebase`                         | Path to a service account key JSON file                     |
-| `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com`                |
-| `--client-id <id>`         | `auth0`                            | Machine-to-machine application client ID                    |
-| `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret                |
-| `--api-key <key>`          | `workos`                           | WorkOS secret API key, the one starting `sk_`               |
-| `--with-identities`        | `workos`                           | Also record each user's OAuth providers                     |
-| `--no-with-identities`     | `workos`                           | Skip the OAuth provider fan-out without being asked         |
+| Flag                       | Platforms                          | Description                                               |
+| -------------------------- | ---------------------------------- | --------------------------------------------------------- |
+| `-o, --output <path>`      | all                                | Write the export here instead of the run folder           |
+| `-y, --yes`                | all                                | Do not prompt: fail on a bad credential                   |
+| `--json`                   | all                                | Print the result as JSON; never prompts                   |
+| `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Postgres, MySQL, libsql/Turso or SQLite connection string |
+| `--service-account <path>` | `firebase`                         | Path to a service account key JSON file                   |
+| `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com`              |
+| `--client-id <id>`         | `auth0`                            | Machine-to-machine application client ID                  |
+| `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret              |
+| `--api-key <key>`          | `workos`                           | WorkOS secret API key, the one starting `sk_`             |
+| `--with-identities`        | `workos`                           | Also record each user's OAuth providers                   |
+| `--no-with-identities`     | `workos`                           | Skip the OAuth provider fan-out without being asked       |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
 so it resolves a key the same way `clerk migrate import` does, with one extra
@@ -255,32 +265,28 @@ Field coverage
   ! 1/3 have a username
   ! 2/3 have a password (not exportable — see below)
 
-Exported 3 users to /project/exports/clerk-export-20260817-1432.json
+Exported 3 users to /project/.clerk/migrate/20260929-141502-a1b2/export.json
+Run 20260929-141502-a1b2. See each user with `clerk migrate runs 20260929-141502-a1b2`.
 
 Import them with:
-  clerk migrate import --transformer clerk --file exports/clerk-export-20260817-1432.json
+  clerk migrate import 20260929-141502-a1b2
 
   Imports into whichever instance the resolved secret key belongs to.
   For production, add `--instance prod` or use a production secret key.
-  Add `-y` to skip the import confirmation prompt.
 ```
 
 The import command prints through the same channel as the coverage table
 rather than the gutter's **Next steps** outro, which is human-only — an agent
-would otherwise be told what was exported and never how to import it. `-y` is
-carried across from the export that was given it, and replaced by the hint line
-above when it was not: on import `-y` also waves through the
-development-instance user-limit warning, so it is not a flag to suggest to
-someone who never asked for it.
+would otherwise be told what was exported and never how to import it.
 
 There is one command, not a development and a production variant, because no
 flag's absence means "development" — the resolved key decides, through
 `--secret-key`, `--app`, `CLERK_SECRET_KEY`, the keyless project and the linked
 profile in that order.
 
-Every export is also a [run](#clerk-migrate-runs), with one line per exported
-user, so `clerk migrate runs` lists it alongside imports. Every export takes
-`--runs-dir <path>` to keep that run somewhere else.
+The export run has one line per exported user, so `clerk migrate runs` lists it
+alongside imports. Every export takes `--runs-dir <path>` to keep that run
+somewhere else.
 
 #### Three platforms export no passwords
 
@@ -373,20 +379,12 @@ appears in output.
 
 Firebase's scrypt is a modified variant, so a digest is worthless without the
 project's four hash parameters. The export **reads them from the project** and
-prints the exact import command:
+saves them in the export file's envelope, so the import needs nothing more:
 
 ```
 Password hash parameters
-Read from the project. Import with:
-  clerk migrate import -y --transformer firebase --file exports/firebase-export.json --firebase-signer-key "…" --firebase-salt-separator "…" --firebase-rounds 8 --firebase-mem-cost 14
+Read from the project and saved in the export file, so the import needs nothing more.
 ```
-
-On one line however long it gets: this prints inside the gutter, which prefixes
-every line given to it with `│`. Split over lines with backslash continuations,
-that character lands in the middle of the command and is copied along with it —
-the shell then reads each one as another argument and rejects the import. A line
-that wraps on screen carries no such character and pastes back as what was
-printed.
 
 Reading the config needs a broader role than listing users, so if it is denied
 the export still succeeds and points at **Authentication → Users → (⋮) →
@@ -717,8 +715,11 @@ naming what is missing. A partial set produces a well-formed digest that
 verifies against nothing, so users would import successfully and then be unable
 to sign in.
 
-They are read from the flags only. The signer key is a Firebase secret, and the
-CLI stores none of them.
+The flags are read first, then the export file's envelope, which carries the
+parameters when `clerk migrate export firebase` could read them from the
+project. The flags win, so a rotated key can be passed without re-exporting.
+The envelope sits in the gitignored run folder, since the signer key is a
+Firebase secret.
 
 An export with no password hashes needs no parameters at all.
 
@@ -977,10 +978,10 @@ those are reachable through has no route for any of these settings, so
 
 ## Artifacts
 
-| Path                                       | Contents                                                |
-| ------------------------------------------ | ------------------------------------------------------- |
-| `<runs dir>/<run-id>/`                     | One [run](#what-a-run-holds) per import, export or undo |
-| `./exports/<platform>-export-<stamp>.json` | The export itself, unless `--output` says otherwise     |
+| Path                              | Contents                                                |
+| --------------------------------- | ------------------------------------------------------- |
+| `<runs dir>/<run-id>/`            | One [run](#what-a-run-holds) per import, export or undo |
+| `<runs dir>/<run-id>/export.json` | An export's envelope, unless `--output` says otherwise  |
 
 `users.ndjson` writes are synchronous appends, so a run interrupted with Ctrl-C
 still leaves a complete record of everything already processed.

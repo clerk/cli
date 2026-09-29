@@ -19,13 +19,7 @@ import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
-import {
-  finishExportRun,
-  reportExport,
-  resolveOutputPath,
-  startExportRun,
-  writeExportOutput,
-} from "./shared.ts";
+import { finishExport, startExportRun } from "./shared.ts";
 import {
   promptDbUrl,
   resolveDbUrl,
@@ -177,8 +171,6 @@ const BETTERAUTH_DB = {
 export async function exportBetterAuth(options: DbExportOptions): Promise<void> {
   const dbUrl = await resolveDbUrl(options, BETTERAUTH_DB);
 
-  const destination = await resolveOutputPath("betterauth", options.output);
-
   await withGutter("Exporting users from Better Auth", async () => {
     const {
       value: { rows, plugins },
@@ -202,19 +194,7 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
     );
 
     const run = await startExportRun(options, { platform: "betterauth" });
-
     const { users, coverage } = buildBetterAuthExport(rows, run.append);
-    const outputPath = writeExportOutput(users, destination);
-
-    const record = finishExportRun(run, outputPath);
-
-    reportExport({
-      platform: "betterauth",
-      userCount: users.length,
-      outputPath,
-      coverage,
-      transformerKey: "betterauth",
-      runId: record.id,
-    });
+    finishExport({ run, options, users, coverage });
   });
 }

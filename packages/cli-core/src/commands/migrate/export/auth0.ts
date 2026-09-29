@@ -23,13 +23,7 @@ import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spin
 import { isAgent, isHuman } from "../../../mode.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
-import {
-  finishExportRun,
-  reportExport,
-  resolveOutputPath,
-  startExportRun,
-  writeExportOutput,
-} from "./shared.ts";
+import { finishExport, startExportRun } from "./shared.ts";
 
 const PAGE_SIZE = 100;
 
@@ -49,6 +43,8 @@ export type ExportAuth0Options = {
   output?: string;
   /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
   runsDir?: string;
+  /** Print the result as JSON on stdout; never prompts. */
+  json?: boolean;
 };
 
 export type Auth0Credentials = {
@@ -336,8 +332,6 @@ export function buildAuth0Export(
 export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
   const resolved = await resolveAuth0Credentials(options);
 
-  const destination = await resolveOutputPath("auth0", options.output);
-
   await withGutter("Exporting users from Auth0", async () => {
     // Only Auth0 can say whether these three go together, and whether the
     // application carries the `read:users` scope, so a rejected set is asked
@@ -356,20 +350,8 @@ export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
     );
 
     const run = await startExportRun(options, { platform: "auth0" });
-
     const { users: exported, coverage } = buildAuth0Export(users, run.append);
-    const outputPath = writeExportOutput(exported, destination);
-
-    const record = finishExportRun(run, outputPath);
-
-    reportExport({
-      platform: "auth0",
-      userCount: exported.length,
-      outputPath,
-      coverage,
-      transformerKey: "auth0",
-      runId: record.id,
-    });
+    finishExport({ run, options, users: exported, coverage });
 
     if (exported.length > 0) {
       log.warn(
