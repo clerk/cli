@@ -37,9 +37,9 @@ function stub(handler: (req: Recorded, postIndex: number) => Response): void {
   });
 }
 
-function json(payload: unknown, headers: Record<string, string> = {}): Response {
+function json(payload: unknown, headers: Record<string, string> = {}, status = 200): Response {
   return new Response(JSON.stringify(payload), {
-    status: 200,
+    status,
     headers: { "content-type": "application/json", ...headers },
   });
 }
@@ -391,6 +391,120 @@ describe("mcp run (stdio bridge)", () => {
     );
 
     expect(out.join("")).toBe("");
+  });
+
+  test("relays a structured JSON-RPC error body from a 400 upstream verbatim", async () => {
+    const upstreamError = {
+      jsonrpc: "2.0",
+      id: 1,
+      error: {
+        code: -32022,
+        message: "Unsupported protocol version",
+        data: { supported: ["2025-06-18", "2024-11-05"] },
+      },
+    };
+    stub((req) => noServerStream(req) ?? json(upstreamError, {}, 400));
+    const out: string[] = [];
+
+    await mcpRun(
+      { url: URL },
+      { input: lines({ jsonrpc: "2.0", id: 1, method: "tools/list" }), write: (c) => out.push(c) },
+    );
+
+    expect(framesFrom(out)[0]).toEqual(upstreamError);
+  });
+
+  test("keeps a notification silent even when the upstream error body is a JSON-RPC error", async () => {
+    const upstreamError = {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid notification" },
+    };
+    stub((req) => noServerStream(req) ?? json(upstreamError, {}, 400));
+    const out: string[] = [];
+
+    await mcpRun(
+      { url: URL },
+      {
+        input: lines({ jsonrpc: "2.0", method: "notifications/initialized" }),
+        write: (c) => out.push(c),
+      },
+    );
+
+    expect(out.join("")).toBe("");
+  });
+
+  test("answers with a structured -32000 when the upstream error body dies mid-read", async () => {
+    // Error on the second pull, not in start(): erroring at construction
+    // surfaces as a fetch failure before the response is even returned. The
+    // regression under test is a body that dies while being read. Today that
+    // read happens inside loggedFetch's non-ok clone().text() (so its message
+    // wins); relayUpstreamError's own catch covers the same failure if that
+    // pre-read ever moves behind --verbose. Either way the invariant is: one
+    // structured -32000 reply, bridge stays alive.
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls === 1) {
+          controller.enqueue(new TextEncoder().encode('{"jsonrpc":"2.0","id":1,'));
+          return;
+        }
+        controller.error(new Error("connection reset"));
+      },
+    });
+    stub(
+      (req) =>
+        noServerStream(req) ??
+        new Response(body, { status: 500, headers: { "content-type": "application/json" } }),
+    );
+    const out: string[] = [];
+
+    await mcpRun(
+      { url: URL },
+      { input: lines({ jsonrpc: "2.0", id: 1, method: "tools/list" }), write: (c) => out.push(c) },
+    );
+
+    const frames = framesFrom(out);
+    expect(frames).toHaveLength(1);
+    const error = frames[0]?.error as { code?: number; message?: string } | undefined;
+    expect(error?.code).toBe(-32000);
+    expect(error?.message).toStartWith("Upstream");
+  });
+
+  test("falls back to a generic -32000 when a 500 upstream returns a non-JSON (HTML) body", async () => {
+    stub(
+      (req) =>
+        noServerStream(req) ??
+        new Response("<html><body>Internal Server Error</body></html>", {
+          status: 500,
+          headers: { "content-type": "text/html" },
+        }),
+    );
+    const out: string[] = [];
+
+    await mcpRun(
+      { url: URL },
+      { input: lines({ jsonrpc: "2.0", id: 1, method: "tools/list" }), write: (c) => out.push(c) },
+    );
+
+    const error = framesFrom(out)[0]?.error as { code?: number; message?: string } | undefined;
+    expect(error?.code).toBe(-32000);
+    expect(error?.message).toBe("Upstream returned HTTP 500.");
+  });
+
+  test("falls back to a generic -32000 when a 400 upstream returns JSON that isn't JSON-RPC", async () => {
+    stub((req) => noServerStream(req) ?? json({ ok: false, reason: "bad request" }, {}, 400));
+    const out: string[] = [];
+
+    await mcpRun(
+      { url: URL },
+      { input: lines({ jsonrpc: "2.0", id: 1, method: "tools/list" }), write: (c) => out.push(c) },
+    );
+
+    const error = framesFrom(out)[0]?.error as { code?: number; message?: string } | undefined;
+    expect(error?.code).toBe(-32000);
+    expect(error?.message).toBe("Upstream returned HTTP 400.");
   });
 
   test("replies with -32000 when an SSE response stream dies before the reply", async () => {
