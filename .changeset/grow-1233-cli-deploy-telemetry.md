@@ -1,9 +1,0 @@
----
-"clerk": patch
----
-
-Record `clerk deploy status` on an unfinished deploy as incomplete rather than an error in usage telemetry, and give the ways a `clerk deploy` run can end their own error codes — a skipped step, an interrupted prompt and a wait on Clerk's provisioning were previously indistinguishable. Every `clerk deploy` and `clerk deploy status` event now also records the state the deploy was in when the run ended, so a run that stopped short says where, and which of DNS, SSL, email DNS and OAuth had been verified at that point — recorded only from a read that actually succeeded, so a failed status call is never reported as a failed check. Output and exit codes are unchanged.
-
-`clerk doctor` now names the check that crashed instead of printing an anonymous "Check crashed" line (which `--json` labelled "Unknown check"), says the crash is a bug in the CLI instead of reporting issues with your integration, and reports a crashed check as `doctor_check_crashed` rather than `doctor_failed`, so a bug in the CLI is distinguishable from a real problem with your integration. Its `--json` results carry `crashed: true` on that check. The exit code is unchanged.
-
-`clerk api`, `clerk users create` and `clerk mcp install --json` failures now carry an error code in usage telemetry — each prints the failure itself instead of throwing, which used to leave the event with a bare error. An API response with a Clerk error code records that code; one without is recorded by its HTTP status as `api_rate_limited` (429), `api_not_found` (a 404 on a path the person typed), `cli_endpoint_not_found` (a 404 on a path the CLI built, from its endpoint catalog or a hardcoded route), `api_client_error` (other 4xx) or `api_error` (5xx). `mcp install --json` records the same code human mode already did. Nothing printed changes and exit codes are unchanged.
