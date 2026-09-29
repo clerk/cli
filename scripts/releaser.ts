@@ -58,7 +58,8 @@ async function generatePlatformPackage(target: Target, version: string): Promise
   const pkg: Record<string, unknown> = {
     name: packageName(target.name),
     version,
-    description: `Clerk CLI binary for ${target.name}`,
+    description: `Platform binary (${target.name}) for the clerk package. Install clerk instead of this package.`,
+    keywords: [],
     license: "MIT",
     repository: { type: "git", url: "https://github.com/clerk/cli.git" },
     homepage: "https://clerk.com/docs",
