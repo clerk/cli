@@ -28,7 +28,7 @@ const workosSource = {
       note: "WorkOS never returns password hashes. Users reset their password, or sign in with SSO.",
     },
     mfa: { level: "no", note: "WorkOS returns TOTP secrets at enrolment only." },
-    metadata: { level: "yes", note: "`metadata` → public metadata." },
+    metadata: { level: "yes", note: "`metadata` → unsafe metadata." },
   },
   transformer: {
     id: "userId",
@@ -36,7 +36,7 @@ const workosSource = {
     email_verified: "emailVerified",
     first_name: "firstName",
     last_name: "lastName",
-    metadata: "publicMetadata",
+    metadata: "unsafeMetadata",
     created_at: "createdAt",
   },
   postTransform: (user) => {

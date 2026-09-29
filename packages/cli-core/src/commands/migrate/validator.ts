@@ -5,7 +5,7 @@
  *
  * ============================================================================
  * ONLY EDIT THIS IF YOU ARE ADDING A NEW FIELD.
- * Adding support for a new source platform means adding a transformer, not
+ * Adding support for a new source platform means adding a source, not
  * touching the schema.
  * ============================================================================
  */
@@ -50,6 +50,8 @@ export const userSchema = z
     // Password
     password: z.string().optional(),
     passwordHasher: passwordHasherEnum.optional(),
+    /** Set by a source that found a password Clerk cannot verify, and left it out. */
+    passwordDropped: z.boolean().optional(),
     // 2FA
     totpSecret: z.string().optional(),
     backupCodesEnabled: z.boolean().optional(),

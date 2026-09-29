@@ -25,7 +25,7 @@ const auth0Source = {
     mfa: { level: "no", note: "Auth0 exports no MFA enrolments. Users enrol again in Clerk." },
     metadata: {
       level: "yes",
-      note: "`user_metadata` → public metadata, `app_metadata` → private metadata.",
+      note: "`user_metadata` → unsafe metadata, which users can edit, as in Auth0. `app_metadata` → private metadata.",
     },
   },
   transformer: {
@@ -38,7 +38,7 @@ const auth0Source = {
     phone_number: "phone",
     phone_verified: "phoneVerified",
     passwordHash: "password",
-    user_metadata: "publicMetadata",
+    user_metadata: "unsafeMetadata",
     app_metadata: "privateMetadata",
     created_at: "createdAt",
   },

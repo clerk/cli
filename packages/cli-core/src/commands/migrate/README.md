@@ -550,11 +550,11 @@ project's `.gitignore` first, because run files carry user data.
 
 Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 
-| File           | Contents                                                                                                 |
-| -------------- | -------------------------------------------------------------------------------------------------------- |
-| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, and the counts    |
-| `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error` or `code` when present |
-| `lock`         | The PID of the process writing the run, while it runs                                                    |
+| File           | Contents                                                                                                                    |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, and the counts                       |
+| `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code` or `passwordDropped` when present |
+| `lock`         | The PID of the process writing the run, while it runs                                                                       |
 
 A user's status is `created`, `failed`, `skipped`, `deleted` or `exported`. The last line
 for each `sourceId` wins. A `429` retry, an extra email or phone that did not
@@ -679,6 +679,37 @@ rejected with the specific problem rather than crashing mid-pipeline:
 The `userId` check is the load-bearing one: without it the import would run to
 completion and create every user with no `external_id`, which is what makes a
 migration re-runnable.
+
+### Metadata
+
+Metadata a user can edit on the source platform — Auth0's `user_metadata`,
+Supabase's `raw_user_meta_data`, WorkOS's `metadata` — goes to Clerk's
+`unsafe_metadata`, which is the user-editable one. Public metadata is read-only
+to the user, so putting it there would take away an edit the user had. Auth0's
+`app_metadata` goes to `private_metadata`.
+
+### Better Auth passwords
+
+Better Auth hashes with its own scrypt by default and lets an app swap in bcrypt
+or argon2, so one database can hold more than one kind. The hasher is detected
+per user:
+
+| Stored value                | Sent as                                                    |
+| --------------------------- | ---------------------------------------------------------- |
+| `<32 hex>:<128 hex>`        | `scrypt:16384:16:1$<salt>$<key>`, hasher `scrypt_werkzeug` |
+| `$2a$`, `$2b$` or `$2y$`    | `bcrypt`                                                   |
+| `$argon2id$` or `$argon2i$` | `argon2id` or `argon2i`                                    |
+| anything else               | dropped                                                    |
+
+Better Auth's scrypt uses the hex salt string as the salt and a 64-byte key,
+which is what `scrypt_werkzeug` verifies once N, r and p are written inline. It
+also normalizes a password to NFKC before hashing, and Clerk does not, so a
+password whose NFKC form differs will not verify and that user resets it.
+`clerk migrate sources betterauth` lists that caveat.
+
+A password Clerk cannot verify is **dropped, not rejected**: the user imports
+without it and can sign in another way or reset it. Their run line carries
+`passwordDropped: true`.
 
 ### Verified vs unverified identifiers
 

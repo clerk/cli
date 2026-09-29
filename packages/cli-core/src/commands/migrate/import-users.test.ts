@@ -232,6 +232,21 @@ describe("importUsers", () => {
     expect(requests.filter((r) => r.url.endsWith("/v1/phone_numbers"))).toHaveLength(1);
   });
 
+  test("marks a user whose password the source dropped", async () => {
+    stub(() => ok("user_created"));
+
+    await importUsers({
+      users: [user({ passwordDropped: true })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines[0]).toMatchObject({ status: "created", passwordDropped: true });
+    // Never sent: it is the CLI's own bookkeeping, not a Clerk field.
+    expect(JSON.stringify(requests[0]?.body)).not.toContain("passwordDropped");
+  });
+
   test("notes a failed additional identifier without failing the user", async () => {
     stub((url) =>
       url.endsWith("/v1/email_addresses")

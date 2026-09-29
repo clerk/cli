@@ -167,7 +167,9 @@ describe("auth0", () => {
     expect("phoneVerified" in (user ?? {})).toBe(false);
   });
 
-  test("keeps user_metadata public and app_metadata private", async () => {
+  // `user_metadata` is the user's own to edit in Auth0, which is what Clerk's
+  // unsafe metadata is; public metadata is read-only to the user.
+  test("sends user_metadata to unsafe metadata and app_metadata to private", async () => {
     const { users } = await load("auth0", [
       {
         ...base,
@@ -176,7 +178,8 @@ describe("auth0", () => {
         app_metadata: { plan: "pro" },
       },
     ]);
-    expect(users[0]?.publicMetadata).toEqual({ theme: "dark" });
+    expect(users[0]?.unsafeMetadata).toEqual({ theme: "dark" });
+    expect(users[0]?.publicMetadata).toBeUndefined();
     expect(users[0]?.privateMetadata).toEqual({ plan: "pro" });
   });
 });
@@ -206,11 +209,11 @@ describe("workos", () => {
     expect(user?.unverifiedEmailAddresses).toBe(unverified);
   });
 
-  test("keeps metadata public", async () => {
+  test("sends metadata to unsafe metadata", async () => {
     const { users } = await load("workos", [
       { ...base, email_verified: true, metadata: { plan: "pro" } },
     ]);
-    expect(users[0]?.publicMetadata).toEqual({ plan: "pro" });
+    expect(users[0]?.unsafeMetadata).toEqual({ plan: "pro" });
   });
 
   // No other transformer omits it. WorkOS never returns a digest, so naming a
@@ -271,9 +274,50 @@ describe("authjs", () => {
 describe("betterauth", () => {
   const base = { user_id: "ba1", email: "a@x.dev", email_verified: true };
 
-  test("maps the credential hash and defaults the hasher to bcrypt", async () => {
-    const { users } = await load("betterauth", [{ ...base, password_hash: "$2a$10$hash" }]);
-    expect(users[0]).toMatchObject({ password: "$2a$10$hash", passwordHasher: "bcrypt" });
+  // Better Auth's own scrypt: a 16-byte hex salt, a colon, a 64-byte hex key.
+  const SALT = "a".repeat(32);
+  const KEY = "b".repeat(128);
+
+  test.each([
+    [`${SALT}:${KEY}`, `scrypt:16384:16:1$${SALT}$${KEY}`, "scrypt_werkzeug"],
+    ["$2a$10$hash", "$2a$10$hash", "bcrypt"],
+    ["$2b$10$hash", "$2b$10$hash", "bcrypt"],
+    ["$2y$10$hash", "$2y$10$hash", "bcrypt"],
+    [
+      "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA",
+      "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA",
+      "argon2id",
+    ],
+    [
+      "$argon2i$v=19$m=4096,t=3,p=1$c2FsdA$aGFzaA",
+      "$argon2i$v=19$m=4096,t=3,p=1$c2FsdA$aGFzaA",
+      "argon2i",
+    ],
+  ])("detects the hasher per user: %s", async (stored, password, passwordHasher) => {
+    const { users } = await load("betterauth", [{ ...base, password_hash: stored }]);
+    expect(users[0]).toMatchObject({ password, passwordHasher });
+    expect(users[0]?.passwordDropped).toBeUndefined();
+  });
+
+  // Imported without the password rather than rejected: the user can still
+  // sign in another way, or reset it.
+  test.each([["plaintext"], ["$pbkdf2$abc"], [`${SALT}:short`]])(
+    "drops a password it cannot verify (%s) and imports the user",
+    async (stored) => {
+      const { users, validationFailed } = await load("betterauth", [
+        { ...base, password_hash: stored },
+      ]);
+      expect(validationFailed).toBe(0);
+      expect(users[0]?.password).toBeUndefined();
+      expect(users[0]?.passwordHasher).toBeUndefined();
+      expect(users[0]?.passwordDropped).toBe(true);
+    },
+  );
+
+  test("names no hasher for a user without a password", async () => {
+    const { users } = await load("betterauth", [base]);
+    expect(users[0]?.passwordHasher).toBeUndefined();
+    expect(users[0]?.passwordDropped).toBeUndefined();
   });
 
   test("routes an unverified phone", () => {

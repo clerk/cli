@@ -323,6 +323,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         clerkId: clerkUserId,
         status: "created",
         ...(error ? { error } : {}),
+        ...(user.passwordDropped ? { passwordDropped: true } : {}),
       });
       progress();
     } catch (error) {

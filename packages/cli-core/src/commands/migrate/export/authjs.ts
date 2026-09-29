@@ -140,7 +140,7 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
 
     if (users.length > 0) {
       log.warn(
-        "Auth.js core stores no passwords — its users sign in with OAuth or email links, so they arrive without credentials and will use the same providers in Clerk.",
+        "Auth.js core stores no passwords — its users sign in with OAuth or email links, so they arrive without credentials.",
       );
     }
   });

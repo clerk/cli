@@ -33,7 +33,7 @@ const supabaseSource = {
     },
     metadata: {
       level: "partial",
-      note: "`raw_user_meta_data` → public metadata. `raw_app_meta_data` is not carried.",
+      note: "`raw_user_meta_data` → unsafe metadata, which users can edit, as in Supabase. `raw_app_meta_data` is not carried.",
     },
   },
   transformer: {
@@ -45,7 +45,7 @@ const supabaseSource = {
     encrypted_password: "password",
     phone: "phone",
     phone_confirmed_at: "phoneConfirmedAt",
-    raw_user_meta_data: "publicMetadata",
+    raw_user_meta_data: "unsafeMetadata",
     created_at: "createdAt",
   },
   postTransform: (user) => {
@@ -55,8 +55,8 @@ const supabaseSource = {
 
     // A basic SQL export has no first_name/last_name columns; the name lives in
     // user metadata instead, under whichever key the provider happened to use.
-    if (!user.firstName && user.publicMetadata && typeof user.publicMetadata === "object") {
-      const meta = user.publicMetadata as Record<string, unknown>;
+    if (!user.firstName && user.unsafeMetadata && typeof user.unsafeMetadata === "object") {
+      const meta = user.unsafeMetadata as Record<string, unknown>;
       const displayName = stripDiscriminator(meta.display_name ?? meta.first_name ?? meta.name);
       if (displayName) {
         const parts = displayName.split(/\s+/);

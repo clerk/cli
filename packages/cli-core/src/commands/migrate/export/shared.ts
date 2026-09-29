@@ -13,6 +13,7 @@ import path from "node:path";
 import { dim, green, yellow } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
 import { ENVELOPE_VERSION, type ExportEnvelope } from "../lib/export-file.ts";
+import { ACCOUNT_LINKING_NOTE } from "../sources/registry.ts";
 import {
   resolveRunsDir,
   sha256File,
@@ -182,6 +183,9 @@ export function finishExport(input: FinishExportInput): FinishedExport {
   log.blank();
   log.success(`Exported ${users.length} user${users.length === 1 ? "" : "s"} to ${outputPath}`);
   log.info(dim(`Run ${record.id}. See each user with \`clerk migrate runs ${record.id}\`.`));
+
+  log.blank();
+  log.info(dim(ACCOUNT_LINKING_NOTE));
 
   log.blank();
   for (const line of formatImportCommand(record.id)) log.info(line);
