@@ -26,47 +26,39 @@ mock.module("../../lib/prompts.ts", () => ({
   editor: async () => "{}",
 }));
 
-const { runWizard, throwAgentFlagsRequired } = await import("./wizard.ts");
-const { _setConfigDir } = await import("../../lib/config.ts");
+const { promptForFile, promptForFirebaseHashConfig, promptForSource } = await import("./wizard.ts");
 
 let workDir: string;
-let configDir: string;
 let originalCwd: string;
 
 beforeAll(() => {
   originalCwd = process.cwd();
   workDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-wizard-")));
-  configDir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-wizard-config-"));
-  _setConfigDir(configDir);
   process.chdir(workDir);
   fs.writeFileSync(path.join(workDir, "users.json"), "[]");
   fs.writeFileSync(path.join(workDir, "other.csv"), "");
+  fs.writeFileSync(path.join(workDir, "notes.txt"), "");
 });
 
 afterAll(() => {
-  _setConfigDir(undefined);
   process.chdir(originalCwd);
   fs.rmSync(workDir, { recursive: true, force: true });
-  fs.rmSync(configDir, { recursive: true, force: true });
 });
 
 beforeEach(() => {
   mockSelect.mockReset();
   mockText.mockReset();
-  fs.rmSync(path.join(configDir, "config.json"), { force: true });
 });
 
-/** The config object the wizard passed to its Nth `text`/`select` prompt. */
+/** The config object passed to the Nth `text`/`select` prompt. */
 const textCall = (index: number): Prompt | undefined => mockText.mock.calls[index]?.[0];
 const selectCall = (index: number): SelectPrompt | undefined => mockSelect.mock.calls[index]?.[0];
 
-describe("source picker", () => {
+describe("promptForSource", () => {
   test("is built from the registry, so every platform appears", async () => {
     mockSelect.mockResolvedValue("auth0");
-    mockText.mockResolvedValue("users.json");
 
-    await runWizard({});
-
+    expect(await promptForSource()).toBe("auth0");
     expect(selectCall(0)?.choices.map((choice) => choice.value)).toEqual([
       "clerk",
       "auth0",
@@ -80,65 +72,48 @@ describe("source picker", () => {
 
   test("labels each choice with the source's display name", async () => {
     mockSelect.mockResolvedValue("clerk");
-    mockText.mockResolvedValue("users.json");
-
-    await runWizard({});
-
+    await promptForSource();
     expect(selectCall(0)?.choices.map((choice) => choice.name)).toContain("Better Auth");
   });
-
-  test("is skipped when --source was already passed", async () => {
-    mockText.mockResolvedValue("users.json");
-
-    const result = await runWizard({ source: "clerk" });
-
-    expect(mockSelect).not.toHaveBeenCalled();
-    expect(result.source).toBe("clerk");
-  });
 });
 
-describe("file prompt validation", () => {
+describe("promptForFile", () => {
   const validate = async () => {
-    mockSelect.mockResolvedValue("clerk");
     mockText.mockResolvedValue("users.json");
-    await runWizard({});
-    return textCall(0)?.validate;
+    await promptForFile();
+    return textCall(0)?.validate as (value?: string) => string | undefined;
   };
 
+  test("returns the trimmed path", async () => {
+    mockText.mockResolvedValue("  users.json  ");
+    expect(await promptForFile()).toBe("users.json");
+  });
+
+  test("accepts an existing JSON or CSV file", async () => {
+    const check = await validate();
+    expect(check("users.json")).toBeUndefined();
+    expect(check("other.csv")).toBeUndefined();
+  });
+
   test.each([
-    ["users.json", undefined],
-    ["other.csv", undefined],
-  ])("accepts %s", async (file, expected) => {
-    expect((await validate())?.(file)).toBe(expected as undefined);
-  });
-
-  test("rejects an empty answer", async () => {
-    expect((await validate())?.("")).toMatch(/required/);
-  });
-
-  test("rejects a file that does not exist", async () => {
-    expect((await validate())?.("missing.json")).toMatch(/File not found/);
-  });
-
-  test("rejects an unsupported extension", async () => {
-    fs.writeFileSync(path.join(workDir, "notes.txt"), "");
-    expect((await validate())?.("notes.txt")).toMatch(/\.json or \.csv/);
+    ["", /required/],
+    ["nope.json", /File not found/],
+    ["notes.txt", /\.json or \.csv/],
+  ])("rejects %p", async (value, message) => {
+    const check = await validate();
+    expect(check(value)).toMatch(message);
   });
 });
 
-describe("firebase hash parameters", () => {
-  test("are asked for when the firebase source is picked", async () => {
-    mockSelect.mockResolvedValue("firebase");
+describe("promptForFirebaseHashConfig", () => {
+  test("collects all four parameters as a set", async () => {
     mockText
-      .mockResolvedValueOnce("users.json")
       .mockResolvedValueOnce("SIGNER")
       .mockResolvedValueOnce("Bw==")
       .mockResolvedValueOnce("8")
       .mockResolvedValueOnce("14");
 
-    const result = await runWizard({});
-
-    expect(result.firebaseHashConfig).toEqual({
+    expect(await promptForFirebaseHashConfig()).toEqual({
       base64_signer_key: "SIGNER",
       base64_salt_separator: "Bw==",
       rounds: 8,
@@ -146,87 +121,11 @@ describe("firebase hash parameters", () => {
     });
   });
 
-  // Pressing enter through the signer key is how a user says "this export has
-  // no passwords" — the remaining three would be meaningless without it.
-  test("stop being asked when the signer key is left blank", async () => {
-    mockSelect.mockResolvedValue("firebase");
-    mockText.mockResolvedValueOnce("users.json").mockResolvedValueOnce("  ");
+  // An export with no password hashes needs none of them.
+  test("stops when the signer key is left blank", async () => {
+    mockText.mockResolvedValueOnce("");
 
-    const result = await runWizard({});
-
-    expect(result.firebaseHashConfig).toBeUndefined();
-    expect(mockText).toHaveBeenCalledTimes(2);
-  });
-
-  // The signer key is a Firebase secret, so it is never written to disk and so
-  // there is nothing to offer back. A repeat run passes it as a flag or env var.
-  test("are never pre-filled, because they are not saved", async () => {
-    mockSelect.mockResolvedValue("firebase");
-    mockText
-      .mockResolvedValueOnce("users.json")
-      .mockResolvedValueOnce("SIGNER")
-      .mockResolvedValueOnce("Bw==")
-      .mockResolvedValueOnce("8")
-      .mockResolvedValueOnce("14");
-
-    await runWizard({});
-
-    expect(textCall(1)?.default).toBeUndefined();
-    expect(textCall(3)?.default).toBeUndefined();
-  });
-
-  test("are not asked for on a non-firebase source", async () => {
-    mockSelect.mockResolvedValue("auth0");
-    mockText.mockResolvedValue("users.json");
-
-    await runWizard({});
-
+    expect(await promptForFirebaseHashConfig()).toBeUndefined();
     expect(mockText).toHaveBeenCalledTimes(1);
-  });
-
-  test("are not asked for when the flags already supplied them", async () => {
-    mockSelect.mockResolvedValue("firebase");
-    mockText.mockResolvedValue("users.json");
-
-    const config = {
-      base64_signer_key: "FLAG",
-      base64_salt_separator: "Bw==",
-      rounds: 8,
-      mem_cost: 14,
-    };
-    const result = await runWizard({ firebaseHashConfig: config });
-
-    expect(mockText).toHaveBeenCalledTimes(1);
-    expect(result.firebaseHashConfig).toEqual(config);
-  });
-
-  test.each([["0"], ["-1"], ["1.5"], ["many"]])("rejects %p as a rounds value", async (value) => {
-    mockSelect.mockResolvedValue("firebase");
-    mockText
-      .mockResolvedValueOnce("users.json")
-      .mockResolvedValueOnce("SIGNER")
-      .mockResolvedValueOnce("Bw==")
-      .mockResolvedValueOnce("8")
-      .mockResolvedValueOnce("14");
-
-    await runWizard({});
-
-    expect(textCall(3)?.validate?.(value)).toMatch(/positive whole number/);
-  });
-});
-
-describe("throwAgentFlagsRequired", () => {
-  test.each([
-    [{ source: true, file: true }, /the file \(or an export run ID\) and --source <platform>/],
-    [{ source: true, file: false }, /Pass --source <platform>\./],
-    [{ source: false, file: true }, /Pass the file \(or an export run ID\)\./],
-  ])("names only the flags that are missing (%p)", (missing, expected) => {
-    expect(() => throwAgentFlagsRequired(missing)).toThrow(expected);
-  });
-
-  test("says why it cannot prompt", () => {
-    expect(() => throwAgentFlagsRequired({ source: true, file: true })).toThrow(
-      /cannot prompt in agent mode/,
-    );
   });
 });

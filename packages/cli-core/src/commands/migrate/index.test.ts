@@ -35,10 +35,11 @@ describe("registerMigrate", () => {
 
   test.each([
     "--source",
-    "--file",
-    "--resume-after",
+    "--dry-run",
+    "--allow-partial",
+    "--new-run",
     "--require-password",
-    "--skip-unsupported-providers",
+    "--json",
     "--firebase-signer-key",
     "--firebase-salt-separator",
     "--firebase-rounds",
@@ -62,7 +63,13 @@ describe("registerMigrate", () => {
     expect(findCommand(["migrate", ...names])).toBeUndefined();
   });
 
-  test.each(["--transformer", "--transformer-file"])("migrate import drops %s", (flag) => {
+  test.each([
+    "--transformer",
+    "--transformer-file",
+    "--file",
+    "--resume-after",
+    "--skip-unsupported-providers",
+  ])("migrate import drops %s", (flag) => {
     expect(findCommand(["migrate", "import"])?.options.map((o) => o.long)).not.toContain(flag);
   });
 
@@ -182,11 +189,13 @@ describe("registerMigrate", () => {
     expect(option?.argChoices).toBeUndefined();
   });
 
-  test.each([
-    ["-f", "--file"],
-    ["-r", "--resume-after"],
-    ["-y", "--yes"],
-  ])("exposes %s as the short form of %s", (short, long) => {
+  test("takes the file, or the export run that wrote it, as an optional argument", () => {
+    const [argument] = findCommand(["migrate", "import"])?.registeredArguments ?? [];
+    expect(argument?.name()).toBe("file|export-run-id");
+    expect(argument?.required).toBe(false);
+  });
+
+  test.each([["-y", "--yes"]])("exposes %s as the short form of %s", (short, long) => {
     const option = findCommand(["migrate", "import"])?.options.find((o) => o.long === long);
     expect(option?.short).toBe(short);
   });

@@ -29,80 +29,142 @@ and lists the subcommands below. The direction is always spelled out —
 `migrate import` moves users **into** Clerk, `migrate export` gets them **out**
 of a source platform — so neither is implied by the group.
 
-### `clerk migrate import` (interactive)
-
-Bare `clerk migrate import` walks a human through the import instead of
-demanding flags.
-
-```sh
-clerk migrate import
-```
-
-It picks the source from a list built off the registry, asks for the file,
-and collects Firebase's hash parameters when they are needed. Anything already
-passed as a flag is not asked for.
-
-Then it prints the [Migration Readiness report](#migration-readiness-report),
-offers to [change whatever it flagged](#changing-the-flagged-settings), and
-waits for confirmation. Declining writes nothing to Clerk.
-
-**Agent mode never prompts.** `clerk migrate import` with no flags exits with a
-usage error naming exactly what to pass:
-
-```
-`clerk migrate import` is interactive and cannot prompt in agent mode.
-Pass the file (or an export run ID) and --source <platform>.
-```
-
 ### `clerk migrate import`
 
-Reads an exported user file, maps it onto Clerk's user schema, validates every
-record, and creates the users through the Backend API.
+Reads an exported user file, maps it onto Clerk's user schema, checks every
+user against the destination instance, and creates them through the Backend
+API.
 
 ```sh
-clerk migrate import 20260929-141502-a1b2 -y        # an export run
-clerk migrate import users.json --source clerk -y
+clerk migrate import 20260929-141502-a1b2 --dry-run     # check, write nothing
+clerk migrate import 20260929-141502-a1b2 --yes         # an export run
+clerk migrate import users.json --source clerk --yes    # any other file
+clerk migrate import                                    # a human is asked
 ```
 
-| Flag                                    | Description                                                      |
-| --------------------------------------- | ---------------------------------------------------------------- |
-| `[file\|export-run-id]`                 | The export file, or the ID of the export run that wrote it       |
-| `--source <key\|path>`                  | Where the file came from: a [source](#sources), or one you wrote |
-| `-f, --file <path>`                     | Path to the export. `.json` or `.csv`                            |
-| `-r, --resume-after <user-id>`          | Skip every user up to and including this **source** ID           |
-| `--require-password`                    | Import only users that carry a password digest                   |
-| `--skip-unsupported-providers`          | Supabase: skip users whose only social provider is off in Clerk  |
-| `--firebase-signer-key <key>`           | Firebase base64 signer key                                       |
-| `--firebase-salt-separator <separator>` | Firebase base64 salt separator                                   |
-| `--firebase-rounds <n>`                 | Firebase scrypt rounds                                           |
-| `--firebase-mem-cost <n>`               | Firebase scrypt memory cost                                      |
-| `-y, --yes`                             | Skip the confirmation prompt                                     |
-| `--runs-dir <path>`                     | Where runs are kept (see [Runs](#clerk-migrate-runs))            |
+| Flag                                    | Description                                                         |
+| --------------------------------------- | ------------------------------------------------------------------- |
+| `[file\|export-run-id]`                 | The export file, or the ID of the export run that wrote it          |
+| `--source <key\|path>`                  | Where the file came from: a [source](#sources), or one you wrote    |
+| `--dry-run`                             | Run the [checks](#checks) against the instance, and write nothing   |
+| `--allow-partial`                       | Import the users that pass, and record the rest as skipped          |
+| `--new-run`                             | Start a new run instead of [continuing](#re-running) an earlier one |
+| `--require-password`                    | Import only users that carry a password digest                      |
+| `--firebase-signer-key <key>`           | Firebase base64 signer key (overrides the export file)              |
+| `--firebase-salt-separator <separator>` | Firebase base64 salt separator                                      |
+| `--firebase-rounds <n>`                 | Firebase scrypt rounds                                              |
+| `--firebase-mem-cost <n>`               | Firebase scrypt memory cost                                         |
+| `-y, --yes`                             | Import without prompting                                            |
+| `--json`                                | Output as JSON. Never prompts, so importing needs `--yes`           |
+| `--runs-dir <path>`                     | Where runs are kept (see [Runs](#clerk-migrate-runs))               |
 
 Plus the targeting flags from the table above: `--secret-key`, `--app` and
 `--instance`.
 
-The file is the positional argument or `--file`, not both. An export run ID
-stands for the file that run wrote, and the import records it as `fromExport`.
+An export run ID stands for the file that run wrote, and the import records it
+as `fromExport`. A file `clerk migrate export` wrote carries its source, so it
+needs no `--source`, and a `--source` that contradicts it exits 2. Any other
+file — a bare JSON array, a CSV, Firebase's own `{ "users": [...] }` — needs
+`--source`.
 
-A file `clerk migrate export` wrote carries its source, so it needs no
-`--source`. A `--source` that contradicts it exits 2. Any other file
-— a bare JSON array, a CSV, Firebase's own `{ "users": [...] }` — needs
-`--source`, and omitting it fails with a usage error that names the valid
-values.
+**What a human is asked, and what an agent is told.** A human at a terminal who
+leaves out the file is asked for its path, and is asked for a source only when
+the file does not name one. An agent, a non-TTY run, or `--json` without the
+file exits 2 naming what to pass.
+
+**Nothing is written without consent.** After the checks, a human is asked
+`Import N users?`, and declining writes nothing. `--yes` skips the question.
+Without either — an agent, a non-TTY run, `--json` — the run prints the checks
+and exits 2 with the exact command to run.
+
+**Every run prints its target first**, then which [case](#re-running) applies,
+then the checks.
 
 Failures do not stop the run: each user's outcome is written to the
-[run](#clerk-migrate-runs) and the import continues. A `429` backs off — honouring `Retry-After` when the response
-carries it — and retries up to 5 times before the user is recorded as failed.
-The command exits non-zero if any user failed.
+[run](#clerk-migrate-runs) and the import continues. A `429` backs off —
+honouring `Retry-After` when the response carries it — and retries up to 5
+times before the user is recorded as failed. The command exits 1 if any user
+failed.
 
-Two failures do abort the whole run, because continuing would produce a
-corrupt instance:
+An **unrecognized password hasher** aborts the whole run before anything is
+sent, because it would import credentials nobody can sign in with.
 
-- An **unrecognized password hasher**, which would import credentials nobody can
-  sign in with.
-- A **`--resume-after` ID that is not in the file**, which would otherwise
-  re-import every user the previous run already created.
+`--json` returns `{ target, run, resume, checks, result }`.
+
+#### Re-running
+
+Running the same import again continues where it left off. The match is the
+file's sha256, the source (and a custom source's content hash), and the
+instance ID; the latest matching import run decides what happens:
+
+| Latest match                              | Re-running does                                                        |
+| ----------------------------------------- | ---------------------------------------------------------------------- |
+| none                                      | a new run                                                              |
+| interrupted (dead lock or no finish time) | continues the same run, skipping the users it created                  |
+| `partial`                                 | continues the same run, retrying the users that failed or were skipped |
+| `complete`                                | nothing: prints "Already imported in run …" and exits 0                |
+| `undone`                                  | a new run                                                              |
+
+`--new-run` skips the lookup. A run another live process holds exits 2.
+
+When an import completes, it names the folders it no longer needs: the export it
+read, which holds your users' data, and its own run, which only `undo` needs.
+Each comes with the `rm -rf` to remove it.
+
+#### Checks
+
+Every import runs the checks before writing anything, and `--dry-run` stops
+after them. They sort the users three ways:
+
+- **Rejected** — users Clerk would refuse. Each gets the first reason that
+  applies:
+  - it failed schema validation
+  - its source ID, email or phone repeats an earlier user in the file
+  - it lacks an identifier the instance requires. An email or phone counts
+    only when it is verified, because an unverified one is attached after the
+    user exists
+  - its password is not the shape its hasher says (`bcrypt`, `scrypt_firebase`,
+    `argon2i`/`argon2id` and `scrypt_werkzeug` are checked; other hashers are
+    not)
+  - Supabase: its only provider is not enabled in Clerk
+  - the instance already has a user with its source ID, email, phone or
+    username (a batched `GET /v1/users` lookup, 100 values a request, through
+    the scheduler). The users a continued run created do not count
+  - a development instance: it is past the 100-user headroom, counted in file
+    order
+- **Imported, but not everything comes across** — fields the instance is not
+  set up to store, fields Clerk has no place for (`Clerk won't store: …`), and
+  passwords a source had to drop.
+- **Imported** — everyone else.
+
+Any reject stops the import, and it exits 2 with the command that adds
+`--allow-partial`. With `--allow-partial`, the rest import and each reject is
+recorded as `skipped` with its reason. `--dry-run` exits 2 when the real run
+would be refused, and 0 otherwise.
+
+```
+Checks
+  120 users checked
+  ✗ 12 users rejected
+      12: only has an unverified email, and this instance requires an email
+         u_17, u_22, u_40, u_51, u_88, and 7 more
+  ⚠ Imported, but not everything comes across
+      6 users have a username, which this instance is not set up to store
+      Clerk won't store: department (120 users)
+  ✓ 108 users to import
+
+Or change the instance instead
+  Make Email optional at sign-up
+    clerk config patch --app app_… --instance ins_… --json '{"auth_email":{"required_for_sign_up":false}}'
+  Enable Username
+    clerk config patch --app app_… --instance ins_… --json '{"auth_username":{"used_for_sign_up":true}}'
+```
+
+The fixes are offers, not corrections: an instance that requires an email is
+configured as its owner intended, and fixing the export may be the answer. When
+the instance settings cannot be read (BAPI `/v1/domains` → the instance's
+Frontend API `/v1/environment`), required fields are not checked and the run
+says so.
 
 #### Additional identifiers
 
@@ -125,17 +187,12 @@ that, assuming ~100ms of API latency. Both are overridable:
 
 A non-numeric or non-positive value is ignored in favour of the default.
 
-**Development instances warn when an import may exceed their user limit.** New
-development instances are created with a 100-user limit; production instances
-have none. Before importing, the run reads the instance's current user count
-(`GET /v1/users/count`) and warns when the file would take it past 100.
-
-The run then stops and asks before going ahead. It is a prompt rather than a
-hard refusal because the number checked against may not be this instance's:
-Clerk raises a development instance's limit on request, and the raised value
-(`max_allowed_users`) is not served by BAPI, DAPI or FAPI — so the CLI can show
-the live count but never the live limit. Declining aborts before anything is
-written to Clerk; `-y` and agent mode proceed on the warning alone.
+A development instance's user limit is checked with the other
+[checks](#checks): new development instances are created with a 100-user limit,
+production instances have none, and the run reads the live count
+(`GET /v1/users/count`). The limit itself is not served by any API, so a
+development instance Clerk has raised may accept more than the checks allow;
+`--allow-partial` imports up to the headroom.
 
 Users that do exceed the limit come back in the error breakdown as
 `You have reached your limit of N users`, annotated with what a development
@@ -341,8 +398,8 @@ unreachable host and a closed port as "Connection closed", so:
 **`supabase` reads the database rather than the Admin API** because
 `encrypted_password` exists only there. An API-based export would force every
 user to reset their password; this one carries the bcrypt digests across. It
-also keeps `raw_app_meta_data`, which is what `--skip-unsupported-providers`
-reads at import time.
+also keeps `raw_app_meta_data`, which is what the import's
+[checks](#checks) read for each user's providers.
 
 **`authjs` tries `User`, then `user`, then `users`.** Auth.js has no single
 schema — Prisma capitalizes the table, Drizzle does not, and Postgres treats
@@ -749,19 +806,6 @@ Firebase secret.
 
 An export with no password hashes needs no parameters at all.
 
-### `--skip-unsupported-providers` (Supabase)
-
-Reads each user's `raw_app_meta_data.providers` and cross-references it against
-the social providers the destination instance has enabled (via BAPI
-`/v1/domains` → the instance's Frontend API `/v1/environment`).
-
-A user is skipped **only when every one of their providers is disabled**. Anyone
-who can still sign in another way — email, phone, or an enabled social provider
-— is imported. The number skipped is reported, broken down by provider.
-
-If the instance configuration cannot be read, nobody is skipped and a warning is
-printed: a failed lookup must not be mistaken for "no providers are enabled".
-
 ## Schema fields
 
 What a source maps _onto_. Every user is validated against this schema
@@ -836,172 +880,6 @@ stamping every user with today's.
 | `skipLegalChecks`           | `boolean` | Skip legal acceptance checks              |
 | `skipPasswordChecks`        | `boolean` | Skip password requirements on import      |
 
-## Migration Readiness report
-
-Printed immediately before the confirmation prompt, so declining aborts with
-nothing written to Clerk. Skipped only for `-y`, which says "don't ask, don't
-lecture" and should not pay for the two extra round-trips. Agent runs without
-`-y` still get it — an agent can act on it exactly as a human would.
-
-It cross-references the file against the destination instance's live settings
-(BAPI `/v1/domains` → that instance's Frontend API `/v1/environment`) and
-answers the two questions worth answering before writing anything: **who won't
-be imported**, and **who will arrive incomplete**.
-
-```
-Migration readiness
-  120 users in this file
-  3 failed validation and will be skipped
-
-  ✗ 12 users will not be imported
-      12 have no email, which this instance requires
-      If you import them, this applies to them too:
-        12 have a phone, which this instance is not set up to store
-  ⚠ 20 users will be imported, but not everything they carry
-      14 have no password, which this instance requires — they will have to reset it to sign in
-      6 have a username, which this instance is not set up to store
-  ✓ 88 users will be imported in full
-
-Identifiers
-  ⚠ Email — required in Clerk, and not every user has one — 108/120 users
-  ⚠ Username — not enabled in Clerk — 6/120 users
-
-Social connections
-  ✓ Google — enabled in Clerk — 40/120 users
-  ⚠ Discord — not enabled in Clerk — 12/120 users
-
-⚠ 3 settings need attention
-```
-
-### The two blocks
-
-**The outcome block** classifies each user **once**, into the worst outcome that
-applies to them, so its three totals add up to the file. This matters: per-field
-coverage cannot answer "how many won't be imported", because the users missing
-an email and the users missing a password overlap by an amount only a per-user
-pass knows. A user rejected for their missing email is not also counted under
-the missing password they happen to share.
-
-**"If you import them, this applies to them too"** is the part that stops the
-settings interacting invisibly. A user who is not being created cannot lose a
-field, so a setting that only affects rejected users costs nothing _today_ and
-would otherwise never be mentioned — right up until the operator relaxes the
-requirement rejecting them, at which point all of it lands at once. Naming it
-up front is what turns
-
-> make email optional → re-check → discover the phones are being dropped →
-> enable phone → re-check
-
-into a single decision with both offers visible. It is also why a setting can
-be flagged in the section rows while contributing nothing to the ✗/⚠/✓ totals.
-
-**The section rows below** are the other question — per-field coverage against
-each setting — and deliberately do not restate user counts, which would read as
-contradicting the block above.
-
-### Which settings cost what
-
-| Setting                                    | Consequence                                                                                   |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| Identifier (email/phone/username) required | **Not imported.** `POST /v1/users` enforces the sign-up identifier requirements.              |
-| Password required, user has none           | **Imported without a password.** The import sends `skip_password_requirement`, so the user is |
-|                                            | created and has to reset their password before they can sign in with one.                     |
-| Attribute disabled in Clerk                | **Imported without that field.** The instance has nowhere to put it.                          |
-| Social provider disabled                   | **Imported**, but that sign-in method is unavailable to them.                                 |
-
-Social rows are not part of the per-user outcome counts: which providers a user
-signed up with lives in the raw export rather than the transformed user, so it
-cannot be attributed per user. Their coverage row still names them.
-
-If the instance settings cannot be read — the secret key is rejected, or FAPI
-is unreachable — the report degrades to a coverage-only listing with a note.
-Nothing is flagged in that case: "could not read" is not the same as "switched
-off", and treating it as such would raise alarms about settings that are
-perfectly fine.
-
-### Changing the flagged settings
-
-When the report flags anything, a human run offers one selectable change per
-flagged row before the import confirmation, so acting on the report does not
-mean leaving the CLI for the dashboard:
-
-```
-Update this instance's settings first? (enter to skip)
-  ◻ Make Email optional at sign-up
-  ◻ Enable Discord sign-in
-  ↑/↓ to navigate • Space: select • a: all • Enter: confirm
-```
-
-**Nothing is preselected** — relaxing an instance's sign-up requirements is a
-real decision, not a default — and selecting nothing continues to the import
-prompt with the instance untouched, which is what "enter to skip" is there to
-say.
-
-`a: all` is added to clack's legend in `lib/prompts.ts`: `MultiSelectPrompt`
-has always bound `a` to toggle everything (and `i` to invert), but clack's
-footer never listed them and takes no override, so the key was undiscoverable.
-It applies to every multiselect in the CLI, because it is a property of the
-prompt rather than of any one question.
-
-These are offers, not corrections: **a flagged setting is not a wrong setting.**
-An instance that genuinely requires an email address is configured exactly as
-its owner intended, and the right answer may well be to fix the export instead.
-
-Whatever is selected becomes a single `PATCH` of the instance config document,
-the same document `clerk config patch` writes. The report is then redrawn so
-the confirmation that follows is against the settings the write established.
-
-**The offer repeats while anything is still flagged.** A redraw is another
-decision point, not a receipt: applying one change routinely leaves others
-worth making, and each round re-offers only what is left. It ends when the
-report has nothing flagged, when the operator selects nothing, or when there is
-nothing offerable for the rows that remain — so reaching the second change
-never costs a second run of the command.
-
-The redraw is computed from the write, **not** from a second settings fetch.
-Clerk's Frontend API is eventually consistent, so a `/v1/environment` read
-issued this soon after the config write routinely still reports the pre-write
-settings — which would redraw the report with every row the operator just
-cleared still flagged. The Platform API accepting the write is the
-authoritative statement of what took, exactly as `clerk config patch` treats
-it (see that command's [round-trip verification](../config/README.md#round-trip-verification)
-notes for the same reasoning).
-
-The config leaves each option writes are not shown in the prompt — internal
-detail an operator cannot act on — but they are fixed and listed here:
-
-| Flagged row                     | Change offered                                                                    |
-| ------------------------------- | --------------------------------------------------------------------------------- |
-| Email/Phone/Username — required | `auth_<x>.required_for_sign_up → false`                                           |
-| Email — disabled                | `auth_email.used_for_sign_up → true` + `verification_strategies → ["email_code"]` |
-| Phone — disabled                | `auth_phone.used_for_sign_up → true` + `verification_strategies → ["phone_code"]` |
-| Username — disabled             | `auth_username.used_for_sign_up → true`                                           |
-| Password — required / disabled  | `auth_password.required → false` / `auth_password.enabled → true`                 |
-| First/Last name                 | `user_model.<x>.required → false` / `user_model.<x>.enabled → true`               |
-| Social provider — disabled      | `connection_oauth_<x>.enabled → true`                                             |
-
-`used_for_sign_up` is the enable field that matters: `POST /v1/users` validates
-an import against the instance's sign-up requirements, not its sign-in
-strategies.
-
-**Email and phone take two writes, not one.** They are _verifiable_ attributes,
-and Clerk rejects one that is on with no way to verify it:
-
-```
-422 phone_number: verifiable attributes need to have at least one verification
-```
-
-Switching the attribute off empties `verification_strategies`, so whatever
-turns it back on has to put a strategy back in the same request. Username,
-password and the name fields are not verifiable and take one write each.
-
-The offer is skipped entirely for `-y` and in agent mode, both of which say
-"don't prompt". It also stands down, with a warning rather than a failed run,
-when the instance to configure cannot be resolved (a bare `--secret-key` in an
-unlinked directory) or when it is a **keyless** application — the Backend API
-those are reachable through has no route for any of these settings, so
-`clerk auth login` is the way in.
-
 ## Artifacts
 
 | Path                              | Contents                                                |
@@ -1033,22 +911,23 @@ grep '"sourceId":"user_123"' .clerk/migrate/20260929-141502-a1b2/users.ndjson
 
 ## API Endpoints
 
-| Method | Path                       | Used by                                                                              |
-| ------ | -------------------------- | ------------------------------------------------------------------------------------ |
-| `POST` | `/v1/users`                | `migrate import` — creates each user                                                 |
-| `POST` | `/v1/email_addresses`      | `migrate import` — attaches additional emails                                        |
-| `POST` | `/v1/phone_numbers`        | `migrate import` — attaches additional phones                                        |
-| `GET`  | `/v1/users?limit=&offset=` | `migrate export clerk` — pages the whole instance, 500 at a time                     |
-| `GET`  | `/v1/users/count`          | `migrate import` — headroom against a development instance's user limit              |
-| `GET`  | `/v1/domains`              | Readiness report and `--skip-unsupported-providers` — resolves the Frontend API host |
+| Method   | Path                       | Used by                                                                        |
+| -------- | -------------------------- | ------------------------------------------------------------------------------ |
+| `POST`   | `/v1/users`                | `migrate import` — creates each user                                           |
+| `POST`   | `/v1/email_addresses`      | `migrate import` — attaches additional emails                                  |
+| `POST`   | `/v1/phone_numbers`        | `migrate import` — attaches additional phones                                  |
+| `GET`    | `/v1/users?limit=&offset=` | `migrate export clerk` — pages the whole instance, 500 at a time               |
+| `GET`    | `/v1/users/count`          | `migrate import` — headroom against a development instance's user limit        |
+| `GET`    | `/v1/users?external_id=…`  | `migrate import` — checks for users already in the instance, 100 values a call |
+| `GET`    | `/v1/users?user_id=…`      | `migrate undo` — reads the imported users back, 100 a call                     |
+| `DELETE` | `/v1/users/{user_id}`      | `migrate undo` — deletes one user                                              |
+| `GET`    | `/v1/instance`             | `migrate import`, `undo`, `export clerk` — names the instance behind the key   |
+| `GET`    | `/v1/domains`              | `migrate import` checks — resolves the Frontend API host                       |
 
-The readiness report also reads the instance's Frontend API
-`GET /v1/environment` (bootstrapping a dev browser first on development
-instances), and its settings-change offer writes through the Platform API:
-
-| Method  | Path                                                              | Used by                                                |
-| ------- | ----------------------------------------------------------------- | ------------------------------------------------------ |
-| `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config` | Applying the settings changes selected from the report |
+The checks also read the instance's Frontend API `GET /v1/environment`
+(bootstrapping a dev browser first on development instances) for its
+attributes and enabled social providers. Nothing in `clerk migrate` writes
+instance settings: the checks print the `clerk config patch` to run instead.
 
 Three exports talk to their own platform rather than to Clerk:
 
@@ -1068,10 +947,6 @@ The two Identity Toolkit paths are on `identitytoolkit.googleapis.com`, or on
 
 The three database exports (`supabase`, `authjs`, `betterauth`) make no HTTP
 calls at all — they connect over `--db-url`.
-
-The readiness report and `--skip-unsupported-providers` additionally read the
-instance's Frontend API `GET /v1/environment` for its attributes and enabled
-social providers.
 
 ## Notes
 

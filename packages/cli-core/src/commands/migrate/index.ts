@@ -16,19 +16,17 @@ export function registerMigrate(program: Program): void {
     .command("migrate")
     .description("Migrate users into Clerk from another auth provider or another Clerk instance")
     .setExamples([
-      { command: "clerk migrate import", description: "Walk through an import interactively" },
-      {
-        command: "clerk migrate import users.json --source clerk -y",
-        description: "Import users from a Clerk export",
-      },
-      {
-        command:
-          "clerk migrate import users.json --source supabase --skip-unsupported-providers -y",
-        description: "Skip Supabase users whose provider is not enabled",
-      },
       {
         command: "clerk migrate export supabase",
-        description: "Export users from Supabase, ready to import",
+        description: "Export users from Supabase into a new run",
+      },
+      {
+        command: "clerk migrate import 20260929-141502-a1b2 --dry-run",
+        description: "Check an export against the instance, and write nothing",
+      },
+      {
+        command: "clerk migrate import 20260929-141502-a1b2 --yes",
+        description: "Import it",
       },
       { command: "clerk migrate runs", description: "List every migration run" },
       {
@@ -68,14 +66,11 @@ export function registerMigrate(program: Program): void {
       "--source <key|path>",
       "Where the file came from: a built-in source, or a source you wrote. Not needed for a file from `clerk migrate export`",
     )
-    .option("-f, --file <path>", "Path to the exported user data (JSON or CSV)")
-    .option("-r, --resume-after <user-id>", "Skip every user up to and including this source ID")
+    .option("--dry-run", "Check the file against the instance, report, and write nothing")
+    .option("--allow-partial", "Import the users that pass the checks, and skip the rest")
+    .option("--new-run", "Start a new run instead of continuing an earlier one of this file")
     .option("--require-password", "Import only users that have a password")
-    .option(
-      "--skip-unsupported-providers",
-      "Supabase: skip users whose only social provider is not enabled in Clerk",
-    )
-    .option("--firebase-signer-key <key>", "Firebase base64 signer key")
+    .option("--firebase-signer-key <key>", "Firebase base64 signer key (overrides the export file)")
     .option("--firebase-salt-separator <separator>", "Firebase base64 salt separator")
     .option("--firebase-rounds <n>", "Firebase scrypt rounds", (value: string) =>
       parseIntegerOption(value, "--firebase-rounds", { min: 1 }),
@@ -83,32 +78,28 @@ export function registerMigrate(program: Program): void {
     .option("--firebase-mem-cost <n>", "Firebase scrypt memory cost", (value: string) =>
       parseIntegerOption(value, "--firebase-mem-cost", { min: 1 }),
     )
-    .option("-y, --yes", "Skip the confirmation prompt")
+    .option("-y, --yes", "Import without prompting")
+    .option("--json", "Output as JSON; never prompts, so pair it with --yes to import")
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
     .setExamples([
       {
-        command: "clerk migrate import 20260929-141502-a1b2 -y",
-        description: "Import what an export run wrote",
+        command: "clerk migrate import 20260929-141502-a1b2 --dry-run",
+        description: "Check what an export run wrote, and write nothing",
       },
       {
-        command: "clerk migrate import users.json --source clerk -y",
-        description: "Import a Clerk Dashboard export",
+        command: "clerk migrate import 20260929-141502-a1b2 --yes",
+        description: "Import it. Run it again to continue after a failure",
       },
       {
-        command: "clerk migrate import users.csv --source clerk --require-password -y",
-        description: "Import only the users that carry a password digest",
+        command: "clerk migrate import users.json --source clerk --allow-partial --yes",
+        description: "Import a Clerk Dashboard export, skipping users that would be rejected",
       },
       {
-        command: "clerk migrate import users.json --source ./my-source.ts -y",
+        command: "clerk migrate import users.json --source ./my-source.ts --yes",
         description: "Import with a source you wrote",
-      },
-      {
-        command:
-          "clerk migrate import users.json --source supabase --skip-unsupported-providers -y",
-        description: "Skip Supabase users whose only provider is not enabled in Clerk",
       },
     ])
     .action(async (input, _opts, cmd) =>

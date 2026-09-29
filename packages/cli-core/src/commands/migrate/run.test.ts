@@ -3,16 +3,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _setConfigDir } from "../../lib/config.ts";
-import { CliError } from "../../lib/errors.ts";
+import { type CliError, EXIT_CODE } from "../../lib/errors.ts";
 import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 
 // Every test below names its own `--secret-key`, which short-circuits the
 // signed-in check — except the one that asserts what happens without it.
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
-import { latestUserLines, listRuns, startRun } from "./lib/run-store.ts";
+import { latestUserLines, listRuns, readRun, startRun } from "./lib/run-store.ts";
 import { __resetCustomSourcesForTesting } from "./sources/registry.ts";
-import { applyResumeAfter, explainErrors, run, validateRunOptions } from "./run.ts";
-import type { User } from "./types.ts";
+import { explainErrors, run, validateRunOptions } from "./run.ts";
+
+/** A real-shaped bcrypt digest: the checks reject anything that is not. */
+const BCRYPT = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
 
 let workDir: string;
 let configDir: string;
@@ -20,8 +22,6 @@ let originalCwd: string;
 
 /** Where runs land for a project rooted at `workDir`. */
 const runsDir = () => path.join(workDir, ".clerk", "migrate");
-
-const users = (...ids: string[]): User[] => ids.map((userId) => ({ userId }) as User);
 
 beforeAll(() => {
   originalCwd = process.cwd();
@@ -62,23 +62,21 @@ describe("validateRunOptions", () => {
   });
 });
 
-describe("applyResumeAfter", () => {
-  test("returns everything when no ID is given", () => {
-    expect(applyResumeAfter(users("a", "b"), undefined)).toHaveLength(2);
-  });
-
-  test("skips up to and including the named user", () => {
-    expect(applyResumeAfter(users("a", "b", "c"), "b").map((u) => u.userId)).toEqual(["c"]);
-  });
-
-  test("returns nothing when the named user is last", () => {
-    expect(applyResumeAfter(users("a", "b"), "b")).toEqual([]);
-  });
-
-  test("throws rather than silently re-importing everyone", () => {
-    expect(() => applyResumeAfter(users("a"), "zz")).toThrow(CliError);
-  });
-});
+type Stub = {
+  /** What `/v1/environment` reports; `null` makes the settings unreadable. */
+  settings?: { attributes?: object; social?: object } | null;
+  /** Users already in the instance, as `GET /v1/users` returns them. */
+  existing?: {
+    id: string;
+    external_id?: string;
+    username?: string;
+    email_addresses?: { email_address: string }[];
+  }[];
+  /** `GET /v1/users/count`. */
+  count?: number;
+  /** Source IDs whose `POST /v1/users` fails with a 422. */
+  failing?: Set<string>;
+};
 
 describe("run", () => {
   const captured = useCaptureLog();
@@ -89,11 +87,62 @@ describe("run", () => {
     {
       id: "u1",
       primary_email_address: "a@x.dev",
-      password_digest: "d1",
+      password_digest: BCRYPT,
       password_hasher: "bcrypt",
     },
     { id: "u2", primary_email_address: "b@x.dev" },
   ];
+
+  /** A fake Clerk: the instance, its settings, its users, and the writes. */
+  function stubClerk(stub: Stub = {}): void {
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(input.toString());
+      const method = init?.method ?? "GET";
+      const body = init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : null;
+      requests.push({ method, url: url.toString(), body });
+
+      if (url.pathname === "/v1/instance") {
+        return Response.json({ object: "instance", id: "ins_1", environment_type: "development" });
+      }
+      if (url.pathname === "/v1/domains") {
+        if (!stub.settings) return new Response("nope", { status: 500 });
+        return Response.json({
+          data: [{ is_satellite: false, frontend_api_url: "https://fapi.example.com" }],
+        });
+      }
+      if (url.pathname.includes("/v1/dev_browser")) return Response.json({ token: "jwt" });
+      if (url.pathname.includes("/v1/environment")) {
+        return Response.json({ user_settings: stub.settings });
+      }
+      if (url.pathname === "/v1/users/count") {
+        return Response.json({ object: "total_count", total_count: stub.count ?? 0 });
+      }
+      if (method === "GET" && url.pathname === "/v1/users") {
+        const wanted = new Set(url.searchParams.values());
+        return Response.json(
+          (stub.existing ?? []).filter(
+            (user) =>
+              wanted.has(user.external_id ?? "") ||
+              wanted.has(user.username ?? "") ||
+              (user.email_addresses ?? []).some((email) => wanted.has(email.email_address)),
+          ),
+        );
+      }
+      if (method === "POST" && url.pathname === "/v1/users") {
+        const externalId = body?.external_id as string;
+        if (stub.failing?.has(externalId)) {
+          return Response.json(
+            {
+              errors: [{ code: "form_identifier_exists", message: "That email address is taken." }],
+            },
+            { status: 422 },
+          );
+        }
+        return Response.json({ id: `user_${externalId}` });
+      }
+      return Response.json({ id: "ok" });
+    }) as typeof fetch;
+  }
 
   beforeAll(() => {
     originalFetch = globalThis.fetch;
@@ -105,14 +154,7 @@ describe("run", () => {
     fs.rmSync(runsDir(), { recursive: true, force: true });
     fs.rmSync(path.join(configDir, "config.json"), { force: true });
     fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(export2));
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-      requests.push({
-        method: init?.method ?? "GET",
-        url: input.toString(),
-        body: init?.body ? JSON.parse(init.body as string) : null,
-      });
-      return new Response(JSON.stringify({ id: "user_created" }), { status: 200 });
-    }) as typeof fetch;
+    stubClerk();
   });
 
   afterEach(() => {
@@ -122,16 +164,24 @@ describe("run", () => {
 
   const baseOptions = {
     source: "clerk",
-    file: "export.json",
+    input: "export.json",
     yes: true,
     secretKey: "sk_test_x",
   };
 
-  test("refuses before the wizard when nobody is signed in", async () => {
+  const created = () =>
+    requests
+      .filter((r) => r.method === "POST" && r.url.endsWith("/v1/users"))
+      .map((r) => (r.body as { external_id: string }).external_id);
+
+  const exitCodeOf = async (promise: Promise<unknown>) =>
+    ((await promise.catch((caught: unknown) => caught)) as CliError | undefined)?.exitCode;
+
+  test("refuses before anything else when nobody is signed in", async () => {
     const previous = process.env.CLERK_SECRET_KEY;
     delete process.env.CLERK_SECRET_KEY;
     try {
-      await expect(run({ source: "clerk", file: "export.json", yes: true })).rejects.toThrow(
+      await expect(run({ source: "clerk", input: "export.json", yes: true })).rejects.toThrow(
         /Not logged in/,
       );
       expect(requests).toHaveLength(0);
@@ -143,14 +193,14 @@ describe("run", () => {
   test("imports every user in the file end to end", async () => {
     await run(baseOptions);
 
-    const created = requests.filter((r) => r.url.endsWith("/v1/users"));
-    expect(created).toHaveLength(2);
-    expect(created[0]?.method).toBe("POST");
-    expect(created.map((r) => (r.body as { external_id: string }).external_id)).toEqual([
-      "u1",
-      "u2",
-    ]);
+    expect(created()).toEqual(["u1", "u2"]);
     expect(captured.err).toContain("Imported:");
+  });
+
+  test("prints the target first", async () => {
+    await run(baseOptions);
+    expect(captured.err).toContain("Target: instance (development, ins_1)");
+    expect(captured.err.indexOf("Target:")).toBeLessThan(captured.err.indexOf("Checks"));
   });
 
   test("records the run in the project's run store", async () => {
@@ -163,17 +213,23 @@ describe("run", () => {
       status: "complete",
       source: "clerk",
       counts: { total: 2, created: 2 },
-      target: { keySource: "--secret-key", instanceType: "dev" },
+      target: { keySource: "--secret-key", instanceType: "dev", instanceId: "ins_1" },
     });
-    expect(record?.id).toMatch(/^\d{8}-\d{6}-[0-9a-f]{4}$/);
     expect(record?.file?.path).toBe(path.join(workDir, "export.json"));
     expect(record?.file?.sha256).toMatch(/^[0-9a-f]{64}$/);
 
     const lines = [...latestUserLines(runsDir(), record!.id).values()];
     expect(lines.map((line) => [line.sourceId, line.status, line.clerkId])).toEqual([
-      ["u1", "created", "user_created"],
-      ["u2", "created", "user_created"],
+      ["u1", "created", "user_u1"],
+      ["u2", "created", "user_u2"],
     ]);
+  });
+
+  // A complete import leaves the export's user data behind; say how to remove it.
+  test("names the folders a complete import no longer needs", async () => {
+    await run(baseOptions);
+    const [record] = listRuns(runsDir());
+    expect(captured.err).toContain(`rm -rf ${path.join(runsDir(), record!.id)}`);
   });
 
   describe("export envelopes", () => {
@@ -196,7 +252,7 @@ describe("run", () => {
       return { record: run.finish(), file };
     }
 
-    const { source: _source, file: _file, ...noSource } = baseOptions;
+    const { source: _source, input: _input, ...noSource } = baseOptions;
 
     test("imports by export run ID, with the source the envelope names", async () => {
       const { record } = exportRun("clerk", export2);
@@ -211,7 +267,7 @@ describe("run", () => {
     test("imports an envelope file with no source named", async () => {
       const { file } = exportRun("clerk", export2);
 
-      await run({ ...noSource, file });
+      await run({ ...noSource, input: file });
 
       expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
     });
@@ -295,66 +351,11 @@ describe("run", () => {
     expect(listRuns(runsDir())).toHaveLength(0);
   });
 
-  test("--require-password imports only the users that have one", async () => {
+  test("--require-password leaves out the users without one", async () => {
     await run({ ...baseOptions, requirePassword: true });
 
-    const created = requests.filter((r) => r.url.endsWith("/v1/users"));
-    expect(created.map((r) => (r.body as { external_id: string }).external_id)).toEqual(["u1"]);
-    expect(captured.err).toContain("skipping 1 user without a password");
-  });
-
-  test("--resume-after skips everyone up to and including that ID", async () => {
-    await run({ ...baseOptions, resumeAfter: "u1" });
-
-    const created = requests.filter((r) => r.url.endsWith("/v1/users"));
-    expect(created.map((r) => (r.body as { external_id: string }).external_id)).toEqual(["u2"]);
-  });
-
-  test("records validation failures in the run and imports the rest", async () => {
-    fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify([...export2, { id: "u3" }]));
-
-    await run(baseOptions);
-
-    expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
-    expect(captured.err).toContain("1 user failed validation");
-
-    const [record] = listRuns(runsDir());
-    expect(record).toMatchObject({ status: "partial", counts: { created: 2, failed: 1 } });
-    expect(latestUserLines(runsDir(), record!.id).get("u3")).toMatchObject({
-      status: "failed",
-      code: "validation",
-    });
-  });
-
-  /** Makes `GET /v1/users/count` report an instance that already holds users. */
-  function stubUserCount(total: number): void {
-    const inner = globalThis.fetch;
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-      if (input.toString().includes("/v1/users/count")) {
-        return Response.json({ object: "total_count", total_count: total });
-      }
-      return inner(input, init);
-    }) as typeof fetch;
-  }
-
-  // `baseOptions` passes -y, which has nobody to answer the prompt this warning
-  // otherwise raises — see run-interactive.test.ts for the prompt itself.
-  test("warns under -y when an import may exceed the development-instance user limit", async () => {
-    stubUserCount(99);
-
-    await run(baseOptions);
-
-    expect(captured.err).toContain("100-user limit");
-    expect(captured.err).toContain("already holds 99");
-    expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
-  });
-
-  test("stays quiet when the instance has room for the whole file", async () => {
-    stubUserCount(10);
-
-    await run(baseOptions);
-
-    expect(captured.err).not.toContain("100-user limit");
+    expect(created()).toEqual(["u1"]);
+    expect(captured.err).toContain("leaving out 1 user without a password");
   });
 
   test("aborts before any API call when the hasher is unrecognized", async () => {
@@ -371,119 +372,242 @@ describe("run", () => {
     );
 
     await expect(run(baseOptions)).rejects.toThrow(/Invalid password hasher/);
-    expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    expect(created()).toHaveLength(0);
   });
 
-  test("exits non-zero when some users failed", async () => {
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ errors: [{ code: "e", message: "taken" }] }), {
-        status: 422,
-      })) as unknown as typeof fetch;
+  test("exits 1 when some users failed", async () => {
+    stubClerk({ failing: new Set(["u2"]) });
 
     await run(baseOptions);
+
     expect(process.exitCode).toBe(1);
+    expect(listRuns(runsDir())[0]).toMatchObject({ status: "partial", counts: { failed: 1 } });
   });
 
-  // Tests run non-TTY, so `isHuman()` is false and the wizard path is never
-  // reached — the same guard an agent hits.
-  describe("without --source or a file", () => {
-    test.each([
-      [{}, /the file \(or an export run ID\) and --source <platform>/],
-      [{ source: "clerk" }, /Pass the file \(or an export run ID\)\./],
-      [{ file: "export.json" }, /Pass --source <platform>\./],
-    ])("names the missing flags rather than prompting (%p)", async (partial, expected) => {
-      await expect(run({ ...partial, yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
-        expected,
+  // Tests run non-TTY, the same signal an agent gives.
+  describe("without a file or a source", () => {
+    test("names what to pass rather than prompting for the file", async () => {
+      await expect(run({ source: "clerk", yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
+        /needs the file to import, or the export run that wrote it, and cannot prompt here/,
       );
       expect(requests).toHaveLength(0);
     });
 
-    test("explains that it cannot prompt", async () => {
-      await expect(run({ yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
-        /cannot prompt in agent mode/,
-      );
+    test("asks for --source when the file does not name its own", async () => {
+      await expect(
+        run({ input: "export.json", yes: true, secretKey: "sk_test_x" }),
+      ).rejects.toThrow(/Missing --source/);
     });
   });
 
-  describe("readiness report", () => {
-    /** Stubs BAPI plus the FAPI environment lookup the report depends on. */
-    function stubInstanceSettings(
-      settings: { attributes?: object; social?: object } | null,
-      onUsers?: () => Response,
-    ) {
-      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-        const url = input.toString();
-        requests.push({
-          method: init?.method ?? "GET",
-          url,
-          body: init?.body ? JSON.parse(init.body as string) : null,
-        });
-        if (url.endsWith("/v1/domains")) {
-          if (!settings) return new Response("nope", { status: 500 });
-          return Response.json({
-            data: [{ is_satellite: false, frontend_api_url: "https://fapi.example.com" }],
-          });
-        }
-        if (url.includes("/v1/dev_browser")) return Response.json({ token: "jwt" });
-        if (url.includes("/v1/environment")) return Response.json({ user_settings: settings });
-        return onUsers ? onUsers() : Response.json({ id: "user_created" });
-      }) as unknown as typeof fetch;
-    }
-
-    const created = () => requests.filter((r) => r.url.endsWith("/v1/users"));
-
-    // `-y` means nobody is watching, so the two extra round-trips buy nothing.
-    test("is skipped for a -y run", async () => {
-      stubInstanceSettings({ attributes: { email_address: { enabled: true } } });
+  describe("continuing an earlier run", () => {
+    test("a complete run is not imported again", async () => {
+      await run(baseOptions);
+      requests = [];
 
       await run(baseOptions);
 
-      expect(requests.some((r) => r.url.endsWith("/v1/domains"))).toBe(false);
-      expect(captured.err).not.toContain("Migration readiness");
-      expect(created()).toHaveLength(2);
+      expect(created()).toHaveLength(0);
+      expect(captured.err).toContain("Already imported in run");
+      expect(listRuns(runsDir())).toHaveLength(1);
     });
 
-    test("renders before any user is created, and flags a required-but-missing field", async () => {
-      stubInstanceSettings({
-        attributes: {
-          email_address: { enabled: true, required: true },
-          username: { enabled: true },
-        },
+    test("--new-run imports it again as a new run", async () => {
+      await run(baseOptions);
+      requests = [];
+
+      await run({ ...baseOptions, newRun: true });
+
+      expect(created()).toEqual(["u1", "u2"]);
+      expect(listRuns(runsDir())).toHaveLength(2);
+    });
+
+    test("a partial run retries only the users that did not make it, in the same run", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u2"]);
+      expect(captured.err).toContain(`Continuing run ${first!.id}, which finished partial`);
+      const runs = listRuns(runsDir());
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({ id: first!.id, status: "complete", counts: { created: 2 } });
+    });
+
+    test("an interrupted run skips the users it already created", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      // A crash never writes a finish time.
+      const record = readRun(runsDir(), first!.id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(path.join(runsDir(), first!.id, "run.json"), JSON.stringify(record));
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u2"]);
+      expect(captured.err).toContain("which was interrupted");
+    });
+
+    test("an undone run is imported again as a new run", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      const record = readRun(runsDir(), first!.id)!;
+      fs.writeFileSync(
+        path.join(runsDir(), first!.id, "run.json"),
+        JSON.stringify({ ...record, status: "undone" }),
+      );
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u1", "u2"]);
+      expect(listRuns(runsDir())).toHaveLength(2);
+    });
+
+    test("a run another live process holds refuses with exit 2", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      const record = readRun(runsDir(), first!.id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(path.join(runsDir(), first!.id, "run.json"), JSON.stringify(record));
+      // PID 1 is always alive, and never this test.
+      fs.writeFileSync(path.join(runsDir(), first!.id, "lock"), "1");
+
+      expect(await exitCodeOf(run(baseOptions))).toBe(EXIT_CODE.USAGE);
+    });
+
+    // An edited file is a different job.
+    test("a changed file is a new run", async () => {
+      await run(baseOptions);
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([...export2, { id: "u3", primary_email_address: "c@x.dev" }]),
+      );
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(listRuns(runsDir())).toHaveLength(2);
+    });
+  });
+
+  describe("checks", () => {
+    test("a reject stops the import, with the command that imports the rest", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([...export2, { id: "u3" }]),
+      );
+
+      const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain("1 user would be rejected, so nothing was imported");
+      expect(error.examples?.[0]?.command).toContain("--allow-partial --yes");
+      expect(created()).toHaveLength(0);
+      expect(listRuns(runsDir())).toHaveLength(0);
+    });
+
+    test("--allow-partial imports the rest and records each reject as skipped", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([...export2, { id: "u3" }]),
+      );
+
+      await run({ ...baseOptions, allowPartial: true });
+
+      expect(created()).toEqual(["u1", "u2"]);
+      const [record] = listRuns(runsDir());
+      expect(record).toMatchObject({ status: "partial", counts: { created: 2, skipped: 1 } });
+      expect(latestUserLines(runsDir(), record!.id).get("u3")).toMatchObject({
+        status: "skipped",
+        reason: expect.stringContaining("invalid:"),
       });
-      // One user has no email, so a required email address will cost them.
+      // The operator accepted the skips; only a failed user exits 1.
+      expect(process.exitCode).toBe(0);
+    });
+
+    test("--dry-run writes nothing, and exits 2 when the import would be refused", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([...export2, { id: "u3" }]),
+      );
+
+      await run({ ...baseOptions, dryRun: true });
+
+      expect(created()).toHaveLength(0);
+      expect(listRuns(runsDir())).toHaveLength(0);
+      expect(captured.err).toContain("Dry run: nothing was written.");
+      expect(process.exitCode).toBe(2);
+    });
+
+    test("--dry-run exits 0 when nothing would be rejected", async () => {
+      await run({ ...baseOptions, dryRun: true });
+
+      expect(created()).toHaveLength(0);
+      expect(process.exitCode).toBe(0);
+    });
+
+    test("a user whose only email is unverified is rejected where email is required, with a fix", async () => {
+      stubClerk({
+        settings: { attributes: { email_address: { enabled: true, required: true } } },
+      });
       fs.writeFileSync(
         path.join(workDir, "export.json"),
         JSON.stringify([
           { id: "u1", primary_email_address: "a@x.dev" },
-          { id: "u2", username: "bob" },
+          { id: "u2", unverified_email_addresses: "b@x.dev" },
         ]),
       );
 
-      await run({ ...baseOptions, yes: false });
+      await run({ ...baseOptions, dryRun: true });
 
-      expect(captured.err).toContain("Migration readiness");
-      expect(captured.err).toContain("1 user will not be imported");
-
-      // The report was printed before the first POST /v1/users.
-      const reportIndex = requests.findIndex((r) => r.url.includes("/v1/environment"));
-      const firstCreate = requests.findIndex((r) => r.url.endsWith("/v1/users"));
-      expect(reportIndex).toBeGreaterThanOrEqual(0);
-      expect(reportIndex).toBeLessThan(firstCreate);
+      expect(captured.err).toContain(
+        "only has an unverified email, and this instance requires an email",
+      );
+      expect(captured.err).toContain(
+        `clerk config patch --json '{"auth_email":{"required_for_sign_up":false}}'`,
+      );
     });
 
-    test("degrades to a note when the instance settings cannot be read", async () => {
-      stubInstanceSettings(null);
+    test("a user already in the instance is rejected", async () => {
+      stubClerk({
+        existing: [{ id: "user_old", email_addresses: [{ email_address: "b@x.dev" }] }],
+      });
 
-      await run({ ...baseOptions, yes: false });
+      await run({ ...baseOptions, dryRun: true });
 
-      expect(captured.err).toContain("Could not read this instance's settings");
-      expect(created()).toHaveLength(2);
+      expect(captured.err).toContain("email is already used by a user in the instance");
+      expect(Bun.stripANSI(captured.err)).toContain("u2");
     });
 
-    test("cross-references supabase providers against the instance", async () => {
-      stubInstanceSettings({
-        attributes: { email_address: { enabled: true } },
-        social: { oauth_google: { enabled: true } },
+    test("the dev quota rejects users past the headroom; --allow-partial imports up to it", async () => {
+      stubClerk({ count: 99 });
+
+      expect(await exitCodeOf(run(baseOptions))).toBe(EXIT_CODE.USAGE);
+      expect(created()).toHaveLength(0);
+
+      await run({ ...baseOptions, allowPartial: true });
+      expect(created()).toEqual(["u1"]);
+      const [record] = listRuns(runsDir());
+      expect(latestUserLines(runsDir(), record!.id).get("u2")?.reason).toContain("100-user limit");
+    });
+
+    test("supabase users whose only provider is disabled are rejected", async () => {
+      stubClerk({
+        settings: {
+          attributes: { email_address: { enabled: true } },
+          social: { oauth_google: { enabled: true } },
+        },
       });
       fs.writeFileSync(
         path.join(workDir, "export.json"),
@@ -494,42 +618,70 @@ describe("run", () => {
             email_confirmed_at: "2024-01-01 00:00:00+00",
             raw_app_meta_data: '{"providers":["discord"]}',
           },
-        ]),
-      );
-
-      await run({ ...baseOptions, source: "supabase", yes: false });
-
-      expect(captured.err).toContain("Social connections");
-      expect(captured.err).toContain("Discord");
-      expect(captured.err).toContain("not enabled in Clerk");
-    });
-
-    // Supabase lists `email` and `phone` in `providers` alongside real social
-    // connections, and Clerk has no `oauth_email` to enable — so counting them
-    // as social flagged every password user as a blocking problem.
-    test("leaves supabase's email and phone pseudo-providers out of the social section", async () => {
-      stubInstanceSettings({
-        attributes: { email_address: { enabled: true } },
-        social: { oauth_google: { enabled: true } },
-      });
-      fs.writeFileSync(
-        path.join(workDir, "export.json"),
-        JSON.stringify([
           {
-            id: "sb1",
-            email: "a@x.dev",
+            id: "sb2",
+            email: "b@x.dev",
             email_confirmed_at: "2024-01-01 00:00:00+00",
             raw_app_meta_data: '{"providers":["email","discord"]}',
           },
         ]),
       );
 
-      await run({ ...baseOptions, source: "supabase", yes: false });
+      await run({ ...baseOptions, source: "supabase", dryRun: true });
 
-      const social = captured.err.slice(captured.err.indexOf("Social connections"));
-      expect(social).toContain("Discord");
-      expect(social).not.toContain("Email");
-      expect(social).not.toContain("Phone");
+      expect(captured.err).toContain("only signs in with Discord, which is not enabled in Clerk");
+      expect(captured.err).toContain(
+        "1 user signed in with Discord, which is not enabled in Clerk",
+      );
+    });
+
+    test("names the fields Clerk won't store", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify(export2.map((user) => ({ ...user, department: "Sales" }))),
+      );
+
+      await run({ ...baseOptions, dryRun: true });
+
+      expect(captured.err).toContain("Clerk won't store: department (2 users)");
+    });
+  });
+
+  describe("consent", () => {
+    test("without --yes where nobody can be asked: the preview, then exit 2 with the command", async () => {
+      const error = (await run({ ...baseOptions, yes: false }).catch(
+        (caught: unknown) => caught,
+      )) as CliError;
+
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain("needs consent. Pass --yes to confirm");
+      expect(error.examples?.[0]?.command).toBe(
+        "clerk migrate import export.json --source clerk --secret-key <key> --yes",
+      );
+      expect(captured.err).toContain("Checks");
+      expect(created()).toHaveLength(0);
+    });
+
+    test("--json --yes returns { target, run, checks, result }", async () => {
+      await run({ ...baseOptions, json: true });
+
+      expect(JSON.parse(captured.out)).toMatchObject({
+        target: { instanceId: "ins_1" },
+        run: { kind: "import", status: "complete" },
+        checks: { total: 2, importable: 2, rejects: [] },
+        result: { created: 2, failed: 0, skipped: 0 },
+      });
+    });
+
+    test("--json without --yes returns the preview with consent required, and exits 2", async () => {
+      expect(await exitCodeOf(run({ ...baseOptions, yes: false, json: true }))).toBe(
+        EXIT_CODE.USAGE,
+      );
+      expect(JSON.parse(captured.out)).toMatchObject({
+        consent: "required",
+        checks: { importable: 2 },
+      });
+      expect(created()).toHaveLength(0);
     });
   });
 
@@ -559,8 +711,8 @@ describe("run", () => {
       fs.writeFileSync(
         path.join(workDir, "export.json"),
         JSON.stringify([
-          { account_ref: "mp_1", contact_email: "a@x.dev", given: "Ada", pw: "$2b$10$hash" },
-          { account_ref: "mp_2", contact_email: "b@x.dev", given: "", pw: "$2b$10$hash" },
+          { account_ref: "mp_1", contact_email: "a@x.dev", given: "Ada", pw: BCRYPT },
+          { account_ref: "mp_2", contact_email: "b@x.dev", given: "", pw: BCRYPT },
         ]),
       );
     });
@@ -573,7 +725,7 @@ describe("run", () => {
 
     test("imports through a user-authored source", async () => {
       await run({
-        file: "export.json",
+        input: "export.json",
         source: customFile,
         yes: true,
         secretKey: "sk_test_x",
@@ -589,7 +741,7 @@ describe("run", () => {
 
     test("applies the custom source's defaults and postTransform", async () => {
       await run({
-        file: "export.json",
+        input: "export.json",
         source: customFile,
         yes: true,
         secretKey: "sk_test_x",
@@ -603,7 +755,7 @@ describe("run", () => {
 
     // An edited source is a different source, so the run records which one.
     test("records the custom source's content hash on the run", async () => {
-      await run({ file: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
 
       const [record] = listRuns(runsDir());
       expect(record?.source).toBe("myplatform");
@@ -612,7 +764,7 @@ describe("run", () => {
 
     test("an unknown built-in key is a usage error listing the valid ones", async () => {
       await expect(
-        run({ file: "export.json", source: "okta", yes: true, secretKey: "sk_test_x" }),
+        run({ input: "export.json", source: "okta", yes: true, secretKey: "sk_test_x" }),
       ).rejects.toThrow(/Unknown source "okta". Valid sources: clerk, auth0/);
       expect(created()).toHaveLength(0);
     });
@@ -620,7 +772,7 @@ describe("run", () => {
     test("fails before any request when the file is not there", async () => {
       await expect(
         run({
-          file: "export.json",
+          input: "export.json",
           source: "./nope.ts",
           yes: true,
           secretKey: "sk_test_x",
@@ -637,14 +789,14 @@ describe("run", () => {
       );
 
       await expect(
-        run({ file: "export.json", source: bad, yes: true, secretKey: "sk_test_x" }),
+        run({ input: "export.json", source: bad, yes: true, secretKey: "sk_test_x" }),
       ).rejects.toThrow(/no source field maps to `userId`/);
       expect(requests).toHaveLength(0);
     });
 
     test("still requires a file", async () => {
       await expect(run({ source: customFile, yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
-        /Pass the file \(or an export run ID\)/,
+        /needs the file to import/,
       );
     });
   });
@@ -668,7 +820,7 @@ describe("run", () => {
       ["authjs", [{ id: "aj1", email: "a@x.dev", email_verified: "2024-01-01T00:00:00Z" }], "aj1"],
       [
         "betterauth",
-        [{ user_id: "ba1", email: "a@x.dev", email_verified: true, password_hash: "$2a$10$h" }],
+        [{ user_id: "ba1", email: "a@x.dev", email_verified: true, password_hash: BCRYPT }],
         "ba1",
       ],
       [
@@ -678,7 +830,7 @@ describe("run", () => {
             id: "sb1",
             email: "a@x.dev",
             email_confirmed_at: "2024-06-29 20:25:06+00",
-            encrypted_password: "$2b$10$h",
+            encrypted_password: BCRYPT,
           },
         ],
         "sb1",
@@ -747,99 +899,6 @@ describe("run", () => {
       await expect(run({ ...baseOptions, source: "okta" })).rejects.toThrow(
         /Unknown source "okta".*clerk.*supabase/s,
       );
-    });
-  });
-
-  describe("--skip-unsupported-providers", () => {
-    const supabaseExport = [
-      {
-        id: "sb_email",
-        email: "a@x.dev",
-        email_confirmed_at: "2024-01-01 00:00:00+00",
-        raw_app_meta_data: '{"providers":["email"]}',
-      },
-      {
-        id: "sb_discord",
-        email: "b@x.dev",
-        email_confirmed_at: "2024-01-01 00:00:00+00",
-        raw_app_meta_data: '{"providers":["discord"]}',
-      },
-      {
-        id: "sb_both",
-        email: "c@x.dev",
-        email_confirmed_at: "2024-01-01 00:00:00+00",
-        raw_app_meta_data: '{"providers":["email","discord"]}',
-      },
-    ];
-
-    /** Stubs BAPI plus the FAPI environment lookup the check depends on. */
-    function stubInstance(enabledSocial: Record<string, { enabled: boolean }> | null) {
-      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-        const url = input.toString();
-        requests.push({
-          method: init?.method ?? "GET",
-          url,
-          body: init?.body ? JSON.parse(init.body as string) : null,
-        });
-        if (url.endsWith("/v1/domains")) {
-          if (!enabledSocial) return new Response("nope", { status: 500 });
-          return Response.json({
-            data: [{ is_satellite: false, frontend_api_url: "https://fapi.example.com" }],
-          });
-        }
-        if (url.includes("/v1/dev_browser")) return Response.json({ token: "jwt" });
-        if (url.includes("/v1/environment")) {
-          return Response.json({ user_settings: { social: enabledSocial } });
-        }
-        return Response.json({ id: "user_created" });
-      }) as unknown as typeof fetch;
-    }
-
-    const created = () =>
-      requests
-        .filter((r) => r.url.endsWith("/v1/users"))
-        .map((r) => (r.body as { external_id: string }).external_id);
-
-    beforeEach(() => {
-      fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(supabaseExport));
-    });
-
-    test("skips only the user whose sole provider is disabled", async () => {
-      stubInstance({ oauth_google: { enabled: true }, oauth_discord: { enabled: false } });
-
-      await run({ ...baseOptions, source: "supabase", skipUnsupportedProviders: true });
-
-      expect(created()).toEqual(["sb_email", "sb_both"]);
-      expect(captured.err).toContain("skipping 1 user ");
-      expect(captured.err).toContain("discord: 1");
-    });
-
-    test("imports everyone when the provider is enabled", async () => {
-      stubInstance({ oauth_discord: { enabled: true } });
-
-      await run({ ...baseOptions, source: "supabase", skipUnsupportedProviders: true });
-
-      expect(created()).toHaveLength(3);
-    });
-
-    // A failed lookup must not be read as "nothing is enabled" — that would
-    // silently drop every social user.
-    test("imports everyone when the instance config cannot be read", async () => {
-      stubInstance(null);
-
-      await run({ ...baseOptions, source: "supabase", skipUnsupportedProviders: true });
-
-      expect(created()).toHaveLength(3);
-      expect(captured.err).toContain("Could not read the instance's enabled providers");
-    });
-
-    test("is a no-op with a warning on a non-supabase source", async () => {
-      fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(export2));
-
-      await run({ ...baseOptions, skipUnsupportedProviders: true });
-
-      expect(created()).toHaveLength(2);
-      expect(captured.err).toContain("only applies to supabase");
     });
   });
 });

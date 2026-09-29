@@ -24,7 +24,7 @@ const supabaseSource = {
   key: "supabase",
   label: "Supabase",
   description:
-    "Works with a Supabase `auth.users` export. Use --skip-unsupported-providers to drop users whose only social provider is not enabled in Clerk.",
+    "Works with a Supabase `auth.users` export. Users whose only social provider is not enabled in Clerk are rejected by the import's checks.",
   carries: {
     passwords: { level: "yes", note: "bcrypt `encrypted_password` hashes come across." },
     mfa: {

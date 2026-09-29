@@ -1,27 +1,20 @@
 /**
- * The interactive path behind a bare `clerk migrate import`.
+ * The prompts behind an interactive `clerk migrate import`.
  *
- * Ported from the standalone migration-tool's `src/migrate/cli.ts` interactive
- * flow.
+ * Each one fills in exactly one thing the command was not given: the file,
+ * the source when the file does not name its own, and Firebase's hash
+ * parameters when neither the flags nor the export carry them.
  *
- * Agent mode never reaches here — `run` raises a usage error naming the flags
- * instead, because an agent cannot answer a prompt.
+ * Nothing here runs for an agent, a non-TTY run or `--json`: `run` raises a
+ * usage error naming what to pass instead.
  */
 
-import { throwUsageError } from "../../lib/errors.ts";
 import { select } from "../../lib/listage.ts";
 import { log } from "../../lib/log.ts";
 import { text } from "../../lib/prompts.ts";
-import { resolveFirebaseHashConfig, type FirebaseHashFlags } from "./lib/firebase-hash.ts";
 import { fileExists, getFileType } from "./lib/transform.ts";
 import { sources } from "./sources/registry.ts";
 import type { FirebaseHashConfig } from "./types.ts";
-
-export type WizardResult = {
-  source: string;
-  file: string;
-  firebaseHashConfig?: FirebaseHashConfig;
-};
 
 /** Trims a description down to a single readable hint line. */
 function hint(description: string): string {
@@ -29,11 +22,10 @@ function hint(description: string): string {
   return firstSentence.length > 96 ? `${firstSentence.slice(0, 93)}...` : firstSentence;
 }
 
-async function pickSource(): Promise<string> {
-  // Built from the registry, so a new platform appears here with no second
-  // place to update.
+/** Asks which platform the file came from. Built from the registry. */
+export async function promptForSource(): Promise<string> {
   return select<string>({
-    message: "Which platform are you migrating from?",
+    message: "Which platform did this file come from?",
     choices: sources.map((entry) => ({
       name: entry.label,
       value: entry.key,
@@ -42,8 +34,9 @@ async function pickSource(): Promise<string> {
   });
 }
 
-async function askFile(): Promise<string> {
-  return text({
+/** Asks for the file to import. */
+export async function promptForFile(): Promise<string> {
+  const answer = await text({
     message: "Path to the exported user file (JSON or CSV)",
     validate: (value) => {
       const file = value?.trim();
@@ -53,16 +46,28 @@ async function askFile(): Promise<string> {
       return undefined;
     },
   });
+  return answer.trim();
+}
+
+async function askNumber(label: string): Promise<number> {
+  const answer = await text({
+    message: label,
+    validate: (value) => {
+      const parsed = Number(value?.trim());
+      return Number.isInteger(parsed) && parsed > 0 ? undefined : "Enter a positive whole number";
+    },
+  });
+  return Number(answer.trim());
 }
 
 /**
  * Collects Firebase's four hash parameters.
  *
  * Asked as a set because a partial set produces a digest that verifies against
- * nothing. Pressing enter through all four leaves the config unset, which is
+ * nothing. Pressing enter at the first leaves the config unset, which is
  * correct for an export with no password hashes.
  */
-async function askFirebaseHashConfig(): Promise<FirebaseHashConfig | undefined> {
+export async function promptForFirebaseHashConfig(): Promise<FirebaseHashConfig | undefined> {
   log.info(
     "Firebase password hashes need the project's hash parameters. Find them in the Firebase console under Authentication → Users → (⋮) → Password hash parameters.",
   );
@@ -88,64 +93,4 @@ async function askFirebaseHashConfig(): Promise<FirebaseHashConfig | undefined> 
     rounds: await askNumber("rounds"),
     mem_cost: await askNumber("mem cost"),
   };
-}
-
-async function askNumber(label: string): Promise<number> {
-  const answer = await text({
-    message: label,
-    validate: (value) => {
-      const parsed = Number(value?.trim());
-      return Number.isInteger(parsed) && parsed > 0 ? undefined : "Enter a positive whole number";
-    },
-  });
-  return Number(answer.trim());
-}
-
-/**
- * Fills in whichever of source and file were not passed.
- *
- * @param provided - Flags the caller already supplied; those are not asked for.
- */
-export async function runWizard(
-  provided: {
-    source?: string;
-    file?: string;
-    firebaseHashConfig?: FirebaseHashConfig;
-  } & FirebaseHashFlags,
-): Promise<WizardResult> {
-  const source = provided.source ?? (await pickSource());
-  const file = provided.file ?? (await askFile());
-
-  let firebaseHashConfig = provided.firebaseHashConfig;
-  if (source === "firebase" && !firebaseHashConfig) {
-    firebaseHashConfig =
-      resolveFirebaseHashConfig(provided, "firebase") ?? (await askFirebaseHashConfig());
-  }
-
-  return { source, file, ...(firebaseHashConfig ? { firebaseHashConfig } : {}) };
-}
-
-/**
- * The error an agent gets instead of a prompt.
- *
- * Names exactly the flags that are missing, so the caller can retry without
- * guessing which of the two it forgot.
- */
-export function throwAgentFlagsRequired(missing: { source: boolean; file: boolean }): never {
-  const flags = [
-    missing.file ? "the file (or an export run ID)" : undefined,
-    missing.source ? "--source <platform>" : undefined,
-  ].filter(Boolean);
-
-  throwUsageError(
-    `\`clerk migrate import\` is interactive and cannot prompt in agent mode. Pass ${flags.join(" and ")}.`,
-    undefined,
-    undefined,
-    [
-      {
-        command: `clerk migrate import users.json --source ${sources[0]?.key ?? "clerk"} -y`,
-        description: "Run non-interactively",
-      },
-    ],
-  );
 }

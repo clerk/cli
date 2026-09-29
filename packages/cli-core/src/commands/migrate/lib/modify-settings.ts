@@ -1,11 +1,11 @@
 /**
- * Turning a flagged Migration Readiness row into the instance-config change
- * that would stop it being flagged.
+ * Turning a flagged readiness row into the instance-config change that would
+ * stop it being flagged, printed as a `clerk config patch` command.
  *
- * The report already knows which settings will cost users; without this the
- * only way to act on it is to leave the CLI, find the setting in the dashboard,
- * and come back. Each change is a single leaf in the Platform API's config
- * document, so they compose into one `PATCH` however many the operator picks.
+ * The checks already know which settings will cost users; without this the
+ * only way to act on them is to leave the CLI, find the setting in the
+ * dashboard, and come back. Each change is a single leaf in the Platform API's
+ * config document.
  *
  * These are offers, not corrections. A flagged setting is not a wrong setting —
  * an instance that genuinely requires an email address is configured exactly as
@@ -18,7 +18,6 @@
  * it and still points at the dashboard.
  */
 
-import type { UserSettingsJSON } from "../../../lib/fapi.ts";
 import { toClerkStrategy } from "./clerk-config.ts";
 import type { ReadinessItem, ReadinessSection } from "./readiness.ts";
 
@@ -141,51 +140,4 @@ export function buildChangePayload(changes: SettingChange[]): Record<string, unk
   }
 
   return payload;
-}
-
-/**
- * The instance's settings as they stand once `changes` have been written.
- *
- * Deliberately not a re-read. Clerk's Frontend API is eventually consistent, so
- * a `/v1/environment` fetch issued straight after the config write routinely
- * still reports the pre-write settings — which would redraw the report with
- * every row it just cleared still flagged. The Platform API answering the write
- * is the authoritative statement of what took, exactly as `clerk config patch`
- * treats it.
- *
- * @param settings - `null` passes through: when the settings could not be read
- *   nothing is ever flagged, so there is nothing to have changed.
- */
-export function applyChanges(
-  settings: UserSettingsJSON | null,
-  changes: SettingChange[],
-): UserSettingsJSON | null {
-  if (!settings) return null;
-
-  const next = structuredClone(settings);
-
-  for (const change of changes) {
-    if (change.section === "social") {
-      const social = next.social as Record<string, { enabled: boolean }>;
-      const strategy = toClerkStrategy(change.id);
-      social[strategy] = { ...social[strategy], enabled: true };
-      continue;
-    }
-
-    const attributes = next.attributes as Record<string, { enabled: boolean; required: boolean }>;
-    attributes[change.id] =
-      change.kind === "enable"
-        ? {
-            ...attributes[change.id],
-            enabled: true,
-            required: attributes[change.id]?.required ?? false,
-          }
-        : {
-            ...attributes[change.id],
-            enabled: attributes[change.id]?.enabled ?? true,
-            required: false,
-          };
-  }
-
-  return next;
 }

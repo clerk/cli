@@ -19,12 +19,18 @@ export const LOOKUP_BATCH = 100;
 export type LookedUpUser = {
   id: string;
   external_id?: string | null;
+  username?: string | null;
   last_sign_in_at?: number | null;
   email_addresses?: { email_address?: string }[];
   phone_numbers?: { phone_number?: string }[];
 };
 
-export type LookupFilter = "user_id" | "external_id" | "email_address" | "phone_number";
+export type LookupFilter =
+  | "user_id"
+  | "external_id"
+  | "email_address"
+  | "phone_number"
+  | "username";
 
 /** Splits `items` into chunks of at most `size`. */
 export function batch<T>(items: T[], size: number): T[][] {

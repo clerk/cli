@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { UserSettingsJSON } from "../../../lib/fapi.ts";
 import type { FieldAnalysis } from "./analysis.ts";
 import { buildReadinessReport } from "./readiness.ts";
-import { applyChanges, buildChangePayload, buildSettingChanges } from "./modify-settings.ts";
+import { buildChangePayload, buildSettingChanges } from "./modify-settings.ts";
 
 /** Instance settings carrying only the attributes and providers a test names. */
 function settings(config: {
@@ -221,83 +221,5 @@ describe("the payload", () => {
 
   test("is empty when nothing was selected", () => {
     expect(buildChangePayload([])).toEqual({});
-  });
-});
-
-/**
- * The redraw after a write comes from `applyChanges`, not a second fetch:
- * Clerk's Frontend API is eventually consistent, so re-reading straight after
- * the patch returns the pre-write settings and redraws every row just cleared.
- */
-describe("the settings after a write", () => {
-  /** The two fields a change touches, as `settings()` above builds them. */
-  const attr = (value: { enabled: boolean; required: boolean }) =>
-    value as unknown as UserSettingsJSON["attributes"]["email_address"];
-
-  test("drops the requirement a relaxation removed", () => {
-    const before = settings({ attributes: { email_address: { enabled: true, required: true } } });
-    const input = {
-      analysis: analysis({
-        totalUsers: 5,
-        identifiers: { verifiedEmails: 3, hasAnyIdentifier: 5 } as never,
-      }),
-      settings: before,
-    };
-
-    const after = applyChanges(before, changesFor(input));
-
-    expect(after?.attributes.email_address).toEqual(attr({ enabled: true, required: false }));
-    // The report is rebuilt from this, so the row must stop being flagged.
-    expect(buildReadinessReport({ ...input, settings: after }).blocking).toEqual([]);
-  });
-
-  test("turns on what an enable switched on", () => {
-    const before = settings({ attributes: { username: { enabled: false } } });
-    const changes = changesFor({
-      analysis: analysis({ totalUsers: 2, identifiers: { username: 2 } as never }),
-      settings: before,
-    });
-
-    expect(applyChanges(before, changes)?.attributes.username).toEqual(
-      attr({ enabled: true, required: false }),
-    );
-  });
-
-  test("enables a provider under Clerk's strategy name, not the source platform's", () => {
-    const before = settings({
-      attributes: { email_address: { enabled: true } },
-      social: { oauth_x: { enabled: false } },
-    });
-    const changes = changesFor({
-      analysis: analysis({
-        totalUsers: 2,
-        identifiers: { verifiedEmails: 2, hasAnyIdentifier: 2 } as never,
-      }),
-      settings: before,
-      providerCounts: { twitter: 2 },
-    });
-
-    expect(applyChanges(before, changes)?.social).toEqual({
-      oauth_x: { enabled: true },
-    } as unknown as UserSettingsJSON["social"]);
-  });
-
-  test("leaves the settings it was given untouched", () => {
-    const before = settings({ attributes: { email_address: { enabled: true, required: true } } });
-    const changes = changesFor({
-      analysis: analysis({
-        totalUsers: 5,
-        identifiers: { verifiedEmails: 3, hasAnyIdentifier: 5 } as never,
-      }),
-      settings: before,
-    });
-
-    applyChanges(before, changes);
-
-    expect(before.attributes.email_address).toMatchObject({ required: true });
-  });
-
-  test("passes null through — unreadable settings flag nothing to change", () => {
-    expect(applyChanges(null, [])).toBeNull();
   });
 });

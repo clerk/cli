@@ -5,8 +5,8 @@
  * - A Better Auth scrypt hash, sent as `scrypt_werkzeug`, verifies against the
  *   password it was made from. A unit test can only check the string shape.
  * - A user whose only email is unverified, imported into an instance that
- *   requires an email, is refused by Clerk. The import's checks treat that
- *   user as a reject on the strength of this test.
+ *   requires an email, is refused by Clerk. The import's checks reject that
+ *   user up front on the strength of this test, so it checks both halves.
  *
  * Requires `CLERK_PLATFORM_API_KEY` and `CLERK_CLI_TEST_APP_ID`. Locally, run
  * via `bun run test:e2e:op` so 1Password resolves both in-memory.
@@ -65,11 +65,11 @@ afterAll(async () => {
 }, 60_000);
 
 /** Imports `users` as a Better Auth export and returns each user's run line. */
-async function importBetterAuth(users: Record<string, unknown>[]) {
+async function importBetterAuth(users: Record<string, unknown>[], extra: string[] = []) {
   const file = join(workDir, `betterauth-${randomBytes(4).toString("hex")}.json`);
   writeFileSync(file, JSON.stringify(users));
 
-  await cli(["migrate", "import", file, "--source", "betterauth", "--yes"]);
+  await cli(["migrate", "import", file, "--source", "betterauth", "--yes", ...extra]);
 
   const runsDir = join(workDir, "runs");
   const [runId] = readdirSync(runsDir)
@@ -131,9 +131,23 @@ test("a user whose only email is unverified is refused where email is required",
   }
   const hex = randomBytes(6).toString("hex");
 
-  const [line] = await importBetterAuth([
-    { user_id: `ba_${hex}`, email: `${hex}+clerk_test@clerkcookie.com`, email_verified: false },
+  // The premise: Clerk itself refuses a user created with no email, which is
+  // what an unverified-only user is at `POST /v1/users`.
+  const direct = await cli([
+    "api",
+    "/users",
+    "-d",
+    JSON.stringify({ external_id: `direct_${hex}`, skip_password_requirement: true }),
   ]);
+  expect(direct.exitCode).not.toBe(0);
 
-  expect(line).toMatchObject({ status: "failed" });
+  // And the import's checks reject them before asking Clerk.
+  const [line] = await importBetterAuth(
+    [{ user_id: `ba_${hex}`, email: `${hex}+clerk_test@clerkcookie.com`, email_verified: false }],
+    ["--allow-partial"],
+  );
+  expect(line).toMatchObject({
+    status: "skipped",
+    reason: "only has an unverified email, and this instance requires an email",
+  });
 }, 60_000);

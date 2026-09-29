@@ -305,17 +305,28 @@ export function consolidateClerkIdentifiers(user: Record<string, unknown>): void
  * importing those users would store credentials nobody can ever sign in with,
  * and the fix is a one-word edit to the transformer.
  */
+/** Every field the import schema declares; anything else is stripped. */
+const SCHEMA_FIELDS: ReadonlySet<string> = new Set(Object.keys(userSchema.shape));
+
 export function validatePreparedUsers(users: Record<string, unknown>[]): {
   users: User[];
   validationFailed: number;
   failures: ValidationFailure[];
+  /** Fields a source produced that Clerk has no place for → how many users carry each. */
+  unknownFields: Record<string, number>;
 } {
   const validated: User[] = [];
   const failures: ValidationFailure[] = [];
+  const unknownFields: Record<string, number> = {};
   let validationFailed = 0;
 
   for (let i = 0; i < users.length; i++) {
     const user = users[i] as Record<string, unknown>;
+    for (const [field, value] of Object.entries(user)) {
+      if (!SCHEMA_FIELDS.has(field) && value !== undefined && value !== null && value !== "") {
+        unknownFields[field] = (unknownFields[field] ?? 0) + 1;
+      }
+    }
     const result = userSchema.safeParse(user);
 
     if (result.success) {
@@ -350,7 +361,7 @@ export function validatePreparedUsers(users: Record<string, unknown>[]): {
     });
   }
 
-  return { users: validated, validationFailed, failures };
+  return { users: validated, validationFailed, failures, unknownFields };
 }
 
 function addDefaultFields(
@@ -373,7 +384,12 @@ export function transformUsers(
   users: Record<string, unknown>[],
   key: string,
   options: TransformOptions = {},
-): { transformedData: User[]; validationFailed: number; failures: ValidationFailure[] } {
+): {
+  transformedData: User[];
+  validationFailed: number;
+  failures: ValidationFailure[];
+  unknownFields: Record<string, number>;
+} {
   const transformer = getSource(key);
   const context = options.context ?? {};
   const transformed: Record<string, unknown>[] = [];
@@ -390,7 +406,12 @@ export function transformUsers(
   }
 
   if (options.validate === false) {
-    return { transformedData: transformed as User[], validationFailed: 0, failures: [] };
+    return {
+      transformedData: transformed as User[],
+      validationFailed: 0,
+      failures: [],
+      unknownFields: {},
+    };
   }
 
   const result = validatePreparedUsers(transformed);
@@ -398,6 +419,7 @@ export function transformUsers(
     transformedData: result.users,
     validationFailed: result.validationFailed,
     failures: result.failures,
+    unknownFields: result.unknownFields,
   };
 }
 
@@ -477,14 +499,19 @@ export async function loadUsersFromFile(
   file: string,
   key: string,
   options: TransformOptions = {},
-): Promise<{ users: User[]; validationFailed: number; failures: ValidationFailure[] }> {
+): Promise<{
+  users: User[];
+  validationFailed: number;
+  failures: ValidationFailure[];
+  unknownFields: Record<string, number>;
+}> {
   const transformer = getSource(key);
   const raw = await readUsersFromFile(file, transformer);
   const withDefaults = addDefaultFields(raw, transformer);
-  const { transformedData, validationFailed, failures } = transformUsers(
+  const { transformedData, validationFailed, failures, unknownFields } = transformUsers(
     withDefaults,
     key,
     options,
   );
-  return { users: transformedData, validationFailed, failures };
+  return { users: transformedData, validationFailed, failures, unknownFields };
 }
