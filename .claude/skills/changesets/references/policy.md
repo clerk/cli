@@ -16,7 +16,7 @@ tracked workspace package changed.
 - `docs/**`
 - `scripts/**`
 - `.claude/**`
-- Root dotfiles and docs at repo root: `.gitignore`, `CLAUDE.md`,
+- Root dotfiles and docs at repo root: `.gitignore`, `AGENTS.md`,
   `CONTRIBUTING.md`, `README.md`
 - Test-only changes matching `packages/**/*.test.ts` or
   `packages/**/__tests__/**`
