@@ -1,7 +1,13 @@
 import { join } from "node:path";
 import { mkdir, unlink } from "node:fs/promises";
 import { getBapiBaseUrl } from "./environment.ts";
-import { detectPublishableKeyName, detectSecretKeyName, detectEnvFile } from "./framework.ts";
+import {
+  detectPublishableKeyName,
+  detectSecretKeyName,
+  detectEnvFile,
+  detectFramework,
+  isNpmFramework,
+} from "./framework.ts";
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "./dotenv.ts";
 import { BapiError } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
@@ -81,10 +87,11 @@ export async function writeKeysToEnvFile(
   cwd: string,
   keys: { publishableKey: string; secretKey: string },
 ): Promise<void> {
-  const [publishableKeyName, secretKeyName, envFile] = await Promise.all([
+  const [publishableKeyName, secretKeyName, envFile, framework] = await Promise.all([
     detectPublishableKeyName(cwd),
     detectSecretKeyName(cwd),
     detectEnvFile(cwd),
+    detectFramework(cwd),
   ]);
 
   const targetFile = join(cwd, envFile);
@@ -92,9 +99,14 @@ export async function writeKeysToEnvFile(
     .text()
     .catch(() => "");
 
+  // Native platforms (iOS/Android) configure Clerk with only the publishable
+  // key in client source; a secret key has no use there and their default
+  // .gitignore templates don't cover .env, so leave it out rather than put a
+  // live credential in a tracked file (as `clerk env pull` already does).
+  const includeSecretKey = isNpmFramework(framework ?? {});
   const merged = mergeEnvVars(parseEnvFile(existingContent), {
     [publishableKeyName]: keys.publishableKey,
-    [secretKeyName]: keys.secretKey,
+    ...(includeSecretKey && { [secretKeyName]: keys.secretKey }),
   });
 
   await Bun.write(targetFile, serializeEnvFile(merged));

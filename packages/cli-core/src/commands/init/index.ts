@@ -150,10 +150,9 @@ export async function init(options: InitOptions = {}) {
     authed,
     isBootstrap: bootstrap != null,
     hasRealAppTarget,
-    framework: ctx.framework,
   });
 
-  assertKeylessOnlyFlags(options, strategy, Boolean(ctx.framework.supportsKeyless));
+  assertKeylessOnlyFlags(options, strategy);
 
   if (strategy === "authenticate") {
     setTelemetryStage("link");
@@ -174,9 +173,6 @@ export async function init(options: InitOptions = {}) {
   if (alreadySetUp) {
     setTelemetryStage("already_set_up");
     log.success("\nClerk is already set up in this project.");
-    if (agent && strategy === "manual") {
-      printBootstrapManualSetupInfo(ctx.framework);
-    }
     await outro("Done");
     return;
   }
@@ -269,28 +265,15 @@ async function isAuthenticatedForAgent(): Promise<boolean> {
  * resolution because that's the earliest point the real strategy — not just
  * the flags that might influence it — is known.
  */
-function assertKeylessOnlyFlags(
-  options: InitOptions,
-  strategy: InitStrategy,
-  supportsAccountless: boolean,
-): void {
+function assertKeylessOnlyFlags(options: InitOptions, strategy: InitStrategy): void {
   if (strategy === "keyless") return;
 
-  // "Add --accountless" is only valid remediation when accountless setup is
-  // actually reachable from here — not when the framework doesn't support it
-  // or when --app/--login are what forced the authenticated flow (both
-  // conflict with --accountless in assertUsableFlags above). Framework
-  // support is checked directly, not via strategy: an unsupported framework
-  // resolves to "manual" only in agent mode — in human mode it resolves to
-  // "authenticate", which would otherwise suggest an --accountless flag the
-  // framework rejects.
+  // "Add --accountless" is only valid remediation when --app/--login aren't
+  // what forced the authenticated flow (both conflict with --accountless in
+  // assertUsableFlags above).
   let reason: string;
-  // Null when dropping the offending flag is the only remediation.
-  let remedy: string | null;
-  if (!supportsAccountless) {
-    reason = "this framework does not support accountless setup";
-    remedy = null;
-  } else if (options.app) {
+  let remedy: string;
+  if (options.app) {
     reason = "--app was set, which cannot be combined with --accountless";
     remedy = "drop --app to allow accountless setup";
   } else if (options.login) {
@@ -302,15 +285,14 @@ function assertKeylessOnlyFlags(
     remedy = "add --accountless to force an accountless app";
   }
 
-  const tail = (flag: string): string => (remedy ? `${remedy}, or drop ${flag}.` : `drop ${flag}.`);
   if (options.template) {
     throwUsageError(
-      `--template only applies to accountless applications, but ${reason}; ${tail("--template")}`,
+      `--template only applies to accountless applications, but ${reason}; ${remedy}, or drop --template.`,
     );
   }
   if (options.fresh) {
     throwUsageError(
-      `--fresh only applies to accountless applications, but ${reason}; ${tail("--fresh")}`,
+      `--fresh only applies to accountless applications, but ${reason}; ${remedy}, or drop --fresh.`,
     );
   }
 }
@@ -403,29 +385,16 @@ function printBootstrapNextSteps(
   printNextSteps(steps);
 }
 
-function printBootstrapManualSetupInfo(framework: FrameworkInfo): void {
-  // Only reachable for frameworks without accountless support: capable ones resolve to
-  // the "keyless" or "authenticate" strategy in agent mode instead.
-  const lines = [
-    `\n  Set up Clerk for ${framework.name}:`,
-    `    ${framework.name} requires API keys — set them up manually:`,
-    "    clerk init --app <app_id>",
-    "    clerk env pull",
-  ];
-  log.info(lines.map(dim).join("\n"));
-}
-
 // --- Strategy ---
 
-type InitStrategy = "keyless" | "manual" | "authenticate";
+type InitStrategy = "keyless" | "authenticate";
 
-// Picks how `clerk init` will reach a working Clerk setup:
+// Picks how `clerk init` will reach a working Clerk setup. The CLI mints the accountless app
+// itself and only needs the framework's env var names, so every framework qualifies:
 // - "keyless"      → temporary development keys, no login. Forced via `--accountless`, or the default
-//                    for unauthenticated runs on a keyless-capable framework (human bootstrap and
-//                    all agent runs). A legacy `.clerk/keyless.json` breadcrumb lets the next
-//                    `clerk auth login` claim the app automatically.
-// - "manual"       → agent mode on a non-keyless framework without a real app target — scaffold
-//                    locally and print guidance instead of running OAuth.
+//                    for unauthenticated runs (human bootstrap and all agent runs). A legacy
+//                    `.clerk/keyless.json` breadcrumb lets the next `clerk auth login` claim the app
+//                    automatically.
 // - "authenticate" → log in (interactively if needed) and link a real Clerk application. Forced
 //                    via `--login`, and the default whenever accountless setup doesn't apply.
 function pickStrategy({
@@ -435,7 +404,6 @@ function pickStrategy({
   authed,
   isBootstrap,
   hasRealAppTarget,
-  framework,
 }: {
   optsAccountless: boolean;
   optsLogin: boolean;
@@ -443,19 +411,10 @@ function pickStrategy({
   authed: boolean;
   isBootstrap: boolean;
   hasRealAppTarget: boolean;
-  framework: FrameworkInfo;
 }): InitStrategy {
-  if (optsAccountless) {
-    if (!framework.supportsKeyless) {
-      throwUsageError(
-        `--accountless is not supported for ${framework.name}. Run \`clerk auth login\` and use \`clerk init --app <app_id>\` instead.`,
-      );
-    }
-    return "keyless";
-  }
+  if (optsAccountless) return "keyless";
   if (optsLogin || hasRealAppTarget) return "authenticate";
-  if (agent && !framework.supportsKeyless) return "manual";
-  if (!authed && framework.supportsKeyless && (agent || isBootstrap)) return "keyless";
+  if (!authed && (agent || isBootstrap)) return "keyless";
   return "authenticate";
 }
 
@@ -473,9 +432,6 @@ async function runStrategy(
   keylessOptions: KeylessRunOptions,
 ): Promise<void> {
   switch (strategy) {
-    case "manual":
-      printBootstrapManualSetupInfo(ctx.framework);
-      return;
     case "authenticate":
       await pull({ file: ctx.envFile, cwd: ctx.cwd });
       return;
@@ -692,10 +648,7 @@ export function registerInit(program: Program): void {
     .option("--name <project-name>", "Project name for --starter (skips prompt)")
     .option("--app <id>", "Application ID to link (skips interactive picker)")
     .option("--starter", "Create a new project from a starter template")
-    .option(
-      "--accountless",
-      "Force accountless development keys, even when logged in (only for supported frameworks)",
-    )
+    .option("--accountless", "Force accountless development keys, even when logged in")
     .addOption(createOption("--keyless", "Deprecated alias for --accountless").hideHelp())
     .option(
       "--login",

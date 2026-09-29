@@ -27,8 +27,8 @@ function runner(pm: PackageManager): string[] {
 // create-astro) infer the PM from npm_config_user_agent, which is set automatically when run
 // via bunx/pnpm dlx/yarn dlx/npx. This works in practice since we run them via the selected
 // PM's runner, and our own installDependencies() step uses the correct PM regardless.
-/** Frameworks that support keyless mode — used for bootstrap (new project from empty dir / --starter). */
-export const BOOTSTRAP_KEYLESS_REGISTRY: BootstrapEntry[] = [
+/** Frameworks `clerk init` can bootstrap (new project from an empty dir / --starter). */
+export const BOOTSTRAP_REGISTRY: BootstrapEntry[] = [
   {
     label: "Next.js",
     dep: "next",
@@ -105,10 +105,6 @@ export const BOOTSTRAP_KEYLESS_REGISTRY: BootstrapEntry[] = [
       pm,
     ],
   },
-];
-
-/** Frameworks that require API keys — keyless mode is not yet supported. */
-export const BOOTSTRAP_AUTHENTICATED_REGISTRY: BootstrapEntry[] = [
   {
     label: "React",
     dep: "react",
@@ -156,12 +152,6 @@ export const BOOTSTRAP_AUTHENTICATED_REGISTRY: BootstrapEntry[] = [
       "--yes",
     ],
   },
-];
-
-/** All bootstrap-capable frameworks (keyless + authenticated). */
-export const BOOTSTRAP_REGISTRY: BootstrapEntry[] = [
-  ...BOOTSTRAP_KEYLESS_REGISTRY,
-  ...BOOTSTRAP_AUTHENTICATED_REGISTRY,
 ];
 
 // Hardening flags come from PM_INSTALL_HARDENING_FLAGS (see package-manager.ts

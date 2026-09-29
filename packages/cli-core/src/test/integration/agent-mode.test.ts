@@ -11,6 +11,7 @@ import {
   http,
   clerk,
   readConfig,
+  mockState,
   MOCK_APP,
   getInstance,
   parseEnvFile,
@@ -104,7 +105,7 @@ test("unlink --yes removes the profile in agent mode", async () => {
   expect(config.profiles["github.com/test/project"]).toBeUndefined();
 });
 
-test("init creates and links a real app for keyless framework when authed in agent mode", async () => {
+test("init creates and links a real app when authed in agent mode", async () => {
   await writeNextAppProject();
   const devInstance = getInstance(MOCK_APP, "development");
   http.mock({
@@ -123,13 +124,47 @@ test("init creates and links a real app for keyless framework when authed in age
   expect(http.requests.some((r) => r.url.includes("/v1/accountless_applications"))).toBe(false);
 });
 
-test("init prints manual setup for non-keyless framework without an app target in agent mode", async () => {
+test("init creates and links a real app on a formerly gated framework when authed in agent mode", async () => {
   await writeReactProject();
+  const devInstance = getInstance(MOCK_APP, "development");
+  http.mock({
+    "/v1/platform/applications": MOCK_APP,
+  });
 
-  const { stderr } = await clerk("--mode", "agent", "init", "--no-skills");
+  await clerk("--mode", "agent", "init", "--no-skills");
 
-  expect(stderr).toContain("clerk init --app <app_id>");
-  expect(http.requests).toHaveLength(0);
+  const env = parseEnvFile(await Bun.file(join(h.tempDir, ".env.local")).text(), ".env.local");
+  expect(env.get("VITE_CLERK_PUBLISHABLE_KEY")).toBe(devInstance.publishable_key);
+  expect(env.get("CLERK_SECRET_KEY")).toBe(devInstance.secret_key);
+
+  const config = await readConfig();
+  expect(config.profiles["github.com/test/project"]?.appId).toBe(MOCK_APP.application_id);
+});
+
+test("init mints an accountless app on a formerly gated framework when unauthenticated in agent mode", async () => {
+  await writeReactProject();
+  delete process.env.CLERK_PLATFORM_API_KEY;
+  mockState.storedToken = null;
+  http.mock({
+    "/v1/accountless_applications": {
+      publishable_key: "pk_test_accountless",
+      secret_key: "sk_test_accountless",
+      claim_url: "https://dashboard.clerk.com/apps/claim?token=tok_react&framework=react",
+    },
+  });
+
+  await clerk("--mode", "agent", "init", "--no-skills");
+
+  const env = parseEnvFile(await Bun.file(join(h.tempDir, ".env.local")).text(), ".env.local");
+  expect(env.get("VITE_CLERK_PUBLISHABLE_KEY")).toBe("pk_test_accountless");
+  expect(env.get("CLERK_SECRET_KEY")).toBe("sk_test_accountless");
+
+  const breadcrumb = await Bun.file(join(h.tempDir, ".clerk", "keyless.json")).json();
+  expect(breadcrumb.claimToken).toBe("tok_react");
+  expect(await Bun.file(join(h.tempDir, ".gitignore")).text()).toContain(".clerk/");
+  expect(http.requests.find((r) => r.url.includes("/v1/accountless_applications"))?.method).toBe(
+    "POST",
+  );
 });
 
 test("init with --app uses real app flow in agent mode", async () => {

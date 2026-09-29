@@ -184,7 +184,7 @@ export async function scaffoldServerFramework(
     actions: action ? [action] : [],
     postInstructions: [
       ...(wired ? [] : [`${config.manualWiring} See: ${config.docsUrl}`]),
-      `Ensure ${ctx.framework.envVar} and CLERK_SECRET_KEY are set in your ${ctx.envFile} (pulled via \`clerk env pull\`), and load them before Clerk imports — e.g. \`node --env-file=${ctx.envFile} ${entryPath ?? "index.js"}\``,
+      `Ensure ${ctx.framework.envVar} and CLERK_SECRET_KEY are set in your ${ctx.envFile}, and load them before Clerk imports — e.g. \`node --env-file=${ctx.envFile} ${entryPath ?? "index.js"}\``,
       `Protect routes with \`getAuth()\` and \`clerkClient\`: ${config.docsUrl}`,
     ],
   };

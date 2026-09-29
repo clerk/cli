@@ -10,6 +10,7 @@
  */
 
 import { afterEach, spyOn } from "bun:test";
+import type { FrameworkInfo } from "../../lib/framework.ts";
 import { useCaptureLog } from "./stubs.ts";
 
 export * as loginMod from "../../commands/auth/login.ts";
@@ -69,22 +70,10 @@ export const FAKE_BOOTSTRAP = {
   packageManager: "npm" as const,
 };
 
-type FakeFramework = {
-  dep: string;
-  name: string;
-  sdk: string;
-  envVar: string;
-  envFile: ".env" | ".env.local";
-  supportsKeyless?: boolean;
-};
+export type FakeCtx = Omit<typeof FAKE_CTX, "framework"> & { framework: FrameworkInfo };
 
-export type FakeCtx = Omit<typeof FAKE_CTX, "framework"> & { framework: FakeFramework };
-
-export const KEYLESS_CTX: FakeCtx = {
-  ...FAKE_CTX,
-  existingClerk: false,
-  framework: { ...FAKE_CTX.framework, supportsKeyless: true },
-};
+/** A project with nothing set up yet — what an accountless run scaffolds against. */
+export const KEYLESS_CTX: FakeCtx = { ...FAKE_CTX, existingClerk: false };
 
 export function mockBootstrapTo(ctx: FakeCtx): void {
   spyOn(contextModule, "gatherContext").mockResolvedValueOnce(null).mockResolvedValueOnce(ctx);
