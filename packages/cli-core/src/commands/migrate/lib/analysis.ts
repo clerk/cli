@@ -8,7 +8,7 @@
 
 import type { User } from "../types.ts";
 
-/** Non-identifier fields the readiness report reports coverage for. */
+/** Non-identifier fields the readiness rows report coverage for. */
 export const ANALYZED_FIELDS = [
   { key: "firstName", label: "First name" },
   { key: "lastName", label: "Last name" },

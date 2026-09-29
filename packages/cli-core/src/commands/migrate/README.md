@@ -3,6 +3,50 @@
 Migrate users into a Clerk instance from another auth provider, or from another
 Clerk instance.
 
+```
+clerk migrate export <source> [-o <path>] [--json]
+clerk migrate import <file|export-run-id> [--source <source>] [--dry-run] [--allow-partial] [--new-run] [--yes] [--json]
+clerk migrate runs [run-id] [--json]
+clerk migrate undo <run-id> [--dry-run] [--yes] [--json]
+clerk migrate sources [source] [--json]
+clerk migrate help
+```
+
+A migration is usually three steps:
+
+```sh
+clerk migrate export supabase                   # 1. a run, holding export.json
+clerk migrate import 20260929-141502-a1b2 --dry-run   # 2. check it against the instance
+clerk migrate import 20260929-141502-a1b2 --yes       # 3. import it
+```
+
+`clerk migrate undo <run-id>` takes an import back out, and `clerk migrate runs`
+shows what every run did. Every subcommand takes `--runs-dir <path>` (or
+`CLERK_MIGRATE_DIR`) to keep its runs somewhere else. `clerk migrate` on its own
+is a group name, not a command: it prints its help.
+
+## The rules
+
+Every command follows these:
+
+1. **Nothing writes without consent.** Consent is a yes at a terminal prompt, or
+   `--yes`. Without either, `import` and `undo` print what they would do and
+   exit 2 with the command to run. `--json` means non-interactive: it never
+   prompts.
+2. **`--dry-run` checks against the real instance, and writes nothing.** An
+   import's [checks](#checks) run before anything is written. Predicted
+   rejects stop the import unless `--allow-partial` is passed; fields that would
+   be dropped are warnings.
+3. **State lives in one place: the [run store](#the-run-store).** Each run
+   records its target, its file, and every source ID → Clerk ID outcome,
+   including the error for each user who failed. `runs`, `undo`, re-runs and
+   exports all read or write it.
+4. **Every command prints its target first:** the environment, app and
+   instance, and where the key came from.
+5. **Every subcommand takes `--json`.** Exit codes: `0` all good, `1` some users
+   failed, `2` a usage error or a refusal. The UI goes to stderr and data to
+   stdout.
+
 ## Targeting And Auth
 
 `clerk migrate import` resolves its Backend API key through the CLI's standard
@@ -38,181 +82,70 @@ Key from: linked profile
 The instance ID is what a run records, so `undo` and re-runs can tell whether
 the key now in use still addresses the same instance.
 
-## Commands
+## The run store
 
-`clerk migrate` on its own is a group name, not a command: it prints its help
-and lists the subcommands below. The direction is always spelled out —
-`migrate import` moves users **into** Clerk, `migrate export` gets them **out**
-of a source platform — so neither is implied by the group.
+Every import, export and undo is a **run**, and the run store is the one place
+`clerk migrate` keeps state.
 
-### `clerk migrate import`
+### Where runs are kept
 
-Reads an exported user file, maps it onto Clerk's user schema, checks every
-user against the destination instance, and creates them through the Backend
-API.
+The first of these that is set:
+
+1. `--runs-dir <path>`
+2. `CLERK_MIGRATE_DIR`
+3. `<project root>/.clerk/migrate/`
+
+The project root is the linked profile's directory, then the git toplevel, then
+the current directory. Writing to the default location adds `.clerk/` to the
+project's `.gitignore` first, because run files carry user data.
+
+### What a run holds
+
+Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
+
+| File           | Contents                                                                                                                    |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, and the counts                       |
+| `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code` or `passwordDropped` when present |
+| `lock`         | The PID of the process writing the run, while it runs                                                                       |
+
+A user's status is `created`, `failed`, `skipped`, `deleted` or `exported`. The last line
+for each `sourceId` wins. A `429` retry, an extra email or phone that did not
+attach, and a validation failure all land in `error`.
+
+A run is `partial` when any user failed or was skipped, and `complete`
+otherwise. A run whose process died, or that never recorded a finish time,
+lists as `interrupted`. A lock held by a live process refuses a second writer
+with exit 2.
+
+`users.ndjson` writes are synchronous appends, so a run interrupted with Ctrl-C
+still leaves a complete record of everything already processed. An export's
+file lands in its run folder as `export.json` unless `--output` says otherwise.
+
+### Why `users.ndjson` is NDJSON
+
+One JSON object per line, rather than one JSON array per file. A migration is a
+long append-only stream, and that format is the one that survives it:
+
+- **Appendable.** Each entry is written as it happens, without rewriting the
+  file. A JSON array would have to be re-serialized on every user.
+- **Crash-safe.** Kill the process at any point and every line already written
+  is still valid. A truncated array is not parseable at all.
+- **Streamable.** `tail -f` shows a long import progressing live, and analysis
+  reads line by line instead of loading a million-user record into memory.
+
+Which is also why it greps usefully without any tooling:
 
 ```sh
-clerk migrate import 20260929-141502-a1b2 --dry-run     # check, write nothing
-clerk migrate import 20260929-141502-a1b2 --yes         # an export run
-clerk migrate import users.json --source clerk --yes    # any other file
-clerk migrate import                                    # a human is asked
+grep '"status":"created"' .clerk/migrate/20260929-141502-a1b2/users.ndjson | wc -l
+grep '"sourceId":"user_123"' .clerk/migrate/20260929-141502-a1b2/users.ndjson
 ```
 
-| Flag                                    | Description                                                         |
-| --------------------------------------- | ------------------------------------------------------------------- |
-| `[file\|export-run-id]`                 | The export file, or the ID of the export run that wrote it          |
-| `--source <key\|path>`                  | Where the file came from: a [source](#sources), or one you wrote    |
-| `--dry-run`                             | Run the [checks](#checks) against the instance, and write nothing   |
-| `--allow-partial`                       | Import the users that pass, and record the rest as skipped          |
-| `--new-run`                             | Start a new run instead of [continuing](#re-running) an earlier one |
-| `--require-password`                    | Import only users that carry a password digest                      |
-| `--firebase-signer-key <key>`           | Firebase base64 signer key (overrides the export file)              |
-| `--firebase-salt-separator <separator>` | Firebase base64 salt separator                                      |
-| `--firebase-rounds <n>`                 | Firebase scrypt rounds                                              |
-| `--firebase-mem-cost <n>`               | Firebase scrypt memory cost                                         |
-| `-y, --yes`                             | Import without prompting                                            |
-| `--json`                                | Output as JSON. Never prompts, so importing needs `--yes`           |
-| `--runs-dir <path>`                     | Where runs are kept (see [Runs](#clerk-migrate-runs))               |
+## Commands
 
-Plus the targeting flags from the table above: `--secret-key`, `--app` and
-`--instance`.
-
-An export run ID stands for the file that run wrote, and the import records it
-as `fromExport`. A file `clerk migrate export` wrote carries its source, so it
-needs no `--source`, and a `--source` that contradicts it exits 2. Any other
-file — a bare JSON array, a CSV, Firebase's own `{ "users": [...] }` — needs
-`--source`.
-
-**What a human is asked, and what an agent is told.** A human at a terminal who
-leaves out the file is asked for its path, and is asked for a source only when
-the file does not name one. An agent, a non-TTY run, or `--json` without the
-file exits 2 naming what to pass.
-
-**Nothing is written without consent.** After the checks, a human is asked
-`Import N users?`, and declining writes nothing. `--yes` skips the question.
-Without either — an agent, a non-TTY run, `--json` — the run prints the checks
-and exits 2 with the exact command to run.
-
-**Every run prints its target first**, then which [case](#re-running) applies,
-then the checks.
-
-Failures do not stop the run: each user's outcome is written to the
-[run](#clerk-migrate-runs) and the import continues. A `429` backs off —
-honouring `Retry-After` when the response carries it — and retries up to 5
-times before the user is recorded as failed. The command exits 1 if any user
-failed.
-
-An **unrecognized password hasher** aborts the whole run before anything is
-sent, because it would import credentials nobody can sign in with.
-
-`--json` returns `{ target, run, resume, checks, result }`.
-
-#### Re-running
-
-Running the same import again continues where it left off. The match is the
-file's sha256, the source (and a custom source's content hash), and the
-instance ID; the latest matching import run decides what happens:
-
-| Latest match                              | Re-running does                                                        |
-| ----------------------------------------- | ---------------------------------------------------------------------- |
-| none                                      | a new run                                                              |
-| interrupted (dead lock or no finish time) | continues the same run, skipping the users it created                  |
-| `partial`                                 | continues the same run, retrying the users that failed or were skipped |
-| `complete`                                | nothing: prints "Already imported in run …" and exits 0                |
-| `undone`                                  | a new run                                                              |
-
-`--new-run` skips the lookup. A run another live process holds exits 2.
-
-When an import completes, it names the folders it no longer needs: the export it
-read, which holds your users' data, and its own run, which only `undo` needs.
-Each comes with the `rm -rf` to remove it.
-
-#### Checks
-
-Every import runs the checks before writing anything, and `--dry-run` stops
-after them. They sort the users three ways:
-
-- **Rejected** — users Clerk would refuse. Each gets the first reason that
-  applies:
-  - it failed schema validation
-  - its source ID, email or phone repeats an earlier user in the file
-  - it lacks an identifier the instance requires. An email or phone counts
-    only when it is verified, because an unverified one is attached after the
-    user exists
-  - its password is not the shape its hasher says (`bcrypt`, `scrypt_firebase`,
-    `argon2i`/`argon2id` and `scrypt_werkzeug` are checked; other hashers are
-    not)
-  - Supabase: its only provider is not enabled in Clerk
-  - the instance already has a user with its source ID, email, phone or
-    username (a batched `GET /v1/users` lookup, 100 values a request, through
-    the scheduler). The users a continued run created do not count
-  - a development instance: it is past the 100-user headroom, counted in file
-    order
-- **Imported, but not everything comes across** — fields the instance is not
-  set up to store, fields Clerk has no place for (`Clerk won't store: …`), and
-  passwords a source had to drop.
-- **Imported** — everyone else.
-
-Any reject stops the import, and it exits 2 with the command that adds
-`--allow-partial`. With `--allow-partial`, the rest import and each reject is
-recorded as `skipped` with its reason. `--dry-run` exits 2 when the real run
-would be refused, and 0 otherwise.
-
-```
-Checks
-  120 users checked
-  ✗ 12 users rejected
-      12: only has an unverified email, and this instance requires an email
-         u_17, u_22, u_40, u_51, u_88, and 7 more
-  ⚠ Imported, but not everything comes across
-      6 users have a username, which this instance is not set up to store
-      Clerk won't store: department (120 users)
-  ✓ 108 users to import
-
-Or change the instance instead
-  Make Email optional at sign-up
-    clerk config patch --app app_… --instance ins_… --json '{"auth_email":{"required_for_sign_up":false}}'
-  Enable Username
-    clerk config patch --app app_… --instance ins_… --json '{"auth_username":{"used_for_sign_up":true}}'
-```
-
-The fixes are offers, not corrections: an instance that requires an email is
-configured as its owner intended, and fixing the export may be the answer. When
-the instance settings cannot be read (BAPI `/v1/domains` → the instance's
-Frontend API `/v1/environment`), required fields are not checked and the run
-says so.
-
-#### Additional identifiers
-
-Only the first verified email and phone go on `POST /v1/users`. Every
-additional verified identifier, and every unverified one, is attached
-afterwards with its own request. A failure there is logged and the user still
-counts as imported — a duplicate secondary email should not undo an otherwise
-successful user.
-
-#### Throughput
-
-Defaults follow Clerk's documented `POST /v1/users` limits: 100 req/s for
-production instances, 10 req/s for development. Concurrency defaults to ~95% of
-that, assuming ~100ms of API latency. Both are overridable:
-
-| Variable                          | Effect                        |
-| --------------------------------- | ----------------------------- |
-| `CLERK_MIGRATE_RATE_LIMIT`        | Requests per second           |
-| `CLERK_MIGRATE_CONCURRENCY_LIMIT` | Concurrent in-flight requests |
-
-A non-numeric or non-positive value is ignored in favour of the default.
-
-A development instance's user limit is checked with the other
-[checks](#checks): new development instances are created with a 100-user limit,
-production instances have none, and the run reads the live count
-(`GET /v1/users/count`). The limit itself is not served by any API, so a
-development instance Clerk has raised may accept more than the checks allow;
-`--allow-partial` imports up to the headroom.
-
-Users that do exceed the limit come back in the error breakdown as
-`You have reached your limit of N users`, annotated with what a development
-instance can do about it.
+The direction is always spelled out — `migrate import` moves users **into**
+Clerk, `migrate export` gets them **out** of a source platform — so neither is
+implied by the group.
 
 ### `clerk migrate export`
 
@@ -254,7 +187,7 @@ having been told not to.
 | `firebase`   | Firebase Identity Toolkit        | `--source firebase`   |
 | `workos`     | WorkOS User Management API       | `--source workos`     |
 
-Every export is a [run](#clerk-migrate-runs), and the file lands in the run
+Every export is a [run](#the-run-store), and the file lands in the run
 folder as `export.json`. `--output` writes it somewhere else instead,
 resolved against the **current directory** like every other path flag here;
 the run still records where. Nothing is asked about where the file goes.
@@ -543,6 +476,196 @@ and every 10 pages during the user fetch. `withSpinner` hands a no-op to
 anything that is not a TTY, so without this an agent exporting a large tenant
 would see nothing at all until the run finished.
 
+### `clerk migrate import`
+
+Reads an exported user file, maps it onto Clerk's user schema, checks every
+user against the destination instance, and creates them through the Backend
+API.
+
+```sh
+clerk migrate import 20260929-141502-a1b2 --dry-run     # check, write nothing
+clerk migrate import 20260929-141502-a1b2 --yes         # an export run
+clerk migrate import users.json --source clerk --yes    # any other file
+clerk migrate import                                    # a human is asked
+```
+
+| Flag                                    | Description                                                         |
+| --------------------------------------- | ------------------------------------------------------------------- |
+| `[file\|export-run-id]`                 | The export file, or the ID of the export run that wrote it          |
+| `--source <key\|path>`                  | Where the file came from: a [source](#sources), or one you wrote    |
+| `--dry-run`                             | Run the [checks](#checks) against the instance, and write nothing   |
+| `--allow-partial`                       | Import the users that pass, and record the rest as skipped          |
+| `--new-run`                             | Start a new run instead of [continuing](#re-running) an earlier one |
+| `--require-password`                    | Import only users that carry a password digest                      |
+| `--firebase-signer-key <key>`           | Firebase base64 signer key (overrides the export file)              |
+| `--firebase-salt-separator <separator>` | Firebase base64 salt separator                                      |
+| `--firebase-rounds <n>`                 | Firebase scrypt rounds                                              |
+| `--firebase-mem-cost <n>`               | Firebase scrypt memory cost                                         |
+| `-y, --yes`                             | Import without prompting                                            |
+| `--json`                                | Output as JSON. Never prompts, so importing needs `--yes`           |
+| `--runs-dir <path>`                     | Where runs are kept (see [the run store](#the-run-store))           |
+
+Plus the targeting flags from the table above: `--secret-key`, `--app` and
+`--instance`.
+
+An export run ID stands for the file that run wrote, and the import records it
+as `fromExport`. A file `clerk migrate export` wrote carries its source, so it
+needs no `--source`, and a `--source` that contradicts it exits 2. Any other
+file — a bare JSON array, a CSV, Firebase's own `{ "users": [...] }` — needs
+`--source`.
+
+**What a human is asked, and what an agent is told.** A human at a terminal who
+leaves out the file is asked for its path, and is asked for a source only when
+the file does not name one. An agent, a non-TTY run, or `--json` without the
+file exits 2 naming what to pass.
+
+**Nothing is written without consent.** After the checks, a human is asked
+`Import N users?`, and declining writes nothing. `--yes` skips the question.
+Without either — an agent, a non-TTY run, `--json` — the run prints the checks
+and exits 2 with the exact command to run.
+
+**Every run prints its target first**, then which [case](#re-running) applies,
+then the checks.
+
+Failures do not stop the run: each user's outcome is written to the
+[run](#the-run-store) and the import continues. A `429` backs off —
+honouring `Retry-After` when the response carries it — and retries up to 5
+times before the user is recorded as failed. The command exits 1 if any user
+failed.
+
+An **unrecognized password hasher** aborts the whole run before anything is
+sent, because it would import credentials nobody can sign in with.
+
+`--json` returns `{ target, run, resume, checks, result }`.
+
+#### Re-running
+
+Running the same import again continues where it left off. The match is the
+file's sha256, the source (and a custom source's content hash), and the
+instance ID; the latest matching import run decides what happens:
+
+| Latest match                              | Re-running does                                                        |
+| ----------------------------------------- | ---------------------------------------------------------------------- |
+| none                                      | a new run                                                              |
+| interrupted (dead lock or no finish time) | continues the same run, skipping the users it created                  |
+| `partial`                                 | continues the same run, retrying the users that failed or were skipped |
+| `complete`                                | nothing: prints "Already imported in run …" and exits 0                |
+| `undone`                                  | a new run                                                              |
+
+`--new-run` skips the lookup. A run another live process holds exits 2.
+
+When an import completes, it names the folders it no longer needs: the export it
+read, which holds your users' data, and its own run, which only `undo` needs.
+Each comes with the `rm -rf` to remove it.
+
+#### Checks
+
+Every import runs the checks before writing anything, and `--dry-run` stops
+after them. They sort the users three ways:
+
+- **Rejected** — users Clerk would refuse. Each gets the first reason that
+  applies:
+  - it failed schema validation
+  - its source ID, email or phone repeats an earlier user in the file
+  - it lacks an identifier the instance requires. An email or phone counts
+    only when it is verified, because an unverified one is attached after the
+    user exists
+  - its password is not the shape its hasher says (`bcrypt`, `scrypt_firebase`,
+    `argon2i`/`argon2id` and `scrypt_werkzeug` are checked; other hashers are
+    not)
+  - Supabase: its only provider is not enabled in Clerk
+  - the instance already has a user with its source ID, email, phone or
+    username (a batched `GET /v1/users` lookup, 100 values a request, through
+    the scheduler). The users a continued run created do not count
+  - a development instance: it is past the 100-user headroom, counted in file
+    order
+- **Imported, but not everything comes across** — fields the instance is not
+  set up to store, fields Clerk has no place for (`Clerk won't store: …`), and
+  passwords a source had to drop.
+- **Imported** — everyone else.
+
+Any reject stops the import, and it exits 2 with the command that adds
+`--allow-partial`. With `--allow-partial`, the rest import and each reject is
+recorded as `skipped` with its reason. `--dry-run` exits 2 when the real run
+would be refused, and 0 otherwise.
+
+```
+Checks
+  120 users checked
+  ✗ 12 users rejected
+      12: only has an unverified email, and this instance requires an email
+         u_17, u_22, u_40, u_51, u_88, and 7 more
+  ⚠ Imported, but not everything comes across
+      6 users have a username, which this instance is not set up to store
+      Clerk won't store: department (120 users)
+  ✓ 108 users to import
+
+Or change the instance instead
+  Make Email optional at sign-up
+    clerk config patch --app app_… --instance ins_… --json '{"auth_email":{"required_for_sign_up":false}}'
+  Enable Username
+    clerk config patch --app app_… --instance ins_… --json '{"auth_username":{"used_for_sign_up":true}}'
+```
+
+The fixes are offers, not corrections: an instance that requires an email is
+configured as its owner intended, and fixing the export may be the answer. When
+the instance settings cannot be read (BAPI `/v1/domains` → the instance's
+Frontend API `/v1/environment`), required fields are not checked and the run
+says so.
+
+#### Additional identifiers
+
+Only the first verified email and phone go on `POST /v1/users`. Every
+additional verified identifier, and every unverified one, is attached
+afterwards with its own request. A failure there is logged and the user still
+counts as imported — a duplicate secondary email should not undo an otherwise
+successful user.
+
+#### Throughput
+
+Defaults follow Clerk's documented `POST /v1/users` limits: 100 req/s for
+production instances, 10 req/s for development. Concurrency defaults to ~95% of
+that, assuming ~100ms of API latency. Both are overridable:
+
+| Variable                          | Effect                        |
+| --------------------------------- | ----------------------------- |
+| `CLERK_MIGRATE_RATE_LIMIT`        | Requests per second           |
+| `CLERK_MIGRATE_CONCURRENCY_LIMIT` | Concurrent in-flight requests |
+
+A non-numeric or non-positive value is ignored in favour of the default.
+
+A development instance's user limit is checked with the other
+[checks](#checks): new development instances are created with a 100-user limit,
+production instances have none, and the run reads the live count
+(`GET /v1/users/count`). The limit itself is not served by any API, so a
+development instance Clerk has raised may accept more than the checks allow;
+`--allow-partial` imports up to the headroom.
+
+Users that do exceed the limit come back in the error breakdown as
+`You have reached your limit of N users`, annotated with what a development
+instance can do about it.
+
+### `clerk migrate runs`
+
+`runs` reads the [run store](#the-run-store).
+
+```sh
+clerk migrate runs                           # every run, newest first
+clerk migrate runs 20260929-141502-a1b2      # one run in full
+clerk migrate runs --json
+```
+
+| Flag                | Description                   |
+| ------------------- | ----------------------------- |
+| `[run-id]`          | Show one run instead of all   |
+| `--json`            | The same data, on stdout      |
+| `--runs-dir <path>` | Read runs from somewhere else |
+
+It prints the runs folder first. The listing shows each run's ID, date, kind,
+status, target, file and counts. `runs <id>` adds the error breakdown and the
+users that failed or were skipped, with the path to the full record. An unknown
+ID exits 2.
+
 ### `clerk migrate undo`
 
 Deletes the users an import run created. The import run is the whole record of
@@ -585,58 +708,31 @@ already gone from the instance counts as deleted. The undo is a run of its own,
 every user is deleted. A partial undo exits 1, and running `undo` again retries
 the users that failed, in the same undo run.
 
-### `clerk migrate runs`
-
-Every import, export and undo is a **run**, and the run store is the one place
-`clerk migrate` keeps state. `runs` reads it.
+### `clerk migrate sources`
 
 ```sh
-clerk migrate runs                           # every run, newest first
-clerk migrate runs 20260929-141502-a1b2      # one run in full
-clerk migrate runs --json
+clerk migrate sources                 # every source, with what it carries
+clerk migrate sources betterauth      # one source in full
+clerk migrate sources ./my-source.ts  # a source you wrote
+clerk migrate sources --json
 ```
 
-| Flag                | Description                   |
-| ------------------- | ----------------------------- |
-| `[run-id]`          | Show one run instead of all   |
-| `--json`            | The same data, on stdout      |
-| `--runs-dir <path>` | Read runs from somewhere else |
+| Flag       | Description                                                      |
+| ---------- | ---------------------------------------------------------------- |
+| `[source]` | A built-in key, or the path to a source you wrote, to show fully |
+| `--json`   | The same data, on stdout                                         |
 
-It prints the runs folder first. The listing shows each run's ID, date, kind,
-status, target, file and counts. `runs <id>` adds the error breakdown and the
-users that failed or were skipped, with the path to the full record. An unknown
-ID exits 2.
+`sources` alone prints the table above. `sources <source>` shows one source in
+full: its export command, what it carries with a note for each, where each
+field lands (`encrypted_password → password`), its fixed defaults, and any
+caveats. An unknown key exits 2 and lists the valid ones. There is no
+intro/outro gutter: this reads a static registry rather than running anything.
 
-#### Where runs are kept
+### `clerk migrate help`
 
-The first of these that is set:
-
-1. `--runs-dir <path>`
-2. `CLERK_MIGRATE_DIR`
-3. `<project root>/.clerk/migrate/`
-
-The project root is the linked profile's directory, then the git toplevel, then
-the current directory. Writing to the default location adds `.clerk/` to the
-project's `.gitignore` first, because run files carry user data.
-
-#### What a run holds
-
-Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
-
-| File           | Contents                                                                                                                    |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, and the counts                       |
-| `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code` or `passwordDropped` when present |
-| `lock`         | The PID of the process writing the run, while it runs                                                                       |
-
-A user's status is `created`, `failed`, `skipped`, `deleted` or `exported`. The last line
-for each `sourceId` wins. A `429` retry, an extra email or phone that did not
-attach, and a validation failure all land in `error`.
-
-A run is `partial` when any user failed or was skipped, and `complete`
-otherwise. A run whose process died, or that never recorded a finish time,
-lists as `interrupted`. A lock held by a live process refuses a second writer
-with exit 2.
+`clerk migrate help` and `clerk migrate <command> --help` print the help for the
+group or one command, with examples. `clerk migrate help <command>` does the
+same.
 
 ## Sources
 
@@ -659,26 +755,6 @@ needs to. Every source shows the same note instead: enable the same providers in
 Clerk, and a user who signs in with one is linked to their imported account by
 verified email. See
 [account linking](https://clerk.com/docs/guides/configure/auth-strategies/social-connections/account-linking).
-
-### `clerk migrate sources`
-
-```sh
-clerk migrate sources                 # every source, with what it carries
-clerk migrate sources betterauth      # one source in full
-clerk migrate sources ./my-source.ts  # a source you wrote
-clerk migrate sources --json
-```
-
-| Flag       | Description                                                      |
-| ---------- | ---------------------------------------------------------------- |
-| `[source]` | A built-in key, or the path to a source you wrote, to show fully |
-| `--json`   | The same data, on stdout                                         |
-
-`sources` alone prints the table above. `sources <source>` shows one source in
-full: its export command, what it carries with a note for each, where each
-field lands (`encrypted_password → password`), its fixed defaults, and any
-caveats. An unknown key exits 2 and lists the valid ones. There is no
-intro/outro gutter: this reads a static registry rather than running anything.
 
 ### `--source`
 
@@ -835,8 +911,8 @@ not editing it.
 **Required:** `userId` (`string`). It becomes the Clerk user's `external_id`,
 which is what makes a migration re-runnable.
 
-**Identifiers.** At least one of these must be present, or the user is logged as
-a validation failure and skipped. Each accepts a single value or an array.
+**Identifiers.** At least one of these must be present, or the import's checks
+reject the user as invalid. Each accepts a single value or an array.
 
 | Field                      | Type                 | Description                        |
 | -------------------------- | -------------------- | ---------------------------------- |
@@ -896,35 +972,6 @@ stamping every user with today's.
 | `skipLegalChecks`           | `boolean` | Skip legal acceptance checks              |
 | `skipPasswordChecks`        | `boolean` | Skip password requirements on import      |
 
-## Artifacts
-
-| Path                              | Contents                                                |
-| --------------------------------- | ------------------------------------------------------- |
-| `<runs dir>/<run-id>/`            | One [run](#what-a-run-holds) per import, export or undo |
-| `<runs dir>/<run-id>/export.json` | An export's envelope, unless `--output` says otherwise  |
-
-`users.ndjson` writes are synchronous appends, so a run interrupted with Ctrl-C
-still leaves a complete record of everything already processed.
-
-### Why `users.ndjson` is NDJSON
-
-One JSON object per line, rather than one JSON array per file. A migration is a
-long append-only stream, and that format is the one that survives it:
-
-- **Appendable.** Each entry is written as it happens, without rewriting the
-  file. A JSON array would have to be re-serialized on every user.
-- **Crash-safe.** Kill the process at any point and every line already written
-  is still valid. A truncated array is not parseable at all.
-- **Streamable.** `tail -f` shows a long import progressing live, and analysis
-  reads line by line instead of loading a million-user record into memory.
-
-Which is also why it greps usefully without any tooling:
-
-```sh
-grep '"status":"created"' .clerk/migrate/20260929-141502-a1b2/users.ndjson | wc -l
-grep '"sourceId":"user_123"' .clerk/migrate/20260929-141502-a1b2/users.ndjson
-```
-
 ## API Endpoints
 
 | Method   | Path                       | Used by                                                                        |
@@ -972,4 +1019,4 @@ calls at all — they connect over `--db-url`.
   both become arrays, `"true"`/`1` become booleans, and JSON metadata columns
   are parsed. An empty column is dropped rather than sent as null.
 - A user must end up with at least one identifier (email, phone or username).
-  Users that do not are logged as validation failures and skipped.
+  Users that do not are rejected by the checks as invalid.

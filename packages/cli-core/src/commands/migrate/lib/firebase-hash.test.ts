@@ -8,9 +8,9 @@ const ALL_FLAGS = {
   firebaseMemCost: 14,
 };
 
-describe("gating on the transformer", () => {
+describe("gating on the source", () => {
   test.each([["clerk"], ["supabase"], ["auth0"], ["authjs"], ["betterauth"]])(
-    "ignores even explicit flags for the %s transformer",
+    "ignores even explicit flags for the %s source",
     (transformer) => {
       expect(resolveFirebaseHashConfig(ALL_FLAGS, transformer)).toBeUndefined();
     },

@@ -77,7 +77,7 @@ async function fetchFapiHost(secretKey: string): Promise<string | null> {
  *
  * @returns The settings, or `null` when they could not be read. Callers must
  *   treat `null` as "unknown" rather than as "nothing is enabled" — the
- *   readiness report degrades to a note, and provider skipping stands down.
+ *   import checks say so and skip the checks that need them.
  */
 export async function fetchInstanceSettings(secretKey: string): Promise<UserSettingsJSON | null> {
   try {

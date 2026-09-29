@@ -8,7 +8,7 @@ import { routeByVerification } from "./shared.ts";
  * carried through as the Clerk user's `external_id`.
  *
  * **There is no `passwordHasher` default here, and that is deliberate.** Every
- * other transformer names the hasher its platform ships so a digest can be
+ * other source names the hasher its platform ships so a digest can be
  * verified; WorkOS returns no digest to verify. It accepts password hashes on
  * import and never gives them back, and its TOTP secrets are returned on enrol
  * only — so a WorkOS migration moves identities, not credentials. Naming a

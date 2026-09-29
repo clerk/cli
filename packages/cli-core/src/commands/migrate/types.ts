@@ -65,7 +65,7 @@ export type FirebaseHashConfig = {
 };
 
 /**
- * Per-run values a transformer may need but cannot read from the user record.
+ * Per-run values a source may need but cannot read from the user record.
  *
  * Passed to `postTransform` rather than held in module state so two runs in one
  * process — or two test files — cannot see each other's configuration.

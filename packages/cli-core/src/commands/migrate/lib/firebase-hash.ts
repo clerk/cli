@@ -1,8 +1,8 @@
 /**
  * Firebase's four scrypt parameters, read from the `--firebase-*` flags.
  *
- * **Only read when the transformer is `firebase`.** `migrate import` is one
- * command serving every platform, and nothing but the Firebase transformer
+ * **Only read when the source is `firebase`.** `migrate import` is one
+ * command serving every platform, and nothing but the Firebase source
  * reads the config off {@link TransformContext}.
  */
 
@@ -31,16 +31,16 @@ export type FirebaseHashFlags = {
  * well-formed but verifies against nothing, so every migrated user would fail
  * to sign in with no error at import time.
  *
- * @param transformer - The platform being migrated. Anything but `firebase`
+ * @param source - The platform being migrated. Anything but `firebase`
  *   returns immediately.
  * @returns The config, or `undefined` when none was supplied — which is fine
  *   for an export that carries no password hashes.
  */
 export function resolveFirebaseHashConfig(
   flags: FirebaseHashFlags,
-  transformer: string | undefined,
+  source: string | undefined,
 ): FirebaseHashConfig | undefined {
-  if (transformer !== "firebase") return undefined;
+  if (source !== "firebase") return undefined;
 
   const provided = FIREBASE_FLAGS.filter(([key]) => flags[key] !== undefined);
   if (provided.length === 0) return undefined;

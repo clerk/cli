@@ -1,8 +1,8 @@
 /**
  * Keeps README.md and the command tree honest about each other.
  *
- * This README documents seven export platforms, seven sources and the run
- * store across ~1000 lines. Checking it by eye at review time does not
+ * This README documents six commands, seven export platforms, seven sources
+ * and the run store across ~1000 lines. Checking it by eye at review time does not
  * scale, and a doc that names a flag the binary rejects is worse than no doc:
  * the reader trusts it and gets a usage error.
  *
@@ -102,11 +102,22 @@ function migrateTree(): { path: string; command: Command }[] {
 
 const EXAMPLES = documentedCommands(README);
 
+/**
+ * The words of an example, minus grammar: a synopsis writes `<source>` and
+ * `[--json]` to say what goes there, and those are not values to resolve.
+ */
+function words(example: string): string[] {
+  return example
+    .split(/\s+/)
+    .slice(1)
+    .filter((token) => !/^[<[]/.test(token) && !/[>\]]$/.test(token));
+}
+
 /** One case per (example, flag) pair, so a failure names the exact flag. */
 const FLAG_USES: [string, string][] = EXAMPLES.flatMap((example) =>
-  example
-    .split(/\s+/)
-    .filter((token) => token.startsWith("-"))
+  words(example)
+    // Every command accepts `--help`; Commander does not list it as an option.
+    .filter((token) => token.startsWith("-") && token !== "--help")
     .map((token) => [example, token.split("=")[0]!] as [string, string]),
 );
 
@@ -119,7 +130,8 @@ describe("migrate README", () => {
   });
 
   test.each(EXAMPLES)("`%s` resolves to a real command", (example) => {
-    const tokens = example.split(/\s+/).slice(1);
+    // `help` is Commander's own subcommand on every group, not a registered one.
+    const tokens = words(example).filter((token) => token !== "help");
     const { command, rest } = resolve(tokens);
     const firstFlag = rest.findIndex((token) => token.startsWith("-"));
     const positionals = firstFlag === -1 ? rest : rest.slice(0, firstFlag);
@@ -132,8 +144,29 @@ describe("migrate README", () => {
   });
 
   test.each(FLAG_USES)("`%s` uses %s, which the command accepts", (example, flag) => {
-    const { command } = resolve(example.split(/\s+/).slice(1));
+    const { command } = resolve(words(example));
     expect(flagsOf(command)).toContain(flag);
+  });
+
+  // The README is organised around the commands, so each one gets a heading.
+  test.each(resolve(["migrate"]).command.commands.map((child) => child.name()))(
+    "has a section for `clerk migrate %s`",
+    (name) => {
+      expect(README).toContain(`### \`clerk migrate ${name}\``);
+    },
+  );
+
+  test("states the rules every command follows", () => {
+    expect(README).toContain("## The rules");
+    for (const rule of [
+      "Nothing writes without consent",
+      "`--dry-run` checks against the real instance",
+      "State lives in one place",
+      "Every command prints its target first",
+      "Every subcommand takes `--json`",
+    ]) {
+      expect(README).toContain(rule);
+    }
   });
 
   test.each(migrateTree())("$path documents every flag it accepts", ({ command }) => {

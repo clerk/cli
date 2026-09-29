@@ -346,7 +346,7 @@ describe("supabase export", () => {
     expect(byLabel["have a password hash"]).toBe(1);
   });
 
-  test("keeps raw_app_meta_data, which --skip-unsupported-providers reads", () => {
+  test("keeps raw_app_meta_data, which the import checks read for providers", () => {
     const { users } = buildSupabaseExport([
       { id: "u1", email: "a@x.dev", raw_app_meta_data: { providers: ["discord"] } },
     ]);

@@ -328,7 +328,7 @@ describe("exportClerk", () => {
 
     expect(captured.err).toContain("No users found to export");
     expect(captured.err).not.toContain("Next steps");
-    expect(captured.err).not.toContain("migrate --transformer");
+    expect(captured.err).not.toContain("Import them with");
   });
 
   test("agent mode suppresses the Next steps block", async () => {
@@ -338,6 +338,7 @@ describe("exportClerk", () => {
 
     expect(captured.err).toContain("Exported 1 user");
     expect(captured.err).not.toContain("Next steps");
-    expect(captured.err).not.toContain("migrate --transformer");
+    // The import command still prints, where an agent can read it.
+    expect(captured.err).toContain("Import them with");
   });
 });
