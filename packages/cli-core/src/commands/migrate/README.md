@@ -39,10 +39,8 @@ clerk migrate import
 ```
 
 It picks the transformer from a list built off the registry, asks for the file,
-collects Firebase's hash parameters when they are needed, and pre-fills the
-platform and file from the last run so a repeat migration is mostly pressing
-enter. Anything already passed as a flag is not asked for. Firebase's hash
-parameters are never pre-filled — see [below](#--firebase--firebase).
+and collects Firebase's hash parameters when they are needed. Anything already
+passed as a flag is not asked for.
 
 Then it prints the [Migration Readiness report](#migration-readiness-report),
 offers to [change whatever it flagged](#changing-the-flagged-settings), and
@@ -282,22 +280,6 @@ profile in that order.
 Every export also writes `logs/export-<timestamp>.log`, so `migrate logs list`
 sees it alongside imports and deletions.
 
-#### What an export remembers
-
-The printed command is one half of the handoff; the other is that an export
-**saves what it just produced** as this project's `transformer` and `file`
-settings, so a bare `clerk migrate import` picks up where the export left off.
-`clerk migrate settings` shows both afterwards, sourced from the CLI config.
-
-The path is remembered the way it was printed — relative while it sits under
-the project — so the remembered value and the copyable command never disagree
-about which file they mean.
-
-**`-y` saves nothing.** It means "do not stop to ask me", and a remembered
-value is one a later run picks up silently; a non-interactive export leaves the
-settings untouched and the printed command as the only handoff. This is the
-rule [`log-dir`](#where-logs-go) already follows.
-
 #### Three platforms export no passwords
 
 - **Clerk** never returns password digests, TOTP secrets or backup codes over
@@ -404,14 +386,6 @@ the shell then reads each one as another argument and rejects the import. A line
 that wraps on screen carries no such character and pastes back as what was
 printed.
 
-The four parameters are also **saved to `.env.clerk-migrate`** (created
-gitignored), under the variables the `firebase-*` settings read, so the import
-can be run without pasting them back. They are credentials, which is why they
-go to that file rather than the CLI config — the same split
-`settings set firebase-signer-key` uses. The path is named in the output:
-writing a credential file is not something to do silently. As everywhere else,
-`-y` saves nothing.
-
 Reading the config needs a broader role than listing users, so if it is denied
 the export still succeeds and points at **Authentication → Users → (⋮) →
 Password hash parameters** instead. An export with no password hashes says so
@@ -497,60 +471,12 @@ and every 10 pages during the user fetch. `withSpinner` hands a no-op to
 anything that is not a TTY, so without this an agent exporting a large tenant
 would see nothing at all until the run finished.
 
-### `clerk migrate delete`
-
-The undo for a bad migration. Deletes the users a previous
-`clerk migrate import` created in this directory, matched by the `external_id`
-the import stamped on each one.
-
-```sh
-clerk migrate delete        # confirms first
-clerk migrate delete -y     # non-interactive
-```
-
-Takes the same targeting flags as `clerk migrate import` (`--secret-key`, `--app`,
-`--instance`).
-
-Flat rather than under a noun group: it is the one command in this tree that
-destroys data **in Clerk**, and is worth keeping short and prominent. (Contrast
-`migrate logs clean`, which only removes local files.)
-
-#### What it will and will not touch
-
-The saved migration record is the only account of what a run created, so that
-is what identifies the migration being undone. Without it the command fails and
-explains — deleting nothing silently would look like a successful undo.
-
-Users are found with `GET /v1/users?external_id=…`, 100 IDs per request. Only a
-user Clerk itself reports as carrying one of _this_ migration's external IDs is
-ever deleted; anything else in the instance is out of scope. IDs with no
-matching user are skipped and reported, which is the normal case for a partial
-migration or one already partly undone.
-
-It confirms before acting — defaulting to **no** — and requires `-y` in
-non-interactive or agent mode.
-
-#### Failures
-
-Rate limiting and 429 retries are literally the same code path as the import
-(`lib/retry.ts`), not a second implementation that drifts.
-
-A failure on one user is logged and the rest continue: a half-undone migration
-with no record of which half is far worse than a reported failure. Every
-attempt lands in a timestamped `logs/delete-<timestamp>.log`, carrying
-both the source ID and the Clerk ID. The command exits non-zero if any deletion
-failed.
-
 ### `clerk migrate logs`
 
-Everything that touches the local log directory — `./logs` unless the project
-says otherwise; see [Where logs go](#where-logs-go). Noun-verb like every
+Everything that touches the local log directory — `./logs` unless
+`CLERK_MIGRATE_LOG_DIR` says otherwise. Noun-verb like every
 other group in the CLI (`config pull`, `users list`), rather than the standalone
 tool's `clean-logs`/`convert-logs`, which were npm script names.
-
-Grouping also disambiguates the two deletes in this tree: `migrate logs clean`
-removes **local files**, `migrate delete` removes **users from a Clerk
-instance**.
 
 ```sh
 clerk migrate logs                  # defaults to list
@@ -567,32 +493,7 @@ clerk migrate logs convert import-2026-01-01T12-00-00.log
 | `logs convert` | `[file…]`, `--all` | NDJSON → a JSON array, written as `<name>.json` |
 
 All three read the directory through one shared enumerator, which is what makes
-`logs list` nearly free. All three **resolve** the directory without ever asking
-for one: they are read-only, and "where should logs go?" is not a question to
-put in front of someone who asked to see the logs they already have.
-
-#### Where logs go
-
-`./logs`, relative to the current directory, until the project says otherwise.
-Resolution order, highest first:
-
-| Source                      | Set by                                                |
-| --------------------------- | ----------------------------------------------------- |
-| `CLERK_MIGRATE_LOG_DIR`     | The shell, `.env`, `.env.local`, `.env.clerk-migrate` |
-| `log-dir` in the CLI config | The first-run prompt, or `settings set`               |
-| `./logs`                    | The fallback                                          |
-
-The first time `migrate import`, `migrate export` or `migrate delete` runs
-interactively in a project with none of those set, it asks where logs should be
-saved and offers `./logs`. The answer is saved under `log-dir`, so it is asked
-once per project and never again. `-y`, agent mode and a non-TTY take `./logs`
-without asking **and without saving it** — landing on a default is not a choice,
-and recording one would retire the question for a human who never saw it.
-
-Logs are the only record of which users landed and which failed, and
-`migrate delete` reads them to undo a run, so where they go is worth the one
-question. Change it later with `clerk migrate settings set log-dir <path>`, or
-clear it with `clerk migrate settings clear log-dir` to be asked again.
+`logs list` nearly free.
 
 #### `logs list`
 
@@ -725,124 +626,6 @@ Migrating from something else? Write a transformer and pass --transformer-file.
 `--json` gives an agent the same data, including which source field each
 transformer maps to `userId`.
 
-### `clerk migrate settings`
-
-What a run in this directory would pick up, and where each value comes from.
-Listing is the default, because it is the read-only one: a bare `clerk migrate
-settings` shows, never changes.
-
-```sh
-clerk migrate settings                                     # list
-clerk migrate settings list --json
-clerk migrate settings set transformer firebase
-clerk migrate settings set firebase-signer-key abc123
-clerk migrate settings clear firebase-signer-key             # forget one
-clerk migrate settings clear -y                              # forget them all
-```
-
-| Subcommand                    | Takes                 | Description                                              |
-| ----------------------------- | --------------------- | -------------------------------------------------------- |
-| `settings list`               | `--json`              | Every setting, its value and the source it resolved from |
-| `settings set <name> <value>` | `<name> <value>`      | Change one setting                                       |
-| `settings clear [name]`       | `[name]`, `-y, --yes` | Forget one setting, or every setting and its credentials |
-
-`settings clear <name>` leaves the rest of the project's settings alone. For a
-credential it drops every variable the setting answers to, aliases included —
-clearing `firebase-rounds` while a bare `ROUNDS` stayed behind in the same file
-would report the setting cleared and leave the next run reading the old value.
-It only ever edits `.env.clerk-migrate`; a value coming from the app's own env
-file or the shell is named in the listing's source column and has to be removed
-there.
-
-**A bare `settings clear` needs `-y` where it cannot ask.** It forgets every
-setting and every credential in `.env.clerk-migrate`, so a non-interactive or
-agent run refuses rather than assuming, the way `migrate logs clean` and
-`migrate delete` already do. `settings clear <name>` does not: naming the one
-setting to forget is itself the confirmation, the same way `settings set` needs
-none.
-
-A misspelled name gets the closest match back, not just the list:
-
-```
-$ clerk migrate settings clear logs-dir
-error: command-argument value 'logs-dir' is invalid for argument 'name'.
-       Did you mean "log-dir"? Allowed choices are transformer, file, …
-```
-
-Setting names are kebab-case and identical to the `clerk migrate import` flag
-each one backs, so `firebase-signer-key` here is `--firebase-signer-key` there
-rather than a second spelling to learn. The description column carries the
-prose.
-
-The source column is the point. A migration reads from flags, the environment,
-two of the app's env files and the CLI's config, so when a run picks up a stale
-value the question is never "what is it" but "which of those won". A value that
-arrived under one of the accepted aliases names the variable alongside the file.
-
-It names a **file** wherever there is one to name. Bun loads `.env`/`.env.local`
-into the environment before the CLI runs, so a value a developer typed into
-`.env.local` would otherwise be reported as "`ROUNDS` env var" — true, and no
-help to someone asking which file to edit. Attribution is by value: a file
-holding the same key with a _different_ value lost to something exported in the
-shell, and that row keeps saying `ROUNDS env var`, because that is exactly the
-case this column exists to catch.
-
-A setting with no value leaves the column empty rather than filling it with a
-placeholder — the source column already reads `not set` on that row, and the
-blank is what makes the settings that do have a value stand out.
-
-It closes on next steps naming the two commands that change what it just
-showed — the same block `clerk mcp list` and `clerk whoami` end on, and human
-only. The full command surface stays in `--help`.
-
-```
-A migration run in this directory picks these up unless a flag overrides them.
-Each setting is named after the `clerk migrate import` flag it stands in for.
-
-SETTING                     VALUE       SOURCE               DESCRIPTION
-transformer                 firebase    clerk config         Source platform the export came from
-file                        users.json  clerk config         Export file to import users from
-skip-unsupported-providers              not set              Skip users with no provider enabled in Clerk (Supabase)
-log-dir                     ./logs      clerk config         Directory migration logs are written to
-firebase-signer-key         [REDACTED]  .env.clerk-migrate   Firebase base64 signer key
-firebase-salt-separator                 not set              Firebase base64 salt separator
-firebase-rounds             8           .env.local (ROUNDS)  Firebase scrypt rounds
-firebase-mem-cost           14          MEM_COST env var     Firebase scrypt memory cost
-
-6 of 8 settings set. Credentials are shown redacted.
-
-   → Run `clerk migrate settings set <name> <value>` to change one
-   → Run `clerk migrate settings clear <name>` to forget one
-   → Run `clerk migrate settings clear` to forget them all, credentials included
-```
-
-#### Where each setting is kept
-
-Two stores, split by what the value **is** rather than by which command wrote it:
-
-| Store                | Holds                                                          | Why                                                              |
-| -------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------- |
-| CLI config           | `transformer`, `file`, `skip-unsupported-providers`, `log-dir` | Project state, not secret, useless outside the CLI               |
-| `.env.clerk-migrate` | `firebase-*`                                                   | Credentials: gitignored on write, and hand-editable for rotation |
-
-`log-dir` is the one setting that answers to both: it is remembered in the CLI
-config, and `CLERK_MIGRATE_LOG_DIR` outranks what is remembered, so a directory
-can be pinned for one shell without disturbing the project. The listing's source
-column says which is winning, and `settings clear log-dir` clears both — half a
-clear would report the setting gone while the next run still read it.
-
-`.env.clerk-migrate` is the migration's own file rather than the app's
-`.env.local`, because a Firebase signer key is of no use to the application
-being migrated and does not belong in the file its developers read daily. The
-CLI adds it to `.gitignore` the first time it writes it, and deletes it when
-`settings clear` removes the last value.
-
-Credentials are withheld wherever they are displayed, including under `--json`,
-so the output is safe to paste into an issue. They display as `[REDACTED]` —
-the same thing `clerk users create --dry-run` prints for a password — rather
-than a truncation like `aVer…3456`: the source column already says which value
-is in play, and a partial secret is one the reader has to recognise as partial.
-
 ### Custom transformers (`--transformer-file`)
 
 Migrating from a platform with no built-in, without recompiling the CLI:
@@ -898,7 +681,7 @@ rejected with the specific problem rather than crashing mid-pipeline:
 
 The `userId` check is the load-bearing one: without it the import would run to
 completion and create every user with no `external_id`, which is what makes a
-migration re-runnable and what `migrate delete` matches on.
+migration re-runnable.
 
 ### Verified vs unverified identifiers
 
@@ -930,32 +713,8 @@ naming what is missing. A partial set produces a well-formed digest that
 verifies against nothing, so users would import successfully and then be unable
 to sign in.
 
-They never go into the CLI's config: the signer key is a Firebase secret, and
-that file is not a secret store. To avoid re-passing all four on every run, set
-them once with [`clerk migrate settings`](#clerk-migrate-settings), or export
-them yourself:
-
-| Flag                        | Variable                        | Also accepted                                             |
-| --------------------------- | ------------------------------- | --------------------------------------------------------- |
-| `--firebase-signer-key`     | `CLERK_FIREBASE_SIGNER_KEY`     | `FIREBASE_BASE64_SIGNER_KEY`, `BASE64_SIGNER_KEY`         |
-| `--firebase-salt-separator` | `CLERK_FIREBASE_SALT_SEPARATOR` | `FIREBASE_BASE64_SALT_SEPARATOR`, `BASE64_SALT_SEPARATOR` |
-| `--firebase-rounds`         | `CLERK_FIREBASE_ROUNDS`         | `FIREBASE_ROUNDS`, `ROUNDS`                               |
-| `--firebase-mem-cost`       | `CLERK_FIREBASE_MEM_COST`       | `FIREBASE_MEM_COST`, `MEM_COST`                           |
-
-The unprefixed names are what Firebase itself calls these (`base64_signer_key`,
-`rounds`) and what every guide, Clerk's own standalone migration script
-included, tells you to paste into `.env`. Someone who followed one has the
-values the import needs, spelled the way the source platform spells them, so
-they are read rather than reported as missing.
-
-They are a fallback, not a synonym: a `CLERK_FIREBASE_*` variable wins wherever
-both exist, and `clerk migrate settings` names the variable it read alongside
-the file — `ROUNDS` is generic enough to mean something else in an app that was
-never a Firebase project, and that should be visible rather than silent.
-
-Resolution order is flag, then exported variable, then `.env.clerk-migrate`,
-then the app's `.env.local`/`.env`. The sources can be mixed as long as all four
-end up supplied. Run with `--verbose` to see which one each came from.
+They are read from the flags only. The signer key is a Firebase secret, and the
+CLI stores none of them.
 
 An export with no password hashes needs no parameters at all.
 
@@ -983,7 +742,7 @@ The schema lives in `validator.ts`; adding a source platform means adding a
 transformer, not editing it.
 
 **Required:** `userId` (`string`). It becomes the Clerk user's `external_id`,
-which is what makes a migration re-runnable and what `migrate delete` matches on.
+which is what makes a migration re-runnable.
 
 **Identifiers.** At least one of these must be present, or the user is logged as
 a validation failure and skipped. Each accepts a single value or an array.
@@ -1222,15 +981,7 @@ rather than "which project is linked here".
 | ------------------------------------------ | --------------------------------------------------------------------- |
 | `./logs/export-<timestamp>.log`            | NDJSON: one line per exported user                                    |
 | `./logs/import-<timestamp>.log`            | NDJSON: one line per user, plus validation failures and retry notices |
-| `./logs/delete-<timestamp>.log`            | NDJSON: one line per `migrate delete` attempt                         |
 | `./exports/<platform>-export-<stamp>.json` | The export itself, unless `--output` says otherwise                   |
-| `./.env.clerk-migrate`                     | Migration credentials, written by `settings set` and gitignored       |
-
-The transformer and file of the last run are **not** written here. They go to
-the `migrations` section of the CLI's own config file, keyed by project the
-same way a linked profile is. That is what `migrate delete` reads to know which
-migration to undo, so it is load-bearing rather than a convenience — and it has
-no business being written into the repository being migrated.
 
 Log writes are synchronous appends, so a run interrupted with Ctrl-C still
 leaves a complete record of everything already processed. Use the last
@@ -1262,16 +1013,14 @@ NDJSON is. The original `.log` stays put.
 
 ## API Endpoints
 
-| Method   | Path                       | Used by                                                                              |
-| -------- | -------------------------- | ------------------------------------------------------------------------------------ |
-| `POST`   | `/v1/users`                | `migrate import` — creates each user                                                 |
-| `POST`   | `/v1/email_addresses`      | `migrate import` — attaches additional emails                                        |
-| `POST`   | `/v1/phone_numbers`        | `migrate import` — attaches additional phones                                        |
-| `GET`    | `/v1/users?external_id=…`  | `migrate delete` — finds this migration's users, 100 IDs a call                      |
-| `GET`    | `/v1/users?limit=&offset=` | `migrate export clerk` — pages the whole instance, 500 at a time                     |
-| `GET`    | `/v1/users/count`          | `migrate import` — headroom against a development instance's user limit              |
-| `DELETE` | `/v1/users/{user_id}`      | `migrate delete` — removes one user                                                  |
-| `GET`    | `/v1/domains`              | Readiness report and `--skip-unsupported-providers` — resolves the Frontend API host |
+| Method | Path                       | Used by                                                                              |
+| ------ | -------------------------- | ------------------------------------------------------------------------------------ |
+| `POST` | `/v1/users`                | `migrate import` — creates each user                                                 |
+| `POST` | `/v1/email_addresses`      | `migrate import` — attaches additional emails                                        |
+| `POST` | `/v1/phone_numbers`        | `migrate import` — attaches additional phones                                        |
+| `GET`  | `/v1/users?limit=&offset=` | `migrate export clerk` — pages the whole instance, 500 at a time                     |
+| `GET`  | `/v1/users/count`          | `migrate import` — headroom against a development instance's user limit              |
+| `GET`  | `/v1/domains`              | Readiness report and `--skip-unsupported-providers` — resolves the Frontend API host |
 
 The readiness report also reads the instance's Frontend API
 `GET /v1/environment` (bootstrapping a dev browser first on development

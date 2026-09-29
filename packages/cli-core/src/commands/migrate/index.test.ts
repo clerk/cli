@@ -137,20 +137,6 @@ describe("registerMigrate", () => {
     );
   });
 
-  // Flat rather than under a noun group: it is the one command in this tree
-  // that destroys data in Clerk.
-  test("registers delete as a direct subcommand of migrate", () => {
-    expect(findCommand(["migrate", "delete"])).toBeDefined();
-    expect(findCommand(["migrate", "delete"])?.description()).toContain("last migration");
-  });
-
-  test.each(["--yes", "--secret-key", "--app", "--instance"])(
-    "migrate delete accepts %s",
-    (flag) => {
-      expect(findCommand(["migrate", "delete"])?.options.map((o) => o.long)).toContain(flag);
-    },
-  );
-
   test.each([[["logs"]], [["logs", "list"]], [["logs", "clean"]], [["logs", "convert"]]])(
     "registers migrate %p",
     (names) => {

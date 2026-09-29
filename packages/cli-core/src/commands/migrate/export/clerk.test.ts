@@ -3,7 +3,7 @@ import { getMode, setMode } from "../../../mode.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { useCaptureLog, useMigrateLogDir } from "../../../test/lib/stubs.ts";
+import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { getLogDir } from "../lib/logger.ts";
 import {
   buildClerkExport,
@@ -13,7 +13,6 @@ import {
 } from "./clerk.ts";
 
 const captured = useCaptureLog();
-useMigrateLogDir();
 
 let workDir: string;
 let originalCwd: string;

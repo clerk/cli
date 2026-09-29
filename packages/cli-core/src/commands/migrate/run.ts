@@ -57,8 +57,7 @@ import {
   type SettingChange,
 } from "./lib/modify-settings.ts";
 import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
-import { startLogging, getLogFilePath } from "./lib/logger.ts";
-import { loadSettings, saveSettings } from "./lib/settings.ts";
+import { getDateTimeStamp, getLogFilePath } from "./lib/logger.ts";
 import {
   countSocialProviders,
   findDisabledProviders,
@@ -539,7 +538,7 @@ async function resolveMissingOptions(options: MigrateRunOptions): Promise<Migrat
   // Resolved before the prompt only when `--transformer firebase` was already
   // passed; otherwise the wizard picks the platform first and looks them up
   // itself, so a non-Firebase migration never reads them at all.
-  const firebaseHashConfig = await resolveFirebaseHashConfig(options, options.transformer);
+  const firebaseHashConfig = resolveFirebaseHashConfig(options, options.transformer);
   const answers = await runWizard({ ...options, firebaseHashConfig });
 
   return {
@@ -651,13 +650,13 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   const options = await resolveMissingOptions(rawOptions);
 
   const { transformer, file } = validateRunOptions(options);
-  const firebaseHashConfig = await resolveFirebaseHashConfig(options, transformer);
+  const firebaseHashConfig = resolveFirebaseHashConfig(options, transformer);
 
   await withGutter("Migrating users to Clerk", async ({ setNextSteps }) => {
     const target = await describeBapiTarget({ ...options, secretKey: options.secretKey });
     const secretKey = await resolveBapiSecretKey({ ...options, secretKey: options.secretKey });
     const limits = resolveLimits(secretKey);
-    const dateTime = await startLogging();
+    const dateTime = getDateTimeStamp();
     const logFile = getLogFilePath("import", dateTime);
 
     const { users: loaded, validationFailed } = await withSpinner(
@@ -734,20 +733,6 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       });
       if (!proceed) throwUserAbort();
     }
-
-    // The Firebase hash parameters are deliberately not among these: the signer
-    // key is a secret, and remembering it would write it to disk in plaintext.
-    //
-    // Spread over what is already saved rather than written fresh: `logDir` was
-    // settled and saved by `startLogging` at the top of this run, and a bare
-    // object here would drop it — leaving `clerk migrate logs` with no
-    // directory to read the run it just wrote.
-    await saveSettings({
-      ...(await loadSettings()),
-      transformer,
-      file,
-      ...(options.skipUnsupportedProviders ? { skipUnsupportedProviders: true } : {}),
-    });
 
     const summary = await withSpinner(`Importing users: [0/${users.length}]...`, async (spinner) =>
       importUsers({

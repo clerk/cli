@@ -2,9 +2,7 @@
  * The interactive path behind a bare `clerk migrate import`.
  *
  * Ported from the standalone migration-tool's `src/migrate/cli.ts` interactive
- * flow. The platform and file are pre-filled from the previous run, so a repeat
- * migration is mostly pressing enter. Firebase's hash parameters are not: the
- * signer key is a secret, and the CLI does not keep those.
+ * flow.
  *
  * Agent mode never reaches here — `run` raises a usage error naming the flags
  * instead, because an agent cannot answer a prompt.
@@ -15,7 +13,6 @@ import { select } from "../../lib/listage.ts";
 import { log } from "../../lib/log.ts";
 import { text } from "../../lib/prompts.ts";
 import { resolveFirebaseHashConfig, type FirebaseHashFlags } from "./lib/firebase-hash.ts";
-import { loadSettings } from "./lib/settings.ts";
 import { fileExists, getFileType } from "./lib/transform.ts";
 import { transformers } from "./transformers/registry.ts";
 import type { FirebaseHashConfig } from "./types.ts";
@@ -32,7 +29,7 @@ function hint(description: string): string {
   return firstSentence.length > 96 ? `${firstSentence.slice(0, 93)}...` : firstSentence;
 }
 
-async function pickTransformer(defaultKey: string | undefined): Promise<string> {
+async function pickTransformer(): Promise<string> {
   // Built from the registry, so a new platform appears here with no second
   // place to update.
   return select<string>({
@@ -42,14 +39,12 @@ async function pickTransformer(defaultKey: string | undefined): Promise<string> 
       value: entry.key,
       description: hint(entry.description),
     })),
-    default: defaultKey && transformers.some((t) => t.key === defaultKey) ? defaultKey : undefined,
   });
 }
 
-async function askFile(defaultFile: string | undefined): Promise<string> {
+async function askFile(): Promise<string> {
   return text({
     message: "Path to the exported user file (JSON or CSV)",
-    default: defaultFile,
     validate: (value) => {
       const file = value?.trim();
       if (!file) return "A file path is required";
@@ -71,9 +66,7 @@ async function askFirebaseHashConfig(): Promise<FirebaseHashConfig | undefined> 
   log.info(
     "Firebase password hashes need the project's hash parameters. Find them in the Firebase console under Authentication → Users → (⋮) → Password hash parameters.",
   );
-  log.info(
-    "Set CLERK_FIREBASE_SIGNER_KEY, CLERK_FIREBASE_SALT_SEPARATOR, CLERK_FIREBASE_ROUNDS and CLERK_FIREBASE_MEM_COST to skip these prompts on the next run.",
-  );
+  log.info("Pass the four --firebase-* flags to skip these prompts on the next run.");
 
   const signerKey = (
     await text({
@@ -120,22 +113,13 @@ export async function runWizard(
     firebaseHashConfig?: FirebaseHashConfig;
   } & FirebaseHashFlags,
 ): Promise<WizardResult> {
-  const saved = await loadSettings();
-
-  const transformer = provided.transformer ?? (await pickTransformer(saved.transformer));
-  const file = provided.file ?? (await askFile(saved.file));
+  const transformer = provided.transformer ?? (await pickTransformer());
+  const file = provided.file ?? (await askFile());
 
   let firebaseHashConfig = provided.firebaseHashConfig;
   if (transformer === "firebase" && !firebaseHashConfig) {
-    // Looked up here rather than before the picker: until the platform is
-    // chosen there is no reason to read Firebase's variables at all, and a
-    // migration from anywhere else must not see them.
-    firebaseHashConfig = await resolveFirebaseHashConfig(provided, "firebase");
-  }
-  if (transformer === "firebase" && !firebaseHashConfig) {
-    // Prompted, never prefilled: the signer key is a secret the CLI does not
-    // keep, so there is nothing to offer back.
-    firebaseHashConfig = await askFirebaseHashConfig();
+    firebaseHashConfig =
+      resolveFirebaseHashConfig(provided, "firebase") ?? (await askFirebaseHashConfig());
   }
 
   return { transformer, file, ...(firebaseHashConfig ? { firebaseHashConfig } : {}) };

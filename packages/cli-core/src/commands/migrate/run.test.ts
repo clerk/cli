@@ -11,7 +11,6 @@ import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 import { getLogDir } from "./lib/logger.ts";
 import { __resetCustomTransformersForTesting } from "./transformers/registry.ts";
-import { loadSettings, saveSettings } from "./lib/settings.ts";
 import { applyResumeAfter, explainErrors, run, validateRunOptions } from "./run.ts";
 import type { User } from "./types.ts";
 
@@ -169,21 +168,6 @@ describe("run", () => {
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
     expect(entries.filter((e) => e.status === "success")).toHaveLength(2);
-  });
-
-  test("records the run's transformer and file for the next run", async () => {
-    await run(baseOptions);
-    expect(await loadSettings()).toEqual({ transformer: "clerk", file: "export.json" });
-  });
-
-  // `startLogging` settles and saves `logDir` before the first user is
-  // processed. Writing the transformer and file as a fresh object dropped it
-  // again mid-run, so `clerk migrate logs` had nowhere to read the log the run
-  // had just written.
-  test("keeps the log directory it saved at the start of the run", async () => {
-    await saveSettings({ logDir: "./custom-logs" });
-    await run(baseOptions);
-    expect((await loadSettings()).logDir).toBe("./custom-logs");
   });
 
   test("--require-password imports only the users that have one", async () => {
@@ -717,14 +701,6 @@ describe("run", () => {
 
       expect(created()).toHaveLength(2);
       expect(captured.err).toContain("only applies to supabase");
-    });
-
-    test("records the flag for the next run", async () => {
-      stubInstance({ oauth_discord: { enabled: true } });
-
-      await run({ ...baseOptions, transformer: "supabase", skipUnsupportedProviders: true });
-
-      expect((await loadSettings()).skipUnsupportedProviders).toBe(true);
     });
   });
 });

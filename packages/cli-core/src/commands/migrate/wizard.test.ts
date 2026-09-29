@@ -27,7 +27,6 @@ mock.module("../../lib/prompts.ts", () => ({
 }));
 
 const { runWizard, throwAgentFlagsRequired } = await import("./wizard.ts");
-const { saveSettings } = await import("./lib/settings.ts");
 const { _setConfigDir } = await import("../../lib/config.ts");
 
 let workDir: string;
@@ -95,41 +94,6 @@ describe("transformer picker", () => {
 
     expect(mockSelect).not.toHaveBeenCalled();
     expect(result.transformer).toBe("clerk");
-  });
-});
-
-describe("defaults from the previous run", () => {
-  test("pre-selects the last transformer and pre-fills the last file", async () => {
-    await saveSettings({ transformer: "supabase", file: "other.csv" });
-    mockSelect.mockResolvedValue("supabase");
-    mockText.mockResolvedValue("other.csv");
-
-    await runWizard({});
-
-    expect(selectCall(0)?.default).toBe("supabase");
-    expect(textCall(0)?.default).toBe("other.csv");
-  });
-
-  test("offers no default when nothing has been saved", async () => {
-    mockSelect.mockResolvedValue("clerk");
-    mockText.mockResolvedValue("users.json");
-
-    await runWizard({});
-
-    expect(selectCall(0)?.default).toBeUndefined();
-    expect(textCall(0)?.default).toBeUndefined();
-  });
-
-  // A saved key from a build that has since dropped that transformer would
-  // otherwise pre-select a value the picker cannot offer.
-  test("ignores a saved transformer that is no longer registered", async () => {
-    await saveSettings({ transformer: "okta" });
-    mockSelect.mockResolvedValue("clerk");
-    mockText.mockResolvedValue("users.json");
-
-    await runWizard({});
-
-    expect(selectCall(0)?.default).toBeUndefined();
   });
 });
 

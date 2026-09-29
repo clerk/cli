@@ -11,9 +11,7 @@ const logs = { clean, convert, list };
  *
  * Noun-verb, matching every other group in the CLI (`config pull`, `users
  * list`) rather than the standalone tool's `clean-logs`/`convert-logs`, which
- * were npm script names. Grouping also disambiguates the two deletes in this
- * tree: `migrate logs clean` removes local files, `migrate delete` removes
- * users from a Clerk instance.
+ * were npm script names.
  */
 export function registerMigrateLogs(migrateCommand: Command<[], Record<string, unknown>>): void {
   const logsCommand = migrateCommand

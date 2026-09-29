@@ -12,7 +12,7 @@
 
 import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
-import { exportLogger, startLogging } from "../lib/logger.ts";
+import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
 import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
 import {
@@ -122,7 +122,7 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
   const destination = await resolveOutputPath("supabase", options.output);
 
   await withGutter("Exporting users from Supabase", async () => {
-    const dateTime = await startLogging();
+    const dateTime = getDateTimeStamp();
 
     const { value: rows } = await withInputRetry(
       dbUrl,
@@ -136,7 +136,7 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
     const { users, coverage } = buildSupabaseExport(rows, dateTime);
     const outputPath = writeExportOutput(users, destination);
 
-    await reportExport({
+    reportExport({
       platform: "supabase",
       userCount: users.length,
       outputPath,

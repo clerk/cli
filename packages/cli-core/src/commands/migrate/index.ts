@@ -1,16 +1,14 @@
 import { createOption } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
 import { parseIntegerOption } from "../../lib/option-parsers.ts";
-import { deleteMigration } from "./delete.ts";
 import { setAssumeYes } from "./lib/assume-yes.ts";
 import { registerMigrateExport } from "./export/index.ts";
 import { registerMigrateLogs } from "./logs/index.ts";
-import { registerMigrateSettings } from "./settings/index.ts";
 import { run } from "./run.ts";
 import { list as transformersList } from "./transformers/list.ts";
 import { transformerKeys } from "./transformers/registry.ts";
 
-const migrate = { run, delete: deleteMigration, transformersList };
+const migrate = { run, transformersList };
 
 export function registerMigrate(program: Program): void {
   const migrateCommand = program
@@ -30,18 +28,12 @@ export function registerMigrate(program: Program): void {
         command: "clerk migrate export supabase",
         description: "Export users from Supabase, ready to import",
       },
-      { command: "clerk migrate settings", description: "Show what a run here would pick up" },
-      {
-        command: "clerk migrate settings set firebase-signer-key abc123",
-        description: "Save a credential to .env.clerk-migrate",
-      },
       { command: "clerk migrate logs", description: "List the local migration logs" },
       { command: "clerk migrate transformers list", description: "Show the built-in transformers" },
-      { command: "clerk migrate delete", description: "Undo the last migration" },
     ]);
 
-  // `-y` is read three layers down — by the log-directory question and by the
-  // credential-retry loop — so it is resolved once here rather than threaded
+  // `-y` is read several layers down — by the credential-retry loop and the
+  // export commands — so it is resolved once here rather than threaded
   // through every export handler. Hooks are inherited, so this fires for every
   // subcommand under `migrate`; one that declares no `-y` resolves to false.
   migrateCommand.hook("preAction", (_thisCommand, actionCommand) => {
@@ -110,26 +102,6 @@ export function registerMigrate(program: Program): void {
       migrate.run(cmd.optsWithGlobals() as Parameters<typeof migrate.run>[0]),
     );
 
-  // Flat, not under a noun group: this is the one command in the tree that
-  // destroys data in Clerk, and it is worth keeping short and prominent.
-  migrateCommand
-    .command("delete")
-    .description("Delete the users created by the last migration for this project")
-    .option("-y, --yes", "Skip the confirmation prompt")
-    .option("--secret-key <key>", "Backend API secret key to use")
-    .option("--app <id>", "Application ID to target (works from any directory)")
-    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
-    .setExamples([
-      {
-        command: "clerk migrate delete",
-        description: "Undo the last migration after confirming",
-      },
-      { command: "clerk migrate delete -y", description: "Undo without prompting" },
-    ])
-    .action(async (_opts, cmd) =>
-      migrate.delete(cmd.optsWithGlobals() as Parameters<typeof migrate.delete>[0]),
-    );
-
   registerMigrateExport(migrateCommand);
 
   // A compiled binary has no source tree to grep, so the available mappings
@@ -168,5 +140,4 @@ export function registerMigrate(program: Program): void {
     );
 
   registerMigrateLogs(migrateCommand);
-  registerMigrateSettings(migrateCommand);
 }

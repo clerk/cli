@@ -8,10 +8,10 @@
  * so the two cannot be collapsed into one flag.
  *
  * Held per-run rather than threaded through, because the readers are three
- * layers below the command that parses it: `ensureLogDir` runs inside the
- * gutter of seven different commands, and `withInputRetry` sits under every
- * credential prompt. Passing it down would put a `yes` parameter on every
- * export handler signature on the way. This mirrors `mode.ts`, which resolves
+ * layers below the command that parses it: `withInputRetry` sits under every
+ * credential prompt, and the export commands read it to decide what to print.
+ * Passing it down would put a `yes` parameter on every export handler
+ * signature on the way. This mirrors `mode.ts`, which resolves
  * `--mode` once in a `preAction` hook and is read the same way.
  *
  * Set by the `migrate` group's `preAction` hook, so every subcommand under it

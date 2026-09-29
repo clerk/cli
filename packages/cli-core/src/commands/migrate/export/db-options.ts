@@ -11,7 +11,6 @@ import { log } from "../../../lib/log.ts";
 import { password as passwordPrompt } from "../../../lib/prompts.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import { detectDbType, isLibsqlUrl, redactConnectionString, type DbPlatform } from "../lib/db.ts";
-import { findMigrateEnvValue } from "../lib/env-file.ts";
 
 export type DbExportOptions = {
   dbUrl?: string;
@@ -96,7 +95,6 @@ export function looksLikeConnectionString(value: string): boolean {
 export async function resolveDbUrl(
   options: DbExportOptions,
   config: ResolveConfig,
-  cwd: string = process.cwd(),
   env: Record<string, string | undefined> = process.env,
 ): Promise<string> {
   const fromFlag = options.dbUrl ? normalizeConnectionString(options.dbUrl) : undefined;
@@ -110,8 +108,8 @@ export async function resolveDbUrl(
     return fromFlag;
   }
 
-  const located = await findMigrateEnvValue([config.envVar], cwd, env);
-  const fromEnv = located ? normalizeConnectionString(located.value) : undefined;
+  const raw = env[config.envVar];
+  const fromEnv = raw ? normalizeConnectionString(raw) : undefined;
   if (fromEnv) {
     if (looksLikeConnectionString(fromEnv)) return fromEnv;
     // Falling through silently would make the prompt look unexplained.

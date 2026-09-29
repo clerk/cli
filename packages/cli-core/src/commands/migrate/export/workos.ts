@@ -23,8 +23,7 @@ import { log } from "../../../lib/log.ts";
 import { confirm, password as passwordPrompt } from "../../../lib/prompts.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
-import { findMigrateEnvValue } from "../lib/env-file.ts";
-import { exportLogger, startLogging } from "../lib/logger.ts";
+import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
 import { createApiScheduler } from "../lib/scheduler.ts";
@@ -86,11 +85,9 @@ export type WorkOsIdentity = { idp_id?: string; type?: string; provider?: string
  */
 export async function resolveWorkOsApiKey(
   options: ExportWorkOsOptions,
-  cwd: string = process.cwd(),
   env: Record<string, string | undefined> = process.env,
 ): Promise<string> {
-  const resolved =
-    options.apiKey ?? (await findMigrateEnvValue(["WORKOS_API_KEY"], cwd, env))?.value;
+  const resolved = options.apiKey ?? env.WORKOS_API_KEY;
 
   if (resolved) return resolved.trim();
 
@@ -446,7 +443,7 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
   const destination = await resolveOutputPath("workos", options.output);
 
   await withGutter("Exporting users from WorkOS", async () => {
-    const dateTime = await startLogging();
+    const dateTime = getDateTimeStamp();
 
     // Only WorkOS can say whether the key is live, for the right environment,
     // and not revoked — so a rejected key is asked for again here. The page it
@@ -471,7 +468,7 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
     const { users: exported, coverage } = buildWorkOsExport(users, dateTime, providers?.identities);
     const outputPath = writeExportOutput(exported, destination);
 
-    await reportExport({
+    reportExport({
       platform: "workos",
       userCount: exported.length,
       outputPath,

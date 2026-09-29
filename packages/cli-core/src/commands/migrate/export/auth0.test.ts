@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
-import { useCaptureLog, useMigrateLogDir } from "../../../test/lib/stubs.ts";
+import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { getLogDir } from "../lib/logger.ts";
 import {
   buildAuth0Export,
@@ -16,11 +16,7 @@ import {
   resolveAuth0Credentials,
 } from "./auth0.ts";
 
-/** A cwd with no `.env` files, so these tests exercise only the injected env. */
-const NO_ENV_FILES = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-no-env-"));
-
 const captured = useCaptureLog();
-useMigrateLogDir();
 
 const CREDENTIALS = { domain: "t.auth0.com", clientId: "cid", clientSecret: "csec" };
 
@@ -96,25 +92,26 @@ describe("resolveAuth0Credentials", () => {
   test("prefers flags", async () => {
     const resolved = await resolveAuth0Credentials(
       { domain: "flag.auth0.com", clientId: "f", clientSecret: "s" },
-      NO_ENV_FILES,
       { AUTH0_DOMAIN: "env.auth0.com" },
     );
     expect(resolved.domain).toBe("flag.auth0.com");
   });
 
   test("falls back to the environment", async () => {
-    const resolved = await resolveAuth0Credentials({}, NO_ENV_FILES, {
-      AUTH0_DOMAIN: "env.auth0.com",
-      AUTH0_CLIENT_ID: "e",
-      AUTH0_CLIENT_SECRET: "s",
-    });
+    const resolved = await resolveAuth0Credentials(
+      {},
+      {
+        AUTH0_DOMAIN: "env.auth0.com",
+        AUTH0_CLIENT_ID: "e",
+        AUTH0_CLIENT_SECRET: "s",
+      },
+    );
     expect(resolved).toEqual({ domain: "env.auth0.com", clientId: "e", clientSecret: "s" });
   });
 
   test("normalizes a domain that came with a scheme", async () => {
     const resolved = await resolveAuth0Credentials(
       { domain: "https://t.auth0.com/", clientId: "c", clientSecret: "s" },
-      NO_ENV_FILES,
       {},
     );
     expect(resolved.domain).toBe("t.auth0.com");
@@ -122,14 +119,14 @@ describe("resolveAuth0Credentials", () => {
 
   // Tests run non-TTY, the same signal an agent gives.
   test("names every missing credential at once rather than one at a time", async () => {
-    await expect(resolveAuth0Credentials({}, NO_ENV_FILES, {})).rejects.toThrow(
+    await expect(resolveAuth0Credentials({}, {})).rejects.toThrow(
       /--domain \(or AUTH0_DOMAIN\), --client-id \(or AUTH0_CLIENT_ID\), --client-secret \(or AUTH0_CLIENT_SECRET\)/,
     );
   });
 
   test("names only what is actually missing", async () => {
     await expect(
-      resolveAuth0Credentials({ domain: "t.auth0.com", clientId: "c" }, NO_ENV_FILES, {}),
+      resolveAuth0Credentials({ domain: "t.auth0.com", clientId: "c" }, {}),
     ).rejects.toThrow(/Missing: --client-secret \(or AUTH0_CLIENT_SECRET\)\./);
   });
 });

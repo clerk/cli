@@ -14,12 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getMode, setMode, type Mode } from "../../mode.ts";
-import {
-  keylessTargetStubs,
-  listageStubs,
-  useCaptureLog,
-  useMigrateLogDir,
-} from "../../test/lib/stubs.ts";
+import { keylessTargetStubs, listageStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 import type { InstanceTarget } from "../../lib/keyless-target.ts";
 
 const mockSelect = mock(async () => "clerk" as unknown);
@@ -70,13 +65,10 @@ mock.module("../../lib/prompts.ts", () => ({
 }));
 
 const { run } = await import("./run.ts");
-const { deleteMigration } = await import("./delete.ts");
 const { UserAbortError } = await import("../../lib/errors.ts");
-const { loadSettings, saveSettings } = await import("./lib/settings.ts");
 const { _setConfigDir } = await import("../../lib/config.ts");
 
 const captured = useCaptureLog();
-useMigrateLogDir();
 
 let workDir: string;
 let configDir: string;
@@ -196,12 +188,6 @@ describe("the wizard fills in missing flags", () => {
 
     expect(mockSelect).not.toHaveBeenCalled();
     expect(mockText).toHaveBeenCalledTimes(1);
-  });
-
-  test("records the wizard's answers for the next run", async () => {
-    await run({ secretKey: "sk_test_x" });
-
-    expect(await loadSettings()).toMatchObject({ transformer: "clerk", file: "export.json" });
   });
 });
 
@@ -538,65 +524,5 @@ describe("guards that still apply interactively", () => {
 
     await expect(run(baseOptions)).rejects.toThrow(/Invalid password hasher/);
     expect(created()).toHaveLength(0);
-  });
-});
-
-describe("migrate delete confirmation", () => {
-  /** Answers the external-id lookup, then the deletes. */
-  function stubDeleteTargets(present: Record<string, string>) {
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-      const url = input.toString();
-      requests.push({ method: init?.method ?? "GET", url, body: null });
-
-      if (url.includes("/v1/users?")) {
-        const asked = new URL(url).searchParams.getAll("external_id");
-        return Response.json(
-          asked
-            .filter((externalId) => externalId in present)
-            .map((externalId) => ({ id: present[externalId], external_id: externalId })),
-        );
-      }
-      return Response.json({ deleted: true });
-    }) as unknown as typeof fetch;
-  }
-
-  const deleted = () => requests.filter((r) => r.method === "DELETE");
-
-  beforeEach(async () => {
-    await saveSettings({ transformer: "clerk", file: "export.json" });
-    stubDeleteTargets({ legacy_a: "user_1", legacy_b: "user_2" });
-    fs.writeFileSync(
-      path.join(workDir, "export.json"),
-      JSON.stringify([
-        { id: "legacy_a", primary_email_address: "a@x.dev" },
-        { id: "legacy_b", primary_email_address: "b@x.dev" },
-      ]),
-    );
-  });
-
-  test("reports the count and confirms before deleting", async () => {
-    confirmAnswer = true;
-
-    await deleteMigration({ secretKey: "sk_test_x" });
-
-    expect(captured.err).toContain("About to delete 2 users");
-    expect(deleted()).toHaveLength(2);
-  });
-
-  // The undo for a bad undo does not exist, so declining must cost nothing.
-  test("declining deletes nobody", async () => {
-    confirmAnswer = false;
-
-    await expect(deleteMigration({ secretKey: "sk_test_x" })).rejects.toThrow(UserAbortError);
-
-    expect(deleted()).toHaveLength(0);
-  });
-
-  test("-y skips the prompt", async () => {
-    confirmAnswer = false;
-
-    await deleteMigration({ yes: true, secretKey: "sk_test_x" });
-
-    expect(deleted()).toHaveLength(2);
   });
 });

@@ -3,7 +3,7 @@ import { getMode, setMode } from "../../../mode.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { useCaptureLog, useMigrateLogDir } from "../../../test/lib/stubs.ts";
+import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { getLogDir } from "../lib/logger.ts";
 import { setAssumeYes } from "../lib/assume-yes.ts";
 import {
@@ -20,11 +20,7 @@ import {
   type WorkOsIdentity,
 } from "./workos.ts";
 
-/** A cwd with no `.env` files, so these tests exercise only the injected env. */
-const NO_ENV_FILES = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-no-env-"));
-
 const captured = useCaptureLog();
-useMigrateLogDir();
 
 const API_KEY = "sk_test";
 
@@ -102,18 +98,16 @@ function stubWorkOs(
 
 describe("resolveWorkOsApiKey", () => {
   test("prefers the flag", async () => {
-    expect(await resolveWorkOsApiKey({ apiKey: "sk_flag" }, NO_ENV_FILES, {})).toBe("sk_flag");
+    expect(await resolveWorkOsApiKey({ apiKey: "sk_flag" }, {})).toBe("sk_flag");
   });
 
   test("falls back to the environment", async () => {
-    expect(await resolveWorkOsApiKey({}, NO_ENV_FILES, { WORKOS_API_KEY: "sk_env" })).toBe(
-      "sk_env",
-    );
+    expect(await resolveWorkOsApiKey({}, { WORKOS_API_KEY: "sk_env" })).toBe("sk_env");
   });
 
   // Tests run non-TTY, the same signal an agent gives.
   test("names the flag and the variable when neither supplied one", async () => {
-    await expect(resolveWorkOsApiKey({}, NO_ENV_FILES, {})).rejects.toThrow(
+    await expect(resolveWorkOsApiKey({}, {})).rejects.toThrow(
       /Missing: --api-key \(or WORKOS_API_KEY\)\./,
     );
   });
