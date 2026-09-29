@@ -246,7 +246,7 @@ Run `clerk auth login` to claim the application; auto-claim links it, and every 
 
 ### API Endpoints (accountless mode)
 
-All requests go to the Clerk Backend API (default `https://api.clerk.dev`, overridable via `CLERK_BACKEND_API_URL`), authenticated with a `Bearer sk_…` instance secret key.
+All requests go to the Clerk Backend API (default `https://api.clerk.com`, overridable via `CLERK_BACKEND_API_URL`), authenticated with a `Bearer sk_…` instance secret key.
 
 | Method  | Endpoint                                  | Description                                                                                                                                                             |
 | ------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
