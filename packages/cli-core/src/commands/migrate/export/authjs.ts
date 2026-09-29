@@ -13,9 +13,15 @@
 
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import { log } from "../../../lib/log.ts";
-import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
+import type { UserLine } from "../lib/run-store.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
-import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
+import {
+  finishExportRun,
+  reportExport,
+  resolveOutputPath,
+  startExportRun,
+  writeExportOutput,
+} from "./shared.ts";
 import {
   promptDbUrl,
   resolveDbUrl,
@@ -74,7 +80,7 @@ export async function fetchAuthJsUsers(
     : new Error(`No Auth.js user table found. Tried ${TABLE_CANDIDATES.join(", ")}.`);
 }
 
-export function buildAuthJsExport(rows: AuthJsRow[], dateTime: string) {
+export function buildAuthJsExport(rows: AuthJsRow[], record: (line: UserLine) => void = () => {}) {
   const users: Record<string, unknown>[] = [];
   const counts = { email: 0, emailVerified: 0, name: 0 };
 
@@ -98,7 +104,7 @@ export function buildAuthJsExport(rows: AuthJsRow[], dateTime: string) {
     }
 
     users.push(user);
-    exportLogger({ userId, status: "success" }, dateTime);
+    record({ sourceId: userId, status: "exported" });
   }
 
   return {
@@ -124,8 +130,6 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
   const destination = await resolveOutputPath("authjs", options.output);
 
   await withGutter("Exporting users from Auth.js", async () => {
-    const dateTime = getDateTimeStamp();
-
     const {
       value: { rows, table },
     } = await withInputRetry(
@@ -138,8 +142,12 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
     );
     log.info(`Read ${rows.length} row${rows.length === 1 ? "" : "s"} from ${table}.`);
 
-    const { users, coverage } = buildAuthJsExport(rows, dateTime);
+    const run = await startExportRun(options, { platform: "authjs" });
+
+    const { users, coverage } = buildAuthJsExport(rows, run.append);
     const outputPath = writeExportOutput(users, destination);
+
+    const record = finishExportRun(run, outputPath);
 
     reportExport({
       platform: "authjs",
@@ -147,6 +155,7 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
       outputPath,
       coverage,
       transformerKey: "authjs",
+      runId: record.id,
     });
 
     if (users.length > 0) {

@@ -122,7 +122,7 @@ beforeEach(() => {
   mockSelect.mockResolvedValue("clerk");
   mockText.mockResolvedValue("export.json");
   mockMultiselect.mockResolvedValue([]);
-  fs.rmSync(path.join(workDir, "logs"), { recursive: true, force: true });
+  fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
   fs.rmSync(path.join(configDir, "config.json"), { force: true });
   fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(EXPORT));
   stubInstanceSettings({ attributes: { email_address: { enabled: true } } });

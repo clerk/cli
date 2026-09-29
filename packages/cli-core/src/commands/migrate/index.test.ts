@@ -137,34 +137,27 @@ describe("registerMigrate", () => {
     );
   });
 
-  test.each([[["logs"]], [["logs", "list"]], [["logs", "clean"]], [["logs", "convert"]]])(
-    "registers migrate %p",
-    (names) => {
-      expect(findCommand(["migrate", ...names])).toBeDefined();
-    },
-  );
-
-  // Listing is read-only, so it is safe as the default for a bare
-  // `clerk migrate logs`.
-  test("makes list the default logs subcommand", () => {
-    const logs = findCommand(["migrate", "logs"]) as unknown as { _defaultCommandName?: string };
-    expect(logs._defaultCommandName).toBe("list");
+  test("registers runs with an optional run ID", () => {
+    const runs = findCommand(["migrate", "runs"]);
+    expect(runs?.registeredArguments[0]?.required).toBe(false);
+    expect(runs?.options.map((option) => option.long)).toEqual(["--json", "--runs-dir"]);
   });
 
+  test("the logs group is gone: runs replaces it", () => {
+    expect(findCommand(["migrate", "logs"])).toBeUndefined();
+  });
+
+  // Every command reads or writes the run store, so each one can be pointed
+  // somewhere else.
   test.each([
-    [["logs", "list"], "--json"],
-    [["logs", "clean"], "--yes"],
-    [["logs", "convert"], "--all"],
-  ])("%s accepts %s", (names, flag) => {
+    [["import"]],
+    [["runs"]],
+    [["export"]],
+    ...exportPlatformKeys().map((platform) => [["export", platform]]),
+  ])("migrate %p accepts --runs-dir", (names) => {
     expect(findCommand(["migrate", ...names])?.options.map((option) => option.long)).toContain(
-      flag,
+      "--runs-dir",
     );
-  });
-
-  test("logs convert takes variadic file positionals", () => {
-    const args = findCommand(["migrate", "logs", "convert"])?.registeredArguments;
-    expect(args?.[0]?.variadic).toBe(true);
-    expect(args?.[0]?.required).toBe(false);
   });
 
   test("constrains --transformer to the registered transformers, for validation and completion", () => {

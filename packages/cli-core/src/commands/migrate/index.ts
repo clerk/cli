@@ -3,12 +3,13 @@ import type { Program } from "../../cli-program.ts";
 import { parseIntegerOption } from "../../lib/option-parsers.ts";
 import { setAssumeYes } from "./lib/assume-yes.ts";
 import { registerMigrateExport } from "./export/index.ts";
-import { registerMigrateLogs } from "./logs/index.ts";
+import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "./lib/run-store.ts";
 import { run } from "./run.ts";
+import { runs } from "./runs.ts";
 import { list as transformersList } from "./transformers/list.ts";
 import { transformerKeys } from "./transformers/registry.ts";
 
-const migrate = { run, transformersList };
+const migrate = { run, runs, transformersList };
 
 export function registerMigrate(program: Program): void {
   const migrateCommand = program
@@ -28,7 +29,7 @@ export function registerMigrate(program: Program): void {
         command: "clerk migrate export supabase",
         description: "Export users from Supabase, ready to import",
       },
-      { command: "clerk migrate logs", description: "List the local migration logs" },
+      { command: "clerk migrate runs", description: "List every migration run" },
       { command: "clerk migrate transformers list", description: "Show the built-in transformers" },
     ]);
 
@@ -80,6 +81,7 @@ export function registerMigrate(program: Program): void {
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
     .setExamples([
       {
         command: "clerk migrate import -y --transformer clerk --file users.json",
@@ -103,6 +105,24 @@ export function registerMigrate(program: Program): void {
     );
 
   registerMigrateExport(migrateCommand);
+
+  migrateCommand
+    .command("runs")
+    .description("List migration runs, or show one")
+    .argument("[run-id]", "A run to show in full")
+    .option("--json", "Output as JSON")
+    .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
+    .setExamples([
+      { command: "clerk migrate runs", description: "List every run, newest first" },
+      {
+        command: "clerk migrate runs 20260929-141502-a1b2",
+        description: "Show one run: counts, errors and the users that did not make it",
+      },
+      { command: "clerk migrate runs --json", description: "Machine-readable listing" },
+    ])
+    .action(async (runId, _opts, cmd) =>
+      migrate.runs(runId, cmd.optsWithGlobals() as Parameters<typeof migrate.runs>[1]),
+    );
 
   // A compiled binary has no source tree to grep, so the available mappings
   // need a command rather than only appearing in the interactive picker.
@@ -138,6 +158,4 @@ export function registerMigrate(program: Program): void {
         cmd.optsWithGlobals() as Parameters<typeof migrate.transformersList>[0],
       ),
     );
-
-  registerMigrateLogs(migrateCommand);
 }

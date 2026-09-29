@@ -76,6 +76,7 @@ clerk migrate import -y --transformer clerk --file users.json
 | `--firebase-rounds <n>`                 | Firebase scrypt rounds                                          |
 | `--firebase-mem-cost <n>`               | Firebase scrypt memory cost                                     |
 | `-y, --yes`                             | Skip the confirmation prompt                                    |
+| `--runs-dir <path>`                     | Where runs are kept (see [Runs](#clerk-migrate-runs))           |
 
 Plus the targeting flags from the table above: `--secret-key`, `--app` and
 `--instance`.
@@ -83,8 +84,8 @@ Plus the targeting flags from the table above: `--secret-key`, `--app` and
 `--transformer` and `--file` are required. Omitting either fails with a usage
 error that names the valid values.
 
-Failures do not stop the run: each user's outcome is written to the log and the
-import continues. A `429` backs off — honouring `Retry-After` when the response
+Failures do not stop the run: each user's outcome is written to the
+[run](#clerk-migrate-runs) and the import continues. A `429` backs off — honouring `Retry-After` when the response
 carries it — and retries up to 5 times before the user is recorded as failed.
 The command exits non-zero if any user failed.
 
@@ -277,8 +278,9 @@ flag's absence means "development" — the resolved key decides, through
 `--secret-key`, `--app`, `CLERK_SECRET_KEY`, the keyless project and the linked
 profile in that order.
 
-Every export also writes `logs/export-<timestamp>.log`, so `migrate logs list`
-sees it alongside imports and deletions.
+Every export is also a [run](#clerk-migrate-runs), with one line per exported
+user, so `clerk migrate runs` lists it alongside imports. Every export takes
+`--runs-dir <path>` to keep that run somewhere else.
 
 #### Three platforms export no passwords
 
@@ -471,98 +473,58 @@ and every 10 pages during the user fetch. `withSpinner` hands a no-op to
 anything that is not a TTY, so without this an agent exporting a large tenant
 would see nothing at all until the run finished.
 
-### `clerk migrate logs`
+### `clerk migrate runs`
 
-Everything that touches the local log directory — `./logs` unless
-`CLERK_MIGRATE_LOG_DIR` says otherwise. Noun-verb like every
-other group in the CLI (`config pull`, `users list`), rather than the standalone
-tool's `clean-logs`/`convert-logs`, which were npm script names.
+Every import and export is a **run**, and the run store is the one place
+`clerk migrate` keeps state. `runs` reads it.
 
 ```sh
-clerk migrate logs                  # defaults to list
-clerk migrate logs list --json
-clerk migrate logs clean -y
-clerk migrate logs convert --all
-clerk migrate logs convert import-2026-01-01T12-00-00.log
+clerk migrate runs                           # every run, newest first
+clerk migrate runs 20260929-141502-a1b2      # one run in full
+clerk migrate runs --json
 ```
 
-| Subcommand     | Takes              | Description                                     |
-| -------------- | ------------------ | ----------------------------------------------- |
-| `logs list`    | `--json`           | File, type, date, size and entry count per file |
-| `logs clean`   | `-y, --yes`        | Delete the `.log` files in the log directory    |
-| `logs convert` | `[file…]`, `--all` | NDJSON → a JSON array, written as `<name>.json` |
+| Flag                | Description                   |
+| ------------------- | ----------------------------- |
+| `[run-id]`          | Show one run instead of all   |
+| `--json`            | The same data, on stdout      |
+| `--runs-dir <path>` | Read runs from somewhere else |
 
-All three read the directory through one shared enumerator, which is what makes
-`logs list` nearly free.
+It prints the runs folder first. The listing shows each run's ID, date, kind,
+status, target, file and counts. `runs <id>` adds the error breakdown and the
+users that failed or were skipped, with the path to the full record. An unknown
+ID exits 2.
 
-#### `logs list`
+#### Where runs are kept
 
-The default, because listing is read-only and therefore safe to run by
-accident. Reports each file's name, type, date, size and entry count, newest
-first; `--json` gives an agent the same data without parsing NDJSON.
+The first of these that is set:
 
-```
-Each log represents a user export, user import, or a user delete run.
-Each log consists of a single NDJSON entry per user.
+1. `--runs-dir <path>`
+2. `CLERK_MIGRATE_DIR`
+3. `<project root>/.clerk/migrate/`
 
-FILE                            TYPE    DATE                      SIZE    ENTRIES
-import-2026-02-01T09-14-22.log  import  Feb 1, 2026 at 4:14 AM    4.1 KB  120
-delete-2026-01-30T17-02-51.log  delete  Jan 30, 2026 at 12:02 PM  612 B   18
+The project root is the linked profile's directory, then the git toplevel, then
+the current directory. Writing to the default location adds `.clerk/` to the
+project's `.gitignore` first, because run files carry user data.
 
-2 log files in ./logs
+#### What a run holds
 
-Log types:
-  export  One entry per user pulled from the source platform.
-  import  One entry per user created in Clerk, with any error.
-  delete  One entry per user removed from Clerk, with any error.
-```
+Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 
-A kind is the name of the command that wrote it — `migrate import` writes
-`import-<timestamp>.log` — so a listing points straight at the run behind each
-line. The legend is fixed rather than derived from what happens to be present,
-because "what else could be here" is the other half of the question.
+| File           | Contents                                                                                                 |
+| -------------- | -------------------------------------------------------------------------------------------------------- |
+| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, and the counts    |
+| `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error` or `code` when present |
+| `lock`         | The PID of the process writing the run, while it runs                                                    |
 
-The older `migration-` and `user-deletion-` names, written by the standalone
-tool and by earlier CLI builds, still classify as `import` and `delete`, so a
-directory of old logs lists and converts unchanged.
+A user's status is `created`, `failed`, `skipped` or `exported`. The last line
+for each `sourceId` wins. A `429` retry, an extra email or phone that did not
+attach, and a validation failure all land in `error`.
 
-The filename leads, because it is what `logs convert` and `logs clean` talk
-about. The date column renders the filename's UTC stamp in the reader's own
-zone — "which run was that" is a question about local time; `--json` keeps the
-raw stamp.
-
-The directory is printed relative (`./logs`) when it sits under the current
-directory and absolute when it does not, so the path can be pasted either way.
-
-Says so plainly when the log directory is empty or absent.
-
-#### `logs clean`
-
-Destructive, so the confirmation is not optional: interactive runs prompt
-(defaulting to **no**), and non-interactive or agent runs must pass `-y` rather
-than being allowed to assume. Deletes `.log` files only — converted `.json`
-output is left alone.
-
-#### `logs convert`
-
-Turns NDJSON into a JSON array for spreadsheet or database analysis, written
-alongside the original as `<name>.json`. The original is left in place.
-
-Takes file positionals or `--all`; given neither, an interactive terminal
-offers a multiselect and an agent gets a usage error naming both alternatives.
-
-A malformed line is reported with its line number and skipped, and the
-remaining entries still convert:
-
-```
-import-2026-01-01T12-00-00.log:2 is not valid JSON and was skipped — …
-1 malformed line skipped.
-```
-
-That beats failing the whole file: a run killed mid-write leaves one truncated
-final line, and the hundreds of complete entries before it are still worth
-having. It also beats dropping the line silently, which would leave a JSON
-array that looks complete.
+A run is `partial` when any user failed or was skipped, and `complete`
+otherwise. A run whose process died, or that never recorded a finish time,
+lists as `interrupted`. A lock held by a live process refuses a second writer
+with exit 2.
 
 ## Transformers
 
@@ -973,21 +935,15 @@ those are reachable through has no route for any of these settings, so
 
 ## Artifacts
 
-Both are written relative to the **current working directory**, not to the
-CLI's config directory, because they describe "which file am I migrating"
-rather than "which project is linked here".
+| Path                                       | Contents                                            |
+| ------------------------------------------ | --------------------------------------------------- |
+| `<runs dir>/<run-id>/`                     | One [run](#what-a-run-holds) per import or export   |
+| `./exports/<platform>-export-<stamp>.json` | The export itself, unless `--output` says otherwise |
 
-| Path                                       | Contents                                                              |
-| ------------------------------------------ | --------------------------------------------------------------------- |
-| `./logs/export-<timestamp>.log`            | NDJSON: one line per exported user                                    |
-| `./logs/import-<timestamp>.log`            | NDJSON: one line per user, plus validation failures and retry notices |
-| `./exports/<platform>-export-<stamp>.json` | The export itself, unless `--output` says otherwise                   |
+`users.ndjson` writes are synchronous appends, so a run interrupted with Ctrl-C
+still leaves a complete record of everything already processed.
 
-Log writes are synchronous appends, so a run interrupted with Ctrl-C still
-leaves a complete record of everything already processed. Use the last
-successful `userId` in that log with `--resume-after` to continue.
-
-### Why the logs are NDJSON
+### Why `users.ndjson` is NDJSON
 
 One JSON object per line, rather than one JSON array per file. A migration is a
 long append-only stream, and that format is the one that survives it:
@@ -997,19 +953,14 @@ long append-only stream, and that format is the one that survives it:
 - **Crash-safe.** Kill the process at any point and every line already written
   is still valid. A truncated array is not parseable at all.
 - **Streamable.** `tail -f` shows a long import progressing live, and analysis
-  reads line by line instead of loading a million-user log into memory.
+  reads line by line instead of loading a million-user record into memory.
 
 Which is also why it greps usefully without any tooling:
 
 ```sh
-grep '"status":"success"' logs/import-2026-01-01T12-00-00.log | wc -l
-grep '"userId":"user_123"' logs/import-2026-01-01T12-00-00.log
+grep '"status":"created"' .clerk/migrate/20260929-141502-a1b2/users.ndjson | wc -l
+grep '"sourceId":"user_123"' .clerk/migrate/20260929-141502-a1b2/users.ndjson
 ```
-
-The trade-off is that spreadsheets, databases and most JSON tooling want an
-array. That is what `clerk migrate logs convert` is for — convert when you need
-to open a log in Excel or hand it to someone who should not have to know what
-NDJSON is. The original `.log` stays put.
 
 ## API Endpoints
 

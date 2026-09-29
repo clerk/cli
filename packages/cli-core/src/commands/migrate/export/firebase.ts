@@ -32,9 +32,15 @@ import { password as passwordPrompt } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
-import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
+import type { UserLine } from "../lib/run-store.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
-import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
+import {
+  finishExportRun,
+  reportExport,
+  resolveOutputPath,
+  startExportRun,
+  writeExportOutput,
+} from "./shared.ts";
 
 /** Identity Toolkit's maximum for `accounts:batchGet`. */
 const PAGE_SIZE = 1000;
@@ -50,6 +56,8 @@ const DOCS_URL = "https://clerk.com/docs/guides/development/migrating/firebase";
 export type ExportFirebaseOptions = {
   serviceAccount?: string;
   output?: string;
+  /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
+  runsDir?: string;
 };
 
 export type ServiceAccount = {
@@ -426,7 +434,10 @@ export function mapFirebaseUserToExport(user: FirebaseUser): Record<string, unkn
   return exported;
 }
 
-export function buildFirebaseExport(users: FirebaseUser[], dateTime: string) {
+export function buildFirebaseExport(
+  users: FirebaseUser[],
+  record: (line: UserLine) => void = () => {},
+) {
   const exported: Record<string, unknown>[] = [];
   const counts = { email: 0, verified: 0, password: 0, name: 0, phone: 0 };
 
@@ -442,9 +453,9 @@ export function buildFirebaseExport(users: FirebaseUser[], dateTime: string) {
       if (mapped.displayName) counts.name++;
       if (mapped.phoneNumber) counts.phone++;
 
-      exportLogger({ userId, status: "success" }, dateTime);
+      record({ sourceId: userId, status: "exported" });
     } catch (error) {
-      exportLogger({ userId, status: "error", error: (error as Error).message }, dateTime);
+      record({ sourceId: userId, status: "skipped", error: (error as Error).message });
     }
   }
 
@@ -507,8 +518,6 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
   const destination = await resolveOutputPath("firebase", options.output);
 
   await withGutter("Exporting users from Firebase", async () => {
-    const dateTime = getDateTimeStamp();
-
     // Only Google can say whether a well-formed key is still a valid one, so a
     // revoked or deleted key fails here and is asked for again.
     const { value: token, input: account } = await withInputRetry(
@@ -526,8 +535,12 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
       fetchAllFirebaseUsers({ account, token, spinner }),
     );
 
-    const { users: exported, coverage } = buildFirebaseExport(users, dateTime);
+    const run = await startExportRun(options, { platform: "firebase" });
+
+    const { users: exported, coverage } = buildFirebaseExport(users, run.append);
     const outputPath = writeExportOutput(exported, destination);
+
+    const record = finishExportRun(run, outputPath);
 
     reportExport({
       platform: "firebase",
@@ -535,6 +548,7 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
       outputPath,
       coverage,
       transformerKey: "firebase",
+      runId: record.id,
     });
 
     const passwordCount = coverage.find((entry) => entry.label.includes("password"))?.count ?? 0;

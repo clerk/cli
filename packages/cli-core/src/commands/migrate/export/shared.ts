@@ -17,6 +17,14 @@ import { log } from "../../../lib/log.ts";
 import { text } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
+import {
+  resolveRunsDir,
+  sha256File,
+  startRun,
+  type Run,
+  type RunRecord,
+  type RunTarget,
+} from "../lib/run-store.ts";
 
 /**
  * `YYYYMMDD-HHmm`, local time — ISO 8601 basic format, minus seconds.
@@ -96,6 +104,26 @@ export async function resolveOutputPath(platform: string, output?: string): Prom
 }
 
 /**
+ * Starts the export run that records each user as it is exported.
+ *
+ * Started once the users are in hand, so a rejected credential leaves no run
+ * behind.
+ */
+export async function startExportRun(
+  options: { runsDir?: string },
+  target: RunTarget,
+): Promise<Run> {
+  const runsDir = await resolveRunsDir(options.runsDir, { write: true });
+  return startRun(runsDir, { kind: "export", target, source: target.platform });
+}
+
+/** Records the written file on the run, and finishes it. */
+export function finishExportRun(run: Run, outputPath: string): RunRecord {
+  run.update({ file: { path: outputPath, sha256: sha256File(outputPath) } });
+  return run.finish();
+}
+
+/**
  * Writes the export, creating any missing parent directories.
  *
  * @returns The absolute path written, for reporting.
@@ -142,6 +170,8 @@ export type ExportSummary = {
   sections?: ExportSection[];
   /** The transformer that reads this file, for the "what next" line. */
   transformerKey: string;
+  /** The export run that recorded each user. */
+  runId: string;
 };
 
 /**
@@ -157,6 +187,7 @@ export function reportExport(summary: ExportSummary): void {
   log.blank();
   if (summary.userCount === 0) {
     log.warn(`No users found to export. Wrote an empty file to ${summary.outputPath}.`);
+    log.info(dim(`Run ${summary.runId}`));
     return;
   }
 
@@ -174,6 +205,9 @@ export function reportExport(summary: ExportSummary): void {
   log.blank();
   log.success(
     `Exported ${summary.userCount} user${summary.userCount === 1 ? "" : "s"} to ${summary.outputPath}`,
+  );
+  log.info(
+    dim(`Run ${summary.runId}. See each user with \`clerk migrate runs ${summary.runId}\`.`),
   );
 
   log.blank();

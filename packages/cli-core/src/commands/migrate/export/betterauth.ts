@@ -17,9 +17,15 @@
 
 import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
-import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
+import type { UserLine } from "../lib/run-store.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
-import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
+import {
+  finishExportRun,
+  reportExport,
+  resolveOutputPath,
+  startExportRun,
+  writeExportOutput,
+} from "./shared.ts";
 import {
   promptDbUrl,
   resolveDbUrl,
@@ -121,7 +127,10 @@ const FIELD_ALIASES: Record<string, string> = {
   updatedAt: "updated_at",
 };
 
-export function buildBetterAuthExport(rows: BetterAuthRow[], dateTime: string) {
+export function buildBetterAuthExport(
+  rows: BetterAuthRow[],
+  record: (line: UserLine) => void = () => {},
+) {
   const users: Record<string, unknown>[] = [];
   const counts = { email: 0, emailVerified: 0, password: 0, name: 0, username: 0, phone: 0 };
 
@@ -142,7 +151,7 @@ export function buildBetterAuthExport(rows: BetterAuthRow[], dateTime: string) {
     if (row.phoneNumber) counts.phone++;
 
     users.push(user);
-    exportLogger({ userId, status: "success" }, dateTime);
+    record({ sourceId: userId, status: "exported" });
   }
 
   return {
@@ -171,8 +180,6 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
   const destination = await resolveOutputPath("betterauth", options.output);
 
   await withGutter("Exporting users from Better Auth", async () => {
-    const dateTime = getDateTimeStamp();
-
     const {
       value: { rows, plugins },
     } = await withInputRetry(
@@ -194,8 +201,12 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
         : "No plugin columns detected; exporting the core user fields.",
     );
 
-    const { users, coverage } = buildBetterAuthExport(rows, dateTime);
+    const run = await startExportRun(options, { platform: "betterauth" });
+
+    const { users, coverage } = buildBetterAuthExport(rows, run.append);
     const outputPath = writeExportOutput(users, destination);
+
+    const record = finishExportRun(run, outputPath);
 
     reportExport({
       platform: "betterauth",
@@ -203,6 +214,7 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
       outputPath,
       coverage,
       transformerKey: "betterauth",
+      runId: record.id,
     });
   });
 }

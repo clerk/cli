@@ -23,13 +23,15 @@ import { log } from "../../../lib/log.ts";
 import { confirm, password as passwordPrompt } from "../../../lib/prompts.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
-import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
+import type { UserLine } from "../lib/run-store.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
 import { createApiScheduler } from "../lib/scheduler.ts";
 import {
+  finishExportRun,
   reportExport,
   resolveOutputPath,
+  startExportRun,
   writeExportOutput,
   type ExportSection,
 } from "./shared.ts";
@@ -69,6 +71,8 @@ export type ExportWorkOsOptions = {
   /** Unset means "ask"; `--no-with-identities` sets it to false. */
   withIdentities?: boolean;
   output?: string;
+  /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
+  runsDir?: string;
 };
 
 export type WorkOsUser = Record<string, unknown> & { id?: string };
@@ -400,7 +404,7 @@ export type WorkOsExportResult = {
 
 export function buildWorkOsExport(
   users: WorkOsUser[],
-  dateTime: string,
+  record: (line: UserLine) => void = () => {},
   identities?: Map<string, WorkOsIdentity[]>,
 ): WorkOsExportResult {
   const exported: Record<string, unknown>[] = [];
@@ -417,9 +421,9 @@ export function buildWorkOsExport(
       if (mapped.last_name) counts.lastName++;
       if (mapped.metadata) counts.metadata++;
 
-      exportLogger({ userId, status: "success" }, dateTime);
+      record({ sourceId: userId, status: "exported" });
     } catch (error) {
-      exportLogger({ userId, status: "error", error: (error as Error).message }, dateTime);
+      record({ sourceId: userId, status: "skipped", error: (error as Error).message });
     }
   }
 
@@ -443,8 +447,6 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
   const destination = await resolveOutputPath("workos", options.output);
 
   await withGutter("Exporting users from WorkOS", async () => {
-    const dateTime = getDateTimeStamp();
-
     // Only WorkOS can say whether the key is live, for the right environment,
     // and not revoked — so a rejected key is asked for again here. The page it
     // fetches is kept and reused, so proving the key costs no extra request.
@@ -465,8 +467,14 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
         )
       : undefined;
 
-    const { users: exported, coverage } = buildWorkOsExport(users, dateTime, providers?.identities);
+    const run = await startExportRun(options, { platform: "workos" });
+    const { users: exported, coverage } = buildWorkOsExport(
+      users,
+      run.append,
+      providers?.identities,
+    );
     const outputPath = writeExportOutput(exported, destination);
+    const record = finishExportRun(run, outputPath);
 
     reportExport({
       platform: "workos",
@@ -477,6 +485,7 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
         ? [buildIdentityReport(users, providers.identities, providers.failed)]
         : [],
       transformerKey: "workos",
+      runId: record.id,
     });
 
     if (exported.length > 0) {

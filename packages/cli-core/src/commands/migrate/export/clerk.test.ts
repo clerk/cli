@@ -3,8 +3,8 @@ import { getMode, setMode } from "../../../mode.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
-import { getLogDir } from "../lib/logger.ts";
 import {
   buildClerkExport,
   exportClerk,
@@ -37,7 +37,7 @@ beforeEach(() => {
   // leaked "human" from an earlier test stops a later one on the destination prompt.
   setMode("agent");
   requests = [];
-  fs.rmSync(getLogDir(), { recursive: true, force: true });
+  fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
   fs.rmSync(path.join(workDir, "exports"), { recursive: true, force: true });
 });
 
@@ -203,10 +203,10 @@ describe("fetchAllClerkUsers", () => {
 
 describe("buildClerkExport", () => {
   test("counts coverage per field", () => {
-    const { coverage } = buildClerkExport(
-      [user({ id: "u1", first_name: "Ada", password_enabled: true }), user({ id: "u2" })],
-      "2026-01-01T00:00:00",
-    );
+    const { coverage } = buildClerkExport([
+      user({ id: "u1", first_name: "Ada", password_enabled: true }),
+      user({ id: "u2" }),
+    ]);
 
     const byLabel = Object.fromEntries(coverage.map((c) => [c.label, c.count]));
     expect(byLabel["have an email address"]).toBe(2);
@@ -214,21 +214,14 @@ describe("buildClerkExport", () => {
     expect(byLabel["have a password (not exportable — see below)"]).toBe(1);
   });
 
-  test("logs one NDJSON line per exported user", () => {
-    buildClerkExport([user({ id: "u1" }), user({ id: "u2" })], "2026-01-01T00:00:00");
+  test("records one line per exported user", () => {
+    const lines: UserLine[] = [];
+    buildClerkExport([user({ id: "u1" }), user({ id: "u2" })], (line) => lines.push(line));
 
-    const entries = fs
-      .readdirSync(getLogDir())
-      .flatMap((name) => fs.readFileSync(path.join(getLogDir(), name), "utf-8").trim().split("\n"))
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-
-    expect(entries).toHaveLength(2);
-    expect(entries[0]).toEqual({ userId: "u1", status: "success" });
-  });
-
-  test("writes the export log where `logs list` will find it", () => {
-    buildClerkExport([user()], "2026-01-01T12:00:00");
-    expect(fs.readdirSync(getLogDir())[0]).toBe("export-2026-01-01T12-00-00.log");
+    expect(lines).toEqual([
+      { sourceId: "u1", status: "exported" },
+      { sourceId: "u2", status: "exported" },
+    ]);
   });
 });
 

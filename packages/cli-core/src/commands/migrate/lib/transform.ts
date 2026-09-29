@@ -19,9 +19,17 @@ import {
   type User,
 } from "../types.ts";
 import { userSchema } from "../validator.ts";
-import { validationLogger } from "./logger.ts";
 
 export type FileType = "application/json" | "text/csv";
+
+/** A user that failed schema validation before any API call was made. */
+export type ValidationFailure = {
+  /** The source ID, or `row-<n>` when the row has none. */
+  userId: string;
+  row: number;
+  error: string;
+  path: (string | number)[];
+};
 
 export type TransformOptions = {
   /** Set `false` to keep invalid rows, for analysis passes that count fields. */
@@ -294,17 +302,20 @@ export function consolidateClerkIdentifiers(user: Record<string, unknown>): void
 // --- Validation ------------------------------------------------------------
 
 /**
- * Validates prepared users, logging each failure and dropping it from the run.
+ * Validates prepared users, dropping each failure from the run and returning
+ * it for the caller to record.
  *
  * An unrecognized `passwordHasher` is the one failure that aborts instead:
  * importing those users would store credentials nobody can ever sign in with,
  * and the fix is a one-word edit to the transformer.
  */
-export function validatePreparedUsers(
-  users: Record<string, unknown>[],
-  dateTime: string,
-): { users: User[]; validationFailed: number } {
+export function validatePreparedUsers(users: Record<string, unknown>[]): {
+  users: User[];
+  validationFailed: number;
+  failures: ValidationFailure[];
+} {
   const validated: User[] = [];
+  const failures: ValidationFailure[] = [];
   let validationFailed = 0;
 
   for (let i = 0; i < users.length; i++) {
@@ -335,18 +346,15 @@ export function validatePreparedUsers(
       );
     }
 
-    validationLogger(
-      {
-        error: firstIssue.message,
-        path: firstIssue.path as (string | number)[],
-        userId: (user.userId as string) || `row-${i}`,
-        row: i,
-      },
-      dateTime,
-    );
+    failures.push({
+      error: firstIssue.message,
+      path: firstIssue.path as (string | number)[],
+      userId: (user.userId as string) || `row-${i}`,
+      row: i,
+    });
   }
 
-  return { users: validated, validationFailed };
+  return { users: validated, validationFailed, failures };
 }
 
 function addDefaultFields(
@@ -368,9 +376,8 @@ function addDefaultFields(
 export function transformUsers(
   users: Record<string, unknown>[],
   key: string,
-  dateTime: string,
   options: TransformOptions = {},
-): { transformedData: User[]; validationFailed: number } {
+): { transformedData: User[]; validationFailed: number; failures: ValidationFailure[] } {
   const transformer = getTransformer(key);
   const context = options.context ?? {};
   const transformed: Record<string, unknown>[] = [];
@@ -387,11 +394,15 @@ export function transformUsers(
   }
 
   if (options.validate === false) {
-    return { transformedData: transformed as User[], validationFailed: 0 };
+    return { transformedData: transformed as User[], validationFailed: 0, failures: [] };
   }
 
-  const result = validatePreparedUsers(transformed, dateTime);
-  return { transformedData: result.users, validationFailed: result.validationFailed };
+  const result = validatePreparedUsers(transformed);
+  return {
+    transformedData: result.users,
+    validationFailed: result.validationFailed,
+    failures: result.failures,
+  };
 }
 
 // --- File loading ----------------------------------------------------------
@@ -453,17 +464,15 @@ export async function readRawUsers(file: string, key: string): Promise<Record<st
 export async function loadUsersFromFile(
   file: string,
   key: string,
-  dateTime: string,
   options: TransformOptions = {},
-): Promise<{ users: User[]; validationFailed: number }> {
+): Promise<{ users: User[]; validationFailed: number; failures: ValidationFailure[] }> {
   const transformer = getTransformer(key);
   const raw = await readUsersFromFile(file, transformer);
   const withDefaults = addDefaultFields(raw, transformer);
-  const { transformedData, validationFailed } = transformUsers(
+  const { transformedData, validationFailed, failures } = transformUsers(
     withDefaults,
     key,
-    dateTime,
     options,
   );
-  return { users: transformedData, validationFailed };
+  return { users: transformedData, validationFailed, failures };
 }

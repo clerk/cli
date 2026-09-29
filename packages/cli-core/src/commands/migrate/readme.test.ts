@@ -1,8 +1,8 @@
 /**
  * Keeps README.md and the command tree honest about each other.
  *
- * This README documents six export platforms, six transformers and three log
- * subcommands across ~600 lines. Checking it by eye at review time does not
+ * This README documents seven export platforms, seven transformers and the
+ * run store across ~1000 lines. Checking it by eye at review time does not
  * scale, and a doc that names a flag the binary rejects is worse than no doc:
  * the reader trusts it and gets a usage error.
  *
@@ -70,9 +70,9 @@ function resolve(tokens: string[]): { command: Command; rest: string[] } {
 /**
  * The flags a command accepts, including those of a default subcommand.
  *
- * `migrate logs` and `migrate transformers` register their `list` `isDefault`,
- * so Commander hands it everything after the group name. The documented
- * spelling is `clerk migrate logs --json`, and this has to see the same flags
+ * `migrate transformers` registers its `list` `isDefault`, so Commander hands
+ * it everything after the group name. The documented spelling is
+ * `clerk migrate transformers --json`, and this has to see the same flags
  * Commander does or every such example reads as unsupported.
  */
 function flagsOf(command: Command): string[] {

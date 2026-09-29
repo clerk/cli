@@ -21,9 +21,15 @@ import { log } from "../../../lib/log.ts";
 import { password as passwordPrompt, text } from "../../../lib/prompts.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
-import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
+import type { UserLine } from "../lib/run-store.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
-import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
+import {
+  finishExportRun,
+  reportExport,
+  resolveOutputPath,
+  startExportRun,
+  writeExportOutput,
+} from "./shared.ts";
 
 const PAGE_SIZE = 100;
 
@@ -41,6 +47,8 @@ export type ExportAuth0Options = {
   clientId?: string;
   clientSecret?: string;
   output?: string;
+  /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
+  runsDir?: string;
 };
 
 export type Auth0Credentials = {
@@ -288,7 +296,10 @@ export type Auth0ExportResult = {
   coverage: { label: string; count: number }[];
 };
 
-export function buildAuth0Export(users: Auth0User[], dateTime: string): Auth0ExportResult {
+export function buildAuth0Export(
+  users: Auth0User[],
+  record: (line: UserLine) => void = () => {},
+): Auth0ExportResult {
   const exported: Record<string, unknown>[] = [];
   const counts = { email: 0, username: 0, firstName: 0, lastName: 0, phone: 0 };
 
@@ -304,9 +315,9 @@ export function buildAuth0Export(users: Auth0User[], dateTime: string): Auth0Exp
       if (mapped.family_name) counts.lastName++;
       if (mapped.phone_number) counts.phone++;
 
-      exportLogger({ userId, status: "success" }, dateTime);
+      record({ sourceId: userId, status: "exported" });
     } catch (error) {
-      exportLogger({ userId, status: "error", error: (error as Error).message }, dateTime);
+      record({ sourceId: userId, status: "skipped", error: (error as Error).message });
     }
   }
 
@@ -328,8 +339,6 @@ export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
   const destination = await resolveOutputPath("auth0", options.output);
 
   await withGutter("Exporting users from Auth0", async () => {
-    const dateTime = getDateTimeStamp();
-
     // Only Auth0 can say whether these three go together, and whether the
     // application carries the `read:users` scope, so a rejected set is asked
     // for again here.
@@ -346,8 +355,12 @@ export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
       fetchAllAuth0Users({ credentials, token, spinner }),
     );
 
-    const { users: exported, coverage } = buildAuth0Export(users, dateTime);
+    const run = await startExportRun(options, { platform: "auth0" });
+
+    const { users: exported, coverage } = buildAuth0Export(users, run.append);
     const outputPath = writeExportOutput(exported, destination);
+
+    const record = finishExportRun(run, outputPath);
 
     reportExport({
       platform: "auth0",
@@ -355,6 +368,7 @@ export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
       outputPath,
       coverage,
       transformerKey: "auth0",
+      runId: record.id,
     });
 
     if (exported.length > 0) {

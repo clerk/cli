@@ -1,7 +1,4 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { BapiError } from "../../lib/errors.ts";
 import {
   buildCreateUserBody,
@@ -10,12 +7,11 @@ import {
   readRetryAfter,
   splitIdentifiers,
 } from "./import-users.ts";
-import { getLogFilePath } from "./lib/logger.ts";
 import type { ResolvedLimits } from "./lib/instance.ts";
+import type { UserLine } from "./lib/run-store.ts";
 import type { User } from "./types.ts";
 
 const LIMITS: ResolvedLimits = { instanceType: "dev", rateLimit: 10_000, concurrencyLimit: 8 };
-const DATE_TIME = "2026-01-01T00:00:00";
 
 const user = (overrides: Partial<User> = {}): User =>
   ({ userId: "u1", email: "a@x.dev", ...overrides }) as User;
@@ -151,27 +147,22 @@ describe("normalizeErrorMessage", () => {
 });
 
 describe("importUsers", () => {
-  let workDir: string;
-  let originalCwd: string;
   let originalFetch: typeof globalThis.fetch;
   let requests: { method: string; url: string; body: unknown }[];
+  let lines: UserLine[];
+  const record = (line: UserLine) => lines.push(line);
 
   beforeAll(() => {
-    originalCwd = process.cwd();
     originalFetch = globalThis.fetch;
-    workDir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-import-"));
-    process.chdir(workDir);
   });
 
   afterAll(() => {
     globalThis.fetch = originalFetch;
-    process.chdir(originalCwd);
-    fs.rmSync(workDir, { recursive: true, force: true });
   });
 
   beforeEach(() => {
     requests = [];
-    fs.rmSync(path.join(workDir, "logs"), { recursive: true, force: true });
+    lines = [];
   });
 
   afterEach(() => {
@@ -202,13 +193,6 @@ describe("importUsers", () => {
       headers,
     });
 
-  const logEntries = () =>
-    fs
-      .readFileSync(getLogFilePath("import", DATE_TIME), "utf-8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-
   test("creates each user and reports them as successful", async () => {
     stub(() => ok("user_created"));
 
@@ -216,12 +200,12 @@ describe("importUsers", () => {
       users: [user({ userId: "u1" }), user({ userId: "u2", email: "b@x.dev" })],
       secretKey: "sk_test_x",
       limits: LIMITS,
-      dateTime: DATE_TIME,
+      record,
     });
 
     expect(summary).toMatchObject({ totalProcessed: 2, successful: 2, failed: 0 });
     expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
-    expect(logEntries().filter((e) => e.status === "success")).toHaveLength(2);
+    expect(lines.filter((line) => line.status === "created")).toHaveLength(2);
   });
 
   test("attaches additional and unverified identifiers after the user exists", async () => {
@@ -237,7 +221,7 @@ describe("importUsers", () => {
       ],
       secretKey: "sk_test_x",
       limits: LIMITS,
-      dateTime: DATE_TIME,
+      record,
     });
 
     const emails = requests.filter((r) => r.url.endsWith("/v1/email_addresses"));
@@ -248,7 +232,7 @@ describe("importUsers", () => {
     expect(requests.filter((r) => r.url.endsWith("/v1/phone_numbers"))).toHaveLength(1);
   });
 
-  test("logs a failed additional identifier without failing the user", async () => {
+  test("notes a failed additional identifier without failing the user", async () => {
     stub((url) =>
       url.endsWith("/v1/email_addresses")
         ? clerkError(422, "that email is taken")
@@ -259,11 +243,13 @@ describe("importUsers", () => {
       users: [user({ email: ["a@x.dev", "b@x.dev"] })],
       secretKey: "sk_test_x",
       limits: LIMITS,
-      dateTime: DATE_TIME,
+      record,
     });
 
     expect(summary).toMatchObject({ successful: 1, failed: 0 });
-    expect(logEntries().some((e) => e.status === "additional_email_error")).toBe(true);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.status).toBe("created");
+    expect(lines[0]?.error).toContain("Failed to add additional email b@x.dev");
   });
 
   test("records a failed user and keeps going", async () => {
@@ -275,13 +261,13 @@ describe("importUsers", () => {
       users: [user({ userId: "u1" }), user({ userId: "u2", email: "b@x.dev" })],
       secretKey: "sk_test_x",
       limits: LIMITS,
-      dateTime: DATE_TIME,
+      record,
     });
 
     expect(summary.successful + summary.failed).toBe(2);
     expect(summary.failed).toBe(1);
     expect([...summary.errorBreakdown.values()]).toEqual([1]);
-    expect(logEntries().some((e) => e.status === "error" && e.code === "422")).toBe(true);
+    expect(lines.some((line) => line.status === "failed" && line.code === "422")).toBe(true);
   });
 
   test("retries a 429 after the interval the server asked for", async () => {
@@ -294,13 +280,15 @@ describe("importUsers", () => {
       users: [user()],
       secretKey: "sk_test_x",
       limits: LIMITS,
-      dateTime: DATE_TIME,
+      record,
     });
 
     expect(summary).toMatchObject({ successful: 1, failed: 0 });
     expect(performance.now() - started).toBeGreaterThanOrEqual(900);
     expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
-    expect(logEntries().some((e) => e.status === "429_retry")).toBe(true);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ status: "created", clerkId: "user_ok" });
+    expect(lines[0]?.error).toContain("Rate limit hit (429)");
   });
 
   test("gives up after the retry ceiling and records the user as failed", async () => {
@@ -310,13 +298,13 @@ describe("importUsers", () => {
       users: [user()],
       secretKey: "sk_test_x",
       limits: LIMITS,
-      dateTime: DATE_TIME,
+      record,
     });
 
     expect(summary).toMatchObject({ successful: 0, failed: 1 });
     // One initial attempt plus MAX_RETRIES retries.
     expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(6);
-    expect(logEntries().some((e) => e.code === "429")).toBe(true);
+    expect(lines).toMatchObject([{ status: "failed", code: "429" }]);
   }, 20_000);
 
   test("carries the validation failure count into the summary", async () => {
@@ -326,7 +314,7 @@ describe("importUsers", () => {
       users: [user()],
       secretKey: "sk_test_x",
       limits: LIMITS,
-      dateTime: DATE_TIME,
+      record,
       validationFailed: 4,
     });
 

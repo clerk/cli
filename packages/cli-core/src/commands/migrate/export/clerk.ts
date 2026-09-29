@@ -17,10 +17,16 @@
 import { bapiRequest } from "../../../lib/bapi.ts";
 import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
-import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
+import type { UserLine } from "../lib/run-store.ts";
 import { retryOn429 } from "../lib/retry.ts";
 import { resolveClerkSource } from "./clerk-source.ts";
-import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
+import {
+  finishExportRun,
+  reportExport,
+  resolveOutputPath,
+  startExportRun,
+  writeExportOutput,
+} from "./shared.ts";
 
 /** BAPI's maximum page size for `GET /v1/users`. */
 const PAGE_SIZE = 500;
@@ -30,6 +36,8 @@ export type ExportClerkOptions = {
   secretKey?: string;
   app?: string;
   instance?: string;
+  /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
+  runsDir?: string;
 };
 
 type BapiIdentifier = {
@@ -187,7 +195,10 @@ export type ClerkExportResult = {
 };
 
 /** Maps every user and counts what the export actually contains. */
-export function buildClerkExport(users: BapiUser[], dateTime: string): ClerkExportResult {
+export function buildClerkExport(
+  users: BapiUser[],
+  record: (line: UserLine) => void = () => {},
+): ClerkExportResult {
   const exported: Record<string, unknown>[] = [];
   const counts = { email: 0, username: 0, firstName: 0, lastName: 0, phone: 0, password: 0 };
 
@@ -203,9 +214,9 @@ export function buildClerkExport(users: BapiUser[], dateTime: string): ClerkExpo
       if (mapped.primary_phone_number) counts.phone++;
       if (user.password_enabled) counts.password++;
 
-      exportLogger({ userId: user.id, status: "success" }, dateTime);
+      record({ sourceId: user.id, status: "exported" });
     } catch (error) {
-      exportLogger({ userId: user.id, status: "error", error: (error as Error).message }, dateTime);
+      record({ sourceId: user.id, status: "skipped", error: (error as Error).message });
     }
   }
 
@@ -235,16 +246,16 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
   const destination = await resolveOutputPath("clerk", options.output);
 
   await withGutter("Exporting users from Clerk", async () => {
-    const dateTime = getDateTimeStamp();
-
     log.info(`Exporting from ${source.target ?? "the resolved instance"}.`);
 
     const users = await withSpinner("Fetching users from Clerk...", async (spinner) =>
       fetchAllClerkUsers({ secretKey: source.secretKey, spinner }),
     );
 
-    const { users: exported, coverage } = buildClerkExport(users, dateTime);
+    const run = await startExportRun(options, { platform: "clerk", appLabel: source.target });
+    const { users: exported, coverage } = buildClerkExport(users, run.append);
     const outputPath = writeExportOutput(exported, destination);
+    const record = finishExportRun(run, outputPath);
 
     reportExport({
       platform: "clerk",
@@ -252,6 +263,7 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
       outputPath,
       coverage,
       transformerKey: "clerk",
+      runId: record.id,
     });
 
     if (exported.length > 0) {

@@ -71,11 +71,11 @@ export const NEXT_STEPS = {
     "Run `clerk apps list` to see your other applications",
     "Run `clerk config pull` to inspect the live configuration of this instance",
   ],
-  MIGRATE_DONE: ["Run `clerk migrate logs list` to inspect the import log"],
-  // `logs list` only names the file; after a partial import the operator needs
-  // the failures themselves, which live one line per user in that file.
-  MIGRATE_DONE_WITH_ERRORS: (logFile: string) => [
-    `Run \`grep '"status":"error"' ${logFile}\` to see every user that failed and why`,
+  MIGRATE_DONE: (runId: string) => [
+    `Run \`clerk migrate runs ${runId}\` to see what happened to each user`,
+  ],
+  MIGRATE_DONE_WITH_ERRORS: (runId: string) => [
+    `Run \`clerk migrate runs ${runId}\` to see every user that failed and why`,
   ],
 } as const;
 

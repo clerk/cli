@@ -13,9 +13,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
+import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { createDbClient, type DbClient } from "../lib/db.ts";
-import { getLogDir } from "../lib/logger.ts";
 import { buildAuthJsExport, buildAuthJsQuery, exportAuthJs, fetchAuthJsUsers } from "./authjs.ts";
 import {
   buildBetterAuthExport,
@@ -49,7 +49,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  fs.rmSync(getLogDir(), { recursive: true, force: true });
+  fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
   fs.rmSync(path.join(workDir, "exports"), { recursive: true, force: true });
 });
 
@@ -207,22 +207,19 @@ describe("authjs export", () => {
   });
 
   test("treats email_verified as a nullable timestamp, not a boolean", () => {
-    const { users } = buildAuthJsExport(
-      [
-        { id: "a", email: "a@x.dev", email_verified: "2024-01-15" },
-        { id: "b", email: "b@x.dev", email_verified: null },
-      ],
-      "2026-01-01T00:00:00",
-    );
+    const { users } = buildAuthJsExport([
+      { id: "a", email: "a@x.dev", email_verified: "2024-01-15" },
+      { id: "b", email: "b@x.dev", email_verified: null },
+    ]);
     expect(users[0]?.email_verified).toBe("2024-01-15");
     expect("email_verified" in (users[1] ?? {})).toBe(false);
   });
 
   test("counts coverage", () => {
-    const { coverage } = buildAuthJsExport(
-      [{ id: "a", email: "a@x.dev", name: "A", email_verified: "2024-01-01" }, { id: "b" }],
-      "2026-01-01T00:00:00",
-    );
+    const { coverage } = buildAuthJsExport([
+      { id: "a", email: "a@x.dev", name: "A", email_verified: "2024-01-01" },
+      { id: "b" },
+    ]);
     const byLabel = Object.fromEntries(coverage.map((c) => [c.label, c.count]));
     expect(byLabel["have an email address"]).toBe(1);
     expect(byLabel["have a verified email"]).toBe(1);
@@ -295,10 +292,9 @@ describe("betterauth export", () => {
   });
 
   test("renames camelCase columns onto what the transformer reads", () => {
-    const { users } = buildBetterAuthExport(
-      [{ id: "u1", emailVerified: 1, phoneNumber: "+1555", createdAt: "2025-01-01" }],
-      "2026-01-01T00:00:00",
-    );
+    const { users } = buildBetterAuthExport([
+      { id: "u1", emailVerified: 1, phoneNumber: "+1555", createdAt: "2025-01-01" },
+    ]);
     expect(users[0]).toMatchObject({
       user_id: "u1",
       email_verified: 1,
@@ -324,53 +320,41 @@ describe("betterauth export", () => {
 
 describe("supabase export", () => {
   test("serializes timestamps the transformer can parse", () => {
-    const { users } = buildSupabaseExport(
-      [{ id: "u1", email: "a@x.dev", created_at: new Date("2024-01-01T00:00:00Z") }],
-      "2026-01-01T00:00:00",
-    );
+    const { users } = buildSupabaseExport([
+      { id: "u1", email: "a@x.dev", created_at: new Date("2024-01-01T00:00:00Z") },
+    ]);
     expect(users[0]?.created_at).toBe("2024-01-01T00:00:00.000Z");
   });
 
   test("omits null columns rather than exporting them", () => {
-    const { users } = buildSupabaseExport(
-      [{ id: "u1", email: "a@x.dev", phone: null, last_name: null }],
-      "2026-01-01T00:00:00",
-    );
+    const { users } = buildSupabaseExport([
+      { id: "u1", email: "a@x.dev", phone: null, last_name: null },
+    ]);
     expect("phone" in (users[0] ?? {})).toBe(false);
     expect("last_name" in (users[0] ?? {})).toBe(false);
   });
 
   test("counts the password hashes, the reason this reads the database", () => {
-    const { coverage } = buildSupabaseExport(
-      [
-        { id: "u1", email: "a@x.dev", encrypted_password: "$2b$10$x" },
-        { id: "u2", email: "b@x.dev" },
-      ],
-      "2026-01-01T00:00:00",
-    );
+    const { coverage } = buildSupabaseExport([
+      { id: "u1", email: "a@x.dev", encrypted_password: "$2b$10$x" },
+      { id: "u2", email: "b@x.dev" },
+    ]);
     const byLabel = Object.fromEntries(coverage.map((c) => [c.label, c.count]));
     expect(byLabel["have a password hash"]).toBe(1);
   });
 
   test("keeps raw_app_meta_data, which --skip-unsupported-providers reads", () => {
-    const { users } = buildSupabaseExport(
-      [{ id: "u1", email: "a@x.dev", raw_app_meta_data: { providers: ["discord"] } }],
-      "2026-01-01T00:00:00",
-    );
+    const { users } = buildSupabaseExport([
+      { id: "u1", email: "a@x.dev", raw_app_meta_data: { providers: ["discord"] } },
+    ]);
     expect(users[0]?.raw_app_meta_data).toEqual({ providers: ["discord"] });
   });
 
-  test("logs one NDJSON line per exported user", () => {
-    buildSupabaseExport([{ id: "u1" }, { id: "u2" }], "2026-01-01T12:00:00");
+  test("records one line per exported user", () => {
+    const lines: UserLine[] = [];
+    buildSupabaseExport([{ id: "u1" }, { id: "u2" }], (line) => lines.push(line));
 
-    const written = fs.readdirSync(getLogDir());
-    expect(written[0]).toBe("export-2026-01-01T12-00-00.log");
-    expect(
-      fs
-        .readFileSync(path.join(getLogDir(), written[0] as string), "utf-8")
-        .trim()
-        .split("\n"),
-    ).toHaveLength(2);
+    expect(lines).toHaveLength(2);
   });
 });
 

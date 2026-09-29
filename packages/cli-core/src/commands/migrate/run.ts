@@ -12,9 +12,9 @@
  * the missing flags for an agent, which cannot answer a prompt.
  */
 
-import { describeBapiTarget, resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { bold, dim, green, red, yellow } from "../../lib/color.ts";
 import { resolveProfile } from "../../lib/config.ts";
+import path from "node:path";
 import { hasAccountCredentials } from "../../lib/credential-store.ts";
 import {
   AUTH_ERROR_REASON,
@@ -57,14 +57,20 @@ import {
   type SettingChange,
 } from "./lib/modify-settings.ts";
 import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
-import { getDateTimeStamp, getLogFilePath } from "./lib/logger.ts";
+import { resolveRunsDir, sha256File, startRun, type RunRecord } from "./lib/run-store.ts";
 import {
   countSocialProviders,
   findDisabledProviders,
   findUsersWithOnlyDisabledProviders,
   readSupabaseRows,
 } from "./lib/supabase-providers.ts";
-import { fileExists, getFileType, loadUsersFromFile } from "./lib/transform.ts";
+import { describeTarget, resolveClerkTarget } from "./lib/target.ts";
+import {
+  fileExists,
+  getFileType,
+  loadUsersFromFile,
+  resolveImportFilePath,
+} from "./lib/transform.ts";
 import { loadCustomTransformer } from "./transformers/load-custom.ts";
 import { registerCustomTransformer, transformerKeys } from "./transformers/registry.ts";
 import type { ImportSummary, User } from "./types.ts";
@@ -85,6 +91,8 @@ export type MigrateRunOptions = {
   transformerFile?: string;
   /** Supabase: drop users whose only social provider is disabled in Clerk. */
   skipUnsupportedProviders?: boolean;
+  /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
+  runsDir?: string;
 } & FirebaseHashFlags;
 
 /**
@@ -233,7 +241,8 @@ export function explainErrors(errors: Iterable<string>, instanceType: InstanceTy
 
 function formatSummary(
   summary: ImportSummary,
-  logFile: string,
+  run: RunRecord,
+  runFolder: string,
   instanceType: InstanceType,
 ): string {
   const inFile = summary.totalProcessed + summary.validationFailed;
@@ -255,7 +264,7 @@ function formatSummary(
       lines.push("", note);
     }
   }
-  lines.push("", dim(`Log: ${logFile}`));
+  lines.push("", dim(`Run ${run.id}: ${runFolder}`));
 
   return lines.join("\n");
 }
@@ -319,16 +328,18 @@ async function confirmDevUserLimit(
  * records per-user providers. If the instance's configuration cannot be read,
  * nobody is dropped: a failed lookup must not be mistaken for "no providers
  * are enabled".
+ *
+ * @returns The source IDs to skip.
  */
-async function skipDisabledProviderUsers(
-  users: User[],
+async function findDisabledProviderUsers(
   file: string,
   transformer: string,
   secretKey: string,
-): Promise<User[]> {
+): Promise<Set<string>> {
+  const none = new Set<string>();
   if (transformer !== "supabase") {
     log.warn(`--skip-unsupported-providers only applies to supabase exports; ignoring.`);
-    return users;
+    return none;
   }
 
   const settings = await withSpinner("Checking enabled providers...", async () =>
@@ -339,14 +350,14 @@ async function skipDisabledProviderUsers(
     log.warn(
       "Could not read the instance's enabled providers; importing every user. Re-run with --verbose for details.",
     );
-    return users;
+    return none;
   }
 
   const rows = await readSupabaseRows(file);
   const disabled = findDisabledProviders(rows, enabled, toClerkStrategy);
   if (disabled.length === 0) {
     log.info("Every provider in this export is enabled in Clerk; no users skipped.");
-    return users;
+    return none;
   }
 
   const { excludedIds, byProvider } = findUsersWithOnlyDisabledProviders(rows, disabled);
@@ -354,7 +365,7 @@ async function skipDisabledProviderUsers(
     log.info(
       `${disabled.join(", ")} not enabled in Clerk, but every user has another way to sign in; none skipped.`,
     );
-    return users;
+    return none;
   }
 
   const breakdown = Object.entries(byProvider)
@@ -364,7 +375,7 @@ async function skipDisabledProviderUsers(
     `--skip-unsupported-providers: skipping ${excludedIds.size} user${excludedIds.size === 1 ? "" : "s"} whose only provider is not enabled in Clerk (${breakdown}).`,
   );
 
-  return users.filter((user) => !excludedIds.has(user.userId));
+  return excludedIds;
 }
 
 type ReportInput = {
@@ -653,16 +664,15 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   const firebaseHashConfig = resolveFirebaseHashConfig(options, transformer);
 
   await withGutter("Migrating users to Clerk", async ({ setNextSteps }) => {
-    const target = await describeBapiTarget({ ...options, secretKey: options.secretKey });
-    const secretKey = await resolveBapiSecretKey({ ...options, secretKey: options.secretKey });
+    const { secretKey, target } = await resolveClerkTarget(options);
     const limits = resolveLimits(secretKey);
-    const dateTime = getDateTimeStamp();
-    const logFile = getLogFilePath("import", dateTime);
 
-    const { users: loaded, validationFailed } = await withSpinner(
-      `Loading users from ${file}...`,
-      async () =>
-        loadUsersFromFile(file, transformer, dateTime, { context: { firebaseHashConfig } }),
+    const {
+      users: loaded,
+      validationFailed,
+      failures,
+    } = await withSpinner(`Loading users from ${file}...`, async () =>
+      loadUsersFromFile(file, transformer, { context: { firebaseHashConfig } }),
     );
 
     let users = applyResumeAfter(loaded, options.resumeAfter);
@@ -670,8 +680,16 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       log.info(`Resuming after ${options.resumeAfter} (${loaded.length - users.length} skipped).`);
     }
 
+    // Users left out on purpose. Recorded as skipped, so the run says who they
+    // were rather than only how many.
+    const skipped: { user: User; reason: string }[] = [];
+
     if (options.skipUnsupportedProviders) {
-      users = await skipDisabledProviderUsers(users, file, transformer, secretKey);
+      const excluded = await findDisabledProviderUsers(file, transformer, secretKey);
+      for (const user of users.filter((candidate) => excluded.has(candidate.userId))) {
+        skipped.push({ user, reason: "only provider is not enabled in Clerk" });
+      }
+      users = users.filter((user) => !excluded.has(user.userId));
     }
 
     if (options.requirePassword) {
@@ -682,17 +700,50 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           `--require-password: skipping ${dropped} user${dropped === 1 ? "" : "s"} without a password.`,
         );
       }
+      for (const user of users.filter((candidate) => !candidate.password)) {
+        skipped.push({ user, reason: "no password (--require-password)" });
+      }
       users = withPassword;
     }
 
     if (validationFailed > 0) {
       log.warn(
-        `${validationFailed} user${validationFailed === 1 ? "" : "s"} failed validation and will be skipped. See ${logFile}.`,
+        `${validationFailed} user${validationFailed === 1 ? "" : "s"} failed validation and will be skipped.`,
       );
     }
 
+    const runsDir = await resolveRunsDir(options.runsDir, { write: true });
+    const beginRun = () => {
+      const filePath = resolveImportFilePath(file);
+      const run = startRun(runsDir, {
+        kind: "import",
+        target,
+        source: transformer,
+        file: { path: filePath, sha256: sha256File(filePath) },
+      });
+      for (const failure of failures) {
+        run.append({
+          sourceId: failure.userId,
+          status: "failed",
+          error: `${failure.error} (${failure.path.join(".") || "user"}, row ${failure.row + 1})`,
+          code: "validation",
+        });
+      }
+      for (const { user, reason } of skipped) {
+        run.append({ sourceId: user.userId, status: "skipped", reason });
+      }
+      return run;
+    };
+
     if (users.length === 0) {
       log.warn("No users left to import.");
+      // Still a run: the record of who failed validation, and why, is the one
+      // thing this attempt produced.
+      if (failures.length > 0 || skipped.length > 0) {
+        const record = beginRun().finish();
+        log.info(dim(`Run ${record.id}: ${path.join(runsDir, record.id)}`));
+        process.exitCode = 1;
+      }
       return;
     }
 
@@ -701,12 +752,9 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         ? await confirmDevUserLimit(users.length, secretKey, Boolean(options.yes))
         : 0;
 
-    // `target` already carries the instance's environment ("My App
-    // (development)"), so the detected type is only worth spelling out when
-    // there is no app context to name — an explicit `--secret-key`.
     log.info(
       `Importing ${users.length} user${users.length === 1 ? "" : "s"} via the ${transformer} transformer into ` +
-        `${target ?? `the resolved instance (${limits.instanceType})`}.`,
+        `${describeTarget(target)}.`,
     );
 
     await showReadinessReport({
@@ -734,26 +782,28 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       if (!proceed) throwUserAbort();
     }
 
+    const run = beginRun();
     const summary = await withSpinner(`Importing users: [0/${users.length}]...`, async (spinner) =>
       importUsers({
         users,
         secretKey,
         limits,
-        dateTime,
+        record: run.append,
         skipPasswordRequirement: !options.requirePassword,
         validationFailed,
         spinner,
       }),
     );
+    const record = run.finish();
 
-    log.info(formatSummary(summary, logFile, limits.instanceType));
+    log.info(formatSummary(summary, record, run.dir, limits.instanceType));
 
     // Offered even when some users failed: a partial import is exactly when
-    // reading the log and knowing how to undo it matters most. When users did
-    // fail, the per-user record of *why* leads, since the breakdown above only
-    // counts each error and never names who hit it.
+    // reading the per-user record matters most.
     const steps =
-      summary.failed > 0 ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(logFile) : NEXT_STEPS.MIGRATE_DONE;
+      summary.failed > 0
+        ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(record.id)
+        : NEXT_STEPS.MIGRATE_DONE(record.id);
     setNextSteps(steps);
     printAgentNextSteps(steps);
 

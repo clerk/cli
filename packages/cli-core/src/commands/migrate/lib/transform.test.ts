@@ -15,8 +15,6 @@ import {
   validatePreparedUsers,
 } from "./transform.ts";
 
-const DATE_TIME = "2026-01-01T00-00-00";
-
 let workDir: string;
 let originalCwd: string;
 
@@ -136,20 +134,21 @@ describe("consolidateClerkIdentifiers", () => {
 
 describe("validatePreparedUsers", () => {
   test("keeps valid users and counts the rest", () => {
-    const result = validatePreparedUsers(
-      [{ userId: "u1", email: "a@x.dev" }, { userId: "u2" }, { userId: "u3", username: "carol" }],
-      DATE_TIME,
-    );
+    const result = validatePreparedUsers([
+      { userId: "u1", email: "a@x.dev" },
+      { userId: "u2" },
+      { userId: "u3", username: "carol" },
+    ]);
     expect(result.users.map((user) => user.userId)).toEqual(["u1", "u3"]);
     expect(result.validationFailed).toBe(1);
+    expect(result.failures).toMatchObject([{ userId: "u2", row: 1 }]);
   });
 
   test("aborts the whole run on an unknown password hasher", () => {
     expect(() =>
-      validatePreparedUsers(
-        [{ userId: "u1", email: "a@x.dev", password: "d", passwordHasher: "rot13" }],
-        DATE_TIME,
-      ),
+      validatePreparedUsers([
+        { userId: "u1", email: "a@x.dev", password: "d", passwordHasher: "rot13" },
+      ]),
     ).toThrow(CliError);
   });
 });
@@ -166,7 +165,6 @@ describe("transformUsers", () => {
         },
       ],
       "clerk",
-      DATE_TIME,
     );
     expect(validationFailed).toBe(0);
     expect(transformedData[0]).toMatchObject({
@@ -177,14 +175,9 @@ describe("transformUsers", () => {
   });
 
   test("skips validation when asked, so analysis passes see every row", () => {
-    const { transformedData, validationFailed } = transformUsers(
-      [{ id: "u1" }],
-      "clerk",
-      DATE_TIME,
-      {
-        validate: false,
-      },
-    );
+    const { transformedData, validationFailed } = transformUsers([{ id: "u1" }], "clerk", {
+      validate: false,
+    });
     expect(transformedData).toHaveLength(1);
     expect(validationFailed).toBe(0);
   });
@@ -196,7 +189,7 @@ describe("loadUsersFromFile", () => {
       path.join(workDir, "users.json"),
       JSON.stringify([{ id: "u1", primary_email_address: "a@x.dev" }]),
     );
-    const { users } = await loadUsersFromFile("users.json", "clerk", DATE_TIME);
+    const { users } = await loadUsersFromFile("users.json", "clerk");
     expect(users).toHaveLength(1);
     expect(users[0]?.userId).toBe("u1");
   });
@@ -206,13 +199,13 @@ describe("loadUsersFromFile", () => {
       path.join(workDir, "users.csv"),
       'id,primary_email_address,verified_email_addresses\nu2,a@x.dev,"a@x.dev,b@x.dev"\n',
     );
-    const { users } = await loadUsersFromFile("users.csv", "clerk", DATE_TIME);
+    const { users } = await loadUsersFromFile("users.csv", "clerk");
     expect(users[0]?.userId).toBe("u2");
     expect(users[0]?.email).toEqual(["a@x.dev", "b@x.dev"]);
   });
 
   test("rejects a JSON file that is not an array of users", async () => {
     fs.writeFileSync(path.join(workDir, "wrapped.json"), JSON.stringify({ users: [] }));
-    await expect(loadUsersFromFile("wrapped.json", "clerk", DATE_TIME)).rejects.toThrow(CliError);
+    await expect(loadUsersFromFile("wrapped.json", "clerk")).rejects.toThrow(CliError);
   });
 });

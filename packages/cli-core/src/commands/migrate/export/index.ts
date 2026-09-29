@@ -10,6 +10,7 @@ import { exportFirebase } from "./firebase.ts";
 import { exportSupabase } from "./supabase.ts";
 import { exportWorkOs } from "./workos.ts";
 import type { DbExportOptions } from "./db-options.ts";
+import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "../lib/run-store.ts";
 import { exportPlatformKeys, exportPlatforms, getExportPlatform } from "./registry.ts";
 
 /**
@@ -99,6 +100,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
         description: "Export from an Auth0 tenant",
       },
     ])
+    .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
     .action(async (_opts, cmd) =>
       handlers.picker(cmd.optsWithGlobals() as Record<string, unknown>),
     );
@@ -110,6 +112,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     )
     .option("-o, --output <path>", "Where to write the export, relative to the current directory")
     .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
+    .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
@@ -137,6 +140,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     .option("--client-secret <secret>", "Machine-to-machine application client secret")
     .option("-o, --output <path>", "Where to write the export, relative to the current directory")
     .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
+    .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
     .setExamples([
       {
         command:
@@ -160,6 +164,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     .option("--service-account <path>", "Path to a service account key JSON file")
     .option("-o, --output <path>", "Where to write the export, relative to the current directory")
     .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
+    .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
     .setExamples([
       {
         command: "clerk migrate export firebase --service-account ./service-account.json",
@@ -186,6 +191,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       "-y, --yes",
       "Do not prompt: require --output, fail on a rejected credential, and assume --with-identities",
     )
+    .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
     .setExamples([
       {
         command: "clerk migrate export workos --api-key sk_…",
@@ -211,6 +217,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       .option("--db-url <url>", "Postgres, MySQL, libsql/Turso or SQLite connection string")
       .option("-o, --output <path>", "Where to write the export, relative to the current directory")
       .option("-y, --yes", "Do not prompt: require --output, and fail on a rejected credential")
+      .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
       .setExamples([
         {
           command: `clerk migrate export ${platform.key} --db-url "${platform.example}"`,

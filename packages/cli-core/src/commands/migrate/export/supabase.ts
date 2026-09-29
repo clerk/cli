@@ -12,9 +12,15 @@
 
 import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
-import { exportLogger, getDateTimeStamp } from "../lib/logger.ts";
+import type { UserLine } from "../lib/run-store.ts";
 import { withDbClient, type DbClient } from "../lib/db.ts";
-import { reportExport, resolveOutputPath, writeExportOutput } from "./shared.ts";
+import {
+  finishExportRun,
+  reportExport,
+  resolveOutputPath,
+  startExportRun,
+  writeExportOutput,
+} from "./shared.ts";
 import {
   promptDbUrl,
   resolveDbUrl,
@@ -74,7 +80,10 @@ export async function fetchSupabaseUsers(client: DbClient): Promise<SupabaseRow[
   return client.query<SupabaseRow>(EXPORT_QUERY);
 }
 
-export function buildSupabaseExport(rows: SupabaseRow[], dateTime: string) {
+export function buildSupabaseExport(
+  rows: SupabaseRow[],
+  record: (line: UserLine) => void = () => {},
+) {
   const users: Record<string, unknown>[] = [];
   const counts = { email: 0, emailConfirmed: 0, password: 0, phone: 0, firstName: 0, lastName: 0 };
 
@@ -90,9 +99,9 @@ export function buildSupabaseExport(rows: SupabaseRow[], dateTime: string) {
       if (row.first_name) counts.firstName++;
       if (row.last_name) counts.lastName++;
 
-      exportLogger({ userId, status: "success" }, dateTime);
+      record({ sourceId: userId, status: "exported" });
     } catch (error) {
-      exportLogger({ userId, status: "error", error: (error as Error).message }, dateTime);
+      record({ sourceId: userId, status: "skipped", error: (error as Error).message });
     }
   }
 
@@ -122,8 +131,6 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
   const destination = await resolveOutputPath("supabase", options.output);
 
   await withGutter("Exporting users from Supabase", async () => {
-    const dateTime = getDateTimeStamp();
-
     const { value: rows } = await withInputRetry(
       dbUrl,
       async () => promptDbUrl(SUPABASE_DB),
@@ -133,8 +140,12 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
         ),
     );
 
-    const { users, coverage } = buildSupabaseExport(rows, dateTime);
+    const run = await startExportRun(options, { platform: "supabase" });
+
+    const { users, coverage } = buildSupabaseExport(rows, run.append);
     const outputPath = writeExportOutput(users, destination);
+
+    const record = finishExportRun(run, outputPath);
 
     reportExport({
       platform: "supabase",
@@ -142,6 +153,7 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
       outputPath,
       coverage,
       transformerKey: "supabase",
+      runId: record.id,
     });
 
     if (users.length > 0) {

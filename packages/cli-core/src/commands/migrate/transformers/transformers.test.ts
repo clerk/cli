@@ -3,13 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
-import { getLogDir } from "../lib/logger.ts";
 import { loadUsersFromFile, transformUsers } from "../lib/transform.ts";
 import type { FirebaseHashConfig } from "../types.ts";
 import { getTransformer, transformerKeys, transformers } from "./registry.ts";
 import { isVerified } from "./shared.ts";
-
-const DATE_TIME = "2026-01-01T00:00:00";
 
 const FIREBASE_HASH: FirebaseHashConfig = {
   base64_signer_key: "SIGNERKEY==",
@@ -39,11 +36,11 @@ async function load(key: string, records: unknown, ext = "json", context = {}) {
     path.join(workDir, file),
     typeof records === "string" ? records : JSON.stringify(records),
   );
-  return loadUsersFromFile(file, key, DATE_TIME, { context });
+  return loadUsersFromFile(file, key, { context });
 }
 
 const one = (key: string, record: Record<string, unknown>, context = {}) =>
-  transformUsers([record], key, DATE_TIME, { validate: false, context }).transformedData[0] as
+  transformUsers([record], key, { validate: false, context }).transformedData[0] as
     | Record<string, unknown>
     | undefined;
 
@@ -414,11 +411,9 @@ describe("invalid records", () => {
   ];
 
   test.each(INVALID)(
-    "%s logs a user with no identifier instead of crashing",
+    "%s reports a user with no identifier instead of crashing",
     async (key, record) => {
-      fs.rmSync(getLogDir(), { recursive: true, force: true });
-
-      const { users, validationFailed } = await load(key, [
+      const { users, validationFailed, failures } = await load(key, [
         record,
         { ...record, ...identifierFor(key) },
       ]);
@@ -426,13 +421,7 @@ describe("invalid records", () => {
       expect(validationFailed).toBe(1);
       expect(users).toHaveLength(1);
 
-      const logged = fs
-        .readdirSync(getLogDir())
-        .flatMap((name) =>
-          fs.readFileSync(path.join(getLogDir(), name), "utf-8").trim().split("\n"),
-        )
-        .map((line) => JSON.parse(line) as Record<string, unknown>);
-      expect(logged.some((entry) => entry.status === "fail")).toBe(true);
+      expect(failures).toHaveLength(1);
     },
   );
 

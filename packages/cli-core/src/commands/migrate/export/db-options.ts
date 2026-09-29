@@ -15,6 +15,8 @@ import { detectDbType, isLibsqlUrl, redactConnectionString, type DbPlatform } fr
 export type DbExportOptions = {
   dbUrl?: string;
   output?: string;
+  /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
+  runsDir?: string;
 };
 
 export type ResolveConfig = {

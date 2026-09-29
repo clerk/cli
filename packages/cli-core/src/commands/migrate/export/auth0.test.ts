@@ -4,8 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
+import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
-import { getLogDir } from "../lib/logger.ts";
 import {
   buildAuth0Export,
   exportAuth0,
@@ -43,7 +43,7 @@ beforeEach(() => {
   // leaked "human" from an earlier test stops a later one on the destination prompt.
   setMode("agent");
   requests = [];
-  fs.rmSync(getLogDir(), { recursive: true, force: true });
+  fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
   fs.rmSync(path.join(workDir, "exports"), { recursive: true, force: true });
 });
 
@@ -261,10 +261,11 @@ describe("mapAuth0UserToExport", () => {
 });
 
 describe("buildAuth0Export", () => {
-  test("counts coverage and logs each user", () => {
+  test("counts coverage and records each user", () => {
+    const lines: UserLine[] = [];
     const { users, coverage } = buildAuth0Export(
       [auth0User(0), auth0User(1, { given_name: undefined })],
-      "2026-01-01T00:00:00",
+      (line) => lines.push(line),
     );
 
     expect(users).toHaveLength(2);
@@ -272,8 +273,7 @@ describe("buildAuth0Export", () => {
     expect(byLabel["have an email address"]).toBe(2);
     expect(byLabel["have a first name"]).toBe(1);
 
-    const logged = fs.readdirSync(getLogDir());
-    expect(logged[0]).toMatch(/^export-/);
+    expect(lines.map((line) => line.status)).toEqual(["exported", "exported"]);
   });
 });
 

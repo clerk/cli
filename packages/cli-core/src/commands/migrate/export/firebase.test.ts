@@ -5,8 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
 import { setAssumeYes } from "../lib/assume-yes.ts";
+import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
-import { getLogDir } from "../lib/logger.ts";
 import {
   buildFirebaseExport,
   exportFirebase,
@@ -72,7 +72,7 @@ beforeEach(() => {
   setMode("agent");
   requests = [];
   delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
-  fs.rmSync(getLogDir(), { recursive: true, force: true });
+  fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
   fs.rmSync(path.join(workDir, "exports"), { recursive: true, force: true });
 });
 
@@ -357,17 +357,18 @@ describe("mapFirebaseUserToExport", () => {
 });
 
 describe("buildFirebaseExport", () => {
-  test("counts coverage and logs each user", () => {
+  test("counts coverage and records each user", () => {
+    const lines: UserLine[] = [];
     const { users, coverage } = buildFirebaseExport(
       [fbUser(0), { localId: "fb1", phoneNumber: "+1555" }],
-      "2026-01-01T12:00:00",
+      (line) => lines.push(line),
     );
 
     expect(users).toHaveLength(2);
     const byLabel = Object.fromEntries(coverage.map((c) => [c.label, c.count]));
     expect(byLabel["have a password hash"]).toBe(1);
     expect(byLabel["have a phone number"]).toBe(1);
-    expect(fs.readdirSync(getLogDir())[0]).toBe("export-2026-01-01T12-00-00.log");
+    expect(lines).toHaveLength(2);
   });
 });
 

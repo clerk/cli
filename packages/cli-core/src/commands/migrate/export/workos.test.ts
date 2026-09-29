@@ -3,8 +3,8 @@ import { getMode, setMode } from "../../../mode.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
-import { getLogDir } from "../lib/logger.ts";
 import { setAssumeYes } from "../lib/assume-yes.ts";
 import {
   buildIdentityReport,
@@ -50,7 +50,7 @@ beforeEach(() => {
   // "human" from an earlier test stops a later one on the destination prompt.
   setMode("agent");
   requests = [];
-  fs.rmSync(getLogDir(), { recursive: true, force: true });
+  fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
   fs.rmSync(path.join(workDir, "exports"), { recursive: true, force: true });
 });
 
@@ -347,10 +347,11 @@ describe("mapWorkOsUserToExport", () => {
 });
 
 describe("buildWorkOsExport", () => {
-  test("counts coverage and logs each user", () => {
+  test("counts coverage and records each user", () => {
+    const lines: UserLine[] = [];
     const { users, coverage } = buildWorkOsExport(
       [workosUser(0), workosUser(1, { first_name: undefined })],
-      "2026-01-01T00:00:00",
+      (line) => lines.push(line),
     );
 
     expect(users).toHaveLength(2);
@@ -358,13 +359,12 @@ describe("buildWorkOsExport", () => {
     expect(byLabel["have an email address"]).toBe(2);
     expect(byLabel["have a first name"]).toBe(1);
 
-    const logged = fs.readdirSync(getLogDir());
-    expect(logged[0]).toMatch(/^export-/);
+    expect(lines.map((line) => line.status)).toEqual(["exported", "exported"]);
   });
 
   // Always shown, always zero: seeing it before the import is the point.
   test("reports the password row even though it can only ever be zero", () => {
-    const { coverage } = buildWorkOsExport([workosUser(0)], "2026-01-01T00:00:00");
+    const { coverage } = buildWorkOsExport([workosUser(0)]);
     expect(coverage.at(-1)).toEqual({
       label: "have a password (WorkOS returns none)",
       count: 0,
@@ -376,7 +376,7 @@ describe("buildWorkOsExport", () => {
   test("keeps providers out of the coverage table", () => {
     const { coverage } = buildWorkOsExport(
       [workosUser(0)],
-      "2026-01-01T00:00:00",
+      undefined,
       new Map([["user_00", [{ provider: "GoogleOAuth" }]]]),
     );
     expect(coverage.some((row) => row.label.toLowerCase().includes("oauth"))).toBe(false);

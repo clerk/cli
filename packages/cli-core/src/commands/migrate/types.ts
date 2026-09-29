@@ -1,10 +1,7 @@
 /**
  * Shared types for `clerk migrate`.
  *
- * Ported from the standalone migration-tool's `src/types.ts`. The Clerk API
- * error shape is declared locally rather than imported from `@clerk/types`,
- * because this command family talks to BAPI through `lib/bapi.ts` instead of
- * `@clerk/backend`.
+ * Ported from the standalone migration-tool's `src/types.ts`.
  */
 
 import type * as z from "zod";
@@ -45,68 +42,6 @@ export type User = z.infer<typeof userSchema>;
 
 /** Union of all registered transformer keys (e.g. `"clerk"`). */
 export type TransformerKey = string;
-
-/**
- * One error entry as returned in a Clerk API error response body.
- *
- * Local mirror of `@clerk/types`' `ClerkAPIError` covering only the fields the
- * migration logs read.
- */
-export type ClerkApiError = {
-  code: string;
-  message: string;
-  longMessage?: string;
-};
-
-/** A failed user-creation attempt, as handed to the error logger. */
-export type ErrorPayload = {
-  userId: string;
-  status: string;
-  errors: ClerkApiError[];
-};
-
-/** A user that failed schema validation before any API call was made. */
-export type ValidationErrorPayload = {
-  error: string;
-  path: (string | number)[];
-  userId: string;
-  row: number;
-};
-
-/** A formatted error line as written to the NDJSON log. */
-export type ErrorLog = {
-  type: string;
-  userId: string;
-  status: string;
-  error: string | undefined;
-};
-
-/** One import attempt as written to the NDJSON log. */
-export type ImportLogEntry = {
-  userId: string;
-  status: "success" | "error";
-  clerkUserId?: string;
-  error?: string;
-  code?: string;
-};
-
-/** One exported user as written to the NDJSON log. */
-export type ExportLogEntry = {
-  /** The source platform's ID for this user. */
-  userId: string;
-  status: "success" | "error";
-  error?: string;
-};
-
-/** One deletion attempt as written to the NDJSON log. */
-export type DeleteLogEntry = {
-  /** The source platform's ID — the Clerk user's `external_id`. */
-  userId: string;
-  clerkUserId?: string;
-  status: "success" | "error";
-  error?: string;
-  code?: string;
-};
 
 /** Totals for a completed import run. */
 export type ImportSummary = {

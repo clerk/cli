@@ -19,9 +19,9 @@
 import { bapiRequest } from "../../lib/bapi.ts";
 import { BapiError } from "../../lib/errors.ts";
 import type { SpinnerControls } from "../../lib/spinner.ts";
-import { errorLogger, importLogger } from "./lib/logger.ts";
 import type { ResolvedLimits } from "./lib/instance.ts";
 import { RateLimitExceededError, retryOn429 } from "./lib/retry.ts";
+import type { UserLine } from "./lib/run-store.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
 import type { ImportSummary, User } from "./types.ts";
 
@@ -171,18 +171,21 @@ export function buildCreateUserBody(
 type CreateContext = {
   secretKey: string;
   schedule: ApiScheduler;
-  dateTime: string;
 };
 
-/** Attaches one extra identifier, logging (but not rethrowing) any failure. */
+/**
+ * Attaches one extra identifier.
+ *
+ * @returns A note describing the failure, or `undefined` when it attached.
+ *   Never throws: the user itself was already created.
+ */
 async function attachIdentifier(
   ctx: CreateContext,
-  userId: string,
   clerkUserId: string,
   kind: "email" | "phone",
   value: string,
   verified: boolean,
-): Promise<void> {
+): Promise<string | undefined> {
   const path = kind === "email" ? "/v1/email_addresses" : "/v1/phone_numbers";
   const body =
     kind === "email"
@@ -198,31 +201,23 @@ async function attachIdentifier(
         body: JSON.stringify(body),
       }),
     );
+    return undefined;
   } catch (error) {
     const label = `${verified ? "additional" : "unverified"} ${kind} ${value}`;
-    errorLogger(
-      {
-        userId,
-        status: `additional_${kind}_error`,
-        errors: [
-          {
-            code: `additional_${kind}_failed`,
-            message: `Failed to add ${label}`,
-            longMessage: `Failed to add ${label}: ${(error as Error).message}`,
-          },
-        ],
-      },
-      ctx.dateTime,
-    );
+    return `Failed to add ${label}: ${(error as Error).message}`;
   }
 }
 
-/** Creates one user, then attaches any additional identifiers it carries. */
+/**
+ * Creates one user, then attaches any additional identifiers it carries.
+ *
+ * @returns The Clerk ID, and a note for each identifier that did not attach.
+ */
 async function createUser(
   ctx: CreateContext,
   user: User,
   skipPasswordRequirement: boolean,
-): Promise<string> {
+): Promise<{ clerkUserId: string; notes: string[] }> {
   const identifiers = splitIdentifiers(user);
 
   const response = await ctx.schedule(async () =>
@@ -238,29 +233,30 @@ async function createUser(
 
   // Extra identifiers are best-effort: a duplicate secondary email should not
   // undo a user who was otherwise imported successfully.
-  await Promise.all([
+  const notes = await Promise.all([
     ...identifiers.additionalEmails.map(async (email) =>
-      attachIdentifier(ctx, user.userId, clerkUserId, "email", email, true),
+      attachIdentifier(ctx, clerkUserId, "email", email, true),
     ),
     ...identifiers.unverifiedEmails.map(async (email) =>
-      attachIdentifier(ctx, user.userId, clerkUserId, "email", email, false),
+      attachIdentifier(ctx, clerkUserId, "email", email, false),
     ),
     ...identifiers.additionalPhones.map(async (phone) =>
-      attachIdentifier(ctx, user.userId, clerkUserId, "phone", phone, true),
+      attachIdentifier(ctx, clerkUserId, "phone", phone, true),
     ),
     ...identifiers.unverifiedPhones.map(async (phone) =>
-      attachIdentifier(ctx, user.userId, clerkUserId, "phone", phone, false),
+      attachIdentifier(ctx, clerkUserId, "phone", phone, false),
     ),
   ]);
 
-  return clerkUserId;
+  return { clerkUserId, notes: notes.filter((note): note is string => note !== undefined) };
 }
 
 export type ImportUsersOptions = {
   users: User[];
   secretKey: string;
   limits: ResolvedLimits;
-  dateTime: string;
+  /** Receives one line per user, as each one finishes. */
+  record: (line: UserLine) => void;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
   /** Carried into the summary so the report covers the whole file. */
@@ -279,7 +275,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     users,
     secretKey,
     limits,
-    dateTime,
+    record,
     skipPasswordRequirement = true,
     validationFailed = 0,
     spinner,
@@ -293,7 +289,6 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
 
   const ctx: CreateContext = {
     secretKey,
-    dateTime,
     schedule: createApiScheduler(limits.concurrencyLimit, limits.rateLimit),
   };
 
@@ -302,44 +297,43 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       `Importing users: [${processed}/${total}] (${successful} succeeded, ${failed} failed)...`,
     );
 
-  const recordFailure = (userId: string, message: string, code: string) => {
+  // One line per user, written once it has finished: a retry that succeeded
+  // and an extra email that did not attach are both part of that line's story.
+  const recordFailure = (userId: string, message: string, code: string, notes: string[]) => {
     failed++;
     processed++;
     const normalized = normalizeErrorMessage(message);
     errorBreakdown.set(normalized, (errorBreakdown.get(normalized) ?? 0) + 1);
-    importLogger({ userId, status: "error", error: message, code }, dateTime);
+    record({ sourceId: userId, status: "failed", error: [message, ...notes].join("; "), code });
     progress();
   };
 
   const processUser = async (user: User): Promise<void> => {
+    const retries: string[] = [];
     try {
-      const clerkUserId = await retryOn429(
+      const { clerkUserId, notes } = await retryOn429(
         async () => createUser(ctx, user, skipPasswordRequirement),
-        {
-          onRetry: ({ message }) =>
-            errorLogger(
-              {
-                userId: user.userId,
-                status: "429_retry",
-                errors: [{ code: "rate_limit_retry", message, longMessage: message }],
-              },
-              dateTime,
-            ),
-        },
+        { onRetry: ({ message }) => retries.push(message) },
       );
       successful++;
       processed++;
-      importLogger({ userId: user.userId, status: "success", clerkUserId }, dateTime);
+      const error = [...notes, ...retries].join("; ");
+      record({
+        sourceId: user.userId,
+        clerkId: clerkUserId,
+        status: "created",
+        ...(error ? { error } : {}),
+      });
       progress();
     } catch (error) {
       if (error instanceof RateLimitExceededError) {
-        recordFailure(user.userId, error.message, "429");
+        recordFailure(user.userId, error.message, "429", retries);
         return;
       }
 
       const apiError = error as BapiError;
       const message = apiError.longMessage ?? apiError.message ?? "Unknown error";
-      recordFailure(user.userId, message, String(apiError.status ?? "unknown"));
+      recordFailure(user.userId, message, String(apiError.status ?? "unknown"), retries);
     }
   };
 

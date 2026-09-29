@@ -9,7 +9,7 @@ import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 // Every test below names its own `--secret-key`, which short-circuits the
 // signed-in check — except the one that asserts what happens without it.
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
-import { getLogDir } from "./lib/logger.ts";
+import { latestUserLines, listRuns } from "./lib/run-store.ts";
 import { __resetCustomTransformersForTesting } from "./transformers/registry.ts";
 import { applyResumeAfter, explainErrors, run, validateRunOptions } from "./run.ts";
 import type { User } from "./types.ts";
@@ -17,6 +17,9 @@ import type { User } from "./types.ts";
 let workDir: string;
 let configDir: string;
 let originalCwd: string;
+
+/** Where runs land for a project rooted at `workDir`. */
+const runsDir = () => path.join(workDir, ".clerk", "migrate");
 
 const users = (...ids: string[]): User[] => ids.map((userId) => ({ userId }) as User);
 
@@ -104,7 +107,7 @@ describe("run", () => {
   beforeEach(() => {
     requests = [];
     delete process.env.CLERK_MIGRATE_RATE_LIMIT;
-    fs.rmSync(getLogDir(), { recursive: true, force: true });
+    fs.rmSync(runsDir(), { recursive: true, force: true });
     fs.rmSync(path.join(configDir, "config.json"), { force: true });
     fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(export2));
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -155,19 +158,38 @@ describe("run", () => {
     expect(captured.err).toContain("Imported:");
   });
 
-  test("writes a timestamped NDJSON log for the run", async () => {
+  test("records the run in the project's run store", async () => {
     await run(baseOptions);
 
-    const logs = fs.readdirSync(getLogDir());
-    expect(logs).toHaveLength(1);
-    expect(logs[0]).toMatch(/^import-\d{4}-\d{2}-\d{2}T[\d-]+\.log$/);
+    const [record, ...rest] = listRuns(runsDir());
+    expect(rest).toHaveLength(0);
+    expect(record).toMatchObject({
+      kind: "import",
+      status: "complete",
+      source: "clerk",
+      counts: { total: 2, created: 2 },
+      target: { keySource: "--secret-key", instanceType: "dev" },
+    });
+    expect(record?.id).toMatch(/^\d{8}-\d{6}-[0-9a-f]{4}$/);
+    expect(record?.file?.path).toBe(path.join(workDir, "export.json"));
+    expect(record?.file?.sha256).toMatch(/^[0-9a-f]{64}$/);
 
-    const entries = fs
-      .readFileSync(path.join(getLogDir(), logs[0] as string), "utf-8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-    expect(entries.filter((e) => e.status === "success")).toHaveLength(2);
+    const lines = [...latestUserLines(runsDir(), record!.id).values()];
+    expect(lines.map((line) => [line.sourceId, line.status, line.clerkId])).toEqual([
+      ["u1", "created", "user_created"],
+      ["u2", "created", "user_created"],
+    ]);
+  });
+
+  test("gitignores the project's .clerk folder before writing a run", async () => {
+    await run(baseOptions);
+    expect(fs.readFileSync(path.join(workDir, ".gitignore"), "utf-8")).toContain(".clerk/");
+  });
+
+  test("--runs-dir puts the run somewhere else", async () => {
+    await run({ ...baseOptions, runsDir: "elsewhere" });
+    expect(listRuns(path.join(workDir, "elsewhere"))).toHaveLength(1);
+    expect(listRuns(runsDir())).toHaveLength(0);
   });
 
   test("--require-password imports only the users that have one", async () => {
@@ -185,13 +207,20 @@ describe("run", () => {
     expect(created.map((r) => (r.body as { external_id: string }).external_id)).toEqual(["u2"]);
   });
 
-  test("logs validation failures and imports the rest", async () => {
+  test("records validation failures in the run and imports the rest", async () => {
     fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify([...export2, { id: "u3" }]));
 
     await run(baseOptions);
 
     expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
     expect(captured.err).toContain("1 user failed validation");
+
+    const [record] = listRuns(runsDir());
+    expect(record).toMatchObject({ status: "partial", counts: { created: 2, failed: 1 } });
+    expect(latestUserLines(runsDir(), record!.id).get("u3")).toMatchObject({
+      status: "failed",
+      code: "validation",
+    });
   });
 
   /** Makes `GET /v1/users/count` report an instance that already holds users. */
