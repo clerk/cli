@@ -49,12 +49,14 @@ jobs:
         run: bun run scripts/check-release.ts
 
       - id: changesets
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
-          version: bun run version-packages
-          commit: "ci(repo): version packages"
-          title: "ci(repo): Version Packages"
+          version-script: bun run version-packages
+          commit-message: "ci(repo): version packages"
+          pr-title: "ci(repo): Version Packages"
+          github-token: ${{ github.token }}
         env:
+          # Read by .changeset/changelog.js to add PR and author links.
           GITHUB_TOKEN: ${{ github.token }}
 
   # ─── Stable release ────────────────────────────────────────────────

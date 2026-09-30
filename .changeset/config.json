@@ -7,6 +7,7 @@
   "baseBranch": "origin/main",
   "updateInternalDependencies": "patch",
   "ignore": ["@clerk/cli-core"],
+  "privatePackages": { "version": true, "tag": false },
   "snapshot": {
     "useCalculatedVersion": true,
     "prereleaseTemplate": "{tag}.{commit}"
