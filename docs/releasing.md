@@ -10,18 +10,18 @@ push to main
     -> merge "Version Packages" PR
       -> check-release.ts detects unpublished version
         -> build job: cross-compile all 8 targets (~5.5s total)
-          -> sign-macos job: code sign + notarize darwin binaries
+          -> sign-macos + sign-windows jobs: code sign darwin and win32 binaries
             -> smoke-test job: verify binaries on native runners
               -> publish-npm: generate platform packages + publish wrapper
                 -> upload-github-assets: attach binaries to the GitHub Release
                 -> homebrew: create archives, upload, render formula, push to clerk/homebrew-stable
   -> (if no stable release needed) canary.ts versions packages
-    -> build -> sign-macos -> smoke-test subset -> upload GitHub pre-release -> publish @canary (npm)
+    -> build -> sign-macos + sign-windows -> smoke-test subset -> upload GitHub pre-release -> publish @canary (npm)
 
 PR comment "!snapshot [name]"
   -> snapshot.ts versions packages from PR branch
     -> build job: cross-compile binaries
-      -> sign-macos job: code sign + notarize darwin binaries
+      -> sign-macos + sign-windows jobs: code sign darwin and win32 binaries
         -> smoke-test job: verify linux-x64 binary
           -> publish-npm: publish @snapshot packages
             -> post installation comment on PR
@@ -150,7 +150,40 @@ APPLE_API_KEY_BASE64="..." APPLE_API_KEY_ID="..." APPLE_API_ISSUER_ID="..." \
 bun run scripts/sign-macos.ts --target darwin-arm64 --artifacts-dir dist/artifacts
 ```
 
-### 3. Smoke Test Job (matrix)
+### 3. Sign Windows Job
+
+Defined in [`.github/workflows/sign-windows.yml`](../.github/workflows/sign-windows.yml) and called by the release, canary, and snapshot pipelines. Runs on a Windows runner (one job per win32 architecture). Unlike macOS there is no local script -- [`azure/artifact-signing-action`](https://github.com/Azure/artifact-signing-action) owns credential handling and the `signtool` invocation. For each target, the job:
+
+1. Authenticates to Azure via `azure/login` using OIDC federated credentials (no stored client secret)
+2. Signs the binary through Azure Artifact Signing (formerly Trusted Signing) with a SHA256 file digest
+3. Countersigns with an RFC-3161 timestamp from `http://timestamp.acs.microsoft.com`
+4. Verifies the result with `Get-AuthenticodeSignature`, failing if the status is not `Valid` or the signature carries no timestamp
+5. Re-uploads the signed binary as a GitHub Actions artifact (overwriting the unsigned one)
+
+Azure Artifact Signing issues **short-lived leaf certificates (~72 hours)**. The RFC-3161 countersignature is what keeps a published binary trusted after the leaf expires, which is why the verify step treats a missing timestamp as a hard failure rather than a warning.
+
+Signing runs on a Windows runner because the signing engine is Windows-only; it cannot be folded into the Linux build job. It also cannot reuse `sign-macos.yml`'s matrix -- the two use entirely different toolchains.
+
+Unsigned Windows binaries are blocked outright on machines running WDAC, Smart App Control, or AppLocker in enforcing mode. The block surfaces to users as `spawnSync ... UNKNOWN` from the npm wrapper shim ([`packages/cli/bin/clerk`](../packages/cli/bin/clerk)) and as Code Integrity event 3077 in the Windows event log.
+
+#### Required Secrets
+
+| Secret                       | Description                                                                                                                                     |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AZURE_TENANT_ID`            | Entra tenant containing the signing account                                                                                                     |
+| `AZURE_CLIENT_ID`            | App registration with a federated credential trusting this repository, and the `Trusted Signing Certificate Profile Signer` role on the account |
+| `AZURE_SUBSCRIPTION_ID`      | Subscription containing the Artifact Signing account                                                                                            |
+| `AZURE_SIGNING_ENDPOINT`     | Regional signing endpoint, e.g. `https://eus.codesigning.azure.net/`                                                                            |
+| `AZURE_SIGNING_ACCOUNT`      | Artifact Signing account name                                                                                                                   |
+| `AZURE_SIGNING_CERT_PROFILE` | Certificate profile name within that account                                                                                                    |
+
+All six are declared `required: true`, so a release fails fast rather than silently shipping an unsigned `clerk.exe`.
+
+The calling job must grant `id-token: write`; the repository-level default is `contents: read`, so each of the three call sites in `release.yml` sets its own `permissions` block.
+
+**Local testing:** not practical -- signing requires a Windows host plus an Azure identity federated to this repository. Exercise it through a `!snapshot` run instead.
+
+### 4. Smoke Test Job (matrix)
 
 Downloads each compiled binary and runs `--version` to verify the binary actually executes. Smoke testing is handled by a reusable workflow (`.github/workflows/smoke-test.yml`) shared across stable, canary, and snapshot pipelines. Each caller passes a preset name (`stable`, `canary`, or `snapshot`); the reusable workflow resolves the preset to a target matrix internally. glibc targets run natively on a platform-matched GitHub-hosted runner; musl targets run inside an Alpine Docker container on a Linux runner.
 
@@ -158,7 +191,7 @@ Not all targets have a native runner available. `win32-arm64` is published as be
 
 Publishing and GitHub Release upload are gated on all smoke tests passing.
 
-### 4. Publish npm Job
+### 5. Publish npm Job
 
 Runs the releaser script (`scripts/releaser.ts`) via `bun run release` (stable), `bun run release:canary` (canary), or `bun run release:snapshot` (snapshot):
 
@@ -191,11 +224,11 @@ Publishing uses [npm OIDC trusted publishing](https://docs.npmjs.com/trusted-pub
 
 > **First publish**: New packages cannot use trusted publishing until they exist on npm. The very first stable release requires a one-time `NODE_AUTH_TOKEN` with a granular access token. After that, configure trusted publishers for all packages and remove the token.
 
-### 5. Upload GitHub Assets Job
+### 6. Upload GitHub Assets Job
 
 Attaches the compiled binaries to the GitHub Release for direct download. Binaries are uploaded with display names following the `clerk-<target>` convention (e.g., `clerk-darwin-arm64`, `clerk-win32-x64.exe`).
 
-### 6. Homebrew Job
+### 7. Homebrew Job
 
 Creates `.tar.gz` archives of the 4 Homebrew-relevant binaries (darwin-arm64, darwin-x64, linux-arm64, linux-x64) downloaded directly from Actions artifacts, uploads them to the GitHub Release, computes SHA256 checksums, renders `Formula/clerk.rb`, and pushes the result to `clerk/homebrew-stable`. The push uses the `HOMEBREW_TAP_TOKEN` secret (a fine-grained PAT or GitHub App token with `contents: write` on `clerk/homebrew-stable`).
 
@@ -228,6 +261,7 @@ Install: `brew install clerk/stable/clerk`
 | `.changeset/config.json`                     | Changesets configuration                                                           |
 | `.github/workflows/build-binaries.yml`       | Reusable workflow for cross-compiling binaries (called by release + snapshot)      |
 | `.github/workflows/sign-macos.yml`           | Reusable workflow for macOS code signing and notarization                          |
+| `.github/workflows/sign-windows.yml`         | Reusable workflow for Windows Authenticode signing via Azure Artifact Signing      |
 | `.github/workflows/smoke-test.yml`           | Reusable workflow for smoke-testing binaries (called by release + snapshot)        |
 | `.github/workflows/release.yml`              | GitHub Actions release, canary, and snapshot workflow                              |
 
@@ -305,4 +339,5 @@ If your change is internal-only (CI, tests, docs, refactoring), you can skip the
 - **Org membership check**: Snapshot releases require the commenter to be a `MEMBER` or `OWNER` of the repository's organization, verified via `author_association`.
 - **OIDC trusted publishing**: Publish jobs authenticate via GitHub's OIDC provider instead of stored npm tokens. This eliminates secret rotation, prevents token exfiltration, and scopes publish permissions to specific workflow files.
 - **macOS code signing and notarization**: macOS binaries are signed with a Developer ID Application certificate and notarized by Apple before publishing. Gatekeeper checks the notarization ticket online on first execution.
+- **Windows Authenticode signing**: Windows binaries are Authenticode-signed and RFC-3161 timestamped via Azure Artifact Signing before publishing, so machines running WDAC, Smart App Control, or AppLocker can execute or allowlist them by publisher.
 - **CI build check**: Every PR to `main` runs a JS bundle build to catch bundler-specific failures before merge.
