@@ -52,6 +52,9 @@ const supabaseSource = {
   postTransform: (user) => {
     user.createdAt = toIsoDate(user.createdAt);
 
+    // Supabase stores E.164 without the leading + (14165550123); Clerk needs it.
+    if (typeof user.phone === "string" && /^\d+$/.test(user.phone)) user.phone = `+${user.phone}`;
+
     // Supabase bans until a time; a "permanent" ban is just a far-future one.
     // Clerk's ban has no end, so only a ban still in force carries, and it then
     // stays until someone lifts it in Clerk.

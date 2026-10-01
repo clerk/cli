@@ -460,6 +460,20 @@ describe("firebase", () => {
 describe("supabase", () => {
   const base = { id: "sb1", email: "a@x.dev", email_confirmed_at: "2024-06-29 20:25:06.126079+00" };
 
+  test.each([
+    ["14165550123", "+14165550123"],
+    ["+14165550123", "+14165550123"],
+  ])("phone %p imports as %p", (phone, expected) => {
+    const user = one("supabase", { ...base, phone, phone_confirmed_at: "2024-06-29 20:25:06+00" });
+    expect(user?.phone).toBe(expected);
+  });
+
+  test("adds the + to an unconfirmed phone too", () => {
+    expect(one("supabase", { ...base, phone: "14165550123" })?.unverifiedPhoneNumbers).toBe(
+      "+14165550123",
+    );
+  });
+
   // An expired ban means the user is active again in Supabase.
   test.each([
     ["2999-01-01 00:00:00+00", true],
