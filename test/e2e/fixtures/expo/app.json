@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "clerk-fixture-expo-qytbqw",
-    "slug": "clerk-fixture-expo-qytbqw",
+    "name": "clerk-fixture-expo-1q3pp1",
+    "slug": "clerk-fixture-expo-1q3pp1",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "clerkfixtureexpoqytbqw",
+    "scheme": "clerkfixtureexpo1q3pp1",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
