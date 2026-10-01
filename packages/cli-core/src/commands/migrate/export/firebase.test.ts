@@ -374,6 +374,17 @@ describe("buildFirebaseExport", () => {
     expect(byLabel["have a phone number"]).toBe(1);
     expect(lines).toHaveLength(2);
   });
+
+  // Firebase returns an empty passwordHash for users it did not hash itself.
+  test("counts password users whose hash Firebase did not return", () => {
+    const { users, unreadablePasswords } = buildFirebaseExport([
+      fbUser(0, { providerUserInfo: [{ providerId: "password" }] }),
+      fbUser(1, { passwordHash: "", providerUserInfo: [{ providerId: "password" }] }),
+      fbUser(2, { passwordHash: "", providerUserInfo: [{ providerId: "google.com" }] }),
+    ]);
+    expect(unreadablePasswords).toBe(1);
+    expect("passwordHash" in users[1]!).toBe(false);
+  });
 });
 
 describe("fetchHashConfig", () => {

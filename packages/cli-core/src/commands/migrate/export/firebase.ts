@@ -433,12 +433,24 @@ export function mapFirebaseUserToExport(user: FirebaseUser): Record<string, unkn
   return exported;
 }
 
+function hasPasswordProvider(user: FirebaseUser): boolean {
+  const providers = user.providerUserInfo;
+  return (
+    Array.isArray(providers) &&
+    providers.some((provider) => (provider as { providerId?: unknown })?.providerId === "password")
+  );
+}
+
 export function buildFirebaseExport(
   users: FirebaseUser[],
   record: (line: UserLine) => void = () => {},
 ) {
   const exported: Record<string, unknown>[] = [];
   const counts = { email: 0, verified: 0, password: 0, name: 0, phone: 0 };
+  // Password users Firebase returned no hash for: it only returns digests it
+  // made itself (scrypt), and an empty string for users uploaded with bcrypt,
+  // HMAC or any other hasher.
+  let unreadablePasswords = 0;
 
   for (const user of users) {
     const userId = String(user.localId ?? "");
@@ -449,6 +461,7 @@ export function buildFirebaseExport(
       if (mapped.email) counts.email++;
       if (mapped.emailVerified) counts.verified++;
       if (mapped.passwordHash) counts.password++;
+      else if (hasPasswordProvider(user)) unreadablePasswords++;
       if (mapped.displayName) counts.name++;
       if (mapped.phoneNumber) counts.phone++;
 
@@ -460,6 +473,7 @@ export function buildFirebaseExport(
 
   return {
     users: exported,
+    unreadablePasswords,
     coverage: [
       { label: "have an email address", count: counts.email },
       { label: "have a verified email", count: counts.verified },
@@ -537,7 +551,11 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
     );
 
     const run = await startExportRun(options, { platform: "firebase" });
-    const { users: exported, coverage } = buildFirebaseExport(users, run.append);
+    const {
+      users: exported,
+      coverage,
+      unreadablePasswords,
+    } = buildFirebaseExport(users, run.append);
 
     // Read before the file is written, so the envelope carries them and the
     // import needs no --firebase-* flags.
@@ -555,6 +573,14 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
     if (!options.json) {
       log.blank();
       for (const line of formatHashConfigGuidance(hashConfig, passwordCount)) log.info(line);
+    }
+
+    if (unreadablePasswords > 0) {
+      log.warn(
+        `${unreadablePasswords} user${unreadablePasswords === 1 ? " has" : "s have"} a password Firebase did not return. ` +
+          "Firebase only returns hashes it made itself; users imported into Firebase with bcrypt, HMAC or another hasher come back without one. " +
+          "They will be imported without a password and need to reset it.",
+      );
     }
   });
 }
