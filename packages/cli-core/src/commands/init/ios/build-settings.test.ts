@@ -438,40 +438,47 @@ describe("inspectTargetBuildConfigurations", () => {
     });
   });
 
-  test("does not trust a fallback Bundle ID under a versioned xcconfig SDK condition", async () => {
-    const { configurations } = await inspectFixture({
-      xcconfig: [
-        "PRODUCT_BUNDLE_IDENTIFIER = com.example.Fallback",
-        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos26*] = com.example.Versioned",
-      ].join("\n"),
-      targetBuildSettings: { PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)" },
-    });
+  test.each(["iphoneos26*", "iphoneos*.*"])(
+    "does not trust a fallback Bundle ID under xcconfig SDK condition %s",
+    async (sdk) => {
+      const { configurations } = await inspectFixture({
+        xcconfig: [
+          "PRODUCT_BUNDLE_IDENTIFIER = com.example.Fallback",
+          `PRODUCT_BUNDLE_IDENTIFIER[sdk=${sdk}] = com.example.Versioned`,
+        ].join("\n"),
+        targetBuildSettings: { PRODUCT_BUNDLE_IDENTIFIER: "$(inherited)" },
+      });
 
-    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
-      state: "unresolved",
-      missingVariables: ["unsupported xcconfig condition"],
-    });
-  });
+      expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+        state: "unresolved",
+        missingVariables: ["unsupported xcconfig condition"],
+      });
+    },
+  );
 
-  test("also treats versioned inline SDK conditions as unresolved", async () => {
-    const { configurations } = await inspectFixture({
-      targetBuildSettings: {
-        PRODUCT_BUNDLE_IDENTIFIER: "com.example.Fallback",
-        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos26*]": "com.example.Versioned",
-      },
-    });
+  test.each(["iphoneos26*", "iphoneos*.*"])(
+    "also treats inline SDK condition %s as unresolved",
+    async (sdk) => {
+      const { configurations } = await inspectFixture({
+        targetBuildSettings: {
+          PRODUCT_BUNDLE_IDENTIFIER: "com.example.Fallback",
+          [`PRODUCT_BUNDLE_IDENTIFIER[sdk=${sdk}]`]: "com.example.Versioned",
+        },
+      });
 
-    expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
-      state: "unresolved",
-      missingVariables: ["unsupported conditional build setting"],
-    });
-  });
+      expect(configurations[0]?.model.bundleIdentifier).toMatchObject({
+        state: "unresolved",
+        missingVariables: ["unsupported conditional build setting"],
+      });
+    },
+  );
 
   for (const source of ["xcconfig", "inline"] as const) {
     test.each([
       { condition: "sdk=IPHONE*", value: "com.example.Shipping" },
       { condition: "sdk=iPhone*", value: "com.example.Shipping" },
       { condition: "sdk=iphone*", value: "com.example.Conditional" },
+      { condition: "sdk=*", value: "com.example.Conditional" },
       { condition: "arch=ARM64", value: "com.example.Shipping" },
       { condition: "config=debug", value: "com.example.Shipping" },
       { condition: "config=debu?", value: "com.example.Shipping" },

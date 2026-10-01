@@ -530,9 +530,10 @@ function parseInlineBuildSettingKey(
     if (!["sdk", "arch", "config"].includes(type)) {
       return { key, supported: false };
     }
-    // BuildContext records platform families, not SDK versions. A pattern
-    // without a trailing wildcard can differ between iphoneos and iphoneos26.5.
-    if (type === "sdk" && (!value.endsWith("*") || /[0-9?]/.test(value))) {
+    // BuildContext records platform families, not SDK versions. Only model
+    // alphabetic family globs ending in '*'; even a digit-free pattern like
+    // iphoneos*.* can match iphoneos26.5 without matching iphoneos.
+    if (type === "sdk" && !/^[A-Za-z*]*\*$/.test(value)) {
       return { key, supported: false };
     }
     if (type === "sdk") conditions.push({ sdk: value });

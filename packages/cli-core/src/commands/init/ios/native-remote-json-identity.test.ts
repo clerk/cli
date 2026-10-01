@@ -25,6 +25,7 @@ test.each([
   { name: "missing manual plist", generated: "NO" },
   { name: "preprocessed plist", generated: "NO", plist: "com.example.Actual", preprocess: "YES" },
   { name: "packaging context conflict", arch: true },
+  { name: "SDK wildcard that requires a version separator", sdkPattern: "iphoneos*.*" },
   { name: "uppercase user variable", uppercase: true, expected: "com.example.Actual.app" },
 ])("authorizes JSON registration using the effective identity: $name", async (scenario) => {
   const root = await mkdtemp(join(tmpdir(), "clerk-native-effective-identity-"));
@@ -50,6 +51,9 @@ test.each([
         : {}),
       ...(scenario.uppercase
         ? { INHERITED: "com.example.Actual", PRODUCT_BUNDLE_IDENTIFIER: "$(INHERITED).app" }
+        : {}),
+      ...(scenario.sdkPattern
+        ? { [`PRODUCT_BUNDLE_IDENTIFIER[sdk=${scenario.sdkPattern}]`]: "com.example.Versioned" }
         : {}),
     };
     await Bun.write(path, applyXCProjValue(source, ["targets", 0, "build-settings"], settings));

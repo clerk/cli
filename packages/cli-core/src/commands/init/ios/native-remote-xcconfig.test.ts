@@ -23,6 +23,12 @@ test.each([
     identity: "unresolved",
   },
   {
+    name: "SDK wildcards that require a version separator",
+    xcconfig:
+      "PRODUCT_BUNDLE_IDENTIFIER = com.example.MyApp\nPRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*.*] = com.example.Versioned\n",
+    identity: "unresolved",
+  },
+  {
     name: "indirect conditional values",
     xcconfig:
       "APP_SUFFIX = MyApp\nAPP_SUFFIX[variant=profile] = Profile\nPRODUCT_BUNDLE_IDENTIFIER = com.example.$(APP_SUFFIX)\n",
