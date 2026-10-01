@@ -105,6 +105,14 @@ const betterAuthSource = {
     // runs before normalizeUserData and must accept those too.
     if (isVerified(user.banned, "boolean")) user.banned = true;
     else delete user.banned;
+
+    // The anonymous plugin's guests are throwaway accounts with placeholder
+    // emails (anon-…@…), not people to migrate.
+    if (isVerified(user.isAnonymous ?? user.is_anonymous, "boolean")) {
+      user.skipReason = "anonymous Better Auth user";
+    }
+    delete user.isAnonymous;
+    delete user.is_anonymous;
   },
 } satisfies SourceEntry;
 

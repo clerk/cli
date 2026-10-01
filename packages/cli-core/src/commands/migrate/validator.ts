@@ -52,6 +52,9 @@ export const userSchema = z
     passwordHasher: passwordHasherEnum.optional(),
     /** Set by a source that found a password Clerk cannot verify, and left it out. */
     passwordDropped: z.boolean().optional(),
+    // Set by a source for a user that should not be created at all; the checks
+    // reject it with this reason. Never sent to Clerk.
+    skipReason: z.string().optional(),
     // 2FA
     totpSecret: z.string().optional(),
     backupCodesEnabled: z.boolean().optional(),

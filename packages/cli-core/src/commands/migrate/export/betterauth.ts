@@ -6,7 +6,8 @@
  *
  * Better Auth's schema depends on which plugins are enabled, so the columns
  * are **detected from the schema** rather than asked for: the username plugin
- * adds `username`, admin adds `banned`, phone-number adds `phoneNumber`, and
+ * adds `username`, admin adds `banned`, phone-number adds `phoneNumber`,
+ * anonymous adds `isAnonymous`, and
  * so on. Selecting a column that is not there fails the whole query, and
  * asking the user which plugins they run is a question their database can
  * already answer.
@@ -40,6 +41,7 @@ export const PLUGIN_COLUMNS = [
   "banReason",
   "banExpires",
   "twoFactorEnabled",
+  "isAnonymous",
 ] as const;
 
 export type PluginColumn = (typeof PLUGIN_COLUMNS)[number];

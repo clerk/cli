@@ -497,6 +497,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   let candidates: User[] = [];
   for (const user of input.users) {
     const reason =
+      user.skipReason ??
       fileDuplicates.get(user.userId) ??
       missingRequiredIdentifier(user, input.settings) ??
       usernameProblem(user, input.settings) ??

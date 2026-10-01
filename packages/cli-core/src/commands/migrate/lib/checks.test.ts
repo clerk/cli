@@ -204,6 +204,14 @@ describe("rejects", () => {
     }
   });
 
+  test("a user its source asked to skip, with the source's reason", async () => {
+    const checks = await checkImport(
+      input({ users: [user("a", { skipReason: "anonymous Better Auth user" }), user("b")] }),
+    );
+    expect(checks.rejects).toEqual([{ sourceId: "a", reason: "anonymous Better Auth user" }]);
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["b"]);
+  });
+
   describe("usernames", () => {
     const withUsernames = (rules: object) =>
       ({

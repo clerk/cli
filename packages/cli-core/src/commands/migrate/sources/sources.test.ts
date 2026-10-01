@@ -309,6 +309,17 @@ describe("authjs", () => {
 describe("betterauth", () => {
   const base = { user_id: "ba1", email: "a@x.dev", email_verified: true };
 
+  test.each([
+    [1, "anonymous Better Auth user"],
+    [true, "anonymous Better Auth user"],
+    [0, undefined],
+    [undefined, undefined],
+  ])("isAnonymous=%p sets skipReason %p", (isAnonymous, expected) => {
+    const user = one("betterauth", { ...base, isAnonymous });
+    expect(user?.skipReason).toBe(expected);
+    expect("isAnonymous" in (user ?? {})).toBe(false);
+  });
+
   // Better Auth's own scrypt: a 16-byte hex salt, a colon, a 64-byte hex key.
   const SALT = "a".repeat(32);
   const KEY = "b".repeat(128);
