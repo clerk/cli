@@ -204,6 +204,47 @@ describe("rejects", () => {
     }
   });
 
+  describe("usernames", () => {
+    const withUsernames = (rules: object) =>
+      ({
+        attributes: { email_address: { enabled: true }, username: { enabled: true } },
+        social: {},
+        username_settings: { min_length: 4, max_length: 64, ...rules },
+      }) as unknown as UserSettingsJSON;
+    const reasonFor = async (username: string, rules: object = {}) =>
+      (
+        await checkImport(
+          input({ settings: withUsernames(rules), users: [user("a", { username })] }),
+        )
+      ).rejects[0]?.reason;
+
+    test.each([
+      ["ada_l-1", {}],
+      ["ada.l", { allow_extended_special_characters: true }],
+    ])("%p is accepted", async (username, rules) => {
+      expect(await reasonFor(username, rules)).toBeUndefined();
+    });
+
+    test("a . needs extended special characters", async () => {
+      expect(await reasonFor("ada.lovelace")).toContain("turn on extended special characters");
+    });
+
+    test.each([
+      ["ada", "4–64 characters"],
+      ["12345", "no letters"],
+      ["ada@x", "characters Clerk does not allow"],
+    ])("%p is rejected: %s", async (username, reason) => {
+      expect(await reasonFor(username)).toContain(reason);
+    });
+
+    test("a username is not checked when usernames are off", async () => {
+      const checks = await checkImport(
+        input({ settings: EMAIL_REQUIRED, users: [user("a", { username: "a.b" })] }),
+      );
+      expect(checks.rejects).toEqual([]);
+    });
+  });
+
   test("groups the rejects by reason", async () => {
     const checks = await checkImport(
       input({

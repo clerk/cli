@@ -159,6 +159,51 @@ function missingRequiredIdentifier(
   return undefined;
 }
 
+/** What FAPI serves under `username_settings`; `@clerk/shared` types only the lengths. */
+type UsernameSettings = {
+  min_length?: number;
+  max_length?: number;
+  allow_extended_special_characters?: boolean;
+  allow_numeric_usernames?: boolean;
+};
+
+const USERNAME_DEFAULT = /^[a-zA-Z0-9_-]+$/;
+const USERNAME_EXTENDED = /^[a-zA-Z0-9!#$'+.^_`~-]+$/;
+
+/**
+ * Clerk's username rules, mirrored from `validate.Username` in clerk_go, so a
+ * username the instance would refuse is a reject here rather than a failed
+ * create. Skipped when usernames are off: the readiness warnings cover that.
+ */
+function usernameProblem(user: User, settings: UserSettingsJSON | null): string | undefined {
+  const username = user.username;
+  if (!settings || typeof username !== "string" || !username) return undefined;
+  if (!isEnabled(settings, "username")) return undefined;
+
+  const rules = (settings as { username_settings?: UsernameSettings }).username_settings ?? {};
+  const length = [...username].length;
+  if (rules.min_length !== undefined && rules.max_length !== undefined) {
+    if (length < rules.min_length || length > rules.max_length) {
+      return `username is not ${rules.min_length}–${rules.max_length} characters, which this instance requires`;
+    }
+  }
+  if (!rules.allow_numeric_usernames && !/[a-zA-Z]/.test(username)) {
+    return "username has no letters; turn on numeric usernames to allow it";
+  }
+  if (rules.allow_extended_special_characters) {
+    if (!USERNAME_EXTENDED.test(username)) return "username has characters Clerk does not allow";
+    if (/^\+[1-9]\d{1,14}$/.test(username))
+      return "username is a phone number, which Clerk does not allow";
+    return undefined;
+  }
+  if (!USERNAME_DEFAULT.test(username)) {
+    return USERNAME_EXTENDED.test(username)
+      ? "username has special characters this instance does not allow; turn on extended special characters"
+      : "username has characters Clerk does not allow";
+  }
+  return undefined;
+}
+
 /** First user in the file to claim each email, phone and source ID. */
 function findFileDuplicates(users: User[]): Map<string, string> {
   const reasons = new Map<string, string>();
@@ -425,6 +470,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     const reason =
       fileDuplicates.get(user.userId) ??
       missingRequiredIdentifier(user, input.settings) ??
+      usernameProblem(user, input.settings) ??
       (user.password && user.passwordHasher
         ? hashShapeProblem(user.password, user.passwordHasher)
         : undefined) ??
