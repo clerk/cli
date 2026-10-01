@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEV_USER_LIMIT,
+  resolveDevUserLimit,
   detectInstanceType,
   getDefaultConcurrencyLimit,
   getDefaultRateLimit,
@@ -37,6 +38,19 @@ describe("default limits", () => {
 
   test("development instances default to 100 users", () => {
     expect(DEV_USER_LIMIT).toBe(100);
+  });
+});
+
+describe("resolveDevUserLimit", () => {
+  test.each([
+    [undefined, 100],
+    ["500", 500],
+    ["250.7", 250],
+    ["0", 100],
+    ["-5", 100],
+    ["lots", 100],
+  ])("CLERK_MIGRATE_DEV_USER_LIMIT=%p gives %i", (value, expected) => {
+    expect(resolveDevUserLimit({ CLERK_MIGRATE_DEV_USER_LIMIT: value })).toBe(expected);
   });
 });
 

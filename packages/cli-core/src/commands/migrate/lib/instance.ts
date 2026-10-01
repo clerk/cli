@@ -11,11 +11,27 @@
  *
  * Only a default: Clerk raises it per instance on request, and the real value
  * (`max_allowed_users`) is not served by BAPI, DAPI or FAPI — only by Clerk's
- * internal staff API. So this is a number to warn against, never one to refuse
- * an import over; the instance in front of you may be allowed far more.
- * Production instances have no limit at all.
+ * internal staff API. The checks reject users past it, so an instance Clerk has
+ * raised overrides it with `CLERK_MIGRATE_DEV_USER_LIMIT` (see
+ * {@link resolveDevUserLimit}). Production instances have no limit at all.
  */
 export const DEV_USER_LIMIT = 100;
+
+/** A positive number from the environment, or undefined. */
+function positive(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+/**
+ * The development-instance user limit for this run: `CLERK_MIGRATE_DEV_USER_LIMIT`
+ * when it is a positive number, otherwise {@link DEV_USER_LIMIT}.
+ */
+export function resolveDevUserLimit(env: Record<string, string | undefined> = process.env): number {
+  const override = positive(env.CLERK_MIGRATE_DEV_USER_LIMIT);
+  return override ? Math.floor(override) : DEV_USER_LIMIT;
+}
 
 /** How many times a 429 is retried before the user is recorded as failed. */
 export const MAX_RETRIES = 5;
@@ -71,12 +87,6 @@ export function resolveLimits(
   env: Record<string, string | undefined> = process.env,
 ): ResolvedLimits {
   const instanceType = detectInstanceType(secretKey);
-
-  const positive = (value: string | undefined): number | undefined => {
-    if (!value) return undefined;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-  };
 
   const rateLimit = positive(env.CLERK_MIGRATE_RATE_LIMIT) ?? getDefaultRateLimit(instanceType);
   const concurrencyLimit =

@@ -24,7 +24,7 @@ import { splitIdentifiers } from "../import-users.ts";
 import type { User } from "../types.ts";
 import { analyzeFields, hasValue } from "./analysis.ts";
 import { enabledSocialProviders, providerLabel, toClerkStrategy } from "./clerk-config.ts";
-import { DEV_USER_LIMIT } from "./instance.ts";
+import { resolveDevUserLimit } from "./instance.ts";
 import { buildChangePayload, buildSettingChanges } from "./modify-settings.ts";
 import { buildReadinessReport } from "./readiness.ts";
 import type { ApiScheduler } from "./scheduler.ts";
@@ -447,16 +447,18 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
 
   // The limit is a development-instance default, not a number the API serves,
   // so it is checked against the live count and the importable users alone.
+  // An instance Clerk has raised sets CLERK_MIGRATE_DEV_USER_LIMIT.
   let quota: Quota | undefined;
   if (input.instanceType === "dev") {
-    const headroom = Math.max(0, DEV_USER_LIMIT - (input.existingUsers ?? 0));
+    const limit = resolveDevUserLimit();
+    const headroom = Math.max(0, limit - (input.existingUsers ?? 0));
     const over = Math.max(0, candidates.length - headroom);
-    quota = { existing: input.existingUsers ?? null, limit: DEV_USER_LIMIT, headroom, over };
+    quota = { existing: input.existingUsers ?? null, limit, headroom, over };
     if (over > 0) {
       for (const user of candidates.slice(headroom)) {
         rejects.push({
           sourceId: user.userId,
-          reason: `over the development instance's ${DEV_USER_LIMIT}-user limit`,
+          reason: `over the development instance's ${limit}-user limit (raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT)`,
         });
       }
       candidates = candidates.slice(0, headroom);

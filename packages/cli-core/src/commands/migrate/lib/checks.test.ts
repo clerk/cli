@@ -182,9 +182,26 @@ describe("rejects", () => {
     );
     expect(checks.importable.map((entry) => entry.userId)).toEqual(["a", "b"]);
     expect(checks.rejects).toEqual([
-      { sourceId: "c", reason: "over the development instance's 100-user limit" },
+      {
+        sourceId: "c",
+        reason:
+          "over the development instance's 100-user limit (raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT)",
+      },
     ]);
     expect(checks.quota).toEqual({ existing: 98, limit: 100, headroom: 2, over: 1 });
+  });
+
+  test("CLERK_MIGRATE_DEV_USER_LIMIT raises the headroom", async () => {
+    process.env.CLERK_MIGRATE_DEV_USER_LIMIT = "500";
+    try {
+      const checks = await checkImport(
+        input({ instanceType: "dev", existingUsers: 98, users: [user("a"), user("b"), user("c")] }),
+      );
+      expect(checks.rejects).toEqual([]);
+      expect(checks.quota).toEqual({ existing: 98, limit: 500, headroom: 402, over: 0 });
+    } finally {
+      delete process.env.CLERK_MIGRATE_DEV_USER_LIMIT;
+    }
   });
 
   test("groups the rejects by reason", async () => {
