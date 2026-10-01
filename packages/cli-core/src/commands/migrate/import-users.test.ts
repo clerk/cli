@@ -262,9 +262,15 @@ describe("importUsers", () => {
     });
 
     expect(summary).toMatchObject({ successful: 1, failed: 0 });
-    expect(lines).toHaveLength(1);
-    expect(lines[0]?.status).toBe("created");
-    expect(lines[0]?.error).toContain("Failed to add additional email b@x.dev");
+    // On record once created, then again with what the attach added.
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toEqual({
+      sourceId: lines[0]!.sourceId,
+      clerkId: "user_created",
+      status: "created",
+    });
+    expect(lines[1]?.status).toBe("created");
+    expect(lines[1]?.error).toContain("Failed to add additional email b@x.dev");
   });
 
   // Shapes from clerk_go's apierror: the country error carries its own code
@@ -306,7 +312,9 @@ describe("importUsers", () => {
     expect(summary).toMatchObject({ successful: 1, failed: 0 });
     expect(requests).toHaveLength(2);
     expect(requests[1]?.body).not.toHaveProperty("phone_number");
-    expect(lines[0]?.error).toContain(`Failed to add phone +31612345678: ${clerkErr.long_message}`);
+    expect(lines.at(-1)?.error).toContain(
+      `Failed to add phone +31612345678: ${clerkErr.long_message}`,
+    );
   });
 
   test("does not retry without the phone when it is the only identifier", async () => {
@@ -329,6 +337,29 @@ describe("importUsers", () => {
 
     expect(summary.failed).toBe(1);
     expect(requests).toHaveLength(1);
+  });
+
+  // A run stopped while attaches wait on the scheduler must still have the
+  // user on record, or `undo` leaves it behind.
+  test("records the user before its additional identifiers attach", async () => {
+    let recordedBeforeAttach = false;
+    stub((url) => {
+      if (url.endsWith("/v1/email_addresses")) {
+        recordedBeforeAttach = lines.some(
+          (line) => line.status === "created" && line.clerkId === "user_created",
+        );
+      }
+      return ok("user_created");
+    });
+
+    await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(recordedBeforeAttach).toBe(true);
   });
 
   test("records a failed user and keeps going", async () => {
@@ -365,9 +396,9 @@ describe("importUsers", () => {
     expect(summary).toMatchObject({ successful: 1, failed: 0 });
     expect(performance.now() - started).toBeGreaterThanOrEqual(900);
     expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatchObject({ status: "created", clerkId: "user_ok" });
-    expect(lines[0]?.error).toContain("Rate limit hit (429)");
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toMatchObject({ status: "created", clerkId: "user_ok" });
+    expect(lines[1]?.error).toContain("Rate limit hit (429)");
   });
 
   test("gives up after the retry ceiling and records the user as failed", async () => {

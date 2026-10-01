@@ -211,12 +211,16 @@ async function attachIdentifier(
 /**
  * Creates one user, then attaches any additional identifiers it carries.
  *
+ * @param onCreated - Called as soon as the user exists, before the attaches:
+ *   those wait their turn on the shared scheduler, and a run stopped in that
+ *   window must still have the user on record for `undo` and re-runs.
  * @returns The Clerk ID, and a note for each identifier that did not attach.
  */
 async function createUser(
   ctx: CreateContext,
   user: User,
   skipPasswordRequirement: boolean,
+  onCreated: (clerkUserId: string) => void,
 ): Promise<{ clerkUserId: string; notes: string[] }> {
   const identifiers = splitIdentifiers(user);
   const create = async (body: Record<string, unknown>) =>
@@ -250,6 +254,7 @@ async function createUser(
   }
 
   const clerkUserId = (response.body as { id?: string })?.id ?? "";
+  onCreated(clerkUserId);
 
   // Extra identifiers are best-effort: a duplicate secondary email should not
   // undo a user who was otherwise imported successfully.
@@ -333,21 +338,25 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
 
   const processUser = async (user: User): Promise<void> => {
     const retries: string[] = [];
-    try {
-      const { clerkUserId, notes } = await retryOn429(
-        async () => createUser(ctx, user, skipPasswordRequirement),
-        { onRetry: ({ message }) => retries.push(message) },
-      );
-      successful++;
-      processed++;
-      const error = [...notes, ...retries].join("; ");
+    const created = (clerkId: string, error?: string) =>
       record({
         sourceId: user.userId,
-        clerkId: clerkUserId,
+        clerkId,
         status: "created",
         ...(error ? { error } : {}),
         ...(user.passwordDropped ? { passwordDropped: true } : {}),
       });
+    try {
+      const { clerkUserId, notes } = await retryOn429(
+        async () => createUser(ctx, user, skipPasswordRequirement, (clerkId) => created(clerkId)),
+        { onRetry: ({ message }) => retries.push(message) },
+      );
+      successful++;
+      processed++;
+      // The user is already on record; a second line, which wins as the
+      // latest, adds what happened on the way.
+      const error = [...notes, ...retries].join("; ");
+      if (error) created(clerkUserId, error);
       progress();
     } catch (error) {
       if (error instanceof RateLimitExceededError) {
