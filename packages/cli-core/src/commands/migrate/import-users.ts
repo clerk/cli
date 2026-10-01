@@ -219,15 +219,35 @@ async function createUser(
   skipPasswordRequirement: boolean,
 ): Promise<{ clerkUserId: string; notes: string[] }> {
   const identifiers = splitIdentifiers(user);
+  const create = async (body: Record<string, unknown>) =>
+    ctx.schedule(async () =>
+      bapiRequest({
+        method: "POST",
+        path: "/v1/users",
+        secretKey: ctx.secretKey,
+        body: JSON.stringify(body),
+      }),
+    );
 
-  const response = await ctx.schedule(async () =>
-    bapiRequest({
-      method: "POST",
-      path: "/v1/users",
-      secretKey: ctx.secretKey,
-      body: JSON.stringify(buildCreateUserBody(user, identifiers, skipPasswordRequirement)),
-    }),
-  );
+  const body = buildCreateUserBody(user, identifiers, skipPasswordRequirement);
+  const phoneNotes: string[] = [];
+  let response;
+  try {
+    response = await create(body);
+  } catch (error) {
+    // A phone Clerk refuses (a country it does not support, a number that is
+    // not E.164) should not cost a user who has an email to be created under.
+    // The country error names no parameter, only its own code.
+    const phoneRefused =
+      error instanceof BapiError &&
+      (error.code === "unsupported_country_code" || error.meta?.param_name === "phone_number");
+    if (!phoneRefused || !identifiers.primaryEmail) throw error;
+    const { phone_number: _dropped, ...withoutPhone } = body;
+    response = await create(withoutPhone);
+    phoneNotes.push(
+      `Failed to add phone ${identifiers.primaryPhone}: ${(error as BapiError).longMessage ?? (error as BapiError).message}`,
+    );
+  }
 
   const clerkUserId = (response.body as { id?: string })?.id ?? "";
 
@@ -248,7 +268,10 @@ async function createUser(
     ),
   ]);
 
-  return { clerkUserId, notes: notes.filter((note): note is string => note !== undefined) };
+  return {
+    clerkUserId,
+    notes: [...phoneNotes, ...notes.filter((note): note is string => note !== undefined)],
+  };
 }
 
 export type ImportUsersOptions = {

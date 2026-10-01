@@ -621,6 +621,10 @@ afterwards with its own request. A failure there is logged and the user still
 counts as imported — a duplicate secondary email should not undo an otherwise
 successful user.
 
+The first phone gets the same treatment when Clerk refuses it — a country the
+instance does not support, or a number that is not E.164 — and the user has an
+email: the create is retried without the phone, and the refusal is logged.
+
 #### Throughput
 
 Defaults follow Clerk's documented `POST /v1/users` limits: 100 req/s for

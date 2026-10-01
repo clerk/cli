@@ -267,6 +267,70 @@ describe("importUsers", () => {
     expect(lines[0]?.error).toContain("Failed to add additional email b@x.dev");
   });
 
+  // Shapes from clerk_go's apierror: the country error carries its own code
+  // and no param_name; the E.164 error is a form error on phone_number.
+  test.each([
+    [
+      403,
+      {
+        code: "unsupported_country_code",
+        message: "Unsupported country code",
+        long_message: "Phone numbers from this country (Netherlands) are currently not supported.",
+        meta: { alpha2: "NL", country_code: "31" },
+      },
+    ],
+    [
+      422,
+      {
+        code: "form_param_format_invalid",
+        message: "is invalid",
+        long_message:
+          "Phone number must be a valid phone number according to E.164 international standard.",
+        meta: { param_name: "phone_number" },
+      },
+    ],
+  ])("retries without a phone Clerk refuses (%i), and notes it", async (status, clerkErr) => {
+    stub((url, attempt) =>
+      url.endsWith("/v1/users") && attempt === 1
+        ? new Response(JSON.stringify({ errors: [clerkErr] }), { status })
+        : ok("user_created"),
+    );
+
+    const summary = await importUsers({
+      users: [user({ phone: "+31612345678" })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(summary).toMatchObject({ successful: 1, failed: 0 });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.body).not.toHaveProperty("phone_number");
+    expect(lines[0]?.error).toContain(`Failed to add phone +31612345678: ${clerkErr.long_message}`);
+  });
+
+  test("does not retry without the phone when it is the only identifier", async () => {
+    stub(
+      () =>
+        new Response(
+          JSON.stringify({
+            errors: [{ code: "x", message: "bad phone", meta: { param_name: "phone_number" } }],
+          }),
+          { status: 422 },
+        ),
+    );
+
+    const summary = await importUsers({
+      users: [user({ email: undefined, phone: "+31612345678" })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(summary.failed).toBe(1);
+    expect(requests).toHaveLength(1);
+  });
+
   test("records a failed user and keeps going", async () => {
     stub((_url, attempt) =>
       attempt === 1 ? clerkError(422, "that email is taken") : ok("user_ok"),
