@@ -275,6 +275,18 @@ describe("warnings", () => {
     expect(checks.rejects).toEqual([]);
   });
 
+  // Clerk refuses the whole create when it is sent an identifier the instance
+  // has off, so the dropped phone has to actually be dropped.
+  test("strips identifiers the instance has off from the importable users", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings({ email_address: { enabled: true }, phone_number: { enabled: false } }),
+        users: [user("a", { phone: "+15555550100", unverifiedPhoneNumbers: ["+15555550101"] })],
+      }),
+    );
+    expect(checks.importable).toEqual([user("a")]);
+  });
+
   test("fields Clerk has no place for", async () => {
     const checks = await checkImport(
       input({ users: [user("a")], unknownFields: { department: 3, role: 1 } }),

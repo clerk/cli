@@ -456,6 +456,29 @@ function countReasons(rejects: Reject[]): ReasonCount[] {
   return [...counts].map(([reason, count]) => ({ reason, count }));
 }
 
+/**
+ * Removes the emails or phones of an instance that has that identifier off.
+ *
+ * The warnings already say they are dropped, but Clerk does not drop them: it
+ * refuses the whole create (`phone_number is not a valid parameter`). Usernames
+ * need no such handling, because the API ignores those itself.
+ */
+function dropDisabledIdentifiers(user: User, settings: UserSettingsJSON | null): User {
+  if (!settings) return user;
+  const fields = [
+    ...(isEnabled(settings, "email_address")
+      ? []
+      : (["email", "emailAddresses", "unverifiedEmailAddresses"] as const)),
+    ...(isEnabled(settings, "phone_number")
+      ? []
+      : (["phone", "phoneNumbers", "unverifiedPhoneNumbers"] as const)),
+  ];
+  if (!fields.some((field) => field in user)) return user;
+  const kept = { ...user };
+  for (const field of fields) delete kept[field];
+  return kept;
+}
+
 export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const rejects: Reject[] = input.failures.map((failure) => ({
     sourceId: failure.userId,
@@ -513,7 +536,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
 
   return {
     total: input.users.length + input.failures.length,
-    importable: candidates,
+    importable: candidates.map((user) => dropDisabledIdentifiers(user, input.settings)),
     rejects,
     rejectReasons: countReasons(rejects),
     warnings: buildWarnings(input, candidates),
