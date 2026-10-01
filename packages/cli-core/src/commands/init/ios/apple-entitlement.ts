@@ -1,6 +1,12 @@
 import { lstat } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import {
+  entitlementsBaseMutations,
+  prepareEntitlementsFileMutations,
+  sameEntitlementsPlanFiles,
+  withHiddenEntitlementsMutations,
+} from "./entitlements-mutations.ts";
 import {
   bytesWithOptionalBOM,
   newEntitlementsBytes,
@@ -17,17 +23,12 @@ import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import {
   applyIOSFileTransaction,
   hashIOSFileBytes,
-  prepareIOSFileMutationBoundary,
-  type IOSCreateFileMutation,
-  type IOSExistingFileMutation,
   type IOSFileMutation,
 } from "./file-transaction.ts";
 import {
-  prepareIOSMissingEntitlementsSettingsMutation,
   validateIOSMissingEntitlementsSettingsPostcondition,
   type IOSMissingEntitlementsSettingsPlan,
 } from "./entitlements-settings.ts";
-import { xcodeProjectDocumentPath } from "./project-document.ts";
 import type { IOSNativePlatform } from "./types.ts";
 
 const APPLE_SIGN_IN_KEY = "com.apple.developer.applesignin";
@@ -308,10 +309,6 @@ function appleEntitlementLines(): string[] {
   ];
 }
 
-function isCreateMutation(mutation: IOSFileMutation): mutation is IOSCreateFileMutation {
-  return "kind" in mutation && mutation.kind === "create";
-}
-
 function isMissingFileError(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -321,48 +318,18 @@ function isMissingFileError(error: unknown): boolean {
   );
 }
 
-function validBaseMutation(mutation: IOSFileMutation): boolean {
-  return (
-    Number.isInteger(mutation.mode) &&
-    mutation.mode >= 0 &&
-    mutation.mode <= 0o7777 &&
-    hashIOSFileBytes(mutation.candidateBytes) === mutation.candidateHash &&
-    (isCreateMutation(mutation) ||
-      hashIOSFileBytes(mutation.originalBytes) === mutation.originalHash)
-  );
-}
-
 function preparedWithHiddenMutations(
   plan: IOSAppleEntitlementPlan,
   mutations: IOSFileMutation[],
   consumedBaseMutationPaths: string[],
 ): Extract<PreparedIOSAppleEntitlementMutation, { status: "ready" }> {
-  const result = {
-    status: "ready" as const,
-    plan,
-    consumedBaseMutationPaths: [...consumedBaseMutationPaths].sort(),
-  } as Extract<PreparedIOSAppleEntitlementMutation, { status: "ready" }>;
-  Object.defineProperty(result, "mutations", {
-    value: mutations,
-    enumerable: false,
-    configurable: false,
-    writable: false,
-  });
-  return result;
-}
-
-function samePlanFiles(
-  left: readonly IOSAppleEntitlementPlanFile[],
-  right: readonly IOSAppleEntitlementPlanFile[],
-): boolean {
-  return (
-    left.length === right.length &&
-    left.every(
-      (file, index) =>
-        file.path === right[index]?.path &&
-        file.operation === right[index]?.operation &&
-        file.expectedHash === right[index]?.expectedHash,
-    )
+  return withHiddenEntitlementsMutations(
+    {
+      status: "ready" as const,
+      plan,
+      consumedBaseMutationPaths: [...consumedBaseMutationPaths].sort(),
+    },
+    mutations,
   );
 }
 
@@ -617,23 +584,13 @@ export async function prepareIOSAppleEntitlementMutation(
   }
   if (plan.platformPlans) return prepareMultiplatformAppleEntitlement(plan, options);
 
-  const baseByPath = new Map<string, IOSFileMutation>();
-  for (const mutation of options.baseMutations ?? []) {
-    const path = resolve(mutation.path);
-    if (
-      !isAbsolute(mutation.path) ||
-      path !== mutation.path ||
-      baseByPath.has(path) ||
-      !(await pathIsSafelyWithinIOSRoot(plan.root, path)) ||
-      !validBaseMutation(mutation)
-    ) {
-      return blockPrepared(
-        plan,
-        "invalid-plan",
-        "A caller-supplied base mutation is invalid, duplicated, or outside the invocation root.",
-      );
-    }
-    baseByPath.set(path, mutation);
+  const baseByPath = await entitlementsBaseMutations(plan.root, options.baseMutations);
+  if (!baseByPath) {
+    return blockPrepared(
+      plan,
+      "invalid-plan",
+      "A caller-supplied base mutation is invalid, duplicated, or outside the invocation root.",
+    );
   }
 
   // Compare the exact authorized bytes before reparsing. A concurrent edit
@@ -673,7 +630,7 @@ export async function prepareIOSAppleEntitlementMutation(
     allowMissingEntitlementsCreation: plan.missingEntitlementsSettings != null,
   });
   if (replanned.status === "blocked") return { status: "blocked", plan: replanned };
-  if (!samePlanFiles(plan.files, replanned.files)) return { status: "stale", plan };
+  if (!sameEntitlementsPlanFiles(plan.files, replanned.files)) return { status: "stale", plan };
   if (plan.status === "satisfied") {
     return replanned.status === "satisfied"
       ? { status: "satisfied", plan: replanned }
@@ -681,181 +638,46 @@ export async function prepareIOSAppleEntitlementMutation(
   }
   if (replanned.status !== "ready") return { status: "stale", plan };
 
-  const createFile = plan.files.find((file) => file.operation === "create");
-  if (createFile) {
-    if (
-      plan.files.length !== 1 ||
-      !plan.missingEntitlementsSettings ||
-      createFile.path !== plan.missingEntitlementsSettings.entitlementsPath
-    ) {
-      return blockPrepared(
-        plan,
-        "invalid-plan",
-        "The missing-entitlements Apple plan is internally inconsistent.",
-      );
-    }
-    const entitlementsPath = resolve(plan.root, createFile.path);
-    const pbxprojPath = await xcodeProjectDocumentPath(resolve(plan.root, plan.projectPath));
-    if (!pbxprojPath) {
-      return blockPrepared(plan, "invalid-plan", "The selected Xcode project document is missing.");
-    }
-    const baseEntitlements = baseByPath.get(entitlementsPath);
-    const basePbx = baseByPath.get(pbxprojPath);
-    if (baseEntitlements && !isCreateMutation(baseEntitlements)) {
-      return { status: "stale", plan };
-    }
-    if (basePbx && isCreateMutation(basePbx)) {
-      return blockPrepared(
-        plan,
-        "invalid-plan",
-        "The base Xcode mutation must replace an existing file.",
-      );
-    }
-    const settings = await prepareIOSMissingEntitlementsSettingsMutation(
-      plan.missingEntitlementsSettings,
-      basePbx as IOSExistingFileMutation | undefined,
-    );
-    if (settings.status === "stale") return { status: "stale", plan };
-    if (settings.status !== "ready") {
-      return blockPrepared(
-        plan,
-        "invalid-plan",
-        "The iOS entitlements build settings could not be prepared safely.",
-      );
-    }
-
-    const expectedParentIdentity =
-      plan.missingEntitlementsSettings.expectedSynchronizedRootIdentity;
-    const synchronizedRootPath = plan.missingEntitlementsSettings.synchronizedRootPath;
-    const boundary = await prepareIOSFileMutationBoundary(plan.root, entitlementsPath);
-    if (
-      !expectedParentIdentity ||
-      !synchronizedRootPath ||
-      dirname(entitlementsPath) !== resolve(plan.root, synchronizedRootPath)
-    ) {
-      return blockPrepared(
-        plan,
-        "invalid-plan",
-        "The entitlements destination no longer matches its synchronized target root.",
-      );
-    }
-    if (
-      !boundary ||
-      boundary.parentIdentity.device !== expectedParentIdentity.device ||
-      boundary.parentIdentity.inode !== expectedParentIdentity.inode
-    ) {
-      return { status: "stale", plan };
-    }
-
-    let createMutation: IOSCreateFileMutation;
-    if (baseEntitlements) {
-      if (!isDeepStrictEqual(baseEntitlements.boundary, boundary)) {
-        return { status: "stale", plan };
-      }
-      const inspected = inspectEntitlementsBytes(
-        plan.root,
-        entitlementsPath,
-        baseEntitlements.candidateBytes,
-        baseEntitlements.mode,
-      );
-      if (inspected.status === "blocked") {
-        return blockPrepared(plan, inspected.blocker.code, inspected.blocker.message);
-      }
-      const candidateBytes = candidateWithApple(plan.root, inspected.document);
-      if (!candidateBytes) {
-        return blockPrepared(
-          plan,
-          "unsupported-entitlements",
-          "The composed entitlements candidate could not be updated safely.",
-        );
-      }
-      createMutation = {
-        ...baseEntitlements,
-        boundary: baseEntitlements.boundary,
-        candidateBytes,
-        candidateHash: hashIOSFileBytes(candidateBytes),
-      };
-    } else {
-      const candidateBytes = newEntitlementsBytes(appleEntitlementLines());
-      createMutation = {
-        kind: "create",
-        path: entitlementsPath,
-        boundary,
-        candidateBytes,
-        candidateHash: hashIOSFileBytes(candidateBytes),
-        mode: 0o644,
-      };
-    }
-    return preparedWithHiddenMutations(
-      plan,
-      [createMutation, settings.mutation],
-      [...(baseEntitlements ? [entitlementsPath] : []), ...(basePbx ? [pbxprojPath] : [])],
-    );
+  const prepared = await prepareEntitlementsFileMutations<
+    EntitlementsDocument,
+    IOSAppleEntitlementBlocker
+  >(plan, baseByPath, {
+    inspectFile: inspectEntitlementsFile,
+    inspectBytes: inspectEntitlementsBytes,
+    newBytes: () => newEntitlementsBytes(appleEntitlementLines()),
+    edit(source, current, path) {
+      // An earlier candidate can already contain Apple sign-in. Consume it only
+      // when the on-disk file still needs that entitlement.
+      if (current?.appleState === "exact" && source.appleState === "exact") return undefined;
+      const bytes = candidateWithApple(plan.root, source);
+      return bytes
+        ? { bytes }
+        : {
+            blocker: blocker(
+              "unsupported-entitlements",
+              current
+                ? `${path} could not be updated without rewriting unrelated plist content.`
+                : "The composed entitlements candidate could not be updated safely.",
+            ),
+          };
+    },
+  });
+  if (prepared.status === "invalid") {
+    const messages = {
+      creation: "The missing-entitlements Apple plan is internally inconsistent.",
+      project: "The selected Xcode project document is missing.",
+      "base-project": "The base Xcode mutation must replace an existing file.",
+      settings: "The iOS entitlements build settings could not be prepared safely.",
+      destination: "The entitlements destination no longer matches its synchronized target root.",
+      file: "The Apple entitlement plan has an invalid file entry.",
+    };
+    return blockPrepared(plan, "invalid-plan", messages[prepared.reason]);
   }
-
-  const mutations: IOSExistingFileMutation[] = [];
-  const consumed: string[] = [];
-  for (const file of plan.files) {
-    if (file.operation !== "modify" || !file.expectedHash) {
-      return blockPrepared(
-        plan,
-        "invalid-plan",
-        "The Apple entitlement plan has an invalid file entry.",
-      );
-    }
-    const absolutePath = resolve(plan.root, file.path);
-    const current = await inspectEntitlementsFile(plan.root, absolutePath);
-    if (current.status === "blocked" || current.document.hash !== file.expectedHash) {
-      return { status: "stale", plan };
-    }
-    const base = baseByPath.get(absolutePath);
-    if (base && isCreateMutation(base)) return { status: "stale", plan };
-    const boundary = await prepareIOSFileMutationBoundary(plan.root, absolutePath);
-    if (!boundary || (base && !isDeepStrictEqual(base.boundary, boundary))) {
-      return { status: "stale", plan };
-    }
-    if (
-      base &&
-      (base.originalHash !== file.expectedHash ||
-        base.mode !== current.document.mode ||
-        hashIOSFileBytes(base.originalBytes) !== current.document.hash)
-    ) {
-      return { status: "stale", plan };
-    }
-    const source = base
-      ? inspectEntitlementsBytes(plan.root, absolutePath, base.candidateBytes, base.mode)
-      : current;
-    if (source.status === "blocked") {
-      return blockPrepared(plan, source.blocker.code, source.blocker.message);
-    }
-    if (source.document.appleState === "exact") {
-      if (base && current.document.appleState !== "exact") {
-        mutations.push(base);
-        consumed.push(absolutePath);
-      }
-      continue;
-    }
-    const candidateBytes = candidateWithApple(plan.root, source.document);
-    if (!candidateBytes) {
-      return blockPrepared(
-        plan,
-        "unsupported-entitlements",
-        `${file.path} could not be updated without rewriting unrelated plist content.`,
-      );
-    }
-    mutations.push({
-      path: absolutePath,
-      boundary: base?.boundary ?? boundary,
-      originalBytes: base?.originalBytes ?? current.document.bytes,
-      originalHash: base?.originalHash ?? current.document.hash,
-      candidateBytes,
-      candidateHash: hashIOSFileBytes(candidateBytes),
-      mode: base?.mode ?? current.document.mode,
-    });
-    if (base) consumed.push(absolutePath);
+  if (prepared.status === "blocked") {
+    return blockPrepared(plan, prepared.blocker.code, prepared.blocker.message);
   }
-  if (mutations.length === 0) return { status: "satisfied", plan };
-  return preparedWithHiddenMutations(plan, mutations, consumed);
+  if (prepared.status !== "ready") return { status: prepared.status, plan };
+  return preparedWithHiddenMutations(plan, prepared.mutations, prepared.consumedBaseMutationPaths);
 }
 
 export async function validatePreparedIOSAppleEntitlement(

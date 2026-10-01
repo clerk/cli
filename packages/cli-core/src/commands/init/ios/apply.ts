@@ -808,22 +808,10 @@ export async function applyIOSLocalSetup(
   };
 }
 
-function directFileMutation(
-  prepared: Extract<IOSDirectConfigPreparedMutation, { status: "ready" }>,
-): IOSExistingFileMutation {
-  return {
-    path: prepared.mutation.absolutePath,
-    boundary: prepared.mutation.boundary,
-    originalBytes: prepared.mutation.originalBytes,
-    originalHash: prepared.mutation.expectedHash,
-    candidateBytes: prepared.mutation.candidateBytes,
-    candidateHash: prepared.mutation.candidateHash,
-    mode: prepared.mutation.mode,
-  };
-}
-
-function prebuiltAuthFileMutation(
-  prepared: Extract<PreparedIOSPrebuiltAuthMutation, { status: "ready" }>,
+function swiftFileMutation(
+  prepared:
+    | Extract<IOSDirectConfigPreparedMutation, { status: "ready" }>
+    | Extract<PreparedIOSPrebuiltAuthMutation, { status: "ready" }>,
 ): IOSExistingFileMutation {
   return {
     path: prepared.mutation.absolutePath,
@@ -954,21 +942,12 @@ async function prepareMacOSNetworkForCommit(
   return prepared;
 }
 
-function composeMacOSNetworkMutations(
+function composeCapabilityMutations(
   baseMutations: readonly IOSFileMutation[],
-  prepared: PreparedMacOSNetworkCapabilityMutation | undefined,
-): IOSFileMutation[] {
-  if (prepared?.status !== "ready") return [...baseMutations];
-  const consumed = new Set(prepared.consumedBaseMutationPaths);
-  return [
-    ...baseMutations.filter((mutation) => !consumed.has(resolve(mutation.path))),
-    ...prepared.mutations,
-  ];
-}
-
-function composeAppleMutations(
-  baseMutations: readonly IOSFileMutation[],
-  prepared: PreparedIOSAppleEntitlementMutation | undefined,
+  prepared:
+    | PreparedMacOSNetworkCapabilityMutation
+    | PreparedIOSAppleEntitlementMutation
+    | undefined,
 ): IOSFileMutation[] {
   if (prepared?.status !== "ready") return [...baseMutations];
   const consumed = new Set(prepared.consumedBaseMutationPaths);
@@ -1206,249 +1185,156 @@ export async function applyIOSPlannedLocalSetup(
   const preparedSDK = await prepareSDKForCommit(setup.sdkInstallPlan);
   const preparedPrebuiltAuth = await preparePrebuiltAuthForCommit(setup.prebuiltAuthPlan);
 
-  if (setup.directConfigPlan) {
-    const preparedDirect = await prepareIOSDirectConfigMutation(setup.directConfigPlan, key);
-    if (preparedDirect.status === "stale") {
-      throw iosSetupError(
-        "The Swift app entry source changed after the preview. No local setup changes were written; rerun clerk init.",
-        ERROR_CODE.IOS_SETUP_STALE,
-      );
-    }
-    if (preparedDirect.status === "blocked") {
-      throw iosSetupError(
-        `The Swift app entry source could no longer be configured safely. No local setup changes were written:\n${blockerList(
-          preparedDirect.plan.blockers,
-        )}`,
-      );
-    }
-    // Verify an existing inline key before using the supplied key to derive
-    // its entitlements candidate. A mismatch must retain the dedicated
-    // wrong-application error and leave every file untouched.
-    const preparedAssociatedDomain = await prepareAssociatedDomainForCommit(
-      setup.associatedDomainPlan,
-      key || undefined,
-      preparedSDK?.status === "ready" ? preparedSDK.mutation : undefined,
+  const preparedDirect = setup.directConfigPlan
+    ? await prepareIOSDirectConfigMutation(setup.directConfigPlan, key)
+    : undefined;
+  if (preparedDirect?.status === "stale") {
+    throw iosSetupError(
+      "The Swift app entry source changed after the preview. No local setup changes were written; rerun clerk init.",
+      ERROR_CODE.IOS_SETUP_STALE,
     );
-
-    const baseMutations: IOSFileMutation[] = [];
-    const postconditions: Array<() => boolean | Promise<boolean>> = [];
-    if (options.beforePostWriteValidation) {
-      postconditions.push(async () => {
-        await options.beforePostWriteValidation?.();
-        return true;
-      });
-    }
-    if (
-      preparedSDK?.status === "ready" &&
-      !(
-        preparedAssociatedDomain?.status === "ready" &&
-        preparedAssociatedDomain.consumesBasePbxMutation
-      )
-    ) {
-      baseMutations.push(preparedSDK.mutation);
-    }
-    if (preparedSDK) {
-      postconditions.push(async () => validateIOSSDKInstallPostcondition(preparedSDK.plan));
-    }
-    if (preparedAssociatedDomain?.status === "ready") {
-      baseMutations.push(...preparedAssociatedDomain.mutations);
-      postconditions.push(async () =>
-        validatePreparedIOSAssociatedDomain(preparedAssociatedDomain),
-      );
-    } else if (preparedAssociatedDomain?.status === "satisfied") {
-      postconditions.push(async () =>
-        validatePreparedIOSAssociatedDomain(preparedAssociatedDomain),
-      );
-    }
-    const preparedMacOSNetwork = await prepareMacOSNetworkForCommit(
-      setup.macOSNetworkCapabilityPlan,
-      baseMutations,
-    );
-    const networkMutations = composeMacOSNetworkMutations(baseMutations, preparedMacOSNetwork);
-    if (preparedMacOSNetwork?.status === "ready") {
-      postconditions.push(async () => validatePreparedMacOSNetworkCapability(preparedMacOSNetwork));
-    } else if (preparedMacOSNetwork?.status === "satisfied") {
-      postconditions.push(async () => validateSatisfiedMacOSNetwork(preparedMacOSNetwork.plan));
-    }
-    const preparedAppleEntitlement = await prepareAppleEntitlementForCommit(
-      setup.appleEntitlementPlan,
-      networkMutations,
-    );
-    const mutations = composeAppleMutations(networkMutations, preparedAppleEntitlement);
-    if (preparedAppleEntitlement?.status === "ready") {
-      postconditions.push(async () =>
-        validatePreparedIOSAppleEntitlement(preparedAppleEntitlement),
-      );
-    } else if (preparedAppleEntitlement?.status === "satisfied") {
-      postconditions.push(async () =>
-        validateSatisfiedAppleEntitlement(preparedAppleEntitlement.plan),
-      );
-    }
-    // Commit the entitlements file and its Xcode settings before Swift starts
-    // depending on the configured SDK. A process interruption can then leave
-    // only harmless project prerequisites, never source that imports an
-    // unlinked package.
-    if (preparedDirect.status === "ready") {
-      mutations.push(directFileMutation(preparedDirect));
-      postconditions.push(async () => validatePreparedIOSDirectConfig(preparedDirect));
-    } else {
-      postconditions.push(async () => {
-        const verified = await prepareIOSDirectConfigMutation(setup.directConfigPlan!, key);
-        return verified.status === "satisfied";
-      });
-    }
-    if (preparedPrebuiltAuth?.status === "ready") {
-      mutations.push(prebuiltAuthFileMutation(preparedPrebuiltAuth));
-      postconditions.push(async () => validatePreparedIOSPrebuiltAuth(preparedPrebuiltAuth));
-    } else if (preparedPrebuiltAuth?.status === "satisfied") {
-      postconditions.push(async () => validateSatisfiedPrebuiltAuth(preparedPrebuiltAuth.plan));
-    }
-    if (setup.prebuiltAuthActive) {
-      postconditions.push(async () => validatePrebuiltAuthRuntimePostcondition(setup));
-    }
-    postconditions.push(async () => validatePlatformViewsPostcondition(setup));
-    assertUniqueMutationPaths(mutations);
-
-    if (mutations.length > 0) {
-      const result = await withSpinner(`Applying the local ${platformLabel} setup...`, async () =>
-        applyIOSFileTransaction(mutations, postconditions),
-      );
-      if (result.status === "stale") {
-        throw iosSetupError(
-          "A native Apple setup file changed while the approved changes were being committed. Any partial write was restored; rerun clerk init.",
-          ERROR_CODE.IOS_SETUP_STALE,
-        );
-      }
-      if (result.status === "rolled-back") {
-        throw iosSetupError(
-          "The local native Apple setup failed post-write validation and was restored byte-for-byte.",
-          ERROR_CODE.IOS_LOCAL_APPLY_FAILED,
-        );
-      }
-    }
-
-    stopNativeProgress();
-    if (preparedSDK?.status === "ready") {
-      log.success(`${formatProducts(preparedSDK.plan.products)} linked to ${setup.targetName}`);
-    }
-    if (preparedDirect.status === "ready") {
-      log.success(`Clerk configured in ${preparedDirect.plan.sourcePath}`);
-    } else {
-      log.info(dim("The existing inline publishable key matches the linked Clerk application."));
-    }
-    if (preparedPrebuiltAuth?.status === "ready") {
-      log.success(`Prebuilt AuthView added to ${preparedPrebuiltAuth.plan.sourcePath}`);
-    }
-    if (preparedAssociatedDomain?.status === "ready") {
-      log.success("Clerk Associated Domain added to the selected target entitlements");
-    }
-    if (preparedMacOSNetwork?.status === "ready") {
-      log.success("Outgoing network access enabled for the selected macOS target");
-    }
-    if (preparedAppleEntitlement?.status === "ready") {
-      log.success("Sign in with Apple entitlement added to the selected target");
-    }
-    return;
   }
-
+  if (preparedDirect?.status === "blocked") {
+    throw iosSetupError(
+      `The Swift app entry source could no longer be configured safely. No local setup changes were written:\n${blockerList(
+        preparedDirect.plan.blockers,
+      )}`,
+    );
+  }
+  // Verify an existing inline key before deriving its entitlements candidate.
+  // A mismatch must retain the wrong-application error and leave files untouched.
   const preparedAssociatedDomain = await prepareAssociatedDomainForCommit(
     setup.associatedDomainPlan,
     key || undefined,
     preparedSDK?.status === "ready" ? preparedSDK.mutation : undefined,
   );
-  const baseMutations: IOSFileMutation[] = [
-    ...(preparedAssociatedDomain?.status === "ready" ? preparedAssociatedDomain.mutations : []),
-    ...(preparedSDK?.status === "ready" &&
+  const sdkMutations =
+    preparedSDK?.status === "ready" &&
     !(
       preparedAssociatedDomain?.status === "ready" &&
       preparedAssociatedDomain.consumesBasePbxMutation
     )
       ? [preparedSDK.mutation]
-      : []),
-    ...(preparedPrebuiltAuth?.status === "ready"
-      ? [prebuiltAuthFileMutation(preparedPrebuiltAuth)]
-      : []),
-  ];
+      : [];
+  const domainMutations =
+    preparedAssociatedDomain?.status === "ready" ? preparedAssociatedDomain.mutations : [];
+  // Preserve each route's existing prerequisite order when combining candidates.
+  const baseMutations = preparedDirect
+    ? [...sdkMutations, ...domainMutations]
+    : [...domainMutations, ...sdkMutations];
+  if (!preparedDirect && preparedPrebuiltAuth?.status === "ready") {
+    baseMutations.push(swiftFileMutation(preparedPrebuiltAuth));
+  }
   const preparedMacOSNetwork = await prepareMacOSNetworkForCommit(
     setup.macOSNetworkCapabilityPlan,
     baseMutations,
   );
-  const networkMutations = composeMacOSNetworkMutations(baseMutations, preparedMacOSNetwork);
+  const networkMutations = composeCapabilityMutations(baseMutations, preparedMacOSNetwork);
   const preparedAppleEntitlement = await prepareAppleEntitlementForCommit(
     setup.appleEntitlementPlan,
     networkMutations,
   );
-  const localMutations = composeAppleMutations(networkMutations, preparedAppleEntitlement);
-  assertUniqueMutationPaths(localMutations);
+  const mutations = composeCapabilityMutations(networkMutations, preparedAppleEntitlement);
+  const postconditions: Array<() => boolean | Promise<boolean>> = [];
+  if (preparedSDK) {
+    postconditions.push(async () => validateIOSSDKInstallPostcondition(preparedSDK.plan));
+  }
+  if (
+    preparedAssociatedDomain?.status === "ready" ||
+    preparedAssociatedDomain?.status === "satisfied"
+  ) {
+    postconditions.push(async () => validatePreparedIOSAssociatedDomain(preparedAssociatedDomain));
+  }
+  if (preparedMacOSNetwork?.status === "ready") {
+    postconditions.push(async () => validatePreparedMacOSNetworkCapability(preparedMacOSNetwork));
+  } else if (preparedMacOSNetwork?.status === "satisfied") {
+    postconditions.push(async () => validateSatisfiedMacOSNetwork(preparedMacOSNetwork.plan));
+  }
+  if (preparedAppleEntitlement?.status === "ready") {
+    postconditions.push(async () => validatePreparedIOSAppleEntitlement(preparedAppleEntitlement));
+  } else if (preparedAppleEntitlement?.status === "satisfied") {
+    postconditions.push(async () =>
+      validateSatisfiedAppleEntitlement(preparedAppleEntitlement.plan),
+    );
+  }
+  // Direct Swift setup follows the SDK and entitlements it depends on.
+  if (preparedDirect?.status === "ready") {
+    mutations.push(swiftFileMutation(preparedDirect));
+    postconditions.push(async () => validatePreparedIOSDirectConfig(preparedDirect));
+  } else if (preparedDirect?.status === "satisfied") {
+    postconditions.push(async () => {
+      const verified = await prepareIOSDirectConfigMutation(setup.directConfigPlan!, key);
+      return verified.status === "satisfied";
+    });
+  }
+  if (preparedPrebuiltAuth?.status === "ready") {
+    if (preparedDirect) mutations.push(swiftFileMutation(preparedPrebuiltAuth));
+    postconditions.push(async () => validatePreparedIOSPrebuiltAuth(preparedPrebuiltAuth));
+  } else if (preparedPrebuiltAuth?.status === "satisfied") {
+    postconditions.push(async () => validateSatisfiedPrebuiltAuth(preparedPrebuiltAuth.plan));
+  }
+  if (setup.prebuiltAuthActive) {
+    postconditions.push(async () => validatePrebuiltAuthRuntimePostcondition(setup));
+  }
+  postconditions.push(async () => validatePlatformViewsPostcondition(setup));
+  if (options.beforePostWriteValidation) {
+    const beforeValidation = async () => {
+      await options.beforePostWriteValidation?.();
+      return true;
+    };
+    if (preparedDirect) postconditions.unshift(beforeValidation);
+    else postconditions.push(beforeValidation);
+  }
+  assertUniqueMutationPaths(mutations);
 
-  // SDK-only and custom-runtime routes apply their local candidates together
-  // after the developer has selected the intended Clerk application.
-  if (localMutations.length > 0) {
-    const postconditions: Array<() => boolean | Promise<boolean>> = [
-      ...(preparedSDK ? [async () => validateIOSSDKInstallPostcondition(preparedSDK.plan)] : []),
-      ...(preparedAssociatedDomain?.status === "ready"
-        ? [async () => validatePreparedIOSAssociatedDomain(preparedAssociatedDomain)]
-        : preparedAssociatedDomain?.status === "satisfied"
-          ? [async () => validatePreparedIOSAssociatedDomain(preparedAssociatedDomain)]
-          : []),
-      ...(preparedMacOSNetwork?.status === "ready"
-        ? [async () => validatePreparedMacOSNetworkCapability(preparedMacOSNetwork)]
-        : preparedMacOSNetwork?.status === "satisfied"
-          ? [async () => validateSatisfiedMacOSNetwork(preparedMacOSNetwork.plan)]
-          : []),
-      ...(preparedAppleEntitlement?.status === "ready"
-        ? [async () => validatePreparedIOSAppleEntitlement(preparedAppleEntitlement)]
-        : preparedAppleEntitlement?.status === "satisfied"
-          ? [async () => validateSatisfiedAppleEntitlement(preparedAppleEntitlement.plan)]
-          : []),
-      ...(preparedPrebuiltAuth?.status === "ready"
-        ? [async () => validatePreparedIOSPrebuiltAuth(preparedPrebuiltAuth)]
-        : preparedPrebuiltAuth?.status === "satisfied"
-          ? [async () => validateSatisfiedPrebuiltAuth(preparedPrebuiltAuth.plan)]
-          : []),
-      ...(setup.prebuiltAuthActive
-        ? [async () => validatePrebuiltAuthRuntimePostcondition(setup)]
-        : []),
-      async () => validatePlatformViewsPostcondition(setup),
-    ];
-    if (options.beforePostWriteValidation) {
-      postconditions.push(async () => {
-        await options.beforePostWriteValidation?.();
-        return true;
-      });
-    }
+  if (mutations.length > 0) {
     const result = await withSpinner(`Applying the local ${platformLabel} setup...`, async () =>
-      applyIOSFileTransaction(localMutations, postconditions),
+      applyIOSFileTransaction(mutations, postconditions),
     );
     if (result.status === "stale") {
       throw iosSetupError(
-        "The Xcode project changed after the preview. No SDK change was written; rerun clerk init.",
+        preparedDirect
+          ? "A native Apple setup file changed while the approved changes were being committed. Any partial write was restored; rerun clerk init."
+          : "The Xcode project changed after the preview. No SDK change was written; rerun clerk init.",
         ERROR_CODE.IOS_SETUP_STALE,
       );
     }
     if (result.status === "rolled-back") {
       throw iosSetupError(
-        "The local native Apple setup changed during post-write validation. The Clerk SDK change was restored byte-for-byte; rerun clerk init.",
+        preparedDirect
+          ? "The local native Apple setup failed post-write validation and was restored byte-for-byte."
+          : "The local native Apple setup changed during post-write validation. The Clerk SDK change was restored byte-for-byte; rerun clerk init.",
         ERROR_CODE.IOS_LOCAL_APPLY_FAILED,
       );
     }
-    stopNativeProgress();
-    if (preparedSDK?.status === "ready") {
-      log.success(`${formatProducts(preparedSDK.plan.products)} linked to ${setup.targetName}`);
-    }
-    if (preparedAssociatedDomain?.status === "ready") {
-      log.success("Clerk Associated Domain added to the selected target entitlements");
-    }
-    if (preparedMacOSNetwork?.status === "ready") {
-      log.success("Outgoing network access enabled for the selected macOS target");
-    }
-    if (preparedAppleEntitlement?.status === "ready") {
-      log.success("Sign in with Apple entitlement added to the selected target");
-    }
+  } else if (!preparedDirect) {
+    await options.beforePostWriteValidation?.();
+    return;
+  }
+
+  stopNativeProgress();
+  if (preparedSDK?.status === "ready") {
+    log.success(`${formatProducts(preparedSDK.plan.products)} linked to ${setup.targetName}`);
+  }
+  if (preparedDirect?.status === "ready") {
+    log.success(`Clerk configured in ${preparedDirect.plan.sourcePath}`);
+  } else if (preparedDirect) {
+    log.info(dim("The existing inline publishable key matches the linked Clerk application."));
+  }
+  const reportPrebuiltAuth = () => {
     if (preparedPrebuiltAuth?.status === "ready") {
       log.success(`Prebuilt AuthView added to ${preparedPrebuiltAuth.plan.sourcePath}`);
     }
+  };
+  if (preparedDirect) reportPrebuiltAuth();
+  if (preparedAssociatedDomain?.status === "ready") {
+    log.success("Clerk Associated Domain added to the selected target entitlements");
   }
-
-  if (localMutations.length === 0) await options.beforePostWriteValidation?.();
+  if (preparedMacOSNetwork?.status === "ready") {
+    log.success("Outgoing network access enabled for the selected macOS target");
+  }
+  if (preparedAppleEntitlement?.status === "ready") {
+    log.success("Sign in with Apple entitlement added to the selected target");
+  }
+  if (!preparedDirect) reportPrebuiltAuth();
 }

@@ -1,6 +1,11 @@
 import { lstat } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
+import {
+  prepareEntitlementsCreation,
+  sameEntitlementsPlanFiles,
+  withHiddenEntitlementsMutations,
+} from "./entitlements-mutations.ts";
 import {
   bytesWithOptionalBOM,
   newEntitlementsBytes,
@@ -20,7 +25,6 @@ import {
   type IOSFileMutation,
 } from "./file-transaction.ts";
 import {
-  prepareIOSMissingEntitlementsSettingsMutation,
   validateIOSMissingEntitlementsSettingsPostcondition,
   type IOSMissingEntitlementsSettingsPlan,
 } from "./entitlements-settings.ts";
@@ -413,19 +417,15 @@ function preparedWithHiddenMutations(
   mutations: IOSFileMutation[],
   consumesBasePbxMutation: boolean,
 ): Extract<PreparedIOSAssociatedDomainMutation, { status: "ready" }> {
-  const result = {
-    status: "ready" as const,
-    plan,
-    expectedDomain,
-    consumesBasePbxMutation,
-  } as Extract<PreparedIOSAssociatedDomainMutation, { status: "ready" }>;
-  Object.defineProperty(result, "mutations", {
-    value: mutations,
-    enumerable: false,
-    configurable: false,
-    writable: false,
-  });
-  return result;
+  return withHiddenEntitlementsMutations(
+    {
+      status: "ready" as const,
+      plan,
+      expectedDomain,
+      consumesBasePbxMutation,
+    },
+    mutations,
+  );
 }
 
 export async function prepareIOSAssociatedDomainMutation(
@@ -484,13 +484,7 @@ export async function prepareIOSAssociatedDomainMutation(
     replanned.status !== plan.status ||
     replanned.expectedDomain !== plan.expectedDomain ||
     replanned.requiresPublishableKey !== plan.requiresPublishableKey ||
-    replanned.files.length !== plan.files.length ||
-    replanned.files.some(
-      (file, index) =>
-        file.path !== plan.files[index]?.path ||
-        file.operation !== plan.files[index]?.operation ||
-        file.expectedHash !== plan.files[index]?.expectedHash,
-    )
+    !sameEntitlementsPlanFiles(plan.files, replanned.files)
   ) {
     return { status: "stale", plan };
   }
@@ -504,31 +498,15 @@ export async function prepareIOSAssociatedDomainMutation(
     ) {
       return { status: "blocked", plan };
     }
-    const preparedSettings = await prepareIOSMissingEntitlementsSettingsMutation(
+    const createPath = resolve(plan.root, plannedFile.path);
+    const creation = await prepareEntitlementsCreation(
+      plan.root,
+      createPath,
       plan.missingEntitlementsSettings,
       options.basePbxMutation,
     );
-    if (preparedSettings.status === "stale") return { status: "stale", plan };
-    if (preparedSettings.status !== "ready") return { status: "blocked", plan };
-    const expectedParentIdentity =
-      plan.missingEntitlementsSettings.expectedSynchronizedRootIdentity;
-    const synchronizedRootPath = plan.missingEntitlementsSettings.synchronizedRootPath;
-    const createPath = resolve(plan.root, plannedFile.path);
-    if (
-      !expectedParentIdentity ||
-      !synchronizedRootPath ||
-      dirname(createPath) !== resolve(plan.root, synchronizedRootPath)
-    ) {
-      return { status: "blocked", plan };
-    }
-    const boundary = await prepareIOSFileMutationBoundary(plan.root, createPath);
-    if (
-      !boundary ||
-      boundary.parentIdentity.device !== expectedParentIdentity.device ||
-      boundary.parentIdentity.inode !== expectedParentIdentity.inode
-    ) {
-      return { status: "stale", plan };
-    }
+    if (creation.status === "stale") return { status: "stale", plan };
+    if (creation.status !== "ready") return { status: "blocked", plan };
     const candidateBytes = newEntitlementsBytes([
       `<key>${ASSOCIATED_DOMAINS_KEY}</key>`,
       "<array>",
@@ -538,7 +516,7 @@ export async function prepareIOSAssociatedDomainMutation(
     const createMutation: IOSCreateFileMutation = {
       kind: "create",
       path: createPath,
-      boundary,
+      boundary: creation.boundary,
       candidateBytes,
       candidateHash: hashIOSFileBytes(candidateBytes),
       mode: 0o644,
@@ -548,7 +526,7 @@ export async function prepareIOSAssociatedDomainMutation(
       expectedDomain,
       // Commit the harmless new plist before project.pbxproj starts pointing
       // at it. The aggregate transaction still rolls both back on failure.
-      [createMutation, preparedSettings.mutation],
+      [createMutation, creation.projectMutation],
       options.basePbxMutation != null,
     );
   }

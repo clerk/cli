@@ -1,6 +1,11 @@
 import { lstat } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
-import { isDeepStrictEqual } from "node:util";
+import { resolve } from "node:path";
+import {
+  entitlementsBaseMutations,
+  prepareEntitlementsFileMutations,
+  sameEntitlementsPlanFiles,
+  withHiddenEntitlementsMutations,
+} from "./entitlements-mutations.ts";
 import {
   bytesWithOptionalBOM,
   newEntitlementsBytes,
@@ -15,19 +20,14 @@ import { pathIsSafelyWithinIOSRoot, relativeIOSPath } from "./discovery.ts";
 import {
   applyIOSFileTransaction,
   hashIOSFileBytes,
-  prepareIOSFileMutationBoundary,
-  type IOSCreateFileMutation,
-  type IOSExistingFileMutation,
   type IOSFileMutation,
 } from "./file-transaction.ts";
 import {
   planIOSMissingEntitlementsSettings,
-  prepareIOSMissingEntitlementsSettingsMutation,
   validateIOSMissingEntitlementsSettingsPostcondition,
   type IOSMissingEntitlementsSettingsPlan,
 } from "./entitlements-settings.ts";
 import { inspectIOSProject } from "./inspect.ts";
-import { xcodeProjectDocumentPath } from "./project-document.ts";
 import type { IOSValueResolution } from "./types.ts";
 
 const APP_SANDBOX_KEY = "com.apple.security.app-sandbox";
@@ -298,53 +298,18 @@ function addBooleanEntitlement(source: string, key: string): string | undefined 
   return appendEntitlementsEntry(source, [`<key>${key}</key>`, "<true/>"]);
 }
 
-function isCreateMutation(mutation: IOSFileMutation): mutation is IOSCreateFileMutation {
-  return "kind" in mutation && mutation.kind === "create";
-}
-
-function validBaseMutation(mutation: IOSFileMutation): boolean {
-  return (
-    isAbsolute(mutation.path) &&
-    Number.isInteger(mutation.mode) &&
-    mutation.mode >= 0 &&
-    mutation.mode <= 0o7777 &&
-    hashIOSFileBytes(mutation.candidateBytes) === mutation.candidateHash &&
-    (isCreateMutation(mutation) ||
-      hashIOSFileBytes(mutation.originalBytes) === mutation.originalHash)
-  );
-}
-
 function preparedWithHiddenMutations(
   plan: MacOSNetworkCapabilityPlan,
   mutations: IOSFileMutation[],
   consumedBaseMutationPaths: string[],
 ): Extract<PreparedMacOSNetworkCapabilityMutation, { status: "ready" }> {
-  const result = {
-    status: "ready" as const,
-    plan,
-    consumedBaseMutationPaths: [...consumedBaseMutationPaths].sort(),
-  } as Extract<PreparedMacOSNetworkCapabilityMutation, { status: "ready" }>;
-  Object.defineProperty(result, "mutations", {
-    value: mutations,
-    enumerable: false,
-    configurable: false,
-    writable: false,
-  });
-  return result;
-}
-
-function samePlanFiles(
-  left: readonly MacOSNetworkCapabilityPlanFile[],
-  right: readonly MacOSNetworkCapabilityPlanFile[],
-): boolean {
-  return (
-    left.length === right.length &&
-    left.every(
-      (file, index) =>
-        file.path === right[index]?.path &&
-        file.operation === right[index]?.operation &&
-        file.expectedHash === right[index]?.expectedHash,
-    )
+  return withHiddenEntitlementsMutations(
+    {
+      status: "ready" as const,
+      plan,
+      consumedBaseMutationPaths: [...consumedBaseMutationPaths].sort(),
+    },
+    mutations,
   );
 }
 
@@ -709,22 +674,13 @@ export async function prepareMacOSNetworkCapabilityMutation(
     return blockPrepared(plan, "invalid-plan", "The serialized macOS network plan is incomplete.");
   }
 
-  const baseByPath = new Map<string, IOSFileMutation>();
-  for (const mutation of options.baseMutations ?? []) {
-    const path = resolve(mutation.path);
-    if (
-      path !== mutation.path ||
-      baseByPath.has(path) ||
-      !(await pathIsSafelyWithinIOSRoot(plan.root, path)) ||
-      !validBaseMutation(mutation)
-    ) {
-      return blockPrepared(
-        plan,
-        "invalid-plan",
-        "A base mutation is invalid, duplicated, or outside the invocation root.",
-      );
-    }
-    baseByPath.set(path, mutation);
+  const baseByPath = await entitlementsBaseMutations(plan.root, options.baseMutations);
+  if (!baseByPath) {
+    return blockPrepared(
+      plan,
+      "invalid-plan",
+      "A base mutation is invalid, duplicated, or outside the invocation root.",
+    );
   }
 
   const replanned = await planMacOSNetworkCapability({
@@ -736,165 +692,56 @@ export async function prepareMacOSNetworkCapabilityMutation(
   if (replanned.status === "blocked") return { status: "blocked", plan: replanned };
   if (
     replanned.status !== plan.status ||
-    !samePlanFiles(plan.files, replanned.files) ||
+    !sameEntitlementsPlanFiles(plan.files, replanned.files) ||
     Boolean(replanned.missingEntitlementsSettings) !== Boolean(plan.missingEntitlementsSettings)
   ) {
     return { status: "stale", plan };
   }
   if (plan.status === "satisfied") return { status: "satisfied", plan: replanned };
 
-  const createFile = plan.files.find((file) => file.operation === "create");
-  if (createFile) {
-    if (
-      plan.files.length !== 1 ||
-      !plan.missingEntitlementsSettings ||
-      createFile.path !== plan.missingEntitlementsSettings.entitlementsPath
-    ) {
-      return blockPrepared(
-        plan,
-        "invalid-plan",
-        "The missing-entitlements macOS network plan is inconsistent.",
-      );
-    }
-    const entitlementsPath = resolve(plan.root, createFile.path);
-    const pbxprojPath = await xcodeProjectDocumentPath(resolve(plan.root, plan.projectPath));
-    if (!pbxprojPath) {
-      return blockPrepared(plan, "invalid-plan", "The selected Xcode project document is missing.");
-    }
-    const baseEntitlements = baseByPath.get(entitlementsPath);
-    const basePbx = baseByPath.get(pbxprojPath);
-    if (baseEntitlements && !isCreateMutation(baseEntitlements)) return { status: "stale", plan };
-    if (basePbx && isCreateMutation(basePbx)) {
-      return blockPrepared(
-        plan,
-        "invalid-plan",
-        "The base Xcode mutation must replace an existing project file.",
-      );
-    }
-    const preparedSettings = await prepareIOSMissingEntitlementsSettingsMutation(
-      plan.missingEntitlementsSettings,
-      basePbx as IOSExistingFileMutation | undefined,
-    );
-    if (preparedSettings.status === "stale") return { status: "stale", plan };
-    if (preparedSettings.status !== "ready") {
-      return blockPrepared(
-        plan,
-        "invalid-plan",
-        "The macOS entitlements build setting could not be prepared safely.",
-      );
-    }
-    const boundary = await prepareIOSFileMutationBoundary(plan.root, entitlementsPath);
-    const expectedParent = plan.missingEntitlementsSettings.expectedSynchronizedRootIdentity;
-    const synchronizedRoot = plan.missingEntitlementsSettings.synchronizedRootPath;
-    if (
-      !boundary ||
-      !expectedParent ||
-      !synchronizedRoot ||
-      dirname(entitlementsPath) !== resolve(plan.root, synchronizedRoot) ||
-      boundary.parentIdentity.device !== expectedParent.device ||
-      boundary.parentIdentity.inode !== expectedParent.inode
-    ) {
-      return { status: "stale", plan };
-    }
-    let createMutation: IOSCreateFileMutation;
-    if (baseEntitlements) {
-      if (!isDeepStrictEqual(baseEntitlements.boundary, boundary)) return { status: "stale", plan };
-      const inspected = inspectEntitlementsBytes(
-        plan.root,
-        entitlementsPath,
-        baseEntitlements.candidateBytes,
-        baseEntitlements.mode,
-      );
-      if (inspected.status === "blocked")
-        return blockPrepared(plan, inspected.blocker.code, inspected.blocker.message);
-      const candidateBytes = candidateWithNetwork(plan.root, inspected.document, true);
-      if (!candidateBytes) {
-        return blockPrepared(
-          plan,
-          "conflicting-entitlement",
-          "The composed entitlements candidate conflicts with the required macOS sandbox capabilities.",
-        );
-      }
-      createMutation = {
-        ...baseEntitlements,
-        candidateBytes,
-        candidateHash: hashIOSFileBytes(candidateBytes),
-      };
-    } else {
-      const candidateBytes = newEntitlementsBytes([
+  const prepared = await prepareEntitlementsFileMutations<
+    EntitlementsDocument,
+    MacOSNetworkCapabilityBlocker
+  >(plan, baseByPath, {
+    inspectFile: inspectEntitlementsFile,
+    inspectBytes: inspectEntitlementsBytes,
+    newBytes: () =>
+      newEntitlementsBytes([
         `<key>${APP_SANDBOX_KEY}</key>`,
         "<true/>",
         `<key>${NETWORK_CLIENT_KEY}</key>`,
         "<true/>",
-      ]);
-      createMutation = {
-        kind: "create",
-        path: entitlementsPath,
-        boundary,
-        candidateBytes,
-        candidateHash: hashIOSFileBytes(candidateBytes),
-        mode: 0o644,
-      };
-    }
-    return preparedWithHiddenMutations(
-      plan,
-      [createMutation, preparedSettings.mutation],
-      [...(baseEntitlements ? [entitlementsPath] : []), ...(basePbx ? [pbxprojPath] : [])],
-    );
+      ]),
+    edit(source, current, path) {
+      const bytes = candidateWithNetwork(plan.root, source, current === undefined);
+      return bytes
+        ? { bytes }
+        : {
+            blocker: blocker(
+              "conflicting-entitlement",
+              current
+                ? `${path} has a conflicting macOS sandbox capability.`
+                : "The composed entitlements candidate conflicts with the required macOS sandbox capabilities.",
+            ),
+          };
+    },
+  });
+  if (prepared.status === "invalid") {
+    if (prepared.reason === "destination") return { status: "stale", plan };
+    const messages = {
+      creation: "The missing-entitlements macOS network plan is inconsistent.",
+      project: "The selected Xcode project document is missing.",
+      "base-project": "The base Xcode mutation must replace an existing project file.",
+      settings: "The macOS entitlements build setting could not be prepared safely.",
+      file: "A planned macOS entitlements file is invalid.",
+    };
+    return blockPrepared(plan, "invalid-plan", messages[prepared.reason]);
   }
-
-  const mutations: IOSExistingFileMutation[] = [];
-  const consumed: string[] = [];
-  for (const file of plan.files) {
-    if (file.operation !== "modify" || !file.expectedHash) {
-      return blockPrepared(plan, "invalid-plan", "A planned macOS entitlements file is invalid.");
-    }
-    const absolutePath = resolve(plan.root, file.path);
-    const current = await inspectEntitlementsFile(plan.root, absolutePath);
-    if (current.status === "blocked" || current.document.hash !== file.expectedHash) {
-      return { status: "stale", plan };
-    }
-    const base = baseByPath.get(absolutePath);
-    if (base && isCreateMutation(base)) return { status: "stale", plan };
-    const boundary = await prepareIOSFileMutationBoundary(plan.root, absolutePath);
-    if (!boundary || (base && !isDeepStrictEqual(base.boundary, boundary))) {
-      return { status: "stale", plan };
-    }
-    if (
-      base &&
-      (base.originalHash !== file.expectedHash ||
-        base.mode !== current.document.mode ||
-        hashIOSFileBytes(base.originalBytes) !== current.document.hash)
-    ) {
-      return { status: "stale", plan };
-    }
-    const source = base
-      ? inspectEntitlementsBytes(plan.root, absolutePath, base.candidateBytes, base.mode)
-      : current;
-    if (source.status === "blocked")
-      return blockPrepared(plan, source.blocker.code, source.blocker.message);
-    const candidateBytes = candidateWithNetwork(plan.root, source.document, false);
-    if (!candidateBytes) {
-      return blockPrepared(
-        plan,
-        "conflicting-entitlement",
-        `${file.path} has a conflicting macOS sandbox capability.`,
-      );
-    }
-    if (hashIOSFileBytes(candidateBytes) === current.document.hash && !base) continue;
-    mutations.push({
-      path: absolutePath,
-      boundary: base?.boundary ?? boundary,
-      originalBytes: base?.originalBytes ?? current.document.bytes,
-      originalHash: base?.originalHash ?? current.document.hash,
-      candidateBytes,
-      candidateHash: hashIOSFileBytes(candidateBytes),
-      mode: base?.mode ?? current.document.mode,
-    });
-    if (base) consumed.push(absolutePath);
+  if (prepared.status === "blocked") {
+    return blockPrepared(plan, prepared.blocker.code, prepared.blocker.message);
   }
-  if (mutations.length === 0) return { status: "satisfied", plan };
-  return preparedWithHiddenMutations(plan, mutations, consumed);
+  if (prepared.status !== "ready") return { status: prepared.status, plan };
+  return preparedWithHiddenMutations(plan, prepared.mutations, prepared.consumedBaseMutationPaths);
 }
 
 export async function validatePreparedMacOSNetworkCapability(

@@ -1254,29 +1254,42 @@ struct MyApp: App {
     expect(await treeDigest(root)).toEqual(digest);
   });
 
-  test("rolls back SDK, Swift, and a newly created entitlements file together", async () => {
-    const root = await createUnconfiguredFixture();
-    await convertIOSFixtureToSynchronizedMissingEntitlements(root);
-    const before = await treeDigest(root);
-    const setup = await applyIOSLocalSetup({
-      root,
-      target: "MyApp",
-      yes: true,
-      agent: false,
-      allowDirty: false,
-    });
+  test.each([false, true])(
+    "rolls back the combined setup (custom startup: %s)",
+    async (customStartup) => {
+      const root = await createUnconfiguredFixture();
+      if (customStartup) {
+        await createIOSFixture(root, {
+          complete: true,
+          includeKey: false,
+          localSecrets: true,
+          clerkSDK: false,
+        });
+      }
+      await convertIOSFixtureToSynchronizedMissingEntitlements(root);
+      const before = await treeDigest(root);
+      const setup = await applyIOSLocalSetup({
+        root,
+        target: "MyApp",
+        yes: true,
+        agent: false,
+        allowDirty: false,
+      });
 
-    await expect(
-      applyIOSPlannedLocalSetup(setup, authFixtureKey, {
-        beforePostWriteValidation: () => {
-          throw new Error("injected aggregate validation failure");
-        },
-      }),
-    ).rejects.toThrow("restored byte-for-byte");
+      expect(setup.directConfigPlan != null).toBe(!customStartup);
 
-    expect(await treeDigest(root)).toEqual(before);
-    expect(await Bun.file(join(root, "MyApp", "MyApp.entitlements")).exists()).toBe(false);
-  });
+      await expect(
+        applyIOSPlannedLocalSetup(setup, authFixtureKey, {
+          beforePostWriteValidation: () => {
+            throw new Error("injected aggregate validation failure");
+          },
+        }),
+      ).rejects.toThrow("restored byte-for-byte");
+
+      expect(await treeDigest(root)).toEqual(before);
+      expect(await Bun.file(join(root, "MyApp", "MyApp.entitlements")).exists()).toBe(false);
+    },
+  );
 
   test("explicitly opts into native Apple without requesting hosted Apple credentials", async () => {
     resetAppleConfiguration({

@@ -13,7 +13,7 @@ import {
   prepareIOSAppleEntitlementMutation,
   validatePreparedIOSAppleEntitlement,
 } from "./apple-entitlement.ts";
-import { applyIOSFileTransaction } from "./file-transaction.ts";
+import { applyIOSFileTransaction, hashIOSFileBytes } from "./file-transaction.ts";
 import {
   convertIOSFixtureToMultiplatform,
   convertIOSFixtureToSynchronizedMissingEntitlements,
@@ -452,32 +452,50 @@ struct MyApp: App {
     expect(source).toContain(`webcredentials:${HOST}`);
   });
 
-  test("composes with an existing entitlements candidate and rolls the aggregate write back", async () => {
-    const root = await fixture();
-    const path = join(root, "MyApp", "MyApp.entitlements");
-    const source = await readFile(path, "utf8");
-    await writeFile(
-      path,
-      source.replace("webcredentials:clerk.example.test", "applinks:keep.test"),
-    );
-    const before = await readFile(path);
-    const associatedPlan = await planIOSAssociatedDomain({
-      ...planOptions(root),
-      deferToPublishableKey: true,
-    });
-    const associated = await prepareIOSAssociatedDomainMutation(associatedPlan, KEY);
-    expect(associated.status).toBe("ready");
-    if (associated.status !== "ready") throw new Error("expected Associated Domains candidate");
-    const applePlan = await planIOSAppleEntitlement(planOptions(root));
-    const prepared = await prepareIOSAppleEntitlementMutation(applePlan, {
-      baseMutations: associated.mutations,
-    });
-    expect(prepared.status).toBe("ready");
-    if (prepared.status !== "ready") throw new Error("expected composed Apple candidate");
+  test.each([false, true])(
+    "composes an existing candidate and rolls back (Apple already in candidate: %s)",
+    async (alreadyHasApple) => {
+      const root = await fixture();
+      const path = join(root, "MyApp", "MyApp.entitlements");
+      const source = await readFile(path, "utf8");
+      await writeFile(
+        path,
+        source.replace("webcredentials:clerk.example.test", "applinks:keep.test"),
+      );
+      const before = await readFile(path);
+      const associatedPlan = await planIOSAssociatedDomain({
+        ...planOptions(root),
+        deferToPublishableKey: true,
+      });
+      const associated = await prepareIOSAssociatedDomainMutation(associatedPlan, KEY);
+      expect(associated.status).toBe("ready");
+      if (associated.status !== "ready") throw new Error("expected Associated Domains candidate");
+      if (alreadyHasApple) {
+        const mutation = associated.mutations[0]!;
+        mutation.candidateBytes = new TextEncoder().encode(
+          new TextDecoder()
+            .decode(mutation.candidateBytes)
+            .replace("</dict>", `${appleBlock()}\n</dict>`),
+        );
+        mutation.candidateHash = hashIOSFileBytes(mutation.candidateBytes);
+      }
+      const applePlan = await planIOSAppleEntitlement(planOptions(root));
+      const prepared = await prepareIOSAppleEntitlementMutation(applePlan, {
+        baseMutations: associated.mutations,
+      });
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") throw new Error("expected composed Apple candidate");
 
-    const result = await applyIOSFileTransaction(prepared.mutations, [() => false]);
+      expect(prepared.consumedBaseMutationPaths).toEqual([path]);
+      const candidate = new TextDecoder().decode(prepared.mutations[0]!.candidateBytes);
+      expect(candidate.split(`<key>${APPLE_KEY}</key>`)).toHaveLength(2);
+      expect(candidate).toContain(`webcredentials:${HOST}`);
+      expect(JSON.stringify(prepared)).not.toContain("candidateBytes");
 
-    expect(result.status).toBe("rolled-back");
-    expect(await readFile(path)).toEqual(before);
-  });
+      const result = await applyIOSFileTransaction(prepared.mutations, [() => false]);
+
+      expect(result.status).toBe("rolled-back");
+      expect(await readFile(path)).toEqual(before);
+    },
+  );
 });
