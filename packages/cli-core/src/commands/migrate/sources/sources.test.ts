@@ -182,6 +182,30 @@ describe("auth0", () => {
     expect(users[0]?.publicMetadata).toBeUndefined();
     expect(users[0]?.privateMetadata).toEqual({ plan: "pro" });
   });
+
+  test.each([
+    [true, true],
+    ["true", true],
+    [false, undefined],
+    [undefined, undefined],
+  ])("blocked=%p is carried as banned=%p", (blocked, expected) => {
+    expect(one("auth0", { ...base, blocked })?.banned).toBe(expected as boolean | undefined);
+  });
+
+  test("splits name when given_name and family_name are absent", () => {
+    const user = one("auth0", { ...base, name: "Ada King Lovelace" });
+    expect(user).toMatchObject({ firstName: "Ada", lastName: "King Lovelace" });
+  });
+
+  test("prefers given_name/family_name over name", () => {
+    const user = one("auth0", { ...base, name: "a@x.dev", given_name: "Ada", family_name: "L" });
+    expect(user).toMatchObject({ firstName: "Ada", lastName: "L" });
+  });
+
+  test("leaves a one-word name (Auth0's email default) unset", () => {
+    const user = one("auth0", { ...base, name: "a@x.dev" });
+    expect(user?.firstName).toBeUndefined();
+  });
 });
 
 describe("workos", () => {

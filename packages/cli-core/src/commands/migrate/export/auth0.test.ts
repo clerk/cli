@@ -251,6 +251,15 @@ describe("mapAuth0UserToExport", () => {
     }
   });
 
+  test("keeps blocked only when it is true", () => {
+    expect(mapAuth0UserToExport(auth0User(0, { blocked: true })).blocked).toBe(true);
+    expect("blocked" in mapAuth0UserToExport(auth0User(0, { blocked: false }))).toBe(false);
+  });
+
+  test("keeps name", () => {
+    expect(mapAuth0UserToExport(auth0User(0, { name: "Ada Lovelace" })).name).toBe("Ada Lovelace");
+  });
+
   test("omits empty metadata", () => {
     const mapped = mapAuth0UserToExport(
       auth0User(0, { user_metadata: {}, app_metadata: { plan: "pro" } }),

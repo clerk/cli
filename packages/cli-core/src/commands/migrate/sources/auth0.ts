@@ -1,5 +1,5 @@
 import type { SourceEntry } from "../types.ts";
-import { routeByVerification } from "./shared.ts";
+import { isVerified, routeByVerification, splitName } from "./shared.ts";
 
 /**
  * Auth0 → Clerk transformer.
@@ -33,6 +33,8 @@ const auth0Source = {
     email: "email",
     email_verified: "emailVerified",
     username: "username",
+    name: "name",
+    blocked: "banned",
     given_name: "firstName",
     family_name: "lastName",
     phone_number: "phone",
@@ -45,6 +47,15 @@ const auth0Source = {
   postTransform: (user) => {
     routeByVerification(user, "email", "emailVerified", "boolean");
     routeByVerification(user, "phone", "phoneVerified", "boolean");
+
+    // given_name/family_name win when present. Auth0 fills `name` with the
+    // email for database users; splitName leaves a one-word value alone.
+    if (user.firstName || user.lastName) delete user.name;
+    else splitName(user);
+
+    // Runs before normalizeUserData, so accept CSV's "true" as well.
+    if (isVerified(user.banned, "boolean")) user.banned = true;
+    else delete user.banned;
   },
   defaults: {
     passwordHasher: "bcrypt" as const,

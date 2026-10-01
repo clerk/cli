@@ -264,6 +264,7 @@ export function mapAuth0UserToExport(user: Auth0User): Record<string, unknown> {
     "user_id",
     "email",
     "username",
+    "name",
     "given_name",
     "family_name",
     "phone_number",
@@ -277,6 +278,9 @@ export function mapAuth0UserToExport(user: Auth0User): Record<string, unknown> {
   for (const field of ["email_verified", "phone_verified"] as const) {
     if (user[field] !== undefined) exported[field] = user[field];
   }
+
+  // Only when true: every unblocked user would otherwise carry a `false`.
+  if (user.blocked === true) exported.blocked = true;
 
   for (const field of ["user_metadata", "app_metadata"] as const) {
     const value = user[field];
