@@ -45,6 +45,7 @@ const EXPORT_QUERY = `
     raw_user_meta_data->>'last_name' AS last_name,
     raw_user_meta_data,
     raw_app_meta_data,
+    banned_until,
     created_at
   FROM auth.users
   ORDER BY created_at

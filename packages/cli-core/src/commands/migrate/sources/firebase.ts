@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 import type { PreTransformResult, SourceEntry } from "../types.ts";
-import { routeByVerification, splitName, toIsoDate } from "./shared.ts";
+import { isVerified, routeByVerification, splitName, toIsoDate } from "./shared.ts";
 
 /**
  * Column order of `firebase auth:export --format=csv`, which writes no header
@@ -81,6 +81,7 @@ const firebaseSource = {
     passwordSalt: "salt",
     phoneNumber: "phone",
     displayName: "name",
+    disabled: "banned",
   },
 
   postTransform: (user, context) => {
@@ -120,6 +121,11 @@ const firebaseSource = {
     // Firebase exports timestamps as Unix milliseconds, often as strings.
     user.createdAt = toIsoDate(user.createdAt, true);
     splitName(user);
+
+    // A disabled Firebase account is Clerk's banned. Runs before
+    // normalizeUserData, so accept CSV's "true" as well.
+    if (isVerified(user.banned, "boolean")) user.banned = true;
+    else delete user.banned;
   },
 
   defaults: {

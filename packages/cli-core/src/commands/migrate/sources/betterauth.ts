@@ -1,5 +1,5 @@
 import type { SourceEntry } from "../types.ts";
-import { routeByVerification, splitName } from "./shared.ts";
+import { isVerified, routeByVerification, splitName } from "./shared.ts";
 
 /**
  * Better Auth → Clerk source.
@@ -101,7 +101,10 @@ const betterAuthSource = {
 
     // Only carry `banned` when it is actually true — Better Auth writes false
     // for every user that was never banned, and sending that to Clerk is noise.
-    if (user.banned !== true) delete user.banned;
+    // SQLite, libSQL and MySQL hand back 1/0 and CSV hands back "true", so this
+    // runs before normalizeUserData and must accept those too.
+    if (isVerified(user.banned, "boolean")) user.banned = true;
+    else delete user.banned;
   },
 } satisfies SourceEntry;
 

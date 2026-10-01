@@ -331,7 +331,10 @@ describe("betterauth", () => {
 
   test.each([
     [true, true],
+    [1, true],
+    ["true", true],
     [false, undefined],
+    [0, undefined],
     [undefined, undefined],
   ])("banned=%p is carried through as %p", (banned, expected) => {
     expect(one("betterauth", { ...base, banned })?.banned).toBe(expected as boolean | undefined);
@@ -350,6 +353,15 @@ describe("betterauth", () => {
 
 describe("firebase", () => {
   const base = { localId: "fb1", email: "a@x.dev", emailVerified: true };
+
+  test.each([
+    [true, true],
+    ["true", true],
+    [false, undefined],
+    [undefined, undefined],
+  ])("disabled=%p carries as banned=%p", (disabled, expected) => {
+    expect(one("firebase", { ...base, disabled })?.banned).toBe(expected as boolean | undefined);
+  });
   const withHash = { ...base, passwordHash: "SGFzaA==", salt: "U2FsdA==" };
 
   test("builds the scrypt digest Clerk expects, parameters inline", async () => {
@@ -412,6 +424,17 @@ describe("firebase", () => {
 
 describe("supabase", () => {
   const base = { id: "sb1", email: "a@x.dev", email_confirmed_at: "2024-06-29 20:25:06.126079+00" };
+
+  // An expired ban means the user is active again in Supabase.
+  test.each([
+    ["2999-01-01 00:00:00+00", true],
+    ["2020-01-01 00:00:00+00", undefined],
+    [undefined, undefined],
+  ])("banned_until=%p carries as banned=%p", (bannedUntil, expected) => {
+    const user = one("supabase", { ...base, banned_until: bannedUntil });
+    expect(user?.banned).toBe(expected as boolean | undefined);
+    expect("bannedUntil" in (user ?? {})).toBe(false);
+  });
 
   test("maps the bcrypt password and converts the PostgreSQL timestamp", async () => {
     const { users } = await load("supabase", [

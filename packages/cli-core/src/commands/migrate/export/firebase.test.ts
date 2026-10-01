@@ -355,6 +355,11 @@ describe("mapFirebaseUserToExport", () => {
   });
 });
 
+test("mapFirebaseUserToExport keeps disabled only when it is true", () => {
+  expect(mapFirebaseUserToExport(fbUser(0, { disabled: true })).disabled).toBe(true);
+  expect("disabled" in mapFirebaseUserToExport(fbUser(0, { disabled: false }))).toBe(false);
+});
+
 describe("buildFirebaseExport", () => {
   test("counts coverage and records each user", () => {
     const lines: UserLine[] = [];

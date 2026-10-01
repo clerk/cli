@@ -421,6 +421,8 @@ export function mapFirebaseUserToExport(user: FirebaseUser): Record<string, unkn
   }
   // Meaningful when false, so copied on presence rather than truthiness.
   if (user.emailVerified !== undefined) exported.emailVerified = user.emailVerified;
+  // Only when true: every active user would otherwise carry a `false`.
+  if (user.disabled === true) exported.disabled = true;
 
   // Both halves or neither: a digest without its salt cannot be verified.
   if (user.passwordHash && user.salt) {

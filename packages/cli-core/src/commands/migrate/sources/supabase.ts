@@ -46,10 +46,18 @@ const supabaseSource = {
     phone: "phone",
     phone_confirmed_at: "phoneConfirmedAt",
     raw_user_meta_data: "unsafeMetadata",
+    banned_until: "bannedUntil",
     created_at: "createdAt",
   },
   postTransform: (user) => {
     user.createdAt = toIsoDate(user.createdAt);
+
+    // Supabase bans until a time; a "permanent" ban is just a far-future one.
+    // Clerk's ban has no end, so only a ban still in force carries, and it then
+    // stays until someone lifts it in Clerk.
+    const bannedUntil = Date.parse(String(toIsoDate(user.bannedUntil)));
+    if (bannedUntil > Date.now()) user.banned = true;
+    delete user.bannedUntil;
     routeByVerification(user, "email", "emailConfirmedAt", "timestamp");
     routeByVerification(user, "phone", "phoneConfirmedAt", "timestamp");
 
