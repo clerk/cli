@@ -364,8 +364,8 @@ export function buildIdentityReport(
  * they were fetched.
  *
  * A copy rather than the raw record: WorkOS also returns `locale`,
- * `profile_picture_url`, `last_sign_in_at` and `updated_at`, none of which
- * `POST /v1/users` accepts. `identities` has no target field either and is
+ * `profile_picture_url`, `last_sign_in_at` and `updated_at`, which the import
+ * does not carry. `identities` has no target field either and is
  * dropped at validation, so it rides along purely as a record for whoever runs
  * the migration.
  */
@@ -375,7 +375,14 @@ export function mapWorkOsUserToExport(
 ): Record<string, unknown> {
   const exported: Record<string, unknown> = {};
 
-  for (const field of ["id", "email", "first_name", "last_name", "created_at"] as const) {
+  for (const field of [
+    "id",
+    "email",
+    "first_name",
+    "last_name",
+    "external_id",
+    "created_at",
+  ] as const) {
     if (user[field]) exported[field] = user[field];
   }
 

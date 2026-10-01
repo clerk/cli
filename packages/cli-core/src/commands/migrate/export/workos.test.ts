@@ -317,18 +317,17 @@ describe("mapWorkOsUserToExport", () => {
         profile_picture_url: "https://x.dev/a.png",
         last_sign_in_at: "2026-01-01",
         updated_at: "2026-01-01",
-        external_id: "cust_1",
       }),
     );
-    for (const noise of [
-      "locale",
-      "profile_picture_url",
-      "last_sign_in_at",
-      "updated_at",
-      "external_id",
-    ]) {
+    for (const noise of ["locale", "profile_picture_url", "last_sign_in_at", "updated_at"]) {
       expect(noise in mapped).toBe(false);
     }
+  });
+
+  test("keeps the tenant's own external_id", () => {
+    expect(mapWorkOsUserToExport(workosUser(0, { external_id: "cust_1" })).external_id).toBe(
+      "cust_1",
+    );
   });
 
   test("omits empty metadata", () => {

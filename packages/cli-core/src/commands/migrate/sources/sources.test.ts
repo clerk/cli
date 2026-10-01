@@ -240,6 +240,17 @@ describe("workos", () => {
     expect(users[0]?.unsafeMetadata).toEqual({ plan: "pro" });
   });
 
+  // The WorkOS id stays the Clerk external_id; the tenant's own ID is kept
+  // where users cannot edit it.
+  test("puts WorkOS's external_id in private metadata", async () => {
+    const { users } = await load("workos", [
+      { ...base, email_verified: true, external_id: "cust_1" },
+    ]);
+    expect(users[0]?.userId).toBe("user_01ABC");
+    expect(users[0]?.privateMetadata).toEqual({ workosExternalId: "cust_1" });
+    expect("workosExternalId" in (users[0] ?? {})).toBe(false);
+  });
+
   // No other transformer omits it. WorkOS never returns a digest, so naming a
   // hasher would imply a password column that cannot exist.
   test("names no password hasher, because WorkOS returns no hashes", () => {
