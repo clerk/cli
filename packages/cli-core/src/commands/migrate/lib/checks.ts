@@ -370,6 +370,12 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
             ? `${plural(missing, "user")} without a password, which this instance requires: they reset it to sign in`
             : `${plural(missing, "user")} without a ${item.label.toLowerCase()}, which this instance requires`,
         );
+      } else if (item.key === "password") {
+        // Clerk stores a digest even with passwords off, so nothing is lost:
+        // it starts working if passwords are turned on.
+        warnings.push(
+          `${plural(item.userCount, "user")} ${item.userCount === 1 ? "has" : "have"} a password, which this instance does not use: it is stored, and works only once passwords are turned on`,
+        );
       } else {
         warnings.push(
           item.section === "social"

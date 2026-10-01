@@ -287,6 +287,18 @@ describe("warnings", () => {
     expect(checks.importable).toEqual([user("a")]);
   });
 
+  test("says a password is kept, not dropped, when passwords are off", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings({ email_address: { enabled: true }, password: { enabled: false } }),
+        users: [user("a", { password: BCRYPT, passwordHasher: "bcrypt" })],
+      }),
+    );
+    expect(checks.warnings).toContain(
+      "1 user has a password, which this instance does not use: it is stored, and works only once passwords are turned on",
+    );
+  });
+
   test("fields Clerk has no place for", async () => {
     const checks = await checkImport(
       input({ users: [user("a")], unknownFields: { department: 3, role: 1 } }),
