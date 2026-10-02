@@ -21,15 +21,21 @@ function settings(config: {
 }
 
 function analysis(overrides: Partial<FieldAnalysis> & { totalUsers: number }): FieldAnalysis {
+  const identifiers = {
+    verifiedEmails: 0,
+    unverifiedEmails: 0,
+    verifiedPhones: 0,
+    unverifiedPhones: 0,
+    username: 0,
+    hasAnyIdentifier: overrides.totalUsers,
+    ...overrides.identifiers,
+  };
   return {
     identifiers: {
-      verifiedEmails: 0,
-      unverifiedEmails: 0,
-      verifiedPhones: 0,
-      unverifiedPhones: 0,
-      username: 0,
-      hasAnyIdentifier: overrides.totalUsers,
-      ...overrides.identifiers,
+      // Hand-built rows have no user overlap, so "any" is the sum.
+      anyEmail: identifiers.verifiedEmails + identifiers.unverifiedEmails,
+      anyPhone: identifiers.verifiedPhones + identifiers.unverifiedPhones,
+      ...identifiers,
     },
     fieldCounts: overrides.fieldCounts ?? {},
     totalUsers: overrides.totalUsers,

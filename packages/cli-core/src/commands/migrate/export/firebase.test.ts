@@ -483,6 +483,19 @@ describe("exportFirebase", () => {
     expect(captured.err).toContain("demo-fb project");
   });
 
+  // Firebase's own variable, so it's honoured, but an emulator's users are
+  // not the project's: the target line says which.
+  test("names the emulator in the target line when one is set", async () => {
+    stubFirebase([[fbUser(0)]], { signIn: {} });
+    process.env.FIREBASE_AUTH_EMULATOR_HOST = "localhost:9099";
+    try {
+      await exportFirebase({ serviceAccount: "./sa.json" });
+    } finally {
+      delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
+    }
+    expect(captured.err).toContain("Source: firebase (emulator at localhost:9099)");
+  });
+
   test("names the command that consumes the file", async () => {
     stubFirebase([[fbUser(0)]], { signIn: {} });
     // The suggestion now rides the gutter's Next steps block, which only

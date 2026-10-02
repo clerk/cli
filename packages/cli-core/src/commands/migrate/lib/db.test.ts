@@ -54,6 +54,11 @@ describe("redactConnectionString", () => {
     ["mysql://root:hunter2@127.0.0.1:3306/app", "mysql://***@127.0.0.1:3306/app"],
     ["postgres://host/db", "postgres://host/db"],
     ["libsql://app.turso.io?authToken=secret", "libsql://app.turso.io?authToken=***"],
+    ["postgres://u@host/db?password=secret", "postgres://***@host/db?password=***"],
+    [
+      "postgres://host/db?sslmode=require&password=secret",
+      "postgres://host/db?sslmode=require&password=***",
+    ],
   ])("%s -> %s", (input, expected) => {
     expect(redactConnectionString(input)).toBe(expected);
   });

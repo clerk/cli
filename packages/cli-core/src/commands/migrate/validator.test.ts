@@ -62,8 +62,10 @@ describe("userSchema passwords", () => {
 describe("userSchema field types", () => {
   const FIELD_CASES = [
     ["valid email", { email: "a@example.com" }, true],
-    ["malformed email", { email: "not-an-email" }, false],
-    ["email array with one bad entry", { email: ["a@example.com", "nope"] }, false],
+    // The checks drop an address Clerk would refuse; the schema only wants a string.
+    ["malformed email", { email: "not-an-email" }, true],
+    ["email array with one bad entry", { email: ["a@example.com", "nope"] }, true],
+    ["email that is not a string", { email: 42 }, false],
     ["userId missing", { userId: undefined }, false],
     ["valid createdAt", { createdAt: "2024-01-01T00:00:00Z" }, true],
     ["unparseable createdAt", { createdAt: "yesterday" }, false],

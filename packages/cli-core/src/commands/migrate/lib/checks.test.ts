@@ -159,7 +159,7 @@ describe("rejects", () => {
     expect(checks.total).toBe(1);
   });
 
-  test("a duplicate source ID, email or phone within the file", async () => {
+  test("a duplicate source ID, email, phone or username within the file", async () => {
     expect(
       await reasonsOf({
         users: [
@@ -168,12 +168,19 @@ describe("rejects", () => {
           user("b", { email: "A@x.dev" }),
           user("c", { phone: "+15555550100" }),
           user("d", { phone: "+15555550100" }),
+          // The same number, punctuated.
+          user("f", { phone: "+1 555-555-0100" }),
+          user("g", { username: "Ada" }),
+          // Clerk lowercases usernames.
+          user("h", { username: "ada" }),
         ],
       }),
     ).toEqual({
       a: "duplicate source ID in the file",
       b: "email is also used by an earlier user in the file, which is kept",
       d: "phone number is also used by an earlier user in the file, which is kept",
+      f: "phone number is also used by an earlier user in the file, which is kept",
+      h: "username is also used by an earlier user in the file, which is kept",
     });
   });
 
@@ -219,7 +226,9 @@ describe("rejects", () => {
           user("bad", { password: "not-a-hash", passwordHasher: "bcrypt" }),
         ],
       }),
-    ).toEqual({ bad: "password is not a bcrypt hash ($2a$/$2b$/$2y$, 60 characters)" });
+    ).toEqual({
+      bad: "password is not a bcrypt hash Clerk accepts ($2a$/$2b$/$2y$, cost up to 15, 60 characters)",
+    });
   });
 
   test("a user already in the instance, by source ID, email or username", async () => {
@@ -291,6 +300,24 @@ describe("rejects", () => {
     ).toEqual({ "only-discord": "only signs in with Discord, which is not enabled in Clerk" });
   });
 
+  // Each reject names that user's providers, not every disabled one in the file.
+  test("a supabase reject names only that user's own providers", async () => {
+    const rows = [
+      { id: "discord", raw_app_meta_data: { providers: ["discord"] } },
+      { id: "twitch", raw_app_meta_data: { providers: ["twitch"] } },
+    ];
+    expect(
+      await reasonsOf({
+        settings: settings({ email_address: { enabled: true } }),
+        supabaseRows: rows,
+        users: [user("discord"), user("twitch")],
+      }),
+    ).toEqual({
+      discord: "only signs in with Discord, which is not enabled in Clerk",
+      twitch: "only signs in with Twitch, which is not enabled in Clerk",
+    });
+  });
+
   test("the users past a development instance's headroom, in file order", async () => {
     const checks = await checkImport(
       input({
@@ -343,9 +370,33 @@ describe("rejects", () => {
       const checks = await checkImport(
         input({ users: [user("a", { email: "15551234@phone.local" })] }),
       );
+      // One fixed reason, so these group in the report and the address
+      // itself stays out of users.ndjson.
       expect(checks.rejects).toEqual([
-        { sourceId: "a", reason: "only has an email Clerk refuses (15551234@phone.local)" },
+        {
+          sourceId: "a",
+          reason: "only has emails Clerk refuses (malformed, or a domain that can't receive mail)",
+        },
       ]);
+    });
+
+    test.each([
+      ["a@localhost", "no dotted domain"],
+      ["not-an-email", "no @"],
+      ["a b@x.dev", "a space"],
+      ["ada@corp.internal", "a private TLD"],
+    ])("drops %p (%s) and keeps the user on its other email", async (bad) => {
+      const checks = await checkImport(
+        input({ users: [user("a", { email: "a@x.dev", emailAddresses: [bad] })] }),
+      );
+      expect(checks.rejects).toEqual([]);
+      expect(checks.importable[0]?.emailAddresses).toBeUndefined();
+    });
+
+    // clerk_go accepts a non-ASCII local part; Zod's email check did not.
+    test("keeps a non-ASCII address", async () => {
+      const checks = await checkImport(input({ users: [user("a", { email: "josé@x.dev" })] }));
+      expect(checks.importable).toEqual([user("a", { email: "josé@x.dev" })]);
     });
 
     test("a placeholder email is dropped, and the user imports on what is left", async () => {
@@ -362,7 +413,7 @@ describe("rejects", () => {
       expect(checks.rejects).toEqual([]);
       expect(checks.importable).toEqual([user("a", { email: "a@x.dev" })]);
       expect(checks.warnings).toContain(
-        "1 user has an email Clerk refuses (.local, .invalid, .test, .example, .arpa), which is dropped",
+        "1 user has an email Clerk refuses (malformed, or a domain such as .local or .invalid), which is dropped",
       );
     });
 
@@ -378,7 +429,6 @@ describe("rejects", () => {
     test.each([
       ["+447836887904"],
       ["4165550123"],
-      ["ada@x.dev"],
       ["https://spam.example"],
       ["see x.com/win"],
       ["<b>Ada</b>"],
@@ -387,17 +437,23 @@ describe("rejects", () => {
       expect(checks.rejects).toEqual([]);
       expect(checks.importable).toEqual([user("a", { lastName: "L" })]);
       expect(checks.warnings).toContain(
-        "1 user has a name Clerk refuses (a phone number, email, URL or HTML), which is dropped",
+        "1 user has a name Clerk refuses (a phone number, URL or HTML), which is dropped",
       );
     });
 
-    test.each([["Ada"], ["Mary-Jane O'Neil"], ["Louis XIV"], ["Agent 007"], ["redacted.io"]])(
-      "%p is kept",
-      async (firstName) => {
-        const checks = await checkImport(input({ users: [user("a", { firstName })] }));
-        expect(checks.importable).toEqual([user("a", { firstName })]);
-      },
-    );
+    // Clerk accepts an email as a name, and a URL that is part of one.
+    test.each([
+      ["Ada"],
+      ["Mary-Jane O'Neil"],
+      ["Louis XIV"],
+      ["Agent 007"],
+      ["redacted.io"],
+      ["ada@x.dev"],
+      ["ada@x.dev/x"],
+    ])("%p is kept", async (firstName) => {
+      const checks = await checkImport(input({ users: [user("a", { firstName })] }));
+      expect(checks.importable).toEqual([user("a", { firstName })]);
+    });
   });
 
   describe("usernames", () => {

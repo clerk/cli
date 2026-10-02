@@ -32,6 +32,7 @@ import {
   countSocialProviders,
   findDisabledProviders,
   findUsersWithOnlyDisabledProviders,
+  getUserProviders,
 } from "./supabase-providers.ts";
 import type { ClerkTarget } from "./target.ts";
 import type { ValidationFailure } from "./transform.ts";
@@ -114,15 +115,16 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
  * Why a password digest cannot be what its hasher says it is, for the hashers
  * whose shape is cheap and certain to check.
  *
- * Every other hasher is "can't verify": its shape is not checked, and a bad
- * digest there still fails only at sign-in.
+ * Every other hasher's shape is not checked here: BAPI validates it at
+ * create, so a bad digest there fails that user mid-import.
  */
 export function hashShapeProblem(password: string, hasher: string): string | undefined {
   switch (hasher) {
     case "bcrypt":
-      return /^\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}$/.test(password)
+      // clerk_go caps the cost at 15 (pkg/hash/bcrypt.go).
+      return /^\$2[aby]\$(0\d|1[0-5])\$[./A-Za-z0-9]{53}$/.test(password)
         ? undefined
-        : "password is not a bcrypt hash ($2a$/$2b$/$2y$, 60 characters)";
+        : "password is not a bcrypt hash Clerk accepts ($2a$/$2b$/$2y$, cost up to 15, 60 characters)";
     case "scrypt_firebase": {
       const parts = password.split("$");
       const numeric = (value: string | undefined) => /^\d+$/.test(value ?? "");
@@ -305,15 +307,45 @@ function usernameProblem(user: User, settings: UserSettingsJSON | null): string 
 }
 
 /**
- * TLDs Clerk refuses for any email, from clerk_go's
- * `emailaddress.nonRoutableTLDs`. This is where placeholder addresses live
- * (`…@phone.local`, `anon-…@anonymous.invalid`). Clerk also refuses a TLD not
- * on the public suffix list; that would take the list as a dependency.
+ * TLDs Clerk refuses for any email: clerk_go's `emailaddress.nonRoutableTLDs`,
+ * where placeholder addresses live (`…@phone.local`, `anon-…@anonymous.invalid`),
+ * plus the common private ones the public suffix list leaves out.
+ *
+ * ponytail: Clerk refuses any TLD not on the public suffix list; this names
+ * the usual ones instead of taking the list as a dependency.
  */
-const NON_ROUTABLE_TLDS = new Set(["arpa", "local", "invalid", "example", "test"]);
+const NON_ROUTABLE_TLDS = new Set([
+  "arpa",
+  "local",
+  "invalid",
+  "example",
+  "test",
+  "internal",
+  "lan",
+  "corp",
+  "home",
+  "localdomain",
+  "intranet",
+  "private",
+]);
+
+/**
+ * An address shape Clerk accepts, loosely: one `@`, no spaces, a dotted host,
+ * a local part of at most 64 bytes and 254 in all. Non-ASCII is fine, as it
+ * is in clerk_go (`josé@x.dev`).
+ */
+function isEmailShaped(email: string): boolean {
+  const at = email.lastIndexOf("@");
+  return (
+    /^[^\s@]+@[^\s@]+\.[^\s@.]+$/.test(email) &&
+    Buffer.byteLength(email.slice(0, at)) <= 64 &&
+    email.length <= 254
+  );
+}
 const EMAIL_FIELDS = ["email", "emailAddresses", "unverifiedEmailAddresses"] as const;
 
 function isRefusedEmail(email: string): boolean {
+  if (!isEmailShaped(email)) return true;
   const host = email.slice(email.lastIndexOf("@") + 1).toLowerCase();
   // Clerk's own dev domains sit under `.test` and are accepted.
   if (host.endsWith(".clerk.test")) return false;
@@ -340,9 +372,9 @@ function dropRefusedEmails(user: User): { user: User; refused: string[] } {
 }
 
 /**
- * A name Clerk refuses, approximating clerk_go's `nameForAbusePrevention`: a
- * phone number (10–15 digits, or fewer behind a `+`/`00`), an email, a URL with
- * a scheme or path, or an HTML tag. Better Auth's phone sign-up stores the
+ * A name Clerk refuses, approximating clerk_go's `NameForAbusePreventionLoose`:
+ * a phone number (10–15 digits, or fewer behind a `+`/`00`), a URL with a
+ * scheme or path that isn't part of an email, or an HTML tag. Better Auth's phone sign-up stores the
  * number as the name, so this is common, not exotic.
  */
 function nameProblem(name: string): string | undefined {
@@ -351,8 +383,10 @@ function nameProblem(name: string): string | undefined {
     const international = /^(\+|00)/.test(candidate.trim());
     if (digits <= 15 && (digits >= 10 || (international && digits >= 7))) return "a phone number";
   }
-  if (/\S+@\S+\.\S+/.test(name)) return "an email address";
-  if (/:\/\/|\b[\w-]+(\.[\w-]+)+[/?#]/.test(name)) return "a URL";
+  // Clerk accepts an email as a name (NameForAbusePreventionLoose), and a URL
+  // that is part of one.
+  const hasEmail = /\S+@\S+\.\S+/.test(name);
+  if (!hasEmail && /:\/\/|\b[\w-]+(\.[\w-]+)+[/?#]/.test(name)) return "a URL";
   if (/<\/?[a-z!][^>]*>/i.test(name)) return "HTML";
   return undefined;
 }
@@ -369,6 +403,15 @@ function dropRefusedNames(user: User): { user: User; dropped: boolean } {
   }
   return { user: kept ?? user, dropped: kept !== undefined };
 }
+
+/**
+ * A phone number with its punctuation stripped, so `+1 555-555-0100` and
+ * `+15555550100` compare equal.
+ *
+ * ponytail: punctuation only; a national number without its country code
+ * still differs from its E.164 form. Full parsing would need a dependency.
+ */
+const phoneKey = (phone: string) => phone.replace(/[^\d+]/g, "");
 
 const hasAnyIdentifier = (user: User) =>
   [...EMAIL_FIELDS, "phone", "phoneNumbers", "unverifiedPhoneNumbers", "username"].some((field) =>
@@ -392,6 +435,7 @@ function findFileDuplicates(users: User[]): {
   const seenIds = new Set<string>();
   const emails = new Map<string, string>();
   const phones = new Map<string, string>();
+  const usernames = new Map<string, string>();
 
   for (const user of users) {
     if (seenIds.has(user.userId)) {
@@ -409,7 +453,10 @@ function findFileDuplicates(users: User[]): {
     );
 
     const emailOwner = ownEmails.map((email) => emails.get(email.toLowerCase())).find(Boolean);
-    const phoneOwner = ownPhones.map((phone) => phones.get(phone)).find(Boolean);
+    const phoneOwner = ownPhones.map((phone) => phones.get(phoneKey(phone))).find(Boolean);
+    // Clerk lowercases usernames, so the second create would fail.
+    const username = typeof user.username === "string" ? user.username.toLowerCase() : "";
+    const usernameOwner = username ? usernames.get(username) : undefined;
     // The first record in the file wins, whatever either holds: the source's
     // order decides, so the kept ID is named alongside the reject.
     if (emailOwner) {
@@ -422,8 +469,14 @@ function findFileDuplicates(users: User[]): {
       keptBy.set(user, phoneOwner);
       continue;
     }
+    if (usernameOwner) {
+      reasons.set(user, "username is also used by an earlier user in the file, which is kept");
+      keptBy.set(user, usernameOwner);
+      continue;
+    }
     for (const email of ownEmails) emails.set(email.toLowerCase(), user.userId);
-    for (const phone of ownPhones) phones.set(phone, user.userId);
+    for (const phone of ownPhones) phones.set(phoneKey(phone), user.userId);
+    if (username) usernames.set(username, user.userId);
   }
   return { reasons, keptBy };
 }
@@ -449,7 +502,7 @@ async function findInstanceDuplicates(
     const identifiers = splitIdentifiers(user);
     byExternalId.set(user.userId, user.userId);
     if (identifiers.primaryEmail) byEmail.set(identifiers.primaryEmail.toLowerCase(), user.userId);
-    if (identifiers.primaryPhone) byPhone.set(identifiers.primaryPhone, user.userId);
+    if (identifiers.primaryPhone) byPhone.set(phoneKey(identifiers.primaryPhone), user.userId);
     if (typeof user.username === "string" && user.username) {
       byUsername.set(user.username.toLowerCase(), user.userId);
     }
@@ -495,7 +548,7 @@ async function findInstanceDuplicates(
     }
     for (const phone of existing.phone_numbers ?? []) {
       claim(
-        byPhone.get(phone.phone_number ?? ""),
+        byPhone.get(phoneKey(phone.phone_number ?? "")),
         "phone number is already used by a user in the instance",
       );
     }
@@ -519,11 +572,14 @@ function findDisabledProviderRejects(input: CheckInput): Map<string, string> {
   if (disabled.length === 0) return reasons;
 
   const { excludedIds } = findUsersWithOnlyDisabledProviders(input.supabaseRows, disabled);
-  const names = disabled.map(providerLabel).join(", ");
+  // Each reject names only that user's own providers.
+  const rowsById = new Map(input.supabaseRows.map((row) => [String(row.id), row]));
   for (const id of excludedIds) {
+    const own = getUserProviders(rowsById.get(id) ?? {}).filter((p) => disabled.includes(p));
+    const names = own.map(providerLabel).join(", ");
     reasons.set(
       id,
-      `only signs in with ${names}, which ${disabled.length === 1 ? "is" : "are"} not enabled in Clerk`,
+      `only signs in with ${names}, which ${own.length === 1 ? "is" : "are"} not enabled in Clerk`,
     );
   }
   return reasons;
@@ -691,7 +747,7 @@ function dropDisabledIdentifiers(user: User, settings: UserSettingsJSON | null):
 function refusedNameWarning(count: number): string[] {
   if (count === 0) return [];
   return [
-    `${plural(count, "user")} ${count === 1 ? "has" : "have"} a name Clerk refuses (a phone number, email, URL or HTML), which is dropped`,
+    `${plural(count, "user")} ${count === 1 ? "has" : "have"} a name Clerk refuses (a phone number, URL or HTML), which is dropped`,
   ];
 }
 
@@ -705,7 +761,7 @@ function legalWarning(count: number): string[] {
 function placeholderWarning(count: number): string[] {
   if (count === 0) return [];
   return [
-    `${plural(count, "user")} ${count === 1 ? "has" : "have"} an email Clerk refuses (.local, .invalid, .test, .example, .arpa), which is dropped`,
+    `${plural(count, "user")} ${count === 1 ? "has" : "have"} an email Clerk refuses (malformed, or a domain such as .local or .invalid), which is dropped`,
   ];
 }
 
@@ -729,7 +785,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     const reason =
       original.skipReason ??
       (refused.length > 0 && !hasAnyIdentifier(user)
-        ? `only has an email Clerk refuses (${refused[0]})`
+        ? "only has emails Clerk refuses (malformed, or a domain that can't receive mail)"
         : undefined) ??
       missingRequiredIdentifier(user, input.settings) ??
       // Stripping the identifiers the instance has off can leave nothing to

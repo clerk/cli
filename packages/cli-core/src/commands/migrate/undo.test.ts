@@ -5,6 +5,7 @@ import path from "node:path";
 import { EXIT_CODE, type CliError } from "../../lib/errors.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 import { latestUserLines, listRuns, readRun, startRun, type RunRecord } from "./lib/run-store.ts";
+import { keyInstanceId } from "./lib/target.ts";
 import { undo } from "./undo.ts";
 
 const captured = useCaptureLog();
@@ -147,6 +148,18 @@ describe("refusals, all exit 2 and delete nothing", () => {
     expect(error.message).toContain("Could not confirm");
     expect(error.message).not.toContain("addresses instance");
     expect(deletes()).toHaveLength(0);
+  });
+
+  // The import ran while Clerk could not name the instance; the same key is
+  // the same instance once it can.
+  test("accepts a run recorded under this key's stand-in ID", async () => {
+    const record = importRun({
+      target: { instanceId: keyInstanceId("sk_test_x"), env: "development" },
+    });
+
+    await undo(record.id, withDir({ yes: true }));
+
+    expect(deletes()).toHaveLength(2);
   });
 
   test("no consent where nobody can be asked: the preview, then the command", async () => {

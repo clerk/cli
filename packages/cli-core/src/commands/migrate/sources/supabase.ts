@@ -68,6 +68,10 @@ const supabaseSource = {
       }
     }
 
+    // `export supabase` selects this for the provider checks, which read the
+    // raw rows; Clerk has no place for it, so it isn't a field "Clerk won't store".
+    delete user.raw_app_meta_data;
+
     // A soft-deleted user is gone from the app; Supabase scrambles its email.
     if (user.deletedAt) user.skipReason = "deleted in Supabase";
     delete user.deletedAt;
@@ -86,8 +90,9 @@ const supabaseSource = {
 
     // A basic SQL export has no first_name/last_name columns; the name lives in
     // user metadata instead, under whichever key the provider happened to use.
-    if (!user.firstName && user.unsafeMetadata && typeof user.unsafeMetadata === "object") {
-      const meta = user.unsafeMetadata as Record<string, unknown>;
+    // A CSV carries the metadata as JSON text, still unparsed at this point.
+    const meta = parseObject(user.unsafeMetadata);
+    if (!user.firstName && meta) {
       const displayName = stripDiscriminator(meta.display_name ?? meta.first_name ?? meta.name);
       if (displayName) {
         const parts = displayName.split(/\s+/);
@@ -108,5 +113,19 @@ const supabaseSource = {
     passwordHasher: "bcrypt" as const,
   },
 } satisfies SourceEntry;
+
+/** A metadata value as an object, parsing it when a CSV left it as JSON text. */
+function parseObject(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
 
 export default supabaseSource;

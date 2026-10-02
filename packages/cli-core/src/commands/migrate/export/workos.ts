@@ -26,7 +26,7 @@ import { isAgent, isHuman } from "../../../mode.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
-import { withInputRetry } from "../lib/input-retry.ts";
+import { throwApiFailure, withInputRetry } from "../lib/input-retry.ts";
 import { createApiScheduler } from "../lib/scheduler.ts";
 import { finishExport, startExportRun, type ExportSection } from "./shared.ts";
 
@@ -166,7 +166,8 @@ export async function fetchWorkOsPage(apiKey: string, after?: string): Promise<W
   });
 
   if (!response.ok) {
-    throwUsageError(
+    throwApiFailure(
+      response.status,
       `WorkOS returned ${response.status} listing users: ${await describeFailure(response)}\n` +
         "Check that the key is a secret key (`sk_…`) for the right environment, and that it has not been revoked.",
       DOCS_URL,
@@ -249,7 +250,8 @@ export async function fetchWorkOsIdentities(
   });
 
   if (!response.ok) {
-    throwUsageError(
+    throwApiFailure(
+      response.status,
       `WorkOS returned ${response.status} listing identities for ${userId}: ${await describeFailure(response)}`,
       DOCS_URL,
     );

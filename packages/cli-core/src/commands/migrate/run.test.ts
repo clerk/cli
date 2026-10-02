@@ -357,6 +357,14 @@ describe("run", () => {
     expect(fs.readFileSync(path.join(workDir, ".gitignore"), "utf-8")).toContain(".clerk/");
   });
 
+  test("leaves .gitignore alone when the import is refused for lack of consent", async () => {
+    fs.rmSync(path.join(workDir, ".gitignore"), { force: true });
+
+    await run({ ...baseOptions, yes: false }).catch(() => undefined);
+
+    expect(fs.existsSync(path.join(workDir, ".gitignore"))).toBe(false);
+  });
+
   test("--runs-dir puts the run somewhere else", async () => {
     await run({ ...baseOptions, runsDir: "elsewhere" });
     expect(listRuns(path.join(workDir, "elsewhere"))).toHaveLength(1);

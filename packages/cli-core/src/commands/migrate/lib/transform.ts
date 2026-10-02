@@ -184,7 +184,9 @@ function normalizeMetadataField(value: unknown): unknown {
 function normalizeDateField(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
   if (typeof value === "number") {
-    const date = new Date(value);
+    // Epoch seconds, not milliseconds, below 1e11: as milliseconds that is
+    // before March 1973, which no signup date is.
+    const date = new Date(value < 1e11 ? value * 1000 : value);
     return Number.isNaN(date.getTime()) ? value : date.toISOString();
   }
   if (typeof value !== "string") return value;
@@ -413,7 +415,13 @@ export function transformUsers(
 
 // --- File loading ----------------------------------------------------------
 
-async function readCsv(filePath: string): Promise<Record<string, unknown>[]> {
+/**
+ * Every row of a CSV. `#` is not a comment: a row whose first cell starts
+ * with one is a row.
+ *
+ * @param headers - Column names, for a CSV with no header row.
+ */
+async function readCsv(filePath: string, headers?: string[]): Promise<Record<string, unknown>[]> {
   return new Promise((resolve, reject) => {
     const users: Record<string, unknown>[] = [];
     fs.createReadStream(filePath)
@@ -421,7 +429,7 @@ async function readCsv(filePath: string): Promise<Record<string, unknown>[]> {
       // part of the first header and hide that column from every row.
       .pipe(
         csvParser({
-          skipComments: true,
+          ...(headers ? { headers } : {}),
           mapHeaders: ({ header }) => header.replace(/^\uFEFF/, ""),
         }),
       )
@@ -438,6 +446,7 @@ async function readUsersFromFile(
   let filePath = resolveImportFilePath(file);
   const type = getFileType(file);
   let preExtracted: Record<string, unknown>[] | undefined;
+  let csvHeaders: string[] | undefined;
 
   // An export's envelope already holds the users in the source's own shape,
   // so there is nothing left for a pre-transform to unwrap.
@@ -459,10 +468,12 @@ async function readUsersFromFile(
     const result = await transformer.preTransform(filePath, type ?? "");
     filePath = result.filePath;
     preExtracted = result.data;
+    csvHeaders = result.csvHeaders;
   }
 
-  if (type === "text/csv") return readCsv(filePath);
+  // A pre-transform's rows win over the file, CSV or not.
   if (preExtracted) return preExtracted;
+  if (type === "text/csv") return readCsv(filePath, csvHeaders);
 
   const parsed = readJsonFile(filePath);
   if (!Array.isArray(parsed)) {

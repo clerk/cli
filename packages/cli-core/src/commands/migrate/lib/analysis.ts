@@ -22,6 +22,10 @@ export type IdentifierCounts = {
   verifiedPhones: number;
   unverifiedPhones: number;
   username: number;
+  /** Users with any email, verified or not: each user counted once. */
+  anyEmail: number;
+  /** Users with any phone, verified or not: each user counted once. */
+  anyPhone: number;
   /** Users with at least one identifier — the rest cannot be imported at all. */
   hasAnyIdentifier: number;
 };
@@ -46,6 +50,8 @@ export function analyzeFields(users: (User | Record<string, unknown>)[]): FieldA
     verifiedPhones: 0,
     unverifiedPhones: 0,
     username: 0,
+    anyEmail: 0,
+    anyPhone: 0,
     hasAnyIdentifier: 0,
   };
   const fieldCounts: Record<string, number> = {};
@@ -70,6 +76,8 @@ export function analyzeFields(users: (User | Record<string, unknown>)[]): FieldA
     if (verifiedPhone) identifiers.verifiedPhones++;
     if (unverifiedPhone) identifiers.unverifiedPhones++;
     if (username) identifiers.username++;
+    if (verifiedEmail || unverifiedEmail) identifiers.anyEmail++;
+    if (verifiedPhone || unverifiedPhone) identifiers.anyPhone++;
 
     if (verifiedEmail || unverifiedEmail || verifiedPhone || unverifiedPhone || username) {
       identifiers.hasAnyIdentifier++;

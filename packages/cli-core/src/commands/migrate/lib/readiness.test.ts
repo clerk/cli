@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { UserSettingsJSON } from "../../../lib/fapi.ts";
-import type { FieldAnalysis } from "./analysis.ts";
+import { analyzeFields, type FieldAnalysis } from "./analysis.ts";
 import { buildReadinessReport, type ReadinessItem } from "./readiness.ts";
 
 /** Instance settings carrying only the attributes and providers a test names. */
@@ -21,15 +21,21 @@ function settings(config: {
 
 /** Field analysis with everything absent unless the test says otherwise. */
 function analysis(overrides: Partial<FieldAnalysis> & { totalUsers: number }): FieldAnalysis {
+  const identifiers = {
+    verifiedEmails: 0,
+    unverifiedEmails: 0,
+    verifiedPhones: 0,
+    unverifiedPhones: 0,
+    username: 0,
+    hasAnyIdentifier: overrides.totalUsers,
+    ...overrides.identifiers,
+  };
   return {
     identifiers: {
-      verifiedEmails: 0,
-      unverifiedEmails: 0,
-      verifiedPhones: 0,
-      unverifiedPhones: 0,
-      username: 0,
-      hasAnyIdentifier: overrides.totalUsers,
-      ...overrides.identifiers,
+      // Hand-built rows have no user overlap, so "any" is the sum.
+      anyEmail: identifiers.verifiedEmails + identifiers.unverifiedEmails,
+      anyPhone: identifiers.verifiedPhones + identifiers.unverifiedPhones,
+      ...identifiers,
     },
     fieldCounts: overrides.fieldCounts ?? {},
     totalUsers: overrides.totalUsers,
@@ -57,6 +63,20 @@ describe("which rows appear", () => {
       settings: settings({ attributes: { email_address: { enabled: true } } }),
     });
     expect(item(report, "Email")?.userCount).toBe(5);
+  });
+
+  // A user with both a verified and an unverified phone is one user, not two.
+  test("counts a user with both kinds of phone once", () => {
+    const users = [
+      { userId: "a", phone: "+15555550100", unverifiedPhoneNumbers: ["+15555550101"] },
+      { userId: "b", phone: "+15555550102", unverifiedPhoneNumbers: ["+15555550103"] },
+      { userId: "c", email: "c@x.dev" },
+    ];
+    const report = buildReadinessReport({
+      analysis: analyzeFields(users),
+      settings: settings({ attributes: { phone_number: { enabled: true } } }),
+    });
+    expect(item(report, "Phone")?.userCount).toBe(2);
   });
 
   test("groups rows into identifiers, auth and user model", () => {

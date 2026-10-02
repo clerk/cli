@@ -64,10 +64,11 @@ export function redactConnectionString(connectionString: string): string {
   // the rest of the password in the message. Everything before the final `@`
   // is userinfo, so redacting all of it is always safe.
   // Non-URL forms (SQLite paths) have no `://` and are left alone.
-  // Turso carries its credential as `?authToken=`, not as userinfo.
+  // Turso carries its credential as `?authToken=`, not as userinfo, and a
+  // `?password=` (which Bun.SQL ignores) still must not be printed.
   return connectionString
     .replace(/^([a-z0-9+]+:\/\/)(.*)@/i, "$1***@")
-    .replace(/([?&]authToken=)[^&]*/gi, "$1***");
+    .replace(/([?&](?:authToken|password)=)[^&]*/gi, "$1***");
 }
 
 /** Strips a `file:` prefix and any URL query, leaving a filesystem path. */

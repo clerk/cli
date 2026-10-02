@@ -45,7 +45,9 @@ export function registerMigrate(program: Program): void {
   // mode: every prompt in this tree already stands down for an agent, with the
   // usage error naming what to pass instead.
   migrateCommand.hook("preAction", (_thisCommand, actionCommand) => {
-    const opts = actionCommand.opts();
+    // With globals: `export auth0 --json` lands on the export group's own
+    // --json, which the subcommand's opts() never sees.
+    const opts = actionCommand.optsWithGlobals();
     setAssumeYes(Boolean(opts.yes));
     if (opts.json) setMode("agent");
   });

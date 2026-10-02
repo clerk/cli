@@ -36,9 +36,11 @@ export const userSchema = z
   .object({
     userId: z.string(),
     // Email fields
-    email: z.union([z.email(), z.array(z.email())]).optional(),
-    emailAddresses: z.union([z.email(), z.array(z.email())]).optional(),
-    unverifiedEmailAddresses: z.union([z.email(), z.array(z.email())]).optional(),
+    // Strings, not z.email(): an address Clerk would refuse is dropped by the
+    // checks, with a warning, rather than taking the whole user down.
+    email: z.union([z.string(), z.array(z.string())]).optional(),
+    emailAddresses: z.union([z.string(), z.array(z.string())]).optional(),
+    unverifiedEmailAddresses: z.union([z.string(), z.array(z.string())]).optional(),
     // Phone fields
     phone: z.union([z.string(), z.array(z.string())]).optional(),
     phoneNumbers: z.union([z.string(), z.array(z.string())]).optional(),

@@ -250,6 +250,19 @@ describe("the migrate group's -y hook", () => {
     }
   });
 
+  // The export group declares --json too, and takes the flag; the hook has to
+  // read the group's options as well as the subcommand's.
+  test("--json on an export subcommand runs it in agent mode", async () => {
+    const original = getMode();
+    try {
+      setMode("human");
+      await parse(["migrate", "export", "supabase", "--json", "--db-url", "./none.sqlite"]);
+      expect(getMode()).toBe("agent");
+    } finally {
+      setMode(original);
+    }
+  });
+
   test("records its absence, so a previous run cannot leak into this one", async () => {
     setAssumeYes(true);
     expect(await parse(["migrate", "export", "supabase", "--db-url", "./none.sqlite"])).toBe(false);

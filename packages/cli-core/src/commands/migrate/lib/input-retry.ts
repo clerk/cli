@@ -15,7 +15,7 @@
  * full re-run for one line they could not see.
  */
 
-import { CliError } from "../../../lib/errors.ts";
+import { CliError, EXIT_CODE, throwUsageError } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import { isAssumeYes } from "./assume-yes.ts";
@@ -51,13 +51,34 @@ export async function withInputRetry<I, T>(
     try {
       return { value: await work(candidate), input: candidate };
     } catch (error) {
-      // Everything these steps raise for a bad credential is a CliError
-      // carrying its own explanation; anything else (an interrupt, a bug) is
-      // not ours to retry.
-      if (!(error instanceof CliError) || !isHuman() || isAgent() || isAssumeYes()) throw error;
+      // Everything these steps raise for a bad credential is a usage error
+      // carrying its own explanation. An outage, a 429 or a refused
+      // connection is not fixed by another credential, and anything else (an
+      // interrupt, a bug) is not ours to retry.
+      const badInput = error instanceof CliError && error.exitCode === EXIT_CODE.USAGE;
+      if (!badInput || !isHuman() || isAgent() || isAssumeYes()) throw error;
 
       log.error(error.message);
       candidate = await reprompt();
     }
   }
+}
+
+/** Statuses that mean the credential is wrong, rather than the service being down. */
+const CREDENTIAL_STATUSES = new Set([400, 401, 403]);
+
+/** True when an API's status says the credential, not the service, is the problem. */
+export function isCredentialStatus(status: number): boolean {
+  return CREDENTIAL_STATUSES.has(status);
+}
+
+/**
+ * Throws an API failure: a usage error (exit 2, and a fresh prompt under
+ * {@link withInputRetry}) when the status blames the credential; a plain
+ * error (exit 1) for a 429, a 5xx or anything else another credential would
+ * not fix.
+ */
+export function throwApiFailure(status: number, message: string, docsUrl?: string): never {
+  if (isCredentialStatus(status)) throwUsageError(message, docsUrl);
+  throw new CliError(message, { docsUrl });
 }

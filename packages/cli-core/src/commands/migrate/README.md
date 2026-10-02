@@ -441,7 +441,8 @@ A user whose hash is present but whose salt is not (or the reverse) has both
 dropped: half a credential produces a user nobody can sign in as.
 
 `FIREBASE_AUTH_EMULATOR_HOST` is honoured, so this works against the local
-Firebase emulator as well as production.
+Firebase emulator as well as production. The target line names the emulator
+when it is set.
 
 **No `firebase-admin`.** The spike the plan called for was run and _passed_ — a
 compiled binary can import the SDK and complete `listUsers`, so the known
@@ -461,7 +462,13 @@ it exits naming **every** missing credential at once rather than one per run.
 
 Auth0 pages this endpoint only through the first **1000** users. Past that the
 export stops and says so, pointing at Auth0's bulk export job — silently
-returning the first thousand would read as "that is everyone".
+returning the first thousand would read as "that is everyone". It still exits
+0, and `--json` carries `truncated: true`. A tenant of exactly 1000 is
+complete, and gets no warning. The bulk job's NDJSON file imports as it is.
+
+A credential the platform rejects (400, 401 or 403) is asked for again at a
+terminal. An outage, a `429` or a refused connection is not: another
+credential would not fix it, and it exits 1.
 
 #### WorkOS credentials
 
@@ -623,12 +630,14 @@ after them. They sort the users three ways:
   - it failed schema validation
   - its source requested a skip (Better Auth: an anonymous guest; Supabase: a
     soft-deleted user)
-  - its only email is one Clerk refuses (`.local`, `.invalid`, `.test`,
-    `.example`, `.arpa`). Such an email is dropped from any other user, with a
-    warning
-  - its source ID, email or phone repeats an earlier user in the file. The
-    first record in the file is kept, whatever either holds, and the reject
-    names it (`kept: …`)
+  - its only emails are ones Clerk refuses: malformed, or a domain that can't
+    receive mail (`.local`, `.invalid`, `.test`, `.example`, `.arpa`,
+    `.internal`, `.lan`, `.corp` and the like). Such an email is dropped from
+    any other user, with a warning
+  - its source ID, email, phone or username repeats an earlier user in the file
+    that passes the other checks. Usernames compare case-insensitively and
+    phones ignore punctuation. The first record in the file is kept, whatever
+    either holds, and the reject names it (`kept: …`)
   - it lacks an identifier the instance requires. An email or phone counts
     only when it is verified, because an unverified one is attached after the
     user exists
@@ -644,9 +653,9 @@ after them. They sort the users three ways:
     without it (`skip_legal_checks`), with a warning
   - its username breaks the instance's username rules (length, letters,
     the allowed special characters)
-  - its password is not the shape its hasher says (`bcrypt`, `scrypt_firebase`,
-    `argon2i`/`argon2id` and `scrypt_werkzeug` are checked; other hashers are
-    not)
+  - its password is not the shape its hasher says (`bcrypt`, with a cost up to
+    15, `scrypt_firebase`, `argon2i`/`argon2id` and `scrypt_werkzeug` are
+    checked; other hashers are not, and Clerk refuses a bad one at create)
   - Supabase: its only provider is not enabled in Clerk
   - the instance already has a user with its source ID, email, phone or
     username (a batched `GET /v1/users` lookup, 100 values a request, through
@@ -657,9 +666,9 @@ after them. They sort the users three ways:
     order
 - **Imported, but not everything comes across** — fields the instance is not
   set up to store, fields Clerk has no place for (`Clerk won't store: …`),
-  passwords a source had to drop, emails Clerk refuses, and names Clerk refuses
-  (a phone number, email, URL or HTML: Better Auth's phone sign-up stores the
-  number as the name).
+  passwords a source had to drop, emails Clerk refuses (malformed, or a domain
+  that can't receive mail), and names Clerk refuses (a phone number, URL or
+  HTML: Better Auth's phone sign-up stores the number as the name).
 - **Imported** — everyone else.
 
 Any reject stops the import, and it exits 2 with the command that adds
@@ -843,7 +852,7 @@ brings across. Adding a platform is one file in `sources/` plus one line in
 
 | Key          | Reads                         | Passwords | MFA     | Metadata |
 | ------------ | ----------------------------- | --------- | ------- | -------- |
-| `clerk`      | Clerk Dashboard export        | partial   | partial | yes      |
+| `clerk`      | Clerk Dashboard export        | partial   | partial | partial  |
 | `auth0`      | Auth0 Export Users API        | partial   | no      | yes      |
 | `authjs`     | Auth.js / NextAuth user table | no        | no      | no       |
 | `betterauth` | Better Auth export            | yes       | no      | no       |
@@ -1061,17 +1070,17 @@ can sign in with.
 are how a Clerk-to-Clerk migration keeps original signup dates instead of
 stamping every user with today's.
 
-| Field                       | Type      | Description                               |
-| --------------------------- | --------- | ----------------------------------------- |
-| `createdAt`                 | `string`  | Original creation timestamp               |
-| `legalAcceptedAt`           | `string`  | When legal terms were accepted            |
-| `banned`                    | `boolean` | Whether the user is banned                |
-| `bypassClientTrust`         | `boolean` | Skip client trust verification            |
-| `createOrganizationEnabled` | `boolean` | Whether the user can create orgs          |
-| `createOrganizationsLimit`  | `number`  | Maximum orgs the user can create          |
-| `deleteSelfEnabled`         | `boolean` | Whether the user can delete their account |
-| `skipLegalChecks`           | `boolean` | Skip legal acceptance checks              |
-| `skipPasswordChecks`        | `boolean` | Skip password requirements on import      |
+| Field                       | Type      | Description                                                                          |
+| --------------------------- | --------- | ------------------------------------------------------------------------------------ |
+| `createdAt`                 | `string`  | Original creation timestamp. A number is epoch milliseconds, or seconds below `1e11` |
+| `legalAcceptedAt`           | `string`  | When legal terms were accepted                                                       |
+| `banned`                    | `boolean` | Whether the user is banned                                                           |
+| `bypassClientTrust`         | `boolean` | Skip client trust verification                                                       |
+| `createOrganizationEnabled` | `boolean` | Whether the user can create orgs                                                     |
+| `createOrganizationsLimit`  | `number`  | Maximum orgs the user can create                                                     |
+| `deleteSelfEnabled`         | `boolean` | Whether the user can delete their account                                            |
+| `skipLegalChecks`           | `boolean` | Skip legal acceptance checks                                                         |
+| `skipPasswordChecks`        | `boolean` | Skip password requirements on import                                                 |
 
 ## API Endpoints
 

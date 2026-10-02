@@ -209,15 +209,37 @@ export function lockFile(runsDir: string, id: string): string {
   return path.join(runDir(runsDir, id), LOCK_FILE);
 }
 
+const isExists = (error: unknown) => (error as NodeJS.ErrnoException).code === "EEXIST";
+
+/**
+ * Takes the run's lock. Created exclusively (`wx`), so two processes can't
+ * both read "free" and both write; a stale lock is removed and taken once.
+ */
 function acquireLock(runsDir: string, id: string): void {
-  const holder = liveLockPid(runsDir, id);
-  if (holder !== undefined) {
+  const file = lockFile(runsDir, id);
+  const refuse = (holder: number | undefined): never =>
     throwUsageError(
-      `Run ${id} is in use by another process (PID ${holder}). Wait for it to finish, then try again. ` +
-        `If that process is not a migrate run, delete ${lockFile(runsDir, id)}.`,
+      `Run ${id} is in use by another process${holder ? ` (PID ${holder})` : ""}. Wait for it to finish, then try again. ` +
+        `If that process is not a migrate run, delete ${file}.`,
     );
+  const take = () => fs.writeFileSync(file, String(process.pid), { flag: "wx" });
+
+  try {
+    take();
+    return;
+  } catch (error) {
+    if (!isExists(error)) throw error;
   }
-  fs.writeFileSync(lockFile(runsDir, id), String(process.pid));
+  const holder = liveLockPid(runsDir, id);
+  if (holder !== undefined) refuse(holder);
+  fs.rmSync(file, { force: true });
+  try {
+    take();
+  } catch (error) {
+    // Another process took the stale lock between the remove and the write.
+    if (isExists(error)) refuse(liveLockPid(runsDir, id));
+    throw error;
+  }
 }
 
 // --- Reading ---------------------------------------------------------------
@@ -377,9 +399,20 @@ export type StartRunInit = Omit<RunRecord, "id" | "status" | "startedAt" | "coun
 
 /** Creates a run folder, takes its lock and writes the first `run.json`. */
 export function startRun(runsDir: string, init: StartRunInit): Run {
-  const id = newRunId();
   // Owner-only: a run's files hold user data.
-  fs.mkdirSync(runDir(runsDir, id), { recursive: true, mode: 0o700 });
+  fs.mkdirSync(runsDir, { recursive: true, mode: 0o700 });
+  // Created exclusively: two runs started in the same second share an ID one
+  // time in 65,536, and must not share a folder.
+  let id = newRunId();
+  for (;;) {
+    try {
+      fs.mkdirSync(runDir(runsDir, id), { mode: 0o700 });
+      break;
+    } catch (error) {
+      if (!isExists(error)) throw error;
+      id = newRunId();
+    }
+  }
   acquireLock(runsDir, id);
 
   const record: RunRecord = {

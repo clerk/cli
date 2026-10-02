@@ -122,6 +122,13 @@ describe("normalizeConnectionString", () => {
     expect(new URL(normalized).hostname).toBe("host");
   });
 
+  // A bare `%` parses as a URL but fails the driver's decode with "URI error".
+  test("encodes a bare % in a password", () => {
+    const normalized = normalizeConnectionString("postgres://u:50%off@host:5432/db");
+
+    expect(decodeURIComponent(new URL(normalized).password)).toBe("50%off");
+  });
+
   test("leaves an already-valid string alone", () => {
     const encoded = "postgres://u:p%40ss@host:5432/db";
     expect(normalizeConnectionString(encoded)).toBe(encoded);

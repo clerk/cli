@@ -23,7 +23,7 @@ import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spin
 import { isAgent, isHuman } from "../../../mode.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
-import { withInputRetry } from "../lib/input-retry.ts";
+import { isCredentialStatus, throwApiFailure, withInputRetry } from "../lib/input-retry.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 
 const PAGE_SIZE = 100;
@@ -175,9 +175,17 @@ export async function fetchAuth0Token(credentials: Auth0Credentials): Promise<st
     error?: string;
   };
 
-  if (!response.ok || !body.access_token) {
+  const detail = body.error_description ?? body.error ?? "no access token returned";
+  if (!response.ok && !isCredentialStatus(response.status)) {
+    throwApiFailure(
+      response.status,
+      `Auth0 did not issue a token (${response.status}): ${detail}. Try again shortly.`,
+      DOCS_URL,
+    );
+  }
+  if (!body.access_token) {
     throwUsageError(
-      `Auth0 rejected the credentials (${response.status}): ${body.error_description ?? body.error ?? "no access token returned"}\n` +
+      `Auth0 rejected the credentials (${response.status}): ${detail}\n` +
         "Check the domain, client ID and secret, and that the application is authorized for the Management API with the `read:users` scope.",
       DOCS_URL,
     );
@@ -207,7 +215,11 @@ async function fetchAuth0Page(
 
   if (!response.ok) {
     const body = await response.text();
-    throwUsageError(`Auth0 returned ${response.status} listing users: ${body}`, DOCS_URL);
+    throwApiFailure(
+      response.status,
+      `Auth0 returned ${response.status} listing users: ${body}`,
+      DOCS_URL,
+    );
   }
 
   const body = (await response.json()) as { users?: Auth0User[]; total?: number };
@@ -224,7 +236,7 @@ export async function fetchAllAuth0Users(options: {
   credentials: Auth0Credentials;
   token: string;
   spinner?: SpinnerControls;
-}): Promise<Auth0User[]> {
+}): Promise<{ users: Auth0User[]; truncated: boolean }> {
   const all: Auth0User[] = [];
 
   for (let page = 0; ; page++) {
@@ -235,16 +247,21 @@ export async function fetchAllAuth0Users(options: {
     if (users.length < PAGE_SIZE) break;
 
     if (all.length >= AUTH0_PAGINATION_CEILING) {
-      log.warn(
-        `Auth0 only pages through the first ${AUTH0_PAGINATION_CEILING} users on this endpoint` +
-          (total > AUTH0_PAGINATION_CEILING ? `, and this tenant reports ${total}` : "") +
-          ". Exported what is reachable; use Auth0's bulk user export job for the rest.",
-      );
-      break;
+      // A tenant of exactly the ceiling is complete. Without a total, a full
+      // last page may hide more.
+      const truncated = total ? total > AUTH0_PAGINATION_CEILING : true;
+      if (truncated) {
+        log.warn(
+          `Auth0 only pages through the first ${AUTH0_PAGINATION_CEILING} users on this endpoint` +
+            (total ? `, and this tenant reports ${total}` : "") +
+            ". Exported what is reachable; use Auth0's bulk user export job for the rest.",
+        );
+      }
+      return { users: all, truncated };
     }
   }
 
-  return all;
+  return { users: all, truncated: false };
 }
 
 /**
@@ -348,13 +365,14 @@ export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
       },
     );
 
-    const users = await withSpinner("Fetching users from Auth0...", async (spinner) =>
-      fetchAllAuth0Users({ credentials, token, spinner }),
+    const { users, truncated } = await withSpinner(
+      "Fetching users from Auth0...",
+      async (spinner) => fetchAllAuth0Users({ credentials, token, spinner }),
     );
 
     const run = await startExportRun(options, { platform: "auth0" });
     const { users: exported, coverage } = buildAuth0Export(users, run.append);
-    finishExport({ run, options, users: exported, coverage });
+    finishExport({ run, options, users: exported, coverage, truncated });
 
     if (exported.length > 0) {
       log.warn(

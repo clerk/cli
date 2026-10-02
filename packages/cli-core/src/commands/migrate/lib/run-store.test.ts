@@ -1,4 +1,15 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  setSystemTime,
+  spyOn,
+  test,
+} from "bun:test";
+import * as crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -184,6 +195,24 @@ describe("locks and interruptions", () => {
     const run = startRun(runsDir, init);
     fs.writeFileSync(path.join(run.dir, "lock"), "1");
     expect(runState(runsDir, run.record)).toBe("running");
+  });
+
+  // Two runs in the same second share an ID one time in 65,536.
+  test("a run ID that is already taken gets a new one, not a shared folder", () => {
+    setSystemTime(new Date("2026-10-02T12:00:00"));
+    const bytes = spyOn(crypto, "randomBytes")
+      .mockReturnValueOnce(Buffer.from([0xab, 0xcd]) as never)
+      .mockReturnValueOnce(Buffer.from([0xab, 0xcd]) as never)
+      .mockReturnValueOnce(Buffer.from([0x12, 0x34]) as never);
+    try {
+      const first = startRun(runsDir, init);
+      const second = startRun(runsDir, init);
+      expect(first.record.id).toEndWith("-abcd");
+      expect(second.record.id).toEndWith("-1234");
+    } finally {
+      bytes.mockRestore();
+      setSystemTime();
+    }
   });
 
   test("refuses a run another live process holds, with exit 2", () => {

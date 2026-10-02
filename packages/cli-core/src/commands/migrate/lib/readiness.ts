@@ -159,8 +159,9 @@ export function buildReadinessReport(input: BuildInput): ReadinessReport {
   const total = analysis.totalUsers;
   const items: ReadinessItem[] = [];
 
-  const emailCount = analysis.identifiers.verifiedEmails + analysis.identifiers.unverifiedEmails;
-  const phoneCount = analysis.identifiers.verifiedPhones + analysis.identifiers.unverifiedPhones;
+  // Users, not fields: one with both a verified and an unverified phone is one.
+  const emailCount = analysis.identifiers.anyEmail;
+  const phoneCount = analysis.identifiers.anyPhone;
 
   const attributeRows: [string, ReadinessSection, AttributeName, number][] = [
     ["Email", "identifiers", "email_address", emailCount],

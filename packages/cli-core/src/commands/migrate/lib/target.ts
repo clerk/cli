@@ -90,8 +90,16 @@ export async function fetchInstanceIdentity(
   } catch (error) {
     log.debug(`migrate: could not read the instance behind the key: ${String(error)}`);
   }
-  const digest = createHash("sha256").update(secretKey).digest("hex").slice(0, 16);
-  return { instanceId: `key_${digest}`, env: fallbackEnv };
+  return { instanceId: keyInstanceId(secretKey), env: fallbackEnv };
+}
+
+/**
+ * The stand-in ID for a key whose instance Clerk did not name: a hash of the
+ * key. A run recorded under it is matched by the same key later, once
+ * `GET /v1/instance` answers again.
+ */
+export function keyInstanceId(secretKey: string): string {
+  return `key_${createHash("sha256").update(secretKey).digest("hex").slice(0, 16)}`;
 }
 
 /**

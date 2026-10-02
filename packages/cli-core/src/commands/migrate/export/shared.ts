@@ -119,6 +119,8 @@ export type FinishExportInput = {
   sections?: ExportSection[];
   /** Firebase's hash parameters, carried to the import in the envelope. */
   firebase?: FirebaseHashConfig;
+  /** The platform stopped short of every user; `--json` says so. */
+  truncated?: boolean;
 };
 
 export type FinishedExport = { record: RunRecord; outputPath: string };
@@ -156,6 +158,7 @@ export function finishExport(input: FinishExportInput): FinishedExport {
           users: users.length,
           coverage,
           ...(input.sections?.length ? { sections: input.sections } : {}),
+          ...(input.truncated ? { truncated: true } : {}),
           next,
         },
         null,

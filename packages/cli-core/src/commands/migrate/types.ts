@@ -86,6 +86,8 @@ export type TransformContext = {
 export type PreTransformResult = {
   filePath: string;
   data?: Record<string, unknown>[];
+  /** Column names for a CSV with no header row of its own. */
+  csvHeaders?: string[];
 };
 
 /** How much of one kind of data a source brings across. */

@@ -1,6 +1,3 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
 import { readJsonFile } from "../lib/export-file.ts";
 import type { PreTransformResult, SourceEntry } from "../types.ts";
@@ -38,17 +35,9 @@ const firebaseSource = {
     "Works with `firebase auth:export` (CSV or JSON). Requires the project's four password hash parameters to migrate passwords.",
 
   preTransform: (filePath: string, fileType: string): PreTransformResult => {
-    if (fileType === "text/csv") {
-      // Written to the OS temp dir rather than the user's cwd: this is a
-      // parsing artifact, not a migration output like ./logs.
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-firebase-"));
-      const withHeaders = path.join(tmpDir, path.basename(filePath));
-      fs.writeFileSync(
-        withHeaders,
-        `${FIREBASE_CSV_HEADERS}\n${fs.readFileSync(filePath, "utf-8")}`,
-      );
-      return { filePath: withHeaders };
-    }
+    // The CSV has no header row; name the columns rather than writing a copy
+    // with one, which would leave the hashes and salts in a temp file.
+    if (fileType === "text/csv") return { filePath, csvHeaders: FIREBASE_CSV_HEADERS.split(",") };
 
     if (fileType === "application/json") {
       const parsed = readJsonFile(filePath);

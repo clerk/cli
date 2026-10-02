@@ -83,9 +83,11 @@ const betterAuthSource = {
     phone_number: "phone",
     phone_number_verified: "phoneVerified",
     created_at: "createdAt",
-    updated_at: "updatedAt",
   },
   postTransform: (user) => {
+    // Every Better Auth row has one, and Clerk sets its own.
+    delete user.updated_at;
+
     routeByVerification(user, "email", "emailVerified", "boolean");
     routeByVerification(user, "phone", "phoneVerified", "boolean");
     splitName(user);

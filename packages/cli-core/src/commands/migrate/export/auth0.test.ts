@@ -3,7 +3,7 @@ import { getMode, setMode } from "../../../mode.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CliError } from "../../../lib/errors.ts";
+import { CliError, EXIT_CODE } from "../../../lib/errors.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import {
@@ -156,6 +156,14 @@ describe("fetchAuth0Token", () => {
     );
   });
 
+  // An outage is not a bad credential: no re-prompt, and exit 1, not 2.
+  test("a 5xx is an outage, not a rejected credential", async () => {
+    stubAuth0([[]], new Response("{}", { status: 503 }));
+    const error = (await fetchAuth0Token(CREDENTIALS).catch((e: unknown) => e)) as CliError;
+    expect(error.message).toContain("Auth0 did not issue a token (503)");
+    expect(error.exitCode).not.toBe(EXIT_CODE.USAGE);
+  });
+
   test("mentions the read:users scope, the usual cause", async () => {
     stubAuth0([[]], new Response("{}", { status: 403 }));
     await expect(fetchAuth0Token(CREDENTIALS)).rejects.toThrow(/read:users/);
@@ -174,9 +182,13 @@ describe("fetchAllAuth0Users", () => {
       Array.from({ length: 4 }, (_, i) => auth0User(100 + i)),
     ]);
 
-    const all = await fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" });
+    const { users: all, truncated } = await fetchAllAuth0Users({
+      credentials: CREDENTIALS,
+      token: "tok",
+    });
 
     expect(all).toHaveLength(104);
+    expect(truncated).toBe(false);
     expect(requests[0]?.url).toContain("page=0");
     expect(requests[1]?.url).toContain("page=1");
     expect(requests).toHaveLength(2);
@@ -196,11 +208,30 @@ describe("fetchAllAuth0Users", () => {
       Array.from({ length: 12 }, () => Array.from({ length: 100 }, (_, i) => auth0User(i))),
     );
 
-    const all = await fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" });
+    const { users: all, truncated } = await fetchAllAuth0Users({
+      credentials: CREDENTIALS,
+      token: "tok",
+    });
 
     expect(all).toHaveLength(1000);
+    expect(truncated).toBe(true);
     expect(captured.err).toContain("only pages through the first 1000 users");
     expect(captured.err).toContain("bulk user export job");
+  });
+
+  test("a tenant of exactly 1000 users is complete, with no warning", async () => {
+    stubAuth0(
+      Array.from({ length: 10 }, () => Array.from({ length: 100 }, (_, i) => auth0User(i))),
+    );
+
+    const { users: all, truncated } = await fetchAllAuth0Users({
+      credentials: CREDENTIALS,
+      token: "tok",
+    });
+
+    expect(all).toHaveLength(1000);
+    expect(truncated).toBe(false);
+    expect(captured.err).not.toContain("only pages through");
   });
 
   test("raises a clear error on a failed page request", async () => {

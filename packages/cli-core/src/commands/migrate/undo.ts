@@ -41,7 +41,13 @@ import {
   type RunRecord,
 } from "./lib/run-store.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
-import { describeTarget, printTarget, resolveClerkTarget, type ClerkTarget } from "./lib/target.ts";
+import {
+  describeTarget,
+  keyInstanceId,
+  printTarget,
+  resolveClerkTarget,
+  type ClerkTarget,
+} from "./lib/target.ts";
 import { findInFlight, lookupUsers } from "./lib/user-lookup.ts";
 
 export type UndoOptions = {
@@ -97,8 +103,11 @@ function readImportRun(runsDir: string, runId: string): RunRecord {
 }
 
 /** Refuses to delete from an instance the import did not write to. */
-function assertSameInstance(record: RunRecord, target: ClerkTarget): void {
+function assertSameInstance(record: RunRecord, target: ClerkTarget, secretKey: string): void {
   if (record.target.instanceId === target.instanceId) return;
+  // Recorded under the key's stand-in ID while Clerk could not name the
+  // instance: the same key is the same instance.
+  if (record.target.instanceId === keyInstanceId(secretKey)) return;
   // A `key_` ID is the fallback for an instance lookup that failed. It cannot
   // be compared with an `ins_` ID, so this is "unknown", not "different".
   const unconfirmed = [record.target.instanceId, target.instanceId].some((id) =>
@@ -314,12 +323,12 @@ function jsonResult(
 }
 
 export async function undo(runId: string, options: UndoOptions = {}): Promise<void> {
-  const runsDir = await resolveRunsDir(options.runsDir, { write: !options.dryRun });
+  const runsDir = await resolveRunsDir(options.runsDir);
   const record = readImportRun(runsDir, runId);
 
   const { secretKey, target } = await resolveClerkTarget(options);
   if (!options.json) printTarget(target);
-  assertSameInstance(record, target);
+  assertSameInstance(record, target, secretKey);
 
   const limits = resolveLimits(secretKey);
   const openUndo = findOpenUndo(runsDir, record.id);
@@ -390,6 +399,8 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     if (!proceed) throwUserAbort();
   }
 
+  // Gitignored only now, once there is consent to write a run.
+  await resolveRunsDir(options.runsDir, { write: true });
   const run = openUndo
     ? continueRun(runsDir, openUndo)
     : startRun(runsDir, { kind: "undo", target, undoes: record.id, source: record.source });

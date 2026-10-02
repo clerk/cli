@@ -9,7 +9,7 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { CliError, ERROR_CODE, UserAbortError } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "../../../lib/errors.ts";
 import { getMode, setMode, type Mode } from "../../../mode.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 
@@ -46,7 +46,8 @@ const CONFIG = {
 const FIRST = "libsql://typo.turso.io?authToken=t";
 const SECOND = "libsql://right.turso.io?authToken=t";
 
-const rejected = () => new CliError("Could not reach it", { code: ERROR_CODE.USAGE_ERROR });
+const rejected = () =>
+  new CliError("Could not reach it", { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE });
 
 let originalMode: Mode;
 
@@ -193,6 +194,30 @@ describe("withInputRetry", () => {
   });
 
   // A bug inside the work, or an interrupt, is not a wrong answer to a prompt.
+  // Another credential would not fix an outage, a 429 or a refused connection.
+  test.each([
+    [
+      "a refused connection",
+      new CliError("Could not reach x", { code: ERROR_CODE.NETWORK_UNREACHABLE }),
+    ],
+    ["a 503", new CliError("Auth0 returned 503 listing users")],
+  ])("does not ask again after %s", async (_label, failure) => {
+    let attempts = 0;
+
+    await expect(
+      withInputRetry(
+        FIRST,
+        () => promptDbUrl(CONFIG),
+        () => {
+          attempts++;
+          throw failure;
+        },
+      ),
+    ).rejects.toBe(failure);
+
+    expect(attempts).toBe(1);
+  });
+
   test("does not retry an error the database layer did not raise", async () => {
     let attempts = 0;
 

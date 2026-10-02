@@ -34,7 +34,7 @@ import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spin
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
 import type { FirebaseHashConfig } from "../types.ts";
-import { withInputRetry } from "../lib/input-retry.ts";
+import { isCredentialStatus, throwApiFailure, withInputRetry } from "../lib/input-retry.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 
 /** Identity Toolkit's maximum for `accounts:batchGet`. */
@@ -286,9 +286,17 @@ export async function fetchAccessToken(account: ServiceAccount): Promise<string>
     error?: string;
   };
 
-  if (!response.ok || !body.access_token) {
+  const detail = body.error_description ?? body.error ?? "no access token returned";
+  if (!response.ok && !isCredentialStatus(response.status)) {
+    throwApiFailure(
+      response.status,
+      `Google did not issue a token (${response.status}): ${detail}. Try again shortly.`,
+      DOCS_URL,
+    );
+  }
+  if (!body.access_token) {
     throwUsageError(
-      `Google rejected the service account (${response.status}): ${body.error_description ?? body.error ?? "no access token returned"}\n` +
+      `Google rejected the service account (${response.status}): ${detail}\n` +
         "Check the key has not been revoked or deleted, in the Google Cloud console under IAM → Service accounts.",
       DOCS_URL,
     );
@@ -335,7 +343,8 @@ export async function fetchAllFirebaseUsers(options: {
     });
 
     if (!response.ok) {
-      throwUsageError(
+      throwApiFailure(
+        response.status,
         `Firebase returned ${response.status} listing users: ${await response.text()}`,
         DOCS_URL,
       );
@@ -545,7 +554,12 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
   const resolved = await resolveServiceAccount(options);
 
   await withGutter("Exporting users from Firebase", async () => {
-    if (!options.json) printTarget({ platform: "firebase" });
+    // The emulator variable is Firebase's own, so it is honoured, but named:
+    // an export from it is not the production project's users.
+    const emulator = process.env.FIREBASE_AUTH_EMULATOR_HOST;
+    if (!options.json) {
+      printTarget({ platform: emulator ? `firebase (emulator at ${emulator})` : "firebase" });
+    }
     // Only Google can say whether a well-formed key is still a valid one, so a
     // revoked or deleted key fails here and is asked for again.
     const { value: token, input: account } = await withInputRetry(

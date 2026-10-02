@@ -21,8 +21,8 @@ const clerkSource = {
       note: "TOTP secrets and backup codes come across from a Dashboard export only.",
     },
     metadata: {
-      level: "yes",
-      note: "Public, private and unsafe metadata keep their places. `export clerk` moves each user's external_id to private metadata as `clerkExternalId`, because the import uses external_id for the old Clerk ID.",
+      level: "partial",
+      note: "With `clerk migrate export clerk`, public, private and unsafe metadata keep their places; a Dashboard CSV carries no metadata, ban or legal acceptance. `export clerk` moves each user's external_id to private metadata as `clerkExternalId`, because the import uses external_id for the old Clerk ID.",
     },
   },
   transformer: {
@@ -54,6 +54,28 @@ const clerkSource = {
     create_organizations_limit: "createOrganizationsLimit",
     delete_self_enabled: "deleteSelfEnabled",
   },
+  postTransform: (user) => {
+    // The Dashboard's CSV prefixes a TAB to any value starting with = + - @
+    // (or their fullwidth forms), so a spreadsheet won't run it as a formula
+    // (clerk_go pkg/csvsafe). Undo it, or the TAB is imported.
+    for (const field of FORMULA_SAFE_FIELDS) {
+      const value = user[field];
+      if (typeof value === "string") user[field] = unprefix(value);
+      else if (Array.isArray(value))
+        user[field] = value.map((v) => (typeof v === "string" ? unprefix(v) : v));
+    }
+  },
 } satisfies SourceEntry;
+
+const FORMULA_SAFE_FIELDS = [
+  "firstName",
+  "lastName",
+  "username",
+  "email",
+  "emailAddresses",
+  "unverifiedEmailAddresses",
+] as const;
+
+const unprefix = (value: string) => value.replace(/^\t(?=[=+\-@\t\r\n＝＋－＠])/, "");
 
 export default clerkSource;

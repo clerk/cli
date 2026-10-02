@@ -40,7 +40,12 @@ const URL_SCHEME = /^(postgresql|postgres|mysql|mysql2|libsql):\/\//i;
  */
 function parsesAsUrl(value: string): boolean {
   try {
-    return new URL(value).hostname.length > 0;
+    const url = new URL(value);
+    // A bare `%` in the password parses, then fails the driver's decode with a
+    // cryptic "URI error"; treat it as unparsed so it gets encoded.
+    decodeURIComponent(url.username);
+    decodeURIComponent(url.password);
+    return url.hostname.length > 0;
   } catch {
     return false;
   }

@@ -60,7 +60,7 @@ import {
 } from "./lib/run-store.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
 import { readSupabaseRows } from "./lib/supabase-providers.ts";
-import { printTarget, resolveClerkTarget } from "./lib/target.ts";
+import { keyInstanceId, printTarget, resolveClerkTarget } from "./lib/target.ts";
 import { findInFlight } from "./lib/user-lookup.ts";
 import {
   fileExists,
@@ -367,7 +367,14 @@ export type ResumeCase =
  */
 export function findResume(
   runsDir: string,
-  match: { sha256: string; source: string; sourceHash?: string; instanceId: string },
+  match: {
+    sha256: string;
+    source: string;
+    sourceHash?: string;
+    instanceId: string;
+    /** The key's stand-in ID, for a run recorded while Clerk could not name the instance. */
+    keyInstanceId?: string;
+  },
 ): ResumeCase {
   const latest = listRuns(runsDir).find(
     (record) =>
@@ -375,7 +382,8 @@ export function findResume(
       record.file?.sha256 === match.sha256 &&
       record.source === match.source &&
       record.sourceHash === match.sourceHash &&
-      record.target.instanceId === match.instanceId,
+      (record.target.instanceId === match.instanceId ||
+        record.target.instanceId === match.keyInstanceId),
   );
   if (!latest) return { kind: "new" };
 
@@ -595,7 +603,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       const filePath = resolveImportFilePath(file);
       const sha256 = sha256File(filePath);
-      const runsDir = await resolveRunsDir(options.runsDir, { write: !options.dryRun });
+      const runsDir = await resolveRunsDir(options.runsDir);
 
       const resume: ResumeCase = options.newRun
         ? { kind: "new" }
@@ -604,6 +612,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             source,
             ...(options.sourceHash ? { sourceHash: options.sourceHash } : {}),
             instanceId: target.instanceId,
+            keyInstanceId: keyInstanceId(secretKey),
           });
 
       if (resume.kind === "complete") {
@@ -811,6 +820,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         if (!proceed) throwUserAbort();
       }
 
+      // Gitignored only now, once there is consent to write a run.
+      await resolveRunsDir(options.runsDir, { write: true });
       const run = continued
         ? continueRun(runsDir, continued)
         : startRun(runsDir, {

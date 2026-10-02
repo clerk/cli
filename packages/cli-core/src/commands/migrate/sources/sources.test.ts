@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -463,10 +463,18 @@ describe("firebase", () => {
     await expect(load("firebase", { records: [] })).rejects.toThrow(CliError);
   });
 
-  test("prepends headers to a headerless CSV export", async () => {
+  // Named, not prepended: a copy with a header row would leave the hashes and
+  // salts in a temp file nobody deletes.
+  test("names the columns of a headerless CSV export, writing no copy", async () => {
     const csv = "fb9,a@x.dev,true,,,Ada Lovelace,,,,,,,,,,,,,,,,,,1704067200000,,,,,\n";
-    const { users } = await load("firebase", csv, "csv");
-    expect(users[0]).toMatchObject({ userId: "fb9", email: "a@x.dev", firstName: "Ada" });
+    const mkdtemp = spyOn(fs, "mkdtempSync");
+    try {
+      const { users } = await load("firebase", csv, "csv");
+      expect(users[0]).toMatchObject({ userId: "fb9", email: "a@x.dev", firstName: "Ada" });
+      expect(mkdtemp).not.toHaveBeenCalled();
+    } finally {
+      mkdtemp.mockRestore();
+    }
   });
 
   test.each([
@@ -567,6 +575,15 @@ describe("supabase", () => {
     expect(user?.lastName).toBe("Lovelace");
   });
 
+  // A CSV carries the metadata as JSON text.
+  test("falls back to metadata given as JSON text, as a CSV carries it", () => {
+    const user = one("supabase", {
+      ...base,
+      raw_user_meta_data: JSON.stringify({ display_name: "Ada Lovelace" }),
+    });
+    expect(user?.firstName).toBe("Ada");
+  });
+
   test("prefers explicit name columns over metadata", () => {
     const user = one("supabase", {
       ...base,
@@ -587,6 +604,54 @@ describe("supabase", () => {
   test("drops a name that was nothing but a discriminator", () => {
     const user = one("supabase", { ...base, first_name: "#0" });
     expect(user?.firstName).toBeUndefined();
+  });
+});
+
+// The Dashboard's CSV prefixes a TAB to a value a spreadsheet would run as a
+// formula (clerk_go pkg/csvsafe).
+describe("clerk", () => {
+  test.each([
+    ["\t=Ada", "=Ada"],
+    ["\t@ada", "@ada"],
+    ["\t＋Ada", "＋Ada"],
+    ["\tAda", "\tAda"],
+  ])("first name %p imports as %p", (firstName, expected) => {
+    expect(
+      one("clerk", { id: "u1", primary_email_address: "a@x.dev", first_name: firstName })
+        ?.firstName,
+    ).toBe(expected);
+  });
+
+  test("unprefixes each address in a list", () => {
+    const user = one("clerk", {
+      id: "u1",
+      primary_email_address: "a@x.dev",
+      unverified_email_addresses: "\t-b@x.dev",
+    });
+    expect(user?.unverifiedEmailAddresses).toEqual(["-b@x.dev"]);
+  });
+});
+
+// The CLI's own exports add these; reporting them as "Clerk won't store" on
+// every import would be noise about the CLI itself.
+describe("fields the CLI's own export adds", () => {
+  test.each([
+    [
+      "supabase",
+      {
+        id: "s1",
+        email: "a@x.dev",
+        email_confirmed_at: "2024-01-01",
+        raw_app_meta_data: { providers: ["email"] },
+      },
+    ],
+    [
+      "betterauth",
+      { user_id: "b1", email: "a@x.dev", email_verified: true, updated_at: "2024-01-01" },
+    ],
+  ])("%s reports no unknown fields", async (key, record) => {
+    const { unknownFields } = await load(key, [record]);
+    expect(unknownFields).toEqual({});
   });
 });
 
@@ -613,14 +678,6 @@ describe("invalid records", () => {
       expect(failures).toHaveLength(1);
     },
   );
-
-  test.each(INVALID)("%s logs a malformed email rather than sending it", async (key, record) => {
-    const { users, validationFailed } = await load(key, [
-      { ...record, ...identifierFor(key, "not-an-email") },
-    ]);
-    expect(validationFailed).toBe(1);
-    expect(users).toHaveLength(0);
-  });
 });
 
 /** The per-platform source field that becomes a Clerk identifier. */

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
 import clerkSource from "../sources/clerk.ts";
+import { __resetCustomSourcesForTesting, registerCustomSource } from "../sources/registry.ts";
 import {
   consolidateClerkIdentifiers,
   flattenObjectSelectively,
@@ -94,6 +95,9 @@ describe("normalizeUserData", () => {
     ["JSON metadata", { publicMetadata: '{"plan":"pro"}' }, { publicMetadata: { plan: "pro" } }],
     ["date string", { createdAt: "2024-01-01" }, { createdAt: "2024-01-01T00:00:00.000Z" }],
     ["numeric user ID", { userId: 42 }, { userId: "42" }],
+    ["epoch milliseconds", { createdAt: 1704067200000 }, { createdAt: "2024-01-01T00:00:00.000Z" }],
+    // As milliseconds this would be January 1970.
+    ["epoch seconds", { createdAt: 1704067200 }, { createdAt: "2024-01-01T00:00:00.000Z" }],
   ])("normalizes %s", (_label, input, expected) => {
     expect(normalizeUserData(input)).toMatchObject(expected);
   });
@@ -252,6 +256,35 @@ describe("loadUsersFromFile", () => {
     )) as CliError;
     expect(error).toBeInstanceOf(CliError);
     expect(error.message).toContain("broken.json is not valid JSON");
+  });
+
+  // `#` starts a value, not a comment: dropping the row would lose the user
+  // and record nothing.
+  test("keeps a CSV row whose first cell starts with #", async () => {
+    fs.writeFileSync(path.join(workDir, "hash.csv"), "id,primary_email_address\n#7,a@x.dev\n");
+    const { users } = await loadUsersFromFile("hash.csv", "clerk");
+    expect(users.map((user) => user.userId)).toEqual(["#7"]);
+  });
+
+  test("a custom preTransform's rows win over a CSV file", async () => {
+    registerCustomSource({
+      ...clerkSource,
+      key: "rows-from-pretransform",
+      preTransform: (filePath) => ({
+        filePath,
+        data: [{ id: "from-pretransform", primary_email_address: "p@x.dev" }],
+      }),
+    });
+    try {
+      fs.writeFileSync(
+        path.join(workDir, "ignored.csv"),
+        "id,primary_email_address\nfile,f@x.dev\n",
+      );
+      const { users } = await loadUsersFromFile("ignored.csv", "rows-from-pretransform");
+      expect(users.map((user) => user.userId)).toEqual(["from-pretransform"]);
+    } finally {
+      __resetCustomSourcesForTesting();
+    }
   });
 
   test("rejects a JSON file that is not an array of users", async () => {
