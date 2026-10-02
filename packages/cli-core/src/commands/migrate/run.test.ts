@@ -235,6 +235,15 @@ describe("run", () => {
     expect(captured.err).toContain(`rm -rf ${path.join(runsDir(), record!.id)}`);
   });
 
+  // Pasted unquoted, `rm -rf …/app copy/…` deletes `…/app`.
+  test("quotes the cleanup paths", async () => {
+    const spaced = path.join(workDir, "app copy");
+    await run({ ...baseOptions, runsDir: spaced });
+
+    const [record] = listRuns(spaced);
+    expect(captured.err).toContain(`rm -rf '${path.join(spaced, record!.id)}'`);
+  });
+
   describe("export envelopes", () => {
     /** An export run whose envelope holds `users`, as `clerk migrate export` writes it. */
     function exportRun(source: string, rows: unknown[], extra: Record<string, unknown> = {}) {
@@ -381,7 +390,10 @@ describe("run", () => {
       ]),
     );
 
-    await expect(run(baseOptions)).rejects.toThrow(/Invalid password hasher/);
+    const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
+    expect(error.message).toContain("Invalid password hasher");
+    // A usage error, not "some users failed" (exit 1).
+    expect(error.exitCode).toBe(EXIT_CODE.USAGE);
     expect(created()).toHaveLength(0);
   });
 
@@ -686,7 +698,7 @@ describe("run", () => {
         "only has an unverified email, and this instance requires an email",
       );
       expect(captured.err).toContain(
-        `clerk config patch --json '{"auth_email":{"required_for_sign_up":false}}'`,
+        `clerk config patch --instance ins_1 --json '{"auth_email":{"required_for_sign_up":false}}'`,
       );
     });
 
@@ -857,6 +869,20 @@ describe("run", () => {
 
     const created = () => requests.filter((r) => r.url.endsWith("/v1/users"));
 
+    // The registered key isn't something --source accepts; the path is.
+    test("the printed command names the source's path, not its key", async () => {
+      const error = (await run({
+        input: "export.json",
+        source: customFile,
+        secretKey: "sk_test_x",
+        json: true,
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.examples?.[0]?.command).toBe(
+        `clerk migrate import export.json --source ${customFile} --secret-key <key> --json --yes`,
+      );
+    });
+
     test("imports through a user-authored source", async () => {
       await run({
         input: "export.json",
@@ -922,9 +948,14 @@ describe("run", () => {
         `export default { key: "x", label: "X", transformer: {} };`,
       );
 
-      await expect(
-        run({ input: "export.json", source: bad, yes: true, secretKey: "sk_test_x" }),
-      ).rejects.toThrow(/no source field maps to `userId`/);
+      const error = (await run({
+        input: "export.json",
+        source: bad,
+        yes: true,
+        secretKey: "sk_test_x",
+      }).catch((caught: unknown) => caught)) as CliError;
+      expect(error.message).toMatch(/no source field maps to `userId`/);
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
       expect(requests).toHaveLength(0);
     });
 
@@ -1020,6 +1051,27 @@ describe("run", () => {
         password_digest: "SGFzaA==$U2FsdA==$SIGNER$Bw==$8$14",
         password_hasher: "scrypt_firebase",
       });
+    });
+
+    test("the printed command keeps the --firebase-* flags, as placeholders", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify({ users: [{ localId: "fb1", email: "a@x.dev", emailVerified: true }] }),
+      );
+
+      const error = (await run({
+        ...baseOptions,
+        yes: false,
+        source: "firebase",
+        firebaseSignerKey: "SIGNER",
+        firebaseSaltSeparator: "Bw==",
+        firebaseRounds: 8,
+        firebaseMemCost: 14,
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.examples?.[0]?.command).toContain(
+        "--firebase-signer-key <key> --firebase-salt-separator <separator> --firebase-rounds <n> --firebase-mem-cost <n>",
+      );
     });
 
     test("a partial firebase flag set fails before anything is read", async () => {

@@ -16,7 +16,7 @@
  * discovered when nobody can sign in.
  */
 
-import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
+import { throwUsageError } from "../../../lib/errors.ts";
 import { loggedFetch } from "../../../lib/fetch.ts";
 import { dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
@@ -166,10 +166,10 @@ export async function fetchWorkOsPage(apiKey: string, after?: string): Promise<W
   });
 
   if (!response.ok) {
-    throw new CliError(
+    throwUsageError(
       `WorkOS returned ${response.status} listing users: ${await describeFailure(response)}\n` +
         "Check that the key is a secret key (`sk_…`) for the right environment, and that it has not been revoked.",
-      { code: ERROR_CODE.USAGE_ERROR, docsUrl: DOCS_URL },
+      DOCS_URL,
     );
   }
 
@@ -249,9 +249,9 @@ export async function fetchWorkOsIdentities(
   });
 
   if (!response.ok) {
-    throw new CliError(
+    throwUsageError(
       `WorkOS returned ${response.status} listing identities for ${userId}: ${await describeFailure(response)}`,
-      { code: ERROR_CODE.USAGE_ERROR, docsUrl: DOCS_URL },
+      DOCS_URL,
     );
   }
 

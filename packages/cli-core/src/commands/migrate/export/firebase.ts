@@ -76,10 +76,7 @@ export type ServiceAccount = {
 function validateServiceAccount(parsed: unknown, label: string): ServiceAccount {
   const account = parsed as Partial<ServiceAccount> & { type?: string };
   const invalid = (problem: string): never => {
-    throw new CliError(`${label} is not a usable service account key: ${problem}`, {
-      code: ERROR_CODE.USAGE_ERROR,
-      docsUrl: DOCS_URL,
-    });
+    throwUsageError(`${label} is not a usable service account key: ${problem}`, DOCS_URL);
   };
 
   if (account.type && account.type !== "service_account") {
@@ -214,10 +211,7 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
   try {
     der = Uint8Array.from(atob(body), (character) => character.charCodeAt(0));
   } catch {
-    throw new CliError("The service account's private_key is not valid base64.", {
-      code: ERROR_CODE.USAGE_ERROR,
-      docsUrl: DOCS_URL,
-    });
+    throwUsageError("The service account's private_key is not valid base64.", DOCS_URL);
   }
 
   try {
@@ -229,9 +223,9 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
       ["sign"],
     );
   } catch (error) {
-    throw new CliError(
+    throwUsageError(
       `The service account's private_key could not be read: ${(error as Error).message}`,
-      { code: ERROR_CODE.USAGE_ERROR, docsUrl: DOCS_URL },
+      DOCS_URL,
     );
   }
 }
@@ -293,10 +287,10 @@ export async function fetchAccessToken(account: ServiceAccount): Promise<string>
   };
 
   if (!response.ok || !body.access_token) {
-    throw new CliError(
+    throwUsageError(
       `Google rejected the service account (${response.status}): ${body.error_description ?? body.error ?? "no access token returned"}\n` +
         "Check the key has not been revoked or deleted, in the Google Cloud console under IAM → Service accounts.",
-      { code: ERROR_CODE.USAGE_ERROR, docsUrl: DOCS_URL },
+      DOCS_URL,
     );
   }
 
@@ -341,9 +335,9 @@ export async function fetchAllFirebaseUsers(options: {
     });
 
     if (!response.ok) {
-      throw new CliError(
+      throwUsageError(
         `Firebase returned ${response.status} listing users: ${await response.text()}`,
-        { code: ERROR_CODE.USAGE_ERROR, docsUrl: DOCS_URL },
+        DOCS_URL,
       );
     }
 
@@ -432,14 +426,21 @@ export function mapFirebaseUserToExport(user: FirebaseUser): Record<string, unkn
   // Only when true: every active user would otherwise carry a `false`.
   if (user.disabled === true) exported.disabled = true;
 
-  // Both halves or neither: a digest without its salt cannot be verified.
-  if (user.passwordHash && user.salt) {
+  // Both halves or neither: a digest without its salt cannot be verified. A
+  // redacted hash is no hash at all.
+  if (user.passwordHash && user.passwordHash !== REDACTED_HASH && user.salt) {
     exported.passwordHash = user.passwordHash;
     exported.salt = user.salt;
   }
 
   return exported;
 }
+
+/**
+ * What Firebase sends as `passwordHash` when the caller may not read hashes:
+ * base64 for "REDACTED". `firebase-admin` treats it as no hash.
+ */
+export const REDACTED_HASH = "UkVEQUNURUQ=";
 
 function hasPasswordProvider(user: FirebaseUser): boolean {
   const providers = user.providerUserInfo;
@@ -459,6 +460,8 @@ export function buildFirebaseExport(
   // made itself (scrypt), and an empty string for users uploaded with bcrypt,
   // HMAC or any other hasher.
   let unreadablePasswords = 0;
+  // Hashes Firebase redacted because the caller may not read them.
+  let redactedPasswords = 0;
 
   for (const user of users) {
     const userId = String(user.localId ?? "");
@@ -469,6 +472,7 @@ export function buildFirebaseExport(
       if (mapped.email) counts.email++;
       if (mapped.emailVerified) counts.verified++;
       if (mapped.passwordHash) counts.password++;
+      else if (user.passwordHash === REDACTED_HASH) redactedPasswords++;
       else if (hasPasswordProvider(user)) unreadablePasswords++;
       if (mapped.displayName) counts.name++;
       if (mapped.phoneNumber) counts.phone++;
@@ -482,6 +486,7 @@ export function buildFirebaseExport(
   return {
     users: exported,
     unreadablePasswords,
+    redactedPasswords,
     coverage: [
       { label: "have an email address", count: counts.email },
       { label: "have a verified email", count: counts.verified },
@@ -563,6 +568,7 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
       users: exported,
       coverage,
       unreadablePasswords,
+      redactedPasswords,
     } = buildFirebaseExport(users, run.append);
 
     // Read before the file is written, so the envelope carries them and the
@@ -581,6 +587,14 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
     if (!options.json) {
       log.blank();
       for (const line of formatHashConfigGuidance(hashConfig, passwordCount)) log.info(line);
+    }
+
+    if (redactedPasswords > 0) {
+      log.warn(
+        `${redactedPasswords} user${redactedPasswords === 1 ? "'s" : "s'"} password hash came back redacted: ` +
+          "the service account can't read hashes. Grant it `firebaseauth.configs.getHashConfig` and export again, " +
+          "or those users are imported without a password and need to reset it.",
+      );
     }
 
     if (unreadablePasswords > 0) {

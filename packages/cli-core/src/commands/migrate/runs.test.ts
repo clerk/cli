@@ -44,6 +44,23 @@ describe("runs", () => {
     expect(captured.err).toContain("1 created, 2 failed, 1 skipped");
   });
 
+  // Counts are written at the finish, which an interrupted run never reaches.
+  test("counts an interrupted run from its user lines", async () => {
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: { env: "development", instanceId: "ins_1" },
+      source: "clerk",
+    });
+    run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    run.append({ sourceId: "b", status: "created", clerkId: "user_b" });
+    fs.rmSync(path.join(run.dir, "lock"));
+
+    await runs(undefined, { runsDir });
+
+    expect(captured.err).toContain("interrupted");
+    expect(captured.err).toContain("2 created");
+  });
+
   test("says so when there are no runs", async () => {
     await runs(undefined, { runsDir });
     expect(captured.err).toContain("No migration runs yet.");

@@ -20,7 +20,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
 import type { CarryLevel, SourceEntry } from "../types.ts";
 
 const DOCS_URL = "https://clerk.com/docs/guides/development/migrating/overview";
@@ -28,10 +28,7 @@ const DOCS_URL = "https://clerk.com/docs/guides/development/migrating/overview";
 const LEVELS: readonly CarryLevel[] = ["yes", "no", "partial"];
 
 function invalid(problem: string, file: string): never {
-  throw new CliError(`${file} is not a valid source: ${problem}`, {
-    code: ERROR_CODE.USAGE_ERROR,
-    docsUrl: DOCS_URL,
-  });
+  throwUsageError(`${file} is not a valid source: ${problem}`, DOCS_URL);
 }
 
 /**
@@ -157,9 +154,7 @@ export async function loadCustomSource(
     });
   }
   if (fs.statSync(resolved).isDirectory()) {
-    throw new CliError(`${resolved} is a directory, not a source file.`, {
-      code: ERROR_CODE.USAGE_ERROR,
-    });
+    throwUsageError(`${resolved} is a directory, not a source file.`);
   }
 
   let module: Record<string, unknown>;
@@ -168,10 +163,10 @@ export async function loadCustomSource(
     // work, but a Windows path (`C:\...`) is not a valid import specifier.
     module = (await import(Bun.pathToFileURL(resolved).href)) as Record<string, unknown>;
   } catch (error) {
-    throw new CliError(
+    throwUsageError(
       `Could not load ${file}: ${(error as Error).message}\n` +
         "The file must be valid JavaScript or TypeScript that this CLI can import.",
-      { code: ERROR_CODE.USAGE_ERROR, docsUrl: DOCS_URL },
+      DOCS_URL,
     );
   }
 
@@ -182,10 +177,7 @@ export async function loadCustomSource(
       named.length > 0
         ? ` Found named export${named.length === 1 ? "" : "s"} ${named.map((n) => `\`${n}\``).join(", ")} — did you mean \`export default\`?`
         : "";
-    throw new CliError(`${file} has no default export.${hint}`, {
-      code: ERROR_CODE.USAGE_ERROR,
-      docsUrl: DOCS_URL,
-    });
+    throwUsageError(`${file} has no default export.${hint}`, DOCS_URL);
   }
 
   return validateSource(module.default, file, reservedKeys);

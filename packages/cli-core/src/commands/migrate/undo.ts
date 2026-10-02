@@ -30,6 +30,8 @@ import {
   continueRun,
   latestUserLines,
   listRuns,
+  liveLockPid,
+  lockFile,
   patchRun,
   readRun,
   resolveRunsDir,
@@ -86,7 +88,10 @@ function readImportRun(runsDir: string, runId: string): RunRecord {
     throwUsageError(`Run ${runId} was already undone by run ${record.undoneBy ?? "(unknown)"}.`);
   }
   if (runState(runsDir, record) === "running") {
-    throwUsageError(`Run ${runId} is still running. Wait for it to finish, then undo it.`);
+    throwUsageError(
+      `Run ${runId} is still running (PID ${liveLockPid(runsDir, runId)}). Wait for it to finish, then undo it. ` +
+        `If that process is not a migrate run, delete ${lockFile(runsDir, runId)}.`,
+    );
   }
   return record;
 }

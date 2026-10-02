@@ -29,6 +29,7 @@ import {
   throwUserAbort,
 } from "../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
+import { quoteArg } from "../../lib/json-body.ts";
 import { log } from "../../lib/log.ts";
 import { NEXT_STEPS, printAgentNextSteps } from "../../lib/next-steps.ts";
 import { confirm } from "../../lib/prompts.ts";
@@ -44,6 +45,8 @@ import {
   continueRun,
   latestUserLines,
   listRuns,
+  liveLockPid,
+  lockFile,
   readRun,
   resolveRunsDir,
   RUN_ID_PATTERN,
@@ -78,6 +81,8 @@ export type MigrateRunOptions = {
   source?: string;
   /** Content hash of a custom `--source`, set once it is loaded. */
   sourceHash?: string;
+  /** `--source` as typed, for printed commands: a custom source's path. Not a flag. */
+  sourceArg?: string;
   /** The file to read, once `input` is resolved. Not a flag. */
   file?: string;
   requirePassword?: boolean;
@@ -313,6 +318,7 @@ async function applySource(options: MigrateRunOptions): Promise<MigrateRunOption
   return {
     ...options,
     source: resolved.key,
+    sourceArg: options.source,
     ...(resolved.hash ? { sourceHash: resolved.hash } : {}),
   };
 }
@@ -376,7 +382,8 @@ export function findResume(
   const state = runState(runsDir, latest);
   if (state === "running") {
     throwUsageError(
-      `Run ${latest.id} is importing this file right now in another process. Wait for it to finish.`,
+      `Run ${latest.id} is importing this file right now in another process (PID ${liveLockPid(runsDir, latest.id)}). ` +
+        `Wait for it to finish. If that process is not a migrate run, delete ${lockFile(runsDir, latest.id)}.`,
     );
   }
   if (state === "undone") return { kind: "new" };
@@ -446,7 +453,7 @@ function printChecks(checks: ImportChecks): void {
     log.info(bold("Or change the instance instead"));
     for (const fix of checks.fixes) {
       log.info(`  ${fix.label}`);
-      log.info(dim(`    ${fix.command}`));
+      log.info(dim(`    ${fix.command ?? fix.url}`));
     }
   }
 }
@@ -500,31 +507,40 @@ function cleanupLines(runsDir: string, record: RunRecord): string[] {
   if (record.fromExport) {
     lines.push(
       `The export in run ${record.fromExport} holds your users' data. Once you have checked the import, delete it:`,
-      dim(`  rm -rf ${runDir(runsDir, record.fromExport)}`),
+      dim(`  rm -rf ${quoteArg(runDir(runsDir, record.fromExport))}`),
     );
   }
   lines.push(
     `Keep run ${record.id} while you might still undo it. After that:`,
-    dim(`  rm -rf ${runDir(runsDir, record.id)}`),
+    dim(`  rm -rf ${quoteArg(runDir(runsDir, record.id))}`),
   );
   return lines;
 }
 
 // --- The import ------------------------------------------------------------
 
-/** The exact command that would carry on from here, for the consent and refusal messages. */
+/**
+ * The exact command that would carry on from here, for the consent and
+ * refusal messages. Every value is shell-quoted; secrets are placeholders.
+ */
 function commandFor(options: MigrateRunOptions, fromExport: string | undefined, extra: string[]) {
   const input = fromExport ?? options.input ?? options.file ?? "<file>";
-  const parts = ["clerk migrate import", input];
-  if (!fromExport && options.source) parts.push("--source", options.source);
+  const parts = ["clerk migrate import", quoteArg(input)];
+  const source = options.sourceArg ?? options.source;
+  if (!fromExport && source) parts.push("--source", quoteArg(source));
   if (options.allowPartial) parts.push("--allow-partial");
   if (options.newRun) parts.push("--new-run");
   if (options.requirePassword) parts.push("--require-password");
   if (options.skipLegalChecks) parts.push("--skip-legal-checks");
+  if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "<key>");
+  if (options.firebaseSaltSeparator) parts.push("--firebase-salt-separator", "<separator>");
+  if (options.firebaseRounds) parts.push("--firebase-rounds", "<n>");
+  if (options.firebaseMemCost) parts.push("--firebase-mem-cost", "<n>");
   if (options.secretKey) parts.push("--secret-key", "<key>");
-  if (options.app) parts.push("--app", options.app);
-  if (options.instance) parts.push("--instance", options.instance);
-  if (options.runsDir) parts.push("--runs-dir", options.runsDir);
+  if (options.app) parts.push("--app", quoteArg(options.app));
+  if (options.instance) parts.push("--instance", quoteArg(options.instance));
+  if (options.runsDir) parts.push("--runs-dir", quoteArg(options.runsDir));
+  if (options.json) parts.push("--json");
   return [...parts, ...extra].join(" ");
 }
 

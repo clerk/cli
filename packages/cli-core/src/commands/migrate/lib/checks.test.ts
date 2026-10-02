@@ -245,6 +245,26 @@ describe("rejects", () => {
     });
   });
 
+  // A repeated record (an export that paged past a sign-up) must not take the
+  // kept copy down with it.
+  test("a repeated source ID rejects only the later copy", async () => {
+    const checks = await checkImport(input({ users: [user("a"), user("a")] }));
+    expect(checks.importable.map((u) => u.userId)).toEqual(["a"]);
+    expect(checks.rejects).toEqual([{ sourceId: "a", reason: "duplicate source ID in the file" }]);
+  });
+
+  test("a rejected user does not claim its email from a later one", async () => {
+    const checks = await checkImport(
+      input({
+        users: [
+          user("skipped", { email: "same@x.dev", skipReason: "anonymous Better Auth user" }),
+          user("kept", { email: "same@x.dev" }),
+        ],
+      }),
+    );
+    expect(checks.importable.map((u) => u.userId)).toEqual(["kept"]);
+  });
+
   // A continued run found this user behind its own in-flight create.
   test("not a user the continued run adopted", async () => {
     existing = [{ id: "user_1", external_id: "mine" }];
@@ -288,6 +308,13 @@ describe("rejects", () => {
       },
     ]);
     expect(checks.quota).toEqual({ existing: 98, limit: 100, headroom: 2, over: 1 });
+  });
+
+  test("warns that an unreadable user count was checked as empty", async () => {
+    const checks = await checkImport(
+      input({ instanceType: "dev", existingUsers: null, users: [user("a")] }),
+    );
+    expect(checks.warnings.join("\n")).toContain("Could not read how many users");
   });
 
   test("CLERK_MIGRATE_DEV_USER_LIMIT raises the headroom", async () => {
@@ -511,6 +538,37 @@ describe("fixes", () => {
         command: `clerk config patch --app app_1 --instance ins_1 --json '{"auth_email":{"required_for_sign_up":false}}'`,
       },
     ]);
+  });
+
+  // Without --instance, `clerk config patch` changes the linked profile's
+  // development instance, not the one a --secret-key import targets.
+  test("name the instance even when the key came from --secret-key", async () => {
+    const checks = await checkImport(
+      input({
+        settings: EMAIL_REQUIRED,
+        users: [user("b", { email: undefined, username: "b" })],
+      }),
+    );
+    expect(checks.fixes[0]?.command).toStartWith("clerk config patch --instance ins_1 --json");
+  });
+
+  test("point at the Dashboard when the instance could not be named", async () => {
+    const checks = await checkImport(
+      input({
+        settings: EMAIL_REQUIRED,
+        target: {
+          env: "production",
+          instanceId: "key_0123",
+          instanceType: "prod",
+          keySource: "--secret-key",
+        },
+        users: [user("b", { email: undefined, username: "b" })],
+      }),
+    );
+    expect(checks.fixes[0]).toEqual({
+      label: "Make Email optional at sign-up",
+      url: "https://dashboard.clerk.com",
+    });
   });
 
   test("offer nothing when the settings could not be read", async () => {

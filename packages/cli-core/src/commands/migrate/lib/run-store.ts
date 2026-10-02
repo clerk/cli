@@ -185,26 +185,39 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-/** The PID holding the run's lock, when that process is still alive. */
+/**
+ * The PID holding the run's lock, when that process is still alive.
+ *
+ * This process's own PID counts as stale: in a container the CLI often gets
+ * the same PID every run, so a killed run's lock would otherwise read as live.
+ */
 export function liveLockPid(runsDir: string, id: string): number | undefined {
   let raw: string;
   try {
-    raw = fs.readFileSync(path.join(runDir(runsDir, id), LOCK_FILE), "utf-8");
+    raw = fs.readFileSync(lockFile(runsDir, id), "utf-8");
   } catch {
     return undefined;
   }
   const pid = Number(raw.trim());
-  return Number.isInteger(pid) && pid > 0 && isPidAlive(pid) ? pid : undefined;
+  return Number.isInteger(pid) && pid > 0 && pid !== process.pid && isPidAlive(pid)
+    ? pid
+    : undefined;
+}
+
+/** The run's lock file. */
+export function lockFile(runsDir: string, id: string): string {
+  return path.join(runDir(runsDir, id), LOCK_FILE);
 }
 
 function acquireLock(runsDir: string, id: string): void {
   const holder = liveLockPid(runsDir, id);
-  if (holder !== undefined && holder !== process.pid) {
+  if (holder !== undefined) {
     throwUsageError(
-      `Run ${id} is in use by another process (PID ${holder}). Wait for it to finish, then try again.`,
+      `Run ${id} is in use by another process (PID ${holder}). Wait for it to finish, then try again. ` +
+        `If that process is not a migrate run, delete ${lockFile(runsDir, id)}.`,
     );
   }
-  fs.writeFileSync(path.join(runDir(runsDir, id), LOCK_FILE), String(process.pid));
+  fs.writeFileSync(lockFile(runsDir, id), String(process.pid));
 }
 
 // --- Reading ---------------------------------------------------------------
@@ -365,7 +378,8 @@ export type StartRunInit = Omit<RunRecord, "id" | "status" | "startedAt" | "coun
 /** Creates a run folder, takes its lock and writes the first `run.json`. */
 export function startRun(runsDir: string, init: StartRunInit): Run {
   const id = newRunId();
-  fs.mkdirSync(runDir(runsDir, id), { recursive: true });
+  // Owner-only: a run's files hold user data.
+  fs.mkdirSync(runDir(runsDir, id), { recursive: true, mode: 0o700 });
   acquireLock(runsDir, id);
 
   const record: RunRecord = {

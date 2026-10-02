@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
+import { readJsonFile } from "../lib/export-file.ts";
 import type { PreTransformResult, SourceEntry } from "../types.ts";
 import { isVerified, routeByVerification, splitName, toIsoDate } from "./shared.ts";
 
@@ -50,7 +51,7 @@ const firebaseSource = {
     }
 
     if (fileType === "application/json") {
-      const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      const parsed = readJsonFile(filePath);
       if (Array.isArray(parsed)) return { filePath, data: parsed as Record<string, unknown>[] };
 
       const users = (parsed as { users?: unknown })?.users;
@@ -91,14 +92,11 @@ const firebaseSource = {
     if (passwordHash && salt) {
       const config = context.firebaseHashConfig;
       if (!config) {
-        throw new CliError(
+        throwUsageError(
           "This export contains Firebase password hashes, which need the project's hash parameters to import.\n" +
             "Find them in the Firebase console under Authentication → Users → (⋮) → Password hash parameters, then pass:\n" +
             "  --firebase-signer-key --firebase-salt-separator --firebase-rounds --firebase-mem-cost",
-          {
-            code: ERROR_CODE.USAGE_ERROR,
-            docsUrl: "https://clerk.com/docs/guides/development/migrating/firebase",
-          },
+          "https://clerk.com/docs/guides/development/migrating/firebase",
         );
       }
 

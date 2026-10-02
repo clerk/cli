@@ -33,6 +33,8 @@ describe("getFileType", () => {
   test.each([
     ["users.json", "application/json"],
     ["users.CSV", "text/csv"],
+    ["users.ndjson", "application/json"],
+    ["users.jsonl", "application/json"],
     ["users.txt", undefined],
     ["users", undefined],
   ])("%s -> %p", (file, expected) => {
@@ -91,6 +93,7 @@ describe("normalizeUserData", () => {
     ["numeric string limit", { createOrganizationsLimit: "5" }, { createOrganizationsLimit: 5 }],
     ["JSON metadata", { publicMetadata: '{"plan":"pro"}' }, { publicMetadata: { plan: "pro" } }],
     ["date string", { createdAt: "2024-01-01" }, { createdAt: "2024-01-01T00:00:00.000Z" }],
+    ["numeric user ID", { userId: 42 }, { userId: "42" }],
   ])("normalizes %s", (_label, input, expected) => {
     expect(normalizeUserData(input)).toMatchObject(expected);
   });
@@ -214,6 +217,41 @@ describe("loadUsersFromFile", () => {
     const { users } = await loadUsersFromFile("users.csv", "clerk");
     expect(users[0]?.userId).toBe("u2");
     expect(users[0]?.email).toEqual(["a@x.dev", "b@x.dev"]);
+  });
+
+  // Excel's "CSV UTF-8" starts with a BOM, which hid the first column.
+  test("reads a CSV that starts with a BOM", async () => {
+    fs.writeFileSync(path.join(workDir, "bom.csv"), "\uFEFFid,primary_email_address\nu3,a@x.dev\n");
+    const { users } = await loadUsersFromFile("bom.csv", "clerk");
+    expect(users[0]?.userId).toBe("u3");
+  });
+
+  test("reads a JSON file that starts with a BOM", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "bom.json"),
+      `\uFEFF${JSON.stringify([{ id: "u4", primary_email_address: "a@x.dev" }])}`,
+    );
+    const { users } = await loadUsersFromFile("bom.json", "clerk");
+    expect(users[0]?.userId).toBe("u4");
+  });
+
+  // What Auth0's bulk export job writes, for tenants over 1,000 users.
+  test.each([["users-bulk.json"], ["users-bulk.ndjson"]])("reads NDJSON from %s", async (file) => {
+    fs.writeFileSync(
+      path.join(workDir, file),
+      '{"id":"u5","primary_email_address":"a@x.dev"}\n{"id":"u6","primary_email_address":"b@x.dev"}\n',
+    );
+    const { users } = await loadUsersFromFile(file, "clerk");
+    expect(users.map((user) => user.userId)).toEqual(["u5", "u6"]);
+  });
+
+  test("names the file when it is not valid JSON", async () => {
+    fs.writeFileSync(path.join(workDir, "broken.json"), "[{");
+    const error = (await loadUsersFromFile("broken.json", "clerk").catch(
+      (e: unknown) => e,
+    )) as CliError;
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.message).toContain("broken.json is not valid JSON");
   });
 
   test("rejects a JSON file that is not an array of users", async () => {

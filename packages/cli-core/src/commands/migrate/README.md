@@ -62,6 +62,11 @@ Resolution order: `--secret-key` → `--app` + Platform API lookup →
 `CLERK_SECRET_KEY` → the keyless project's own key → a linked project profile
 from `clerk link`.
 
+With a key from `--secret-key` or `CLERK_SECRET_KEY`, the key alone picks the
+instance, so `import` and `undo` refuse (exit 2) an `--instance` that names a
+different one. `--instance dev` next to an exported `sk_live_…` key would
+otherwise write to production.
+
 The **instance type is read from the key**: `sk_live_…` is treated as
 production, anything else as development. That choice drives the throughput
 defaults and the development-instance user limit below.
@@ -121,8 +126,13 @@ and phones not yet attached.
 
 A run is `partial` when any user failed, was skipped or is still `creating`,
 and `complete` otherwise. A run whose process died, or that never recorded a finish time,
-lists as `interrupted`. A lock held by a live process refuses a second writer
-with exit 2.
+lists as `interrupted`. A lock held by another live process refuses a second
+writer with exit 2, and names the lock file to delete if that process is not a
+migrate run. A lock holding this process's own PID is stale: in a container the
+CLI often gets the same PID every run.
+
+Run folders are created owner-only (`0700`), and export files `0600`: they hold
+password hashes and user data.
 
 `users.ndjson` writes are synchronous appends, so a run interrupted with Ctrl-C
 still leaves a complete record of everything already processed. A line that
@@ -544,7 +554,9 @@ An export run ID stands for the file that run wrote, and the import records it
 as `fromExport`. A file `clerk migrate export` wrote carries its source, so it
 needs no `--source`, and a `--source` that contradicts it exits 2. Any other
 file — a bare JSON array, a CSV, Firebase's own `{ "users": [...] }` — needs
-`--source`.
+`--source`. NDJSON, one user per line (what Auth0's bulk export job writes), is
+read too: always for `.ndjson` and `.jsonl`, and for a `.json` file that
+doesn't parse whole. A leading BOM is ignored in JSON and CSV.
 
 **What a human is asked, and what an agent is told.** A human at a terminal who
 leaves out the file is asked for its path, and is asked for a source only when
@@ -672,6 +684,11 @@ Or change the instance instead
   Enable Username
     clerk config patch --app app_… --instance ins_… --json '{"auth_username":{"used_for_sign_up":true}}'
 ```
+
+Each fix names its instance with `--instance`, so it changes the instance the
+import targets, whatever the key's source. When Clerk could not name the
+instance (a `key_…` fallback ID), the fix points at the Dashboard instead: in
+`--json` it carries `url` in place of `command`.
 
 The fixes are offers, not corrections: an instance that requires an email is
 configured as its owner intended, and fixing the export may be the answer. When
@@ -1025,7 +1042,7 @@ source actually used:
 
 `argon2i`, `argon2id`, `awscognito`, `bcrypt`, `bcrypt_peppered`,
 `bcrypt_sha256_django`, `hmac_sha256_utf16_b64`, `ldap_ssha`, `md5`,
-`md5_phpass`, `md5_salted`, `pbkdf2_sha1`, `pbkdf2_sha256`,
+`md5_phpass`, `md5_salted`, `phpass`, `pbkdf2_sha1`, `pbkdf2_sha256`,
 `pbkdf2_sha256_django`, `pbkdf2_sha512`, `pbkdf2_sha512_hex`, `scrypt_firebase`,
 `scrypt_werkzeug`, `sha256`, `sha256_salted`, `sha512_symfony`
 
@@ -1058,19 +1075,19 @@ stamping every user with today's.
 
 ## API Endpoints
 
-| Method   | Path                       | Used by                                                                         |
-| -------- | -------------------------- | ------------------------------------------------------------------------------- |
-| `POST`   | `/v1/users`                | `migrate import` — creates each user                                            |
-| `POST`   | `/v1/email_addresses`      | `migrate import` — attaches additional emails                                   |
-| `POST`   | `/v1/phone_numbers`        | `migrate import` — attaches additional phones                                   |
-| `GET`    | `/v1/users?limit=&offset=` | `migrate export clerk` — pages the whole instance, 500 at a time                |
-| `GET`    | `/v1/users/count`          | `migrate import` — headroom against a development instance's user limit         |
-| `GET`    | `/v1/users?external_id=…`  | `migrate import` — checks for users already in the instance, 100 values a call  |
-| `GET`    | `/v1/users?external_id=…`  | `migrate undo` — finds users whose create was in flight when the import stopped |
-| `GET`    | `/v1/users?user_id=…`      | `migrate undo` — reads the imported users back, 100 a call                      |
-| `DELETE` | `/v1/users/{user_id}`      | `migrate undo` — deletes one user                                               |
-| `GET`    | `/v1/instance`             | `migrate import`, `undo`, `export clerk` — names the instance behind the key    |
-| `GET`    | `/v1/domains`              | `migrate import` checks — resolves the Frontend API host                        |
+| Method   | Path                                            | Used by                                                                         |
+| -------- | ----------------------------------------------- | ------------------------------------------------------------------------------- |
+| `POST`   | `/v1/users`                                     | `migrate import` — creates each user                                            |
+| `POST`   | `/v1/email_addresses`                           | `migrate import` — attaches additional emails                                   |
+| `POST`   | `/v1/phone_numbers`                             | `migrate import` — attaches additional phones                                   |
+| `GET`    | `/v1/users?limit=&offset=&order_by=+created_at` | `migrate export clerk` — pages the whole instance, oldest first, 500 at a time  |
+| `GET`    | `/v1/users/count`                               | `migrate import` — headroom against a development instance's user limit         |
+| `GET`    | `/v1/users?external_id=…`                       | `migrate import` — checks for users already in the instance, 100 values a call  |
+| `GET`    | `/v1/users?external_id=…`                       | `migrate undo` — finds users whose create was in flight when the import stopped |
+| `GET`    | `/v1/users?user_id=…`                           | `migrate undo` — reads the imported users back, 100 a call                      |
+| `DELETE` | `/v1/users/{user_id}`                           | `migrate undo` — deletes one user                                               |
+| `GET`    | `/v1/instance`                                  | `migrate import`, `undo`, `export clerk` — names the instance behind the key    |
+| `GET`    | `/v1/domains`                                   | `migrate import` checks — resolves the Frontend API host                        |
 
 The checks also read the instance's Frontend API `GET /v1/environment`
 (bootstrapping a dev browser first on development instances) for its

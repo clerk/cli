@@ -48,6 +48,16 @@ describe("finishExport", () => {
     expect(latestUserLines(runsDir, record.id).get("u1")?.status).toBe("exported");
   });
 
+  // The file holds password hashes and PII, so no other local account reads it.
+  test("writes the file owner-only, in an owner-only run folder", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "supabase" });
+
+    const { outputPath } = finishExport({ run, options: {}, users, coverage });
+
+    expect(fs.statSync(outputPath).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(path.dirname(outputPath)).mode & 0o777).toBe(0o700);
+  });
+
   test("--output writes somewhere else, and the run still records where", async () => {
     const run = await startExportRun({ runsDir }, { platform: "auth0" });
 

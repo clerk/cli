@@ -385,6 +385,17 @@ describe("buildFirebaseExport", () => {
     expect(unreadablePasswords).toBe(1);
     expect("passwordHash" in users[1]!).toBe(false);
   });
+
+  // Firebase sends base64 "REDACTED" when the caller may not read hashes: a
+  // digest that could never verify, which must not be exported as one.
+  test("treats a redacted hash as none, and counts it", () => {
+    const { users, redactedPasswords } = buildFirebaseExport([
+      fbUser(0, { passwordHash: "UkVEQUNURUQ=", providerUserInfo: [{ providerId: "password" }] }),
+    ]);
+    expect(redactedPasswords).toBe(1);
+    expect("passwordHash" in users[0]!).toBe(false);
+    expect("salt" in users[0]!).toBe(false);
+  });
 });
 
 describe("fetchHashConfig", () => {

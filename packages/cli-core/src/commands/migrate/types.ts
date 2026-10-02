@@ -33,6 +33,7 @@ export const PASSWORD_HASHERS = [
   "sha256",
   "sha256_salted",
   "md5_phpass",
+  "phpass",
   "ldap_ssha",
   "sha512_symfony",
 ] as const;

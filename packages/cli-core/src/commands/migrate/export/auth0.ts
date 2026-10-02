@@ -14,7 +14,7 @@
  * leaving it to be discovered when nobody can sign in.
  */
 
-import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
+import { throwUsageError } from "../../../lib/errors.ts";
 import { loggedFetch } from "../../../lib/fetch.ts";
 import { dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
@@ -176,10 +176,10 @@ export async function fetchAuth0Token(credentials: Auth0Credentials): Promise<st
   };
 
   if (!response.ok || !body.access_token) {
-    throw new CliError(
+    throwUsageError(
       `Auth0 rejected the credentials (${response.status}): ${body.error_description ?? body.error ?? "no access token returned"}\n` +
         "Check the domain, client ID and secret, and that the application is authorized for the Management API with the `read:users` scope.",
-      { code: ERROR_CODE.USAGE_ERROR, docsUrl: DOCS_URL },
+      DOCS_URL,
     );
   }
 
@@ -207,10 +207,7 @@ async function fetchAuth0Page(
 
   if (!response.ok) {
     const body = await response.text();
-    throw new CliError(`Auth0 returned ${response.status} listing users: ${body}`, {
-      code: ERROR_CODE.USAGE_ERROR,
-      docsUrl: DOCS_URL,
-    });
+    throwUsageError(`Auth0 returned ${response.status} listing users: ${body}`, DOCS_URL);
   }
 
   const body = (await response.json()) as { users?: Auth0User[]; total?: number };

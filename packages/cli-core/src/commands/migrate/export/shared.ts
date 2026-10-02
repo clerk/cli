@@ -58,8 +58,9 @@ export function exportPath(run: Run, output: string | undefined): string {
  * @returns The absolute path written.
  */
 export function writeExportFile(file: string, envelope: ExportEnvelope): string {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(envelope, null, 2));
+  // Password hashes, PII and a Firebase signer key: owner-only.
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, JSON.stringify(envelope, null, 2), { mode: 0o600 });
   return file;
 }
 

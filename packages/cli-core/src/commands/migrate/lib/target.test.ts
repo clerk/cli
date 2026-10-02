@@ -1,6 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { EXIT_CODE, type CliError } from "../../../lib/errors.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
-import { describeTarget, fetchInstanceIdentity, printTarget } from "./target.ts";
+import {
+  describeTarget,
+  fetchInstanceIdentity,
+  printTarget,
+  resolveClerkTarget,
+} from "./target.ts";
 
 const captured = useCaptureLog();
 
@@ -106,5 +112,44 @@ describe("fetchInstanceIdentity", () => {
     expect(first.env).toBe("development");
     expect(await fetchInstanceIdentity("sk_test_a")).toEqual(first);
     expect((await fetchInstanceIdentity("sk_test_b")).instanceId).not.toBe(first.instanceId);
+  });
+});
+
+describe("resolveClerkTarget --instance", () => {
+  let originalFetch: typeof globalThis.fetch;
+  let originalKey: string | undefined;
+
+  beforeAll(() => {
+    originalFetch = globalThis.fetch;
+    originalKey = process.env.CLERK_SECRET_KEY;
+    globalThis.fetch = (async () =>
+      Response.json({ id: "ins_prod", environment_type: "production" })) as unknown as typeof fetch;
+  });
+
+  afterAll(() => {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.CLERK_SECRET_KEY;
+    else process.env.CLERK_SECRET_KEY = originalKey;
+  });
+
+  // An exported production key would otherwise win over `--instance dev`
+  // without a word, and the import would write to production.
+  test.each([
+    ["an exported key", { instance: "dev" }, "sk_live_x"],
+    ["--secret-key", { instance: "dev", secretKey: "sk_live_x" }, undefined],
+    ["--secret-key, with a literal ID", { instance: "ins_dev", secretKey: "sk_live_x" }, undefined],
+  ])("refuses %s that addresses another instance", async (_label, options, envKey) => {
+    if (envKey) process.env.CLERK_SECRET_KEY = envKey;
+    else delete process.env.CLERK_SECRET_KEY;
+
+    const error = (await resolveClerkTarget(options).catch((e: unknown) => e)) as CliError;
+    expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+    expect(error.message).toContain("does not match the key");
+  });
+
+  test.each([["prod"], ["production"], ["ins_prod"]])("accepts --instance %s", async (instance) => {
+    delete process.env.CLERK_SECRET_KEY;
+    const { target } = await resolveClerkTarget({ instance, secretKey: "sk_live_x" });
+    expect(target.instanceId).toBe("ins_prod");
   });
 });

@@ -75,7 +75,7 @@ describe("a run's life", () => {
   test("starts running, holding a lock", () => {
     const run = startRun(runsDir, init);
     expect(readRun(runsDir, run.record.id)).toMatchObject({ status: "running", kind: "import" });
-    expect(runState(runsDir, run.record)).toBe("running");
+    expect(fs.readFileSync(path.join(run.dir, "lock"), "utf-8")).toBe(String(process.pid));
   });
 
   test("finishes complete when every user made it", () => {
@@ -172,12 +172,31 @@ describe("locks and interruptions", () => {
     expect(again.finish().counts.total).toBe(2);
   });
 
+  // In a container the CLI often gets the same PID every run, so a killed
+  // run's lock can hold this process's own PID.
+  test("a lock holding this process's own PID is stale", () => {
+    const run = startRun(runsDir, init);
+    expect(runState(runsDir, run.record)).toBe("interrupted");
+    expect(() => continueRun(runsDir, run.record)).not.toThrow();
+  });
+
+  test("reads as running while another live process holds the lock", () => {
+    const run = startRun(runsDir, init);
+    fs.writeFileSync(path.join(run.dir, "lock"), "1");
+    expect(runState(runsDir, run.record)).toBe("running");
+  });
+
   test("refuses a run another live process holds, with exit 2", () => {
     const run = startRun(runsDir, init);
     // PID 1 is always alive, and never this test.
     fs.writeFileSync(path.join(run.dir, "lock"), "1");
 
-    expect(() => continueRun(runsDir, run.record)).toThrow(/in use by another process \(PID 1\)/);
+    expect(() => continueRun(runsDir, run.record)).toThrow(
+      new RegExp(
+        `in use by another process \\(PID 1\\).*delete ${path.join(run.dir, "lock")}`,
+        "s",
+      ),
+    );
   });
 });
 

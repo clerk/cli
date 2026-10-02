@@ -12,7 +12,8 @@ import { createHash } from "node:crypto";
 import { bapiRequest } from "../../../lib/bapi.ts";
 import { dim } from "../../../lib/color.ts";
 import { resolveBapiSecretKey } from "../../../lib/bapi-command.ts";
-import { resolveAppContext } from "../../../lib/config.ts";
+import { INSTANCE_ALIASES, resolveAppContext } from "../../../lib/config.ts";
+import { throwUsageError } from "../../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../../lib/keyless-target.ts";
 import { log } from "../../../lib/log.ts";
 import { detectInstanceType } from "./instance.ts";
@@ -93,6 +94,31 @@ export async function fetchInstanceIdentity(
   return { instanceId: `key_${digest}`, env: fallbackEnv };
 }
 
+/**
+ * Refuses an `--instance` the key does not address.
+ *
+ * With a key from `--secret-key` or `CLERK_SECRET_KEY`, the key alone picks
+ * the instance and `--instance` would be ignored without a word. Migrate
+ * writes and deletes in bulk, so `--instance dev` next to an exported
+ * `sk_live_` key must not reach production.
+ */
+function assertInstanceFlagMatches(
+  options: TargetOptions,
+  keySource: string,
+  identity: { instanceId: string; env: string },
+): void {
+  const flag = options.instance;
+  if (!flag || (keySource !== "--secret-key" && !keySource.startsWith("CLERK_SECRET_KEY"))) return;
+  const wanted = INSTANCE_ALIASES[flag];
+  const matches = wanted ? identity.env === wanted : identity.instanceId === flag;
+  if (matches) return;
+  throwUsageError(
+    `--instance ${flag} does not match the key from ${keySource}, which addresses the ` +
+      `${identity.env} instance ${identity.instanceId}. Nothing was changed.\n` +
+      "Pass the key for that instance with --secret-key, or drop --instance.",
+  );
+}
+
 /** Resolves the key, then names the instance it addresses. */
 export async function resolveClerkTarget(
   options: TargetOptions,
@@ -100,6 +126,7 @@ export async function resolveClerkTarget(
   const secretKey = await resolveBapiSecretKey(options);
   const source = await describeKeySource(options);
   const { instanceId, env } = await fetchInstanceIdentity(secretKey);
+  assertInstanceFlagMatches(options, source.keySource, { instanceId, env });
 
   return {
     secretKey,

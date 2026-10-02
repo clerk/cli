@@ -10,12 +10,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import csvParser from "csv-parser";
-import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
 import { getSource } from "../sources/registry.ts";
 import { normalizeBooleanField } from "../sources/shared.ts";
 import { PASSWORD_HASHERS, type TransformContext, type SourceEntry, type User } from "../types.ts";
 import { userSchema } from "../validator.ts";
-import { isEnvelope } from "./export-file.ts";
+import { isEnvelope, readJsonFile } from "./export-file.ts";
 
 export type FileType = "application/json" | "text/csv";
 
@@ -51,7 +51,7 @@ export function fileExists(file: string): boolean {
  */
 export function getFileType(file: string): FileType | undefined {
   const ext = path.extname(resolveImportFilePath(file)).toLowerCase();
-  if (ext === ".json") return "application/json";
+  if (ext === ".json" || ext === ".ndjson" || ext === ".jsonl") return "application/json";
   if (ext === ".csv") return "text/csv";
   return undefined;
 }
@@ -228,6 +228,8 @@ const DATE_FIELDS = ["createdAt", "legalAcceptedAt"] as const;
  */
 export function normalizeUserData(user: Record<string, unknown>): Record<string, unknown> {
   const normalized = { ...user };
+  // Integer keys (Better Auth, a custom JSON file) are still IDs.
+  if (typeof normalized.userId === "number") normalized.userId = String(normalized.userId);
 
   const setOrDelete = (field: string, value: unknown) => {
     if (value === undefined) delete normalized[field];
@@ -332,13 +334,10 @@ export function validatePreparedUsers(users: Record<string, unknown>[]): {
         typeof user.passwordHasher === "string"
           ? user.passwordHasher
           : JSON.stringify(user.passwordHasher);
-      throw new CliError(
+      throwUsageError(
         `Invalid password hasher "${invalidHasher}" on user ${String(user.userId)} (row ${i + 1}).\n` +
           `Expected one of: ${PASSWORD_HASHERS.join(", ")}`,
-        {
-          code: ERROR_CODE.USAGE_ERROR,
-          docsUrl: "https://clerk.com/docs/guides/development/migrating/overview",
-        },
+        "https://clerk.com/docs/guides/development/migrating/overview",
       );
     }
 
@@ -418,7 +417,14 @@ async function readCsv(filePath: string): Promise<Record<string, unknown>[]> {
   return new Promise((resolve, reject) => {
     const users: Record<string, unknown>[] = [];
     fs.createReadStream(filePath)
-      .pipe(csvParser({ skipComments: true }))
+      // Excel's "CSV UTF-8" starts with a BOM, which would otherwise become
+      // part of the first header and hide that column from every row.
+      .pipe(
+        csvParser({
+          skipComments: true,
+          mapHeaders: ({ header }) => header.replace(/^\uFEFF/, ""),
+        }),
+      )
       .on("data", (row: Record<string, unknown>) => users.push(row))
       .on("error", reject)
       .on("end", () => resolve(users));
@@ -436,7 +442,7 @@ async function readUsersFromFile(
   // An export's envelope already holds the users in the source's own shape,
   // so there is nothing left for a pre-transform to unwrap.
   if (type === "application/json") {
-    const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    const parsed = readJsonFile(filePath);
     if (isEnvelope(parsed)) return parsed.users;
     if (!transformer.preTransform) {
       if (!Array.isArray(parsed)) {
@@ -458,7 +464,7 @@ async function readUsersFromFile(
   if (type === "text/csv") return readCsv(filePath);
   if (preExtracted) return preExtracted;
 
-  const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  const parsed = readJsonFile(filePath);
   if (!Array.isArray(parsed)) {
     throw new CliError(`Expected ${file} to contain a JSON array of users, got ${typeof parsed}.`, {
       code: ERROR_CODE.INVALID_JSON,

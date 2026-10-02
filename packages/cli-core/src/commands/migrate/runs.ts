@@ -12,6 +12,7 @@ import { throwUsageError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { normalizeErrorMessage } from "./import-users.ts";
 import {
+  countLines,
   latestUserLines,
   listRuns,
   readRun,
@@ -215,20 +216,30 @@ function printRun(runsDir: string, record: RunRecord): void {
   for (const step of nextCommands(record, state)) log.info(`  → ${step}`);
 }
 
+/**
+ * Counts are written when a run finishes, so an interrupted one still holds
+ * its start's zeros. Those are counted from its user lines instead.
+ */
+function withLiveCounts(runsDir: string, record: RunRecord): RunRecord {
+  if (record.finishedAt) return record;
+  return { ...record, counts: countLines(latestUserLines(runsDir, record.id).values()) };
+}
+
 export async function runs(id: string | undefined, options: RunsOptions = {}): Promise<void> {
   const runsDir = await resolveRunsDir(options.runsDir);
 
   if (id === undefined) {
-    const records = listRuns(runsDir);
+    const records = listRuns(runsDir).map((record) => withLiveCounts(runsDir, record));
     if (options.json) log.data(JSON.stringify(listJson(runsDir, records), null, 2));
     else printList(runsDir, records);
     return;
   }
 
-  const record = readRun(runsDir, id);
-  if (!record) {
+  const stored = readRun(runsDir, id);
+  if (!stored) {
     throwUsageError(`No run \`${id}\` in ${runsDir}. Run \`clerk migrate runs\` to list them.`);
   }
+  const record = withLiveCounts(runsDir, stored);
 
   if (options.json) log.data(JSON.stringify(showJson(runsDir, record), null, 2));
   else printRun(runsDir, record);

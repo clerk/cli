@@ -141,6 +141,15 @@ export function mapClerkUserToExport(user: BapiUser): Record<string, unknown> {
     if (value && Object.keys(value).length > 0) exported[target] = value;
   }
 
+  // The import sets external_id to the old Clerk ID, so an app's own
+  // external_id moves to private metadata rather than being lost.
+  if (user.external_id) {
+    exported.private_metadata = {
+      ...(exported.private_metadata as Record<string, unknown> | undefined),
+      clerkExternalId: user.external_id,
+    };
+  }
+
   if (user.banned) exported.banned = true;
   if (user.create_organization_enabled !== undefined) {
     exported.create_organization_enabled = user.create_organization_enabled;
@@ -166,27 +175,31 @@ export async function fetchAllClerkUsers(options: {
   secretKey: string;
   spinner?: SpinnerControls;
 }): Promise<BapiUser[]> {
-  const all: BapiUser[] = [];
+  const all = new Map<string, BapiUser>();
 
+  // Oldest first, so a sign-up during the export lands at the end instead of
+  // shifting every later page by one (BAPI's default is newest first). A
+  // deletion can still shift a page; the Map drops the repeat that causes.
+  // ponytail: offset paging; /v1/users has no cursor to page by instead.
   for (let offset = 0; ; offset += PAGE_SIZE) {
     const response = await retryOn429(async () =>
       bapiRequest({
         method: "GET",
-        path: `/v1/users?limit=${PAGE_SIZE}&offset=${offset}`,
+        path: `/v1/users?limit=${PAGE_SIZE}&offset=${offset}&order_by=%2Bcreated_at`,
         secretKey: options.secretKey,
       }),
     );
 
     const page = Array.isArray(response.body) ? (response.body as BapiUser[]) : [];
-    all.push(...page);
-    options.spinner?.update(`Fetching users from Clerk: ${all.length} so far...`);
+    for (const user of page) all.set(user.id, user);
+    options.spinner?.update(`Fetching users from Clerk: ${all.size} so far...`);
 
     // A short page means the end; anything else would loop forever on an
     // instance whose size happens to be a multiple of the page size.
     if (page.length < PAGE_SIZE) break;
   }
 
-  return all;
+  return [...all.values()];
 }
 
 export type ClerkExportResult = {

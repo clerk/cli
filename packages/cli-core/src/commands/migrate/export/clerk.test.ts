@@ -124,6 +124,15 @@ describe("mapClerkUserToExport", () => {
     expect(mapped.unverified_email_addresses).toEqual(["a@x.dev"]);
   });
 
+  // The import puts the old Clerk ID in external_id, so the app's own value
+  // would otherwise be lost.
+  test("moves external_id into private metadata, keeping what is there", () => {
+    const mapped = mapClerkUserToExport(
+      user({ external_id: "acct_9", private_metadata: { tier: "gold" } }),
+    );
+    expect(mapped.private_metadata).toEqual({ tier: "gold", clerkExternalId: "acct_9" });
+  });
+
   test("promotes the first verified address when none is flagged primary", () => {
     const mapped = mapClerkUserToExport(
       user({
@@ -195,6 +204,20 @@ describe("fetchAllClerkUsers", () => {
     expect(all).toHaveLength(512);
     expect(requests).toHaveLength(2);
     expect(requests[1]).toContain("offset=500");
+  });
+
+  // Oldest first, so a sign-up mid-export lands at the end; a row a deletion
+  // shifts onto the next page is dropped as a repeat.
+  test("pages oldest first and drops a user a shifted page repeats", async () => {
+    stubPages([
+      Array.from({ length: 500 }, (_, i) => user({ id: `u${i}` })),
+      [user({ id: "u499" }), user({ id: "v0" })],
+    ]);
+
+    const all = await fetchAllClerkUsers({ secretKey: "sk_test_x" });
+
+    expect(all).toHaveLength(501);
+    expect(requests[0]).toContain("order_by=%2Bcreated_at");
   });
 
   // A full final page must still trigger one more request, or an instance whose

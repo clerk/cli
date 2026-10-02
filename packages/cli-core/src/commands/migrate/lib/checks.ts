@@ -47,7 +47,13 @@ export type Reject = {
 export type ReasonCount = { reason: string; count: number };
 
 /** A `clerk config patch` that would stop a setting costing users. */
-export type Fix = { label: string; command: string };
+/**
+ * A setting change that would stop users being flagged: a `clerk config patch`
+ * command, or a Dashboard link when the instance can't be named for one.
+ */
+export type Fix = { label: string; command?: string; url?: string };
+
+const DASHBOARD_URL = "https://dashboard.clerk.com";
 
 export type Quota = {
   /** Users already in the instance, or `null` when the count could not be read. */
@@ -372,21 +378,24 @@ const hasAnyIdentifier = (user: User) =>
 /**
  * First user in the file to claim each email, phone and source ID.
  *
+ * Keyed by record, not source ID: two records with one source ID must not
+ * share a verdict, or the one kept would be rejected along with its copy.
+ *
  * @returns Each duplicate's reason, and the earlier user kept in its place.
  */
 function findFileDuplicates(users: User[]): {
-  reasons: Map<string, string>;
-  keptBy: Map<string, string>;
+  reasons: Map<User, string>;
+  keptBy: Map<User, string>;
 } {
-  const reasons = new Map<string, string>();
-  const keptBy = new Map<string, string>();
+  const reasons = new Map<User, string>();
+  const keptBy = new Map<User, string>();
   const seenIds = new Set<string>();
   const emails = new Map<string, string>();
   const phones = new Map<string, string>();
 
   for (const user of users) {
     if (seenIds.has(user.userId)) {
-      reasons.set(user.userId, "duplicate source ID in the file");
+      reasons.set(user, "duplicate source ID in the file");
       continue;
     }
     seenIds.add(user.userId);
@@ -404,16 +413,13 @@ function findFileDuplicates(users: User[]): {
     // The first record in the file wins, whatever either holds: the source's
     // order decides, so the kept ID is named alongside the reject.
     if (emailOwner) {
-      reasons.set(user.userId, "email is also used by an earlier user in the file, which is kept");
-      keptBy.set(user.userId, emailOwner);
+      reasons.set(user, "email is also used by an earlier user in the file, which is kept");
+      keptBy.set(user, emailOwner);
       continue;
     }
     if (phoneOwner) {
-      reasons.set(
-        user.userId,
-        "phone number is also used by an earlier user in the file, which is kept",
-      );
-      keptBy.set(user.userId, phoneOwner);
+      reasons.set(user, "phone number is also used by an earlier user in the file, which is kept");
+      keptBy.set(user, phoneOwner);
       continue;
     }
     for (const email of ownEmails) emails.set(email.toLowerCase(), user.userId);
@@ -625,19 +631,27 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
       flagged.unshift({ ...email, clerkRequired: true, blocking: true, consequence: "rejects" });
   }
 
-  const flags = input.target.appId
-    ? ` --app ${input.target.appId} --instance ${input.target.instanceId}`
-    : "";
+  // Always name the instance: without it, `clerk config patch` acts on the
+  // linked profile's development instance, whatever key this import used. A
+  // `key_` ID is a stand-in for an instance Clerk didn't name, so there is
+  // nothing to pass; point at the Dashboard instead.
+  const { appId, instanceId } = input.target;
+  const named = instanceId.startsWith("ins_");
+  const flags = `${appId ? ` --app ${appId}` : ""} --instance ${instanceId}`;
   const settings = input.settings;
   const mfa = MFA_SETTINGS.filter(
     ({ field, attribute }) =>
       !isEnabled(settings, attribute) && users.some((user) => hasValue(user[field])),
   ).map(({ label, path }) => ({ label, writes: [{ path: [...path], value: true }] }));
 
-  return [...buildSettingChanges(flagged), ...mfa].map((change) => ({
-    label: change.label,
-    command: `clerk config patch${flags} --json ${quoteJson(buildChangePayload([change]))}`,
-  }));
+  return [...buildSettingChanges(flagged), ...mfa].map((change) =>
+    named
+      ? {
+          label: change.label,
+          command: `clerk config patch${flags} --json ${quoteJson(buildChangePayload([change]))}`,
+        }
+      : { label: change.label, url: DASHBOARD_URL },
+  );
 }
 
 // --- The whole check -------------------------------------------------------
@@ -701,10 +715,11 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     reason: `invalid: ${failure.error}`,
   }));
 
-  const { reasons: fileDuplicates, keptBy } = findFileDuplicates(input.users);
   const disabledProviders = findDisabledProviderRejects(input);
 
-  let candidates: User[] = [];
+  // Users that pass every per-user check. Only these claim identifiers in
+  // the file: a rejected record must not cost a later one its email.
+  const passed: User[] = [];
   const placeholderEmails = new Set<string>();
   const refusedNames = new Set<string>();
   for (const original of input.users) {
@@ -716,7 +731,6 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       (refused.length > 0 && !hasAnyIdentifier(user)
         ? `only has an email Clerk refuses (${refused[0]})`
         : undefined) ??
-      fileDuplicates.get(user.userId) ??
       missingRequiredIdentifier(user, input.settings) ??
       // Stripping the identifiers the instance has off can leave nothing to
       // sign in with; Clerk would still create the user.
@@ -737,12 +751,21 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         : undefined) ??
       disabledProviders.get(user.userId);
     if (reason) {
-      const kept = reason === fileDuplicates.get(user.userId) ? keptBy.get(user.userId) : undefined;
-      rejects.push({ sourceId: user.userId, reason, ...(kept ? { keptSourceId: kept } : {}) });
+      rejects.push({ sourceId: user.userId, reason });
     } else {
-      candidates.push(user);
+      passed.push(user);
       if (refused.length > 0) placeholderEmails.add(user.userId);
     }
+  }
+
+  const { reasons: fileDuplicates, keptBy } = findFileDuplicates(passed);
+  let candidates: User[] = [];
+  for (const user of passed) {
+    const reason = fileDuplicates.get(user);
+    const kept = keptBy.get(user);
+    if (reason)
+      rejects.push({ sourceId: user.userId, reason, ...(kept ? { keptSourceId: kept } : {}) });
+    else candidates.push(user);
   }
 
   const instanceDuplicates =
@@ -792,6 +815,12 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       ...legalWarning(
         candidates.filter((user) => lacksLegalAcceptance(user, input.settings)).length,
       ),
+      // An unknown count is checked as zero; say so rather than imply it fit.
+      ...(quota && quota.existing === null
+        ? [
+            `Could not read how many users this development instance holds, so the ${quota.limit}-user limit was checked as if it were empty`,
+          ]
+        : []),
     ],
     fixes: buildFixes(input, input.users),
     ...(quota ? { quota } : {}),

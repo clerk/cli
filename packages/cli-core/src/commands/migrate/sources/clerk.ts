@@ -20,7 +20,10 @@ const clerkSource = {
       level: "partial",
       note: "TOTP secrets and backup codes come across from a Dashboard export only.",
     },
-    metadata: { level: "yes", note: "Public, private and unsafe metadata keep their places." },
+    metadata: {
+      level: "yes",
+      note: "Public, private and unsafe metadata keep their places. `export clerk` moves each user's external_id to private metadata as `clerkExternalId`, because the import uses external_id for the old Clerk ID.",
+    },
   },
   transformer: {
     id: "userId",
