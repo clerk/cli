@@ -249,7 +249,7 @@ describe("fetchAccessToken", () => {
 
   test("names the role the service account usually lacks", async () => {
     globalThis.fetch = (async () => new Response("{}", { status: 403 })) as unknown as typeof fetch;
-    await expect(fetchAccessToken(account)).rejects.toThrow(/Firebase Authentication Admin/);
+    await expect(fetchAccessToken(account)).rejects.toThrow(/revoked or deleted/);
   });
 
   // The emulator has no token endpoint; `firebase-admin` uses the same bearer.
@@ -408,6 +408,8 @@ describe("fetchHashConfig", () => {
   test("returns null rather than failing when the call is not permitted", async () => {
     stubFirebase([[]]);
     expect(await fetchHashConfig(account, "tok")).toBeNull();
+    // Names the permission, so the operator can grant it rather than guess.
+    expect(captured.err).toContain("firebaseauth.configs.getHashConfig");
   });
 
   test("returns null when the response carries no hash config", async () => {

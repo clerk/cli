@@ -369,7 +369,29 @@ clerk migrate export firebase --service-account ./service-account.json
 ```
 
 Needs a service account key from **Project settings → Service accounts →
-Generate new private key**, with the Firebase Authentication Admin role.
+Generate new private key**. The service account needs to read users and the
+project's password hash parameters. A read-only account verified to work has:
+
+- **Firebase Authentication Viewer** (`roles/firebaseauth.viewer`), to read
+  users;
+- a custom role with `firebaseauth.configs.get`,
+  `firebaseauth.configs.getHashConfig` and `firebaseauth.users.get`. The hash
+  parameters need `getHashConfig`, which no predefined Firebase Auth role is
+  documented to include.
+
+```sh
+gcloud iam roles create clerkMigrateHashExport --project=PROJECT_ID \
+  --title="Clerk migrate hash export" \
+  --permissions=firebaseauth.configs.get,firebaseauth.configs.getHashConfig,firebaseauth.users.get
+gcloud projects add-iam-policy-binding PROJECT_ID \
+  --member=serviceAccount:SA_EMAIL --role=roles/firebaseauth.viewer
+gcloud projects add-iam-policy-binding PROJECT_ID \
+  --member=serviceAccount:SA_EMAIL --role=projects/PROJECT_ID/roles/clerkMigrateHashExport
+```
+
+Without `getHashConfig` the users still export, with their hashes, but the
+export says which permission is missing and the import needs the
+`--firebase-*` flags instead.
 
 Without `--service-account` you are prompted for it, the way `export supabase`
 prompts for its connection string. The answer can be a path to the downloaded

@@ -295,7 +295,7 @@ export async function fetchAccessToken(account: ServiceAccount): Promise<string>
   if (!response.ok || !body.access_token) {
     throw new CliError(
       `Google rejected the service account (${response.status}): ${body.error_description ?? body.error ?? "no access token returned"}\n` +
-        "Check the key has not been revoked, and that the service account has the Firebase Authentication Admin role.",
+        "Check the key has not been revoked or deleted, in the Google Cloud console under IAM → Service accounts.",
       { code: ERROR_CODE.USAGE_ERROR, docsUrl: DOCS_URL },
     );
   }
@@ -385,7 +385,15 @@ export async function fetchHashConfig(
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     });
     if (!response.ok) {
-      log.debug(`firebase: ${response.status} reading the project config`);
+      if (response.status === 403) {
+        log.warn(
+          "The service account cannot read the project's password hash parameters: it needs the " +
+            "`firebaseauth.configs.getHashConfig` permission. Grant it and export again, or pass the " +
+            "parameters to the import with --firebase-*.",
+        );
+      } else {
+        log.debug(`firebase: ${response.status} reading the project config`);
+      }
       return null;
     }
 
