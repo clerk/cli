@@ -35,18 +35,40 @@ type AuthJsRow = Record<string, unknown> & {
   email_verified?: unknown;
 };
 
-export function buildAuthJsQuery(client: DbClient, table: string): string {
+/**
+ * The verified-email column, in the order tried: the current adapters' name,
+ * then the legacy NextAuth `users` table's.
+ */
+const VERIFIED_COLUMNS = ["emailVerified", "email_verified"] as const;
+
+/**
+ * Every column is qualified with the table alias: SQLite reads an unqualified
+ * double-quoted name that matches no column as a string literal, so a missing
+ * `"emailVerified"` would come back as the text "emailVerified" on every row,
+ * which reads as verified.
+ */
+export function buildAuthJsQuery(
+  client: DbClient,
+  table: string,
+  verifiedColumn: (typeof VERIFIED_COLUMNS)[number] = "emailVerified",
+): string {
   const q = (identifier: string) => client.quote(identifier);
   return (
-    `SELECT ${q("id")}, ${q("name")}, ${q("email")}, ${q("emailVerified")} AS ${q("email_verified")} ` +
-    `FROM ${q(table)} ORDER BY ${q("id")} ASC`
+    `SELECT u.${q("id")}, u.${q("name")}, u.${q("email")}, u.${q(verifiedColumn)} AS ${q("email_verified")} ` +
+    `FROM ${q(table)} u ORDER BY u.${q("id")} ASC`
   );
+}
+
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** True for an error that means "no such column". Postgres says "does not exist" for both. */
+function isMissingColumn(error: unknown): boolean {
+  return /no such column|column .* does not exist|unknown column/i.test(messageOf(error));
 }
 
 /** True for an error that means "wrong table name", not "broken connection". */
 function isMissingTable(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /does not exist|no such table|doesn't exist|unknown table/i.test(message);
+  return /does not exist|no such table|doesn't exist|unknown table/i.test(messageOf(error));
 }
 
 /**
@@ -60,12 +82,24 @@ export async function fetchAuthJsUsers(
   let lastError: unknown;
 
   for (const table of TABLE_CANDIDATES) {
-    try {
-      return { rows: await client.query<AuthJsRow>(buildAuthJsQuery(client, table)), table };
-    } catch (error) {
-      if (!isMissingTable(error)) throw error;
-      lastError = error;
+    let columnError: unknown;
+    for (const column of VERIFIED_COLUMNS) {
+      try {
+        const rows = await client.query<AuthJsRow>(buildAuthJsQuery(client, table, column));
+        return { rows, table };
+      } catch (error) {
+        // The table is there: try the other name for the verified column, and
+        // report the first failure if neither reads.
+        if (isMissingColumn(error)) {
+          columnError ??= error;
+          continue;
+        }
+        if (!isMissingTable(error)) throw error;
+        lastError = error;
+        break;
+      }
     }
+    if (columnError) throw columnError;
   }
 
   throw lastError instanceof Error

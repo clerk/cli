@@ -360,11 +360,13 @@ also keeps `raw_app_meta_data`, which is what the import's
 **`authjs` tries `User`, then `user`, then `users`.** Auth.js has no single
 schema — Prisma capitalizes the table, Drizzle does not, and Postgres treats
 the difference as significant once quoted. The run reports which one it found.
-Auth.js core stores no passwords, so its users arrive without credentials.
+The verified column is read as `emailVerified`, or `email_verified` on a legacy
+NextAuth table. Auth.js core stores no passwords, so its users arrive without
+credentials.
 
 **`betterauth` detects its plugin columns from the schema.** The username
-plugin adds `username`, admin adds `banned`, phone-number adds `phoneNumber`,
-and so on; selecting a column that is not there fails the whole query, and the
+plugin adds `username`, admin adds `banned` (carried only while `banExpires` is
+unset or in the future), phone-number adds `phoneNumber`, and so on; selecting a column that is not there fails the whole query, and the
 database answers the question better than the user can. Passwords come from a
 `LEFT JOIN` onto the credential `account` row — left, not inner, so a user who
 only ever signed in with OAuth is still exported.
@@ -526,6 +528,7 @@ clerk migrate import                                    # a human is asked
 | `--allow-partial`                       | Import the users that pass, and record the rest as skipped          |
 | `--new-run`                             | Start a new run instead of [continuing](#re-running) an earlier one |
 | `--require-password`                    | Import only users that carry a password digest                      |
+| `--skip-legal-checks`                   | Import users with no legal acceptance into an instance requiring it |
 | `--firebase-signer-key <key>`           | Firebase base64 signer key (overrides the export file)              |
 | `--firebase-salt-separator <separator>` | Firebase base64 salt separator                                      |
 | `--firebase-rounds <n>`                 | Firebase scrypt rounds                                              |
@@ -617,6 +620,16 @@ after them. They sort the users three ways:
   - it lacks an identifier the instance requires. An email or phone counts
     only when it is verified, because an unverified one is attached after the
     user exists
+  - it has no identifier left once those the instance has turned off are
+    stripped
+  - it lacks a first or last name the instance requires
+  - it has an authenticator app secret or backup codes, and the instance has
+    that turned off. Importing it without them would take away its second
+    factor, so the checks offer to turn the setting on instead
+  - it has no password, and password is the instance's only way to sign in
+  - it has no legal acceptance on record, and the instance requires legal
+    consent. `--skip-legal-checks`, or a yes at the prompt, imports these users
+    without it (`skip_legal_checks`), with a warning
   - its username breaks the instance's username rules (length, letters,
     the allowed special characters)
   - its password is not the shape its hasher says (`bcrypt`, `scrypt_firebase`,
@@ -625,7 +638,8 @@ after them. They sort the users three ways:
   - Supabase: its only provider is not enabled in Clerk
   - the instance already has a user with its source ID, email, phone or
     username (a batched `GET /v1/users` lookup, 100 values a request, through
-    the scheduler). The users a continued run created do not count
+    the scheduler). A user a continued run found behind its own interrupted
+    create does not count
   - a development instance: it is past the 100-user headroom
     (`CLERK_MIGRATE_DEV_USER_LIMIT` when Clerk raised it), counted in file
     order
@@ -664,6 +678,12 @@ configured as its owner intended, and fixing the export may be the answer. When
 the instance settings cannot be read (BAPI `/v1/domains` → the instance's
 Frontend API `/v1/environment`), required fields are not checked and the run
 says so.
+
+#### Sign-up restrictions
+
+Every create sends `skip_restriction_checks: true`. The instance's allowlist,
+blocklist, disposable-email and subaddress rules police new sign-ups, and these
+users already signed up on the source platform.
 
 #### Additional identifiers
 

@@ -128,7 +128,9 @@ export function buildSettingChanges(flagged: ReadinessItem[]): SettingChange[] {
  * Changes share parents — `first_name` and `last_name` both write `user_model`
  * — so leaves are written into a shared tree rather than merged after the fact.
  */
-export function buildChangePayload(changes: SettingChange[]): Record<string, unknown> {
+export function buildChangePayload(
+  changes: Pick<SettingChange, "writes">[],
+): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
 
   for (const write of changes.flatMap((change) => change.writes)) {

@@ -81,6 +81,11 @@ export type MigrateRunOptions = {
   /** The file to read, once `input` is resolved. Not a flag. */
   file?: string;
   requirePassword?: boolean;
+  /**
+   * Import users with no legal acceptance into an instance that requires it.
+   * Without it, a prompt asks; where nobody can be asked, they are rejected.
+   */
+  skipLegalChecks?: boolean;
   /** Check against the instance, report, and write nothing. */
   dryRun?: boolean;
   /** Import the users that pass, and record the rest as skipped. */
@@ -515,6 +520,7 @@ function commandFor(options: MigrateRunOptions, fromExport: string | undefined, 
   if (options.allowPartial) parts.push("--allow-partial");
   if (options.newRun) parts.push("--new-run");
   if (options.requirePassword) parts.push("--require-password");
+  if (options.skipLegalChecks) parts.push("--skip-legal-checks");
   if (options.secretKey) parts.push("--secret-key", "<key>");
   if (options.app) parts.push("--app", options.app);
   if (options.instance) parts.push("--instance", options.instance);
@@ -675,9 +681,23 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         ]),
       );
 
+      // Creating a user without legal acceptance needs consent of its own:
+      // the flag, or a yes at a prompt. Otherwise the checks reject them.
+      let skipLegalChecks = options.skipLegalChecks ?? false;
+      const withoutLegal = settings?.sign_up?.legal_consent_enabled
+        ? users.filter((user) => !user.legalAcceptedAt && !user.skipLegalChecks).length
+        : 0;
+      if (!skipLegalChecks && withoutLegal > 0 && !options.dryRun && canPrompt(options)) {
+        skipLegalChecks = await confirm({
+          message: `${plural(withoutLegal, "user")} ${withoutLegal === 1 ? "has" : "have"} no legal acceptance on record, which this instance requires. Import them without it?`,
+          default: false,
+        });
+      }
+
       const checks = await withSpinner("Checking users against the instance...", async (spinner) =>
         checkImport({
           users,
+          skipLegalChecks,
           failures,
           unknownFields: loaded.unknownFields,
           ...(supabaseRows ? { supabaseRows } : {}),

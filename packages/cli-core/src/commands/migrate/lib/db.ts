@@ -320,7 +320,7 @@ export function describeDbError(error: unknown, platform?: DbPlatform): string {
   if (/no such column|column .* does not exist|unknown column/i.test(message)) {
     const needs: Partial<Record<DbPlatform, string>> = {
       authjs:
-        "The Auth.js export reads `id`, `name`, `email` and `emailVerified`. For a schema that renames them " +
+        "The Auth.js export reads `id`, `name`, `email` and `emailVerified` (or `email_verified`). For a schema that renames them " +
         '(Prisma `@map("email_verified")`, for one), export the users with your own query, ' +
         "`SELECT id, name, email, email_verified FROM …`, and import that file with the authjs source.",
     };

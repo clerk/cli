@@ -131,7 +131,9 @@ export function buildCreateUserBody(
   identifiers: Identifiers,
   skipPasswordRequirement: boolean,
 ): Record<string, unknown> {
-  const body: Record<string, unknown> = { external_id: user.userId };
+  // The instance's allowlist, blocklist, disposable-email and subaddress rules
+  // police sign-ups. These users already signed up, on the source platform.
+  const body: Record<string, unknown> = { external_id: user.userId, skip_restriction_checks: true };
 
   if (identifiers.primaryEmail) body.email_address = [identifiers.primaryEmail];
   if (identifiers.primaryPhone) body.phone_number = [identifiers.primaryPhone];

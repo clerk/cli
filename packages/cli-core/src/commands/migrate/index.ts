@@ -70,6 +70,10 @@ export function registerMigrate(program: Program): void {
     .option("--allow-partial", "Import the users that pass the checks, and skip the rest")
     .option("--new-run", "Start a new run instead of continuing an earlier one of this file")
     .option("--require-password", "Import only users that have a password")
+    .option(
+      "--skip-legal-checks",
+      "Import users with no legal acceptance on record into an instance that requires it",
+    )
     .option("--firebase-signer-key <key>", "Firebase base64 signer key (overrides the export file)")
     .option("--firebase-salt-separator <separator>", "Firebase base64 salt separator")
     .option("--firebase-rounds <n>", "Firebase scrypt rounds", (value: string) =>

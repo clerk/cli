@@ -80,7 +80,14 @@ type BuildInput = {
  * carry leaves nothing to create them with, so the API refuses them — which is
  * why these are the only attributes whose consequence is `rejects`.
  */
-const IDENTIFIER_ATTRIBUTES = new Set<AttributeName>(["email_address", "phone_number", "username"]);
+/** Attributes `POST /v1/users` refuses a user without, when they are required. */
+const REJECTING_ATTRIBUTES = new Set<AttributeName>([
+  "email_address",
+  "phone_number",
+  "username",
+  "first_name",
+  "last_name",
+]);
 
 /** An identifier or user-model row, with its blocking verdict. */
 function buildAttributeItem(
@@ -106,7 +113,7 @@ function buildAttributeItem(
       clerkEnabled: enabled,
       clerkRequired: required,
       blocking: true,
-      consequence: IDENTIFIER_ATTRIBUTES.has(attribute) ? "rejects" : "drops",
+      consequence: REJECTING_ATTRIBUTES.has(attribute) ? "rejects" : "drops",
       // How many users this costs is the outcome block's job. Restating it here
       // reads as a contradiction, because that block counts each user once and
       // this row counts the field — a user missing both an email and a password
@@ -165,7 +172,8 @@ export function buildReadinessReport(input: BuildInput): ReadinessReport {
   ];
 
   for (const [label, section, attribute, count] of attributeRows) {
-    if (count > 0) {
+    // A required field nobody has still costs every user, so it gets a row.
+    if (count > 0 || (settings && isRequired(settings, attribute))) {
       items.push(buildAttributeItem(label, section, attribute, count, settings, total));
     }
   }

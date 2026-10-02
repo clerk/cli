@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import type { UserSettingsJSON } from "../../../lib/fapi.ts";
 import type { User } from "../types.ts";
-import { checkImport, hashShapeProblem, type CheckInput } from "./checks.ts";
+import { checkImport, hashShapeProblem, passwordIsOnlySignIn, type CheckInput } from "./checks.ts";
 
 const BCRYPT = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
 
@@ -69,6 +69,88 @@ const reasonsOf = async (overrides: Partial<CheckInput>) =>
   );
 
 describe("rejects", () => {
+  // Each one is a user POST /v1/users refuses (clerk_go create_service.go).
+  describe("what the create refuses", () => {
+    const EMAIL_ON = { email_address: { enabled: true } };
+
+    test.each([
+      ["first_name", { lastName: "L" }, "no first name, which this instance requires"],
+      ["last_name", { firstName: "F" }, "no last name, which this instance requires"],
+    ] as const)("a missing required %s", async (attribute, fields, reason) => {
+      const reasons = await reasonsOf({
+        users: [user("a", fields), user("b", { firstName: "F", lastName: "L" })],
+        settings: settings({ ...EMAIL_ON, [attribute]: { enabled: true, required: true } }),
+      });
+      expect(reasons).toEqual({ a: reason });
+    });
+
+    test.each([
+      [
+        "totpSecret",
+        "authenticator_app",
+        "has an authenticator app (TOTP) secret, and this instance has authenticator apps off",
+      ],
+      ["backupCodes", "backup_code", "has backup codes, and this instance has backup codes off"],
+    ] as const)("%s with %s off, offering to turn it on", async (field, attribute, reason) => {
+      const value = field === "backupCodes" ? ["code1"] : "SECRET";
+      const checks = await checkImport(
+        input({
+          users: [user("a", { [field]: value })],
+          settings: settings({ ...EMAIL_ON, [attribute]: { enabled: false } }),
+        }),
+      );
+      expect(checks.rejects).toEqual([{ sourceId: "a", reason }]);
+      expect(checks.fixes.map((fix) => fix.command).join("\n")).toContain(
+        `"auth_multi_factor":{"${attribute}":{"enabled":true}}`,
+      );
+    });
+
+    test("no password where password is the only way to sign in", async () => {
+      const passwordOnly = settings({
+        email_address: { enabled: true, used_for_first_factor: false, first_factors: [] },
+        password: { enabled: true, used_for_first_factor: true, first_factors: ["password"] },
+      });
+      const reasons = await reasonsOf({
+        users: [user("a"), user("b", { password: BCRYPT, passwordHasher: "bcrypt" })],
+        settings: passwordOnly,
+      });
+      expect(reasons).toEqual({
+        a: "no password, and password is this instance's only way to sign in",
+      });
+    });
+
+    // Firebase or Supabase phone-auth users, into an instance with phone off.
+    test("a user left with no identifier once disabled ones are stripped", async () => {
+      const reasons = await reasonsOf({
+        users: [user("phone-only", { email: undefined, phone: "+15555550100" }), user("b")],
+        settings: settings({ email_address: { enabled: true }, phone_number: { enabled: false } }),
+      });
+      expect(reasons).toEqual({
+        "phone-only":
+          "has no identifier this instance accepts (its email, phone or username is turned off)",
+      });
+    });
+
+    describe("legal consent", () => {
+      const LEGAL = {
+        ...settings(EMAIL_ON),
+        sign_up: { legal_consent_enabled: true },
+      } as unknown as UserSettingsJSON;
+      const users = [user("a"), user("b", { legalAcceptedAt: "2024-01-01T00:00:00.000Z" })];
+
+      test("rejects a user with no acceptance on record, naming the flag", async () => {
+        expect((await reasonsOf({ users, settings: LEGAL })).a).toContain("--skip-legal-checks");
+      });
+
+      test("with skipLegalChecks, imports them with skip_legal_checks and a warning", async () => {
+        const checks = await checkImport(input({ users, settings: LEGAL, skipLegalChecks: true }));
+        expect(checks.rejects).toEqual([]);
+        expect(checks.importable.map((u) => u.skipLegalChecks)).toEqual([true, undefined]);
+        expect(checks.warnings.join("\n")).toContain("1 user has no legal acceptance on record");
+      });
+    });
+  });
+
   test("a user that failed validation", async () => {
     const checks = await checkImport(
       input({ failures: [{ userId: "bad", row: 0, error: "Invalid email", path: ["email"] }] }),
@@ -435,6 +517,40 @@ describe("fixes", () => {
     const checks = await checkImport(input({ users: [user("a")] }));
     expect(checks.fixes).toEqual([]);
     expect(checks.settingsUnavailable).toBe(true);
+  });
+});
+
+describe("passwordIsOnlySignIn", () => {
+  const withFactors = (factors: Record<string, string[]>, social: object = {}) =>
+    settings(
+      Object.fromEntries(
+        Object.entries(factors).map(([name, first_factors]) => [
+          name,
+          { enabled: true, used_for_first_factor: first_factors.length > 0, first_factors },
+        ]),
+      ),
+      social,
+    );
+
+  test.each([
+    ["password alone", { password: ["password"] }, {}, true],
+    // Mirrors clerk_go: a passkey is not counted as a way in without a password.
+    ["password and passkey", { password: ["password"], passkey: ["passkey"] }, {}, true],
+    [
+      "password and email codes",
+      { password: ["password"], email_address: ["email_code"] },
+      {},
+      false,
+    ],
+    [
+      "password and Google",
+      { password: ["password"] },
+      { oauth_google: { enabled: true, authenticatable: true } },
+      false,
+    ],
+    ["no password factor", { email_address: ["email_code"] }, {}, false],
+  ])("%s -> %p", (_label, factors, social, expected) => {
+    expect(passwordIsOnlySignIn(withFactors(factors, social))).toBe(expected);
   });
 });
 

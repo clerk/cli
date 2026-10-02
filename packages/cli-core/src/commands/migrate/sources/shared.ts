@@ -20,12 +20,30 @@ export type VerificationStyle = "boolean" | "timestamp";
 /** CSV exports write SQL NULL as one of these rather than an empty cell. */
 const NULLISH_STRINGS = new Set(["", "null", "nil", "undefined", "\\n"]);
 
+/**
+ * A boolean as a CSV or a database writes it: `TRUE` from a spreadsheet, `t`
+ * and `f` from psql, `yes`/`no`. Anything else is returned unchanged, so the
+ * schema can reject it.
+ */
+export function normalizeBooleanField(value: unknown): unknown {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return value;
+  }
+  if (typeof value !== "string") return value;
+
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "yes", "y", "t"].includes(normalized)) return true;
+  if (["false", "0", "no", "n", "f"].includes(normalized)) return false;
+  return value;
+}
+
 export function isVerified(value: unknown, style: VerificationStyle): boolean {
   if (value === null || value === undefined) return false;
 
-  if (style === "boolean") {
-    return value === true || value === 1 || value === "true" || value === "1";
-  }
+  if (style === "boolean") return normalizeBooleanField(value) === true;
 
   if (value instanceof Date) return !Number.isNaN(value.getTime());
   if (typeof value === "number") return true;

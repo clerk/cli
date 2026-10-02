@@ -82,6 +82,13 @@ describe("buildCreateUserBody", () => {
     ]);
   });
 
+  // Allowlists and blocklists police sign-ups; these users already signed up.
+  test("skips the instance's sign-up restrictions", () => {
+    expect(buildCreateUserBody(user(), splitIdentifiers(user()), true)).toMatchObject({
+      skip_restriction_checks: true,
+    });
+  });
+
   test("omits fields the source platform never recorded", () => {
     const body = buildCreateUserBody(user(), splitIdentifiers(user()), true);
     expect("first_name" in body).toBe(false);

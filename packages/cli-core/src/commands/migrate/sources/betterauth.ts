@@ -1,5 +1,11 @@
 import type { SourceEntry } from "../types.ts";
-import { detectStandardHasher, isVerified, routeByVerification, splitName } from "./shared.ts";
+import {
+  detectStandardHasher,
+  isVerified,
+  routeByVerification,
+  splitName,
+  toIsoDate,
+} from "./shared.ts";
 
 /**
  * Better Auth → Clerk source.
@@ -49,7 +55,7 @@ const betterAuthSource = {
   key: "betterauth",
   label: "Better Auth",
   description:
-    "Works with the Better Auth export. Detects scrypt, bcrypt and argon2 passwords per user, and carries the admin plugin's banned flag.",
+    "Works with the Better Auth export. Detects scrypt, bcrypt and argon2 passwords per user, and carries the admin plugin's banned flag while its ban has not expired.",
   carries: {
     passwords: {
       level: "yes",
@@ -101,8 +107,16 @@ const betterAuthSource = {
     // for every user that was never banned, and sending that to Clerk is noise.
     // SQLite, libSQL and MySQL hand back 1/0 and CSV hands back "true", so this
     // runs before normalizeUserData and must accept those too.
-    if (isVerified(user.banned, "boolean")) user.banned = true;
+    // A ban whose `banExpires` has passed is over: Better Auth lifts it only
+    // at the user's next sign-in, so the column still says banned. An expiry
+    // that can't be read keeps the ban.
+    const rawExpiry = user.banExpires ?? user.ban_expires;
+    const expiry = typeof rawExpiry === "number" && rawExpiry < 1e11 ? rawExpiry * 1000 : rawExpiry;
+    const expired = Date.parse(String(toIsoDate(expiry, true))) <= Date.now();
+    if (isVerified(user.banned, "boolean") && !expired) user.banned = true;
     else delete user.banned;
+    delete user.banExpires;
+    delete user.ban_expires;
 
     // The anonymous plugin's guests are throwaway accounts with placeholder
     // emails (anon-…@…), not people to migrate.

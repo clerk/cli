@@ -12,6 +12,7 @@ import path from "node:path";
 import csvParser from "csv-parser";
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 import { getSource } from "../sources/registry.ts";
+import { normalizeBooleanField } from "../sources/shared.ts";
 import { PASSWORD_HASHERS, type TransformContext, type SourceEntry, type User } from "../types.ts";
 import { userSchema } from "../validator.ts";
 import { isEnvelope } from "./export-file.ts";
@@ -161,21 +162,6 @@ function normalizeStringArrayField(value: unknown): unknown {
   return parsed;
 }
 
-function normalizeBooleanField(value: unknown): unknown {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") {
-    if (value === 1) return true;
-    if (value === 0) return false;
-    return value;
-  }
-  if (typeof value !== "string") return value;
-
-  const normalized = value.trim().toLowerCase();
-  if (["true", "1", "yes", "y"].includes(normalized)) return true;
-  if (["false", "0", "no", "n"].includes(normalized)) return false;
-  return value;
-}
-
 function normalizeNumberField(value: unknown): unknown {
   if (typeof value === "number") return value;
   if (typeof value !== "string") return value;
@@ -278,12 +264,15 @@ export function consolidateClerkIdentifiers(user: Record<string, unknown>): void
     const verified = parseDelimitedStrings(user[verifiedKey]);
     const unverified = parseDelimitedStrings(user[unverifiedKey]);
 
+    // The Dashboard lists an unverified primary under the unverified field.
+    // Leading the verified list would put it on POST /v1/users, verified.
     const all: string[] = [];
-    if (primary) all.push(primary);
+    if (primary && !unverified.includes(primary)) all.push(primary);
     for (const value of verified) {
       if (!all.includes(value)) all.push(value);
     }
     if (all.length > 0) user[primaryKey] = all;
+    else delete user[primaryKey];
     delete user[verifiedKey];
 
     const extraUnverified = unverified.filter((value) => !all.includes(value));

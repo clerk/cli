@@ -88,6 +88,11 @@ export type CheckInput = {
   secretKey: string;
   schedule: ApiScheduler;
   /**
+   * Import users with no legal acceptance into an instance that requires it,
+   * sending `skip_legal_checks`. Without it they are rejected.
+   */
+  skipLegalChecks?: boolean;
+  /**
    * Clerk IDs a continued run found behind its own in-flight creates: finding
    * them in the instance is expected.
    */
@@ -165,6 +170,87 @@ function missingRequiredIdentifier(
     return "no username, which this instance requires";
   }
   return undefined;
+}
+
+/** A required first or last name the user lacks: `POST /v1/users` refuses it. */
+function missingRequiredName(user: User, settings: UserSettingsJSON | null): string | undefined {
+  if (!settings) return undefined;
+  if (isRequired(settings, "first_name") && !hasValue(user.firstName)) {
+    return "no first name, which this instance requires";
+  }
+  if (isRequired(settings, "last_name") && !hasValue(user.lastName)) {
+    return "no last name, which this instance requires";
+  }
+  return undefined;
+}
+
+/** MFA a user can carry, and the setting `POST /v1/users` refuses it without. */
+const MFA_SETTINGS = [
+  {
+    field: "totpSecret",
+    attribute: "authenticator_app",
+    reason: "has an authenticator app (TOTP) secret, and this instance has authenticator apps off",
+    label: "Enable authenticator apps",
+    path: ["auth_multi_factor", "authenticator_app", "enabled"],
+  },
+  {
+    field: "backupCodes",
+    attribute: "backup_code",
+    reason: "has backup codes, and this instance has backup codes off",
+    label: "Enable backup codes",
+    path: ["auth_multi_factor", "backup_code", "enabled"],
+  },
+] as const;
+
+/**
+ * MFA the instance has off. Rejected rather than dropped: importing the user
+ * without it would quietly take away their second factor.
+ */
+function mfaProblem(user: User, settings: UserSettingsJSON | null): string | undefined {
+  if (!settings) return undefined;
+  return MFA_SETTINGS.find(
+    ({ field, attribute }) => hasValue(user[field]) && !isEnabled(settings, attribute),
+  )?.reason;
+}
+
+/** Sign-in strategies that don't count as a way in without a password, per clerk_go. */
+const NOT_ALTERNATIVE_SIGN_IN = new Set([
+  "password",
+  "passkey",
+  "ticket",
+  "reset_password_email_code",
+  "reset_password_phone_code",
+]);
+
+/**
+ * True when the instance has no sign-in strategy but a password. Clerk then
+ * refuses `skip_password_requirement`, so a user without a digest can't be
+ * created. Mirrors `create_service.go` and `UserSettings.FirstFactors()`.
+ */
+export function passwordIsOnlySignIn(settings: UserSettingsJSON): boolean {
+  const strategies = new Set<string>();
+  for (const attribute of Object.values(settings.attributes ?? {})) {
+    if (attribute?.used_for_first_factor) {
+      for (const strategy of attribute.first_factors ?? []) strategies.add(strategy);
+    }
+  }
+  for (const [strategy, social] of Object.entries(settings.social ?? {})) {
+    if (social?.enabled && social.authenticatable) strategies.add(strategy);
+  }
+  if (settings.enterprise_sso?.enabled) strategies.add("enterprise_sso");
+  return (
+    strategies.has("password") &&
+    [...strategies].every((strategy) => NOT_ALTERNATIVE_SIGN_IN.has(strategy))
+  );
+}
+
+/** True when the instance needs legal acceptance this user has no record of. */
+function lacksLegalAcceptance(user: User, settings: UserSettingsJSON | null): boolean {
+  return (
+    Boolean(settings?.sign_up?.legal_consent_enabled) &&
+    !user.legalAcceptedAt &&
+    !user.skipLegalChecks
+  );
 }
 
 /** What FAPI serves under `username_settings`; `@clerk/shared` types only the lengths. */
@@ -542,7 +628,13 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
   const flags = input.target.appId
     ? ` --app ${input.target.appId} --instance ${input.target.instanceId}`
     : "";
-  return buildSettingChanges(flagged).map((change) => ({
+  const settings = input.settings;
+  const mfa = MFA_SETTINGS.filter(
+    ({ field, attribute }) =>
+      !isEnabled(settings, attribute) && users.some((user) => hasValue(user[field])),
+  ).map(({ label, path }) => ({ label, writes: [{ path: [...path], value: true }] }));
+
+  return [...buildSettingChanges(flagged), ...mfa].map((change) => ({
     label: change.label,
     command: `clerk config patch${flags} --json ${quoteJson(buildChangePayload([change]))}`,
   }));
@@ -589,6 +681,13 @@ function refusedNameWarning(count: number): string[] {
   ];
 }
 
+function legalWarning(count: number): string[] {
+  if (count === 0) return [];
+  return [
+    `${plural(count, "user")} ${count === 1 ? "has" : "have"} no legal acceptance on record, and ${count === 1 ? "is" : "are"} created without it (--skip-legal-checks)`,
+  ];
+}
+
 function placeholderWarning(count: number): string[] {
   if (count === 0) return [];
   return [
@@ -619,6 +718,19 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         : undefined) ??
       fileDuplicates.get(user.userId) ??
       missingRequiredIdentifier(user, input.settings) ??
+      // Stripping the identifiers the instance has off can leave nothing to
+      // sign in with; Clerk would still create the user.
+      (!hasAnyIdentifier(dropDisabledIdentifiers(user, input.settings))
+        ? "has no identifier this instance accepts (its email, phone or username is turned off)"
+        : undefined) ??
+      missingRequiredName(user, input.settings) ??
+      mfaProblem(user, input.settings) ??
+      (!user.password && input.settings && passwordIsOnlySignIn(input.settings)
+        ? "no password, and password is this instance's only way to sign in"
+        : undefined) ??
+      (!input.skipLegalChecks && lacksLegalAcceptance(user, input.settings)
+        ? "no legal acceptance on record, which this instance requires (--skip-legal-checks imports them without it)"
+        : undefined) ??
       usernameProblem(user, input.settings) ??
       (user.password && user.passwordHasher
         ? hashShapeProblem(user.password, user.passwordHasher)
@@ -667,13 +779,19 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
 
   return {
     total: input.users.length + input.failures.length,
-    importable: candidates.map((user) => dropDisabledIdentifiers(user, input.settings)),
+    importable: candidates.map((user) => {
+      const kept = dropDisabledIdentifiers(user, input.settings);
+      return lacksLegalAcceptance(kept, input.settings) ? { ...kept, skipLegalChecks: true } : kept;
+    }),
     rejects,
     rejectReasons: countReasons(rejects),
     warnings: [
       ...buildWarnings(input, candidates),
       ...placeholderWarning(candidates.filter((user) => placeholderEmails.has(user.userId)).length),
       ...refusedNameWarning(candidates.filter((user) => refusedNames.has(user.userId)).length),
+      ...legalWarning(
+        candidates.filter((user) => lacksLegalAcceptance(user, input.settings)).length,
+      ),
     ],
     fixes: buildFixes(input, input.users),
     ...(quota ? { quota } : {}),

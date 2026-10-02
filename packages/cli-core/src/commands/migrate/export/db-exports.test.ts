@@ -187,8 +187,8 @@ describe("authjs export", () => {
 
   test("quotes identifiers for the dialect", async () => {
     await withClient(authJsDb("User"), async (client) => {
-      expect(buildAuthJsQuery(client, "User")).toContain('"User"');
-      expect(buildAuthJsQuery(client, "User")).toContain('"emailVerified" AS "email_verified"');
+      expect(buildAuthJsQuery(client, "User")).toContain('"User" u');
+      expect(buildAuthJsQuery(client, "User")).toContain('u."emailVerified" AS "email_verified"');
     });
   });
 
@@ -197,6 +197,32 @@ describe("authjs export", () => {
   test.each([["User"], ["user"], ["users"]])("finds the %s table", async (table) => {
     const { rows } = await withClient(authJsDb(table), fetchAuthJsUsers);
     expect(rows).toHaveLength(2);
+  });
+
+  // SQLite reads an unqualified "emailVerified" that matches no column as the
+  // string "emailVerified", which would mark every email verified.
+  test("reads a legacy NextAuth table's email_verified, and keeps null unverified", async () => {
+    const file = makeDb((db) => {
+      db.run(
+        `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, email_verified TEXT)`,
+      );
+      db.run(`INSERT INTO users VALUES (?,?,?,?)`, ["n1", "Nv", "nv@x.dev", null]);
+      db.run(`INSERT INTO users VALUES (?,?,?,?)`, ["n2", "V", "v@x.dev", "2024-01-15"]);
+    });
+
+    const { rows, table } = await withClient(file, fetchAuthJsUsers);
+
+    expect(table).toBe("users");
+    expect(rows.map((row) => row.email_verified)).toEqual([null, "2024-01-15"]);
+  });
+
+  test("a missing column is an error, not a literal", async () => {
+    const file = makeDb((db) => {
+      db.run(`CREATE TABLE "User" (id TEXT PRIMARY KEY, email TEXT, "emailVerified" TEXT)`);
+      db.run(`INSERT INTO "User" VALUES (?,?,?)`, ["a", "a@x.dev", null]);
+    });
+
+    await expect(withClient(file, fetchAuthJsUsers)).rejects.toThrow(/no such column/);
   });
 
   test("fails clearly when no candidate table exists", async () => {

@@ -124,11 +124,23 @@ describe("consolidateClerkIdentifiers", () => {
   test("drops the unverified list when every entry is already verified", () => {
     const user: Record<string, unknown> = {
       phone: "+15555550100",
-      unverifiedPhoneNumbers: ["+15555550100"],
+      phoneNumbers: ["+15555550101"],
+      unverifiedPhoneNumbers: ["+15555550101"],
     };
     consolidateClerkIdentifiers(user);
-    expect(user.phone).toEqual(["+15555550100"]);
+    expect(user.phone).toEqual(["+15555550100", "+15555550101"]);
     expect("unverifiedPhoneNumbers" in user).toBe(false);
+  });
+
+  // The Dashboard lists an unverified primary under unverified_email_addresses.
+  test.each([
+    ["email", "unverifiedEmailAddresses", "a@x.dev"],
+    ["phone", "unverifiedPhoneNumbers", "+15555550100"],
+  ])("keeps an unverified primary %s unverified", (primaryKey, unverifiedKey, value) => {
+    const user: Record<string, unknown> = { [primaryKey]: value, [unverifiedKey]: [value] };
+    consolidateClerkIdentifiers(user);
+    expect(primaryKey in user).toBe(false);
+    expect(user[unverifiedKey]).toEqual([value]);
   });
 });
 

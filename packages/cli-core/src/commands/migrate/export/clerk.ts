@@ -88,16 +88,19 @@ function splitIdentifiers(
     const value = read(entry);
     if (!value) continue;
 
-    if (entry.id && entry.id === primaryId) {
+    const isVerified = entry.verification?.status === "verified";
+    // An unverified primary stays unverified: the import puts a primary on
+    // POST /v1/users, which creates it verified.
+    if (entry.id && entry.id === primaryId && isVerified) {
       primary = value;
       continue;
     }
-    if (entry.verification?.status === "verified") verified.push(value);
+    if (isVerified) verified.push(value);
     else unverified.push(value);
   }
 
-  // No primary flagged: promote the first verified one so the export still has
-  // an identifier the import can lead with.
+  // No verified primary: promote the first verified one so the export still
+  // has an identifier the import can lead with.
   if (!primary && verified.length > 0) primary = verified.shift();
 
   return { primary, verified, unverified };

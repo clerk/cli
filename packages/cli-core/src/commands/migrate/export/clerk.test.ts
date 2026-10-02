@@ -109,6 +109,21 @@ describe("mapClerkUserToExport", () => {
     expect(mapped.verified_email_addresses).toBeUndefined();
   });
 
+  // Verify-at-sign-up off lets a primary stay unverified. Exported as primary,
+  // the import would create it verified.
+  test("keeps an unverified primary unverified, and promotes a verified one", () => {
+    const mapped = mapClerkUserToExport(
+      user({
+        email_addresses: [
+          { id: "idn_1", email_address: "a@x.dev", verification: { status: "unverified" } },
+          { id: "idn_2", email_address: "b@x.dev", verification: { status: "verified" } },
+        ],
+      }),
+    );
+    expect(mapped.primary_email_address).toBe("b@x.dev");
+    expect(mapped.unverified_email_addresses).toEqual(["a@x.dev"]);
+  });
+
   test("promotes the first verified address when none is flagged primary", () => {
     const mapped = mapClerkUserToExport(
       user({

@@ -107,6 +107,12 @@ describe("isVerified", () => {
     ["", false],
     [null, false],
     [undefined, false],
+    // A CSV re-saved by a spreadsheet, or written by psql.
+    ["TRUE", true],
+    ["FALSE", false],
+    ["t", true],
+    ["f", false],
+    ["Yes", true],
   ])("boolean style: %p -> %p", (value, expected) => {
     expect(isVerified(value, "boolean")).toBe(expected);
   });
@@ -384,6 +390,19 @@ describe("betterauth", () => {
     [undefined, undefined],
   ])("banned=%p is carried through as %p", (banned, expected) => {
     expect(one("betterauth", { ...base, banned })?.banned).toBe(expected as boolean | undefined);
+  });
+
+  // Better Auth lifts an expired ban only at the next sign-in, so the column
+  // can still say banned long after the ban ended.
+  test.each([
+    ["an expiry in the past", "2020-01-01T00:00:00.000Z", undefined],
+    ["an expiry in the future", "2999-01-01T00:00:00.000Z", true],
+    ["epoch seconds in the past", 1_577_836_800, undefined],
+    ["epoch milliseconds in the future", 32_472_144_000_000, true],
+    ["an unreadable expiry", "soon", true],
+  ])("a ban with %s -> banned %p", (_label, banExpires, expected) => {
+    const user = one("betterauth", { ...base, banned: true, banExpires });
+    expect(user?.banned).toBe(expected as boolean | undefined);
   });
 
   test("drops plugin-only columns during validation", async () => {

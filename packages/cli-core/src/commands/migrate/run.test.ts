@@ -64,7 +64,7 @@ describe("validateRunOptions", () => {
 
 type Stub = {
   /** What `/v1/environment` reports; `null` makes the settings unreadable. */
-  settings?: { attributes?: object; social?: object } | null;
+  settings?: { attributes?: object; social?: object; sign_up?: object } | null;
   /** Users already in the instance, as `GET /v1/users` returns them. */
   existing?: {
     id: string;
@@ -688,6 +688,29 @@ describe("run", () => {
       expect(captured.err).toContain(
         `clerk config patch --json '{"auth_email":{"required_for_sign_up":false}}'`,
       );
+    });
+
+    test("legal consent: refused without --skip-legal-checks, sent with skip_legal_checks with it", async () => {
+      stubClerk({
+        settings: {
+          attributes: { email_address: { enabled: true } },
+          sign_up: { legal_consent_enabled: true },
+        },
+      });
+
+      const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(captured.err).toContain("no legal acceptance on record");
+      expect(created()).toEqual([]);
+
+      await run({ ...baseOptions, skipLegalChecks: true });
+      const bodies = requests
+        .filter((r) => r.method === "POST" && r.url.endsWith("/v1/users"))
+        .map((r) => r.body);
+      expect(bodies).toEqual([
+        expect.objectContaining({ external_id: "u1", skip_legal_checks: true }),
+        expect.objectContaining({ external_id: "u2", skip_legal_checks: true }),
+      ]);
     });
 
     test("a user already in the instance is rejected", async () => {
