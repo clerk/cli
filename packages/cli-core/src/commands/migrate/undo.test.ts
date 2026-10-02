@@ -125,6 +125,18 @@ describe("refusals, all exit 2 and delete nothing", () => {
     expect(deletes()).toHaveLength(0);
   });
 
+  // `key_` is the identity fallback when GET /v1/instance failed, e.g. rate
+  // limited straight after a large import. That is unknown, not different.
+  test("an unconfirmed instance is not reported as a different one", async () => {
+    const record = importRun({
+      target: { instanceId: "key_0123456789abcdef", env: "development" },
+    });
+    const error = (await undo(record.id, withDir({ yes: true })).catch((e: unknown) => e)) as Error;
+    expect(error.message).toContain("Could not confirm");
+    expect(error.message).not.toContain("addresses instance");
+    expect(deletes()).toHaveLength(0);
+  });
+
   test("no consent where nobody can be asked: the preview, then the command", async () => {
     const record = importRun();
 

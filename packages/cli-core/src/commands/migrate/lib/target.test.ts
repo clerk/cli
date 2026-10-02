@@ -81,6 +81,20 @@ describe("fetchInstanceIdentity", () => {
     });
   });
 
+  test("retries a 429 rather than falling back", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () =>
+      ++calls === 1
+        ? new Response("{}", { status: 429, headers: { "retry-after": "1" } })
+        : Response.json({
+            id: "ins_7",
+            environment_type: "development",
+          })) as unknown as typeof fetch;
+
+    expect((await fetchInstanceIdentity("sk_test_x")).instanceId).toBe("ins_7");
+    expect(calls).toBe(2);
+  });
+
   // The same key always addresses the same instance, so a hash still tells two
   // instances apart when the API cannot say.
   test("falls back to a stable hash of the key when the instance cannot be read", async () => {

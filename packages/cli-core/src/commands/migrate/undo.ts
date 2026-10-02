@@ -94,6 +94,18 @@ function readImportRun(runsDir: string, runId: string): RunRecord {
 /** Refuses to delete from an instance the import did not write to. */
 function assertSameInstance(record: RunRecord, target: ClerkTarget): void {
   if (record.target.instanceId === target.instanceId) return;
+  // A `key_` ID is the fallback for an instance lookup that failed. It cannot
+  // be compared with an `ins_` ID, so this is "unknown", not "different".
+  const unconfirmed = [record.target.instanceId, target.instanceId].some((id) =>
+    id?.startsWith("key_"),
+  );
+  if (unconfirmed) {
+    throwUsageError(
+      `Could not confirm that the resolved key addresses the instance run ${record.id} imported into: ` +
+        "Clerk did not answer GET /v1/instance (often rate limiting straight after a large import). " +
+        "Nothing was deleted. Try again in a minute; --verbose shows the response.",
+    );
+  }
   throwUsageError(
     `Run ${record.id} imported into ${describeTarget(record.target)}, but the resolved key ` +
       `addresses ${describeTarget(target)}. Nothing was deleted.\n` +

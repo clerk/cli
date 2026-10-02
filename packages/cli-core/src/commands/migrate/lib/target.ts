@@ -16,6 +16,7 @@ import { resolveAppContext } from "../../../lib/config.ts";
 import { resolveKeylessTarget } from "../../../lib/keyless-target.ts";
 import { log } from "../../../lib/log.ts";
 import { detectInstanceType } from "./instance.ts";
+import { retryOn429 } from "./retry.ts";
 import type { RunTarget } from "./run-store.ts";
 
 export type TargetOptions = {
@@ -66,14 +67,17 @@ async function describeKeySource(
  *
  * Falls back to a hash of the key when `GET /v1/instance` cannot be read: the
  * same key always addresses the same instance, so it still tells two
- * instances apart, and nothing is sent anywhere.
+ * instances apart, and nothing is sent anywhere. A 429 is retried first: it is
+ * most likely straight after a large import, which is when `undo` runs.
  */
 export async function fetchInstanceIdentity(
   secretKey: string,
 ): Promise<{ instanceId: string; env: string }> {
   const fallbackEnv = detectInstanceType(secretKey) === "prod" ? "production" : "development";
   try {
-    const { body } = await bapiRequest({ method: "GET", path: "/v1/instance", secretKey });
+    const { body } = await retryOn429(async () =>
+      bapiRequest({ method: "GET", path: "/v1/instance", secretKey }),
+    );
     const instance = body as { id?: unknown; environment_type?: unknown };
     if (typeof instance.id === "string" && instance.id.startsWith("ins_")) {
       return {
