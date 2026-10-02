@@ -16,6 +16,8 @@ let requests: { method: string; url: string }[];
 let instanceUsers: Map<string, number | null>;
 /** Clerk IDs whose DELETE fails with a 500. */
 let failing: Set<string>;
+/** external_id → Clerk ID, for users whose create was in flight. */
+let inFlight: Map<string, string>;
 
 const IMPORT_STARTED = "2026-09-01T00:00:00.000Z";
 const AFTER_IMPORT = Date.parse("2026-09-02T00:00:00.000Z");
@@ -32,6 +34,7 @@ beforeEach(() => {
   runsDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-undo-")));
   requests = [];
   failing = new Set();
+  inFlight = new Map();
   instanceUsers = new Map([
     ["user_a", null],
     ["user_b", AFTER_IMPORT],
@@ -44,6 +47,14 @@ beforeEach(() => {
 
     if (url.pathname === "/v1/instance") {
       return Response.json({ object: "instance", id: "ins_1", environment_type: "development" });
+    }
+    if (method === "GET" && url.pathname === "/v1/users" && url.searchParams.has("external_id")) {
+      return Response.json(
+        url.searchParams
+          .getAll("external_id")
+          .filter((externalId) => inFlight.has(externalId))
+          .map((externalId) => ({ id: inFlight.get(externalId), external_id: externalId })),
+      );
     }
     if (method === "GET" && url.pathname === "/v1/users") {
       const ids = url.searchParams.getAll("user_id");
@@ -177,6 +188,30 @@ describe("--dry-run", () => {
 });
 
 describe("deleting", () => {
+  // The run stopped with this user's POST /v1/users in flight: Clerk created
+  // it, but its ID never reached the run record.
+  test("finds a user whose create was in flight by external_id, and deletes it", async () => {
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: { instanceId: "ins_1", env: "development" },
+      source: "clerk",
+    });
+    run.update({ startedAt: IMPORT_STARTED });
+    run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    run.append({ sourceId: "d", status: "creating" });
+    run.append({ sourceId: "e", status: "creating" });
+    const record = run.finish();
+    inFlight.set("d", "user_d");
+    instanceUsers.set("user_d", null);
+
+    await undo(record.id, withDir({ yes: true }));
+
+    expect(deletes().map((request) => request.url.split("/").pop())).toEqual(
+      expect.arrayContaining(["user_a", "user_d"]),
+    );
+    expect(deletes()).toHaveLength(2);
+  });
+
   test("deletes what the import created, records an undo run, and marks the import undone", async () => {
     const record = importRun();
 

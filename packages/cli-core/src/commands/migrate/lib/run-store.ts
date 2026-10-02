@@ -35,7 +35,12 @@ export const RUNS_DIR_DESCRIPTION = `Where migration runs are kept (default: .cl
 
 export type RunKind = "import" | "undo" | "export";
 export type RunStatus = "running" | "complete" | "partial" | "undone";
-export type UserStatus = "created" | "failed" | "skipped" | "deleted" | "exported";
+/**
+ * `creating` is written just before `POST /v1/users`. As a user's latest line
+ * it means the run stopped with that create in flight: the user may exist in
+ * Clerk without its ID on record, so `undo` looks it up by `external_id`.
+ */
+export type UserStatus = "creating" | "created" | "failed" | "skipped" | "deleted" | "exported";
 
 /**
  * What a run acted on. For an import or undo, the Clerk instance. For an

@@ -123,12 +123,17 @@ function findOpenUndo(runsDir: string, importId: string): RunRecord | undefined 
   );
 }
 
-/** Every user the import created, minus those an earlier undo already deleted. */
+/**
+ * Every user the import created, minus those an earlier undo already deleted.
+ *
+ * `unconfirmed` holds the source IDs whose create was in flight when the run
+ * stopped: they may exist in Clerk with no ID on record.
+ */
 function usersToDelete(
   runsDir: string,
   record: RunRecord,
   openUndo: RunRecord | undefined,
-): { users: UndoUser[]; alreadyDeleted: number } {
+): { users: UndoUser[]; unconfirmed: string[]; alreadyDeleted: number } {
   const deleted = new Set<string>();
   if (openUndo) {
     for (const line of latestUserLines(runsDir, openUndo.id).values()) {
@@ -137,12 +142,38 @@ function usersToDelete(
   }
 
   const users: UndoUser[] = [];
+  const unconfirmed: string[] = [];
   for (const line of latestUserLines(runsDir, record.id).values()) {
-    if (line.status !== "created" || !line.clerkId) continue;
     if (deleted.has(line.sourceId)) continue;
+    if (line.status === "creating") unconfirmed.push(line.sourceId);
+    if (line.status !== "created" || !line.clerkId) continue;
     users.push({ sourceId: line.sourceId, clerkId: line.clerkId });
   }
-  return { users, alreadyDeleted: deleted.size };
+  return { users, unconfirmed, alreadyDeleted: deleted.size };
+}
+
+/**
+ * Finds the users behind creates that were in flight when the run stopped.
+ *
+ * Matching on `external_id` alone is safe here: the import's checks refused
+ * any source ID the instance already held, so a user carrying one of these
+ * was created by this run.
+ */
+async function findUnconfirmed(
+  sourceIds: string[],
+  secretKey: string,
+  schedule: ApiScheduler,
+): Promise<UndoUser[]> {
+  if (sourceIds.length === 0) return [];
+  const found = await lookupUsers({
+    filter: "external_id",
+    values: sourceIds,
+    secretKey,
+    schedule,
+  });
+  return found
+    .filter((user) => user.external_id && sourceIds.includes(user.external_id))
+    .map((user) => ({ sourceId: user.external_id as string, clerkId: user.id }));
 }
 
 /**
@@ -311,9 +342,14 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
 
   const limits = resolveLimits(secretKey);
   const openUndo = findOpenUndo(runsDir, record.id);
-  const { users, alreadyDeleted } = usersToDelete(runsDir, record, openUndo);
+  const recorded = usersToDelete(runsDir, record, openUndo);
+  const { alreadyDeleted } = recorded;
 
   const schedule = createApiScheduler(limits.concurrencyLimit, limits.rateLimit);
+  const users = [
+    ...recorded.users,
+    ...(await findUnconfirmed(recorded.unconfirmed, secretKey, schedule)),
+  ];
   const { present, gone, signedInSince } =
     users.length > 0
       ? await withSpinner("Checking the imported users...", async (spinner) =>

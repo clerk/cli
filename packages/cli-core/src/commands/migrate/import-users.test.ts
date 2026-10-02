@@ -150,7 +150,13 @@ describe("importUsers", () => {
   let originalFetch: typeof globalThis.fetch;
   let requests: { method: string; url: string; body: unknown }[];
   let lines: UserLine[];
-  const record = (line: UserLine) => lines.push(line);
+  let allLines: UserLine[];
+  // `lines` leaves out the `creating` marker every user gets first; one test
+  // below covers it through `allLines`.
+  const record = (line: UserLine) => {
+    allLines.push(line);
+    if (line.status !== "creating") lines.push(line);
+  };
 
   beforeAll(() => {
     originalFetch = globalThis.fetch;
@@ -163,6 +169,7 @@ describe("importUsers", () => {
   beforeEach(() => {
     requests = [];
     lines = [];
+    allLines = [];
   });
 
   afterEach(() => {
@@ -337,6 +344,23 @@ describe("importUsers", () => {
 
     expect(summary.failed).toBe(1);
     expect(requests).toHaveLength(1);
+  });
+
+  // The marker `undo` uses to find a user whose create was in flight when the
+  // run stopped.
+  test("marks each user as creating before its POST /v1/users", async () => {
+    let recordedBeforePost = false;
+    stub((url) => {
+      if (url.endsWith("/v1/users")) {
+        recordedBeforePost = allLines.some((line) => line.status === "creating");
+      }
+      return ok("user_created");
+    });
+
+    await importUsers({ users: [user()], secretKey: "sk_test_x", limits: LIMITS, record });
+
+    expect(recordedBeforePost).toBe(true);
+    expect(allLines.map((line) => line.status)).toEqual(["creating", "created"]);
   });
 
   // A run stopped while attaches wait on the scheduler must still have the

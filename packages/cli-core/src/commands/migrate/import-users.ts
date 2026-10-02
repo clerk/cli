@@ -337,6 +337,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   };
 
   const processUser = async (user: User): Promise<void> => {
+    record({ sourceId: user.userId, status: "creating" });
     const retries: string[] = [];
     const created = (clerkId: string, error?: string) =>
       record({

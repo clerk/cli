@@ -684,8 +684,13 @@ ID exits 2.
 
 Deletes the users an import run created. The import run is the whole record of
 what to delete: every source ID whose latest line is `created`, by the Clerk ID
-recorded beside it. Nothing is matched by searching the instance, so a user the
-import did not create is never in scope.
+recorded beside it.
+
+The one search is for a source ID whose latest line is `creating`: the run
+stopped with that user's `POST /v1/users` in flight, so Clerk may hold the user
+without its ID on record. Those are looked up by `external_id`. That match is
+safe because the import's checks refused any source ID the instance already
+held, so a user the import did not create is never in scope.
 
 ```sh
 clerk migrate undo 20260929-141502-a1b2 --dry-run   # preview, delete nothing
@@ -988,18 +993,19 @@ stamping every user with today's.
 
 ## API Endpoints
 
-| Method   | Path                       | Used by                                                                        |
-| -------- | -------------------------- | ------------------------------------------------------------------------------ |
-| `POST`   | `/v1/users`                | `migrate import` — creates each user                                           |
-| `POST`   | `/v1/email_addresses`      | `migrate import` — attaches additional emails                                  |
-| `POST`   | `/v1/phone_numbers`        | `migrate import` — attaches additional phones                                  |
-| `GET`    | `/v1/users?limit=&offset=` | `migrate export clerk` — pages the whole instance, 500 at a time               |
-| `GET`    | `/v1/users/count`          | `migrate import` — headroom against a development instance's user limit        |
-| `GET`    | `/v1/users?external_id=…`  | `migrate import` — checks for users already in the instance, 100 values a call |
-| `GET`    | `/v1/users?user_id=…`      | `migrate undo` — reads the imported users back, 100 a call                     |
-| `DELETE` | `/v1/users/{user_id}`      | `migrate undo` — deletes one user                                              |
-| `GET`    | `/v1/instance`             | `migrate import`, `undo`, `export clerk` — names the instance behind the key   |
-| `GET`    | `/v1/domains`              | `migrate import` checks — resolves the Frontend API host                       |
+| Method   | Path                       | Used by                                                                         |
+| -------- | -------------------------- | ------------------------------------------------------------------------------- |
+| `POST`   | `/v1/users`                | `migrate import` — creates each user                                            |
+| `POST`   | `/v1/email_addresses`      | `migrate import` — attaches additional emails                                   |
+| `POST`   | `/v1/phone_numbers`        | `migrate import` — attaches additional phones                                   |
+| `GET`    | `/v1/users?limit=&offset=` | `migrate export clerk` — pages the whole instance, 500 at a time                |
+| `GET`    | `/v1/users/count`          | `migrate import` — headroom against a development instance's user limit         |
+| `GET`    | `/v1/users?external_id=…`  | `migrate import` — checks for users already in the instance, 100 values a call  |
+| `GET`    | `/v1/users?external_id=…`  | `migrate undo` — finds users whose create was in flight when the import stopped |
+| `GET`    | `/v1/users?user_id=…`      | `migrate undo` — reads the imported users back, 100 a call                      |
+| `DELETE` | `/v1/users/{user_id}`      | `migrate undo` — deletes one user                                               |
+| `GET`    | `/v1/instance`             | `migrate import`, `undo`, `export clerk` — names the instance behind the key    |
+| `GET`    | `/v1/domains`              | `migrate import` checks — resolves the Frontend API host                        |
 
 The checks also read the instance's Frontend API `GET /v1/environment`
 (bootstrapping a dev browser first on development instances) for its
