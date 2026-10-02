@@ -49,7 +49,7 @@ const auth0Source = {
     routeByVerification(user, "phone", "phoneVerified", "boolean");
 
     // given_name/family_name win when present. Auth0 fills `name` with the
-    // email for database users; splitName leaves a one-word value alone.
+    // email for database users; splitName drops an email-shaped value.
     if (user.firstName || user.lastName) delete user.name;
     else splitName(user);
 

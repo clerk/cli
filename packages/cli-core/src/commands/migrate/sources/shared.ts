@@ -55,11 +55,11 @@ export function routeByVerification(
 }
 
 /**
- * Splits a single display name into `firstName` and `lastName`.
+ * Splits a single display name into `firstName` and `lastName`: the first word,
+ * then the rest. A one-word name (`Cher`) becomes the first name alone.
  *
- * Only splits when there are at least two words — a one-word name would
- * otherwise produce a first name with no last name, which several instance
- * configurations reject.
+ * A one-word value that is an email address is dropped instead: Auth0 fills
+ * `name` with the email for database users, and that is not anyone's name.
  */
 export function splitName(user: Record<string, unknown>, field = "name"): void {
   const name = user[field];
@@ -69,6 +69,8 @@ export function splitName(user: Record<string, unknown>, field = "name"): void {
   if (parts.length > 1) {
     user.firstName = parts[0];
     user.lastName = parts.slice(1).join(" ");
+  } else if (parts[0] && !parts[0].includes("@")) {
+    user.firstName = parts[0];
   }
   delete user[field];
 }

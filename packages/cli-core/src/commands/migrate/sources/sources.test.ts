@@ -202,7 +202,7 @@ describe("auth0", () => {
     expect(user).toMatchObject({ firstName: "Ada", lastName: "L" });
   });
 
-  test("leaves a one-word name (Auth0's email default) unset", () => {
+  test("leaves Auth0's email-default name unset", () => {
     const user = one("auth0", { ...base, name: "a@x.dev" });
     expect(user?.firstName).toBeUndefined();
   });
@@ -292,9 +292,9 @@ describe("authjs", () => {
     expect(user?.lastName).toBe(lastName);
   });
 
-  test("leaves a single-word name unsplit rather than inventing a last name", () => {
+  test("keeps a single-word name as the first name, without inventing a last name", () => {
     const user = one("authjs", { ...base, name: "Prince" });
-    expect(user?.firstName).toBeUndefined();
+    expect(user?.firstName).toBe("Prince");
     expect(user?.lastName).toBeUndefined();
     expect("name" in (user ?? {})).toBe(false);
   });
