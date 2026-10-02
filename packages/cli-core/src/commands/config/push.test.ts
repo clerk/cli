@@ -205,7 +205,13 @@ describe("config push", () => {
       return new Response(
         JSON.stringify({
           application_id: "app_1",
-          instances: [{ instance_id: "ins_dev", environment_type: "development" }],
+          instances: [
+            {
+              instance_id: "ins_dev",
+              environment_type: "development",
+              publishable_key: "pk_test_fixture",
+            },
+          ],
         }),
         { status: 200 },
       );

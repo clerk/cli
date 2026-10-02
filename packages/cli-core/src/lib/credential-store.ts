@@ -453,6 +453,7 @@ export async function storeToken(value: OAuthSession): Promise<void> {
 }
 
 let tokenOverride: string | null | undefined;
+let validTokenPromise: Promise<string | null> | undefined;
 
 /** Test-only: override getToken() result. Pass undefined to clear. */
 export function _setTokenOverride(value: string | null | undefined): void {
@@ -486,7 +487,7 @@ export async function hasAccountCredentials(): Promise<boolean> {
   return hasStoredCredentials();
 }
 
-export async function getValidToken(): Promise<string | null> {
+async function resolveValidToken(): Promise<string | null> {
   const session = await getStoredSession();
   if (!session) {
     if (await hasStoredCredentials()) {
@@ -496,6 +497,30 @@ export async function getValidToken(): Promise<string | null> {
   }
 
   return getValidAccessToken(session);
+}
+
+/**
+ * Resolve a usable OAuth access token once per process at a time.
+ *
+ * A refresh token rotates when it is redeemed. Without this in-flight guard,
+ * concurrent API calls can both read the same expired session and attempt to
+ * refresh it: one succeeds while the other receives `invalid_grant`. The
+ * cross-process recovery in `refreshStoredSession` still handles a different
+ * CLI process winning that race; this guard prevents the race between callers
+ * that already share this module instance.
+ */
+export async function getValidToken(): Promise<string | null> {
+  if (validTokenPromise) return validTokenPromise;
+
+  const pending = resolveValidToken();
+  validTokenPromise = pending;
+  try {
+    return await pending;
+  } finally {
+    if (validTokenPromise === pending) {
+      validTokenPromise = undefined;
+    }
+  }
 }
 
 export async function deleteToken(): Promise<void> {

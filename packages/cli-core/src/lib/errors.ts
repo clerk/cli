@@ -139,6 +139,8 @@ export const ERROR_CODE = {
   OAUTH_NO_CODE: "oauth_no_code",
   /** The loopback callback server could not bind a local port. */
   CALLBACK_BIND_FAILED: "callback_bind_failed",
+  /** Platform API returned a successful response with missing or contradictory data. */
+  PLAPI_UNEXPECTED_RESPONSE: "plapi_unexpected_response",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];

@@ -20,7 +20,7 @@ const {
   triggerApplicationDomainDNSCheck,
   listApplicationDomains,
 } = await import("./plapi.ts");
-const { AuthError, PlapiError } = await import("./errors.ts");
+const { AuthError, ERROR_CODE, PlapiError } = await import("./errors.ts");
 
 describe("plapi", () => {
   const originalEnv = { ...process.env };
@@ -252,6 +252,22 @@ describe("plapi", () => {
       expect(capturedHeaders?.get("Content-Type")).toBe("application/json");
     });
 
+    test("sends If-Match when a config version is supplied", async () => {
+      let capturedHeaders: Headers | undefined;
+      stubFetch(async (_input, init) => {
+        capturedHeaders = new Headers(init?.headers);
+        return new Response(JSON.stringify({}), { status: 200 });
+      });
+
+      await patchInstanceConfig(
+        "app_1",
+        "ins_1",
+        { connection_oauth_apple: { enabled: true } },
+        { ifMatch: "v1_12345678" },
+      );
+      expect(capturedHeaders?.get("If-Match")).toBe("v1_12345678");
+    });
+
     test("sends JSON body", async () => {
       let capturedBody = "";
       stubFetch(async (_input, init) => {
@@ -293,7 +309,7 @@ describe("plapi", () => {
       ],
     };
 
-    test("always sends include_secret_keys=true", async () => {
+    test("sends include_secret_keys=true by default", async () => {
       let requestedUrl = "";
       stubFetch(async (input) => {
         requestedUrl = input.toString();
@@ -306,11 +322,63 @@ describe("plapi", () => {
       expect(url.searchParams.get("include_secret_keys")).toBe("true");
     });
 
+    test("omits include_secret_keys when the caller only needs public metadata", async () => {
+      let requestedUrl = "";
+      stubFetch(async (input) => {
+        requestedUrl = input.toString();
+        return new Response(JSON.stringify(mockApp), { status: 200 });
+      });
+
+      await fetchApplication("app_abc", { includeSecretKeys: false });
+      const url = new URL(requestedUrl);
+      expect(url.pathname).toBe("/v1/platform/applications/app_abc");
+      expect(url.searchParams.has("include_secret_keys")).toBe(false);
+    });
+
     test("returns parsed application JSON", async () => {
       stubFetch(async () => new Response(JSON.stringify(mockApp), { status: 200 }));
 
       const result = await fetchApplication("app_abc");
       expect(result).toEqual(mockApp);
+    });
+
+    test("rejects malformed application JSON", async () => {
+      stubFetch(async () => new Response("{", { status: 200 }));
+
+      await expect(fetchApplication("app_abc")).rejects.toMatchObject({
+        name: "CliError",
+        code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+        message: "Clerk returned an invalid application response.",
+      });
+    });
+
+    test.each([
+      { name: "missing instances", body: { application_id: "app_abc" } },
+      {
+        name: "non-array instances",
+        body: { application_id: "app_abc", instances: {} },
+      },
+      {
+        name: "a malformed instance",
+        body: {
+          application_id: "app_abc",
+          instances: [
+            {
+              instance_id: "ins_1",
+              environment_type: "development",
+              publishable_key: 123,
+            },
+          ],
+        },
+      },
+    ])("rejects $name in an application response", async ({ body }) => {
+      stubFetch(async () => Response.json(body));
+
+      await expect(fetchApplication("app_abc")).rejects.toMatchObject({
+        name: "CliError",
+        code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+        message: "Clerk returned an invalid application response.",
+      });
     });
 
     test("throws PlapiError on non-2xx response", async () => {

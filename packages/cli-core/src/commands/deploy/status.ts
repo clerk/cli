@@ -1,12 +1,14 @@
 import { resolveProfile } from "../../lib/config.ts";
-import { PlapiError } from "../../lib/errors.ts";
+import { errorMessage, PlapiError, UserAbortError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import {
   fetchApplication,
   fetchInstanceConfig,
   fetchInstanceConfigSchema,
+  getNativeSettings,
   getApplicationDomainStatus,
   listApplicationDomains,
+  listIOSApplications,
   triggerApplicationDomainDNSCheck,
   type ApplicationDomain,
   type DomainStatusResponse,
@@ -29,6 +31,7 @@ import {
   OAUTH_KEY_PREFIX,
   buildOAuthProviderDescriptors,
   hasProviderRequiredCredentials,
+  inspectNativeAppleConfiguration,
   type OAuthProvider,
   type OAuthProviderDescriptor,
 } from "./providers.ts";
@@ -76,6 +79,17 @@ export type DeployStatusState =
  */
 export type DomainComponentState = "complete" | "pending";
 
+type NativeAppleReadinessIssue = {
+  bundleId: string;
+  reason:
+    | "authentication-disabled"
+    | "registration-missing"
+    | "registration-bundle-case-mismatch"
+    | "registration-ambiguous"
+    | "native-api-disabled"
+    | "verification-unavailable";
+};
+
 export interface DeployStatusReport {
   complete: boolean;
   state: DeployStatusState;
@@ -88,6 +102,7 @@ export interface DeployStatusReport {
   } | null;
   pendingDnsRecords: { type: "CNAME"; host: string; value: string; required: boolean }[];
   oauth: { complete: boolean; configured: string[]; pending: string[]; unsupported: string[] };
+  nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
   /**
    * Dashboard pages for this deploy: the production instance and its Domains
    * page. Null before a production instance exists, and when the run was
@@ -118,13 +133,19 @@ export type DeployNextStep =
       oauthUnsupported: readonly string[];
       instanceUrl: string | null;
     }
-  | { kind: "oauth_pending"; oauthPending: readonly string[]; oauthUnsupported: readonly string[] }
+  | {
+      kind: "oauth_pending";
+      oauthPending: readonly string[];
+      oauthUnsupported: readonly string[];
+      nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
+    }
   | {
       kind: "records_available" | "records_unavailable" | "ssl_pending" | "finalizing";
       domain: string;
       /** "DNS", "Email DNS", or "DNS and email DNS": the record kinds still unverified. */
       records: string;
       domainsUrl: string | null;
+      nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
     };
 
 export type LiveDeploySnapshot = Omit<
@@ -148,6 +169,7 @@ export type LiveDeploySnapshot = Omit<
   live: boolean;
   unsupportedOAuthProviderCount: number;
   unsupportedOAuthProviders: string[];
+  nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
 };
 
 export type DeployState =
@@ -289,21 +311,57 @@ export async function resolveLiveDeploySnapshot(
 
   const { descriptors: oauthProviderDescriptors, unsupported } = oauth;
   const oauthProviders = oauthProviderDescriptors.map((descriptor) => descriptor.provider);
-  const completedProvidersIn = (config: Record<string, unknown>): OAuthProvider[] =>
-    oauthProviderDescriptors
-      .filter((descriptor) => hasProviderRequiredCredentials(config, descriptor))
-      .map((descriptor) => descriptor.provider);
-
-  const { productionConfig, deployStatus, live } = await withSpinner(
-    "Reading production configuration...",
-    async () => {
+  const { nativeAppleConfiguration, completedOAuthProviders, deployStatus, live } =
+    await withSpinner("Reading production configuration...", async () => {
       const configRead = Promise.resolve(fetchInstanceConfig(ctx.appId, productionInstanceId)).then(
-        (config) => {
-          recordOAuthObservation({
-            oauthProviders,
-            completedOAuthProviders: completedProvidersIn(config),
-          });
-          return config;
+        async (config) => {
+          const nativeAppleDescriptor = oauthProviderDescriptors.find(
+            (descriptor) => descriptor.provider === "apple",
+          );
+          const preliminaryNativeAppleConfiguration = nativeAppleDescriptor
+            ? inspectNativeAppleConfiguration(config, nativeAppleDescriptor, [])
+            : undefined;
+          let nativeAppleConfiguration = preliminaryNativeAppleConfiguration;
+          if (
+            nativeAppleDescriptor &&
+            preliminaryNativeAppleConfiguration?.status === "registration-missing"
+          ) {
+            try {
+              nativeAppleConfiguration = await withSpinner(
+                "Reading production Native Application settings...",
+                async () => {
+                  const [iosApplications, nativeSettings] = await Promise.all([
+                    listIOSApplications(ctx.appId, productionInstanceId),
+                    getNativeSettings(ctx.appId, productionInstanceId),
+                  ]);
+                  return inspectNativeAppleConfiguration(
+                    config,
+                    nativeAppleDescriptor,
+                    iosApplications,
+                    nativeSettings,
+                  );
+                },
+              );
+            } catch (error) {
+              if (error instanceof UserAbortError) throw error;
+              log.debug(
+                `Could not read production Native Application settings: ${errorMessage(error)}`,
+              );
+              nativeAppleConfiguration = {
+                status: "verification-unavailable",
+                bundleId: preliminaryNativeAppleConfiguration.bundleId,
+              };
+            }
+          }
+          const completedOAuthProviders = oauthProviderDescriptors
+            .filter(
+              (descriptor) =>
+                hasProviderRequiredCredentials(config, descriptor) ||
+                (descriptor.provider === "apple" && nativeAppleConfiguration?.status === "ready"),
+            )
+            .map((descriptor) => descriptor.provider);
+          recordOAuthObservation({ oauthProviders, completedOAuthProviders });
+          return { nativeAppleConfiguration, completedOAuthProviders };
         },
       );
       const statusRead = loadInitialDeployStatus(ctx.appId, domain.id, options).then((read) => {
@@ -315,14 +373,12 @@ export async function resolveLiveDeploySnapshot(
       // dropped — never wrong, just absent. Waiting for the slower read to
       // settle would hold a real error behind a hanging request, and nothing
       // bounds how long that is.
-      const [productionConfig, { status: deployStatus, live }] = await Promise.all([
+      const [oauthReadiness, { status: deployStatus, live }] = await Promise.all([
         configRead,
         statusRead,
       ]);
-      return { productionConfig, deployStatus, live };
-    },
-  );
-  const completedOAuthProviders = completedProvidersIn(productionConfig);
+      return { ...oauthReadiness, deployStatus, live };
+    });
   const pendingOAuthDescriptor = oauthProviderDescriptors.find(
     (descriptor) => !completedOAuthProviders.includes(descriptor.provider),
   );
@@ -342,6 +398,16 @@ export async function resolveLiveDeploySnapshot(
     live,
     unsupportedOAuthProviderCount: unsupported.length,
     unsupportedOAuthProviders: unsupported,
+    ...(nativeAppleConfiguration &&
+    "bundleId" in nativeAppleConfiguration &&
+    isNativeAppleReadinessIssue(nativeAppleConfiguration.status)
+      ? {
+          nativeAppleReadinessIssue: {
+            bundleId: nativeAppleConfiguration.bundleId,
+            reason: nativeAppleConfiguration.status,
+          },
+        }
+      : {}),
   };
 
   const domainComplete = deployStatus.status === "complete";
@@ -471,6 +537,7 @@ function buildDeployStatusFacts(
       pending: oauthPending,
       unsupported: [...snapshot.unsupportedOAuthProviders],
     },
+    nativeAppleReadinessIssue: snapshot.nativeAppleReadinessIssue,
     urls: snapshot.productionInstanceId
       ? dashboardUrls(snapshot.appId, snapshot.productionInstanceId)
       : null,
@@ -533,6 +600,7 @@ export function deployNextStep(report: DeployStatusFacts): DeployNextStep {
         kind: "oauth_pending",
         oauthPending: report.oauth.pending,
         oauthUnsupported: report.oauth.unsupported,
+        nativeAppleReadinessIssue: report.nativeAppleReadinessIssue,
       };
     case "domain_pending": {
       // DNS and email DNS are records someone has to add at the registrar;
@@ -548,9 +616,60 @@ export function deployNextStep(report: DeployStatusFacts): DeployNextStep {
         domain: report.domain ?? "",
         records: capitalizeFirst(pendingRecordComponents(status)),
         domainsUrl: report.urls?.domains ?? null,
+        nativeAppleReadinessIssue: report.nativeAppleReadinessIssue,
       };
     }
   }
+}
+
+function isNativeAppleReadinessIssue(
+  status: string,
+): status is NativeAppleReadinessIssue["reason"] {
+  return (
+    status === "authentication-disabled" ||
+    status === "registration-missing" ||
+    status === "registration-bundle-case-mismatch" ||
+    status === "registration-ambiguous" ||
+    status === "native-api-disabled" ||
+    status === "verification-unavailable"
+  );
+}
+
+function nativeAppleReadinessNextAction(issue: NativeAppleReadinessIssue): string {
+  if (issue.reason === "verification-unavailable") {
+    return (
+      `Clerk could not verify the production Native Application registration for ${issue.bundleId}. ` +
+      "Retry `clerk deploy status`; do not create another registration based on this unverified result."
+    );
+  }
+  if (issue.reason === "registration-ambiguous") {
+    return (
+      `Native Sign in with Apple has more than one App ID Prefix registration for ${issue.bundleId}. ` +
+      "Review the existing registrations at https://dashboard.clerk.com/~/native-applications before continuing; do not create another registration."
+    );
+  }
+  if (issue.reason === "registration-bundle-case-mismatch") {
+    return (
+      `The Apple connection Bundle ID ${issue.bundleId} differs only by letter casing from its existing iOS Native Application registration. ` +
+      "Update the Apple connection to use the registration's exact Bundle ID spelling in the Clerk Dashboard; do not create another registration."
+    );
+  }
+  if (issue.reason === "authentication-disabled") {
+    return (
+      `Apple is not explicitly enabled for authentication on the production instance for ${issue.bundleId}. ` +
+      "Review the Apple connection in the Clerk Dashboard; no web credentials should be added for a native-only setup."
+    );
+  }
+  if (issue.reason === "native-api-disabled") {
+    return (
+      `Native API is disabled on the production instance for ${issue.bundleId}. ` +
+      "Enable it at https://dashboard.clerk.com/~/native-applications; the CLI will not infer an App ID Prefix."
+    );
+  }
+  return (
+    `Native Sign in with Apple is missing an exact production iOS Native Application registration for ${issue.bundleId}. ` +
+    "Register that Bundle ID at https://dashboard.clerk.com/~/native-applications; the CLI will not infer an App ID Prefix."
+  );
 }
 
 /** The `nextAction` sentence: written for an agent that will relay it to a person. */
@@ -604,6 +723,19 @@ export function agentNextAction(step: DeployNextStep): string {
           : "")
       );
     case "oauth_pending":
+      if (step.nativeAppleReadinessIssue) {
+        const hostedPending = step.oauthPending.filter((provider) => provider !== "apple");
+        const hostedAction =
+          hostedPending.length > 0
+            ? ` These OAuth providers are also missing production credentials: ${hostedPending.join(", ")}.`
+            : "";
+        return (
+          `Domain verified, but setup is incomplete. ${nativeAppleReadinessNextAction(step.nativeAppleReadinessIssue)}` +
+          hostedAction +
+          " After resolving those items, run `clerk deploy status` again." +
+          unsupported(step.oauthUnsupported)
+        );
+      }
       // The domain is verified, so there is nothing to monitor on the Domains
       // page; the wizard is the only way to supply credentials.
       return (
@@ -616,7 +748,10 @@ export function agentNextAction(step: DeployNextStep): string {
         `${step.records} records not found yet for ${step.domain}. ` +
         `Add the records in \`pendingDnsRecords\` at the domain's DNS provider if you haven't already, ` +
         `then re-run \`clerk deploy status --wait\`. Propagation usually takes minutes.` +
-        domains(step.domainsUrl)
+        domains(step.domainsUrl) +
+        (step.nativeAppleReadinessIssue
+          ? ` ${nativeAppleReadinessNextAction(step.nativeAppleReadinessIssue)}`
+          : "")
       );
     case "records_unavailable":
       // The report has nothing to hand over; the Dashboard clause carries the
@@ -625,7 +760,10 @@ export function agentNextAction(step: DeployNextStep): string {
         `${step.records} records not found yet for ${step.domain}, but this report has no record list. ` +
         `Find the records to add on the Domains page in the Clerk Dashboard, then re-run ` +
         `\`clerk deploy status --wait\`.` +
-        domains(step.domainsUrl)
+        domains(step.domainsUrl) +
+        (step.nativeAppleReadinessIssue
+          ? ` ${nativeAppleReadinessNextAction(step.nativeAppleReadinessIssue)}`
+          : "")
       );
     case "ssl_pending":
       // Records are verified; the certificate is Clerk's side and nobody can
@@ -633,13 +771,19 @@ export function agentNextAction(step: DeployNextStep): string {
       return (
         `SSL certificate still pending for ${step.domain}. Clerk issues it automatically now that ` +
         `DNS is verified; re-run \`clerk deploy status\` in a few minutes.` +
-        domains(step.domainsUrl)
+        domains(step.domainsUrl) +
+        (step.nativeAppleReadinessIssue
+          ? ` ${nativeAppleReadinessNextAction(step.nativeAppleReadinessIssue)}`
+          : "")
       );
     case "finalizing":
       return (
         `Production setup for ${step.domain} is still finalizing on Clerk's side. ` +
         `Re-run \`clerk deploy status\` in a few minutes.` +
-        domains(step.domainsUrl)
+        domains(step.domainsUrl) +
+        (step.nativeAppleReadinessIssue
+          ? ` ${nativeAppleReadinessNextAction(step.nativeAppleReadinessIssue)}`
+          : "")
       );
   }
 }
