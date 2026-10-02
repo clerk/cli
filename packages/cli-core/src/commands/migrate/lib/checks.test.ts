@@ -300,6 +300,26 @@ describe("rejects", () => {
     ).toEqual({ "only-discord": "only signs in with Discord, which is not enabled in Clerk" });
   });
 
+  // Clerk can't turn on a provider it doesn't offer, so none is suggested.
+  test("a provider Clerk doesn't offer is named as such, with no fix", async () => {
+    const rows = [
+      { id: "figma", raw_app_meta_data: { providers: ["figma"] } },
+      { id: "both", raw_app_meta_data: { providers: ["discord", "figma"] } },
+    ];
+    const checks = await checkImport(
+      input({
+        settings: settings({ email_address: { enabled: true } }),
+        supabaseRows: rows,
+        users: [user("figma"), user("both")],
+      }),
+    );
+    expect(Object.fromEntries(checks.rejects.map((r) => [r.sourceId, r.reason]))).toEqual({
+      figma: "only signs in with Figma, which is not offered by Clerk",
+      both: "only signs in with Discord (not enabled in Clerk), Figma (not offered by Clerk)",
+    });
+    expect(checks.fixes.map((fix) => fix.label)).not.toContain("Enable Figma sign-in");
+  });
+
   // Each reject names that user's providers, not every disabled one in the file.
   test("a supabase reject names only that user's own providers", async () => {
     const rows = [

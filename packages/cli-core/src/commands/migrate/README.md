@@ -656,7 +656,9 @@ after them. They sort the users three ways:
   - its password is not the shape its hasher says (`bcrypt`, with a cost up to
     15, `scrypt_firebase`, `argon2i`/`argon2id` and `scrypt_werkzeug` are
     checked; other hashers are not, and Clerk refuses a bad one at create)
-  - Supabase: its only provider is not enabled in Clerk
+  - Supabase: its only providers are ones Clerk has off, or doesn't offer at all
+    (Figma, Kakao, Keycloak, WorkOS, Zoom, Fly). The checks offer to turn on
+    the first kind; nothing can turn on the second
   - the instance already has a user with its source ID, email, phone or
     username (a batched `GET /v1/users` lookup, 100 values a request, through
     the scheduler). A user a continued run found behind its own interrupted

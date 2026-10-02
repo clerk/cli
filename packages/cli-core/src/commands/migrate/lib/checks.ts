@@ -23,7 +23,12 @@ import { isEnabled, isRequired, type AttributeName } from "../../users/interacti
 import { splitIdentifiers } from "../import-users.ts";
 import type { User } from "../types.ts";
 import { analyzeFields, hasValue } from "./analysis.ts";
-import { enabledSocialProviders, providerLabel, toClerkStrategy } from "./clerk-config.ts";
+import {
+  clerkOffersProvider,
+  enabledSocialProviders,
+  providerLabel,
+  toClerkStrategy,
+} from "./clerk-config.ts";
 import { resolveDevUserLimit } from "./instance.ts";
 import { buildChangePayload, buildSettingChanges } from "./modify-settings.ts";
 import { buildReadinessReport } from "./readiness.ts";
@@ -576,11 +581,15 @@ function findDisabledProviderRejects(input: CheckInput): Map<string, string> {
   const rowsById = new Map(input.supabaseRows.map((row) => [String(row.id), row]));
   for (const id of excludedIds) {
     const own = getUserProviders(rowsById.get(id) ?? {}).filter((p) => disabled.includes(p));
-    const names = own.map(providerLabel).join(", ");
-    reasons.set(
-      id,
-      `only signs in with ${names}, which ${own.length === 1 ? "is" : "are"} not enabled in Clerk`,
-    );
+    // Clerk can't turn on a provider it doesn't offer, so say which is which.
+    const why = (provider: string) =>
+      clerkOffersProvider(provider) ? "not enabled in Clerk" : "not offered by Clerk";
+    const kinds = new Set(own.map(why));
+    const names =
+      kinds.size === 1
+        ? `${own.map(providerLabel).join(", ")}, which ${own.length === 1 ? "is" : "are"} ${[...kinds][0]}`
+        : own.map((provider) => `${providerLabel(provider)} (${why(provider)})`).join(", ");
+    reasons.set(id, `only signs in with ${names}`);
   }
   return reasons;
 }
@@ -621,7 +630,7 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
       } else {
         warnings.push(
           item.section === "social"
-            ? `${plural(item.userCount, "user")} signed in with ${item.label}, which is not enabled in Clerk`
+            ? `${plural(item.userCount, "user")} signed in with ${item.label}, which ${clerkOffersProvider(item.key) ? "is not enabled in Clerk" : "Clerk doesn't offer"}`
             : `${plural(item.userCount, "user")} ${item.userCount === 1 ? "has" : "have"} a ${item.label.toLowerCase()}, which this instance is not set up to store`,
         );
       }

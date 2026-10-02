@@ -12,7 +12,7 @@ import type { UserSettingsJSON } from "../../../lib/fapi.ts";
 // Pure attribute lookups, shared with the `users` create wizard.
 import { isEnabled, isRequired, type AttributeName } from "../../users/interactive/attributes.ts";
 import type { FieldAnalysis } from "./analysis.ts";
-import { providerLabel, toClerkStrategy } from "./clerk-config.ts";
+import { clerkOffersProvider, providerLabel, toClerkStrategy } from "./clerk-config.ts";
 
 export type ReadinessSection = "identifiers" | "auth" | "social" | "model";
 
@@ -194,7 +194,10 @@ export function buildReadinessReport(input: BuildInput): ReadinessReport {
       clerkRequired: null,
       blocking: enabled === false,
       ...(enabled === false
-        ? { consequence: "drops" as const, detail: "not enabled in Clerk" }
+        ? {
+            consequence: "drops" as const,
+            detail: clerkOffersProvider(provider) ? "not enabled in Clerk" : "not offered by Clerk",
+          }
         : {}),
     });
   }

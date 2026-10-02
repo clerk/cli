@@ -18,7 +18,7 @@
  * it and still points at the dashboard.
  */
 
-import { toClerkStrategy } from "./clerk-config.ts";
+import { clerkOffersProvider, toClerkStrategy } from "./clerk-config.ts";
 import type { ReadinessItem, ReadinessSection } from "./readiness.ts";
 
 /** One leaf of the config document, and what to set it to. */
@@ -94,8 +94,9 @@ function changeFor(item: ReadinessItem): SettingChange | undefined {
   const relax = item.clerkRequired === true;
 
   if (item.section === "social") {
-    // A provider has no "required" in Clerk, so there is nothing to relax.
-    if (relax) return undefined;
+    // A provider has no "required" in Clerk, so there is nothing to relax, and
+    // one Clerk doesn't offer has nothing to turn on.
+    if (relax || !clerkOffersProvider(item.key)) return undefined;
     return {
       id: item.key,
       label: `Enable ${item.label} sign-in`,

@@ -35,6 +35,55 @@ export function toClerkStrategy(provider: string): string {
   return CLERK_STRATEGY_ALIASES[provider] ?? `oauth_${provider}`;
 }
 
+/**
+ * The OAuth strategies Clerk has built in: clerk_go's registration in
+ * `api/shared/sso/oauth.go`, less the customer-specific ones. Nothing the CLI
+ * can call lists them, and an instance's settings name only the providers it
+ * has configured.
+ *
+ * ponytail: a copy of that list; check it there when Clerk adds a provider.
+ */
+const CLERK_OAUTH_STRATEGIES = new Set([
+  "oauth_agentid",
+  "oauth_apple",
+  "oauth_atlassian",
+  "oauth_bitbucket",
+  "oauth_box",
+  "oauth_coinbase",
+  "oauth_discord",
+  "oauth_dropbox",
+  "oauth_facebook",
+  "oauth_github",
+  "oauth_gitlab",
+  "oauth_google",
+  "oauth_hubspot",
+  "oauth_huggingface",
+  "oauth_instagram",
+  "oauth_line",
+  "oauth_linear",
+  "oauth_linkedin",
+  "oauth_linkedin_oidc",
+  "oauth_microsoft",
+  "oauth_notion",
+  "oauth_slack",
+  "oauth_spotify",
+  "oauth_tiktok",
+  "oauth_twitch",
+  "oauth_twitter",
+  "oauth_vercel",
+  "oauth_x",
+  "oauth_xero",
+]);
+
+/**
+ * True when Clerk offers a Supabase provider at all. One it doesn't (Figma,
+ * Kakao, Keycloak, WorkOS, Zoom, Fly) can't be turned on, so the checks offer
+ * no fix for it.
+ */
+export function clerkOffersProvider(provider: string): boolean {
+  return CLERK_OAUTH_STRATEGIES.has(toClerkStrategy(provider));
+}
+
 /** Human label for a provider key, for report output. */
 export function providerLabel(provider: string): string {
   const special: Record<string, string> = {
