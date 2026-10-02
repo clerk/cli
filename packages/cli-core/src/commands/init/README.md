@@ -75,6 +75,11 @@ injection, and explicitly requested prebuilt UI. Custom Swift is preserved and
 handed to the developer or calling agent. Human output summarizes completed work
 and links to the quickstart. No ClerkProvider or wrapper view is introduced.
 
+An explicit `--project` selects native Apple setup, including nested projects or
+workspaces in repositories whose root has no framework marker or contains a web app.
+Bundle ID capitalization must match the existing Clerk registration; a mismatch
+stops setup before applying edits and reports both values for correction.
+
 `--dry-run --json` uses Xcode for inspection but does not authenticate, fetch Clerk
 settings, apply setup, or initiate package resolution. If unresolved dependencies
 prevent inspection, run normal init to resolve them. Normal agent/JSON apply

@@ -126,7 +126,9 @@ export async function init(options: InitOptions = {}) {
 
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework) ?? undefined)
-    : undefined;
+    : options.project != null
+      ? (lookupFramework("ios") ?? undefined)
+      : undefined;
   const requiresExistingIOSProject =
     options.project != null ||
     options.configuration != null ||

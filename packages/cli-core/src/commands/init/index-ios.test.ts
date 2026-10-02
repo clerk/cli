@@ -8,10 +8,13 @@ import {
   pullMod,
   linkMod,
   plapiMod,
+  frameworkMod,
 } from "../../test/lib/init-harness.ts";
 import * as apple from "./ios/coordinator.ts";
 import { ERROR_CODE } from "../../lib/errors.ts";
 import { init } from "./index.ts";
+
+const iosFramework = frameworkMod.lookupFramework("ios")!;
 
 describe("public Apple init routing", () => {
   const { setup, track } = useInitHarness();
@@ -42,6 +45,38 @@ describe("public Apple init routing", () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(pullMod.pull).not.toHaveBeenCalled();
     expect(loginMod.login).not.toHaveBeenCalled();
+  });
+  test.each([
+    { project: "native/MyApp.xcodeproj", dryRun: true },
+    { project: "native/MyApp.xcworkspace", dryRun: false },
+  ])("explicit $project routes to Apple setup (dryRun=$dryRun)", async ({ project, dryRun }) => {
+    setup();
+    spyOn(frameworkMod, "lookupFramework").mockImplementation((name) =>
+      name === "ios" ? iosFramework : null,
+    );
+    spyOn(context, "gatherContext").mockImplementation(async (_cwd, framework) =>
+      framework?.dep === "ios" ? { ...FAKE_CTX, framework } : dryRun ? null : FAKE_CTX,
+    );
+    const run = spyOn(apple, "runAppleInit").mockResolvedValue();
+    track(run);
+
+    await init({ project, dryRun, json: true, yes: true });
+
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({ project, dryRun, root: "/tmp/test" }),
+      expect.any(Function),
+    );
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(pullMod.pull).not.toHaveBeenCalled();
+  });
+  test("an explicit web framework conflicts with an Apple project selection", async () => {
+    setup();
+    spyOn(frameworkMod, "lookupFramework").mockReturnValue(FAKE_CTX.framework);
+
+    await expect(init({ project: "native/MyApp.xcodeproj", framework: "react" })).rejects.toThrow(
+      "apply only to native Apple projects",
+    );
+    expect(context.gatherContext).not.toHaveBeenCalled();
   });
   test("an agent without an application receives actionable guidance instead of an interactive picker", async () => {
     native(true);
