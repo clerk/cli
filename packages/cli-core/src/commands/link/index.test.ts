@@ -157,6 +157,28 @@ describe("link", () => {
     return link(options);
   }
 
+  test("embedded linking keeps the outer flow open and omits env-pull instructions", async () => {
+    mockIsAgent.mockReturnValue(false);
+    mockGetToken.mockResolvedValue("token");
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockFetchApplication.mockResolvedValue(mockApp);
+    const spinner = await import("../../lib/spinner.ts");
+    const introSpy = spyOn(spinner, "intro");
+    const outroSpy = spyOn(spinner, "outro");
+    try {
+      await link({ app: "app_123", embedded: true });
+      expect(introSpy).not.toHaveBeenCalled();
+      expect(outroSpy).not.toHaveBeenCalled();
+      expect(mockSetProfile).toHaveBeenCalled();
+      expect(captured.err).not.toContain("Linking project");
+      expect(captured.err).not.toContain("clerk env pull");
+      expect(captured.err).toContain("Linked to");
+    } finally {
+      introSpy.mockRestore();
+      outroSpy.mockRestore();
+    }
+  });
+
   describe("agent mode", () => {
     test("links directly with --app", async () => {
       mockIsAgent.mockReturnValue(true);
@@ -166,7 +188,9 @@ describe("link", () => {
 
       await runLink({ app: "app_123" });
 
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123", {
+        includeSecretKeys: false,
+      });
       expect(mockSetProfile).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({
@@ -220,7 +244,9 @@ describe("link", () => {
       await runLink({ app: "app_123" });
 
       expect(mockConfirm).not.toHaveBeenCalled();
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123", {
+        includeSecretKeys: false,
+      });
       expect(mockSetProfile).toHaveBeenCalled();
     });
 
@@ -263,6 +289,25 @@ describe("link", () => {
 
       expect(mockAutolink).toHaveBeenCalled();
       expect(mockCreateApplication).not.toHaveBeenCalled();
+    });
+
+    test("can skip ambient-key autolink for a native runtime plan", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockAutolink.mockResolvedValue({
+        path: "github.com/org/repo",
+        profile: { workspaceId: "", appId: "app_web", instances: { development: "ins_web" } },
+      });
+      mockCreateApplication.mockResolvedValue({ ...mockApp, application_id: "app_native" });
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ createIfMissing: "native-project", skipAutolink: true });
+
+      expect(mockAutolink).not.toHaveBeenCalled();
+      expect(mockCreateApplication).toHaveBeenCalledWith("native-project");
+      expect(mockSetProfile).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ appId: "app_native" }),
+      );
     });
   });
 
@@ -351,7 +396,9 @@ describe("link", () => {
       await runLink({ skipIfLinked: true, app: "app_123" });
 
       expect(mockConfirm).toHaveBeenCalled();
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123", {
+        includeSecretKeys: false,
+      });
       expect(mockSetProfile).toHaveBeenCalled();
     });
   });
@@ -404,7 +451,9 @@ describe("link", () => {
 
       expect(mockListApplications).not.toHaveBeenCalled();
       expect(mockSearch).not.toHaveBeenCalled();
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123", {
+        includeSecretKeys: false,
+      });
     });
 
     test("shows interactive picker when no --app flag", async () => {
@@ -432,6 +481,33 @@ describe("link", () => {
       expect(mockListApplications).toHaveBeenCalled();
       expect(mockSearch).toHaveBeenCalled();
       expect(mockFetchApplication).not.toHaveBeenCalled();
+    });
+
+    test("skipAutolink bypasses ambient key detection and uses the interactive picker", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockFindClerkKeys.mockResolvedValue([
+        { key: "pk_test", source: "CLERK_PUBLISHABLE_KEY env var" },
+      ]);
+      mockMatchKeyToApp.mockReturnValue({
+        app: mockApp,
+        instance: mockApp.instances[0],
+        source: "CLERK_PUBLISHABLE_KEY env var",
+      });
+      mockSearch.mockResolvedValue("app_123");
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ skipAutolink: true });
+
+      expect(mockAutolink).not.toHaveBeenCalled();
+      expect(mockFindClerkKeys).not.toHaveBeenCalled();
+      expect(mockMatchKeyToApp).not.toHaveBeenCalled();
+      expect(mockSearch).toHaveBeenCalled();
+      expect(mockSetProfile).toHaveBeenCalledWith(
+        "github.com/org/repo",
+        expect.objectContaining({ appId: "app_123" }),
+      );
     });
 
     test("source returns create option first, then all choices, when term is empty", async () => {
@@ -803,6 +879,18 @@ describe("link", () => {
       availableRemote: "github.com/org/repo",
     };
 
+    test("explicit same-app selection still offers the Git remote profile upgrade", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
+      mockResolveProfile.mockResolvedValue(dirProfile);
+      mockConfirm.mockResolvedValueOnce(true);
+
+      await runLink({ app: "app_existing" });
+
+      expect(mockMoveProfile).toHaveBeenCalledWith("/projects/myapp", "github.com/org/repo");
+      expect(mockFetchApplication).not.toHaveBeenCalled();
+    });
+
     test("offers upgrade when directory-keyed profile has available remote", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
@@ -1047,7 +1135,9 @@ describe("link", () => {
 
       expect(mockFindClerkKeys).not.toHaveBeenCalled();
       expect(mockSearch).not.toHaveBeenCalled();
-      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123", {
+        includeSecretKeys: false,
+      });
     });
 
     test("shows target app name in re-link prompt when --app is provided", async () => {

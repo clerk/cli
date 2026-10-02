@@ -8,8 +8,9 @@ import { readdir } from "node:fs/promises";
 import { log } from "./log.ts";
 
 /** Where the framework's Clerk SDK is published. Drives how `clerk init`
- *  installs the SDK: npm frameworks run the package manager, native
- *  ecosystems (Swift Package Manager, Gradle) print manual install steps. */
+ *  installs the SDK: npm frameworks run the package manager, iOS has a
+ *  dedicated Xcode graph installer, and other native ecosystems print manual
+ *  install steps. */
 export type FrameworkEcosystem = "npm" | "swift" | "gradle";
 
 export interface FrameworkInfo {

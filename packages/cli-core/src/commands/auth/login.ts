@@ -29,6 +29,8 @@ import { currentTelemetryStage, setTelemetryStage } from "../../lib/telemetry.ts
 import { ensureFirstApplication } from "../../lib/first-application.ts";
 
 interface LoginOptions {
+  /** Keep the caller’s setup flow open instead of rendering a nested command. */
+  embedded?: boolean;
   showNextSteps?: boolean;
   yes?: boolean;
 }
@@ -147,7 +149,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
 
 async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   const { showNextSteps = true, yes } = options;
-  intro("Signing in");
+  if (!options.embedded) intro("Signing in");
   setTelemetryStage("session_check");
   const existingSession = await withSpinner("Checking session...", async () =>
     getExistingSession(),
@@ -157,9 +159,9 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
     setTelemetryStage("done");
     log.success(`Logged in as ${existingSession.email}`);
     const claimResult = await handleAutoclaim(process.cwd());
-    if (showNextSteps) {
+    if (!options.embedded && showNextSteps) {
       await outro(await loginNextSteps(claimResult));
-    } else {
+    } else if (!options.embedded) {
       await outro("Done");
     }
     return existingSession;
@@ -171,7 +173,7 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
       default: false,
     });
     if (!reauthenticate) {
-      await outro();
+      if (!options.embedded) await outro();
       throwUserAbort();
     }
   }
@@ -207,9 +209,9 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
 
   const claimResult = await handleAutoclaim(process.cwd());
 
-  if (showNextSteps) {
+  if (!options.embedded && showNextSteps) {
     await outro(await loginNextSteps(claimResult));
-  } else {
+  } else if (!options.embedded) {
     await outro("Done");
   }
 

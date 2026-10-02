@@ -18,69 +18,115 @@ clerk init --accountless --fresh
 clerk init -y
 clerk init --yes
 clerk init --no-skills
+clerk init --target MyApp
+clerk init --target MyApp --yes
+clerk init --app app_123 --target MyApp --sdk core --yes
+clerk init --target MyApp --prebuilt-auth-ui
+clerk init --target MyApp --sign-in-with-apple
+clerk init --dry-run
+clerk init --dry-run --target MyApp
+clerk init --dry-run --target MyApp --json
 ```
 
 ## Options
 
-| Option                  | Description                                                                                                                                                                                                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--framework <name>`    | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `javascript`, `js`, `express`, `fastify`, `ios`, `android`                                                            |
-| `--pm <manager>`        | Package manager to use. Valid values: `bun`, `pnpm`, `yarn`, `npm`. Skips the PM prompt (bootstrap) or overrides lockfile detection (existing project)                                                                                                             |
-| `--name <project-name>` | Project name for `--starter` (skips prompt). Must be lowercase, no spaces, no path separators                                                                                                                                                                      |
-| `--app <id>`            | Application ID to link (skips the interactive app picker during authenticated linking)                                                                                                                                                                             |
-| `--starter`             | Bootstrap a new project from a starter template (runs the framework generator, installs deps, and scaffolds Clerk)                                                                                                                                                 |
-| `--accountless`         | Force auto-generated temporary development keys, even when logged in. Only valid on an accountless-capable framework; cannot be combined with `--login` or `--app`                                                                                                 |
-| `--login`               | Force the authenticated flow: log in (interactively if needed) and link a real application instead of accountless keys. Errors in agent mode when unauthenticated (agents can't run OAuth)                                                                         |
-| `--template <name>`     | Pre-configure the accountless application at creation: `b2b-saas`, `b2c-saas`, `native`, `waitlist`. Only applies when the run resolves to accountless — errors otherwise (see [Application templates](#application-templates)); cannot be combined with `--login` |
-| `--fresh`               | Replace an existing unclaimed accountless application with a new one, instead of keeping it (see [Accountless breadcrumb](#accountless-breadcrumb)). Only applies when the run resolves to accountless — errors otherwise; cannot be combined with `--login`       |
-| `-y, --yes`             | Skip y/n confirmation prompts only. It neither forces nor bypasses accountless — the strategy is picked by auth state, mode, and flags. It does **not** replace an existing unclaimed accountless app — that still requires `--fresh`                              |
-| `--no-skills`           | Skip the optional agent skills install prompt at the end of init                                                                                                                                                                                                   |
+| Option                   | Description                                                                                                                                                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--framework <name>`     | Framework to set up (skips auto-detection). Valid values: `next`, `astro`, `nuxt`, `tanstack-start`, `react-router`, `vue`, `expo`, `react`, `javascript`, `js`, `express`, `fastify`, `ios`, `android`                                                            |
+| `--pm <manager>`         | Package manager to use. Valid values: `bun`, `pnpm`, `yarn`, `npm`. Skips the PM prompt (bootstrap) or overrides lockfile detection (existing project)                                                                                                             |
+| `--name <project-name>`  | Project name for `--starter` (skips prompt). Must be lowercase, no spaces, no path separators                                                                                                                                                                      |
+| `--app <id>`             | Application ID to link (skips the interactive app picker during authenticated linking)                                                                                                                                                                             |
+| `--starter`              | Bootstrap a new project from a starter template (runs the framework generator, installs deps, and scaffolds Clerk)                                                                                                                                                 |
+| `--accountless`          | Force auto-generated temporary development keys, even when logged in. Only valid on an accountless-capable framework; cannot be combined with `--login` or `--app`                                                                                                 |
+| `--login`                | Force the authenticated flow: log in (interactively if needed) and link a real application instead of accountless keys. Opens browser login when authentication is needed, including in agent mode                                                                 |
+| `--template <name>`      | Pre-configure the accountless application at creation: `b2b-saas`, `b2c-saas`, `native`, `waitlist`. Only applies when the run resolves to accountless — errors otherwise (see [Application templates](#application-templates)); cannot be combined with `--login` |
+| `--fresh`                | Replace an existing unclaimed accountless application with a new one, instead of keeping it (see [Accountless breadcrumb](#accountless-breadcrumb)). Only applies when the run resolves to accountless — errors otherwise; cannot be combined with `--login`       |
+| `--dry-run`              | Inspect an existing native Apple (iOS or macOS) project and print a semantic Clerk setup plan without changing local or remote state                                                                                                                               |
+| `--json`                 | Output native setup results and the agent handoff, or a read-only inspection with `--dry-run`                                                                                                                                                                      |
+| `--target <name-or-id>`  | Select a native Apple application target by target name or PBX object ID for either inspection or setup                                                                                                                                                            |
+| `--project <path>`       | Select an Xcode project or workspace                                                                                                                                                                                                                               |
+| `--configuration <name>` | Select a custom build configuration                                                                                                                                                                                                                                |
+| `--bundle-id <id>`       | Confirm an ambiguous Bundle ID                                                                                                                                                                                                                                     |
+| `--app-id-prefix <id>`   | Apple App ID Prefix to use if the selected native Apple Bundle ID needs a new Clerk registration. Never inferred from `DEVELOPMENT_TEAM`; required in agent mode when local/remote evidence cannot supply it                                                       |
+| `--sign-in-with-apple`   | Opt into native Sign in with Apple for the selected native Apple target. Adds the exact Apple entitlement and enables the matching native Clerk connection; never requests hosted/web Apple credentials                                                            |
+| `--prebuilt-auth-ui`     | Opt into ClerkKitUI's prebuilt authentication UI for an untouched, safely inspectable SwiftUI starter. Existing or customized application UI is preserved and returned for review instead of being rewritten                                                       |
+| `--sdk <products>`       | Choose native Apple products: `core` for ClerkKit or `ui` for ClerkKit and ClerkKitUI. Preserves existing products and does not insert AuthView                                                                                                                    |
+| `-y, --yes`              | Skip y/n confirmation prompts only. It neither forces nor bypasses accountless — the strategy is picked by auth state, mode, and flags. It does **not** replace an existing unclaimed accountless app — that still requires `--fresh`                              |
+| `--no-skills`            | Skip the optional agent skills install prompt at the end of init                                                                                                                                                                                                   |
 
 `--keyless` remains accepted as a deprecated, hidden compatibility alias for `--accountless`. Use `--accountless` in all new commands and documentation.
+
+## Native Apple setup and inspection
+
+Run `clerk init` from an iOS or macOS project directory for the full interactive
+flow. The CLI discovers projects/workspaces and targets, authenticates and links
+a Clerk app, discovers the Bundle ID and an existing App ID Prefix, and previews
+local and remote setup. It installs and downloads the Swift packages, configures
+capabilities, registers the native identity, and optionally enables Apple sign-in.
+Debug and Release are covered by default; `--configuration` selects custom builds.
+
+Both `project.pbxproj` and `project.xcproj` are supported. Xcode is required. The
+CLI preserves existing package policy and products, and asks a custom app to choose
+products when none are installed. New noninteractive setups default to both
+ClerkKit and ClerkKitUI; `--sdk core` selects core alone.
+
+An unchanged SwiftUI starter can receive direct Clerk configuration, environment
+injection, and explicitly requested prebuilt UI. Custom Swift is preserved and
+handed to the developer or calling agent. Human output summarizes completed work
+and links to the quickstart. No ClerkProvider or wrapper view is introduced.
+
+`--dry-run --json` uses Xcode for inspection but does not authenticate, fetch Clerk
+settings, apply setup, or initiate package resolution. If unresolved dependencies
+prevent inspection, run normal init to resolve them. Normal agent/JSON apply
+requires `--yes`, existing authentication, and `--app` or an existing project link.
+Its structured handoff includes the development publishable key and explicitly
+pending source/build tasks. Preview output redacts keys.
+
+See [the native setup contract](../../../../../docs/native-established-apps.md)
+for capability scope, Apple identity discovery, recovery, and verification limits.
 
 ## Agent Mode
 
 When running in agent mode (`--mode agent` or non-TTY), the command runs the full init flow non-interactively:
 
-- All confirmation prompts are auto-skipped (as if `--yes` was passed)
+- Confirmation prompts are generally auto-skipped, but changing a native Apple Xcode project requires an explicit `--yes`
+- Native Apple remote mutations also require explicit `--yes`; when no existing registration or complete literal evidence supplies the App ID Prefix, pass `--app-id-prefix`
+- New native Apple setups default to both SDK products in agent mode; `--sdk core` selects ClerkKit alone
+- Native Sign in with Apple additionally requires `--sign-in-with-apple`; `--yes` grants mutation consent but never opts a project into an authentication strategy
+- The prebuilt native Apple authentication UI additionally requires `--prebuilt-auth-ui`; `--yes` and agent mode never opt into replacing even an eligible starter screen
+- `init --dry-run` automatically emits structured JSON, even when `--json` is omitted
 - For **existing projects**: framework and package manager are auto-detected, no flags required
 - For **new projects** (`--starter` or blank directory): `--framework` is required (no way to auto-detect in an empty dir). Package manager is auto-selected by availability (bun → pnpm → yarn → npm) unless `--pm` is provided
 - Project name defaults to the framework's default (e.g. `my-clerk-next-app`) unless `--name` is provided
 - For accountless-capable frameworks with no `--app` and no linked profile:
   - When **authenticated**, init creates a real Clerk app named after the project (`package.json#name`, `--name`, or directory basename) and links it.
   - When **unauthenticated**, init uses accountless: the app runs on auto-generated dev keys, and init writes a legacy-named `.clerk/keyless.json` breadcrumb so the next `clerk auth login` claims the app automatically.
-- For frameworks that require API keys, init will not pick or create an app in agent mode; pass `--app <id>` or link the project first to pull real keys
-- `--login` while unauthenticated exits with a usage error (agents can't complete the interactive browser login)
-- Agent mode never trusts the mere _presence_ of a stored credential the way human mode does — a stored session that turns out to be expired/broken (e.g. keyring holds a stale OAuth session) is validated before init decides it's "authenticated". A broken credential is treated as unauthenticated, which routes an accountless-capable framework to accountless instead of blocking on a browser OAuth round-trip an agent can never complete. If `--login` (or a real app target) forces the authenticated flow anyway and the credential turns out broken, init exits with a usage error instead of attempting an interactive login
+- Native Apple agent setup requires `--app <id>` or an existing link; select/create the application interactively first if needed
+- Authenticated setup can open browser login in agent mode. The user completes sign-in, and the same invocation continues; the existing login timeout and cancellation apply.
+- Platform API keys are checked by the setup requests that need them; init does not make an extra application-list request to validate a key. Stored OAuth sessions are checked when choosing automatic accountless setup. An explicit authenticated flow can open browser login for the user.
 - Agent mode never mints a fresh accountless application over an existing unclaimed one on re-run — see [Accountless breadcrumb](#accountless-breadcrumb)
 
 ## Flow
 
-1. Gathers project context (framework, router variant, TypeScript, `src/` directory, package manager)
-2. Determines the strategy (in precedence order). In agent mode, "authenticated" here means a _validated_ credential (a real `CLERK_PLATFORM_API_KEY`, or a stored session that still exchanges for a valid token) — not just the presence of something in the keyring, since agent mode has no interactive fallback if a stale credential turns out to be unusable:
-   - **`--accountless`**: forces accountless mode, even when logged in. Only valid on an accountless-capable framework, and cannot be combined with `--login` or `--app` (usage errors otherwise). The app runs on auto-generated dev keys; init writes a legacy-named `.clerk/keyless.json` breadcrumb so the next `clerk auth login` claims the app automatically
-   - **`--login`**: forces the authenticated flow. In agent mode while unauthenticated (or while stored credentials are broken) this exits with a usage error, since agents can't complete the interactive browser login
-   - **Real app target** (`--app` or linked profile): authenticates, links if needed, and pulls real API keys into `.env`
-   - **Agent + non-accountless framework + no real app target**: scaffolds locally and prints manual setup instructions instead of selecting or creating an app
-   - **Agent + accountless-capable framework + authenticated + no real app target**: creates a real Clerk app named after the project, links it, and pulls real API keys into `.env`
-   - **Agent + accountless-capable framework + unauthenticated + no real app target**: uses accountless mode — the app runs on auto-generated dev keys and the breadcrumb lets the next `clerk auth login` claim it. A broken/stale stored credential (present in the keyring but no longer valid) is treated the same as unauthenticated, so this is also the fallback when the presence-only check would have wrongly said "authenticated"
-   - **Human mode + bootstrap + accountless-capable framework + not authenticated**: uses accountless mode
-   - **Human mode + existing project + not authenticated**: runs the authenticated flow, which triggers an interactive login so real keys can be pulled. `-y` does not bypass this — it only suppresses y/n confirmation prompts, not authentication
-   - `--template` and `--fresh` are rejected with a usage error whenever the resolved strategy above isn't accountless — see [Application templates](#application-templates) and [Accountless breadcrumb](#accountless-breadcrumb)
-3. **Authenticated mode only**: authenticates via `clerk auth login` (skipped if already authenticated) and links the project via `clerk link` (skipped if already linked)
-4. Displays detected framework and variant
-5. Detects existing auth libraries (NextAuth, Auth0, Supabase, Firebase, Passport, Better Auth, Kinde) and shows migration guidance
-6. Installs the appropriate Clerk SDK (skips if already present)
-7. Generates a scaffold plan for the detected framework
-8. Warns if the git working tree has uncommitted changes
-9. Previews planned file changes and asks for confirmation
-10. Writes scaffold files to disk
-11. Runs project formatters (Prettier/Biome) on generated files
-12. Scans for issues: hardcoded keys, leftover auth-library imports, stale API calls
-13. Prints a summary of created, modified, and skipped files with recommendations
-14. **Authenticated mode**: pulls development instance API keys via `clerk env pull`
-15. **Accountless mode** (unauthenticated runs whose resolved strategy in step 2 is accountless — an unauthenticated human-mode rerun on an existing project resolves to the authenticated flow instead): mints an accountless application and prints instructions for development without API keys and how to connect a Clerk account later — unless an unclaimed accountless app already exists for this project (see [Re-running init on an already-accountless project](#re-running-init-on-an-already-accountless-project)), in which case the existing keys are kept and reported instead
-16. Optionally installs Clerk agent skills (cli + core + features, plus a framework-specific skill) via the project's package runner (see [Agent skills install](#agent-skills-install))
+1. Detect the framework or create the requested starter project.
+2. Native Apple projects use the dedicated flow described above and return with
+   completed setup and any remaining source/build work. Read-only native runs
+   return their inspection without authentication or setup changes.
+3. Other frameworks choose accountless, authenticated, or manual setup. Explicit
+   `--accountless` forces accountless where supported; `--login`, `--app`, and an
+   existing linked profile choose authenticated setup. An unauthenticated agent
+   uses accountless when supported; an unsupported agent project without an app
+   receives manual guidance. Unauthenticated human bootstrap defaults to
+   accountless where supported; existing human projects authenticate.
+4. Validate accountless-only flags (`--template`, `--fresh`). Authenticate and link
+   a real application when required. If login is needed, open the browser and
+   wait for the user to finish signing in before continuing setup.
+5. Detect existing authentication libraries and install the selected framework SDK.
+6. Prepare scaffolding, show the preview and Git-change warning, and confirm edits.
+7. Write files, run project formatters, and scan for remaining integration issues.
+8. Pull development keys for authenticated frameworks that consume env files, or
+   create/reuse accountless keys and their claim breadcrumb.
+9. Print completion guidance and offer optional Clerk agent skills installation.
 
 ## Framework Detection
 
@@ -102,12 +148,15 @@ Detects the project's framework from `package.json` dependencies (checked top-to
 
 Native mobile platforms may not have a `package.json`, so they are detected from project marker files when no npm framework matches:
 
-| Marker files                                                        | Framework        | Clerk SDK                             | Publishable Key Env Var |
-| ------------------------------------------------------------------- | ---------------- | ------------------------------------- | ----------------------- |
-| `*.xcodeproj` / `*.xcworkspace`                                     | iOS (Swift)      | `ClerkKit` (Swift Package Manager)    | `CLERK_PUBLISHABLE_KEY` |
-| `app/src/main/AndroidManifest.xml` / `src/main/AndroidManifest.xml` | Android (Kotlin) | `com.clerk:clerk-android-ui` (Gradle) | `CLERK_PUBLISHABLE_KEY` |
+| Marker files                                                        | Framework            | Clerk SDK                                         | Publishable Key Env Var |
+| ------------------------------------------------------------------- | -------------------- | ------------------------------------------------- | ----------------------- |
+| `*.xcodeproj` / `*.xcworkspace`                                     | iOS or macOS (Swift) | `ClerkKit` + `ClerkKitUI` (Swift Package Manager) | `CLERK_PUBLISHABLE_KEY` |
+| `app/src/main/AndroidManifest.xml` / `src/main/AndroidManifest.xml` | Android (Kotlin)     | `com.clerk:clerk-android-ui` (Gradle)             | `CLERK_PUBLISHABLE_KEY` |
 
-A bare `Package.swift` or `build.gradle` is intentionally **not** enough — those also match server-side Swift packages and non-Android JVM projects. For native platforms the Clerk SDK cannot be installed by a JS package manager, so init skips the SDK install step and the scaffold plan prints Swift Package Manager / Gradle install steps instead. The publishable key is configured in source code (`Clerk.configure(...)` / `Clerk.initialize(...)`), so init still pulls keys into the env file and instructs the user to copy the key over.
+A bare `Package.swift` or `build.gradle` is not sufficient detection evidence.
+Native Apple projects use the Xcode setup flow above; the shared explicit framework
+selector is `--framework ios` for both iOS and macOS. Android prints Gradle setup
+instructions. Native packages are not installed through a JavaScript package manager.
 
 The **Accountless** column indicates whether the framework's Clerk SDK supports accountless mode (auto-generated temporary dev keys). Accountless is the default for unauthenticated runs on Yes-row frameworks — during bootstrap (new projects) in human mode, and in all agent-mode runs. In human mode, an unauthenticated re-run in an existing project still triggers the authenticated flow. `--accountless` forces accountless anywhere a Yes-row framework is detected (existing projects included, even when logged in); passing it for a No-row framework exits with a usage error. In agent mode, an authenticated run on an accountless-capable framework creates a real app named after the project and links it.
 
@@ -115,7 +164,8 @@ Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `ya
 
 ## Scaffolding
 
-Scaffolding is supported for every detected framework. iOS and Android write no files (their SDKs are not npm packages and their build files are not safe to modify automatically) — instead they print the exact quickstart steps as post-instructions.
+Web framework scaffolding uses the adapters below. Native Apple setup returns
+through its dedicated engine; Android supplies post-install instructions.
 
 All scaffolding is idempotent — files are skipped if they already contain Clerk setup.
 
@@ -232,9 +282,11 @@ A post-instruction reminds the user that `types/globals.d.ts` must be covered by
 
 Express and Fastify share the server-entry scaffolding in [`node-server.ts`](./frameworks/node-server.ts). The entry file is resolved from `package.json#main` (ignored when it points at build output like `dist/`) and common candidates (`[src/]index|server|app|main` with `.ts/.mts/.js/.mjs/.cjs`, ordered by basename so an unrelated `src/app.ts` can't outrank a root `index.js`). The resolved path is the one named in the `--env-file` post-instruction. Both ESM (`import`) and CommonJS (`require`, including the inline `require("fastify")(...)` form) are supported; injection lands after the full creation statement, so multi-line options objects and chained calls (e.g. `.withTypeProvider()`) are safe. When no entry or creation call is found, a post-instruction with the quickstart link is printed instead.
 
-### iOS (Swift) / Android (Kotlin)
+### Native Apple (iOS/macOS Swift) / Android (Kotlin)
 
-No files are written. The scaffold plan prints the quickstart steps: SDK install (Swift Package Manager for `ClerkKit`/`ClerkKitUI`, Gradle for `com.clerk:clerk-android-*`), enabling the Native API and registering the app on the Dashboard's Native Applications page, and configuring the publishable key in source (`Clerk.configure(...)` / `Clerk.initialize(...)`) by copying it from the pulled env file.
+Native Apple setup can link SDK products, configure supported SwiftUI templates, update eligible entitlements, and register the selected native app. Custom Swift integration remains manual, with independent SDK installation and registration available when their prerequisites hold. Explicit `--prebuilt-auth-ui` and `--sign-in-with-apple` requests retain their own prerequisites. See [Native Apple setup](#native-apple-setup-and-inspection) for SDK selection, entitlements creation, and mutation boundaries.
+
+Android prints the Gradle SDK step for `com.clerk:clerk-android-*`.
 
 ## Agent skills install
 
