@@ -49,7 +49,7 @@ describe("public Apple init routing", () => {
       await authenticate();
     });
     track(run);
-    await expect(init({ yes: true })).rejects.toThrow("Select a Clerk application with --app");
+    await expect(init({ yes: true })).rejects.toThrow("Run `clerk apps list --json`");
     expect(loginMod.login).not.toHaveBeenCalled();
   });
   test("an unlinked agent can authenticate before being asked to select an application", async () => {
@@ -58,7 +58,9 @@ describe("public Apple init routing", () => {
       await authenticate();
     });
     track(run);
-    await expect(init({ yes: true })).rejects.toThrow("Select a Clerk application with --app");
+    await expect(init({ yes: true })).rejects.toThrow(
+      "You're signed in. Setup needs a Clerk application.",
+    );
     expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, embedded: true });
     expect(linkMod.link).not.toHaveBeenCalled();
     expect(pullMod.pull).not.toHaveBeenCalled();
