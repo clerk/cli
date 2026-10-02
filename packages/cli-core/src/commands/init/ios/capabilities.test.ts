@@ -85,6 +85,62 @@ for (const platform of ["ios", "macos"] as const)
     ).toBe(true);
   });
 
+test("macOS sandbox declared only in entitlements gets network access without Apple opt-in", async () => {
+  const f = await fixture("macos");
+  f.options.signInWithApple = false;
+  const run = f.dependencies.run;
+  f.dependencies.run = async (...args) => {
+    const output = JSON.parse(await run(...args));
+    output[0].buildSettings.ENABLE_APP_SANDBOX = "NO";
+    return JSON.stringify(output);
+  };
+  const path = join(f.root, "MyApp/MyApp.entitlements");
+  await writeFile(
+    path,
+    "<plist><dict><key>com.apple.security.app-sandbox</key><true/><!--keep--></dict></plist>",
+  );
+  const checks = (report: Awaited<ReturnType<typeof doctor>>) =>
+    report.checks
+      .filter((item) => item.name.startsWith("Capabilities:"))
+      .map((item) => item.status);
+  expect(checks(await doctor(f.options, f.dependencies))).toContain("warn");
+  const preview = await prepareSetup(f.options, f.dependencies);
+  expect(preview.capabilities?.actions).toHaveLength(1);
+  expect((await applySetup(preview, f.dependencies)).capabilities.status).toBe("configured");
+  const source = await readFile(path, "utf8");
+  expect(source).toContain("<key>com.apple.security.network.client</key><true/>");
+  expect(source).toContain("<!--keep-->");
+  expect(source).not.toContain("com.apple.developer.applesignin");
+  expect((await prepareSetup(f.options, f.dependencies)).capabilities?.status).toBe("satisfied");
+  expect(checks(await doctor(f.options, f.dependencies))).toEqual(["pass", "pass"]);
+});
+
+test.each([
+  { sandbox: "<true/>", network: "<false/>", enabled: true },
+  { sandbox: "<true/>", network: "<true/>", enabled: false },
+  { sandbox: "<false/>", network: "<false/>", enabled: false },
+])(
+  "macOS networking respects existing entitlements: $sandbox / $network",
+  ({ sandbox, network, enabled }) => {
+    const source = `<plist><dict><key>com.apple.security.app-sandbox</key>${sandbox}<key>com.apple.security.network.client</key>${network}</dict></plist>`;
+    const result = capabilityXML(source, undefined, false, true);
+    expect(result).toBe(enabled ? source.replace("<false/>", "<true/>") : source);
+    expect(capabilityXML(result, undefined, false, true)).toBe(result);
+    expect(capabilityXML(source)).toBe(source);
+  },
+);
+
+test("malformed macOS sandbox entitlements require manual review", () => {
+  expect(() =>
+    capabilityXML(
+      "<plist><dict><key>com.apple.security.app-sandbox</key><string>true</string></dict></plist>",
+      undefined,
+      false,
+      true,
+    ),
+  ).toThrow("sandbox entitlement");
+});
+
 test("create and attach entitlements for a target without a file, then rerun", async () => {
   const f = await fixture();
   const document = parse(await readFile(f.path, "utf8"));
