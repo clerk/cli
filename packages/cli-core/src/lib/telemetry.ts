@@ -93,6 +93,17 @@ export type TelemetryStage =
   | "already_set_up"
   | "keys"
   | "skills"
+  | "ios_inspect"
+  | "ios_native_plan"
+  | "ios_apple_plan"
+  | "ios_local_setup"
+  | "ios_native_setup"
+  | "ios_apple_setup"
+  // `clerk doctor`
+  | "doctor_checks"
+  | "doctor_ios_audit"
+  | "doctor_fix"
+  | "doctor_verify"
   // `clerk auth login`
   | "session_check"
   | "awaiting_callback"
@@ -340,6 +351,11 @@ function uncodedApiErrorCode(status: number, userSuppliedPath: boolean): string 
   if (status === 404) return userSuppliedPath ? "api_not_found" : "cli_endpoint_not_found";
   if (status >= 400 && status < 500) return "api_client_error";
   return "api_error";
+}
+
+/** Clears any prior in-memory invocation context without reading or writing state. */
+export function discardCommandTelemetry(): void {
+  context = null;
 }
 
 export function telemetryResultForError(error: unknown): TelemetryResult {

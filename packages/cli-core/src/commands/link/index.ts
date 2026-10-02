@@ -16,6 +16,8 @@ import { intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
 interface LinkOptions {
+  /** Called within another command that owns its header and next steps. */
+  embedded?: boolean;
   app?: string;
   skipIfLinked?: boolean;
   cwd?: string;
@@ -26,6 +28,12 @@ interface LinkOptions {
    * interactive end-to-end.
    */
   createIfMissing?: string;
+  /**
+   * Skip generic process-env/dotenv key discovery when those sources are not
+   * runtime inputs for the calling framework. Native iOS direct setup uses
+   * this so a web app's ambient key cannot silently choose the embedded app.
+   */
+  skipAutolink?: boolean;
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
@@ -45,7 +53,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     return;
   }
 
-  if (!existing && !options.app && (options.skipIfLinked || agent)) {
+  if (!existing && !options.app && !options.skipAutolink && (options.skipIfLinked || agent)) {
     const autolinked = await autolink(cwd);
     if (autolinked) return;
   }
@@ -56,32 +64,35 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     );
   }
 
-  intro("Linking project");
+  if (!options.embedded) intro("Linking project");
 
   if (existing && agent) {
     printExistingStatus(existing, normalizedRemote);
     if (!targetsDifferentApp) {
-      await outro();
+      if (!options.embedded) await outro();
       return;
     }
   } else if (existing) {
     const shouldRelink = await handleExistingProfile(existing, normalizedRemote, options);
     if (!shouldRelink) {
-      await outro();
+      if (!options.embedded) await outro();
       return;
     }
   }
 
-  await ensureAuth();
+  await ensureAuth(options.embedded);
 
   const app = options.app
-    ? await withApiContext(fetchApplication(options.app), "Failed to fetch application")
+    ? await withApiContext(
+        fetchApplication(options.app, { includeSecretKeys: false }),
+        "Failed to fetch application",
+      )
     : agent && options.createIfMissing
       ? await withApiContext(
           createApplication(options.createIfMissing),
           "Failed to create application",
         )
-      : await resolveApp(cwd, displayPath, !existing);
+      : await resolveApp(cwd, displayPath, !existing && !options.skipAutolink);
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
@@ -103,12 +114,16 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   });
 
   const label = app.name || app.application_id;
-  log.success(`Linked to ${cyan(label)} in ${dim(displayPath)}`);
+  log.success(
+    options.embedded
+      ? `Linked to ${cyan(label)}`
+      : `Linked to ${cyan(label)} in ${dim(displayPath)}`,
+  );
 
-  await outro(NEXT_STEPS.LINK);
+  if (!options.embedded) await outro(NEXT_STEPS.LINK);
 }
 
-async function ensureAuth() {
+async function ensureAuth(embedded?: boolean) {
   // CLERK_PLATFORM_API_KEY is a valid non-interactive auth mechanism.
   // The PLAPI fetch helpers use it directly for API calls, so no OAuth
   // token is needed when this key is present.
@@ -116,7 +131,7 @@ async function ensureAuth() {
   const token = await getToken();
   if (!token) {
     log.info("Not logged in. Authenticating first...");
-    await login({ showNextSteps: false });
+    await login({ showNextSteps: false, ...(embedded && { embedded: true }) });
   }
 }
 
@@ -159,7 +174,7 @@ async function handleExistingProfile(
   if (options.app) {
     await ensureAuth();
     const targetApp = await withApiContext(
-      fetchApplication(options.app),
+      fetchApplication(options.app, { includeSecretKeys: false }),
       "Failed to fetch application",
     );
     return confirm({ message: `Re-link to ${cyan(appLabel(targetApp))}?`, default: false });

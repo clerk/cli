@@ -21,6 +21,7 @@ import {
   bootstrapMod,
   keylessMod,
   keylessTargetMod,
+  plapiMod,
 } from "../../test/lib/init-harness.ts";
 import * as promptsMod from "../../lib/prompts.ts";
 import { init } from "./index.ts";
@@ -264,13 +265,15 @@ describe("init strategy", () => {
     expect(loginMod.login).not.toHaveBeenCalled();
   });
 
-  test("agent mode with --login while unauthenticated throws a usage error", async () => {
+  test("agent mode with --login opens browser login for the user", async () => {
     setup({ isAgent: true, email: null });
+    mockExistingProject(KEYLESS_CTX);
+    mockMiddlewareScaffold();
 
-    await expect(init({ login: true })).rejects.toThrow(/--login requires an interactive terminal/);
+    await init({ login: true });
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
-    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
   });
 
   test("agent mode with --login while authenticated runs the authenticated flow", async () => {
@@ -337,6 +340,9 @@ describe("init strategy", () => {
   test("agent mode with keyless framework and --app uses real app flow", async () => {
     setup({ isAgent: true, email: "user@example.com" });
     mockExistingProject(KEYLESS_CTX);
+    spyOn(config, "resolveProfile")
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue({ profile: { appId: "app_abc" } } as never);
     mockMiddlewareScaffold();
 
     await init({ app: "app_abc" });
@@ -380,9 +386,13 @@ describe("init strategy", () => {
     expect(captured.err).toContain("clerk init --app <app_id>");
   });
 
-  test("agent mode with real app target and no auth launches login", async () => {
+  test("agent mode with real app target and no auth launches login and continues setup", async () => {
     setup({ isAgent: true });
     spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    mockMiddlewareScaffold();
+    spyOn(config, "resolveProfile")
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue({ profile: { appId: "app_abc" } } as never);
 
     await init({ app: "app_abc" });
 
@@ -393,6 +403,7 @@ describe("init strategy", () => {
       cwd: FAKE_CTX.cwd,
       createIfMissing: expect.any(String),
     });
+    expect(pullMod.pull).toHaveBeenCalled();
   });
 
   test("-y flag triggers login when unauthenticated", async () => {
@@ -772,19 +783,20 @@ describe("init strategy", () => {
       expect(loginMod.login).not.toHaveBeenCalled();
     });
 
-    test("--login validates the credential instead of trusting presence, still erroring on a stale session", async () => {
+    test("--login replaces a stale session through browser login", async () => {
       setup({ isAgent: true, email: null });
       spyOn(heuristics, "isAuthenticated").mockResolvedValue(true);
+      mockExistingProject(KEYLESS_CTX);
+      mockMiddlewareScaffold();
 
-      await expect(init({ login: true })).rejects.toThrow(
-        /--login requires an interactive terminal/,
-      );
-      expect(loginMod.login).not.toHaveBeenCalled();
+      await init({ login: true });
+      expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+      expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
       expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     });
 
-    test("a real CLERK_PLATFORM_API_KEY is trusted outright, without needing to validate a stored session", async () => {
-      process.env.CLERK_PLATFORM_API_KEY = "test_key";
+    test("a Platform API key does not require an extra application-list precheck", async () => {
+      process.env.CLERK_PLATFORM_API_KEY = "ak_test_agent_validation";
       try {
         setup({ isAgent: true, email: null });
         mockExistingProject(KEYLESS_CTX);
@@ -793,6 +805,7 @@ describe("init strategy", () => {
 
         await init({});
 
+        expect(plapiMod.listApplications).not.toHaveBeenCalled();
         expect(linkMod.link).toHaveBeenCalled();
         expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
       } finally {

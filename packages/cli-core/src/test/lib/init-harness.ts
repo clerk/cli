@@ -29,6 +29,7 @@ export * as bootstrapMod from "../../commands/init/bootstrap.ts";
 export * as nextStepsMod from "../../lib/next-steps.ts";
 export * as keylessMod from "../../lib/keyless.ts";
 export * as keylessTargetMod from "../../lib/keyless-target.ts";
+export * as plapiMod from "../../lib/plapi.ts";
 
 import * as loginModule from "../../commands/auth/login.ts";
 import * as linkModule from "../../commands/link/index.ts";
@@ -45,6 +46,7 @@ import * as heuristicsModule from "../../commands/init/heuristics.ts";
 import * as skillsModule from "../../commands/init/skills.ts";
 import * as bootstrapModule from "../../commands/init/bootstrap.ts";
 import * as keylessModule from "../../lib/keyless.ts";
+import * as plapiModule from "../../lib/plapi.ts";
 
 export const FAKE_CTX = {
   cwd: "/tmp/test",
@@ -160,6 +162,7 @@ export function useInitHarness(): InitHarness {
       spyOn(pullModule, "pull").mockResolvedValue(undefined),
       spyOn(bootstrapModule, "promptAndBootstrap").mockResolvedValue(FAKE_BOOTSTRAP),
       spyOn(bootstrapModule, "confirmOverwrite").mockResolvedValue(undefined),
+      spyOn(plapiModule, "listApplications").mockResolvedValue([]),
       spyOn(keylessModule, "createAccountlessApp").mockResolvedValue({
         publishable_key: "pk_test_stub",
         secret_key: "sk_test_stub",
