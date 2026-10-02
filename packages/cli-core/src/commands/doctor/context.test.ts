@@ -38,7 +38,7 @@ mock.module("../../lib/bapi.ts", () => ({
 }));
 
 // stubFetch instead of mock.module for plapi — mock.module leaks globally in Bun
-let mockAppResponse: Application | null = null;
+let mockAppResponse: Application | Application[] | null = null;
 let mockAppError: Error | null = null;
 const mockFetch = mock();
 
@@ -95,6 +95,37 @@ describe("createDoctorContext", () => {
     });
   });
 
+  describe("verifyAccountAccess", () => {
+    test("performs one memoized read-only application-list request, including for an empty list", async () => {
+      mockAppResponse = [];
+
+      const ctx = createDoctorContext();
+      const p1 = ctx.verifyAccountAccess();
+      const p2 = ctx.verifyAccountAccess();
+
+      expect(p1).toBe(p2);
+      await expect(p1).resolves.toBeUndefined();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(String(mockFetch.mock.calls[0]?.[0])).toBe(
+        "https://api.clerk.com/v1/platform/applications",
+      );
+      expect(mockFetch.mock.calls[0]?.[1]).toMatchObject({ method: "GET" });
+    });
+
+    test("memoizes a failed verification request", async () => {
+      mockAppError = new TypeError("fetch failed");
+
+      const ctx = createDoctorContext();
+      const p1 = ctx.verifyAccountAccess();
+      const p2 = ctx.verifyAccountAccess();
+
+      expect(p1).toBe(p2);
+      await expect(p1).rejects.toThrow("fetch failed");
+      await expect(p2).rejects.toThrow("fetch failed");
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("getProfile", () => {
     test("returns the same promise on repeated calls", async () => {
       const profile = {
@@ -135,6 +166,7 @@ describe("createDoctorContext", () => {
     });
 
     test("returns null when no token", async () => {
+      delete process.env.CLERK_PLATFORM_API_KEY;
       mockGetToken.mockResolvedValue(null);
 
       const ctx = createDoctorContext();
@@ -142,6 +174,21 @@ describe("createDoctorContext", () => {
 
       expect(result).toBeNull();
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    test("fetches the public application shape with a Platform API key", async () => {
+      mockGetToken.mockResolvedValue(null);
+      mockResolveProfile.mockResolvedValue({
+        path: "github.com/org/repo",
+        profile: { workspaceId: "org_1", appId: "app_1", instances: { development: "ins_dev" } },
+        resolvedVia: "remote" as const,
+      });
+      mockAppResponse = { application_id: "app_1", name: "My App", instances: [] };
+
+      const ctx = createDoctorContext();
+      expect(await ctx.getApplication()).toEqual(mockAppResponse);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(String(mockFetch.mock.calls[0]?.[0])).not.toContain("include_secret_keys");
     });
 
     test("returns null when no profile", async () => {
