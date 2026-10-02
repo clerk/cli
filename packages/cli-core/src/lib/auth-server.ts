@@ -223,6 +223,66 @@ interface AuthServerResult {
   stop: () => void;
 }
 
+/**
+ * The result of checking an OAuth redirect URL. A failure carries both the
+ * error the login flow rejects with and the message the browser page shows.
+ */
+export type CallbackOutcome =
+  | { ok: true; code: string }
+  | { ok: false; error: CliError; page: string; status: number };
+
+/**
+ * Validate an OAuth redirect against the state this login generated. Shared by
+ * the loopback route and the paste-back prompt, so a pasted URL passes exactly
+ * the checks a browser redirect does — in particular the state check, which is
+ * what stops someone getting a user to paste a code from *their* login.
+ */
+export function parseCallback(url: URL, expectedState: string): CallbackOutcome {
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  const error = url.searchParams.get("error");
+
+  if (error) {
+    const description = url.searchParams.get("error_description") || error;
+    log.debug(`auth-server: OAuth error in callback — ${error}: ${description}`);
+    return {
+      ok: false,
+      error: new CliError(`OAuth error: ${description}`, {
+        code: ERROR_CODE.OAUTH_PROVIDER_ERROR,
+      }),
+      page: description,
+      status: 200,
+    };
+  }
+
+  if (state !== expectedState) {
+    log.debug(`auth-server: state mismatch (expected=${expectedState}, got=${state})`);
+    return {
+      ok: false,
+      error: new CliError("Invalid state parameter. Possible CSRF attack.", {
+        code: ERROR_CODE.OAUTH_STATE_MISMATCH,
+      }),
+      page: "Invalid state parameter.",
+      status: 400,
+    };
+  }
+
+  if (!code) {
+    log.debug("auth-server: callback received with no authorization code");
+    return {
+      ok: false,
+      error: new CliError("No authorization code received.", {
+        code: ERROR_CODE.OAUTH_NO_CODE,
+      }),
+      page: "No authorization code received.",
+      status: 400,
+    };
+  }
+
+  log.debug("auth-server: callback received with valid code and state");
+  return { ok: true, code };
+}
+
 export function startAuthServer(expectedState: string): AuthServerResult {
   let resolveCallback: (value: { code: string }) => void;
   let rejectCallback: (reason: Error) => void;
@@ -232,12 +292,16 @@ export function startAuthServer(expectedState: string): AuthServerResult {
     resolveCallback = resolve;
     rejectCallback = reject;
   });
+  // `stop()` rejects this, and it may run before anyone has called
+  // `waitForCallback()` — a failed setup step, or a test. The callers that do
+  // wait get their own derived promise and still see the rejection.
+  callbackPromise.catch(() => {});
 
   const timeout = setTimeout(() => {
     log.debug(`auth-server: timed out after ${AUTH_TIMEOUT_MS}ms`);
     rejectCallback(
       new CliError(
-        "Authentication timed out. Run `clerk auth login` to try again — if your browser did not open, copy the printed URL into any browser on this machine.",
+        "Authentication timed out. Run `clerk auth login` to try again — if your browser did not open, open the printed URL in any browser, and if that browser is on another device, paste the URL it lands on back into the terminal.",
         { code: ERROR_CODE.AUTH_TIMEOUT },
       ),
     );
@@ -254,58 +318,19 @@ export function startAuthServer(expectedState: string): AuthServerResult {
       routes: {
         [CALLBACK_PATH]: {
           GET: (req) => {
-            const url = new URL(req.url);
-            const code = url.searchParams.get("code");
-            const state = url.searchParams.get("state");
-            const error = url.searchParams.get("error");
+            const outcome = parseCallback(new URL(req.url), expectedState);
 
-            if (error) {
-              const description = url.searchParams.get("error_description") || error;
-              log.debug(`auth-server: OAuth error in callback — ${error}: ${description}`);
-              rejectCallback(
-                new CliError(`OAuth error: ${description}`, {
-                  code: ERROR_CODE.OAUTH_PROVIDER_ERROR,
-                }),
-              );
+            if (!outcome.ok) {
+              rejectCallback(outcome.error);
               clearTimeout(timeout);
               setTimeout(() => void server?.stop(), 100);
-              return new Response(ERROR_HTML(description), {
+              return new Response(ERROR_HTML(outcome.page), {
+                status: outcome.status,
                 headers: { "Content-Type": "text/html; charset=utf-8" },
               });
             }
 
-            if (state !== expectedState) {
-              log.debug(`auth-server: state mismatch (expected=${expectedState}, got=${state})`);
-              rejectCallback(
-                new CliError("Invalid state parameter. Possible CSRF attack.", {
-                  code: ERROR_CODE.OAUTH_STATE_MISMATCH,
-                }),
-              );
-              clearTimeout(timeout);
-              setTimeout(() => void server?.stop(), 100);
-              return new Response(ERROR_HTML("Invalid state parameter."), {
-                status: 400,
-                headers: { "Content-Type": "text/html; charset=utf-8" },
-              });
-            }
-
-            if (!code) {
-              log.debug("auth-server: callback received with no authorization code");
-              rejectCallback(
-                new CliError("No authorization code received.", {
-                  code: ERROR_CODE.OAUTH_NO_CODE,
-                }),
-              );
-              clearTimeout(timeout);
-              setTimeout(() => void server?.stop(), 100);
-              return new Response(ERROR_HTML("No authorization code received."), {
-                status: 400,
-                headers: { "Content-Type": "text/html; charset=utf-8" },
-              });
-            }
-
-            log.debug("auth-server: callback received with valid code and state");
-            resolveCallback({ code });
+            resolveCallback({ code: outcome.code });
             clearTimeout(timeout);
             setTimeout(() => void server?.stop(), 100);
             return new Response(SUCCESS_HTML, {
@@ -348,8 +373,13 @@ export function startAuthServer(expectedState: string): AuthServerResult {
     // The CLI is idle here while the user signs in through their browser, so
     // Ctrl-C is them abandoning the login rather than an interrupted operation.
     waitForCallback: async () => whileAwaitingUser(callbackPromise),
+    // Settles the wait as well as closing the server. When the paste-back path
+    // wins, login carries on in this process, and a wait left open would pin
+    // `whileAwaitingUser`'s counter so every later Ctrl-C reported a clean exit.
+    // A no-op if the callback already settled.
     stop: () => {
       clearTimeout(timeout);
+      rejectCallback(new Error("Authentication server stopped."));
       void activeServer.stop();
     },
   };
