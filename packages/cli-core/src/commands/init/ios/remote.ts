@@ -87,7 +87,13 @@ function matchingApplication(
       "Existing native registrations conflict with this identity; review them in the Dashboard.",
     );
   }
-  return matches[0];
+  const match = matches[0];
+  if (match && match.bundle_id !== context.bundleIdentifier) {
+    throw new Error(
+      `Bundle ID "${context.bundleIdentifier}" differs in capitalization from Clerk registration "${match.bundle_id}". Match the spelling in Xcode and Clerk, then retry setup.`,
+    );
+  }
+  return match;
 }
 
 export async function auditRemote(context: RemoteContext, api: NativeAPI): Promise<RemotePlan> {

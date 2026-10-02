@@ -150,6 +150,25 @@ test("stale entitlements and new-file collisions stop before any writes", async 
   }
 });
 
+test("registration casing conflicts block before local edits or Apple activation", async () => {
+  const f = await fixture();
+  f.options.remote = { applicationId: "app_test" };
+  f.state.apps.push({
+    object: "ios_application",
+    id: "ios_existing",
+    bundle_id: "com.example.myapp",
+    app_id_prefix: "TEST123456",
+    created_at: 1,
+    updated_at: 1,
+  });
+  const before = await treeDigest(f.root);
+  await expect(prepareSetup(f.options, f.dependencies)).rejects.toThrow(
+    'Bundle ID "com.example.MyApp" differs in capitalization from Clerk registration "com.example.myapp"',
+  );
+  expect(await treeDigest(f.root)).toEqual(before);
+  expect(f.state.events).toEqual([]);
+});
+
 test("an existing conflicting Apple identity blocks planning; interrupted Apple activation recovers", async () => {
   const f = await fixture();
   f.state.apple.bundle_id = "com.other.App";
