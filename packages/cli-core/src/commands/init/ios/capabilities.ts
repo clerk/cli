@@ -8,6 +8,8 @@ import type { Inspection } from "./xcode.ts";
 
 const DOMAIN = "com.apple.developer.associated-domains";
 const APPLE = "com.apple.developer.applesignin";
+const SANDBOX = "com.apple.security.app-sandbox";
+const NETWORK = "com.apple.security.network.client";
 const EMPTY =
   '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n';
 type Element = ReturnType<DOMParser["parseFromString"]>["documentElement"];
@@ -22,8 +24,8 @@ function elements(node: Element): Element[] {
   return Array.from(node.childNodes).filter((child) => child.nodeType === 1) as Element[];
 }
 
-// Modify only the two requested top-level arrays; retain all unrelated XML nodes.
-export function capabilityXML(source: string, domain?: string, apple = false): string {
+// Modify requested capabilities and macOS sandbox networking; retain unrelated XML nodes.
+export function capabilityXML(source: string, domain?: string, apple = false, mac = false): string {
   if (source.length > 1_000_000 || /<!ENTITY/i.test(source))
     throw new Error("Unsupported entitlements XML.");
   const document = new DOMParser({
@@ -49,6 +51,30 @@ export function capabilityXML(source: string, domain?: string, apple = false): s
     values.set(key.textContent ?? "", children[i + 1]!);
   }
   let changed = false;
+  if (mac) {
+    for (const key of [SANDBOX, NETWORK]) {
+      const value = values.get(key);
+      if (
+        value &&
+        (!["true", "false"].includes(value.tagName) ||
+          elements(value).length ||
+          value.textContent?.trim())
+      )
+        throw new Error("Review the existing sandbox entitlement value manually.");
+    }
+    const network = values.get(NETWORK);
+    if (values.get(SANDBOX)?.tagName === "true" && network?.tagName !== "true") {
+      const enabled = document.createElement("true");
+      if (network) dictionary.replaceChild(enabled, network);
+      else {
+        const name = document.createElement("key");
+        name.appendChild(document.createTextNode(NETWORK));
+        dictionary.appendChild(name);
+        dictionary.appendChild(enabled);
+      }
+      changed = true;
+    }
+  }
   for (const [key, value] of [
     [DOMAIN, domain],
     [APPLE, apple ? "Default" : undefined],
@@ -140,8 +166,8 @@ export async function planCapabilities(
     }
     const actions: FileAction[] = [];
     const snapshots: FileSnapshot[] = [];
-    if (domain || apple) {
-      let path = inspection.settings.CODE_SIGN_ENTITLEMENTS?.trim();
+    let path = inspection.settings.CODE_SIGN_ENTITLEMENTS?.trim();
+    if (domain || apple || (mac && path)) {
       let snapshot: FileSnapshot | undefined;
       if (path) {
         if (path.includes("$") || !path.endsWith(".entitlements"))
@@ -200,13 +226,15 @@ export async function planCapabilities(
       const previous = overlay.get(path);
       const source =
         previous && previous.type !== "skip" ? previous.content : (snapshot?.source ?? EMPTY);
-      const content = capabilityXML(source, domain, apple);
+      const content = capabilityXML(source, domain, apple, mac);
       if (!snapshot || content !== source)
         actions.push({
           type: snapshot ? "modify" : "create",
           path,
           content,
-          description: `Add ${[domain && "Clerk Associated Domain", apple && "Sign in with Apple"].filter(Boolean).join(" and ")}`,
+          description: mac
+            ? "Update macOS entitlements"
+            : `Add ${[domain && "Clerk Associated Domain", apple && "Sign in with Apple"].filter(Boolean).join(" and ")}`,
         });
     }
     return {
