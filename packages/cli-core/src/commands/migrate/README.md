@@ -566,7 +566,8 @@ after them. They sort the users three ways:
 - **Rejected** — users Clerk would refuse. Each gets the first reason that
   applies:
   - it failed schema validation
-  - its source requested a skip (Better Auth: an anonymous guest)
+  - its source requested a skip (Better Auth: an anonymous guest; Supabase: a
+    soft-deleted user)
   - its only email is one Clerk refuses (`.local`, `.invalid`, `.test`,
     `.example`, `.arpa`). Such an email is dropped from any other user, with a
     warning

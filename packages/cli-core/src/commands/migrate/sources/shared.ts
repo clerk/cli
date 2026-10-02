@@ -93,3 +93,15 @@ export function toIsoDate(value: unknown, epochMillis = false): unknown {
 
   return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
 }
+
+/**
+ * The hasher for a self-describing bcrypt or argon2 digest, or undefined.
+ * Platforms that accept imported hashes (Supabase, Better Auth) can hold
+ * either, so the hasher is read per user rather than assumed per source.
+ */
+export function detectStandardHasher(hash: string): "bcrypt" | "argon2id" | "argon2i" | undefined {
+  if (/^\$2[aby]\$/.test(hash)) return "bcrypt";
+  if (hash.startsWith("$argon2id$")) return "argon2id";
+  if (hash.startsWith("$argon2i$")) return "argon2i";
+  return undefined;
+}

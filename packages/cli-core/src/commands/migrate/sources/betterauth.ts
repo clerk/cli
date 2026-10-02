@@ -1,5 +1,5 @@
 import type { SourceEntry } from "../types.ts";
-import { isVerified, routeByVerification, splitName } from "./shared.ts";
+import { detectStandardHasher, isVerified, routeByVerification, splitName } from "./shared.ts";
 
 /**
  * Better Auth → Clerk source.
@@ -41,10 +41,8 @@ export function detectBetterAuthHash(
       passwordHasher: "scrypt_werkzeug",
     };
   }
-  if (/^\$2[aby]\$/.test(hash)) return { password: hash, passwordHasher: "bcrypt" };
-  if (hash.startsWith("$argon2id$")) return { password: hash, passwordHasher: "argon2id" };
-  if (hash.startsWith("$argon2i$")) return { password: hash, passwordHasher: "argon2i" };
-  return undefined;
+  const passwordHasher = detectStandardHasher(hash);
+  return passwordHasher ? { password: hash, passwordHasher } : undefined;
 }
 
 const betterAuthSource = {

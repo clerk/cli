@@ -1,5 +1,5 @@
 import type { SourceEntry } from "../types.ts";
-import { routeByVerification, toIsoDate } from "./shared.ts";
+import { detectStandardHasher, routeByVerification, toIsoDate } from "./shared.ts";
 
 /**
  * Supabase Auth → Clerk transformer.
@@ -26,7 +26,10 @@ const supabaseSource = {
   description:
     "Works with a Supabase `auth.users` export. Users whose only social provider is not enabled in Clerk are rejected by the import's checks.",
   carries: {
-    passwords: { level: "yes", note: "bcrypt `encrypted_password` hashes come across." },
+    passwords: {
+      level: "yes",
+      note: "bcrypt and argon2 `encrypted_password` hashes come across, detected per user. Any other hash is dropped, and that user resets their password.",
+    },
     mfa: {
       level: "no",
       note: "Supabase MFA factors are not exported. Users enrol again in Clerk.",
@@ -47,10 +50,27 @@ const supabaseSource = {
     phone_confirmed_at: "phoneConfirmedAt",
     raw_user_meta_data: "unsafeMetadata",
     banned_until: "bannedUntil",
+    deleted_at: "deletedAt",
     created_at: "createdAt",
   },
   postTransform: (user) => {
     user.createdAt = toIsoDate(user.createdAt);
+
+    // Supabase accepts bcrypt and argon2 hashes on import, so `bcrypt` (the
+    // default it hashes with) is only right for most users, not all.
+    if (typeof user.password === "string" && user.password) {
+      const hasher = detectStandardHasher(user.password);
+      if (hasher) {
+        user.passwordHasher = hasher;
+      } else {
+        delete user.password;
+        user.passwordDropped = true;
+      }
+    }
+
+    // A soft-deleted user is gone from the app; Supabase scrambles its email.
+    if (user.deletedAt) user.skipReason = "deleted in Supabase";
+    delete user.deletedAt;
 
     // Supabase stores E.164 without the leading + (14165550123); Clerk needs it.
     if (typeof user.phone === "string" && /^\d+$/.test(user.phone)) user.phone = `+${user.phone}`;

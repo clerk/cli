@@ -46,8 +46,10 @@ const EXPORT_QUERY = `
     raw_user_meta_data,
     raw_app_meta_data,
     banned_until,
+    -- Through to_jsonb so an older auth.users without the column still reads.
+    to_jsonb(u)->>'deleted_at' AS deleted_at,
     created_at
-  FROM auth.users
+  FROM auth.users u
   ORDER BY created_at
 `;
 

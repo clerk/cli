@@ -471,6 +471,29 @@ describe("firebase", () => {
 describe("supabase", () => {
   const base = { id: "sb1", email: "a@x.dev", email_confirmed_at: "2024-06-29 20:25:06.126079+00" };
 
+  // Supabase accepts argon2 hashes on import, so the hasher is read per user.
+  test.each([
+    ["$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy", "bcrypt"],
+    ["$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNo", "argon2id"],
+    ["$argon2i$v=19$m=4096,t=3,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNo", "argon2i"],
+  ])("detects the hasher for %p", (encrypted_password, hasher) => {
+    const user = one("supabase", { ...base, encrypted_password });
+    expect(user?.passwordHasher).toBe(hasher);
+    expect(user?.password).toBe(encrypted_password);
+  });
+
+  test("drops a hash no hasher fits, and imports the user", () => {
+    const user = one("supabase", { ...base, encrypted_password: "md5:abc" });
+    expect(user?.password).toBeUndefined();
+    expect(user?.passwordDropped).toBe(true);
+  });
+
+  test("skips a soft-deleted user", () => {
+    const user = one("supabase", { ...base, deleted_at: "2026-01-01 00:00:00+00" });
+    expect(user?.skipReason).toBe("deleted in Supabase");
+    expect("deletedAt" in (user ?? {})).toBe(false);
+  });
+
   test.each([
     ["14165550123", "+14165550123"],
     ["+14165550123", "+14165550123"],
