@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { startAuthServer } from "./auth-server.ts";
+import { parseCallback, startAuthServer } from "./auth-server.ts";
 import { AUTH_TIMEOUT_MS } from "./constants.ts";
 import { ERROR_CODE } from "./errors.ts";
 import { useCaptureLog } from "../test/lib/stubs.ts";
@@ -143,6 +143,29 @@ describe("auth-server", () => {
     expect(error).toMatchObject({ code: ERROR_CODE.OAUTH_PROVIDER_ERROR });
   });
 
+  // Paste-back sign-in wins while the wait is still open, and login carries on
+  // in the same process. A wait that never settled would pin the human-wait
+  // counter, so every later Ctrl-C would report a clean exit.
+  test("stop settles a pending callback wait", async () => {
+    const server = startAuthServer("test-state");
+
+    const waiting = server.waitForCallback();
+    server.stop();
+
+    await expect(waiting).rejects.toThrow("Authentication server stopped");
+  });
+
+  test("stop after the callback settled leaves the code in place", async () => {
+    const state = "test-state";
+    const server = startAuthServer(state);
+    const waiting = server.waitForCallback();
+
+    await fetch(`http://127.0.0.1:${server.port}/callback?code=auth-code-123&state=${state}`);
+    server.stop();
+
+    expect(await waiting).toEqual({ code: "auth-code-123" });
+  });
+
   test("root path returns waiting message", async () => {
     const server = startAuthServer("test-state");
 
@@ -151,5 +174,26 @@ describe("auth-server", () => {
     expect(text).toContain("waiting for authentication");
 
     server.stop();
+  });
+});
+
+describe("parseCallback", () => {
+  const callback = (query: string) => new URL(`http://127.0.0.1:54321/callback?${query}`);
+
+  test("returns the code when the state matches", () => {
+    expect(parseCallback(callback("code=abc&state=s1"), "s1")).toEqual({ ok: true, code: "abc" });
+  });
+
+  test.each([
+    ["a state mismatch", "code=abc&state=other", ERROR_CODE.OAUTH_STATE_MISMATCH, 400],
+    ["a missing state", "code=abc", ERROR_CODE.OAUTH_STATE_MISMATCH, 400],
+    ["a missing code", "state=s1", ERROR_CODE.OAUTH_NO_CODE, 400],
+    ["an OAuth error", "error=access_denied", ERROR_CODE.OAUTH_PROVIDER_ERROR, 200],
+  ])("rejects %s", (_label, query, code, status) => {
+    expect(parseCallback(callback(query), "s1")).toMatchObject({
+      ok: false,
+      error: { code },
+      status,
+    });
   });
 });
