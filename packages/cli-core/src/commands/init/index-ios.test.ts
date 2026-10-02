@@ -125,6 +125,9 @@ describe("public Apple init routing", () => {
       await expect(init({ yes: true, json, app: "app_requested" })).rejects.toMatchObject({
         code: ERROR_CODE.NOT_LINKED,
       });
+      expect(linkMod.link).toHaveBeenCalledWith(
+        expect.objectContaining({ app: "app_requested", agent: true }),
+      );
       expect(pullMod.pull).not.toHaveBeenCalled();
     });
 
