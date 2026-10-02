@@ -264,6 +264,32 @@ describe("rejects", () => {
     });
   });
 
+  describe("names Clerk refuses", () => {
+    test.each([
+      ["+447836887904"],
+      ["4165550123"],
+      ["ada@x.dev"],
+      ["https://spam.example"],
+      ["see x.com/win"],
+      ["<b>Ada</b>"],
+    ])("%p is dropped, and the user still imports", async (firstName) => {
+      const checks = await checkImport(input({ users: [user("a", { firstName, lastName: "L" })] }));
+      expect(checks.rejects).toEqual([]);
+      expect(checks.importable).toEqual([user("a", { lastName: "L" })]);
+      expect(checks.warnings).toContain(
+        "1 user has a name Clerk refuses (a phone number, email, URL or HTML), which is dropped",
+      );
+    });
+
+    test.each([["Ada"], ["Mary-Jane O'Neil"], ["Louis XIV"], ["Agent 007"], ["redacted.io"]])(
+      "%p is kept",
+      async (firstName) => {
+        const checks = await checkImport(input({ users: [user("a", { firstName })] }));
+        expect(checks.importable).toEqual([user("a", { firstName })]);
+      },
+    );
+  });
+
   describe("usernames", () => {
     const withUsernames = (rules: object) =>
       ({

@@ -589,8 +589,10 @@ after them. They sort the users three ways:
     (`CLERK_MIGRATE_DEV_USER_LIMIT` when Clerk raised it), counted in file
     order
 - **Imported, but not everything comes across** — fields the instance is not
-  set up to store, fields Clerk has no place for (`Clerk won't store: …`), and
-  passwords a source had to drop.
+  set up to store, fields Clerk has no place for (`Clerk won't store: …`),
+  passwords a source had to drop, emails Clerk refuses, and names Clerk refuses
+  (a phone number, email, URL or HTML: Better Auth's phone sign-up stores the
+  number as the name).
 - **Imported** — everyone else.
 
 Any reject stops the import, and it exits 2 with the command that adds

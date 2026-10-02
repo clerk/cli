@@ -244,6 +244,37 @@ function dropRefusedEmails(user: User): { user: User; refused: string[] } {
   return { user: kept ?? user, refused };
 }
 
+/**
+ * A name Clerk refuses, approximating clerk_go's `nameForAbusePrevention`: a
+ * phone number (10–15 digits, or fewer behind a `+`/`00`), an email, a URL with
+ * a scheme or path, or an HTML tag. Better Auth's phone sign-up stores the
+ * number as the name, so this is common, not exotic.
+ */
+function nameProblem(name: string): string | undefined {
+  for (const candidate of name.match(/(?:\+|00)?\d[\d\s().-]{5,}\d/g) ?? []) {
+    const digits = candidate.replace(/\D/g, "").length;
+    const international = /^(\+|00)/.test(candidate.trim());
+    if (digits <= 15 && (digits >= 10 || (international && digits >= 7))) return "a phone number";
+  }
+  if (/\S+@\S+\.\S+/.test(name)) return "an email address";
+  if (/:\/\/|\b[\w-]+(\.[\w-]+)+[/?#]/.test(name)) return "a URL";
+  if (/<\/?[a-z!][^>]*>/i.test(name)) return "HTML";
+  return undefined;
+}
+
+/** The user without a first or last name Clerk would refuse. */
+function dropRefusedNames(user: User): { user: User; dropped: boolean } {
+  let kept: User | undefined;
+  for (const field of ["firstName", "lastName"] as const) {
+    const value = user[field];
+    if (typeof value === "string" && nameProblem(value)) {
+      kept ??= { ...user };
+      delete kept[field];
+    }
+  }
+  return { user: kept ?? user, dropped: kept !== undefined };
+}
+
 const hasAnyIdentifier = (user: User) =>
   [...EMAIL_FIELDS, "phone", "phoneNumbers", "unverifiedPhoneNumbers", "username"].some((field) =>
     hasValue(user[field as keyof User]),
@@ -548,6 +579,13 @@ function dropDisabledIdentifiers(user: User, settings: UserSettingsJSON | null):
   return kept;
 }
 
+function refusedNameWarning(count: number): string[] {
+  if (count === 0) return [];
+  return [
+    `${plural(count, "user")} ${count === 1 ? "has" : "have"} a name Clerk refuses (a phone number, email, URL or HTML), which is dropped`,
+  ];
+}
+
 function placeholderWarning(count: number): string[] {
   if (count === 0) return [];
   return [
@@ -566,8 +604,11 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
 
   let candidates: User[] = [];
   const placeholderEmails = new Set<string>();
+  const refusedNames = new Set<string>();
   for (const original of input.users) {
-    const { user, refused } = dropRefusedEmails(original);
+    const named = dropRefusedNames(original);
+    if (named.dropped) refusedNames.add(original.userId);
+    const { user, refused } = dropRefusedEmails(named.user);
     const reason =
       original.skipReason ??
       (refused.length > 0 && !hasAnyIdentifier(user)
@@ -629,6 +670,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     warnings: [
       ...buildWarnings(input, candidates),
       ...placeholderWarning(candidates.filter((user) => placeholderEmails.has(user.userId)).length),
+      ...refusedNameWarning(candidates.filter((user) => refusedNames.has(user.userId)).length),
     ],
     fixes: buildFixes(input, input.users),
     ...(quota ? { quota } : {}),
