@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { getDoctorChecks, runChecks, type DoctorRunDependencies } from "./index.ts";
 import { checkEnvVars } from "./checks.ts";
 import type { DoctorContext } from "./types.ts";
+import { abortInFlight, interruptSignal, _resetInterruptState } from "../../lib/signals.ts";
 
 const ctx = {} as DoctorContext;
 function dependencies(native = true): DoctorRunDependencies {
@@ -60,4 +61,20 @@ test("a failed native inspection retains account diagnostics and gives a failing
     { name: "Common" },
     { name: "Apple-native inspection", status: "fail" },
   ]);
+});
+
+test("Ctrl+C during native inspection propagates instead of reporting a failed check", async () => {
+  const deps = dependencies();
+  deps.runIOSDoctorChecks = async () => {
+    abortInFlight();
+    interruptSignal().throwIfAborted();
+    throw new Error("unreachable");
+  };
+  try {
+    await expect(runChecks(ctx, {}, { dependencies: deps })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+  } finally {
+    _resetInterruptState();
+  }
 });

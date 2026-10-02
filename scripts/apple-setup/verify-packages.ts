@@ -121,11 +121,12 @@ for (const platform of ["ios", "macos"] as const)
         {
           env: developerDir ? { ...process.env, DEVELOPER_DIR: developerDir } : process.env,
           stdout: Bun.file(buildLog),
-          stderr: Bun.file(buildLog),
+          stderr: Bun.file(`${buildLog}.stderr`),
           timeout: 600_000,
         },
       );
-      if ((await child.exited) !== 0) throw new Error(`App build failed: ${buildLog}`);
+      if ((await child.exited) !== 0)
+        throw new Error(`App build failed: ${buildLog} and ${buildLog}.stderr`);
       console.log(
         JSON.stringify({
           format,

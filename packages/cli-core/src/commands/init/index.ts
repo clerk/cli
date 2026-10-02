@@ -693,7 +693,7 @@ async function authenticateAndLink(
 
   const linked = app || native ? await resolveProfile(cwd) : undefined;
   if (app && linked?.profile.appId !== app) {
-    if (profile) throwUserAbort();
+    if (profile && !isAgent() && !native?.agent) throwUserAbort();
     throw new CliError(
       `The project was not linked to the requested Clerk application ${app}. No keys were written.`,
       { code: ERROR_CODE.NOT_LINKED },

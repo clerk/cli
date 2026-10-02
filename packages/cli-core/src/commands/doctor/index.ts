@@ -6,6 +6,7 @@ import { log } from "../../lib/log.ts";
 import { CliError, ERROR_CODE, errorMessage } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { setTelemetryStage } from "../../lib/telemetry.ts";
+import { interruptSignal } from "../../lib/signals.ts";
 import { createDoctorContext } from "./context.ts";
 import {
   checkLoggedIn,
@@ -119,6 +120,7 @@ export async function runChecks(
       configuration: options.configuration,
     });
   } catch {
+    interruptSignal().throwIfAborted();
     return [
       ...common,
       {
