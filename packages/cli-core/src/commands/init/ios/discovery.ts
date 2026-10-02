@@ -47,10 +47,17 @@ async function workspaceProjects(root: string, workspace: string): Promise<strin
       const destination = resolve(kind === "container" ? base : group, path);
       if (kind === "absolute" && !isAbsolute(path))
         throw new Error("Invalid absolute workspace reference.");
-      const contained =
-        element.tagName === "Group" && destination === root
-          ? root
-          : await containedPath(root, destination);
+      let contained: string;
+      try {
+        contained =
+          element.tagName === "Group" && destination === root
+            ? root
+            : await containedPath(root, destination);
+      } catch (error) {
+        if (element.tagName === "FileRef" && (error as NodeJS.ErrnoException).code === "ENOENT")
+          continue;
+        throw error;
+      }
       if (element.tagName === "Group") await visit(element, contained);
       else if (contained.endsWith(".xcodeproj")) result.push(relative(root, contained));
       else if (contained.endsWith(".xcworkspace"))

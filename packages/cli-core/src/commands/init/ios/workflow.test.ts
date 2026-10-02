@@ -367,7 +367,10 @@ test("cancelled setup, invalid Xcode output, and failed process are bounded and 
       [process.execPath, "-e", "console.error('secret-build-setting');process.exit(1)"],
       f.root,
     ),
-  ).rejects.toThrow("Xcode inspection failed");
+  ).rejects.toThrow("Open the project, resolve its packages, and retry");
+  await expect(
+    runCommand([process.execPath, "-e", "console.log('x'.repeat(8_000_001))"], f.root),
+  ).rejects.toThrow("Xcode returned more output");
   await expect(
     runCommand(
       [process.execPath, "-e", "setInterval(()=>{},1000)"],
@@ -408,6 +411,31 @@ test("ordinary Bundle ID and existing Clerk prefix are discovered without questi
     prefixSource: "clerk-registration",
   });
   expect(preview.remote?.actions).toEqual([]);
+});
+
+test("invalid registered prefixes produce actionable identity diagnostics without writes", async () => {
+  const f = await discoveredFixture();
+  await applySetup(await prepareSetup(f.options, f.dependencies), f.dependencies);
+  f.state.applications[0]!.app_id_prefix = "invalid-prefix";
+  f.state.events.length = 0;
+  const options = { ...f.options, remote: { applicationId: identity.applicationId } };
+  await expect(prepareSetup(options, f.dependencies)).rejects.toMatchObject({
+    discovery: {
+      context: undefined,
+      prefixSource: "clerk-registration",
+      issues: [expect.stringContaining("Correct its ten-character prefix in the Clerk Dashboard")],
+    },
+  });
+  const report = await doctor(options, f.dependencies);
+  expect(report.identity?.issues).toEqual([expect.stringContaining("invalid Apple App ID Prefix")]);
+  expect(report.identity?.nativeApiEnabled).toBe(true);
+  expect(f.state.events).toEqual([]);
+  await expect(
+    prepareSetup(
+      { ...options, remote: { ...options.remote, appIdPrefix: "invalid-prefix" } },
+      f.dependencies,
+    ),
+  ).rejects.toThrow("Supply a valid ten-character Apple App ID Prefix");
 });
 
 test("Doctor reads Native API and registrations without requiring or prompting for a prefix", async () => {

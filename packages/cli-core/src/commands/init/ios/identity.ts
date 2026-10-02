@@ -115,7 +115,8 @@ export async function discoverRemote(
     );
     prefixSource = "confirmed";
   }
-  if (appIdPrefix !== undefined && !/^[A-Z0-9]{10}$/.test(appIdPrefix))
+  const invalidPrefix = appIdPrefix !== undefined && !/^[A-Z0-9]{10}$/.test(appIdPrefix);
+  if (invalidPrefix && prefixSource !== "clerk-registration")
     throw new Error("Supply a valid ten-character Apple App ID Prefix.");
   const issues = [
     ...(!bundleIdentifier
@@ -129,6 +130,11 @@ export async function discoverRemote(
     ...(conflict
       ? ["Existing native registrations conflict; review them in the Clerk Dashboard."]
       : []),
+    ...(invalidPrefix
+      ? [
+          "The matching Clerk registration has an invalid Apple App ID Prefix. Correct its ten-character prefix in the Clerk Dashboard, then retry.",
+        ]
+      : []),
   ];
   return {
     instance,
@@ -140,7 +146,7 @@ export async function discoverRemote(
     prefixSource,
     issues,
     context:
-      bundleIdentifier && appIdPrefix && !conflict
+      bundleIdentifier && appIdPrefix && !conflict && !invalidPrefix
         ? { ...instance, bundleIdentifier, appIdPrefix }
         : undefined,
   };

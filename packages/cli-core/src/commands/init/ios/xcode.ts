@@ -12,6 +12,8 @@ export type CommandRunner = (
   signal?: AbortSignal,
 ) => Promise<string>;
 
+class XcodeInspectionError extends Error {}
+
 export const runCommand: CommandRunner = async (command, root, signal) => {
   signal?.throwIfAborted();
   const project = command[command.indexOf("-project") + 1];
@@ -47,7 +49,7 @@ export const runCommand: CommandRunner = async (command, root, signal) => {
         if (item.done) break;
         size += item.value.byteLength;
         if (size > 8_000_000)
-          throw new Error("Xcode returned more output than this setup can inspect.");
+          throw new XcodeInspectionError("Xcode returned more output than this setup can inspect.");
         chunks.push(item.value);
       }
       return Buffer.concat(chunks).toString("utf8");
@@ -65,15 +67,17 @@ export const runCommand: CommandRunner = async (command, root, signal) => {
       child.exited,
     ]);
     signal?.throwIfAborted();
+    if (child.signalCode) throw new Error("Xcode was interrupted.");
     if (code !== 0)
-      throw new Error(
+      throw new XcodeInspectionError(
         "Xcode could not inspect this configuration. Open the project, resolve its packages, and retry; manual setup remains available.",
       );
     return output;
-  } catch {
+  } catch (error) {
     child.kill();
     await child.exited;
     signal?.throwIfAborted();
+    if (error instanceof XcodeInspectionError) throw error;
     throw new Error(
       "Xcode inspection failed or timed out. Resolve the project in Xcode or use manual setup.",
     );
