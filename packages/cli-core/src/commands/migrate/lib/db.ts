@@ -17,7 +17,7 @@
 
 import { Database } from "bun:sqlite";
 import { SQL } from "bun";
-import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
 
 export type DbType = "postgres" | "mysql" | "sqlite";
 
@@ -316,6 +316,20 @@ export function describeDbError(error: unknown, platform?: DbPlatform): string {
     return "The database rejected those credentials. Check the user and password in the connection string.";
   }
 
+  // Before the table check: Postgres words a missing column "does not exist" too.
+  if (/no such column|column .* does not exist|unknown column/i.test(message)) {
+    const needs: Partial<Record<DbPlatform, string>> = {
+      authjs:
+        "The Auth.js export reads `id`, `name`, `email` and `emailVerified`. For a schema that renames them " +
+        '(Prisma `@map("email_verified")`, for one), export the users with your own query, ' +
+        "`SELECT id, name, email, email_verified FROM …`, and import that file with the authjs source.",
+    };
+    return (
+      needs[platform as DbPlatform] ??
+      "The user table is missing a column the export reads. Check the schema matches the platform's default."
+    );
+  }
+
   if (/does not exist|unknown database|no such table|permission denied/i.test(message)) {
     if (platform === "supabase") {
       return (
@@ -341,7 +355,7 @@ function connectionError(
   const message = error instanceof Error ? error.message : String(error);
   return new CliError(
     `Could not connect to ${redactConnectionString(connectionString)}: ${message}\n\n${describeDbError(error, platform)}`,
-    { code: ERROR_CODE.USAGE_ERROR },
+    { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE },
   );
 }
 
@@ -365,7 +379,7 @@ export async function withDbClient<T>(
     if (error instanceof CliError) throw error;
     throw new CliError(
       `${error instanceof Error ? error.message : String(error)}\n\n${describeDbError(error, platform)}`,
-      { code: ERROR_CODE.USAGE_ERROR },
+      { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE },
     );
   } finally {
     await client.close().catch(() => {});
