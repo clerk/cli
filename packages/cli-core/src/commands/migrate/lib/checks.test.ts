@@ -89,9 +89,25 @@ describe("rejects", () => {
       }),
     ).toEqual({
       a: "duplicate source ID in the file",
-      b: "email is also used by another user in the file",
-      d: "phone number is also used by another user in the file",
+      b: "email is also used by an earlier user in the file, which is kept",
+      d: "phone number is also used by an earlier user in the file, which is kept",
     });
+  });
+
+  // The source's order decides which duplicate survives, so the dry run says.
+  test("a duplicate names the earlier user kept in its place", async () => {
+    const checks = await checkImport(
+      input({
+        users: [user("email|1", { email: "a@x.dev" }), user("auth0|1", { email: "a@x.dev" })],
+      }),
+    );
+    expect(checks.rejects).toEqual([
+      {
+        sourceId: "auth0|1",
+        reason: "email is also used by an earlier user in the file, which is kept",
+        keptSourceId: "email|1",
+      },
+    ]);
   });
 
   // G20: an unverified email is attached after the user exists, so it cannot

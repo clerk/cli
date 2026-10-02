@@ -566,10 +566,18 @@ after them. They sort the users three ways:
 - **Rejected** — users Clerk would refuse. Each gets the first reason that
   applies:
   - it failed schema validation
-  - its source ID, email or phone repeats an earlier user in the file
+  - its source requested a skip (Better Auth: an anonymous guest)
+  - its only email is one Clerk refuses (`.local`, `.invalid`, `.test`,
+    `.example`, `.arpa`). Such an email is dropped from any other user, with a
+    warning
+  - its source ID, email or phone repeats an earlier user in the file. The
+    first record in the file is kept, whatever either holds, and the reject
+    names it (`kept: …`)
   - it lacks an identifier the instance requires. An email or phone counts
     only when it is verified, because an unverified one is attached after the
     user exists
+  - its username breaks the instance's username rules (length, letters,
+    the allowed special characters)
   - its password is not the shape its hasher says (`bcrypt`, `scrypt_firebase`,
     `argon2i`/`argon2id` and `scrypt_werkzeug` are checked; other hashers are
     not)
@@ -577,7 +585,8 @@ after them. They sort the users three ways:
   - the instance already has a user with its source ID, email, phone or
     username (a batched `GET /v1/users` lookup, 100 values a request, through
     the scheduler). The users a continued run created do not count
-  - a development instance: it is past the 100-user headroom, counted in file
+  - a development instance: it is past the 100-user headroom
+    (`CLERK_MIGRATE_DEV_USER_LIMIT` when Clerk raised it), counted in file
     order
 - **Imported, but not everything comes across** — fields the instance is not
   set up to store, fields Clerk has no place for (`Clerk won't store: …`), and

@@ -37,7 +37,12 @@ import type { ClerkTarget } from "./target.ts";
 import type { ValidationFailure } from "./transform.ts";
 import { lookupUsers, type LookedUpUser } from "./user-lookup.ts";
 
-export type Reject = { sourceId: string; reason: string };
+export type Reject = {
+  sourceId: string;
+  reason: string;
+  /** For a duplicate: the earlier user in the file that is kept instead. */
+  keptSourceId?: string;
+};
 
 export type ReasonCount = { reason: string; count: number };
 
@@ -244,9 +249,17 @@ const hasAnyIdentifier = (user: User) =>
     hasValue(user[field as keyof User]),
   );
 
-/** First user in the file to claim each email, phone and source ID. */
-function findFileDuplicates(users: User[]): Map<string, string> {
+/**
+ * First user in the file to claim each email, phone and source ID.
+ *
+ * @returns Each duplicate's reason, and the earlier user kept in its place.
+ */
+function findFileDuplicates(users: User[]): {
+  reasons: Map<string, string>;
+  keptBy: Map<string, string>;
+} {
   const reasons = new Map<string, string>();
+  const keptBy = new Map<string, string>();
   const seenIds = new Set<string>();
   const emails = new Map<string, string>();
   const phones = new Map<string, string>();
@@ -268,18 +281,25 @@ function findFileDuplicates(users: User[]): Map<string, string> {
 
     const emailOwner = ownEmails.map((email) => emails.get(email.toLowerCase())).find(Boolean);
     const phoneOwner = ownPhones.map((phone) => phones.get(phone)).find(Boolean);
+    // The first record in the file wins, whatever either holds: the source's
+    // order decides, so the kept ID is named alongside the reject.
     if (emailOwner) {
-      reasons.set(user.userId, "email is also used by another user in the file");
+      reasons.set(user.userId, "email is also used by an earlier user in the file, which is kept");
+      keptBy.set(user.userId, emailOwner);
       continue;
     }
     if (phoneOwner) {
-      reasons.set(user.userId, "phone number is also used by another user in the file");
+      reasons.set(
+        user.userId,
+        "phone number is also used by an earlier user in the file, which is kept",
+      );
+      keptBy.set(user.userId, phoneOwner);
       continue;
     }
     for (const email of ownEmails) emails.set(email.toLowerCase(), user.userId);
     for (const phone of ownPhones) phones.set(phone, user.userId);
   }
-  return reasons;
+  return { reasons, keptBy };
 }
 
 /**
@@ -541,7 +561,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     reason: `invalid: ${failure.error}`,
   }));
 
-  const fileDuplicates = findFileDuplicates(input.users);
+  const { reasons: fileDuplicates, keptBy } = findFileDuplicates(input.users);
   const disabledProviders = findDisabledProviderRejects(input);
 
   let candidates: User[] = [];
@@ -560,8 +580,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         ? hashShapeProblem(user.password, user.passwordHasher)
         : undefined) ??
       disabledProviders.get(user.userId);
-    if (reason) rejects.push({ sourceId: user.userId, reason });
-    else {
+    if (reason) {
+      const kept = reason === fileDuplicates.get(user.userId) ? keptBy.get(user.userId) : undefined;
+      rejects.push({ sourceId: user.userId, reason, ...(kept ? { keptSourceId: kept } : {}) });
+    } else {
       candidates.push(user);
       if (refused.length > 0) placeholderEmails.add(user.userId);
     }

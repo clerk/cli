@@ -394,7 +394,11 @@ function printChecks(checks: ImportChecks): void {
     for (const { reason, count } of checks.rejectReasons) {
       const ids = checks.rejects
         .filter((reject) => reject.reason === reason)
-        .map((reject) => reject.sourceId);
+        .map((reject) =>
+          reject.keptSourceId
+            ? `${reject.sourceId} (kept: ${reject.keptSourceId})`
+            : reject.sourceId,
+        );
       const sample = ids.slice(0, REJECT_SAMPLE).join(", ");
       const more = ids.length > REJECT_SAMPLE ? `, and ${ids.length - REJECT_SAMPLE} more` : "";
       log.info(`      ${count}: ${reason}`);
@@ -503,8 +507,12 @@ function commandFor(options: MigrateRunOptions, fromExport: string | undefined, 
 
 /** Records the checks' rejects as skipped users, so the run says who they were. */
 function recordRejects(run: Run, checks: ImportChecks): void {
-  for (const { sourceId, reason } of checks.rejects) {
-    run.append({ sourceId, status: "skipped", reason });
+  for (const { sourceId, reason, keptSourceId } of checks.rejects) {
+    run.append({
+      sourceId,
+      status: "skipped",
+      reason: keptSourceId ? `${reason} (kept: ${keptSourceId})` : reason,
+    });
   }
 }
 
