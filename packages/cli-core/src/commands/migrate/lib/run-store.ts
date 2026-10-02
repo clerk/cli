@@ -36,9 +36,10 @@ export const RUNS_DIR_DESCRIPTION = `Where migration runs are kept (default: .cl
 export type RunKind = "import" | "undo" | "export";
 export type RunStatus = "running" | "complete" | "partial" | "undone";
 /**
- * `creating` is written just before `POST /v1/users`. As a user's latest line
- * it means the run stopped with that create in flight: the user may exist in
- * Clerk without its ID on record, so `undo` looks it up by `external_id`.
+ * `creating` is written as `POST /v1/users` goes out, and stays the latest line
+ * when no answer says whether the create landed (an abort, a network error, a
+ * 5xx). The user may then exist in Clerk without its ID on record, so `undo`
+ * and a continued run look it up by `external_id`.
  */
 export type UserStatus = "creating" | "created" | "failed" | "skipped" | "deleted" | "exported";
 
@@ -81,10 +82,18 @@ export type RunRecord = {
   counts: RunCounts;
 };
 
+/** An extra email or phone still to attach to a created user. */
+export type PendingIdentifier = { kind: "email" | "phone"; value: string; verified: boolean };
+
 export type UserLine = {
   sourceId: string;
   clerkId?: string;
   status: UserStatus;
+  /**
+   * On a `created` line: the extra identifiers not yet attached. A continued
+   * run attaches them; a later `created` line without it means they are done.
+   */
+  pending?: PendingIdentifier[];
   /** Why a user was skipped. */
   reason?: string;
   error?: string;
@@ -244,8 +253,26 @@ export function latestUserLines(runsDir: string, id: string): Map<string, UserLi
  * was interrupted, whatever its stored status says.
  */
 export function runState(runsDir: string, record: RunRecord): RunState {
-  if (record.finishedAt) return record.status;
+  // An interrupted run that was then undone has no finish time of its own.
+  if (record.finishedAt || record.status === "undone") return record.status;
   return liveLockPid(runsDir, record.id) === undefined ? "interrupted" : "running";
+}
+
+/**
+ * Clerk IDs that import runs other than `exceptId` record as created.
+ *
+ * A user found by `external_id` may belong to another run of the same source
+ * IDs, so lookups for in-flight creates leave these out.
+ */
+export function clerkIdsCreatedByOtherRuns(runsDir: string, exceptId: string): Set<string> {
+  const ids = new Set<string>();
+  for (const record of listRuns(runsDir)) {
+    if (record.kind !== "import" || record.id === exceptId) continue;
+    for (const line of latestUserLines(runsDir, record.id).values()) {
+      if (line.status === "created" && line.clerkId) ids.add(line.clerkId);
+    }
+  }
+  return ids;
 }
 
 /** Every readable run, newest first. */
@@ -295,7 +322,8 @@ export type Run = {
   /**
    * Counts the outcomes, settles the status and releases the lock.
    *
-   * `partial` when any user failed or was skipped, `complete` otherwise.
+   * `partial` when any user failed, was skipped or may not have been created,
+   * `complete` otherwise.
    */
   finish(): RunRecord;
 };
@@ -308,14 +336,10 @@ function openRun(runsDir: string, record: RunRecord): Run {
     runsDir,
     dir,
     record,
+    // Throws when the line cannot be written: a user created with no record is
+    // beyond both `undo` and a re-run, so the create it precedes must not go out.
     append(line) {
-      try {
-        fs.appendFileSync(usersFile, `${JSON.stringify(line)}\n`);
-      } catch (error) {
-        // A broken destination must not abort an in-flight migration; the run
-        // is still making real progress against the API.
-        log.warn(`Could not write to ${usersFile}: ${(error as Error).message}`);
-      }
+      fs.appendFileSync(usersFile, `${JSON.stringify(line)}\n`);
     },
     update(patch) {
       run.record = { ...run.record, ...patch };
@@ -323,7 +347,7 @@ function openRun(runsDir: string, record: RunRecord): Run {
     },
     finish() {
       const counts = countLines(latestUserLines(runsDir, run.record.id).values());
-      const unfinished = (counts.failed ?? 0) + (counts.skipped ?? 0);
+      const unfinished = (counts.failed ?? 0) + (counts.skipped ?? 0) + (counts.creating ?? 0);
       run.update({
         counts,
         status: unfinished > 0 ? "partial" : "complete",
@@ -363,6 +387,11 @@ export function startRun(runsDir: string, init: StartRunInit): Run {
  */
 export function continueRun(runsDir: string, record: RunRecord): Run {
   acquireLock(runsDir, record.id);
+  // A crash mid-write leaves a torn last line; end it so the next append
+  // starts a line of its own instead of fusing with it.
+  const usersFile = path.join(runDir(runsDir, record.id), USERS_FILE);
+  const written = fs.existsSync(usersFile) ? fs.readFileSync(usersFile, "utf-8") : "";
+  if (written && !written.endsWith("\n")) fs.appendFileSync(usersFile, "\n");
   const run = openRun(runsDir, record);
   run.record = { ...record, status: "running" };
   delete run.record.finishedAt;

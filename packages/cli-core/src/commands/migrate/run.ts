@@ -53,10 +53,12 @@ import {
   startRun,
   type Run,
   type RunRecord,
+  type UserLine,
 } from "./lib/run-store.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
 import { readSupabaseRows } from "./lib/supabase-providers.ts";
 import { printTarget, resolveClerkTarget } from "./lib/target.ts";
+import { findInFlight } from "./lib/user-lookup.ts";
 import {
   fileExists,
   getFileType,
@@ -64,7 +66,7 @@ import {
   resolveImportFilePath,
 } from "./lib/transform.ts";
 import { resolveSource, sourceKeys } from "./sources/registry.ts";
-import type { ImportSummary } from "./types.ts";
+import type { ImportSummary, User } from "./types.ts";
 import { promptForFile, promptForFirebaseHashConfig, promptForSource } from "./wizard.ts";
 import { login } from "../auth/login.ts";
 import { link } from "../link/index.ts";
@@ -348,7 +350,9 @@ export type ResumeCase =
  * - partial: continue it, retrying the users that failed or were skipped
  * - complete: nothing; the file is already in
  *
- * @throws UsageError when that run is still running in another process.
+ * @throws UsageError when that run is still running in another process, or
+ *   has an undo that never finished: some of its users are gone and some are
+ *   not, so neither continuing it nor starting over is safe.
  */
 export function findResume(
   runsDir: string,
@@ -370,8 +374,21 @@ export function findResume(
       `Run ${latest.id} is importing this file right now in another process. Wait for it to finish.`,
     );
   }
-  if (state === "complete") return { kind: "complete", record: latest };
   if (state === "undone") return { kind: "new" };
+
+  const undoRun = listRuns(runsDir).find(
+    (record) => record.kind === "undo" && record.undoes === latest.id,
+  );
+  if (undoRun && runState(runsDir, undoRun) !== "complete") {
+    throwUsageError(
+      `Run ${latest.id} has an undo that did not finish (run ${undoRun.id}). ` +
+        `Finish it with \`clerk migrate undo ${latest.id}\`, or pass --new-run to import into a new run.`,
+    );
+  }
+  // Undone in full, though the import run was never marked so.
+  if (undoRun) return { kind: "new" };
+
+  if (state === "complete") return { kind: "complete", record: latest };
   return {
     kind: "continue",
     record: latest,
@@ -505,9 +522,15 @@ function commandFor(options: MigrateRunOptions, fromExport: string | undefined, 
   return [...parts, ...extra].join(" ");
 }
 
-/** Records the checks' rejects as skipped users, so the run says who they were. */
-function recordRejects(run: Run, checks: ImportChecks): void {
+/**
+ * Records the checks' rejects as skipped users, so the run says who they were.
+ *
+ * An adopted user keeps its `creating` line: it exists in Clerk, and `undo`
+ * finds it only through that line.
+ */
+function recordRejects(run: Run, checks: ImportChecks, adopted: Map<string, string>): void {
   for (const { sourceId, reason, keptSourceId } of checks.rejects) {
+    if (adopted.has(sourceId)) continue;
     run.append({
       sourceId,
       status: "skipped",
@@ -573,13 +596,34 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       }
 
       // Users the run being continued already created are done: they are not
-      // checked or sent again, and finding them in the instance is expected.
+      // checked or sent again. Those whose extra identifiers never attached
+      // get just the attaches.
       const continued = resume.kind === "continue" ? resume.record : undefined;
       const done = new Map<string, string>();
+      const attachOnly: UserLine[] = [];
+      const inFlight: string[] = [];
       if (continued) {
         for (const line of latestUserLines(runsDir, continued.id).values()) {
-          if (line.status === "created" && line.clerkId) done.set(line.sourceId, line.clerkId);
+          if (line.status === "creating") inFlight.push(line.sourceId);
+          if (line.status !== "created" || !line.clerkId) continue;
+          done.set(line.sourceId, line.clerkId);
+          if (line.pending?.length) attachOnly.push(line);
         }
+      }
+
+      // Creates the run stopped with no answer to. Those Clerk holds are
+      // adopted: checked as usual, but never created again.
+      const schedule = createApiScheduler(limits.concurrencyLimit, limits.rateLimit);
+      const adopted = new Map<string, string>();
+      if (continued) {
+        const found = await findInFlight({
+          runsDir,
+          runId: continued.id,
+          sourceIds: inFlight,
+          secretKey,
+          schedule,
+        });
+        for (const user of found) adopted.set(user.sourceId, user.clerkId);
       }
 
       if (!options.json) {
@@ -589,6 +633,11 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
                 `${plural(done.size, "user")} already imported ${done.size === 1 ? "is" : "are"} left alone.`
             : "Starting a new run.",
         );
+        if (adopted.size > 0) {
+          log.info(
+            `${plural(adopted.size, "user")} whose create was cut off ${adopted.size === 1 ? "is" : "are"} already in the instance, and won't be created again.`,
+          );
+        }
       }
 
       const loaded = await withSpinner(`Loading users from ${file}...`, async () =>
@@ -599,15 +648,15 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       // An instruction about this import, not a prediction: users without a
       // password are left out of the job rather than recorded as skipped.
+      let withoutPassword: User[] = [];
       if (options.requirePassword) {
-        const withPassword = users.filter((user) => Boolean(user.password));
-        const dropped = users.length - withPassword.length;
-        if (dropped > 0 && !options.json) {
+        withoutPassword = users.filter((user) => !user.password && !adopted.has(user.userId));
+        if (withoutPassword.length > 0 && !options.json) {
           log.info(
-            `--require-password: leaving out ${plural(dropped, "user")} without a password.`,
+            `--require-password: leaving out ${plural(withoutPassword.length, "user")} without a password.`,
           );
         }
-        users = withPassword;
+        users = users.filter((user) => !withoutPassword.includes(user));
       }
 
       let supabaseRows: Record<string, unknown>[] | undefined;
@@ -626,7 +675,6 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         ]),
       );
 
-      const schedule = createApiScheduler(limits.concurrencyLimit, limits.rateLimit);
       const checks = await withSpinner("Checking users against the instance...", async (spinner) =>
         checkImport({
           users,
@@ -639,7 +687,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           target,
           secretKey,
           schedule,
-          continuedClerkIds: new Set(done.values()),
+          adoptedClerkIds: new Set(adopted.values()),
           spinner,
         }),
       );
@@ -689,7 +737,14 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         );
       }
 
-      if (checks.importable.length === 0 && checks.rejects.length === 0) {
+      if (
+        checks.importable.length === 0 &&
+        checks.rejects.length === 0 &&
+        withoutPassword.length === 0 &&
+        attachOnly.length === 0
+      ) {
+        // Settled, so a continued run is finished rather than left interrupted.
+        if (continued) continueRun(runsDir, continued).finish();
         if (options.json) preview({ nothingToImport: true });
         else log.warn("No users left to import.");
         return;
@@ -730,10 +785,17 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             file: { path: filePath, sha256 },
             ...(input.fromExport ? { fromExport: input.fromExport } : {}),
           });
-      recordRejects(run, checks);
+      recordRejects(run, checks, adopted);
+      for (const user of withoutPassword) {
+        run.append({
+          sourceId: user.userId,
+          status: "skipped",
+          reason: "no password (--require-password)",
+        });
+      }
 
       const summary =
-        checks.importable.length > 0
+        checks.importable.length > 0 || attachOnly.length > 0
           ? await withSpinner(
               `Importing users: [0/${checks.importable.length}]...`,
               async (spinner) =>
@@ -742,6 +804,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
                   secretKey,
                   limits,
                   record: run.append,
+                  attachOnly,
+                  adopted,
                   skipPasswordRequirement: !options.requirePassword,
                   spinner,
                 }),
@@ -767,7 +831,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
               result: {
                 created: summary.successful,
                 failed: summary.failed,
-                skipped: checks.rejects.length,
+                skipped: checks.rejects.length + withoutPassword.length,
                 errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
               },
             },
@@ -781,7 +845,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       log.blank();
       for (const line of formatSummary(
         summary,
-        checks.rejects.length,
+        checks.rejects.length + withoutPassword.length,
         record,
         run.dir,
         limits.instanceType,

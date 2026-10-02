@@ -8,34 +8,45 @@
  * with ten extra email addresses cannot burst past the instance's rate limit.
  */
 
-/** Runs `fn` once a slot is free and the pacing interval has elapsed. */
-export type ApiScheduler = <T>(fn: () => Promise<T>) => Promise<T>;
+/**
+ * Runs `fn` once a slot is free and the pacing interval has elapsed.
+ *
+ * `first` puts `fn` ahead of every queued call without it: a user's extra
+ * identifiers attach before the next user is created, so a run stopped midway
+ * leaves few users waiting on attaches.
+ */
+export type ApiScheduler = <T>(fn: () => Promise<T>, options?: { first?: boolean }) => Promise<T>;
 
 export function createApiScheduler(concurrencyLimit: number, rateLimit: number): ApiScheduler {
   const maxConcurrent = Math.max(1, Math.floor(concurrencyLimit));
   const intervalMs = Math.ceil(1000 / Math.max(1, rateLimit));
   const waiting: (() => void)[] = [];
+  const waitingFirst: (() => void)[] = [];
   let active = 0;
   let nextRequestAt = 0;
 
-  async function acquire(): Promise<void> {
+  async function acquire(first: boolean): Promise<void> {
     if (active < maxConcurrent) {
       active++;
       return Promise.resolve();
     }
-    return new Promise<void>((resolve) => waiting.push(resolve));
+    return new Promise<void>((resolve) => (first ? waitingFirst : waiting).push(resolve));
   }
 
   function release(): void {
-    const next = waiting.shift();
-    // Hand the slot straight to the next waiter; `active` is unchanged because
-    // the slot never actually frees up.
-    if (next) next();
-    else active--;
+    // One macrotask later, so the finished call's follow-up (a user's attaches)
+    // is queued before the slot is handed on.
+    setImmediate(() => {
+      const next = waitingFirst.shift() ?? waiting.shift();
+      // Hand the slot straight to the next waiter; `active` is unchanged
+      // because the slot never actually frees up.
+      if (next) next();
+      else active--;
+    });
   }
 
-  return async (fn) => {
-    await acquire();
+  return async (fn, options) => {
+    await acquire(options?.first ?? false);
     try {
       const now = Date.now();
       const waitMs = Math.max(0, nextRequestAt - now);

@@ -52,6 +52,7 @@ beforeEach(() => {
       return Response.json(
         url.searchParams
           .getAll("external_id")
+          .map((externalId) => externalId.replace(/^\+/, ""))
           .filter((externalId) => inFlight.has(externalId))
           .map((externalId) => ({ id: inFlight.get(externalId), external_id: externalId })),
       );
@@ -210,6 +211,32 @@ describe("deleting", () => {
       expect.arrayContaining(["user_a", "user_d"]),
     );
     expect(deletes()).toHaveLength(2);
+  });
+
+  // Run A stopped with d's create in flight; a later run B then created d.
+  // The user Clerk holds is B's, so undoing A leaves it alone.
+  test("leaves an in-flight user that another import run records as created", async () => {
+    const runA = startRun(runsDir, {
+      kind: "import",
+      target: { instanceId: "ins_1", env: "development" },
+      source: "clerk",
+    });
+    runA.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    runA.append({ sourceId: "d", status: "creating" });
+    const recordA = runA.finish();
+    const runB = startRun(runsDir, {
+      kind: "import",
+      target: { instanceId: "ins_1", env: "development" },
+      source: "clerk",
+    });
+    runB.append({ sourceId: "d", status: "created", clerkId: "user_d" });
+    runB.finish();
+    inFlight.set("d", "user_d");
+    instanceUsers.set("user_d", null);
+
+    await undo(recordA.id, withDir({ yes: true }));
+
+    expect(deletes().map((request) => request.url.split("/").pop())).toEqual(["user_a"]);
   });
 
   test("deletes what the import created, records an undo run, and marks the import undone", async () => {

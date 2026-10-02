@@ -40,7 +40,7 @@ import {
 } from "./lib/run-store.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
 import { describeTarget, printTarget, resolveClerkTarget, type ClerkTarget } from "./lib/target.ts";
-import { lookupUsers } from "./lib/user-lookup.ts";
+import { findInFlight, lookupUsers } from "./lib/user-lookup.ts";
 
 export type UndoOptions = {
   dryRun?: boolean;
@@ -150,30 +150,6 @@ function usersToDelete(
     users.push({ sourceId: line.sourceId, clerkId: line.clerkId });
   }
   return { users, unconfirmed, alreadyDeleted: deleted.size };
-}
-
-/**
- * Finds the users behind creates that were in flight when the run stopped.
- *
- * Matching on `external_id` alone is safe here: the import's checks refused
- * any source ID the instance already held, so a user carrying one of these
- * was created by this run.
- */
-async function findUnconfirmed(
-  sourceIds: string[],
-  secretKey: string,
-  schedule: ApiScheduler,
-): Promise<UndoUser[]> {
-  if (sourceIds.length === 0) return [];
-  const found = await lookupUsers({
-    filter: "external_id",
-    values: sourceIds,
-    secretKey,
-    schedule,
-  });
-  return found
-    .filter((user) => user.external_id && sourceIds.includes(user.external_id))
-    .map((user) => ({ sourceId: user.external_id as string, clerkId: user.id }));
 }
 
 /**
@@ -348,7 +324,13 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   const schedule = createApiScheduler(limits.concurrencyLimit, limits.rateLimit);
   const users = [
     ...recorded.users,
-    ...(await findUnconfirmed(recorded.unconfirmed, secretKey, schedule)),
+    ...(await findInFlight({
+      runsDir,
+      runId: record.id,
+      sourceIds: recorded.unconfirmed,
+      secretKey,
+      schedule,
+    })),
   ];
   const { present, gone, signedInSince } =
     users.length > 0

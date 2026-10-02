@@ -269,15 +269,117 @@ describe("importUsers", () => {
     });
 
     expect(summary).toMatchObject({ successful: 1, failed: 0 });
-    // On record once created, then again with what the attach added.
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toEqual({
-      sourceId: lines[0]!.sourceId,
-      clerkId: "user_created",
-      status: "created",
+    // On record once created, then with its attach pending, then with what
+    // the attach added. A refused attach is not retried, so nothing is pending.
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toEqual({ sourceId: "u1", clerkId: "user_created", status: "created" });
+    expect(lines[1]?.pending).toEqual([{ kind: "email", value: "b@x.dev", verified: true }]);
+    expect(lines[2]).toMatchObject({ status: "created", clerkId: "user_created" });
+    expect(lines[2]?.error).toContain("Failed to add additional email b@x.dev");
+    expect(lines[2]).not.toHaveProperty("pending");
+  });
+
+  test("retries an attach that hits a 429", async () => {
+    stub((url, attempt) =>
+      url.endsWith("/v1/email_addresses") && attempt === 1
+        ? clerkError(429, "slow down", { "retry-after": "1" })
+        : ok("user_created"),
+    );
+
+    await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
     });
-    expect(lines[1]?.status).toBe("created");
-    expect(lines[1]?.error).toContain("Failed to add additional email b@x.dev");
+
+    expect(requests.filter((r) => r.url.endsWith("/v1/email_addresses"))).toHaveLength(2);
+    expect(lines.at(-1)).not.toHaveProperty("error");
+    expect(lines.at(-1)).not.toHaveProperty("pending");
+  });
+
+  test("keeps an attach with no answer pending, for a continued run", async () => {
+    stub((url) =>
+      url.endsWith("/v1/email_addresses") ? clerkError(503, "unavailable") : ok("user_created"),
+    );
+
+    await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.pending).toEqual([{ kind: "email", value: "b@x.dev", verified: true }]);
+  });
+
+  // One slot: a user's attaches go ahead of the next queued create, so a run
+  // stopped midway leaves few users without their extra identifiers.
+  test("attaches a user's identifiers before the next queued create", async () => {
+    stub((url) => ok(url.endsWith("/v1/users") ? "user_created" : "idn_1"));
+
+    await importUsers({
+      users: [
+        user({ userId: "u1", email: ["a@x.dev", "b@x.dev"] }),
+        user({ userId: "u2", email: ["c@x.dev", "d@x.dev"] }),
+        user({ userId: "u3", email: ["e@x.dev", "f@x.dev"] }),
+      ],
+      secretKey: "sk_test_x",
+      limits: { ...LIMITS, concurrencyLimit: 1 },
+      record,
+    });
+
+    expect(requests.map((r) => new URL(r.url).pathname)).toEqual([
+      "/v1/users",
+      "/v1/email_addresses",
+      "/v1/users",
+      "/v1/email_addresses",
+      "/v1/users",
+      "/v1/email_addresses",
+    ]);
+  });
+
+  test("attachOnly sends just the pending attaches, and clears them", async () => {
+    stub(() => ok("idn_1"));
+
+    await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          clerkId: "user_1",
+          status: "created",
+          pending: [{ kind: "phone", value: "+15555550100", verified: false }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(requests.map((r) => [new URL(r.url).pathname, r.body])).toEqual([
+      [
+        "/v1/phone_numbers",
+        { user_id: "user_1", phone_number: "+15555550100", primary: false, verified: false },
+      ],
+    ]);
+    expect(lines.at(-1)).toEqual({ sourceId: "u1", clerkId: "user_1", status: "created" });
+  });
+
+  test("an adopted user is not created again; only its extras attach", async () => {
+    stub(() => ok("idn_1"));
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+      adopted: new Map([["u1", "user_found"]]),
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(requests.map((r) => new URL(r.url).pathname)).toEqual(["/v1/email_addresses"]);
+    expect(summary.successful).toBe(1);
+    expect(lines.at(-1)).toMatchObject({ clerkId: "user_found", status: "created" });
   });
 
   // Shapes from clerk_go's apierror: the country error carries its own code
@@ -384,6 +486,50 @@ describe("importUsers", () => {
     });
 
     expect(recordedBeforeAttach).toBe(true);
+  });
+
+  // A user is on record only once its create may land, so `undo` never
+  // looks up users that were still queued when the run stopped.
+  test("writes creating only as each POST /v1/users goes out", async () => {
+    const creatingAtFirstPost: number[] = [];
+    stub((url) => {
+      if (url.endsWith("/v1/users") && creatingAtFirstPost.length === 0) {
+        creatingAtFirstPost.push(allLines.filter((line) => line.status === "creating").length);
+      }
+      return ok("user_created");
+    });
+
+    await importUsers({
+      users: [user({ userId: "u1" }), user({ userId: "u2" }), user({ userId: "u3" })],
+      secretKey: "sk_test_x",
+      limits: { ...LIMITS, concurrencyLimit: 1 },
+      record,
+    });
+
+    expect(creatingAtFirstPost).toEqual([1]);
+  });
+
+  test.each([
+    ["a 5xx", () => clerkError(502, "bad gateway")],
+    [
+      "a network error",
+      () => {
+        throw new TypeError("fetch failed");
+      },
+    ],
+  ])("a create that gets %s keeps creating, not failed", async (_label, respond) => {
+    stub(respond);
+
+    const summary = await importUsers({
+      users: [user()],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(summary.failed).toBe(1);
+    expect(allLines.map((line) => line.status)).toEqual(["creating"]);
+    expect([...summary.errorBreakdown.keys()][0]).toContain("a re-run checks");
   });
 
   test("records a failed user and keeps going", async () => {

@@ -103,23 +103,30 @@ project's `.gitignore` first, because run files carry user data.
 
 Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 
-| File           | Contents                                                                                                                    |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, and the counts                       |
-| `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code` or `passwordDropped` when present |
-| `lock`         | The PID of the process writing the run, while it runs                                                                       |
+| File           | Contents                                                                                                                               |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, and the counts                                  |
+| `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code`, `pending` or `passwordDropped` when present |
+| `lock`         | The PID of the process writing the run, while it runs                                                                                  |
 
-A user's status is `created`, `failed`, `skipped`, `deleted` or `exported`. The last line
-for each `sourceId` wins. A `429` retry, an extra email or phone that did not
-attach, and a validation failure all land in `error`.
+A user's status is `creating`, `created`, `failed`, `skipped`, `deleted` or
+`exported`. The last line for each `sourceId` wins. A `429` retry, an extra
+email or phone that did not attach, and a validation failure all land in
+`error`.
 
-A run is `partial` when any user failed or was skipped, and `complete`
-otherwise. A run whose process died, or that never recorded a finish time,
+`creating` is written as a user's `POST /v1/users` goes out. It stays the
+latest line when no answer says whether the create landed: an abort, a
+network error, or a 5xx. A `created` line with `pending` lists the extra emails
+and phones not yet attached.
+
+A run is `partial` when any user failed, was skipped or is still `creating`,
+and `complete` otherwise. A run whose process died, or that never recorded a finish time,
 lists as `interrupted`. A lock held by a live process refuses a second writer
 with exit 2.
 
 `users.ndjson` writes are synchronous appends, so a run interrupted with Ctrl-C
-still leaves a complete record of everything already processed. An export's
+still leaves a complete record of everything already processed. A line that
+cannot be written stops that user's create from going out. An export's
 file lands in its run folder as `export.json` unless `--output` says otherwise.
 
 ### Why `users.ndjson` is NDJSON
@@ -573,8 +580,19 @@ instance ID; the latest matching import run decides what happens:
 | `partial`                                 | continues the same run, retrying the users that failed or were skipped |
 | `complete`                                | nothing: prints "Already imported in run …" and exits 0                |
 | `undone`                                  | a new run                                                              |
+| has an undo that did not finish           | exits 2, naming the `clerk migrate undo` that finishes it              |
 
 `--new-run` skips the lookup. A run another live process holds exits 2.
+
+A continued run also finishes what the last one left open:
+
+- A user still `creating` is looked up by `external_id`. One Clerk holds is
+  adopted as `created`, and not created again; one it doesn't is created.
+- A user whose `created` line has `pending` identifiers gets just those
+  attaches.
+
+`--require-password` records each user it leaves out as `skipped`, so the run
+ends `partial`.
 
 When an import completes, it names the folders it no longer needs: the export it
 read, which holds your users' data, and its own run, which only `undo` needs.
@@ -651,9 +669,10 @@ says so.
 
 Only the first verified email and phone go on `POST /v1/users`. Every
 additional verified identifier, and every unverified one, is attached
-afterwards with its own request. A failure there is logged and the user still
+afterwards with its own request, ahead of any create still queued, and backs
+off on a `429` like the create. A refusal there is logged and the user still
 counts as imported — a duplicate secondary email should not undo an otherwise
-successful user.
+successful user. An attach with no answer stays `pending` for a re-run.
 
 The first phone gets the same treatment when Clerk refuses it — a country the
 instance does not support, or a number that is not E.164 — and the user has an
@@ -712,10 +731,11 @@ what to delete: every source ID whose latest line is `created`, by the Clerk ID
 recorded beside it.
 
 The one search is for a source ID whose latest line is `creating`: the run
-stopped with that user's `POST /v1/users` in flight, so Clerk may hold the user
-without its ID on record. Those are looked up by `external_id`. That match is
-safe because the import's checks refused any source ID the instance already
-held, so a user the import did not create is never in scope.
+stopped with that user's `POST /v1/users` sent and unanswered, so Clerk may
+hold the user without its ID on record. Those are looked up by `external_id`.
+The import's checks refused any source ID the instance already held, but a
+later import of the same source IDs could have created one since. So a user
+that another import run in the runs folder records as created is left out.
 
 ```sh
 clerk migrate undo 20260929-141502-a1b2 --dry-run   # preview, delete nothing

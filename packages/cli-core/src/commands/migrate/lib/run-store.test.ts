@@ -89,12 +89,15 @@ describe("a run's life", () => {
     expect(fs.existsSync(path.join(run.dir, "lock"))).toBe(false);
   });
 
-  test.each([["failed"], ["skipped"]] as const)("finishes partial when a user was %s", (status) => {
-    const run = startRun(runsDir, init);
-    run.append({ sourceId: "a", status: "created" });
-    run.append({ sourceId: "b", status });
-    expect(run.finish().status).toBe("partial");
-  });
+  test.each([["failed"], ["skipped"], ["creating"]] as const)(
+    "finishes partial when a user was %s",
+    (status) => {
+      const run = startRun(runsDir, init);
+      run.append({ sourceId: "a", status: "created" });
+      run.append({ sourceId: "b", status });
+      expect(run.finish().status).toBe("partial");
+    },
+  );
 
   test("counts each source ID by its last line", () => {
     const run = startRun(runsDir, init);
@@ -112,6 +115,26 @@ describe("a run's life", () => {
 
     expect([...latestUserLines(runsDir, run.record.id).keys()]).toEqual(["a"]);
   });
+
+  test("a continued run starts a fresh line after one a crash cut short", () => {
+    const run = startRun(runsDir, init);
+    run.append({ sourceId: "a", status: "created" });
+    fs.appendFileSync(path.join(run.dir, "users.ndjson"), '{"sourceId":"b","sta');
+    fs.rmSync(path.join(run.dir, "lock"));
+
+    continueRun(runsDir, run.record).append({ sourceId: "c", status: "created" });
+
+    expect([...latestUserLines(runsDir, run.record.id).keys()]).toEqual(["a", "c"]);
+  });
+
+  // A user created with no line is beyond both undo and a re-run, so the
+  // create that would follow must not go out.
+  test("append throws when the line cannot be written", () => {
+    const run = startRun(runsDir, init);
+    fs.mkdirSync(path.join(run.dir, "users.ndjson"));
+
+    expect(() => run.append({ sourceId: "a", status: "creating" })).toThrow();
+  });
 });
 
 describe("locks and interruptions", () => {
@@ -128,6 +151,13 @@ describe("locks and interruptions", () => {
     const run = startRun(runsDir, init);
     fs.rmSync(path.join(run.dir, "lock"));
     expect(runState(runsDir, run.record)).toBe("interrupted");
+  });
+
+  // Undo marks an interrupted import undone, but leaves it with no finish time.
+  test("an interrupted run that was undone reads as undone", () => {
+    const run = startRun(runsDir, init);
+    fs.rmSync(path.join(run.dir, "lock"));
+    expect(runState(runsDir, { ...run.record, status: "undone" })).toBe("undone");
   });
 
   test("continuing takes the lock from a dead process and reopens the run", () => {

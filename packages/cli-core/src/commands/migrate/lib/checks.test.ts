@@ -29,7 +29,8 @@ beforeEach(() => {
   existing = [];
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = new URL(input.toString());
-    const wanted = new Set(url.searchParams.values());
+    // BAPI strips the `+` the lookup puts on each external_id.
+    const wanted = new Set([...url.searchParams.values()].map((value) => value.replace(/^\+/, "")));
     return Response.json(
       existing.filter((candidate) =>
         [
@@ -162,12 +163,12 @@ describe("rejects", () => {
     });
   });
 
-  // Continuing a run finds the users it created: that is expected, not a clash.
-  test("not a user the run being continued created", async () => {
+  // A continued run found this user behind its own in-flight create.
+  test("not a user the continued run adopted", async () => {
     existing = [{ id: "user_1", external_id: "mine" }];
 
     expect(
-      await reasonsOf({ users: [user("mine")], continuedClerkIds: new Set(["user_1"]) }),
+      await reasonsOf({ users: [user("mine")], adoptedClerkIds: new Set(["user_1"]) }),
     ).toEqual({});
   });
 

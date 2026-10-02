@@ -87,8 +87,11 @@ export type CheckInput = {
   target: ClerkTarget;
   secretKey: string;
   schedule: ApiScheduler;
-  /** Clerk IDs the run being continued created: finding them in the instance is expected. */
-  continuedClerkIds?: Set<string>;
+  /**
+   * Clerk IDs a continued run found behind its own in-flight creates: finding
+   * them in the instance is expected.
+   */
+  adoptedClerkIds?: Set<string>;
   spinner?: SpinnerControls;
 };
 
@@ -388,7 +391,7 @@ async function findInstanceDuplicates(
   };
 
   for (const existing of found) {
-    if (input.continuedClerkIds?.has(existing.id)) continue;
+    if (input.adoptedClerkIds?.has(existing.id)) continue;
     if (existing.external_id) {
       claim(byExternalId.get(existing.external_id), "already in the instance, with this source ID");
     }

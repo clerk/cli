@@ -18,10 +18,11 @@
 
 import { bapiRequest } from "../../lib/bapi.ts";
 import { BapiError } from "../../lib/errors.ts";
+import { interruptSignal } from "../../lib/signals.ts";
 import type { SpinnerControls } from "../../lib/spinner.ts";
 import type { ResolvedLimits } from "./lib/instance.ts";
 import { RateLimitExceededError, retryOn429 } from "./lib/retry.ts";
-import type { UserLine } from "./lib/run-store.ts";
+import type { PendingIdentifier, UserLine } from "./lib/run-store.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
 import type { ImportSummary, User } from "./types.ts";
 
@@ -174,18 +175,53 @@ type CreateContext = {
 };
 
 /**
- * Attaches one extra identifier.
+ * True when no answer says whether a request landed: an abort, a network
+ * error, or a 5xx after which Clerk may still have committed it. A 4xx, and a
+ * 429 that ran out of retries, are definite refusals.
+ */
+export function outcomeUnknown(error: unknown): boolean {
+  if (error instanceof RateLimitExceededError) return false;
+  if (error instanceof BapiError) return error.status >= 500;
+  return true;
+}
+
+/** The extra identifiers a user carries, in the order they are attached. */
+export function pendingIdentifiers(identifiers: Identifiers): PendingIdentifier[] {
+  return [
+    ...identifiers.additionalEmails.map((value) => ({
+      kind: "email" as const,
+      value,
+      verified: true,
+    })),
+    ...identifiers.unverifiedEmails.map((value) => ({
+      kind: "email" as const,
+      value,
+      verified: false,
+    })),
+    ...identifiers.additionalPhones.map((value) => ({
+      kind: "phone" as const,
+      value,
+      verified: true,
+    })),
+    ...identifiers.unverifiedPhones.map((value) => ({
+      kind: "phone" as const,
+      value,
+      verified: false,
+    })),
+  ];
+}
+
+/**
+ * Attaches one extra identifier, backing off on a 429.
  *
- * @returns A note describing the failure, or `undefined` when it attached.
- *   Never throws: the user itself was already created.
+ * @returns A note when Clerk refused it, `pending` when nothing says whether
+ *   it attached. Never throws: the user itself was already created.
  */
 async function attachIdentifier(
   ctx: CreateContext,
   clerkUserId: string,
-  kind: "email" | "phone",
-  value: string,
-  verified: boolean,
-): Promise<string | undefined> {
+  { kind, value, verified }: PendingIdentifier,
+): Promise<{ note?: string; pending?: boolean }> {
   const path = kind === "email" ? "/v1/email_addresses" : "/v1/phone_numbers";
   const body =
     kind === "email"
@@ -193,48 +229,75 @@ async function attachIdentifier(
       : { user_id: clerkUserId, phone_number: value, primary: false, verified };
 
   try {
-    await ctx.schedule(async () =>
-      bapiRequest({
-        method: "POST",
-        path,
-        secretKey: ctx.secretKey,
-        body: JSON.stringify(body),
-      }),
+    await retryOn429(async () =>
+      ctx.schedule(
+        async () =>
+          bapiRequest({
+            method: "POST",
+            path,
+            secretKey: ctx.secretKey,
+            body: JSON.stringify(body),
+          }),
+        { first: true },
+      ),
     );
-    return undefined;
+    return {};
   } catch (error) {
+    if (outcomeUnknown(error)) return { pending: true };
     const label = `${verified ? "additional" : "unverified"} ${kind} ${value}`;
-    return `Failed to add ${label}: ${(error as Error).message}`;
+    return { note: `Failed to add ${label}: ${(error as Error).message}` };
   }
 }
 
 /**
- * Creates one user, then attaches any additional identifiers it carries.
+ * Attaches each identifier. Extra identifiers are best-effort: a duplicate
+ * secondary email should not undo a user who was otherwise imported.
  *
- * @param onCreated - Called as soon as the user exists, before the attaches:
- *   those wait their turn on the shared scheduler, and a run stopped in that
- *   window must still have the user on record for `undo` and re-runs.
- * @returns The Clerk ID, and a note for each identifier that did not attach.
+ * @returns A note per identifier Clerk refused, and those still pending.
+ */
+async function attachAll(
+  ctx: CreateContext,
+  clerkUserId: string,
+  identifiers: PendingIdentifier[],
+): Promise<{ notes: string[]; pending: PendingIdentifier[] }> {
+  const results = await Promise.all(
+    identifiers.map(async (identifier) => attachIdentifier(ctx, clerkUserId, identifier)),
+  );
+  return {
+    notes: results.flatMap((result) => (result.note ? [result.note] : [])),
+    pending: identifiers.filter((_, index) => results[index]?.pending),
+  };
+}
+
+/**
+ * Creates one user, retrying without a phone Clerk refuses.
+ *
+ * @param sending - Called as each `POST /v1/users` goes out, so the run
+ *   records the user only once a create may actually land.
+ * @returns The Clerk ID, and a note when the phone was dropped.
  */
 async function createUser(
   ctx: CreateContext,
   user: User,
+  identifiers: Identifiers,
   skipPasswordRequirement: boolean,
-  onCreated: (clerkUserId: string) => void,
+  sending: () => void,
 ): Promise<{ clerkUserId: string; notes: string[] }> {
-  const identifiers = splitIdentifiers(user);
   const create = async (body: Record<string, unknown>) =>
-    ctx.schedule(async () =>
-      bapiRequest({
+    ctx.schedule(async () => {
+      // A Ctrl-C hands the slot on to queued creates; none of them was sent.
+      interruptSignal().throwIfAborted();
+      sending();
+      return bapiRequest({
         method: "POST",
         path: "/v1/users",
         secretKey: ctx.secretKey,
         body: JSON.stringify(body),
-      }),
-    );
+      });
+    });
 
   const body = buildCreateUserBody(user, identifiers, skipPasswordRequirement);
-  const phoneNotes: string[] = [];
+  const notes: string[] = [];
   let response;
   try {
     response = await create(body);
@@ -248,43 +311,31 @@ async function createUser(
     if (!phoneRefused || !identifiers.primaryEmail) throw error;
     const { phone_number: _dropped, ...withoutPhone } = body;
     response = await create(withoutPhone);
-    phoneNotes.push(
+    notes.push(
       `Failed to add phone ${identifiers.primaryPhone}: ${(error as BapiError).longMessage ?? (error as BapiError).message}`,
     );
   }
 
-  const clerkUserId = (response.body as { id?: string })?.id ?? "";
-  onCreated(clerkUserId);
-
-  // Extra identifiers are best-effort: a duplicate secondary email should not
-  // undo a user who was otherwise imported successfully.
-  const notes = await Promise.all([
-    ...identifiers.additionalEmails.map(async (email) =>
-      attachIdentifier(ctx, clerkUserId, "email", email, true),
-    ),
-    ...identifiers.unverifiedEmails.map(async (email) =>
-      attachIdentifier(ctx, clerkUserId, "email", email, false),
-    ),
-    ...identifiers.additionalPhones.map(async (phone) =>
-      attachIdentifier(ctx, clerkUserId, "phone", phone, true),
-    ),
-    ...identifiers.unverifiedPhones.map(async (phone) =>
-      attachIdentifier(ctx, clerkUserId, "phone", phone, false),
-    ),
-  ]);
-
-  return {
-    clerkUserId,
-    notes: [...phoneNotes, ...notes.filter((note): note is string => note !== undefined)],
-  };
+  return { clerkUserId: (response.body as { id?: string })?.id ?? "", notes };
 }
 
 export type ImportUsersOptions = {
   users: User[];
   secretKey: string;
   limits: ResolvedLimits;
-  /** Receives one line per user, as each one finishes. */
+  /** Receives each user's lines as they happen. */
   record: (line: UserLine) => void;
+  /**
+   * Users a continued run created whose extra identifiers never attached: their
+   * latest `created` line, with `pending`. Only the attaches are sent.
+   */
+  attachOnly?: UserLine[];
+  /**
+   * Source ID → Clerk ID for users whose create a stopped run sent with no
+   * answer, and which a continued run then found in the instance. They are
+   * not created again; only their extra identifiers are sent.
+   */
+  adopted?: Map<string, string>;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
   /** Carried into the summary so the report covers the whole file. */
@@ -296,7 +347,8 @@ export type ImportUsersOptions = {
  * Imports every user, concurrently and within the instance's rate limit.
  *
  * A failed user is recorded and the run continues; a 429 backs off (honouring
- * `Retry-After`) and retries up to {@link MAX_RETRIES} times.
+ * `Retry-After`) and retries up to {@link MAX_RETRIES} times. A create with no
+ * answer keeps its `creating` line, for a continued run or `undo` to resolve.
  */
 export async function importUsers(options: ImportUsersOptions): Promise<ImportSummary> {
   const {
@@ -304,6 +356,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     secretKey,
     limits,
     record,
+    attachOnly = [],
+    adopted = new Map<string, string>(),
     skipPasswordRequirement = true,
     validationFailed = 0,
     spinner,
@@ -325,54 +379,95 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       `Importing users: [${processed}/${total}] (${successful} succeeded, ${failed} failed)...`,
     );
 
-  // One line per user, written once it has finished: a retry that succeeded
-  // and an extra email that did not attach are both part of that line's story.
-  const recordFailure = (userId: string, message: string, code: string, notes: string[]) => {
+  const recordFailure = (
+    userId: string,
+    message: string,
+    code: string,
+    notes: string[],
+    unknown: boolean,
+  ) => {
     failed++;
     processed++;
     const normalized = normalizeErrorMessage(message);
     errorBreakdown.set(normalized, (errorBreakdown.get(normalized) ?? 0) + 1);
-    record({ sourceId: userId, status: "failed", error: [message, ...notes].join("; "), code });
+    // With no answer, the `creating` line stays the latest: Clerk may hold
+    // the user, and a re-run looks it up before creating it again.
+    if (!unknown) {
+      record({ sourceId: userId, status: "failed", error: [message, ...notes].join("; "), code });
+    }
     progress();
   };
 
-  const processUser = async (user: User): Promise<void> => {
-    record({ sourceId: user.userId, status: "creating" });
-    const retries: string[] = [];
-    const created = (clerkId: string, error?: string) =>
+  /**
+   * Attaches a created user's extra identifiers. The user goes on record with
+   * them `pending` first, so a run stopped before they attach can finish them.
+   */
+  const finishUser = async (line: UserLine, toAttach: PendingIdentifier[], notes: string[]) => {
+    const { error: _error, pending: _pending, ...base } = line;
+    if (toAttach.length > 0) record({ ...base, pending: toAttach });
+    const attached = await attachAll(ctx, base.clerkId ?? "", toAttach);
+    const error = [...notes, ...attached.notes].join("; ");
+    // A second line, which wins as the latest, adds what happened on the way.
+    if (toAttach.length > 0 || error) {
       record({
-        sourceId: user.userId,
-        clerkId,
-        status: "created",
+        ...base,
         ...(error ? { error } : {}),
-        ...(user.passwordDropped ? { passwordDropped: true } : {}),
+        ...(attached.pending.length > 0 ? { pending: attached.pending } : {}),
       });
-    try {
-      const { clerkUserId, notes } = await retryOn429(
-        async () => createUser(ctx, user, skipPasswordRequirement, (clerkId) => created(clerkId)),
-        { onRetry: ({ message }) => retries.push(message) },
-      );
-      successful++;
-      processed++;
-      // The user is already on record; a second line, which wins as the
-      // latest, adds what happened on the way.
-      const error = [...notes, ...retries].join("; ");
-      if (error) created(clerkUserId, error);
-      progress();
-    } catch (error) {
-      if (error instanceof RateLimitExceededError) {
-        recordFailure(user.userId, error.message, "429", retries);
-        return;
-      }
-
-      const apiError = error as BapiError;
-      const message = apiError.longMessage ?? apiError.message ?? "Unknown error";
-      recordFailure(user.userId, message, String(apiError.status ?? "unknown"), retries);
     }
   };
 
+  const processUser = async (user: User): Promise<void> => {
+    const retries: string[] = [];
+    const identifiers = splitIdentifiers(user);
+    let created: { clerkUserId: string; notes: string[] };
+    const adoptedId = adopted.get(user.userId);
+    try {
+      created = adoptedId
+        ? { clerkUserId: adoptedId, notes: [] }
+        : await retryOn429(
+            async () =>
+              createUser(ctx, user, identifiers, skipPasswordRequirement, () =>
+                record({ sourceId: user.userId, status: "creating" }),
+              ),
+            { onRetry: ({ message }) => retries.push(message) },
+          );
+    } catch (error) {
+      if (error instanceof RateLimitExceededError) {
+        recordFailure(user.userId, error.message, "429", retries, false);
+        return;
+      }
+      const apiError = error as BapiError;
+      const unknown = outcomeUnknown(error);
+      const message = apiError.longMessage ?? apiError.message ?? "Unknown error";
+      recordFailure(
+        user.userId,
+        unknown ? `${message} (Clerk may have created the user; a re-run checks)` : message,
+        String(apiError.status ?? "unknown"),
+        retries,
+        unknown,
+      );
+      return;
+    }
+
+    const line: UserLine = {
+      sourceId: user.userId,
+      clerkId: created.clerkUserId,
+      status: "created",
+      ...(user.passwordDropped ? { passwordDropped: true } : {}),
+    };
+    record(line);
+    await finishUser(line, pendingIdentifiers(identifiers), [...created.notes, ...retries]);
+    successful++;
+    processed++;
+    progress();
+  };
+
   progress();
-  await Promise.all(users.map(async (user) => processUser(user)));
+  await Promise.all([
+    ...users.map(async (user) => processUser(user)),
+    ...attachOnly.map(async (line) => finishUser(line, line.pending ?? [], [])),
+  ]);
 
   return { totalProcessed: total, successful, failed, validationFailed, errorBreakdown };
 }

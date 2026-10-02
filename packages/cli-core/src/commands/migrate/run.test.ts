@@ -118,7 +118,10 @@ describe("run", () => {
         return Response.json({ object: "total_count", total_count: stub.count ?? 0 });
       }
       if (method === "GET" && url.pathname === "/v1/users") {
-        const wanted = new Set(url.searchParams.values());
+        // BAPI strips the `+` the lookup puts on each external_id.
+        const wanted = new Set(
+          [...url.searchParams.values()].map((value) => value.replace(/^\+(?!\d)/, "")),
+        );
         return Response.json(
           (stub.existing ?? []).filter(
             (user) =>
@@ -356,6 +359,13 @@ describe("run", () => {
 
     expect(created()).toEqual(["u1"]);
     expect(captured.err).toContain("leaving out 1 user without a password");
+    // On record, so the run is partial rather than "Already imported".
+    const [record] = listRuns(runsDir());
+    expect(latestUserLines(runsDir(), record!.id).get("u2")).toMatchObject({
+      status: "skipped",
+      reason: "no password (--require-password)",
+    });
+    expect(record?.status).toBe("partial");
   });
 
   test("aborts before any API call when the hasher is unrecognized", async () => {
@@ -455,6 +465,107 @@ describe("run", () => {
 
       expect(created()).toEqual(["u2"]);
       expect(captured.err).toContain("which was interrupted");
+    });
+
+    /** Rewrites a finished run as one a crash stopped: no finish time. */
+    const interrupt = (id: string, patch: Record<string, unknown> = {}) => {
+      const record = readRun(runsDir(), id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(
+        path.join(runsDir(), id, "run.json"),
+        JSON.stringify({ ...record, ...patch }),
+      );
+    };
+
+    // The create went out and the run stopped before the answer came back.
+    test("an interrupted run adopts a user Clerk created with no ID on record", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating" })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({ existing: [{ id: "user_found", external_id: "u2" }] });
+      await run(baseOptions);
+
+      expect(created()).toEqual([]);
+      expect(captured.err).toContain("1 user whose create was cut off is already in the instance");
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+      });
+      expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
+    });
+
+    test("an interrupted run creates a user whose in-flight create never landed", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating" })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u2"]);
+    });
+
+    test("a continued run with nothing left to do is finished", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      interrupt(first!.id);
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(created()).toEqual([]);
+      expect(captured.err).toContain("No users left to import");
+      expect(readRun(runsDir(), first!.id)).toMatchObject({ status: "complete" });
+      expect(readRun(runsDir(), first!.id)?.finishedAt).toBeDefined();
+    });
+
+    // "Interrupted, so undo it and start over": the undo marks the run undone
+    // but leaves it with no finish time.
+    test("an interrupted run that was then undone is imported again as a new run", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      interrupt(first!.id, { status: "undone" });
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u1", "u2"]);
+      expect(listRuns(runsDir()).filter((record) => record.kind === "import")).toHaveLength(2);
+    });
+
+    test("a run with an undo that did not finish refuses with exit 2", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      const undoRun = startRun(runsDir(), {
+        kind: "undo",
+        target: { instanceId: "ins_1" },
+        undoes: first!.id,
+      });
+      undoRun.append({ sourceId: "u1", status: "deleted", clerkId: "user_u1" });
+      undoRun.append({ sourceId: "u2", status: "failed", clerkId: "user_u2" });
+      undoRun.finish();
+      requests = [];
+
+      const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain(`clerk migrate undo ${first!.id}`);
+      expect(created()).toEqual([]);
     });
 
     test("an undone run is imported again as a new run", async () => {
