@@ -10,6 +10,7 @@ import {
   plapiMod,
 } from "../../test/lib/init-harness.ts";
 import * as apple from "./ios/coordinator.ts";
+import { ERROR_CODE } from "../../lib/errors.ts";
 import { init } from "./index.ts";
 
 describe("public Apple init routing", () => {
@@ -51,6 +52,17 @@ describe("public Apple init routing", () => {
     await expect(init({ yes: true })).rejects.toThrow("Select a Clerk application with --app");
     expect(loginMod.login).not.toHaveBeenCalled();
   });
+  test("an unlinked agent can authenticate before being asked to select an application", async () => {
+    native(true, null);
+    const run = spyOn(apple, "runAppleInit").mockImplementation(async (_options, authenticate) => {
+      await authenticate();
+    });
+    track(run);
+    await expect(init({ yes: true })).rejects.toThrow("Select a Clerk application with --app");
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, embedded: true });
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(pullMod.pull).not.toHaveBeenCalled();
+  });
   test("core SDK plus prebuilt UI fails before setup", async () => {
     native();
     const run = spyOn(apple, "runAppleInit").mockResolvedValue();
@@ -62,6 +74,23 @@ describe("public Apple init routing", () => {
   });
 
   for (const json of [false, true]) {
+    test(`an Apple agent reports a post-link mismatch as failure (json=${json})`, async () => {
+      native(!json);
+      spyOn(config, "resolveProfile").mockResolvedValue({
+        profile: { appId: "app_existing" },
+      } as never);
+      const run = spyOn(apple, "runAppleInit").mockImplementation(
+        async (_options, authenticate) => {
+          await authenticate();
+        },
+      );
+      track(run);
+      await expect(init({ yes: true, json, app: "app_requested" })).rejects.toMatchObject({
+        code: ERROR_CODE.NOT_LINKED,
+      });
+      expect(pullMod.pull).not.toHaveBeenCalled();
+    });
+
     test(`an unauthenticated Apple agent can log in and continue (json=${json})`, async () => {
       native(!json, null);
       spyOn(config, "resolveProfile")
