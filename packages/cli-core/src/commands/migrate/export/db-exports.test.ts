@@ -20,7 +20,7 @@ import { buildAuthJsExport, buildAuthJsQuery, exportAuthJs, fetchAuthJsUsers } f
 import {
   buildBetterAuthExport,
   buildBetterAuthQuery,
-  detectPluginColumns,
+  detectSchema,
   exportBetterAuth,
   PLUGIN_COLUMNS,
 } from "./betterauth.ts";
@@ -272,19 +272,19 @@ describe("authjs export", () => {
 describe("betterauth export", () => {
   test("detects only the plugin columns that exist", async () => {
     await withClient(betterAuthDb(["username", "banned"]), async (client) => {
-      expect([...(await detectPluginColumns(client))].sort()).toEqual(["banned", "username"]);
+      expect([...(await detectSchema(client)).plugins].sort()).toEqual(["banned", "username"]);
     });
   });
 
   test("detects nothing on a core-only schema", async () => {
     await withClient(betterAuthDb([]), async (client) => {
-      expect((await detectPluginColumns(client)).size).toBe(0);
+      expect((await detectSchema(client)).plugins.size).toBe(0);
     });
   });
 
   test("detects every plugin column when all are present", async () => {
     await withClient(betterAuthDb([...PLUGIN_COLUMNS]), async (client) => {
-      expect((await detectPluginColumns(client)).size).toBe(PLUGIN_COLUMNS.length);
+      expect((await detectSchema(client)).plugins.size).toBe(PLUGIN_COLUMNS.length);
     });
   });
 
@@ -292,7 +292,7 @@ describe("betterauth export", () => {
   // the columns are detected rather than assumed.
   test("selects only detected columns", async () => {
     await withClient(betterAuthDb(["username"]), async (client) => {
-      const query = buildBetterAuthQuery(client, await detectPluginColumns(client));
+      const query = buildBetterAuthQuery(client, await detectSchema(client));
       expect(query).toContain('"username"');
       expect(query).not.toContain('"twoFactorEnabled"');
     });
@@ -304,7 +304,7 @@ describe("betterauth export", () => {
       [{ id: "u1", email: "a@x.dev", username: "a" }],
     );
     const rows = await withClient(file, async (client) =>
-      client.query(buildBetterAuthQuery(client, await detectPluginColumns(client))),
+      client.query(buildBetterAuthQuery(client, await detectSchema(client))),
     );
     expect(rows).toHaveLength(1);
   });
@@ -320,9 +320,46 @@ describe("betterauth export", () => {
       ],
     );
     const rows = await withClient(file, async (client) =>
-      client.query(buildBetterAuthQuery(client, new Set())),
+      client.query(buildBetterAuthQuery(client, await detectSchema(client))),
     );
     expect(rows).toHaveLength(2);
+  });
+
+  // Better Auth's Drizzle generator writes snake_case unless `camelCase: true`,
+  // and `usePlural: true` pluralizes the tables.
+  test.each([
+    ["snake_case columns", "user", "account"],
+    ["snake_case columns and plural tables", "users", "accounts"],
+  ])("reads a Drizzle schema with %s", async (_label, userTable, accountTable) => {
+    const file = makeDb((db) => {
+      db.run(
+        `CREATE TABLE "${userTable}" (id TEXT PRIMARY KEY, email TEXT, email_verified INTEGER, name TEXT,
+         created_at TEXT, updated_at TEXT, ban_expires TEXT, banned INTEGER)`,
+      );
+      db.run(
+        `CREATE TABLE "${accountTable}" (id TEXT, user_id TEXT, provider_id TEXT, password TEXT)`,
+      );
+      db.run(
+        `INSERT INTO "${userTable}" (id, email, email_verified, banned) VALUES ('u1', 'a@x.dev', 1, 1)`,
+      );
+      db.run(`INSERT INTO "${accountTable}" VALUES ('a1', 'u1', 'credential', 'salt:hash')`);
+    });
+
+    const { rows, schema } = await withClient(file, async (client) => {
+      const detected = await detectSchema(client);
+      return { rows: await client.query(buildBetterAuthQuery(client, detected)), schema: detected };
+    });
+
+    expect([...schema.plugins].sort()).toEqual(["banExpires", "banned"]);
+    // Read back under the camelCase names the rest of the export expects.
+    expect(rows).toEqual([
+      expect.objectContaining({
+        id: "u1",
+        emailVerified: 1,
+        banned: 1,
+        password_hash: "salt:hash",
+      }),
+    ]);
   });
 
   test("renames camelCase columns onto what the transformer reads", () => {

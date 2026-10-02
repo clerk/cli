@@ -49,64 +49,102 @@ export type PluginColumn = (typeof PLUGIN_COLUMNS)[number];
 /** Columns every Better Auth install has. */
 const CORE_COLUMNS = ["id", "email", "emailVerified", "name", "createdAt", "updatedAt"] as const;
 
+/** How one Better Auth database names its tables and columns. */
+export type BetterAuthSchema = {
+  userTable: string;
+  accountTable: string;
+  /**
+   * The column for a field. Better Auth's Drizzle generator writes snake_case
+   * (`email_verified`) unless the project sets `camelCase: true`; its Kysely
+   * and Prisma setups keep camelCase.
+   */
+  column: (field: string) => string;
+  /** The plugin columns this database has. */
+  plugins: Set<PluginColumn>;
+};
+
+/** `emailVerified` → `email_verified`, as Better Auth's Drizzle generator does it. */
+function toSnakeCase(field: string): string {
+  return field
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .replace(/([a-z\d])([A-Z])/g, "$1_$2")
+    .toLowerCase();
+}
+
 /**
- * Asks the schema which plugin columns exist.
+ * Every column of a table, or an empty set when there is no such table.
  *
  * SQLite has no `information_schema`, so it goes through `PRAGMA` — and the
  * PRAGMA takes the table name inline rather than as a bind parameter.
  */
-export async function detectPluginColumns(client: DbClient): Promise<Set<PluginColumn>> {
-  const present = new Set<PluginColumn>();
-
+async function tableColumns(client: DbClient, table: string): Promise<Set<string>> {
   if (client.dbType === "sqlite") {
-    const rows = await client.query<{ name: string }>(`PRAGMA table_info(${client.quote("user")})`);
-    const columns = new Set(rows.map((row) => row.name));
-    for (const column of PLUGIN_COLUMNS) {
-      if (columns.has(column)) present.add(column);
-    }
-    return present;
+    const rows = await client.query<{ name: string }>(`PRAGMA table_info(${client.quote(table)})`);
+    return new Set(rows.map((row) => row.name));
   }
-
   const scope = client.dbType === "mysql" ? "DATABASE()" : "current_schema()";
-  const placeholders = PLUGIN_COLUMNS.map((_, index) => client.placeholder(index + 1)).join(", ");
-
   const rows = await client.query<{ column_name?: string; COLUMN_NAME?: string }>(
     `SELECT column_name FROM information_schema.columns
-     WHERE table_name = 'user' AND table_schema = ${scope}
-       AND column_name IN (${placeholders})`,
-    [...PLUGIN_COLUMNS],
+     WHERE table_name = ${client.placeholder(1)} AND table_schema = ${scope}`,
+    [table],
   );
+  // MySQL 8 answers with an upper-case column label.
+  return new Set(rows.map((row) => row.column_name ?? row.COLUMN_NAME ?? ""));
+}
 
-  for (const row of rows) {
-    // MySQL 8 answers with an upper-case column label.
-    const name = (row.column_name ?? row.COLUMN_NAME) as PluginColumn | undefined;
-    if (name && (PLUGIN_COLUMNS as readonly string[]).includes(name)) present.add(name);
+/** Table names to try, in order: Better Auth's default, then `usePlural: true`. */
+const TABLE_CANDIDATES = [
+  ["user", "account"],
+  ["users", "accounts"],
+] as const;
+
+/**
+ * Asks the database how it names Better Auth's tables and columns, and which
+ * plugin columns it has. Selecting a column that is not there fails the whole
+ * query, so nothing is assumed.
+ */
+export async function detectSchema(client: DbClient): Promise<BetterAuthSchema> {
+  for (const [userTable, accountTable] of TABLE_CANDIDATES) {
+    const columns = await tableColumns(client, userTable);
+    if (columns.size === 0) continue;
+    const snake = !columns.has("emailVerified") && columns.has("email_verified");
+    const column = (field: string) => (snake ? toSnakeCase(field) : field);
+    const plugins = new Set(PLUGIN_COLUMNS.filter((field) => columns.has(column(field))));
+    return { userTable, accountTable, column, plugins };
   }
-
-  return present;
+  // No table found: the query names the default, and its "no such table"
+  // error carries the hint.
+  return {
+    userTable: "user",
+    accountTable: "account",
+    column: (field) => field,
+    plugins: new Set(),
+  };
 }
 
 /**
- * Builds the SELECT, including only the plugin columns that exist.
+ * Builds the SELECT, including only the plugin columns that exist. Each column
+ * comes back under its camelCase name, however the database spells it.
  *
- * @param pluginColumns - From {@link detectPluginColumns}.
+ * @param schema - From {@link detectSchema}.
  */
-export function buildBetterAuthQuery(client: DbClient, pluginColumns: Set<PluginColumn>): string {
+export function buildBetterAuthQuery(client: DbClient, schema: BetterAuthSchema): string {
   const q = (identifier: string) => client.quote(identifier);
+  const { column } = schema;
+  const select = (field: string) =>
+    column(field) === field ? `u.${q(field)}` : `u.${q(column(field))} AS ${q(field)}`;
   const selected = [
-    ...CORE_COLUMNS.map((column) => `u.${q(column)}`),
-    ...PLUGIN_COLUMNS.filter((column) => pluginColumns.has(column)).map(
-      (column) => `u.${q(column)}`,
-    ),
+    ...CORE_COLUMNS.map(select),
+    ...PLUGIN_COLUMNS.filter((field) => schema.plugins.has(field)).map(select),
   ];
 
   // LEFT JOIN, not INNER: a user who only ever signed in with OAuth has no
   // credential account, and dropping them would silently shrink the export.
   return (
     `SELECT ${selected.join(", ")}, a.${q("password")} AS ${q("password_hash")} ` +
-    `FROM ${q("user")} u ` +
-    `LEFT JOIN ${q("account")} a ON a.${q("userId")} = u.${q("id")} ` +
-    `AND a.${q("providerId")} = 'credential' ` +
+    `FROM ${q(schema.userTable)} u ` +
+    `LEFT JOIN ${q(schema.accountTable)} a ON a.${q(column("userId"))} = u.${q("id")} ` +
+    `AND a.${q(column("providerId"))} = 'credential' ` +
     `ORDER BY u.${q("id")} ASC`
   );
 }
@@ -184,9 +222,9 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
       async (connectionString) =>
         withSpinner("Reading the user table...", async () =>
           withDbClient(connectionString, "betterauth", async (client) => {
-            const plugins = await detectPluginColumns(client);
-            const rows = await client.query<BetterAuthRow>(buildBetterAuthQuery(client, plugins));
-            return { rows, plugins };
+            const schema = await detectSchema(client);
+            const rows = await client.query<BetterAuthRow>(buildBetterAuthQuery(client, schema));
+            return { rows, plugins: schema.plugins };
           }),
         ),
     );

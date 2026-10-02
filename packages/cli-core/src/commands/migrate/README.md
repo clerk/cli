@@ -374,7 +374,10 @@ The verified column is read as `emailVerified`, or `email_verified` on a legacy
 NextAuth table. Auth.js core stores no passwords, so its users arrive without
 credentials.
 
-**`betterauth` detects its plugin columns from the schema.** The username
+**`betterauth` reads its schema before it queries.** It finds the tables
+(`user` and `account`, or `users` and `accounts` under `usePlural: true`), how
+the columns are spelled (camelCase, or the snake_case Better Auth's Drizzle
+generator writes by default), and which plugin columns exist. The username
 plugin adds `username`, admin adds `banned` (carried only while `banExpires` is
 unset or in the future), phone-number adds `phoneNumber`, and so on; selecting a column that is not there fails the whole query, and the
 database answers the question better than the user can. Passwords come from a
