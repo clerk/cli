@@ -48,7 +48,7 @@ bun run test:e2e:op  # Run E2E tests with secrets resolved from 1Password (prefe
 bun run test:e2e     # Run E2E tests with env vars already set (used by CI)
 ```
 
-Locally, prefer `bun run test:e2e:op` so secrets are injected from 1Password in-memory and never written to disk. `bun run test:e2e` is for CI or for cases where the required env vars are already exported.
+Locally, prefer `bun run test:e2e:op` so secrets are injected from 1Password in-memory and never written to disk. `bun run test:e2e` is for CI or for cases where the required env vars are already exported. Both run `bun test` with `--no-env-file`, so a `.env.local` pointing the CLI at a local `clerk_go` stack can't send the production test secrets there.
 
 CI runs `bun run format:check` (fails if unformatted), `bun run lint`, `bun run test`, and `bun run test:e2e` on every PR to `main`. E2E tests only run for PRs from the same repository (not external forks) and target the production Clerk API with a dedicated test application.
 
