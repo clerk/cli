@@ -79,6 +79,8 @@ An explicit `--project` selects native Apple setup, including nested projects or
 workspaces in repositories whose root has no framework marker or contains a web app.
 Bundle ID capitalization must match the existing Clerk registration; a mismatch
 stops setup before applying edits and reports both values for correction.
+On macOS, sandbox networking is configured whether sandboxing comes from Xcode
+build settings or the selected entitlement file.
 
 `--dry-run --json` uses Xcode for inspection but does not authenticate, fetch Clerk
 settings, apply setup, or initiate package resolution. If unresolved dependencies

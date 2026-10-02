@@ -179,6 +179,24 @@ describe("link", () => {
     }
   });
 
+  test("embedded agent intent relinks without prompts even in global human mode", async () => {
+    mockIsAgent.mockReturnValue(false);
+    mockGetToken.mockResolvedValue("token");
+    mockResolveProfile.mockResolvedValue({
+      path: "/repo/.git",
+      profile: { appId: "app_old", instances: { development: "ins_old" } },
+    });
+    mockFetchApplication.mockResolvedValue(mockApp);
+    await runLink({ app: "app_123", skipIfLinked: true, embedded: true, agent: true });
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockSetProfile).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ appId: "app_123" }),
+    );
+    expect(mockSearch).not.toHaveBeenCalled();
+    expect(captured.out).toBe("");
+  });
+
   describe("agent mode", () => {
     test("links directly with --app", async () => {
       mockIsAgent.mockReturnValue(true);

@@ -697,7 +697,7 @@ async function authenticateAndLink(
     app,
     cwd,
     createIfMissing,
-    ...(native && { skipAutolink: true, embedded: true }),
+    ...(native && { skipAutolink: true, embedded: true, agent: native.agent }),
   });
 
   const linked = app || native ? await resolveProfile(cwd) : undefined;

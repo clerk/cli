@@ -34,6 +34,10 @@ creates a fresh app named after the project instead of erroring. The CLI does
 not expose `createIfMissing` as a flag — it is library-only and reserved for
 `clerk init`'s flow.
 
+Embedded callers can pass their effective agent mode internally. Native JSON init
+uses this to relink an explicitly selected application without confirmation, even
+when the global mode is human. Other callers retain the global mode by default.
+
 ## Flow
 
 1. Resolves the normalized git remote URL (e.g., `github.com/org/repo`) for cross-clone matching

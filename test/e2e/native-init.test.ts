@@ -295,6 +295,40 @@ test.each(PLATFORMS.filter((item) => item.fixture !== "ios" || process.platform 
                 entry.includes(".clerk-backup-") || entry.startsWith("?? MyApp.xcodeproj/"),
             ),
         ).toBe(true);
+        await iosPlatformStub!.stop(true);
+        iosPlatformStub = startIOSPlatformStub("app_native_relinked");
+        const relink = Bun.spawn(
+          [
+            process.execPath,
+            CLI_PATH,
+            "--mode",
+            "human",
+            "init",
+            "--json",
+            "--yes",
+            "--app",
+            "app_native_relinked",
+          ],
+          {
+            cwd: projectDir,
+            env: {
+              CLERK_CONFIG_DIR: configDir,
+              CLERK_PLATFORM_API_KEY: platformAPIKey,
+              CLERK_PLATFORM_API_URL: iosPlatformStub.url.origin,
+              CLERK_TELEMETRY_DISABLED: "1",
+            },
+            stdout: "pipe",
+            stderr: "pipe",
+            timeout: 30_000,
+          },
+        );
+        const [json, , exitCode] = await Promise.all([
+          new Response(relink.stdout).text(),
+          new Response(relink.stderr).text(),
+          relink.exited,
+        ]);
+        expect(exitCode).toBe(0);
+        expect(JSON.parse(json).remote).toBe("verified");
       } else expect(entries.sort()).toEqual([...expectedGitEntries].sort());
     } finally {
       if (iosPlatformStub) await iosPlatformStub.stop(true);

@@ -16,6 +16,8 @@ import { intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
 interface LinkOptions {
+  /** Effective mode of an embedded caller, including JSON setup. */
+  agent?: boolean;
   /** Called within another command that owns its header and next steps. */
   embedded?: boolean;
   app?: string;
@@ -37,7 +39,7 @@ interface LinkOptions {
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
-  const agent = isAgent();
+  const agent = options.agent ?? isAgent();
   const cwd = options.cwd ?? process.cwd();
   const repoRoot = await getGitRepoRoot(cwd);
   const normalizedRemote = await getGitNormalizedRemote(cwd);
