@@ -139,6 +139,17 @@ export const ERROR_CODE = {
   OAUTH_NO_CODE: "oauth_no_code",
   /** The loopback callback server could not bind a local port. */
   CALLBACK_BIND_FAILED: "callback_bind_failed",
+
+  /** The inspected iOS project has a known condition that prevents safe automatic setup. */
+  IOS_SETUP_BLOCKED: "ios_setup_blocked",
+  /** The iOS project or Clerk application changed after the approved setup was planned. */
+  IOS_SETUP_STALE: "ios_setup_stale",
+  /** An internally inconsistent or incomplete iOS setup plan reached the apply boundary. */
+  IOS_SETUP_PLAN_INVALID: "ios_setup_plan_invalid",
+  /** An approved Clerk native configuration change could not be applied or confirmed. */
+  IOS_REMOTE_APPLY_FAILED: "ios_remote_apply_failed",
+  /** Clerk native configuration was readable after apply but did not match the approved state. */
+  IOS_REMOTE_VERIFY_FAILED: "ios_remote_verify_failed",
   /** Platform API returned a successful response with missing or contradictory data. */
   PLAPI_UNEXPECTED_RESPONSE: "plapi_unexpected_response",
 } as const;

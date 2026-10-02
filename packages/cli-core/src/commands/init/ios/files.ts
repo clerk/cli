@@ -1,0 +1,162 @@
+import { constants } from "node:fs";
+import { link, lstat, open, realpath, rename, unlink } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+
+export interface FileSnapshot {
+  path: string;
+  source: string;
+  mode: number;
+  device: number;
+  inode: number;
+}
+
+export async function containedPath(
+  root: string,
+  path: string,
+  allowMissingLeaf = false,
+): Promise<string> {
+  const base = await realpath(root);
+  const destination = resolve(base, path);
+  const rel = relative(base, destination);
+  if (!rel || isAbsolute(rel) || rel.split(sep).includes(".."))
+    throw new Error("Path is outside the selected project root.");
+  let cursor = base;
+  for (const part of rel.split(sep)) {
+    cursor = join(cursor, part);
+    const info = await lstat(cursor).catch((error: NodeJS.ErrnoException) => {
+      if (allowMissingLeaf && cursor === destination && error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (info?.isSymbolicLink()) throw new Error("Symbolic links require manual project setup.");
+  }
+  return destination;
+}
+
+export async function assertAbsent(root: string, path: string): Promise<string> {
+  const destination = await containedPath(root, path, true);
+  try {
+    await lstat(destination);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return destination;
+    throw error;
+  }
+  throw new Error("A planned new file already exists. Review a fresh setup plan.");
+}
+
+export async function createFile(root: string, path: string, content: string): Promise<void> {
+  const destination = await assertAbsent(root, path);
+  const candidate = `${destination}.clerk-${randomUUID()}.tmp`;
+  const handle = await open(candidate, "wx", 0o644);
+  try {
+    await handle.writeFile(content);
+    await handle.sync();
+    await handle.close();
+    await assertAbsent(root, path);
+    await link(candidate, destination);
+  } finally {
+    await handle.close();
+    await unlink(candidate);
+  }
+}
+
+export async function snapshotFile(root: string, path: string): Promise<FileSnapshot> {
+  const destination = await containedPath(root, path);
+  const handle = await open(destination, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > 15_000_000)
+      throw new Error("Project document is not a supported regular file.");
+    const bytes = await handle.readFile();
+    return {
+      path,
+      source: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+      mode: info.mode & 0o777,
+      device: info.dev,
+      inode: info.ino,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function assertUnchanged(root: string, snapshot: FileSnapshot): Promise<void> {
+  const current = await snapshotFile(root, snapshot.path);
+  if (
+    current.source !== snapshot.source ||
+    current.mode !== snapshot.mode ||
+    current.device !== snapshot.device ||
+    current.inode !== snapshot.inode
+  ) {
+    throw new Error("The project changed after its preview. Review a fresh plan.");
+  }
+}
+
+export async function gitDirty(root: string, path: string): Promise<boolean> {
+  const child = Bun.spawn(["git", "status", "--porcelain", "--", path], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "ignore",
+    timeout: 5_000,
+  });
+  const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+  // A non-Git project can still be edited; an adjacent backup is always created.
+  return code === 0 && output.trim().length > 0;
+}
+
+export async function replaceProject(
+  root: string,
+  snapshot: FileSnapshot,
+  content: string,
+): Promise<string | undefined> {
+  await assertUnchanged(root, snapshot);
+  if (content === snapshot.source) return undefined;
+  const destination = await containedPath(root, snapshot.path);
+  const suffix = randomUUID();
+  const backup = `${destination}.clerk-backup-${suffix}`;
+  const candidate = join(dirname(destination), `.clerk-project-${suffix}.tmp`);
+  const writeExclusive = async (path: string, source: string) => {
+    const handle = await open(path, "wx", snapshot.mode);
+    try {
+      await handle.chmod(snapshot.mode);
+      await handle.writeFile(source);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  };
+  await writeExclusive(backup, snapshot.source);
+  try {
+    await writeExclusive(candidate, content);
+    await assertUnchanged(root, snapshot);
+    await rename(candidate, destination);
+  } finally {
+    await unlink(candidate).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    });
+  }
+  return relative(await realpath(root), backup);
+}
+
+export interface AppliedFile {
+  before?: FileSnapshot;
+  after: FileSnapshot;
+}
+
+// Recover ordinary in-process write failures, without replacing subsequent edits.
+// Backups remain available. This is not crash recovery or a remote transaction.
+export async function rollbackFiles(root: string, files: AppliedFile[]) {
+  const restored: string[] = [],
+    needsReview: string[] = [];
+  for (const { before, after } of [...files].reverse()) {
+    try {
+      await assertUnchanged(root, after);
+      if (before) await replaceProject(root, after, before.source);
+      else await unlink(await containedPath(root, after.path));
+      restored.push(after.path);
+    } catch {
+      needsReview.push(after.path);
+    }
+  }
+  return { restored, needsReview };
+}
