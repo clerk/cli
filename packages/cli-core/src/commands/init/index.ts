@@ -668,7 +668,10 @@ async function authenticateAndLink(
 
   if (native?.agent && !app && !profile) {
     throwUsageError(
-      "Select a Clerk application with --app, or run clerk init interactively first.",
+      `${label === "Using API key" ? "Using a Platform API key." : "You're signed in."} ` +
+        "Setup needs a Clerk application. Run `clerk apps list --json` and help the user choose one, " +
+        'or create one with `clerk apps create "<name>" --json` if requested. ' +
+        "Then rerun `clerk init --app <application-id>` using the selected ID and the same setup options.",
     );
   }
 
