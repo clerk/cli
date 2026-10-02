@@ -93,6 +93,21 @@ test("external and symlinked workspace projects require explicit root selection"
   await expect(selectApplication(path)).rejects.toThrow("Symbolic");
 });
 
+test("workspace discovery skips missing projects even when their parent folder is absent", async () => {
+  const path = await root();
+  await createIOSFixture(path, { clerkSDK: false });
+  await mkdir(join(path, "App.xcworkspace"));
+  await writeFile(
+    join(path, "App.xcworkspace/contents.xcworkspacedata"),
+    '<Workspace><FileRef location="group:MyApp.xcodeproj"/><FileRef location="group:Missing.xcodeproj"/><FileRef location="group:Pods/Pods.xcodeproj"/></Workspace>',
+  );
+  expect((await selectApplication(path)).project).toBe("MyApp.xcodeproj");
+  expect((await selectApplication(path, "App.xcworkspace")).project).toBe("MyApp.xcodeproj");
+  // A missing project below a symlink must still be rejected.
+  await symlink(await root(), join(path, "Pods"));
+  await expect(selectApplication(path)).rejects.toThrow("Symbolic");
+});
+
 test("Bundle ID discovery handles ordinary generated and explicit plists, but not conflicting configurations", async () => {
   const found = await inspection();
   expect(await discoverBundleIdentifier(found)).toBe("com.example.App");
@@ -138,9 +153,18 @@ test("ordinary recovery restores previous bytes and removes newly created files 
 for (const format of ["pbxproj", "xcproj"] as const)
   test(`${format}: starter recipe is limited to unchanged templates and explicit UI intent`, async () => {
     const found = await inspection(format);
+    const header = "// Created for the important release\n// import notes\n";
+    for (const file of ["MyAppApp.swift", "ContentView.swift"]) {
+      const path = join(found.input.selection.root, "MyApp", file);
+      await writeFile(path, header + (await readFile(path, "utf8")));
+    }
     const key = `pk_test_${btoa("fixture.clerk.accounts.dev$")}`;
     const plan = await planStarter(found, key, true);
     expect(plan.actions).toHaveLength(2);
+    for (const action of plan.actions) {
+      expect("content" in action && action.content?.startsWith(header)).toBe(true);
+      expect("content" in action && action.content).toContain("\nimport SwiftUI\n");
+    }
     expect(plan.tasks).toEqual(["initialize-clerk", "swiftui-environment", "optional-sign-in-ui"]);
     expect((await planStarter(found, key, false)).actions).toHaveLength(1);
     const path = join(found.input.selection.root, "MyApp/ContentView.swift");

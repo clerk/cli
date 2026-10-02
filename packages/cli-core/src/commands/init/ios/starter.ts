@@ -103,7 +103,8 @@ function starterPaths(inspection: Inspection): { app: string; view: string } | u
 
 // Exact starter recipe, not Swift analysis: only a header plus these token sequences.
 // Quoted string contents are preserved during whitespace normalization.
-const body = (source: string) => source.replace(/^(?:\s*\/\/[^\n]*(?:\n|$))*/, "").trim();
+const headerPattern = /^(?:\s*\/\/[^\n]*(?:\n|$))*/;
+const body = (source: string) => source.replace(headerPattern, "").trim();
 const tokens = (source: string) =>
   body(source)
     .match(/"(?:\\.|[^"\\])*"|[^\s]/g)
@@ -172,7 +173,7 @@ export async function planStarter(
     const app = await snapshotFile(inspection.input.selection.root, paths.app);
     const view = await snapshotFile(inspection.input.selection.root, paths.view);
     const preserveHeader = (snapshot: FileSnapshot, content: string) =>
-      snapshot.source.slice(0, snapshot.source.indexOf("import")) + content;
+      (snapshot.source.match(headerPattern)?.[0] ?? "") + content;
     const content = starterApp(inspection.input.selection.targetName)
       .replace("import SwiftUI", "import SwiftUI\nimport ClerkKit")
       .replace(
