@@ -44,8 +44,21 @@ Every command follows these:
 4. **Every command prints its target first:** the environment, app and
    instance, and where the key came from.
 5. **Every subcommand takes `--json`.** Exit codes: `0` all good, `1` some users
-   failed, `2` a usage error or a refusal. The UI goes to stderr and data to
+   failed, `2` a usage error or a refusal, and `130` (death by SIGINT) when
+   Ctrl-C stops an import or an undo partway. The UI goes to stderr and data to
    stdout.
+
+   While users are created or deleted, a terminal shows a bar and the counts
+   under it, not a spinner:
+
+   ```
+   │  ██████████████████████████████████████████████████████░░░░░░░░░░░░░░░░░░  75%
+   │  7,500/10,000 users  ·  ✓ 7,425 created  ·  ✗ 75 failed  ·  ~25s left
+   ```
+
+   A spinner takes the keyboard and exits 0 on Ctrl-C, so a script that deletes
+   the export once the import succeeds would delete it after an interrupted
+   one. Without a terminal, the counts are printed at each 10%.
 
 ## Targeting And Auth
 

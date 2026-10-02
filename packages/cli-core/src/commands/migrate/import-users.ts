@@ -19,8 +19,8 @@
 import { bapiRequest } from "../../lib/bapi.ts";
 import { BapiError } from "../../lib/errors.ts";
 import { interruptSignal } from "../../lib/signals.ts";
-import type { SpinnerControls } from "../../lib/spinner.ts";
 import type { ResolvedLimits } from "./lib/instance.ts";
+import type { ProgressUpdate } from "./lib/progress.ts";
 import { RateLimitExceededError, retryOn429 } from "./lib/retry.ts";
 import type { PendingIdentifier, UserLine } from "./lib/run-store.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
@@ -342,7 +342,8 @@ export type ImportUsersOptions = {
   skipPasswordRequirement?: boolean;
   /** Carried into the summary so the report covers the whole file. */
   validationFailed?: number;
-  spinner?: SpinnerControls;
+  /** Receives the counts as each user finishes. */
+  progress?: ProgressUpdate;
 };
 
 /**
@@ -362,7 +363,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     adopted = new Map<string, string>(),
     skipPasswordRequirement = true,
     validationFailed = 0,
-    spinner,
+    progress: report,
   } = options;
 
   const total = users.length;
@@ -376,10 +377,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     schedule: createApiScheduler(limits.concurrencyLimit, limits.rateLimit),
   };
 
-  const progress = () =>
-    spinner?.update(
-      `Importing users: [${processed}/${total}] (${successful} succeeded, ${failed} failed)...`,
-    );
+  const progress = () => report?.({ done: processed, ok: successful, failed });
 
   const recordFailure = (
     userId: string,

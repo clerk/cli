@@ -58,6 +58,7 @@ import {
   type RunRecord,
   type UserLine,
 } from "./lib/run-store.ts";
+import { withProgress } from "./lib/progress.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
 import { readSupabaseRows } from "./lib/supabase-providers.ts";
 import { keyInstanceId, printTarget, resolveClerkTarget } from "./lib/target.ts";
@@ -843,9 +844,9 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       const summary =
         checks.importable.length > 0 || attachOnly.length > 0
-          ? await withSpinner(
-              `Importing users: [0/${checks.importable.length}]...`,
-              async (spinner) =>
+          ? await withProgress(
+              { total: checks.importable.length, verb: "created" },
+              async (progress) =>
                 importUsers({
                   users: checks.importable,
                   secretKey,
@@ -854,7 +855,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
                   attachOnly,
                   adopted,
                   skipPasswordRequirement: !options.requirePassword,
-                  spinner,
+                  progress,
                 }),
             )
           : {

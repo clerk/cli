@@ -40,6 +40,7 @@ import {
   type Run,
   type RunRecord,
 } from "./lib/run-store.ts";
+import { withProgress, type ProgressUpdate } from "./lib/progress.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
 import {
   describeTarget,
@@ -212,19 +213,16 @@ async function deleteUsers(options: {
   secretKey: string;
   limits: ResolvedLimits;
   run: Run;
-  spinner?: SpinnerControls;
+  progress?: ProgressUpdate;
 }): Promise<UndoSummary> {
-  const { users, secretKey, limits, run, spinner } = options;
+  const { users, secretKey, limits, run, progress: report } = options;
   const schedule = createApiScheduler(limits.concurrencyLimit, limits.rateLimit);
   const errorBreakdown = new Map<string, number>();
   let processed = 0;
   let deleted = 0;
   let failed = 0;
 
-  const progress = () =>
-    spinner?.update(
-      `Deleting users: [${processed}/${users.length}] (${deleted} deleted, ${failed} failed)...`,
-    );
+  const progress = () => report?.({ done: processed, ok: deleted, failed });
 
   // A failure on one user must not stop the rest: a half-undone import with
   // no record of which half is far worse than a reported failure.
@@ -413,8 +411,8 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
 
   const summary =
     present.length > 0
-      ? await withSpinner(`Deleting users: [0/${present.length}]...`, async (spinner) =>
-          deleteUsers({ users: present, secretKey, limits, run, spinner }),
+      ? await withProgress({ total: present.length, verb: "deleted" }, async (progress) =>
+          deleteUsers({ users: present, secretKey, limits, run, progress }),
         )
       : { deleted: 0, failed: 0, errorBreakdown: new Map<string, number>() };
 
