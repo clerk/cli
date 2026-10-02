@@ -289,7 +289,13 @@ describe("warnings", () => {
     const checks = await checkImport(
       input({
         settings: settings({ email_address: { enabled: true }, phone_number: { enabled: false } }),
-        users: [user("a", { phone: "+15555550100", unverifiedPhoneNumbers: ["+15555550101"] })],
+        users: [
+          user("a", {
+            phone: "+15555550100",
+            unverifiedPhoneNumbers: ["+15555550101"],
+            username: "ada.l",
+          }),
+        ],
       }),
     );
     expect(checks.importable).toEqual([user("a")]);

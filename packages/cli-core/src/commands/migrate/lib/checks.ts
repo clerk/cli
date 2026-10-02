@@ -463,11 +463,13 @@ function countReasons(rejects: Reject[]): ReasonCount[] {
 }
 
 /**
- * Removes the emails or phones of an instance that has that identifier off.
+ * Removes the emails, phones or usernames of an instance that has that
+ * identifier off.
  *
- * The warnings already say they are dropped, but Clerk does not drop them: it
- * refuses the whole create (`phone_number is not a valid parameter`). Usernames
- * need no such handling, because the API ignores those itself.
+ * The warnings already say they are dropped, but Clerk does not drop them. It
+ * refuses the whole create for a phone (`phone_number is not a valid
+ * parameter`), and for a username it stores it anyway, or refuses the create
+ * when the username breaks the default rules.
  */
 function dropDisabledIdentifiers(user: User, settings: UserSettingsJSON | null): User {
   if (!settings) return user;
@@ -478,6 +480,7 @@ function dropDisabledIdentifiers(user: User, settings: UserSettingsJSON | null):
     ...(isEnabled(settings, "phone_number")
       ? []
       : (["phone", "phoneNumbers", "unverifiedPhoneNumbers"] as const)),
+    ...(isEnabled(settings, "username") ? [] : (["username"] as const)),
   ];
   if (!fields.some((field) => field in user)) return user;
   const kept = { ...user };
