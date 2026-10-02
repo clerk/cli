@@ -212,6 +212,42 @@ describe("rejects", () => {
     expect(checks.importable.map((entry) => entry.userId)).toEqual(["b"]);
   });
 
+  describe("emails Clerk refuses", () => {
+    test("a user whose only identifier is a placeholder email is rejected", async () => {
+      const checks = await checkImport(
+        input({ users: [user("a", { email: "15551234@phone.local" })] }),
+      );
+      expect(checks.rejects).toEqual([
+        { sourceId: "a", reason: "only has an email Clerk refuses (15551234@phone.local)" },
+      ]);
+    });
+
+    test("a placeholder email is dropped, and the user imports on what is left", async () => {
+      const checks = await checkImport(
+        input({
+          users: [
+            user("a", {
+              email: "a@x.dev",
+              unverifiedEmailAddresses: ["anon-1@anonymous.invalid"],
+            }),
+          ],
+        }),
+      );
+      expect(checks.rejects).toEqual([]);
+      expect(checks.importable).toEqual([user("a", { email: "a@x.dev" })]);
+      expect(checks.warnings).toContain(
+        "1 user has an email Clerk refuses (.local, .invalid, .test, .example, .arpa), which is dropped",
+      );
+    });
+
+    test("Clerk's own .clerk.test addresses are kept", async () => {
+      const checks = await checkImport(
+        input({ users: [user("a", { email: "a@dev.clerk.test" })] }),
+      );
+      expect(checks.importable).toEqual([user("a", { email: "a@dev.clerk.test" })]);
+    });
+  });
+
   describe("usernames", () => {
     const withUsernames = (rules: object) =>
       ({

@@ -204,6 +204,46 @@ function usernameProblem(user: User, settings: UserSettingsJSON | null): string 
   return undefined;
 }
 
+/**
+ * TLDs Clerk refuses for any email, from clerk_go's
+ * `emailaddress.nonRoutableTLDs`. This is where placeholder addresses live
+ * (`…@phone.local`, `anon-…@anonymous.invalid`). Clerk also refuses a TLD not
+ * on the public suffix list; that would take the list as a dependency.
+ */
+const NON_ROUTABLE_TLDS = new Set(["arpa", "local", "invalid", "example", "test"]);
+const EMAIL_FIELDS = ["email", "emailAddresses", "unverifiedEmailAddresses"] as const;
+
+function isRefusedEmail(email: string): boolean {
+  const host = email.slice(email.lastIndexOf("@") + 1).toLowerCase();
+  // Clerk's own dev domains sit under `.test` and are accepted.
+  if (host.endsWith(".clerk.test")) return false;
+  return NON_ROUTABLE_TLDS.has(host.slice(host.lastIndexOf(".") + 1));
+}
+
+/** The user without the emails Clerk would refuse, and those emails. */
+function dropRefusedEmails(user: User): { user: User; refused: string[] } {
+  const refused: string[] = [];
+  let kept: User | undefined;
+  for (const field of EMAIL_FIELDS) {
+    const value = user[field];
+    if (value === undefined) continue;
+    const list = Array.isArray(value) ? value : [value];
+    const bad = list.filter(isRefusedEmail);
+    if (bad.length === 0) continue;
+    refused.push(...bad);
+    kept ??= { ...user };
+    const good = list.filter((email) => !isRefusedEmail(email));
+    if (good.length > 0) kept[field] = good;
+    else delete kept[field];
+  }
+  return { user: kept ?? user, refused };
+}
+
+const hasAnyIdentifier = (user: User) =>
+  [...EMAIL_FIELDS, "phone", "phoneNumbers", "unverifiedPhoneNumbers", "username"].some((field) =>
+    hasValue(user[field as keyof User]),
+  );
+
 /** First user in the file to claim each email, phone and source ID. */
 function findFileDuplicates(users: User[]): Map<string, string> {
   const reasons = new Map<string, string>();
@@ -488,6 +528,13 @@ function dropDisabledIdentifiers(user: User, settings: UserSettingsJSON | null):
   return kept;
 }
 
+function placeholderWarning(count: number): string[] {
+  if (count === 0) return [];
+  return [
+    `${plural(count, "user")} ${count === 1 ? "has" : "have"} an email Clerk refuses (.local, .invalid, .test, .example, .arpa), which is dropped`,
+  ];
+}
+
 export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const rejects: Reject[] = input.failures.map((failure) => ({
     sourceId: failure.userId,
@@ -498,9 +545,14 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const disabledProviders = findDisabledProviderRejects(input);
 
   let candidates: User[] = [];
-  for (const user of input.users) {
+  const placeholderEmails = new Set<string>();
+  for (const original of input.users) {
+    const { user, refused } = dropRefusedEmails(original);
     const reason =
-      user.skipReason ??
+      original.skipReason ??
+      (refused.length > 0 && !hasAnyIdentifier(user)
+        ? `only has an email Clerk refuses (${refused[0]})`
+        : undefined) ??
       fileDuplicates.get(user.userId) ??
       missingRequiredIdentifier(user, input.settings) ??
       usernameProblem(user, input.settings) ??
@@ -509,7 +561,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         : undefined) ??
       disabledProviders.get(user.userId);
     if (reason) rejects.push({ sourceId: user.userId, reason });
-    else candidates.push(user);
+    else {
+      candidates.push(user);
+      if (refused.length > 0) placeholderEmails.add(user.userId);
+    }
   }
 
   const instanceDuplicates =
@@ -549,7 +604,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     importable: candidates.map((user) => dropDisabledIdentifiers(user, input.settings)),
     rejects,
     rejectReasons: countReasons(rejects),
-    warnings: buildWarnings(input, candidates),
+    warnings: [
+      ...buildWarnings(input, candidates),
+      ...placeholderWarning(candidates.filter((user) => placeholderEmails.has(user.userId)).length),
+    ],
     fixes: buildFixes(input, input.users),
     ...(quota ? { quota } : {}),
     settingsUnavailable: input.settings === null,
