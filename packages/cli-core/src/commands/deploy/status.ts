@@ -169,6 +169,7 @@ export type LiveDeploySnapshot = Omit<
   live: boolean;
   unsupportedOAuthProviderCount: number;
   unsupportedOAuthProviders: string[];
+  nativeAppleBundleId?: string;
   nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
 };
 
@@ -327,20 +328,15 @@ export async function resolveLiveDeploySnapshot(
             preliminaryNativeAppleConfiguration?.status === "registration-missing"
           ) {
             try {
-              nativeAppleConfiguration = await withSpinner(
-                "Reading production Native Application settings...",
-                async () => {
-                  const [iosApplications, nativeSettings] = await Promise.all([
-                    listIOSApplications(ctx.appId, productionInstanceId),
-                    getNativeSettings(ctx.appId, productionInstanceId),
-                  ]);
-                  return inspectNativeAppleConfiguration(
-                    config,
-                    nativeAppleDescriptor,
-                    iosApplications,
-                    nativeSettings,
-                  );
-                },
+              const [iosApplications, nativeSettings] = await Promise.all([
+                listIOSApplications(ctx.appId, productionInstanceId),
+                getNativeSettings(ctx.appId, productionInstanceId),
+              ]);
+              nativeAppleConfiguration = inspectNativeAppleConfiguration(
+                config,
+                nativeAppleDescriptor,
+                iosApplications,
+                nativeSettings,
               );
             } catch (error) {
               if (error instanceof UserAbortError) throw error;
@@ -398,6 +394,9 @@ export async function resolveLiveDeploySnapshot(
     live,
     unsupportedOAuthProviderCount: unsupported.length,
     unsupportedOAuthProviders: unsupported,
+    ...(nativeAppleConfiguration && "bundleId" in nativeAppleConfiguration
+      ? { nativeAppleBundleId: nativeAppleConfiguration.bundleId }
+      : {}),
     ...(nativeAppleConfiguration &&
     "bundleId" in nativeAppleConfiguration &&
     isNativeAppleReadinessIssue(nativeAppleConfiguration.status)

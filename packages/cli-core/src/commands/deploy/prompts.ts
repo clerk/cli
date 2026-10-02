@@ -78,6 +78,13 @@ export async function confirmExportBindZone(): Promise<boolean> {
   });
 }
 
+export async function confirmAppleWebCredentials(bundleId: string): Promise<boolean> {
+  return confirm({
+    message: `Apple has a native Bundle ID (${bundleId}). Also configure Apple web sign-in credentials?`,
+    default: false,
+  });
+}
+
 export async function chooseOAuthCredentialAction(
   descriptor: OAuthProviderDescriptor,
   options: { includeWalkthrough?: boolean } = {},

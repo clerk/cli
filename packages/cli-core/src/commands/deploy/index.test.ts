@@ -1422,6 +1422,10 @@ describe("deploy", () => {
 
       expect(mockListIOSApplications).toHaveBeenCalledWith("app_xyz789", "ins_prod_native_apple");
       expect(mockGetNativeSettings).toHaveBeenCalledWith("app_xyz789", "ins_prod_native_apple");
+      expect(mockConfirm).toHaveBeenCalledWith({
+        message: expect.stringContaining("Also configure Apple web sign-in credentials?"),
+        default: false,
+      });
       expect(mockSelect).not.toHaveBeenCalled();
       expect(mockInput).not.toHaveBeenCalled();
       expect(mockPassword).not.toHaveBeenCalled();
@@ -1431,6 +1435,66 @@ describe("deploy", () => {
       expect(err).toContain("OAuth       Apple");
       expect(err).not.toContain("Configure Apple OAuth for production");
     });
+
+    test.each(["ready", "registration-missing", "authentication-disabled"])(
+      "allows web Apple credentials alongside a native Bundle ID (%s)",
+      async (readiness) => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
+        });
+        mockLiveProduction({
+          instanceId: "ins_prod_native_apple",
+          developmentConfig: { connection_oauth_apple: { enabled: true } },
+          productionConfig: {
+            connection_oauth_apple: {
+              enabled: true,
+              authenticatable: readiness !== "authentication-disabled",
+              bundle_id: "com.example.native",
+            },
+          },
+        });
+        if (readiness === "ready")
+          mockListIOSApplications.mockResolvedValue([
+            {
+              object: "ios_application",
+              id: "ios_native",
+              app_id_prefix: "ABCDE12345",
+              bundle_id: "com.example.native",
+              created_at: 1,
+              updated_at: 1,
+            },
+          ]);
+        mockIsAgent.mockReturnValue(false);
+        mockConfirm.mockResolvedValueOnce(true);
+        mockSelect.mockResolvedValueOnce("have-credentials");
+        const keyPath = join(tempDir, "AuthKey.p8");
+        const key = "-----BEGIN PRIVATE KEY-----\nfixture\n-----END PRIVATE KEY-----\n";
+        await Bun.write(keyPath, key);
+        mockInput
+          .mockResolvedValueOnce("services-id")
+          .mockResolvedValueOnce("team-id")
+          .mockResolvedValueOnce("key-id")
+          .mockResolvedValueOnce(keyPath);
+
+        await runDeploy({});
+
+        expect(mockConfirm).toHaveBeenCalledTimes(1);
+        expect(mockPatchInstanceConfig).toHaveBeenCalledWith(
+          "app_xyz789",
+          "ins_prod_native_apple",
+          {
+            connection_oauth_apple: {
+              enabled: true,
+              authenticatable: true,
+              client_id: "services-id",
+              team_id: "team-id",
+              key_id: "key-id",
+              client_secret: key,
+            },
+          },
+        );
+      },
+    );
 
     test("refuses case-only Apple registration mismatches without suggesting another registration", async () => {
       await linkedProject({
@@ -1794,6 +1858,7 @@ describe("deploy", () => {
         connection_oauth_apple: {
           enabled: true,
           client_id: "apple-services-id",
+          authenticatable: true,
           team_id: "apple-team-id",
           key_id: "apple-key-id",
           client_secret:

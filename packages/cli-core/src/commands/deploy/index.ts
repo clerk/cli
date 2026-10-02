@@ -57,6 +57,7 @@ import {
   collectCustomDomain,
   collectOAuthCredentials,
   confirmCreateProductionInstance,
+  confirmAppleWebCredentials,
   confirmExportBindZone,
   confirmProceed,
 } from "./prompts.ts";
@@ -303,6 +304,16 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
   // way, since the configuration read succeeded.
   recordDeployObservation({ kind: "active", snapshot });
 
+  const configureAppleWebCredentials = snapshot.nativeAppleBundleId
+    ? await confirmAppleWebCredentials(snapshot.nativeAppleBundleId)
+    : undefined;
+  if (configureAppleWebCredentials) {
+    snapshot.completedOAuthProviders = snapshot.completedOAuthProviders.filter(
+      (provider) => provider !== "apple",
+    );
+    snapshot.pending = { type: "oauth", provider: "apple" };
+  }
+
   log.blank();
   for (const line of printPlan(ctx.appLabel, buildLiveDeployPlan(snapshot))) {
     log.info(line);
@@ -339,6 +350,7 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
         },
       },
       snapshot.oauthProviderDescriptors,
+      configureAppleWebCredentials,
     );
     snapshot.completedOAuthProviders = completed;
   }
@@ -628,6 +640,7 @@ async function runOAuthSetup(
   ctx: DeployContext,
   state: DeployOperationState,
   descriptors: readonly OAuthProviderDescriptor[],
+  configureAppleWebCredentials?: boolean,
 ): Promise<OAuthProvider[]> {
   const completed = new Set(state.completedOAuthProviders as OAuthProvider[]);
   const oauthProviders = descriptors.map((descriptor) => descriptor.provider);
@@ -656,6 +669,7 @@ async function runOAuthSetup(
         state.domain,
         productionInstanceId,
         state.frontendApiUrl,
+        configureAppleWebCredentials,
       );
       if (!saved) {
         throwDeployPaused(
@@ -703,8 +717,16 @@ async function collectAndSaveOAuthCredentials(
   domain: string,
   productionInstanceId: string,
   frontendApiUrl?: string,
+  configureAppleWebCredentials?: boolean,
 ): Promise<boolean> {
-  if (await nativeAppleCredentialsAreAlreadyConfigured(ctx, descriptor, productionInstanceId)) {
+  if (
+    await nativeAppleCredentialsAreAlreadyConfigured(
+      ctx,
+      descriptor,
+      productionInstanceId,
+      configureAppleWebCredentials,
+    )
+  ) {
     return true;
   }
 
@@ -734,6 +756,7 @@ async function collectAndSaveOAuthCredentials(
     await patchInstanceConfig(ctx.appId, productionInstanceId, {
       [descriptor.configKey]: {
         enabled: true,
+        ...(descriptor.provider === "apple" ? { authenticatable: true } : {}),
         ...credentials,
       },
     });
@@ -746,14 +769,21 @@ async function nativeAppleCredentialsAreAlreadyConfigured(
   ctx: DeployContext,
   descriptor: OAuthProviderDescriptor,
   productionInstanceId: string,
+  configureAppleWebCredentials?: boolean,
 ): Promise<boolean> {
-  if (descriptor.provider !== "apple") return false;
+  if (descriptor.provider !== "apple" || configureAppleWebCredentials) return false;
 
   const productionConfig = await withSpinner(
     "Checking production Sign in with Apple configuration...",
     async () => fetchInstanceConfig(ctx.appId, productionInstanceId),
   );
   const preliminary = inspectNativeAppleConfiguration(productionConfig, descriptor, []);
+  if (
+    "bundleId" in preliminary &&
+    configureAppleWebCredentials === undefined &&
+    (await confirmAppleWebCredentials(preliminary.bundleId))
+  )
+    return false;
   if (preliminary.status === "authentication-disabled") {
     throwUsageError(
       `Native Sign in with Apple is configured for ${preliminary.bundleId}, but Apple is not explicitly enabled for authentication on the production instance. ` +
