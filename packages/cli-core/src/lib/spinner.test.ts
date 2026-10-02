@@ -9,7 +9,7 @@ let lastOutroLabel: string | undefined;
 let outroCalls = 0;
 
 interface SpinnerCall {
-  type: "start" | "stop" | "error" | "message";
+  type: "start" | "stop" | "error" | "message" | "clear";
   message?: string;
 }
 let spinnerCalls: SpinnerCall[] = [];
@@ -32,6 +32,9 @@ mock.module("@clack/prompts", () => ({
     },
     message: (message?: string) => {
       spinnerCalls.push({ type: "message", message });
+    },
+    clear: () => {
+      spinnerCalls.push({ type: "clear" });
     },
     error: (message?: string) => {
       spinnerCalls.push({ type: "error", message });
@@ -264,4 +267,74 @@ test("withSpinner calls error() on the spinner and rethrows when fn throws", asy
   const types = spinnerCalls.map((c) => c.type);
   expect(types).toEqual(["start", "error"]);
   expect(spinnerCalls[1]?.message).toBe("Failed");
+});
+
+test.each([
+  { outcome: "success", error: undefined },
+  { outcome: "failure", error: new Error("check failed") },
+  { outcome: "cancellation", error: new UserAbortError() },
+])(
+  "fast transient checks settle without flashing or leaving a pending spinner on $outcome",
+  async ({ error }) => {
+    const result = withSpinner(
+      "Checking...",
+      async ({ update }) => {
+        update("Checking another detail...");
+        if (error) throw error;
+        return 42;
+      },
+      null,
+    );
+    if (error) await expect(result).rejects.toBe(error);
+    else expect(await result).toBe(42);
+    expect(spinnerCalls).toEqual([]);
+    await Bun.sleep(300);
+    expect(spinnerCalls).toEqual([]);
+  },
+);
+
+test("slower transient checks show the latest message, accept updates, and clear on completion", async () => {
+  const result = await withSpinner(
+    "Checking...",
+    async ({ update }) => {
+      update("Waiting for the server...");
+      expect(spinnerCalls).toEqual([]);
+      await Bun.sleep(300);
+      expect(spinnerCalls).toEqual([{ type: "start", message: "Waiting for the server..." }]);
+      update("Reading the response...");
+      return 42;
+    },
+    null,
+  );
+  expect(result).toBe(42);
+  expect(spinnerCalls).toEqual([
+    { type: "start", message: "Waiting for the server..." },
+    { type: "message", message: "Reading the response..." },
+    { type: "clear" },
+  ]);
+});
+
+test.each([
+  {
+    outcome: "failure",
+    error: new Error("check failed"),
+    completion: { type: "error", message: "Failed" },
+  },
+  {
+    outcome: "cancellation",
+    error: new UserAbortError(),
+    completion: { type: "stop", message: "Checking" },
+  },
+])("visible transient checks clean up and propagate $outcome", async ({ error, completion }) => {
+  await expect(
+    withSpinner(
+      "Checking...",
+      async () => {
+        await Bun.sleep(300);
+        throw error;
+      },
+      null,
+    ),
+  ).rejects.toBe(error);
+  expect(spinnerCalls).toEqual([{ type: "start", message: "Checking..." }, completion]);
 });
