@@ -203,9 +203,26 @@ mock.module("../../../lib/listage.ts", () => ({
   },
 }));
 
+const dequeueInput = dequeuePrompt("input");
+
+/**
+ * An abortable `text()` with nothing queued behaves like a real prompt nobody
+ * has typed into: it waits until aborted. That is the login paste-back prompt,
+ * which races the (mocked, instantly resolving) loopback callback.
+ */
+async function textPrompt(config?: { signal?: AbortSignal }) {
+  const signal = config?.signal;
+  if (!signal || promptQueues.input.length > 0) return dequeueInput();
+  return new Promise<never>((_resolve, reject) => {
+    const abort = () => reject(new Error("User aborted"));
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
 mock.module("../../../lib/prompts.ts", () => ({
   confirm: dequeuePrompt("confirm"),
-  text: dequeuePrompt("input"),
+  text: textPrompt,
   password: dequeuePrompt("password"),
   editor: dequeuePrompt("editor"),
 }));
@@ -243,6 +260,7 @@ mock.module(
         waitForCallback: async () => ({ code: "mock_code" }),
         stop: () => {},
       }),
+      parseCallback: () => ({ ok: true as const, code: "mock_code" }),
     }) satisfies typeof import("../../../lib/auth-server.ts"),
 );
 
