@@ -669,8 +669,12 @@ async function authenticateAndLink(
   if (native?.agent && !app && !profile) {
     throwUsageError(
       `${label === "Using API key" ? "Using a Platform API key." : "You're signed in."} ` +
-        "Setup needs a Clerk application. Run `clerk apps list --json` and help the user choose one, " +
-        'or create one with `clerk apps create "<name>" --json` if requested. ' +
+        "Setup needs a Clerk application. Run `clerk apps list --json`. " +
+        "Reuse a unique match to the selected Xcode app's existing Clerk publishable key. " +
+        "If the list is empty and the app has no existing Clerk configuration, " +
+        'run `clerk apps create "<Xcode-app-name>" --json`. ' +
+        "Otherwise, show application names and ask which to use or whether to create one. " +
+        "Resolve conflicting configuration or listing errors before proceeding; names and unrelated environment keys are not proof of a match. " +
         "Then rerun `clerk init --app <application-id>` using the selected ID and the same setup options.",
     );
   }
