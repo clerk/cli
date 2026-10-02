@@ -64,7 +64,11 @@ afterAll(async () => {
   rmSync(workDir, { recursive: true, force: true });
 }, 60_000);
 
-/** Imports `users` as a Better Auth export and returns each user's run line. */
+/**
+ * Imports `users` as a Better Auth export and returns each user's latest run
+ * line. A user has several (`creating`, then `created`); the last one wins,
+ * as it does for `runs` and `undo`.
+ */
 async function importBetterAuth(users: Record<string, unknown>[], extra: string[] = []) {
   const file = join(workDir, `betterauth-${randomBytes(4).toString("hex")}.json`);
   writeFileSync(file, JSON.stringify(users));
@@ -80,10 +84,14 @@ async function importBetterAuth(users: Record<string, unknown>[], extra: string[
   if (!runId) throw new Error("The import recorded no run.");
   importRuns.push(runId);
 
-  return readFileSync(join(runsDir, runId, "users.ndjson"), "utf-8")
+  const latest = new Map<unknown, Record<string, unknown>>();
+  for (const line of readFileSync(join(runsDir, runId, "users.ndjson"), "utf-8")
     .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
+    .split("\n")) {
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    latest.set(parsed.sourceId, parsed);
+  }
+  return [...latest.values()];
 }
 
 /** A password hashed exactly the way Better Auth's default hasher does it. */
