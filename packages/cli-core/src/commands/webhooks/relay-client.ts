@@ -153,7 +153,7 @@ export class RelayClient implements IRelayClient {
     this.probeTimer = setInterval(() => {
       if (Date.now() - this.lastActivityAt < RELAY_SILENCE_TIMEOUT_MS) return;
       try {
-        (ws as import("bun").WebSocket).ping();
+        ws.ping();
         this.lastActivityAt = Date.now();
       } catch {
         ws.close();

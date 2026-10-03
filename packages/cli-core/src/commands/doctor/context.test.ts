@@ -188,7 +188,7 @@ describe("createDoctorContext", () => {
       const ctx = createDoctorContext();
       expect(await ctx.getApplication()).toEqual(mockAppResponse);
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(String(mockFetch.mock.calls[0]?.[0])).not.toContain("include_secret_keys");
+      expect(String(mockFetch.mock.calls[0]?.[0])).toContain("include_secret_keys=false");
     });
 
     test("returns null when no profile", async () => {

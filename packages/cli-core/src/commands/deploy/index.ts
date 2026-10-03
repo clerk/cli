@@ -11,8 +11,6 @@ import { setProfile } from "../../lib/config.ts";
 import {
   createProductionInstance as apiCreateProductionInstance,
   fetchInstanceConfig,
-  getNativeSettings,
-  listIOSApplications,
   patchInstanceConfig,
   type CnameTarget,
   type ProductionInstanceResponse,
@@ -35,6 +33,8 @@ import {
   dnsRecords,
   domainsDashboardUrl,
   instanceDashboardUrl,
+  nativeAppleGuidance,
+  nativeApplicationsDashboardUrl,
   nextStepsBody,
   pendingCnameTargets,
   pausedOperationNotice,
@@ -43,10 +43,10 @@ import {
 } from "./copy.ts";
 import { mapDeployError } from "./errors.ts";
 import {
-  inspectNativeAppleConfiguration,
   providerLabel,
   providerSetupIntro,
   showOAuthWalkthrough,
+  type NativeAppleConfiguration,
   type OAuthProvider,
   type OAuthProviderDescriptor,
 } from "./providers.ts";
@@ -74,6 +74,7 @@ import {
   resolveDeployState,
   resolveLiveApplicationContext,
   resolveLiveDeploySnapshot,
+  resolveNativeAppleConfiguration,
   waitForDeployStatus,
   type DeployProgressHandlers,
   type DeployStatusOutcome,
@@ -304,16 +305,6 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
   // way, since the configuration read succeeded.
   recordDeployObservation({ kind: "active", snapshot });
 
-  const configureAppleWebCredentials = snapshot.nativeAppleBundleId
-    ? await confirmAppleWebCredentials(snapshot.nativeAppleBundleId)
-    : undefined;
-  if (configureAppleWebCredentials) {
-    snapshot.completedOAuthProviders = snapshot.completedOAuthProviders.filter(
-      (provider) => provider !== "apple",
-    );
-    snapshot.pending = { type: "oauth", provider: "apple" };
-  }
-
   log.blank();
   for (const line of printPlan(ctx.appLabel, buildLiveDeployPlan(snapshot))) {
     log.info(line);
@@ -350,7 +341,7 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
         },
       },
       snapshot.oauthProviderDescriptors,
-      configureAppleWebCredentials,
+      snapshot.nativeApple ?? null,
     );
     snapshot.completedOAuthProviders = completed;
   }
@@ -640,7 +631,8 @@ async function runOAuthSetup(
   ctx: DeployContext,
   state: DeployOperationState,
   descriptors: readonly OAuthProviderDescriptor[],
-  configureAppleWebCredentials?: boolean,
+  /** Undefined when unknown (a fresh deploy); null when Apple is not native-only. */
+  nativeApple?: NativeAppleConfiguration | null,
 ): Promise<OAuthProvider[]> {
   const completed = new Set(state.completedOAuthProviders as OAuthProvider[]);
   const oauthProviders = descriptors.map((descriptor) => descriptor.provider);
@@ -669,7 +661,7 @@ async function runOAuthSetup(
         state.domain,
         productionInstanceId,
         state.frontendApiUrl,
-        configureAppleWebCredentials,
+        nativeApple,
       );
       if (!saved) {
         throwDeployPaused(
@@ -717,17 +709,36 @@ async function collectAndSaveOAuthCredentials(
   domain: string,
   productionInstanceId: string,
   frontendApiUrl?: string,
-  configureAppleWebCredentials?: boolean,
+  nativeApple?: NativeAppleConfiguration | null,
 ): Promise<boolean> {
-  if (
-    await nativeAppleCredentialsAreAlreadyConfigured(
-      ctx,
-      descriptor,
-      productionInstanceId,
-      configureAppleWebCredentials,
-    )
-  ) {
-    return true;
+  if (descriptor.provider === "apple") {
+    const native =
+      nativeApple !== undefined
+        ? nativeApple
+        : await withSpinner("Checking production Sign in with Apple configuration...", async () =>
+            resolveNativeAppleConfiguration(
+              ctx.appId,
+              productionInstanceId,
+              await fetchInstanceConfig(ctx.appId, productionInstanceId),
+              [descriptor],
+            ),
+          );
+    if (native?.status === "ready") {
+      log.success(
+        `Native Sign in with Apple is ready for ${native.bundleId}; Apple web credentials are not required`,
+      );
+      return true;
+    }
+    if (native && !(await confirmAppleWebCredentials(native.bundleId))) {
+      log.warn(
+        nativeAppleGuidance({
+          bundleId: native.bundleId,
+          reason: native.status,
+          dashboardUrl: nativeApplicationsDashboardUrl(ctx.appId, productionInstanceId),
+        }),
+      );
+      return false;
+    }
   }
 
   for (const line of providerSetupIntro(descriptor)) log.info(line);
@@ -756,107 +767,12 @@ async function collectAndSaveOAuthCredentials(
     await patchInstanceConfig(ctx.appId, productionInstanceId, {
       [descriptor.configKey]: {
         enabled: true,
-        ...(descriptor.provider === "apple" ? { authenticatable: true } : {}),
         ...credentials,
       },
     });
   });
   log.success(`Saved ${descriptor.label} OAuth credentials`);
   return true;
-}
-
-async function nativeAppleCredentialsAreAlreadyConfigured(
-  ctx: DeployContext,
-  descriptor: OAuthProviderDescriptor,
-  productionInstanceId: string,
-  configureAppleWebCredentials?: boolean,
-): Promise<boolean> {
-  if (descriptor.provider !== "apple" || configureAppleWebCredentials) return false;
-
-  const productionConfig = await withSpinner(
-    "Checking production Sign in with Apple configuration...",
-    async () => fetchInstanceConfig(ctx.appId, productionInstanceId),
-  );
-  const preliminary = inspectNativeAppleConfiguration(productionConfig, descriptor, []);
-  if (
-    "bundleId" in preliminary &&
-    configureAppleWebCredentials === undefined &&
-    (await confirmAppleWebCredentials(preliminary.bundleId))
-  )
-    return false;
-  if (preliminary.status === "authentication-disabled") {
-    throwUsageError(
-      `Native Sign in with Apple is configured for ${preliminary.bundleId}, but Apple is not explicitly enabled for authentication on the production instance. ` +
-        "Review the Apple connection in the Clerk Dashboard, then rerun `clerk deploy`. No Apple web credentials were requested.",
-    );
-  }
-  if (preliminary.status !== "registration-missing") {
-    return false;
-  }
-
-  let nativeConfiguration: ReturnType<typeof inspectNativeAppleConfiguration>;
-  try {
-    const [iosApplications, nativeSettings] = await withSpinner(
-      "Checking production Native Application settings...",
-      async () =>
-        Promise.all([
-          listIOSApplications(ctx.appId, productionInstanceId),
-          getNativeSettings(ctx.appId, productionInstanceId),
-        ]),
-    );
-    nativeConfiguration = inspectNativeAppleConfiguration(
-      productionConfig,
-      descriptor,
-      iosApplications,
-      nativeSettings,
-    );
-  } catch (error) {
-    if (error instanceof UserAbortError) throw error;
-    nativeConfiguration = {
-      status: "verification-unavailable",
-      bundleId: preliminary.bundleId,
-    };
-  }
-
-  if (nativeConfiguration.status === "verification-unavailable") {
-    throw new CliError(
-      `clerk deploy could not verify the production Native Application registration for ${preliminary.bundleId}. ` +
-        "No Apple web credentials were requested and no registration should be created from this unverified result. Retry `clerk deploy`, or review the existing registrations at https://dashboard.clerk.com/~/native-applications.",
-    );
-  }
-
-  if (nativeConfiguration.status === "ready") {
-    log.success(
-      `Native Sign in with Apple is configured for ${nativeConfiguration.bundleId}; Apple web credentials are not required`,
-    );
-    return true;
-  }
-
-  if (nativeConfiguration.status === "native-api-disabled") {
-    throwUsageError(
-      `Native Sign in with Apple is configured for ${nativeConfiguration.bundleId}, but Native API is disabled on the production instance. ` +
-        "Enable Native API at https://dashboard.clerk.com/~/native-applications, then rerun `clerk deploy`. The CLI will not infer an App ID Prefix or request unrelated Apple web credentials.",
-    );
-  }
-
-  if (nativeConfiguration.status === "registration-ambiguous") {
-    throwUsageError(
-      `Native Sign in with Apple has more than one App ID Prefix registration for ${nativeConfiguration.bundleId}. ` +
-        "Review the existing registrations at https://dashboard.clerk.com/~/native-applications, then rerun `clerk deploy`. Do not create another registration or add unrelated Apple web credentials.",
-    );
-  }
-
-  if (nativeConfiguration.status === "registration-bundle-case-mismatch") {
-    throwUsageError(
-      `Native Sign in with Apple uses Bundle ID ${nativeConfiguration.bundleId}, but its letter casing does not exactly match the existing iOS Native Application registration. ` +
-        "Update the Apple connection to use the registration's exact Bundle ID spelling in the Clerk Dashboard, then rerun `clerk deploy`. Do not create another registration or add unrelated Apple web credentials.",
-    );
-  }
-
-  throwUsageError(
-    `Native Sign in with Apple is configured for ${preliminary.bundleId}, but the production instance does not have an exact iOS Native Application registration for that Bundle ID. ` +
-      "Register it at https://dashboard.clerk.com/~/native-applications, then rerun `clerk deploy`. The CLI will not infer an App ID Prefix or request unrelated Apple web credentials.",
-  );
 }
 
 async function persistProductionInstance(ctx: DeployContext, productionInstanceId: string) {

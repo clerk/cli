@@ -1,19 +1,8 @@
 /**
- * Apple treats Bundle IDs as case-insensitive. Keep the original spelling for
- * display and API writes, but use this ASCII-only identity form anywhere a
- * Bundle ID participates in matching or persisted retry identity.
+ * Apple treats Bundle IDs as case-insensitive, while Clerk matches native
+ * registrations exactly. Use this to spot a registration that differs only in
+ * letter case; keep the original spelling for display and API writes.
  */
-export function normalizeBundleIdentifierIdentity(bundleIdentifier: string): string {
-  return bundleIdentifier.replace(/[A-Z]/g, (character) => character.toLowerCase());
-}
-
-export function bundleIdentifiersEqual(
-  left: string | undefined,
-  right: string | undefined,
-): boolean {
-  return (
-    left != null &&
-    right != null &&
-    normalizeBundleIdentifierIdentity(left) === normalizeBundleIdentifierIdentity(right)
-  );
+export function bundleIdentifiersEqual(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
 }

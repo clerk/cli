@@ -488,13 +488,16 @@ describe("checkTokenValid", () => {
     });
   });
 
-  for (const status of [401, 403]) {
-    test(`fails when both userinfo and the account-scoped API reject the credential with ${status}`, async () => {
+  test.each([
+    { name: "401", error: new ApiError(401, "Unauthorized") },
+    { name: "403", error: new ApiError(403, "Forbidden") },
+    { name: "an outage", error: PlapiError.fromBody(503, "Service unavailable") },
+    { name: "a network failure", error: new TypeError("fetch failed") },
+  ])(
+    "keeps the expired result when the account-scoped fallback fails with $name",
+    async ({ error }) => {
       mockUserInfoError = new ApiError(401, "Unauthorized");
-      const ctx = createMockContext({
-        token: "expired_token",
-        accountAccessError: new ApiError(status, "Unauthorized"),
-      });
+      const ctx = createMockContext({ token: "expired_token", accountAccessError: error });
       const result = await checkTokenValid(ctx);
       expectCheck(result, {
         name: "Authentication valid",
@@ -503,67 +506,8 @@ describe("checkTokenValid", () => {
         remedy: "clerk auth login",
         fix: true,
       });
-    });
-  }
-
-  test("does not mislabel a missing account verification endpoint as an expired token", async () => {
-    mockUserInfoError = new ApiError(401, "Unauthorized");
-    const ctx = createMockContext({
-      token: "local_token",
-      accountAccessError: PlapiError.fromBody(404, "Not found"),
-    });
-
-    const result = await checkTokenValid(ctx);
-
-    expectCheck(result, {
-      name: "Authentication valid",
-      status: "warn",
-      message: ["Could not verify authentication", "endpoint unavailable"],
-      messageNot: "expired",
-      detail: "Not found",
-      remedy: "Clerk environment",
-      fix: false,
-    });
-  });
-
-  test("reports a Clerk API outage without mislabeling the token as expired", async () => {
-    mockUserInfoError = new ApiError(401, "Unauthorized");
-    const ctx = createMockContext({
-      token: "local_token",
-      accountAccessError: PlapiError.fromBody(503, "Service unavailable"),
-    });
-
-    const result = await checkTokenValid(ctx);
-
-    expectCheck(result, {
-      name: "Authentication valid",
-      status: "warn",
-      message: ["Could not verify authentication", "API unavailable"],
-      messageNot: "expired",
-      detail: "Service unavailable",
-      fix: false,
-    });
-  });
-
-  test("reports a fallback transport failure as a network issue", async () => {
-    mockUserInfoError = new ApiError(401, "Unauthorized");
-    const ctx = createMockContext({
-      token: "local_token",
-      accountAccessError: new TypeError("fetch failed"),
-    });
-
-    const result = await checkTokenValid(ctx);
-
-    expectCheck(result, {
-      name: "Authentication valid",
-      status: "warn",
-      message: ["Could not reach Clerk", "network issue"],
-      messageNot: "expired",
-      detail: "fetch failed",
-      remedy: "network connection",
-      fix: false,
-    });
-  });
+    },
+  );
 
   test("fail when refreshing the stored session requires re-authentication", async () => {
     const ctx = createMockContext({

@@ -69,19 +69,22 @@ export type OAuthProviderDescriptorResult = {
   unsupported: string[];
 };
 
-export type NativeAppleConfiguration =
-  | { status: "not-apple" | "hosted-or-unconfigured" }
-  | {
-      status:
-        | "ready"
-        | "authentication-disabled"
-        | "registration-missing"
-        | "registration-bundle-case-mismatch"
-        | "registration-ambiguous"
-        | "native-api-disabled"
-        | "verification-unavailable";
-      bundleId: string;
-    };
+export type NativeAppleStatus =
+  | "ready"
+  | "authentication-disabled"
+  | "registration-missing"
+  | "registration-bundle-case-mismatch"
+  | "registration-ambiguous"
+  | "native-api-disabled"
+  | "verification-unavailable";
+
+export type NativeAppleConfiguration = { status: NativeAppleStatus; bundleId: string };
+
+export type NativeAppleReadinessIssue = {
+  bundleId: string;
+  reason: Exclude<NativeAppleStatus, "ready">;
+  dashboardUrl: string;
+};
 
 type ProviderOverride = {
   credentialLabel?: string;
@@ -234,31 +237,40 @@ export function hasProviderRequiredCredentials(
 }
 
 /**
- * Distinguish native-only Apple configuration from hosted Apple OAuth without
- * treating an unrelated iOS registration as proof. Native-only production
- * setup is ready only when it is authenticatable, its explicit Bundle ID has
- * an exact registration, and Native API is enabled on that production instance.
+ * The Bundle ID of a native-only Apple connection, or undefined for hosted or
+ * unconfigured Apple. Mirrors the backend: any hosted identifier makes the
+ * connection hosted, even when it also has a Bundle ID.
+ */
+export function nativeAppleBundleId(
+  config: Record<string, unknown>,
+  descriptor: OAuthProviderDescriptor,
+): string | undefined {
+  if (descriptor.provider !== "apple") return undefined;
+  const value = config[descriptor.configKey];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const providerConfig = value as Record<string, unknown>;
+  const hosted = ["client_id", "client_secret", "team_id", "key_id"].some((key) => {
+    const field = providerConfig[key];
+    return typeof field === "string" && field.trim().length > 0;
+  });
+  if (hosted || typeof providerConfig.bundle_id !== "string") return undefined;
+  return providerConfig.bundle_id.trim() || undefined;
+}
+
+/**
+ * Native-only production Apple sign-in is ready only when it is enabled for
+ * authentication, its Bundle ID has exactly one registration, and Native API
+ * is enabled on that production instance.
  */
 export function inspectNativeAppleConfiguration(
   config: Record<string, unknown>,
   descriptor: OAuthProviderDescriptor,
   iosApplications: readonly IOSApplication[],
-  nativeSettings?: NativeSettings,
-): NativeAppleConfiguration {
-  if (descriptor.provider !== "apple") return { status: "not-apple" };
-
-  const value = config[descriptor.configKey];
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { status: "hosted-or-unconfigured" };
-  }
-  const providerConfig = value as Record<string, unknown>;
-  if (hasAppleHostedIdentifier(providerConfig)) {
-    return { status: "hosted-or-unconfigured" };
-  }
-
-  const rawBundleId = providerConfig.bundle_id;
-  const bundleId = typeof rawBundleId === "string" ? rawBundleId.trim() : "";
-  if (!bundleId) return { status: "hosted-or-unconfigured" };
+  nativeSettings: NativeSettings,
+): NativeAppleConfiguration | undefined {
+  const bundleId = nativeAppleBundleId(config, descriptor);
+  if (!bundleId) return undefined;
+  const providerConfig = config[descriptor.configKey] as Record<string, unknown>;
   if (providerConfig.enabled !== true || providerConfig.authenticatable !== true) {
     return { status: "authentication-disabled", bundleId };
   }
@@ -268,25 +280,14 @@ export function inspectNativeAppleConfiguration(
       .filter((application) => bundleIdentifiersEqual(application.bundle_id, bundleId))
       .map((application) => application.app_id_prefix),
   );
-  if (registeredPrefixes.size === 0) {
-    return { status: "registration-missing", bundleId };
-  }
-  if (registeredPrefixes.size > 1) {
-    return { status: "registration-ambiguous", bundleId };
-  }
+  if (registeredPrefixes.size === 0) return { status: "registration-missing", bundleId };
+  if (registeredPrefixes.size > 1) return { status: "registration-ambiguous", bundleId };
   if (!iosApplications.some((application) => application.bundle_id === bundleId)) {
     return { status: "registration-bundle-case-mismatch", bundleId };
   }
-  return nativeSettings?.api_enabled === true
+  return nativeSettings.api_enabled
     ? { status: "ready", bundleId }
     : { status: "native-api-disabled", bundleId };
-}
-
-function hasAppleHostedIdentifier(config: Record<string, unknown>): boolean {
-  return ["client_id", "client_secret", "team_id", "key_id"].some((key) => {
-    const value = config[key];
-    return typeof value === "string" && value.trim().length > 0;
-  });
 }
 
 function buildOAuthProviderDescriptor(

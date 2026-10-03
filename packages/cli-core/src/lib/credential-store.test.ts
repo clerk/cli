@@ -193,57 +193,51 @@ describe("credential-store", () => {
   });
 
   test("getValidToken coalesces concurrent refreshes in one process", async () => {
-    const session = {
+    await storeToken({
       accessToken: "expired-access-token",
       refreshToken: "refresh-token",
       expiresAt: Date.now() - 60_000,
       tokenType: "Bearer",
-    };
-    await storeToken(session);
-
-    let releaseRefresh:
-      | ((value: {
-          access_token: string;
-          token_type: string;
-          expires_in: number;
-          refresh_token: string;
-        }) => void)
-      | null = null;
-    let markRefreshStarted: (() => void) | null = null;
-    const refreshStarted = new Promise<void>((resolve) => {
-      markRefreshStarted = resolve;
     });
-    const refreshResult = new Promise<{
+    const refresh = Promise.withResolvers<{
       access_token: string;
       token_type: string;
       expires_in: number;
       refresh_token: string;
-    }>((resolve) => {
-      releaseRefresh = resolve;
-    });
-    mockRefreshAccessToken.mockImplementation(() => {
-      markRefreshStarted!();
-      return refreshResult;
-    });
+    }>();
+    mockRefreshAccessToken.mockImplementation(() => refresh.promise);
 
-    const first = getValidToken();
-    const second = getValidToken();
-
-    await refreshStarted;
-    expect(mockRefreshAccessToken).toHaveBeenCalledTimes(1);
-
-    releaseRefresh!({
+    const tokens = Promise.all([getValidToken(), getValidToken()]);
+    refresh.resolve({
       access_token: "refreshed-access-token",
       token_type: "Bearer",
       expires_in: 3600,
       refresh_token: "rotated-refresh-token",
     });
 
-    expect(await Promise.all([first, second])).toEqual([
-      "refreshed-access-token",
-      "refreshed-access-token",
-    ]);
+    expect(await tokens).toEqual(["refreshed-access-token", "refreshed-access-token"]);
     expect(mockRefreshAccessToken).toHaveBeenCalledTimes(1);
+  });
+
+  test("getValidToken retries after a shared refresh fails", async () => {
+    await storeToken({
+      accessToken: "expired-access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() - 60_000,
+      tokenType: "Bearer",
+    });
+    mockRefreshAccessToken.mockRejectedValueOnce(new Error("network down"));
+
+    await expect(getValidToken()).rejects.toThrow();
+    mockRefreshAccessToken.mockResolvedValueOnce({
+      access_token: "refreshed-access-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+      refresh_token: "rotated-refresh-token",
+    });
+
+    expect(await getValidToken()).toBe("refreshed-access-token");
+    expect(mockRefreshAccessToken).toHaveBeenCalledTimes(2);
   });
 
   test("concurrent callers share invalid_grant recovery from another process", async () => {

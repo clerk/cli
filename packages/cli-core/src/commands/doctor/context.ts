@@ -73,10 +73,8 @@ export function createDoctorContext(): DoctorContext {
           if (!(await ctx.hasAccountCredentials())) return null;
           const resolved = await ctx.getProfile();
           if (!resolved) return null;
-          // Doctor only needs application and instance identity. Keeping
-          // secret keys out of this long-lived, shared diagnostic context
-          // prevents unrelated checks from retaining credentials they never
-          // use (including the iOS checks below).
+          // Doctor only needs application and instance identity, so keep
+          // secret keys out of this shared diagnostic context.
           return fetchApplication(resolved.profile.appId, { includeSecretKeys: false });
         })();
       }

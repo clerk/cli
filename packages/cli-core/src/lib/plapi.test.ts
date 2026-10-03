@@ -19,6 +19,10 @@ const {
   getApplicationDomainStatus,
   triggerApplicationDomainDNSCheck,
   listApplicationDomains,
+  getNativeSettings,
+  enableNativeApi,
+  listIOSApplications,
+  createIOSApplication,
 } = await import("./plapi.ts");
 const { AuthError, ERROR_CODE, PlapiError } = await import("./errors.ts");
 
@@ -322,7 +326,7 @@ describe("plapi", () => {
       expect(url.searchParams.get("include_secret_keys")).toBe("true");
     });
 
-    test("omits include_secret_keys when the caller only needs public metadata", async () => {
+    test("sends include_secret_keys=false when the caller opts out", async () => {
       let requestedUrl = "";
       stubFetch(async (input) => {
         requestedUrl = input.toString();
@@ -330,9 +334,7 @@ describe("plapi", () => {
       });
 
       await fetchApplication("app_abc", { includeSecretKeys: false });
-      const url = new URL(requestedUrl);
-      expect(url.pathname).toBe("/v1/platform/applications/app_abc");
-      expect(url.searchParams.has("include_secret_keys")).toBe(false);
+      expect(new URL(requestedUrl).searchParams.get("include_secret_keys")).toBe("false");
     });
 
     test("returns parsed application JSON", async () => {
@@ -340,45 +342,6 @@ describe("plapi", () => {
 
       const result = await fetchApplication("app_abc");
       expect(result).toEqual(mockApp);
-    });
-
-    test("rejects malformed application JSON", async () => {
-      stubFetch(async () => new Response("{", { status: 200 }));
-
-      await expect(fetchApplication("app_abc")).rejects.toMatchObject({
-        name: "CliError",
-        code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
-        message: "Clerk returned an invalid application response.",
-      });
-    });
-
-    test.each([
-      { name: "missing instances", body: { application_id: "app_abc" } },
-      {
-        name: "non-array instances",
-        body: { application_id: "app_abc", instances: {} },
-      },
-      {
-        name: "a malformed instance",
-        body: {
-          application_id: "app_abc",
-          instances: [
-            {
-              instance_id: "ins_1",
-              environment_type: "development",
-              publishable_key: 123,
-            },
-          ],
-        },
-      },
-    ])("rejects $name in an application response", async ({ body }) => {
-      stubFetch(async () => Response.json(body));
-
-      await expect(fetchApplication("app_abc")).rejects.toMatchObject({
-        name: "CliError",
-        code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
-        message: "Clerk returned an invalid application response.",
-      });
     });
 
     test("throws PlapiError on non-2xx response", async () => {
@@ -628,6 +591,86 @@ describe("plapi", () => {
       expect(capturedMethod).toBe("GET");
       expect(capturedUrl).toBe("https://api.clerk.com/v1/platform/applications/app_abc/domains");
       expect(result).toEqual(responseBody);
+    });
+  });
+
+  describe("native applications", () => {
+    function captureRequests(body: unknown): Request[] {
+      const requests: Request[] = [];
+      stubFetch(async (input, init) => {
+        requests.push(new Request(input.toString(), init));
+        return Response.json(body);
+      });
+      return requests;
+    }
+
+    const iosApp = {
+      object: "ios_application" as const,
+      id: "iosapp_1",
+      app_id_prefix: "ABCD123456",
+      bundle_id: "com.example.app",
+    };
+
+    test("reads native settings", async () => {
+      const requests = captureRequests({ object: "native_settings", api_enabled: false });
+
+      expect(await getNativeSettings("app_1", "ins_1")).toEqual({
+        object: "native_settings",
+        api_enabled: false,
+      });
+      expect(requests[0]?.method).toBe("GET");
+      expect(requests[0]?.url).toBe(
+        "https://api.clerk.com/v1/platform/applications/app_1/instances/ins_1/native_settings",
+      );
+    });
+
+    test("enables Native API", async () => {
+      const requests = captureRequests({ object: "native_settings", api_enabled: true });
+
+      await enableNativeApi("app_1", "ins_1");
+      expect(requests[0]?.method).toBe("PATCH");
+      expect(await requests[0]?.json()).toEqual({ api_enabled: true });
+    });
+
+    test("lists iOS registrations", async () => {
+      const requests = captureRequests([{ ...iosApp, created_at: 1 }]);
+
+      expect(await listIOSApplications("app_1", "ins_1")).toEqual([iosApp]);
+      expect(requests[0]?.url).toBe(
+        "https://api.clerk.com/v1/platform/applications/app_1/instances/ins_1/native_applications/ios",
+      );
+    });
+
+    test("creates an iOS registration with an idempotency key", async () => {
+      const requests = captureRequests(iosApp);
+
+      await createIOSApplication(
+        "app_1",
+        "ins_1",
+        { app_id_prefix: "ABCD123456", bundle_id: "com.example.app" },
+        "key_1",
+      );
+      expect(requests[0]?.method).toBe("POST");
+      expect(requests[0]?.headers.get("Idempotency-Key")).toBe("key_1");
+      expect(await requests[0]?.json()).toEqual({
+        app_id_prefix: "ABCD123456",
+        bundle_id: "com.example.app",
+      });
+    });
+
+    test.each([
+      { name: "native settings", request: () => getNativeSettings("app_1", "ins_1"), body: [] },
+      {
+        name: "an iOS registration list",
+        request: () => listIOSApplications("app_1", "ins_1"),
+        body: [{ ...iosApp, bundle_id: undefined }],
+      },
+    ])("rejects unexpected $name", async ({ request, body }) => {
+      stubFetch(async () => Response.json(body));
+
+      await expect(request()).rejects.toMatchObject({
+        code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+      });
     });
   });
 });

@@ -1385,86 +1385,63 @@ describe("deploy", () => {
       );
     });
 
-    test("skips Apple web credential prompts for an exact native-only production registration", async () => {
-      await linkedProject({
-        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
-      });
-      mockLiveProduction({
-        instanceId: "ins_prod_native_apple",
-        developmentConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-        productionConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-      });
-      mockListIOSApplications.mockResolvedValueOnce([
-        {
-          object: "ios_application",
-          id: "ios_native",
-          app_id_prefix: "ABCDE12345",
-          bundle_id: "com.example.native",
-          created_at: 1,
-          updated_at: 1,
-        },
-      ]);
-      mockIsAgent.mockReturnValue(false);
+    describe("native-only Apple", () => {
+      const nativeConnection = {
+        enabled: true,
+        authenticatable: true,
+        bundle_id: "com.example.native",
+      };
+      const registration = {
+        object: "ios_application",
+        id: "ios_native",
+        app_id_prefix: "ABCDE12345",
+        bundle_id: "com.example.native",
+      };
 
-      await runDeploy({});
-
-      expect(mockListIOSApplications).toHaveBeenCalledWith("app_xyz789", "ins_prod_native_apple");
-      expect(mockGetNativeSettings).toHaveBeenCalledWith("app_xyz789", "ins_prod_native_apple");
-      expect(mockConfirm).toHaveBeenCalledWith({
-        message: expect.stringContaining("Also configure Apple web sign-in credentials?"),
-        default: false,
-      });
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-      expect(mockPassword).not.toHaveBeenCalled();
-      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
-      const err = stripAnsi(captured.err);
-      expect(err).toContain("No deploy actions remain.");
-      expect(err).toContain("OAuth       Apple");
-      expect(err).not.toContain("Configure Apple OAuth for production");
-    });
-
-    test.each(["ready", "registration-missing", "authentication-disabled"])(
-      "allows web Apple credentials alongside a native Bundle ID (%s)",
-      async (readiness) => {
+      async function nativeAppleDeploy(): Promise<void> {
         await linkedProject({
           instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
         });
         mockLiveProduction({
           instanceId: "ins_prod_native_apple",
-          developmentConfig: { connection_oauth_apple: { enabled: true } },
-          productionConfig: {
-            connection_oauth_apple: {
-              enabled: true,
-              authenticatable: readiness !== "authentication-disabled",
-              bundle_id: "com.example.native",
-            },
-          },
+          developmentConfig: { connection_oauth_apple: nativeConnection },
+          productionConfig: { connection_oauth_apple: nativeConnection },
         });
-        if (readiness === "ready")
-          mockListIOSApplications.mockResolvedValue([
-            {
-              object: "ios_application",
-              id: "ios_native",
-              app_id_prefix: "ABCDE12345",
-              bundle_id: "com.example.native",
-              created_at: 1,
-              updated_at: 1,
-            },
-          ]);
         mockIsAgent.mockReturnValue(false);
+      }
+
+      test("needs no prompts once the production registration is ready", async () => {
+        await nativeAppleDeploy();
+        mockListIOSApplications.mockResolvedValue([registration]);
+
+        await runDeploy({});
+
+        expect(mockConfirm).not.toHaveBeenCalled();
+        expect(mockSelect).not.toHaveBeenCalled();
+        expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+        expect(stripAnsi(captured.err)).toContain("No deploy actions remain.");
+      });
+
+      test("pauses with production guidance when the user declines web credentials", async () => {
+        await nativeAppleDeploy();
+        mockConfirm.mockResolvedValueOnce(false);
+
+        const error = await runDeploy({}).catch((caught: unknown) => caught as CliError);
+
+        expect(mockConfirm).toHaveBeenCalledWith({
+          message: expect.stringContaining("Also configure Apple web sign-in credentials?"),
+          default: false,
+        });
+        expect(error?.message).toContain("Deploy paused at: Apple OAuth credential setup");
+        expect(flat(stripAnsi(captured.err))).toContain(
+          "https://dashboard.clerk.com/apps/app_xyz789/instances/ins_prod_native_apple/native-applications",
+        );
+        expect(mockSelect).not.toHaveBeenCalled();
+        expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+      });
+
+      test("saves hosted credentials unchanged when the user adds web sign-in", async () => {
+        await nativeAppleDeploy();
         mockConfirm.mockResolvedValueOnce(true);
         mockSelect.mockResolvedValueOnce("have-credentials");
         const keyPath = join(tempDir, "AuthKey.p8");
@@ -1478,14 +1455,12 @@ describe("deploy", () => {
 
         await runDeploy({});
 
-        expect(mockConfirm).toHaveBeenCalledTimes(1);
         expect(mockPatchInstanceConfig).toHaveBeenCalledWith(
           "app_xyz789",
           "ins_prod_native_apple",
           {
             connection_oauth_apple: {
               enabled: true,
-              authenticatable: true,
               client_id: "services-id",
               team_id: "team-id",
               key_id: "key-id",
@@ -1493,322 +1468,7 @@ describe("deploy", () => {
             },
           },
         );
-      },
-    );
-
-    test("refuses case-only Apple registration mismatches without suggesting another registration", async () => {
-      await linkedProject({
-        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
       });
-      mockLiveProduction({
-        instanceId: "ins_prod_native_apple",
-        developmentConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-        productionConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-      });
-      mockListIOSApplications.mockResolvedValue([
-        {
-          object: "ios_application",
-          id: "ios_native",
-          app_id_prefix: "ABCDE12345",
-          bundle_id: "com.Example.Native",
-          created_at: 1,
-          updated_at: 1,
-        },
-      ]);
-      mockIsAgent.mockReturnValue(false);
-
-      const thrown = await runDeploy({}).catch((error: unknown) => error);
-
-      expect(thrown).toBeInstanceOf(CliError);
-      const message = (thrown as Error).message;
-      expect(message).toContain("letter casing does not exactly match");
-      expect(message).toContain("registration's exact Bundle ID spelling");
-      expect(message).toContain("Do not create another registration");
-      expect(message).not.toContain("Register it at");
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-      expect(mockPassword).not.toHaveBeenCalled();
-      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
-    });
-
-    test("refuses ambiguous App ID Prefix registrations for native-only Apple", async () => {
-      await linkedProject({
-        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
-      });
-      mockLiveProduction({
-        instanceId: "ins_prod_native_apple",
-        developmentConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-        productionConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-      });
-      mockListIOSApplications.mockResolvedValue([
-        {
-          object: "ios_application",
-          id: "ios_first",
-          app_id_prefix: "FIRST12345",
-          bundle_id: "com.example.native",
-          created_at: 1,
-          updated_at: 1,
-        },
-        {
-          object: "ios_application",
-          id: "ios_second",
-          app_id_prefix: "SECOND1234",
-          bundle_id: "com.example.native",
-          created_at: 1,
-          updated_at: 1,
-        },
-      ]);
-      mockIsAgent.mockReturnValue(false);
-
-      let thrown: unknown;
-      try {
-        await runDeploy({});
-      } catch (error) {
-        thrown = error;
-      }
-
-      expect(thrown).toBeInstanceOf(CliError);
-      const message = (thrown as Error).message;
-      expect(message).toContain("more than one App ID Prefix registration");
-      expect(message).toContain("Review the existing registrations");
-      expect(message).toContain("Do not create another registration");
-      expect(message).not.toContain("Register it at");
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-      expect(mockPassword).not.toHaveBeenCalled();
-      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
-      expect(stripAnsi(captured.err)).toContain("Failed");
-    });
-
-    test("does not recommend registration creation when native Apple verification is unavailable", async () => {
-      await linkedProject({
-        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
-      });
-      mockLiveProduction({
-        instanceId: "ins_prod_native_apple",
-        developmentConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-        productionConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-      });
-      mockListIOSApplications.mockRejectedValue(new Error("native endpoint unavailable"));
-      mockIsAgent.mockReturnValue(false);
-
-      let thrown: unknown;
-      try {
-        await runDeploy({});
-      } catch (error) {
-        thrown = error;
-      }
-
-      expect(thrown).toBeInstanceOf(CliError);
-      const message = (thrown as Error).message;
-      expect(message).toContain(
-        "could not verify the production Native Application registration for com.example.native",
-      );
-      expect(message).toContain("no registration should be created from this unverified result");
-      expect(message).toContain("Retry `clerk deploy`");
-      expect(message).not.toContain("Register it at");
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-      expect(mockPassword).not.toHaveBeenCalled();
-      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
-      expect(stripAnsi(captured.err)).toContain("Failed");
-    });
-
-    test("refuses to infer an App ID Prefix when native Apple lacks an exact production registration", async () => {
-      await linkedProject({
-        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
-      });
-      mockLiveProduction({
-        instanceId: "ins_prod_native_apple",
-        developmentConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-        productionConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-      });
-      mockListIOSApplications.mockResolvedValueOnce([
-        {
-          object: "ios_application",
-          id: "ios_other",
-          app_id_prefix: "OTHER12345",
-          bundle_id: "com.example.other",
-          created_at: 1,
-          updated_at: 1,
-        },
-      ]);
-      mockIsAgent.mockReturnValue(false);
-
-      await expect(runDeploy({})).rejects.toThrow(
-        "the production instance does not have an exact iOS Native Application registration for that Bundle ID",
-      );
-
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-      expect(mockPassword).not.toHaveBeenCalled();
-      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
-      expect(stripAnsi(captured.err)).toContain("Failed");
-    });
-
-    test("preserves Ctrl-C while verifying a native-only Apple registration", async () => {
-      await linkedProject({
-        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
-      });
-      mockLiveProduction({
-        instanceId: "ins_prod_native_apple",
-        developmentConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-        productionConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-      });
-      mockListIOSApplications
-        .mockRejectedValueOnce(new Error("native status endpoint unavailable"))
-        .mockRejectedValueOnce(promptExitError());
-      mockIsAgent.mockReturnValue(false);
-
-      await expect(runDeploy({})).rejects.toMatchObject({ exitCode: EXIT_CODE.SIGINT });
-
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-      expect(mockPassword).not.toHaveBeenCalled();
-      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
-      expect(stripAnsi(captured.err)).toContain("Paused");
-    });
-
-    test("refuses native-only Apple when production Native API is disabled", async () => {
-      await linkedProject({
-        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
-      });
-      mockLiveProduction({
-        instanceId: "ins_prod_native_apple",
-        developmentConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-        productionConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-      });
-      mockListIOSApplications.mockResolvedValue([
-        {
-          object: "ios_application",
-          id: "ios_native",
-          app_id_prefix: "ABCDE12345",
-          bundle_id: "com.example.native",
-          created_at: 1,
-          updated_at: 1,
-        },
-      ]);
-      mockGetNativeSettings.mockResolvedValue({
-        object: "native_settings",
-        api_enabled: false,
-      });
-      mockIsAgent.mockReturnValue(false);
-
-      await expect(runDeploy({})).rejects.toThrow(
-        "Enable Native API at https://dashboard.clerk.com/~/native-applications",
-      );
-
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-      expect(mockPassword).not.toHaveBeenCalled();
-      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
-    });
-
-    test("refuses disabled native-only Apple without requesting hosted credentials", async () => {
-      await linkedProject({
-        instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
-      });
-      mockLiveProduction({
-        instanceId: "ins_prod_native_apple",
-        developmentConfig: {
-          connection_oauth_apple: {
-            enabled: true,
-            authenticatable: true,
-            bundle_id: "com.example.native",
-          },
-        },
-        productionConfig: {
-          connection_oauth_apple: {
-            enabled: false,
-            authenticatable: false,
-            bundle_id: "com.example.native",
-          },
-        },
-      });
-      mockIsAgent.mockReturnValue(false);
-
-      await expect(runDeploy({})).rejects.toThrow(
-        "Apple is not explicitly enabled for authentication on the production instance",
-      );
-
-      expect(mockListIOSApplications).not.toHaveBeenCalled();
-      expect(mockGetNativeSettings).not.toHaveBeenCalled();
-      expect(mockSelect).not.toHaveBeenCalled();
-      expect(mockInput).not.toHaveBeenCalled();
-      expect(mockPassword).not.toHaveBeenCalled();
-      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
     });
 
     test("Apple .p8 file prompt validates path and PEM framing before continuing", async () => {
@@ -1858,7 +1518,6 @@ describe("deploy", () => {
         connection_oauth_apple: {
           enabled: true,
           client_id: "apple-services-id",
-          authenticatable: true,
           team_id: "apple-team-id",
           key_id: "apple-key-id",
           client_secret:

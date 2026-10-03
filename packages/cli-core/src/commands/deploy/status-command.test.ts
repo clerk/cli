@@ -43,20 +43,8 @@ function stripAnsi(value: string): string {
 }
 
 function appWith(production: boolean) {
-  const instances = [
-    {
-      instance_id: "ins_dev",
-      environment_type: "development",
-      publishable_key: "pk_test_fixture",
-    },
-  ];
-  if (production) {
-    instances.push({
-      instance_id: "ins_prod",
-      environment_type: "production",
-      publishable_key: "pk_live_fixture",
-    });
-  }
+  const instances = [{ instance_id: "ins_dev", environment_type: "development" }];
+  if (production) instances.push({ instance_id: "ins_prod", environment_type: "production" });
   return { application_id: "app_1", name: "app", instances };
 }
 
@@ -1141,11 +1129,15 @@ describe("humanNextAction", () => {
       const domainGuidance = humanNextAction(step);
       const line = humanNextAction({
         ...step,
-        nativeAppleReadinessIssue: { bundleId: "com.example.app", reason: "native-api-disabled" },
+        nativeAppleReadinessIssue: {
+          bundleId: "com.example.app",
+          reason: "native-api-disabled",
+          dashboardUrl: "https://dashboard.clerk.com/native-applications",
+        },
       });
       expect(line).toStartWith(domainGuidance);
       expect(line).toContain("Native API is disabled");
-      expect(line).toContain("com.example.app");
+      expect(line).toContain("https://dashboard.clerk.com/native-applications");
     },
   );
   // These are the three things that used to leak from the agent sentence into

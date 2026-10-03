@@ -200,12 +200,6 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
   }
   const storedToken = await ctx.getToken();
   if (!storedToken) {
-    if (await ctx.hasAccountCredentials()) {
-      return check.warn("Account credentials are configured but could not be verified", {
-        remedy: "Check your Clerk authentication and rerun `clerk doctor`.",
-        fixable: false,
-      });
-    }
     const keyless = await ctx.getKeylessTarget();
     return keyless
       ? check.pass("No account session — not required for this accountless application")
@@ -219,36 +213,14 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
     return check.pass(`Authenticated as ${userInfo.email}`);
   } catch (error) {
     if (isAuthError(error)) {
-      // The OAuth userinfo surface is not available in every environment that
-      // can accept the same account credential through PLAPI. Verify it with
-      // an account-scoped application-list request: unlike getApplication(),
-      // this does not depend on the current directory being linked or its
-      // linked application continuing to exist.
-      try {
-        await ctx.verifyAccountAccess();
-        return check.pass("Account access verified through the Clerk API");
-      } catch (verificationError) {
-        if (!isAuthError(verificationError)) {
-          if (verificationError instanceof PlapiError) {
-            const unavailable = verificationError.status === 404 ? "endpoint" : "API";
-            return check.warn(
-              `Could not verify authentication — Clerk ${unavailable} unavailable`,
-              {
-                detail: errorMessage(verificationError),
-                remedy:
-                  "Check the Clerk environment and service status, then rerun `clerk doctor`.",
-                fixable: false,
-              },
-            );
-          }
-
-          return check.warn("Could not reach Clerk to verify authentication — network issue", {
-            detail: errorMessage(verificationError),
-            remedy: "Check your network connection, then rerun `clerk doctor`.",
-            fixable: false,
-          });
-        }
-      }
+      // OAuth userinfo isn't available in every environment that accepts the
+      // same session through the Platform API. Only a confirmed account read
+      // overrides the rejection; anything else keeps the expired result.
+      const verified = await ctx.verifyAccountAccess().then(
+        () => true,
+        () => false,
+      );
+      if (verified) return check.pass("Account access verified through the Clerk API");
 
       // Same fallback whoami uses: an expired session doesn't strand a keyless
       // project, so don't tell the user their setup is broken.

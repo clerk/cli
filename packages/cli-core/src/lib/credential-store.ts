@@ -500,14 +500,9 @@ async function resolveValidToken(): Promise<string | null> {
 }
 
 /**
- * Resolve a usable OAuth access token once per process at a time.
- *
- * A refresh token rotates when it is redeemed. Without this in-flight guard,
- * concurrent API calls can both read the same expired session and attempt to
- * refresh it: one succeeds while the other receives `invalid_grant`. The
- * cross-process recovery in `refreshStoredSession` still handles a different
- * CLI process winning that race; this guard prevents the race between callers
- * that already share this module instance.
+ * Refresh tokens rotate when redeemed, so concurrent callers in this process
+ * share one in-flight resolution instead of racing each other to
+ * `invalid_grant`. `refreshStoredSession` still handles another process winning.
  */
 export async function getValidToken(): Promise<string | null> {
   if (validTokenPromise) return validTokenPromise;

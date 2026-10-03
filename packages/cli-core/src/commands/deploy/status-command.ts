@@ -5,7 +5,7 @@ import { interruptedExitCode } from "../../lib/signals.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { declareSoftExitOutcome } from "../../lib/telemetry.ts";
-import { deployComponentLabels, dnsRecords } from "./copy.ts";
+import { deployComponentLabels, dnsRecords, nativeAppleGuidance } from "./copy.ts";
 import {
   buildDeployStatusReport,
   buildInterruptedDeployStatusReport,
@@ -227,7 +227,7 @@ export function humanNextAction(step: DeployNextStep): string {
     url ? ` Visit the Clerk Dashboard domains page to monitor its status there: ${url}` : "";
   const nativeApple =
     "nativeAppleReadinessIssue" in step && step.nativeAppleReadinessIssue
-      ? ` ${humanNativeAppleReadinessNextAction(step.nativeAppleReadinessIssue)}`
+      ? ` ${nativeAppleGuidance(step.nativeAppleReadinessIssue)}`
       : "";
 
   switch (step.kind) {
@@ -263,10 +263,7 @@ export function humanNextAction(step: DeployNextStep): string {
           hostedPending.length > 0
             ? ` These OAuth providers are also missing production credentials: ${hostedPending.join(", ")}. Run \`clerk deploy\` to configure them.`
             : "";
-        return (
-          `Domain verified, but setup is incomplete. ${humanNativeAppleReadinessNextAction(step.nativeAppleReadinessIssue)}` +
-          hostedAction
-        );
+        return `Domain verified, but setup is incomplete.${nativeApple}` + hostedAction;
       }
       return (
         `Domain verified, but these OAuth providers are missing production credentials: ` +
@@ -303,43 +300,4 @@ export function humanNextAction(step: DeployNextStep): string {
         nativeApple
       );
   }
-}
-
-function humanNativeAppleReadinessNextAction(
-  issue: NonNullable<DeployStatusReport["nativeAppleReadinessIssue"]>,
-): string {
-  if (issue.reason === "verification-unavailable") {
-    return (
-      `Clerk could not verify the production Native Application registration for ${issue.bundleId}. ` +
-      "Retry `clerk deploy status`; do not create another registration based on this unverified result."
-    );
-  }
-  if (issue.reason === "registration-ambiguous") {
-    return (
-      `Native Sign in with Apple has more than one App ID Prefix registration for ${issue.bundleId}. ` +
-      "Review the existing registrations in the Clerk Dashboard before continuing; do not create another registration."
-    );
-  }
-  if (issue.reason === "registration-bundle-case-mismatch") {
-    return (
-      `The Apple connection Bundle ID ${issue.bundleId} differs only by letter casing from its existing iOS Native Application registration. ` +
-      "Update the Apple connection to use the registration's exact Bundle ID spelling in the Clerk Dashboard."
-    );
-  }
-  if (issue.reason === "authentication-disabled") {
-    return (
-      `Apple is not explicitly enabled for authentication on the production instance for ${issue.bundleId}. ` +
-      "Review the Apple connection in the Clerk Dashboard; do not add web credentials for a native-only setup."
-    );
-  }
-  if (issue.reason === "native-api-disabled") {
-    return (
-      `Native API is disabled on the production instance for ${issue.bundleId}. ` +
-      "Enable it in the Clerk Dashboard under Native Applications."
-    );
-  }
-  return (
-    `Native Sign in with Apple is missing an exact production iOS Native Application registration for ${issue.bundleId}. ` +
-    "Register that Bundle ID in the Clerk Dashboard under Native Applications."
-  );
 }

@@ -4,6 +4,7 @@ import {
   inspectNativeAppleConfiguration,
   providerFields,
   providerLabel,
+  type NativeAppleStatus,
   type OAuthProviderDescriptor,
 } from "./providers.ts";
 import type { IOSApplication, InstanceConfigSchema } from "../../lib/plapi.ts";
@@ -69,8 +70,6 @@ function iosApplication(
     id,
     app_id_prefix: appIdPrefix,
     bundle_id: bundleId,
-    created_at: 1,
-    updated_at: 1,
   };
 }
 
@@ -206,164 +205,87 @@ describe("deploy OAuth provider descriptors", () => {
     ]);
   });
 
-  test("recognizes native-only Apple only for an exact production registration", () => {
-    const result = buildOAuthProviderDescriptors(
-      ["apple"],
-      schemaResponse({ connection_oauth_apple: appleOAuthSchema }),
+  describe("native-only Apple readiness", () => {
+    const apple = descriptorByProvider(
+      buildOAuthProviderDescriptors(
+        ["apple"],
+        schemaResponse({ connection_oauth_apple: appleOAuthSchema }),
+      ).supported,
+      "apple",
     );
-    const apple = descriptorByProvider(result.supported, "apple");
-    const config = {
-      connection_oauth_apple: {
-        enabled: true,
-        authenticatable: true,
-        bundle_id: "com.example.app",
+    const connection = { enabled: true, authenticatable: true, bundle_id: "com.example.app" };
+    const registered = [iosApplication("com.example.app")];
+
+    test.each([
+      { name: "an exact registration", apps: registered, expected: "ready" },
+      {
+        name: "duplicate registrations under one prefix",
+        apps: [
+          iosApplication("com.example.app", "PREFIX_ONE", "ios_a"),
+          iosApplication("com.example.app", "PREFIX_ONE", "ios_b"),
+        ],
+        expected: "ready",
       },
-    };
-
-    expect(
-      inspectNativeAppleConfiguration(config, apple, [iosApplication("com.example.app")], {
-        object: "native_settings",
-        api_enabled: true,
-      }),
-    ).toEqual({ status: "ready", bundleId: "com.example.app" });
-    expect(
-      inspectNativeAppleConfiguration(config, apple, [iosApplication("COM.EXAMPLE.APP")], {
-        object: "native_settings",
-        api_enabled: true,
-      }),
-    ).toEqual({
-      status: "registration-bundle-case-mismatch",
-      bundleId: "com.example.app",
-    });
-    expect(
-      inspectNativeAppleConfiguration(config, apple, [iosApplication("com.example.other")], {
-        object: "native_settings",
-        api_enabled: true,
-      }),
-    ).toEqual({ status: "registration-missing", bundleId: "com.example.app" });
-  });
-
-  test("rejects multiple App ID prefixes for one native Apple Bundle ID", () => {
-    const result = buildOAuthProviderDescriptors(
-      ["apple"],
-      schemaResponse({ connection_oauth_apple: appleOAuthSchema }),
-    );
-    const apple = descriptorByProvider(result.supported, "apple");
-    const config = {
-      connection_oauth_apple: {
-        enabled: true,
-        authenticatable: true,
-        bundle_id: "com.example.app",
+      {
+        name: "no registration",
+        apps: [iosApplication("com.example.other")],
+        expected: "registration-missing",
       },
-    };
-
-    expect(
-      inspectNativeAppleConfiguration(
-        config,
-        apple,
-        [
+      {
+        name: "registrations under two prefixes",
+        apps: [
           iosApplication("com.example.app", "PREFIX_ONE"),
           iosApplication("com.example.app", "PREFIX_TWO"),
         ],
-        { object: "native_settings", api_enabled: true },
-      ),
-    ).toEqual({ status: "registration-ambiguous", bundleId: "com.example.app" });
-    expect(
-      inspectNativeAppleConfiguration(
-        config,
-        apple,
-        [
-          iosApplication("com.example.app", "PREFIX_ONE", "ios_first"),
-          iosApplication("com.example.app", "PREFIX_ONE", "ios_duplicate"),
-        ],
-        { object: "native_settings", api_enabled: true },
-      ),
-    ).toEqual({ status: "ready", bundleId: "com.example.app" });
-  });
+        expected: "registration-ambiguous",
+      },
+      {
+        name: "a registration that differs in case",
+        apps: [iosApplication("COM.EXAMPLE.APP")],
+        expected: "registration-bundle-case-mismatch",
+      },
+      {
+        name: "Native API disabled",
+        apps: registered,
+        apiEnabled: false,
+        expected: "native-api-disabled",
+      },
+      {
+        name: "a connection that cannot authenticate",
+        apps: registered,
+        override: { authenticatable: false },
+        expected: "authentication-disabled",
+      },
+      {
+        name: "a disabled connection",
+        apps: registered,
+        override: { enabled: false },
+        expected: "authentication-disabled",
+      },
+    ])("reports $expected for $name", ({ apps, apiEnabled = true, override = {}, expected }) => {
+      expect(
+        inspectNativeAppleConfiguration(
+          { connection_oauth_apple: { ...connection, ...override } },
+          apple,
+          apps,
+          { object: "native_settings", api_enabled: apiEnabled },
+        ),
+      ).toEqual({ status: expected as NativeAppleStatus, bundleId: "com.example.app" });
+    });
 
-  test("requires Native API and authenticatable Apple settings for native readiness", () => {
-    const result = buildOAuthProviderDescriptors(
-      ["apple"],
-      schemaResponse({ connection_oauth_apple: appleOAuthSchema }),
+    test.each(["client_id", "client_secret", "team_id", "key_id"])(
+      "treats Apple with %s as hosted, like the backend",
+      (key) => {
+        expect(
+          inspectNativeAppleConfiguration(
+            { connection_oauth_apple: { ...connection, [key]: "value" } },
+            apple,
+            registered,
+            { object: "native_settings", api_enabled: true },
+          ),
+        ).toBeUndefined();
+      },
     );
-    const apple = descriptorByProvider(result.supported, "apple");
-    const iosApplications = [iosApplication("com.example.app")];
-    const connection = {
-      enabled: true,
-      authenticatable: true,
-      bundle_id: "com.example.app",
-    };
-
-    expect(
-      inspectNativeAppleConfiguration(
-        { connection_oauth_apple: connection },
-        apple,
-        iosApplications,
-        { object: "native_settings", api_enabled: false },
-      ),
-    ).toEqual({ status: "native-api-disabled", bundleId: "com.example.app" });
-    expect(
-      inspectNativeAppleConfiguration(
-        {
-          connection_oauth_apple: {
-            ...connection,
-            authenticatable: false,
-          },
-        },
-        apple,
-        iosApplications,
-        { object: "native_settings", api_enabled: true },
-      ),
-    ).toEqual({ status: "authentication-disabled", bundleId: "com.example.app" });
-    expect(
-      inspectNativeAppleConfiguration(
-        {
-          connection_oauth_apple: {
-            enabled: false,
-            authenticatable: false,
-            bundle_id: "com.example.app",
-          },
-        },
-        apple,
-        iosApplications,
-        { object: "native_settings", api_enabled: true },
-      ),
-    ).toEqual({ status: "authentication-disabled", bundleId: "com.example.app" });
-    expect(
-      inspectNativeAppleConfiguration(
-        {
-          connection_oauth_apple: {
-            enabled: true,
-            bundle_id: "com.example.app",
-          },
-        },
-        apple,
-        iosApplications,
-        { object: "native_settings", api_enabled: true },
-      ),
-    ).toEqual({ status: "authentication-disabled", bundleId: "com.example.app" });
-  });
-
-  test("keeps hosted Apple credentials on the hosted OAuth path", () => {
-    const result = buildOAuthProviderDescriptors(
-      ["apple"],
-      schemaResponse({ connection_oauth_apple: appleOAuthSchema }),
-    );
-    const apple = descriptorByProvider(result.supported, "apple");
-
-    expect(
-      inspectNativeAppleConfiguration(
-        {
-          connection_oauth_apple: {
-            enabled: false,
-            bundle_id: "com.example.app",
-            client_id: "com.example.web",
-          },
-        },
-        apple,
-        [iosApplication("com.example.app")],
-      ),
-    ).toEqual({ status: "hosted-or-unconfigured" });
   });
 
   test("keeps compatibility prompt labels only for behavioral overrides", () => {
