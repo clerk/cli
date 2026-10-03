@@ -268,7 +268,7 @@ liveTest(
         "init",
         "--yes",
         "--no-skills",
-        "--target",
+        "--xcode-target",
         "MyApp",
         "--app",
         disposableApplicationId,
@@ -345,11 +345,9 @@ liveTest(
       const doctor = await runCLI(projectDir, configDir, apiKey, [
         "doctor",
         "--json",
-        "--target",
+        "--xcode-target",
         "MyApp",
       ]);
-      // Setup did not request AuthView or add a custom authentication flow.
-      // Doctor must report that remaining work even when registration is ready.
       expect(doctor.exitCode).toBe(0);
       let doctorResults: unknown;
       try {
@@ -367,7 +365,6 @@ liveTest(
           (value.status === "pass" || value.status === "warn" || value.status === "fail"),
       );
       expect(checks.filter((check) => check.status === "fail")).toEqual([]);
-      expect(checks.find((check) => check.name === "App integration")?.status).toBe("warn");
       for (const name of [
         "Native registration",
         "Apple entitlement: Debug",

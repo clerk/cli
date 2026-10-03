@@ -31,8 +31,6 @@ async function fixture(starter = false) {
     id: "ios_existing",
     bundle_id: "com.example.MyApp",
     app_id_prefix: "TEST123456",
-    created_at: 1,
-    updated_at: 1,
   });
   return f;
 }
@@ -49,18 +47,9 @@ test("plain interactive starter setup discovers identity, downloads packages, co
   const p = promptsFor(true);
   const outro = spyOn(spinner, "outro").mockResolvedValue(undefined);
   spies.push(outro);
-  let authenticated = 0;
   const run = spyOn(f.dependencies, "run");
   spies.push(run);
-  await runAppleInit(
-    { root: f.root, agent: false },
-    async () => {
-      authenticated++;
-      return "app_test";
-    },
-    f.dependencies,
-  );
-  expect(authenticated).toBe(1);
+  await runAppleInit({ root: f.root, agent: false }, "app_test", f.dependencies);
   expect(p.text).not.toHaveBeenCalled();
   expect(p.select).not.toHaveBeenCalled();
   expect(p.confirm.mock.calls.map((call) => call[0].message)).toEqual([
@@ -69,6 +58,9 @@ test("plain interactive starter setup discovers identity, downloads packages, co
     "Apply this setup?",
   ]);
   expect(run.mock.calls.some((call) => call[0].includes("-resolvePackageDependencies"))).toBe(true);
+  // Debug and Release are read once for planning (the coordinator's inspection is
+  // reused), then once more to confirm the Bundle ID from Xcode before registering.
+  expect(run.mock.calls.filter((call) => call[0].includes("-showBuildSettings"))).toHaveLength(4);
   expect(await readFile(join(f.root, "MyApp/MyAppApp.swift"), "utf8")).toContain("Clerk.configure");
   expect(await readFile(join(f.root, "MyApp/ContentView.swift"), "utf8")).toContain("AuthView()");
   expect(await readFile(join(f.root, "MyApp/MyApp.entitlements"), "utf8")).toContain(
@@ -86,8 +78,8 @@ test("plain interactive starter setup discovers identity, downloads packages, co
 test("existing app receives capabilities and a precise JSON handoff without rewriting Swift; reruns are idempotent", async () => {
   const f = await fixture();
   const before = await readFile(join(f.root, "MyApp/MyAppApp.swift"), "utf8");
-  const options = { root: f.root, agent: true, yes: true };
-  await runAppleInit(options, async () => "app_test", f.dependencies);
+  const options = { root: f.root, agent: true, json: true };
+  await runAppleInit(options, "app_test", f.dependencies);
   const result = JSON.parse(captured.out);
   expect(result).toMatchObject({
     status: "requires-source-integration",
@@ -113,7 +105,7 @@ test("existing app receives capabilities and a precise JSON handoff without rewr
   expect(captured.out).not.toContain("SYNTHETIC_PRESERVED_SECRET");
   expect(await readFile(join(f.root, "MyApp/MyAppApp.swift"), "utf8")).toBe(before);
   captured.clear();
-  await runAppleInit(options, async () => "app_test", f.dependencies);
+  await runAppleInit(options, "app_test", f.dependencies);
   expect(JSON.parse(captured.out).changedFiles).toEqual([]);
   expect(f.state.events).toEqual(["enable-native"]);
 });
@@ -123,11 +115,7 @@ test("an enabled Apple provider automatically gets its local entitlement without
   const outro = spyOn(spinner, "outro").mockResolvedValue(undefined);
   spies.push(outro);
   Object.assign(f.state.apple, { enabled: true, bundle_id: "com.example.MyApp" });
-  await runAppleInit(
-    { root: f.root, agent: false, yes: true },
-    async () => "app_test",
-    f.dependencies,
-  );
+  await runAppleInit({ root: f.root, agent: false, yes: true }, "app_test", f.dependencies);
   expect(await readFile(join(f.root, "MyApp/MyApp.entitlements"), "utf8")).toContain(
     "com.apple.developer.applesignin",
   );
@@ -138,7 +126,7 @@ test("an enabled Apple provider automatically gets its local entitlement without
   expect(captured.err).not.toContain("app verification remains");
 });
 
-test("dry run does not authenticate, fetch remote settings, resolve packages, or edit the project", async () => {
+test("dry run reads no remote settings, resolves no packages, and edits nothing", async () => {
   const f = await fixture();
   const before = await treeDigest(f.root);
   const read = spyOn(f.dependencies.api, "fetchApplication");
@@ -146,10 +134,8 @@ test("dry run does not authenticate, fetch remote settings, resolve packages, or
   const run = spyOn(f.dependencies, "run");
   spies.push(run);
   await runAppleInit(
-    { root: f.root, agent: true, dryRun: true },
-    async () => {
-      throw new Error("Must not authenticate");
-    },
+    { root: f.root, agent: true, dryRun: true, json: true },
+    undefined,
     f.dependencies,
   );
   expect(JSON.parse(captured.out).mode).toBe("read-only");
@@ -165,13 +151,13 @@ test("declining the final preview leaves local files and remote settings unchang
   promptsFor(false);
   const before = await treeDigest(f.root);
   await expect(
-    runAppleInit({ root: f.root, agent: false }, async () => "app_test", f.dependencies),
+    runAppleInit({ root: f.root, agent: false }, "app_test", f.dependencies),
   ).rejects.toThrow();
   expect(await treeDigest(f.root)).toEqual(before);
   expect(f.state.events).toEqual([]);
 });
 
-test("package failure returns an incomplete result and never activates remote settings", async () => {
+test("package failure returns an incomplete result but still completes native registration", async () => {
   const f = await fixture();
   const original = f.dependencies.run;
   f.dependencies.run = async (...args) => {
@@ -179,20 +165,29 @@ test("package failure returns an incomplete result and never activates remote se
     return original(...args);
   };
   await expect(
-    runAppleInit({ root: f.root, agent: true, yes: true }, async () => "app_test", f.dependencies),
-  ).rejects.toThrow("incomplete");
-  expect(JSON.parse(captured.out)).toMatchObject({ status: "incomplete", packages: "incomplete" });
-  expect(f.state.events).toEqual([]);
+    runAppleInit({ root: f.root, agent: true, json: true }, "app_test", f.dependencies),
+  ).rejects.toThrow("Swift package resolution failed");
+  expect(JSON.parse(captured.out)).toMatchObject({
+    status: "incomplete",
+    packages: "incomplete",
+    remote: "verified",
+  });
+  expect(f.state.events).toEqual(["enable-native"]);
 });
 
 test("public doctor reads Native API before a prefix is known and never writes or resolves packages", async () => {
+  const platform = process.platform;
+  Object.defineProperty(process, "platform", { value: "darwin" });
+  spies.push({
+    mockRestore: () => Object.defineProperty(process, "platform", { value: platform }),
+  } as never);
   const f = await fixture();
   f.state.apps = [];
   const before = await treeDigest(f.root);
   const run = spyOn(f.dependencies, "run");
   spies.push(run);
   const ctx = { getProfile: async () => ({ profile: { appId: "app_test" } }) } as DoctorContext;
-  const { results } = await runIOSDoctorChecks(ctx, { root: f.root }, f.dependencies);
+  const results = await runIOSDoctorChecks(ctx, { root: f.root }, f.dependencies);
   expect(results.find((item) => item.name === "Native API")).toMatchObject({
     status: "warn",
     message: "Native API is disabled.",
@@ -210,8 +205,8 @@ test("public doctor reads Native API before a prefix is known and never writes o
     throw new Error("unavailable");
   };
   const offline = await runIOSDoctorChecks(ctx, { root: f.root }, f.dependencies);
-  expect(offline.results.some((item) => item.name === "SDK project linkage")).toBe(true);
-  expect(offline.results.find((item) => item.name === "Clerk settings")?.status).toBe("warn");
+  expect(offline.some((item) => item.name === "SDK project linkage")).toBe(true);
+  expect(offline.find((item) => item.name === "Clerk native settings")?.status).toBe("warn");
 });
 
 test("installed core products and a compatible resolved SDK are preserved without unnecessary questions", async () => {
@@ -234,7 +229,7 @@ test("installed core products and a compatible resolved SDK are preserved withou
   const p = promptsFor(true);
   await runAppleInit(
     { root: f.root, agent: false, signInWithApple: false },
-    async () => "app_test",
+    "app_test",
     f.dependencies,
   );
   expect(p.select).not.toHaveBeenCalled();
@@ -243,15 +238,11 @@ test("installed core products and a compatible resolved SDK are preserved withou
   expect(await readFile(f.path, "utf8")).not.toContain("ClerkKitUI");
   captured.clear();
   await writeFile(join(directory, "Package.resolved"), pin("1.0.0"));
-  await runAppleInit(
-    { root: f.root, agent: true, yes: true },
-    async () => "app_test",
-    f.dependencies,
-  );
+  await runAppleInit({ root: f.root, agent: true, json: true }, "app_test", f.dependencies);
   expect(JSON.parse(captured.out)).toMatchObject({ status: "manual-steps-required" });
   expect(JSON.parse(captured.out).handoff.remaining).toContainEqual({
     id: "sdk-version",
     detail: expect.stringContaining("below the 1.5.8 baseline"),
   });
-  expect(process.exitCode).toBe(2);
+  expect(process.exitCode).toBe(0);
 });

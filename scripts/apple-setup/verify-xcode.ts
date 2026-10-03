@@ -2,13 +2,12 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createIOSFixture } from "../../packages/cli-core/src/commands/init/ios/test-helpers.ts";
-import { createIOSNativeRegistrationRetryStore } from "../../packages/cli-core/src/commands/init/ios/native-registration-retry.ts";
 import type { IOSApplication } from "../../packages/cli-core/src/lib/plapi.ts";
 import { AUTH_UI_BODY, AUTH_UI_STATE } from "../../packages/cli-core/src/commands/init/ios/plan.ts";
 import type { NativeAPI } from "../../packages/cli-core/src/commands/init/ios/remote.ts";
+import { doctor } from "../../packages/cli-core/src/commands/init/ios/doctor.ts";
 import {
   applySetup,
-  doctor,
   prepareSetup,
   type SetupOptions,
 } from "../../packages/cli-core/src/commands/init/ios/workflow.ts";
@@ -44,10 +43,8 @@ for (const platform of ["ios", "macos"] as const) {
         const application: IOSApplication = {
           object: "ios_application",
           id: "ios_fixture",
-          bundle_id: params.bundleId,
-          app_id_prefix: params.appIdPrefix,
-          created_at: 1,
-          updated_at: 1,
+          bundle_id: params.bundle_id,
+          app_id_prefix: params.app_id_prefix,
         };
         applications.push(application);
         return application;
@@ -84,7 +81,6 @@ for (const platform of ["ios", "macos"] as const) {
           throw new Error("Doctor must not write");
         },
       },
-      retry: createIOSNativeRegistrationRetryStore(() => join(root, "retry-state")),
     };
     const entry = Bun.spawn(
       [
@@ -116,9 +112,10 @@ for (const platform of ["ios", "macos"] as const) {
     )
       throw new Error("Doctor overstated the fixture's readiness.");
     const result = await applySetup(preview, dependencies);
-    if (result.local !== "updated" || result.remote !== "verified" || !result.backup)
+    const backup = result.backups.at(-1);
+    if (result.local !== "updated" || result.remote !== "verified" || !backup)
       throw new Error("Fixture setup did not complete.");
-    if ((await readFile(join(root, result.backup), "utf8")) !== preview.inspection.document.source)
+    if ((await readFile(join(root, backup), "utf8")) !== preview.inspection.document.source)
       throw new Error("Backup did not preserve the original project.");
     const sourcePath = join(root, "ExistingView.swift");
     // Test-only container for snippets destined for a developer's existing view.

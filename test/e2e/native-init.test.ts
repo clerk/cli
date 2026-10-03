@@ -104,7 +104,7 @@ test.skipIf(process.platform !== "darwin")(
       ).text();
 
       const result =
-        await Bun.$`bun ${CLI_PATH} --mode human init --dry-run --prebuilt-auth-ui --target MyApp --no-skills`
+        await Bun.$`bun ${CLI_PATH} --mode human init --dry-run --prebuilt-auth-ui --xcode-target MyApp --no-skills`
           .cwd(projectDir)
           .env({
             ...process.env,
@@ -301,11 +301,11 @@ test.each(PLATFORMS.filter((item) => item.fixture !== "ios" || process.platform 
           [
             process.execPath,
             CLI_PATH,
+            // Agent mode relinks to a different --app without asking, as it does for every framework.
             "--mode",
-            "human",
+            "agent",
             "init",
             "--json",
-            "--yes",
             "--app",
             "app_native_relinked",
           ],

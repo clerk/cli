@@ -51,8 +51,6 @@ for (const platform of ["ios", "macos"] as const)
               id: "ios_fixture",
               bundle_id: "com.example.MyApp",
               app_id_prefix: "TEST123456",
-              created_at: 1,
-              updated_at: 1,
             },
           ];
         },
