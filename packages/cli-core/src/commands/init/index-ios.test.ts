@@ -70,6 +70,21 @@ describe("clerk init for native Apple projects", () => {
     expect(captured.err).not.toContain("clerk env pull");
   });
 
+  test("an agent asking for JSON with no app gets an application-required status", async () => {
+    const run = iosProject({ isAgent: true });
+
+    await init({ json: true });
+
+    expect(run).not.toHaveBeenCalled();
+    expect(JSON.parse(captured.out)).toMatchObject({
+      status: "application-required",
+      next: [
+        expect.stringContaining("clerk apps list --json"),
+        expect.stringContaining("clerk init --app"),
+      ],
+    });
+  });
+
   test("a dry run inspects without signing in", async () => {
     const run = iosProject({ email: null });
 
