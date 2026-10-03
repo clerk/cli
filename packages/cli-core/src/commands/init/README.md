@@ -107,7 +107,7 @@ Native mobile platforms may not have a `package.json`, so they are detected from
 | `*.xcodeproj` / `*.xcworkspace`                                     | iOS (Swift)      | `ClerkKit` (Swift Package Manager)    | `CLERK_PUBLISHABLE_KEY` |
 | `app/src/main/AndroidManifest.xml` / `src/main/AndroidManifest.xml` | Android (Kotlin) | `com.clerk:clerk-android-ui` (Gradle) | `CLERK_PUBLISHABLE_KEY` |
 
-A bare `Package.swift` or `build.gradle` is intentionally **not** enough — those also match server-side Swift packages and non-Android JVM projects. For native platforms the Clerk SDK cannot be installed by a JS package manager, so init skips the SDK install step and the scaffold plan prints Swift Package Manager / Gradle install steps instead. The publishable key is configured in source code (`Clerk.configure(...)` / `Clerk.initialize(...)`), so init still pulls keys into the env file and instructs the user to copy the key over.
+A bare `Package.swift` or `build.gradle` is intentionally **not** enough — those also match server-side Swift packages and non-Android JVM projects. iOS prints manual Swift Package Manager instructions and pulls the publishable key to an env file. Android uses the dedicated [Android setup](#android-setup) flow; use `--android-module` for a nonstandard module directory.
 
 The **Accountless** column indicates whether the framework's Clerk SDK supports accountless mode (auto-generated temporary dev keys). Accountless is the default for unauthenticated runs on Yes-row frameworks — during bootstrap (new projects) in human mode, and in all agent-mode runs. In human mode, an unauthenticated re-run in an existing project still triggers the authenticated flow. `--accountless` forces accountless anywhere a Yes-row framework is detected (existing projects included, even when logged in); passing it for a No-row framework exits with a usage error. In agent mode, an authenticated run on an accountless-capable framework creates a real app named after the project and links it.
 
@@ -115,7 +115,7 @@ Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `ya
 
 ## Scaffolding
 
-Scaffolding is supported for every detected framework. iOS and Android write no files (their SDKs are not npm packages and their build files are not safe to modify automatically) — instead they print the exact quickstart steps as post-instructions.
+Scaffolding is supported for every detected framework. iOS prints quickstart instructions. Android inspects supported Gradle/Kotlin layouts, previews changes, and configures native registration and initialization.
 
 All scaffolding is idempotent — files are skipped if they already contain Clerk setup.
 
@@ -232,9 +232,11 @@ A post-instruction reminds the user that `types/globals.d.ts` must be covered by
 
 Express and Fastify share the server-entry scaffolding in [`node-server.ts`](./frameworks/node-server.ts). The entry file is resolved from `package.json#main` (ignored when it points at build output like `dist/`) and common candidates (`[src/]index|server|app|main` with `.ts/.mts/.js/.mjs/.cjs`, ordered by basename so an unrelated `src/app.ts` can't outrank a root `index.js`). The resolved path is the one named in the `--env-file` post-instruction. Both ESM (`import`) and CommonJS (`require`, including the inline `require("fastify")(...)` form) are supported; injection lands after the full creation statement, so multi-line options objects and chained calls (e.g. `.withTypeProvider()`) are safe. When no entry or creation call is found, a post-instruction with the quickstart link is printed instead.
 
-### iOS (Swift) / Android (Kotlin)
+### iOS (Swift)
 
-No files are written. The scaffold plan prints the quickstart steps: SDK install (Swift Package Manager for `ClerkKit`/`ClerkKitUI`, Gradle for `com.clerk:clerk-android-*`), enabling the Native API and registering the app on the Dashboard's Native Applications page, and configuring the publishable key in source (`Clerk.configure(...)` / `Clerk.initialize(...)`) by copying it from the pulled env file.
+No source files are written. The scaffold plan prints Swift Package Manager,
+Native Applications registration, and publishable-key setup instructions.
+Android uses the dedicated [Android setup](#android-setup) flow.
 
 ## Agent skills install
 
@@ -315,3 +317,57 @@ The breadcrumb is also what protects an unclaimed accountless app from being orp
 - **`--fresh`**: the explicit escape hatch. Skips the check entirely and mints a new application (and overwrites the env keys and breadcrumb), even in agent mode or with `-y`. Like `--template`, it's a usage error when combined with `--login` or whenever the run doesn't resolve to accountless.
 
 If no breadcrumb exists (first run, or the previous app was already claimed and the breadcrumb removed), init proceeds exactly as before — there's nothing to protect.
+
+## Android setup
+
+For a Kotlin Android application, `clerk init --app <app_id>` configures the
+selected Clerk **development** instance and the local application module:
+
+- Enables Native API and registers `applicationId` with the `android_app` Digital
+  Asset Links namespace. The Gradle `namespace` is used for Kotlin/R references;
+  it is not used as the installed application ID.
+- Adds `com.clerk:clerk-android-api:1.1.7`, raising `minSdk` below 24 to 24 locally. Literal values and simple version-catalog references are supported.
+- Aligns literal Kotlin plugin versions or the shared `kotlin` catalog version with Kotlin 2.4.20 when needed. For AGP 9 built-in Kotlin, adds a root KGP classpath dependency. Builds requiring KSP/kapt migration or custom toolchain configuration stop for manual setup.
+- Registers a generated `Application` subclass, or adds initialization after
+  `super.onCreate()` in a supported existing Kotlin `Application`.
+- Writes the development publishable key to `src/main/res/values/clerk.xml` and
+  reads it from Kotlin. No secret key or unused `.env` file is written.
+
+Use Java 17 or newer to sync/build. This initializes the API SDK; add custom
+sign-in UI or Clerk's prebuilt UI separately. Play Integrity credentials remain
+Dashboard-managed.
+
+```sh
+clerk init --dry-run
+clerk init --app app_123 --android-fingerprint AA:BB:... --yes
+clerk init --framework android --android-module mobile --android-package com.example.app.debug --app app_123
+```
+
+`--dry-run` inspects local files and previews the plan without authenticating,
+calling setup APIs, or writing project files. It works before login. Normal runs
+preview remote and local changes before confirmation; `--yes` and agent mode
+apply the plan without a prompt.
+
+`--android-module` is a relative directory, not a Gradle task path. Ambiguous
+multi-module projects require it. Projects with flavors, application ID suffixes,
+or external build logic require `--android-package` with the final installed
+variant ID. Automatic source edits require a literal Gradle namespace and a
+supported Kotlin Application; unsupported layouts stop with manual instructions.
+
+Supply one or more SHA-256 signing fingerprints via `--android-fingerprint`.
+Find these with `./gradlew signingReport`; use the certificate for the installed
+build (including the Play app-signing certificate for Play-distributed builds).
+Without fingerprints, native registration and initialization proceed, but
+passkey association still requires fingerprints in Dashboard > Native Applications.
+
+Reruns reuse an equivalent registration and leave matching files unchanged.
+Existing registrations missing a requested fingerprint must be corrected in the
+Dashboard, because the Platform API provides list/create, not update/delete.
+Completed requests use stable idempotency keys. Native setup is additive: if a
+later step fails, remote changes may already exist and a rerun reconciles them.
+Local writes check for edits since preview and roll back on write failures where
+possible. Existing unmanaged Clerk initialization is preserved and reported for
+manual setup.
+
+This flow requires the Native Settings and Android Applications Platform API
+endpoints, plus `applications:read` and `applications:manage` permissions.

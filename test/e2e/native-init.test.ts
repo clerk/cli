@@ -9,26 +9,13 @@ import { log } from "./lib/logger.ts";
 const FIXTURES_DIR = join(import.meta.dir, "fixtures");
 const CLI_PATH = join(import.meta.dir, "../../packages/cli-core/src/cli.ts");
 
-/**
- * Native platforms (iOS, Android) have no package.json, no npm install, and no
- * build CI can run — Xcode and Gradle toolchains aren't available. So instead
- * of the manifest/`createFixtureHarness` flow, this test asserts the whole of
- * what `clerk init` promises on native: platform detection from marker files,
- * keys pulled into `.env`, zero project files written, and the SDK quickstart
- * printed. The fixtures are hand-authored marker stubs the refresh script
- * never touches.
- */
+/** iOS retains its instruction-only setup; Android setup is tested below. */
 const PLATFORMS = [
   {
     fixture: "ios",
     detectedName: "iOS (Swift)",
     // One stable phrase per printed quickstart step that would break setup if dropped.
     instructions: ["Swift Package Manager", "dashboard.clerk.com/~/native-applications"],
-  },
-  {
-    fixture: "android",
-    detectedName: "Android (Kotlin)",
-    instructions: ["app/build.gradle.kts", "dashboard.clerk.com/~/native-applications"],
   },
 ] as const;
 
@@ -88,6 +75,60 @@ test.each([...PLATFORMS])(
     } finally {
       await rm(projectDir, { recursive: true, force: true }).catch((err) => log(`rm: ${err}`));
       await rm(configDir, { recursive: true, force: true }).catch((err) => log(`rm: ${err}`));
+    }
+  },
+  { timeout: 120_000 },
+);
+
+test(
+  "clerk init configures Android and safely reuses its registration",
+  async () => {
+    const platformAPIKey = process.env.CLERK_PLATFORM_API_KEY;
+    if (!platformAPIKey) throw new Error("Missing required env var: CLERK_PLATFORM_API_KEY");
+    const projectDir = await mkdtemp(join(await realpath(tmpdir()), "clerk-e2e-android-"));
+    const configDir = await mkdtemp(join(await realpath(tmpdir()), "clerk-e2e-config-"));
+    try {
+      await cp(join(FIXTURES_DIR, "android"), projectDir, { recursive: true });
+      await gitInit(projectDir);
+      await linkProject(projectDir, configDir);
+      const run = async () =>
+        Bun.$`bun ${CLI_PATH} --mode human init --yes --no-skills`
+          .cwd(projectDir)
+          .env({
+            CLERK_CONFIG_DIR: configDir,
+            CLERK_PLATFORM_API_KEY: platformAPIKey,
+            CLERK_TELEMETRY_DISABLED: "1",
+          })
+          .quiet()
+          .nothrow();
+      const first = await run();
+      const output = first.stdout.toString() + first.stderr.toString();
+      log(`Android init output:\n${output}`);
+      expect(first.exitCode).toBe(0);
+      expect(output).toContain("Android setup complete");
+      expect(await Bun.file(join(projectDir, "app/build.gradle.kts")).text()).toContain(
+        "com.clerk:clerk-android-api:",
+      );
+      expect(
+        await Bun.file(
+          join(projectDir, "app/src/main/kotlin/com/clerk/cli/e2e/ClerkApplication.kt"),
+        ).text(),
+      ).toContain("Clerk.initialize");
+      const resource = await Bun.file(join(projectDir, "app/src/main/res/values/clerk.xml")).text();
+      expect(resource).toContain("pk_test_");
+      expect(resource).not.toContain("sk_");
+      expect(await Bun.file(join(projectDir, ".env")).exists()).toBe(false);
+      const second = await run();
+      expect(second.exitCode).toBe(0);
+      expect(second.stdout.toString() + second.stderr.toString()).toContain(
+        "Android is already set up",
+      );
+      expect(await Bun.file(join(projectDir, "app/src/main/res/values/clerk.xml")).text()).toBe(
+        resource,
+      );
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+      await rm(configDir, { recursive: true, force: true });
     }
   },
   { timeout: 120_000 },

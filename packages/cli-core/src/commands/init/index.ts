@@ -61,8 +61,10 @@ import {
 } from "./bootstrap.js";
 import type { ProjectContext } from "./frameworks/types.js";
 import { type PackageManager, PACKAGE_MANAGERS } from "../../lib/package-manager.ts";
+import { inspectAndroidProject, type AndroidOptions } from "./android/project.ts";
+import { setupAndroid } from "./android/setup.ts";
 
-type InitOptions = {
+type InitOptions = AndroidOptions & {
   /** Framework to set up (skips auto-detection). */
   framework?: string;
   pm?: PackageManager;
@@ -95,10 +97,34 @@ export async function init(options: InitOptions = {}) {
   if (options.keyless) {
     log.warn("`--keyless` is deprecated. Use `--accountless` instead.");
   }
-  await assertUsableFlags(options, agent, optsAccountless);
+  if (
+    options.dryRun &&
+    (options.starter || optsAccountless || options.login || options.template || options.fresh)
+  ) {
+    throwUsageError(
+      "--dry-run is for inspecting an existing Android project and cannot be combined with starter or authentication options.",
+    );
+  }
+  if (
+    options.starter &&
+    (options.androidModule ||
+      options.androidPackage ||
+      options.androidFingerprint ||
+      options.framework === "android")
+  ) {
+    throwUsageError(
+      "Android setup requires an existing application module; --starter is not supported.",
+    );
+  }
+  if (!options.dryRun) await assertUsableFlags(options, agent, optsAccountless);
 
-  const frameworkOverride = options.framework
-    ? (lookupFramework(options.framework) ?? undefined)
+  const frameworkName =
+    options.framework ??
+    (options.androidModule || options.androidPackage || options.androidFingerprint
+      ? "android"
+      : undefined);
+  const frameworkOverride = frameworkName
+    ? (lookupFramework(frameworkName) ?? undefined)
     : undefined;
 
   // In agent mode, implicitly enable --yes to skip all confirmation prompts.
@@ -111,13 +137,38 @@ export async function init(options: InitOptions = {}) {
   intro("Setting up Clerk");
 
   setTelemetryStage("detect");
-  const resolved = options.starter
-    ? await handleStarter(cwd, frameworkOverride, overrides)
-    : await resolveProjectContext(cwd, frameworkOverride, overrides);
+  const resolved = options.dryRun
+    ? { ctx: await gatherContext(cwd, frameworkOverride), bootstrap: null }
+    : options.starter
+      ? await handleStarter(cwd, frameworkOverride, overrides)
+      : await resolveProjectContext(cwd, frameworkOverride, overrides);
 
   if (!resolved) return;
+  if (!resolved.ctx) throwUsageError("Could not detect an Android project for --dry-run.");
 
   const { ctx, bootstrap } = resolved;
+
+  const hasAndroidFlags =
+    options.androidModule !== undefined ||
+    options.androidPackage !== undefined ||
+    options.androidFingerprint !== undefined ||
+    options.dryRun;
+  if (hasAndroidFlags && ctx.framework.dep !== "android") {
+    throwUsageError(
+      "--android-module, --android-package, --android-fingerprint and --dry-run apply only to Android projects.",
+    );
+  }
+  const androidProject =
+    ctx.framework.dep === "android" ? await inspectAndroidProject(ctx.cwd, options) : undefined;
+  if (options.dryRun && androidProject) {
+    log.info(`Android applicationId: ${androidProject.packageName}`);
+    previewPlan(androidProject.plan);
+    log.info(
+      "Dry run: no authentication, API requests, or file writes. A normal run also enables Native API and registers this application on the linked development instance.",
+    );
+    await outro("Done");
+    return;
+  }
 
   if (bootstrap) {
     ctx.isBootstrap = true;
@@ -162,6 +213,22 @@ export async function init(options: InitOptions = {}) {
       ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
       : undefined;
     await authenticateAndLink(ctx.cwd, options.app, createIfMissing);
+  }
+
+  if (androidProject) {
+    if (strategy === "authenticate") {
+      await setupAndroid(androidProject, {
+        app: options.app,
+        skipConfirm: Boolean(overrides.skipConfirm),
+      });
+    } else {
+      previewPlan(androidProject.plan);
+      log.info(
+        "Run clerk init --app <app_id> to apply Android setup with your development publishable key.",
+      );
+    }
+    await outro("Done");
+    return;
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
@@ -691,6 +758,13 @@ export function registerInit(program: Program): void {
     )
     .option("--name <project-name>", "Project name for --starter (skips prompt)")
     .option("--app <id>", "Application ID to link (skips interactive picker)")
+    .option("--android-module <path>", "Android application module relative to the project root")
+    .option("--android-package <id>", "Final Android applicationId, including any variant suffix")
+    .option(
+      "--android-fingerprint <sha256...>",
+      "SHA-256 signing certificate fingerprints for Android passkeys",
+    )
+    .option("--dry-run", "Preview Android setup without authentication, API calls, or file writes")
     .option("--starter", "Create a new project from a starter template")
     .option(
       "--accountless",
