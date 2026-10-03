@@ -143,6 +143,10 @@ export async function replaceProject(
     await writeExclusive(candidate, content);
     await assertUnchanged(root, snapshot);
     await rename(candidate, destination);
+  } catch (error) {
+    // The original was never replaced, so its backup would only be an unreported copy.
+    if (backup) await unlink(backupPath).catch(() => {});
+    throw error;
   } finally {
     await unlink(candidate).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;

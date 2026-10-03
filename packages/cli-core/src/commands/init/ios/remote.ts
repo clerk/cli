@@ -158,7 +158,12 @@ export async function applyRemote(
         !(error instanceof PlapiError && (error.status === 422 || error.status >= 500))
       )
         throw error;
-      const current = await api.listIOSApplications(context.applicationId, context.instanceId);
+      // If the re-read fails too, report the create failure, which says why.
+      const current = await api
+        .listIOSApplications(context.applicationId, context.instanceId)
+        .catch(() => {
+          throw error;
+        });
       if (!matchingApplication(context, current)) throw error;
     }
   }

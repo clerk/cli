@@ -1,5 +1,15 @@
-import { afterEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import * as fsPromises from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createIOSFixture } from "./test-helpers.ts";
@@ -165,6 +175,20 @@ test("ordinary recovery restores previous bytes and removes newly created files 
     needsReview: ["existing"],
   });
   expect(await readFile(join(path, "existing"), "utf8")).toBe("User's later edit");
+});
+
+test("a replacement that doesn't complete leaves no backup behind", async () => {
+  const path = await root();
+  await writeFile(join(path, "existing"), "original");
+  const before = await snapshotFile(path, "existing");
+  const rename = spyOn(fsPromises, "rename").mockRejectedValueOnce(new Error("disk full"));
+  try {
+    await expect(replaceProject(path, before, "CLI edit")).rejects.toThrow("disk full");
+  } finally {
+    rename.mockRestore();
+  }
+  expect(await readFile(join(path, "existing"), "utf8")).toBe("original");
+  expect(await readdir(path)).toEqual(["existing"]);
 });
 
 for (const format of ["pbxproj", "xcproj"] as const)

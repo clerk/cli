@@ -19,6 +19,7 @@ import { createIOSFixture, treeDigest } from "./test-helpers.ts";
 import type { IOSApplication } from "../../../lib/plapi.ts";
 import { applySetup, describePreview, prepareSetup, type SetupOptions } from "./workflow.ts";
 import { doctor } from "./doctor.ts";
+import { PlapiError } from "../../../lib/errors.ts";
 import { type NativeAPI, type RemoteInput } from "./remote.ts";
 import { runCommand, XcodeCommandError, type CommandRunner } from "./xcode.ts";
 
@@ -41,6 +42,9 @@ function server() {
     events: [] as string[],
     keys: [] as string[],
     failCreate: false,
+    createError: undefined as unknown,
+    failListAfterCreate: false,
+    listFails: false,
     failAfterCreate: false,
     failEnable: false,
     wrongCreated: false,
@@ -68,12 +72,17 @@ function server() {
       return { object: "native_settings", api_enabled: state.enabled };
     },
     async listIOSApplications() {
+      if (state.listFails) throw new Error("Registrations unavailable");
       return [...state.applications];
     },
     async createIOSApplication(_app, _instance, params, idempotencyKey) {
       state.events.push("register");
       state.keys.push(idempotencyKey);
       if (state.failCreate) throw new Error("Ambiguous connection failure");
+      if (state.createError) {
+        state.listFails = state.failListAfterCreate;
+        throw state.createError;
+      }
       const created: IOSApplication = {
         object: "ios_application",
         id: "ios_test",
@@ -336,6 +345,16 @@ test("ambiguous registration failure preserves SDK work and stable retry identit
   expect(f.state.keys).toHaveLength(2);
   expect(f.state.keys[0]).toBe(f.state.keys[1]);
   expect(f.state.events).toEqual(["register", "register", "enable"]);
+});
+
+test("a create rejection is reported even when the reconcile read also fails", async () => {
+  const f = await fixture();
+  f.state.createError = PlapiError.fromBody(422, '{"errors":[{"message":"bundle_id is invalid"}]}');
+  f.state.failListAfterCreate = true;
+  const result = await applySetup(await prepareSetup(f.options, f.dependencies), f.dependencies);
+  expect(result.remote).toBe("incomplete");
+  expect(result.message).toContain("bundle_id is invalid");
+  expect(result.message).not.toContain("Registrations unavailable");
 });
 
 test("enable failure reconciles without duplicate registrations", async () => {
