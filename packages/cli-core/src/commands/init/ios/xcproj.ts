@@ -7,43 +7,19 @@ import {
   type Node,
   type ParseError,
 } from "jsonc-parser";
-import JSON5 from "json5";
+import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 
-export const MAX_XCPROJ_BYTES = 15_000_000;
+const MAX_XCPROJ_BYTES = 15_000_000;
 
-export type XCProjRecord = Record<string, unknown>;
+type XCProjRecord = Record<string, unknown>;
 
-export type XCProjErrorCode =
-  | "too-large"
-  | "invalid-utf8"
-  | "invalid-syntax"
-  | "noncanonical-json5"
-  | "duplicate-key"
-  | "invalid-schema"
-  | "unsupported-capability"
-  | "unsafe-edit";
-
-export class XCProjError extends Error {
-  readonly code: XCProjErrorCode;
-
-  constructor(code: XCProjErrorCode, message: string) {
-    super(message);
-    this.name = "XCProjError";
-    this.code = code;
-  }
+function xcprojError(message: string): never {
+  throw new CliError(`${message} Set up Clerk in Xcode instead.`, {
+    code: ERROR_CODE.IOS_SETUP_BLOCKED,
+  });
 }
 
-export interface ParseXCProjOptions {
-  maxBytes?: number;
-}
-
-export interface ParsedXCProjSource {
-  /** The validated source text. Never include it in diagnostics or logs. */
-  source: string;
-  root: XCProjRecord;
-}
-
-export type XCProjBuildPhaseKind =
+type XCProjBuildPhaseKind =
   | "apple-script"
   | "frameworks"
   | "headers"
@@ -54,14 +30,14 @@ export type XCProjBuildPhaseKind =
   | "copy"
   | "script";
 
-export interface XCProjBuildPhase {
+interface XCProjBuildPhase {
   kind: XCProjBuildPhaseKind;
   name?: string;
   id?: string;
   raw: string | XCProjRecord;
 }
 
-export type XCProjSwiftPackage =
+type XCProjSwiftPackage =
   | {
       kind: "remote";
       repository: string;
@@ -76,7 +52,7 @@ export type XCProjSwiftPackage =
       raw: XCProjRecord;
     };
 
-export interface XCProjTarget {
+interface XCProjTarget {
   name: string;
   id: string;
   kind: "native" | "aggregate" | "external-build-system";
@@ -121,28 +97,25 @@ const PACKAGE_VERSION_KEYS = [
 ] as const;
 
 function schemaError(): never {
-  throw new XCProjError(
-    "invalid-schema",
-    "project.xcproj contains a value with an unsupported schema shape.",
-  );
+  return xcprojError("project.xcproj contains a value with an unsupported shape.");
 }
 
-export function xcprojRecord(value: unknown): XCProjRecord {
+function xcprojRecord(value: unknown): XCProjRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) schemaError();
   return value as XCProjRecord;
 }
 
-export function xcprojArray(value: unknown): unknown[] {
+function xcprojArray(value: unknown): unknown[] {
   if (!Array.isArray(value)) schemaError();
   return value;
 }
 
-export function xcprojString(value: unknown): string {
+function xcprojString(value: unknown): string {
   if (typeof value !== "string") schemaError();
   return value;
 }
 
-export function xcprojStringArray(value: unknown): string[] {
+function xcprojStringArray(value: unknown): string[] {
   const values = xcprojArray(value);
   if (!values.every((item): item is string => typeof item === "string")) schemaError();
   return values;
@@ -210,7 +183,7 @@ function normalizeBuildPhase(value: unknown): XCProjBuildPhase {
   };
 }
 
-export function xcprojBuildPhases(target: XCProjRecord): XCProjBuildPhase[] {
+function xcprojBuildPhases(target: XCProjRecord): XCProjBuildPhase[] {
   const value = target["build-phases"];
   return value === undefined ? [] : xcprojArray(value).map(normalizeBuildPhase);
 }
@@ -219,7 +192,7 @@ type ParsedTargetBuildPhaseReference =
   | { kind: "id"; id: string }
   | { kind: "named"; phaseKind: XCProjBuildPhaseKind; name?: string };
 
-export function xcprojNamePathChildNames(value: unknown): string[] | undefined {
+function xcprojNamePathChildNames(value: unknown): string[] | undefined {
   const rawComponents = typeof value === "string" ? value.split("/") : value;
   if (!Array.isArray(rawComponents)) return undefined;
   const components: string[] = [];
@@ -341,12 +314,6 @@ function normalizeTarget(value: unknown): XCProjTarget {
   }
   const configurations = target["specialized-configurations"];
   if (configurations !== undefined) xcprojArray(configurations).forEach(validateConfiguration);
-  const dependencies = target.dependencies;
-  if (dependencies !== undefined) {
-    for (const dependency of xcprojArray(dependencies)) {
-      if (typeof dependency !== "string") xcprojRecord(dependency);
-    }
-  }
 
   return {
     name: xcprojString(target.name),
@@ -369,79 +336,19 @@ export function xcprojTargets(root: XCProjRecord): XCProjTarget[] {
   return value === undefined ? [] : xcprojArray(value).map(normalizeTarget);
 }
 
-function validateFileReference(value: unknown): void {
-  const reference = xcprojRecord(value);
-  optionalString(reference, "kind");
-  optionalString(reference, "path");
-  optionalString(reference, "name");
-  optionalString(reference, "id");
-  const children = reference.children;
-  if (children !== undefined) xcprojArray(children).forEach(validateFileReference);
-  const membership = reference["target-membership"];
-  if (membership !== undefined) {
-    for (const item of xcprojArray(membership)) {
-      if (typeof item !== "string") xcprojRecord(item);
-    }
-  }
-}
-
+// Only shapes this module reads are validated; edits are byte-preserving, so
+// fields it never reads can't be damaged.
 function validateRoot(root: XCProjRecord): void {
   const capabilities =
     root["required-capabilities"] === undefined
       ? []
       : xcprojStringArray(root["required-capabilities"]);
-  if (capabilities.length > 0) {
-    throw new XCProjError(
-      "unsupported-capability",
-      "project.xcproj requires an unsupported Xcode capability.",
-    );
-  }
-
-  xcprojString(root["default-configuration"]);
-  const localizations = xcprojRecord(root.localizations);
-  xcprojString(localizations.development);
-  optionalStringArray(localizations, "supported");
-
+  if (capabilities.length > 0)
+    xcprojError("project.xcproj requires an Xcode capability this setup doesn't support.");
   xcprojArray(root.configurations ?? []).forEach(validateConfiguration);
-  xcprojArray(root.files).forEach(validateFileReference);
   xcprojPackages(root);
   xcprojTargets(root);
   if (root["build-settings"] !== undefined) validateBuildSettings(root["build-settings"]);
-  optionalRecordArray(root, "imported-products");
-
-  if (
-    root["build-independent-targets-in-parallel"] !== undefined &&
-    typeof root["build-independent-targets-in-parallel"] !== "boolean"
-  ) {
-    schemaError();
-  }
-  for (const key of [
-    "id",
-    "root-group-debug-id",
-    "configuration-list-debug-id",
-    "organization",
-    "class-prefix",
-    "products-group",
-    "last-upgrade",
-    "last-swift-update",
-    "last-swift-migration",
-  ]) {
-    if (root[key] !== undefined && key !== "products-group") optionalString(root, key);
-  }
-  if (
-    root["products-group"] !== undefined &&
-    root["products-group"] !== null &&
-    typeof root["products-group"] !== "string" &&
-    !Array.isArray(root["products-group"])
-  ) {
-    schemaError();
-  }
-  if (Array.isArray(root["products-group"])) {
-    for (const component of xcprojArray(root["products-group"])) {
-      if (typeof component === "string") continue;
-      xcprojString(xcprojRecord(component).name);
-    }
-  }
 }
 
 function validateNoDuplicateKeys(node: Node): void {
@@ -451,9 +358,7 @@ function validateNoDuplicateKeys(node: Node): void {
       const key = property.children?.[0]?.value;
       const value = property.children?.[1];
       if (typeof key !== "string" || !value) schemaError();
-      if (seen.has(key)) {
-        throw new XCProjError("duplicate-key", "project.xcproj contains duplicate object keys.");
-      }
+      if (seen.has(key)) xcprojError("project.xcproj contains duplicate object keys.");
       seen.add(key);
       validateNoDuplicateKeys(value);
     }
@@ -464,57 +369,36 @@ function validateNoDuplicateKeys(node: Node): void {
   }
 }
 
-function sourceText(source: string | Uint8Array, maxBytes: number): string {
+function sourceText(source: string | Uint8Array): string {
   const byteLength = typeof source === "string" ? Buffer.byteLength(source) : source.byteLength;
-  if (byteLength > maxBytes) {
-    throw new XCProjError(
-      "too-large",
-      `project.xcproj exceeds the ${maxBytes} byte inspection limit.`,
-    );
-  }
+  if (byteLength > MAX_XCPROJ_BYTES) xcprojError("project.xcproj is too large to inspect.");
   if (typeof source === "string") return source;
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(source);
   } catch {
-    throw new XCProjError("invalid-utf8", "project.xcproj is not valid UTF-8.");
+    return xcprojError("project.xcproj is not valid UTF-8.");
   }
 }
 
-export function parseXCProjSource(
-  source: string | Uint8Array,
-  options: ParseXCProjOptions = {},
-): ParsedXCProjSource {
-  const text = sourceText(source, options.maxBytes ?? MAX_XCPROJ_BYTES);
+export function parseXCProjSource(source: string | Uint8Array): {
+  /** The validated source text. Never include it in diagnostics or logs. */
+  source: string;
+  root: XCProjRecord;
+} {
+  const text = sourceText(source);
   const errors: ParseError[] = [];
   const tree = parseTree(text, errors, {
     allowTrailingComma: true,
     disallowComments: false,
     allowEmptyContent: false,
   });
-  if (!tree || errors.length > 0) {
-    try {
-      JSON5.parse(text);
-    } catch {
-      throw new XCProjError("invalid-syntax", "project.xcproj is not valid JSON5.");
-    }
-    throw new XCProjError(
-      "noncanonical-json5",
-      "project.xcproj uses valid JSON5 syntax that must be canonicalized before Clerk can inspect or modify it.",
-    );
-  }
+  if (!tree || errors.length > 0)
+    xcprojError("project.xcproj could not be parsed; re-save it in Xcode and retry.");
   if (tree.type !== "object") schemaError();
   validateNoDuplicateKeys(tree);
   const root = xcprojRecord(getNodeValue(tree));
   validateRoot(root);
   return { source: text, root };
-}
-
-export interface ApplyXCProjValueOptions extends ParseXCProjOptions {
-  formatting?: {
-    insertSpaces?: boolean;
-    tabSize?: number;
-    eol?: string;
-  };
 }
 
 /**
@@ -525,22 +409,16 @@ export function applyXCProjValue(
   source: string | Uint8Array,
   path: JSONPath,
   value: unknown,
-  options: ApplyXCProjValueOptions = {},
 ): string {
-  const parsed = parseXCProjSource(source, options);
-  try {
-    const edits = modify(parsed.source, [...path], value, {
-      formattingOptions: {
-        insertSpaces: options.formatting?.insertSpaces ?? true,
-        tabSize: options.formatting?.tabSize ?? 2,
-        eol: options.formatting?.eol ?? (parsed.source.includes("\r\n") ? "\r\n" : "\n"),
-      },
-    });
-    const candidate = applyEdits(parsed.source, edits);
-    parseXCProjSource(candidate, options);
-    return candidate;
-  } catch (error) {
-    if (error instanceof XCProjError) throw error;
-    throw new XCProjError("unsafe-edit", "Unable to edit project.xcproj safely.");
-  }
+  const parsed = parseXCProjSource(source);
+  const edits = modify(parsed.source, [...path], value, {
+    formattingOptions: {
+      insertSpaces: true,
+      tabSize: 2,
+      eol: parsed.source.includes("\r\n") ? "\r\n" : "\n",
+    },
+  });
+  const candidate = applyEdits(parsed.source, edits);
+  parseXCProjSource(candidate);
+  return candidate;
 }

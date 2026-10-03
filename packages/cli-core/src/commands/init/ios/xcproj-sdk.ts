@@ -6,15 +6,28 @@ import {
   xcprojTargets,
 } from "./xcproj.ts";
 import type { FileAction } from "../frameworks/types.ts";
-import type { SDKInput } from "./sdk.ts";
+import { ALREADY_LINKED, type SDKInput } from "./sdk.ts";
 
 export const CLERK_URL = "https://github.com/clerk/clerk-ios.git";
+/** Clerk's own repository, over HTTPS or SSH. */
 export function isClerkRepository(value: string | undefined): boolean {
+  const normalized = value
+    ?.replace(/\.git\/?$/, "")
+    .replace(/\/$/, "")
+    .replace(/^git@github\.com:/, "https://github.com/")
+    .toLowerCase();
+  return normalized === "https://github.com/clerk/clerk-ios";
+}
+
+/** SwiftPM identifies a package by the last component of its URL or path. */
+export function hasClerkPackageIdentity(urlOrPath: string | undefined): boolean {
   return (
-    value
-      ?.replace(/\.git\/?$/, "")
-      .replace(/\/$/, "")
-      .toLowerCase() === "https://github.com/clerk/clerk-ios"
+    urlOrPath
+      ?.replace(/\/$/, "")
+      .split(/[/:]/)
+      .at(-1)
+      ?.replace(/\.git$/, "")
+      .toLowerCase() === "clerk-ios"
   );
 }
 
@@ -33,14 +46,8 @@ export function scaffoldXCProjSDK(input: SDKInput): FileAction {
     )
       return skip("Select an unambiguous application target.");
     const packages = xcprojPackages(root);
-    const identity = packages.filter(
-      (item) =>
-        (item.kind === "remote" ? item.repository : item.path)
-          .replace(/\/$/, "")
-          .split("/")
-          .at(-1)
-          ?.replace(/\.git$/, "")
-          .toLowerCase() === "clerk-ios",
+    const identity = packages.filter((item) =>
+      hasClerkPackageIdentity(item.kind === "remote" ? item.repository : item.path),
     );
     if (
       identity.length > 1 ||
@@ -72,10 +79,7 @@ export function scaffoldXCProjSDK(input: SDKInput): FileAction {
     const missing = (input.products === "ui" ? products : [products[0]!]).filter(
       (name) => !target.packageProductMembers.some((member) => member["product-name"] === name),
     );
-    if (!missing.length)
-      return skip(
-        "Requested Clerk products are already linked; package compatibility is not verified.",
-      );
+    if (!missing.length) return skip(ALREADY_LINKED);
     let source = input.source;
     if (!identity.length)
       source = applyXCProjValue(

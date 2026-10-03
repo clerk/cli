@@ -1,11 +1,17 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 
 let selection: Promise<string | undefined> | undefined;
 
 /** Choose a compatible installed Xcode for JSON projects without changing xcode-select. */
 export async function compatibleXcode(signal?: AbortSignal): Promise<string | undefined> {
-  return (selection ??= selectXcode(signal));
+  // Cache a found Xcode, but let a failed or cancelled lookup run again.
+  selection ??= selectXcode(signal).catch((error: unknown) => {
+    selection = undefined;
+    throw error;
+  });
+  return selection;
 }
 
 async function selectXcode(signal?: AbortSignal): Promise<string | undefined> {
@@ -51,7 +57,8 @@ async function selectXcode(signal?: AbortSignal): Promise<string | undefined> {
     );
     if ((candidates[0]?.version[0] ?? 0) >= 27) return candidates[0]!.path;
   }
-  throw new Error(
+  throw new CliError(
     "This .xcproj project requires Xcode 27 or newer. Select a compatible Xcode in Xcode Settings > Locations, then rerun clerk init.",
+    { code: ERROR_CODE.IOS_SETUP_BLOCKED },
   );
 }

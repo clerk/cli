@@ -225,6 +225,35 @@ describe("Apple setup plan", () => {
     if (result.type === "skip") expect(result.skipReason).not.toContain("already linked");
   });
 
+  test("hands off a local clerk-ios checkout instead of adding a second package", async () => {
+    const input = await fixture();
+    mutateGraph(input, (objects) => {
+      objects.LOCALCLERK = { isa: "XCLocalSwiftPackageReference", relativePath: "../clerk-ios" };
+      objects[ids.project].packageReferences = ["LOCALCLERK"];
+    });
+    const result = scaffoldSDK(sdkInput(input));
+    expect(result.type).toBe("skip");
+    if (result.type === "skip") expect(result.skipReason).toContain("local or forked");
+  });
+
+  test("reuses a Clerk package referenced over SSH", async () => {
+    const input = await fixture();
+    mutateGraph(input, (objects) => {
+      objects.SSHCLERK = {
+        isa: "XCRemoteSwiftPackageReference",
+        repositoryURL: "git@github.com:clerk/clerk-ios.git",
+        requirement: { kind: "upToNextMajorVersion", minimumVersion: "1.0.0" },
+      };
+      objects[ids.project].packageReferences = ["SSHCLERK"];
+    });
+    const result = scaffoldSDK(sdkInput(input));
+    expect(result.type).toBe("modify");
+    if (result.type === "modify")
+      expect(parse(result.content).objects![ids.project]).toMatchObject({
+        packageReferences: ["SSHCLERK"],
+      });
+  });
+
   test.each(["xcodegen", "tuist"] as const)(
     "hands off %s project edits while generating the recipe",
     async (managedBy) => {
@@ -266,10 +295,16 @@ describe("Apple setup plan", () => {
     expect(() => selectedSettings(input.selection, JSON.stringify(output))).toThrow();
   });
 
-  test("rejects duplicate settings results, unsupported deployment, and escaping output paths", async () => {
+  test("rejects conflicting settings results, unsupported deployment, and escaping output paths", async () => {
     const input = await fixture();
     const rows = JSON.parse(input.settingsJSON);
-    expect(() => selectedSettings(input.selection, JSON.stringify([...rows, ...rows]))).toThrow();
+    // Xcode can repeat a target with identical settings; only a conflicting repeat is rejected.
+    expect(selectedSettings(input.selection, JSON.stringify([...rows, ...rows]))).toBeDefined();
+    const conflicting = structuredClone(rows[0]);
+    conflicting.buildSettings.PRODUCT_BUNDLE_IDENTIFIER = "com.example.Other";
+    expect(() =>
+      selectedSettings(input.selection, JSON.stringify([...rows, conflicting])),
+    ).toThrow();
     rows[0].buildSettings.IPHONEOS_DEPLOYMENT_TARGET = "16.0";
     expect(() => planAppleSetup({ ...input, settingsJSON: JSON.stringify(rows) })).toThrow(
       "iOS 17",
@@ -284,8 +319,7 @@ describe("Apple setup plan", () => {
       "xcodebuild",
       "-project",
       "MyApp.xcodeproj",
-      "-target",
-      "MyApp",
+      "-alltargets",
       "-configuration",
       "Debug",
       "-sdk",

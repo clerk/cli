@@ -1,10 +1,14 @@
 import type { ScaffoldPlan } from "../frameworks/types.ts";
-import type { IOSNativeRegistrationRetryStore } from "./native-registration-retry.ts";
+import { unlink } from "node:fs/promises";
+import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
 import {
   assertAbsent,
   assertUnchanged,
   createFile,
   gitDirty,
+  gitTracked,
   replaceProject,
   snapshotFile,
   rollbackFiles,
@@ -31,6 +35,8 @@ import {
   type IOSNativeApplePlan,
 } from "./native-apple.ts";
 import { planAppleSetup } from "./plan.ts";
+import { sdkLinked } from "./sdk.ts";
+import { setupError } from "./types.ts";
 import {
   applyRemote,
   auditRemote,
@@ -49,18 +55,18 @@ import {
 
 export interface SetupOptions extends InspectOptions {
   remote?: RemoteSelection;
-  allowDirty?: boolean;
   capabilities?: boolean;
   signInWithApple?: boolean;
   signInUI?: boolean;
   starter?: boolean;
   inspectOnly?: boolean;
   checkAppleConnection?: boolean;
+  /** An inspection of the same project taken earlier (say, before prompting), to avoid a second xcodebuild pass. */
+  inspection?: Inspection;
 }
 export interface Dependencies {
   run?: CommandRunner;
   api?: NativeAPI;
-  retry?: IOSNativeRegistrationRetryStore;
   appleAPI?: IOSNativeAppleAPI;
   promptIdentity?: IdentityPrompt;
 }
@@ -71,7 +77,6 @@ export interface SetupPreview {
   discovery?: IdentityDiscovery;
   resolvePackages: boolean;
   progress?: (message: string) => void;
-  allowDirty: boolean;
   dirtyFiles: string[];
   capabilities?: Awaited<ReturnType<typeof planAllCapabilities>>;
   sdk: ScaffoldPlan["actions"][number];
@@ -87,10 +92,12 @@ export async function prepareSetup(
   options: SetupOptions,
   dependencies: Dependencies = {},
 ): Promise<SetupPreview> {
-  const inspection = await inspectSelectedProject(
-    { ...options, resolvePackages: options.inspectOnly ? false : options.resolvePackages },
-    dependencies.run,
-  );
+  const inspection = options.inspection
+    ? { ...options.inspection, input: { ...options.inspection.input, products: options.products } }
+    : await inspectSelectedProject(
+        { ...options, resolvePackages: options.inspectOnly ? false : options.resolvePackages },
+        dependencies.run,
+      );
   const local = planAppleSetup(inspection.input);
   for (const context of inspection.contexts.slice(1))
     planAppleSetup({
@@ -113,7 +120,7 @@ export async function prepareSetup(
   if (discovery && !discovery.context) throw new IdentityRequired(discovery);
   const remote = discovery?.context ? await auditRemote(discovery.context, api) : undefined;
   if (options.signInWithApple && !remote)
-    throw new Error(
+    throw setupError(
       "Native Apple sign-in requires an explicitly selected Clerk application and confirmed native identity.",
     );
   const originalAction = local.actions[0]!;
@@ -128,8 +135,14 @@ export async function prepareSetup(
         },
         dependencies.appleAPI,
       );
-      appleEnabled = health.runtime.current?.enabled === true;
-      if (
+      const enabledInClerk = health.runtime.current?.enabled === true;
+      // Follow Clerk's setting only when the user wasn't asked; an explicit
+      // "no" must not add the Sign in with Apple entitlement.
+      if (options.signInWithApple === undefined) appleEnabled = enabledInClerk;
+      if (enabledInClerk && options.signInWithApple === false)
+        appleWarning =
+          "Sign in with Apple is enabled for this Clerk instance, but its capability was not added. Apple sign-in fails on device until you add it, or rerun with --sign-in-with-apple.";
+      else if (
         health.runtime.status === "blocked" ||
         (appleEnabled && health.runtime.status !== "satisfied")
       )
@@ -171,22 +184,19 @@ export async function prepareSetup(
             instanceId: remote.context.instanceId,
             bundleIdentifier: remote.context.bundleIdentifier,
             platform: inspection.input.selection.sdk === "macosx" ? "macos" : "ios",
-            nativeApplicationReady: true,
           },
           dependencies.appleAPI,
         )
       : undefined;
 
   if (apple?.status === "blocked")
-    throw new Error(
+    throw setupError(
       "The existing Apple connection needs review in Clerk before setup can proceed.",
     );
   if (options.signInUI && options.products !== "ui")
-    throw new Error("Sign-in UI requires ClerkKitUI; select --sdk ui.");
+    throw setupError("Sign-in UI requires ClerkKitUI; use --apple-sdk ui.");
   const starter =
-    options.starter !== false &&
-    (originalAction.type !== "skip" ||
-      originalAction.skipReason.startsWith("Requested Clerk products are already linked"))
+    options.starter !== false && sdkLinked(originalAction)
       ? await planStarter(inspection, remote?.context.publishableKey, options.signInUI === true)
       : undefined;
   if (starter) local.actions.push(...starter.actions);
@@ -201,10 +211,6 @@ export async function prepareSetup(
         .map(async (action) => ((await gitDirty(root, action.path)) ? action.path : undefined)),
     )
   ).filter((path): path is string => path !== undefined);
-  if (options.allowDirty === false && dirtyFiles.length)
-    throw new Error(
-      "The planned files have Git changes. Review them before allowing this setup edit.",
-    );
   const instructions = local.postInstructions;
   if (remote) {
     local.postInstructions = instructions.map((instruction) =>
@@ -242,7 +248,6 @@ export async function prepareSetup(
     starter,
     sdk: originalAction,
     sdkCheck,
-    allowDirty: options.allowDirty !== false,
     dirtyFiles,
   };
 }
@@ -313,7 +318,6 @@ export interface ApplyResult {
     | "requires-build-and-verification";
   appIntegrationComplete: false;
   local: "updated" | "unchanged" | "incomplete";
-  backup?: string;
   remote: "verified" | "manual" | "incomplete";
   instructions: string[];
   message?: string;
@@ -347,11 +351,9 @@ export async function applySetup(
     if (action.type === "create") await assertAbsent(root, action.path);
     else {
       const snapshot = snapshots.find((item) => item.path === action.path);
-      if (!snapshot) throw new Error("Review a fresh setup plan.");
+      if (!snapshot) throw setupError("Review a fresh setup plan.", true);
       await assertUnchanged(root, snapshot);
     }
-    if (!preview.allowDirty && (await gitDirty(root, action.path)))
-      throw new Error("A planned file now has Git changes; review a fresh plan.");
   }
   const result: ApplyResult = {
     status: "incomplete",
@@ -380,15 +382,13 @@ export async function applySetup(
     const remaining: { id: string; detail: string }[] = [];
     const step = (id: string, done: boolean, detail: string) =>
       (done ? completed : remaining).push({ id, detail });
-    const sdkLinked =
-      preview.sdk.type !== "skip" ||
-      preview.sdk.skipReason.startsWith("Requested Clerk products are already linked");
+    const linked = sdkLinked(preview.sdk);
     step(
       "sdk-linkage",
-      result.local !== "incomplete" && sdkLinked,
+      result.local !== "incomplete" && linked,
       result.local === "incomplete"
         ? "Local writes stopped; inspect changedFiles and backups before retrying."
-        : sdkLinked
+        : linked
           ? "Requested SDK products are linked in the project. Package resolution and compilation remain unverified."
           : preview.sdk.type === "skip"
             ? preview.sdk.skipReason
@@ -440,7 +440,7 @@ export async function applySetup(
       remaining.push({
         id: `configuration: ${configuration}`,
         detail:
-          "This configuration was not inspected. Run setup with --configuration to review it.",
+          "This configuration was not inspected. Run setup with --xcode-configuration to review it.",
       });
     if (result.local !== "incomplete")
       for (const id of preview.starter?.tasks ?? [])
@@ -460,15 +460,6 @@ export async function applySetup(
           ? "requires-build-and-verification"
           : "requires-source-integration";
     if (result.local !== "incomplete" && preview.starter?.tasks.length) {
-      result.instructions = result.instructions.filter(
-        (instruction) =>
-          !instruction.startsWith("For SwiftUI, import ClerkKit") &&
-          !(
-            preview.starter!.tasks.includes("optional-sign-in-ui") &&
-            (instruction.startsWith("To use the prebuilt components") ||
-              instruction.startsWith("Place the existing SDK components"))
-          ),
-      );
       result.instructions.push(
         "The recognized starter's Clerk source setup is configured. Make one Debug build; runtime testing requires an explicit user request.",
       );
@@ -505,6 +496,8 @@ export async function applySetup(
     return result;
   };
   const applied: AppliedFile[] = [];
+  const messages: string[] = [];
+  const backups = new Map<string, string>();
   try {
     // Entitlement file first, project reference last. Each write is recoverable;
     // this is deliberately not a durable transaction across several files.
@@ -520,18 +513,17 @@ export async function applySetup(
           snapshots.find((item) => item.path === action.path)!,
           action.content,
         );
-        if (backup) {
-          result.backups.push(backup);
-          if (action.path === document.path) result.backup = backup;
-        }
+        if (backup) backups.set(action.path, backup);
       }
       result.changedFiles.push(action.path);
       result.local = "updated";
       const after = await snapshotFile(root, action.path);
-      if (after.source !== action.content) throw new Error("A written file changed during setup.");
+      if (after.source !== action.content)
+        throw setupError("A written file changed during setup.", true);
       applied.push({ before: snapshots.find((item) => item.path === action.path), after });
     }
-  } catch {
+  } catch (error) {
+    result.backups = [...backups.values()];
     result.local = "incomplete";
     result.recovery = await rollbackFiles(root, applied);
     result.changedFiles = result.changedFiles.filter(
@@ -540,17 +532,20 @@ export async function applySetup(
     result.recovery.needsReview = [
       ...new Set([...result.recovery.needsReview, ...result.changedFiles]),
     ];
-    result.message =
-      "Local setup stopped. Earlier edits were restored where unchanged; review recovery.needsReview and backups for any files requiring attention. No remote changes were attempted.";
+    if (signal?.aborted) throw error;
+    result.message = `Local setup stopped (${errorMessage(error)}). Earlier edits were restored where unchanged; review recovery.needsReview and backups for any files requiring attention. No remote changes were attempted.`;
     return finish();
+  }
+  // Git restores tracked files that were clean before setup; keep backups for
+  // everything else (uncommitted changes, untracked or ignored files, no Git).
+  for (const [path, backup] of backups) {
+    if (!preview.dirtyFiles.includes(path) && (await gitTracked(root, path)))
+      await unlink(join(root, backup));
+    else result.backups.push(backup);
   }
   if (preview.capabilities && preview.capabilities.status !== "manual")
     result.capabilities.status = "configured";
-  if (
-    preview.resolvePackages &&
-    (preview.sdk.type !== "skip" ||
-      preview.sdk.skipReason.startsWith("Requested Clerk products are already linked"))
-  ) {
+  if (preview.resolvePackages && sdkLinked(preview.sdk)) {
     try {
       await resolvePackages(
         root,
@@ -561,11 +556,11 @@ export async function applySetup(
       );
       result.packages = "resolved";
       sdkCheck = (await resolvedSDKHealth(preview.inspection.input)) ?? sdkCheck;
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      // Registration doesn't depend on packages, so carry on and report both.
       result.packages = "incomplete";
-      result.message =
-        "Project edits are ready, but Swift package resolution failed or was cancelled. Check network access and private-package credentials in Xcode, then retry. No remote changes were attempted.";
-      return finish();
+      messages.push(errorMessage(error));
     }
   }
   const revalidateLocal = async () => {
@@ -574,24 +569,25 @@ export async function applySetup(
       const action = actions.find((item) => item.path === snapshot.path);
       if (!action) await assertUnchanged(root, snapshot);
       else if ((await snapshotFile(root, snapshot.path)).source !== action.content)
-        throw new Error("Local setup changed before remote registration.");
+        throw setupError("Local setup changed before remote registration.", true);
     }
     for (const action of actions.filter((item) => item.type === "create"))
       if ((await snapshotFile(root, action.path)).source !== action.content)
-        throw new Error("New local files changed before remote registration.");
+        throw setupError("New local files changed before remote registration.", true);
   };
   if (preview.remote) {
     try {
       await revalidateLocal();
+      // A Bundle ID read from Xcode can come from an xcconfig the snapshots don't
+      // cover, so read it again rather than register a stale one.
       if (preview.discovery?.bundleSource === "xcode") {
-        const input = preview.inspection.input;
+        const { input, contexts } = preview.inspection;
         const current = await inspectSelectedProject(
           {
             root,
             project: input.selection.project,
             target: input.selection.targetId,
-            configuration:
-              preview.inspection.contexts.length === 1 ? input.selection.configuration : undefined,
+            configuration: contexts.length === 1 ? input.selection.configuration : undefined,
             sdk: input.selection.sdk,
             products: input.products,
             minimumVersion: input.minimumVersion,
@@ -600,50 +596,44 @@ export async function applySetup(
           dependencies.run,
         );
         if ((await discoverBundleIdentifier(current)) !== preview.remote.context.bundleIdentifier)
-          throw new Error("The discovered Bundle ID changed; review a fresh setup plan.");
+          throw setupError("The Bundle ID changed after the preview; rerun clerk init.", true);
       }
-      await applyRemote(preview.remote, api, dependencies.retry, signal);
+      await applyRemote(preview.remote, api, signal);
       result.remote = "verified";
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) throw error;
       result.remote = "incomplete";
-      result.message =
-        "Remote setup is incomplete. Local SDK edits remain; retry with the same application and native identity to reconcile remote state. No registration was deleted.";
+      messages.push(
+        `Clerk native registration is incomplete: ${errorMessage(error)} Local edits remain; rerun setup with the same application to reconcile.`,
+      );
     }
   }
   if (preview.apple && result.remote === "verified") {
     try {
-      // Native registration may advance the instance config version. Re-audit the
-      // same approved Apple intent; the service still uses If-Match and dry-run.
-      const apple = await auditIOSNativeAppleConnection(
-        {
-          applicationId: preview.apple.applicationId,
-          instanceId: preview.apple.instanceId,
-          bundleIdentifier: preview.apple.bundleIdentifier,
-          platform: preview.apple.platform,
-          nativeApplicationReady: true,
-        },
-        dependencies.appleAPI,
-      );
+      // Native registration may advance the config version, so re-audit and
+      // apply only if the Apple connection is still what the user approved.
+      const apple = await auditIOSNativeAppleConnection(preview.apple, dependencies.appleAPI);
       if (
         apple.status !== "satisfied" &&
         (apple.status !== "ready" ||
           preview.apple.status !== "ready" ||
-          JSON.stringify(apple.current) !== JSON.stringify(preview.apple.current) ||
+          !isDeepStrictEqual(apple.current, preview.apple.current) ||
           apple.bundleIdentifierConfiguration !== preview.apple.bundleIdentifierConfiguration)
       )
-        throw new Error("Apple setup now requires a fresh preview.");
+        throw new CliError("The Apple connection changed after the preview; rerun clerk init.", {
+          code: ERROR_CODE.IOS_SETUP_STALE,
+        });
       await applyIOSNativeAppleConnection(apple, {
         api: dependencies.appleAPI,
         revalidateLocalPreconditions: revalidateLocal,
       });
       result.apple = "verified";
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) throw error;
       result.apple = "incomplete";
-      result.message =
-        "SDK/native registration steps completed, but Apple sign-in was not verified. Review the current configuration and retry.";
+      messages.push(`Sign in with Apple was not configured: ${errorMessage(error)}`);
     }
   }
+  if (messages.length) result.message = messages.join("\n");
   return finish();
 }
-
-export { doctor } from "./doctor.ts";

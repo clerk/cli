@@ -1,9 +1,11 @@
 import { dirname, resolve } from "node:path";
 import { DOMParser } from "@xmldom/xmldom";
-import * as plapi from "../../../lib/plapi.ts";
+import { bundleIdentifiersEqual } from "../../../lib/apple-native-identity.ts";
 import { snapshotFile } from "./files.ts";
 import { resolveInstance, type NativeAPI, type RemoteInput } from "./remote.ts";
 import type { Inspection } from "./xcode.ts";
+import { setupError } from "./types.ts";
+import { CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
 
 export type RemoteSelection = Pick<RemoteInput, "applicationId" | "instanceId"> &
   Partial<Pick<RemoteInput, "bundleIdentifier" | "appIdPrefix">>;
@@ -35,7 +37,7 @@ export async function discoverBundleIdentifier(
         if (/<!ENTITY/i.test(source)) return undefined;
         const xml = new DOMParser({
           errorHandler: () => {
-            throw new Error("Invalid plist");
+            throw setupError("INVALID_PLIST_KEEP");
           },
         }).parseFromString(source, "text/xml");
         const root = xml.documentElement;
@@ -52,13 +54,18 @@ export async function discoverBundleIdentifier(
         const identifiers = children.filter(
           (node) => node.nodeName === "key" && node.textContent === "CFBundleIdentifier",
         );
-        if (identifiers.length !== 1) return undefined;
-        const entry = children[children.indexOf(identifiers[0]!) + 1];
-        if (entry?.nodeName !== "string") return undefined;
-        const literal = entry.textContent ?? "";
-        // Conflicting template and build-setting overrides need a caller decision.
-        if (value && value !== literal) return undefined;
-        value = literal;
+        // A generated Info.plist fills CFBundleIdentifier from the build settings,
+        // so a partial plist without it falls through to them.
+        const generated = identifiers.length === 0 && settings.GENERATE_INFOPLIST_FILE === "YES";
+        if (!generated) {
+          if (identifiers.length !== 1) return undefined;
+          const entry = children[children.indexOf(identifiers[0]!) + 1];
+          if (entry?.nodeName !== "string") return undefined;
+          const literal = entry.textContent ?? "";
+          // Conflicting template and build-setting overrides need a caller decision.
+          if (value && value !== literal) return undefined;
+          value = literal;
+        }
       } catch {
         return undefined;
       }
@@ -83,8 +90,8 @@ export async function discoverRemote(
     api.getNativeSettings(instance.applicationId, instance.instanceId),
     api.listIOSApplications(instance.applicationId, instance.instanceId),
   ]);
-  const registrations = plapi.validateIOSApplications(applications);
-  const nativeEnabled = plapi.validateNativeSettings(native).api_enabled;
+  const registrations = applications;
+  const nativeEnabled = native.api_enabled;
   let bundleIdentifier = input.bundleIdentifier ?? (await discoverBundleIdentifier(inspection));
   let bundleSource = input.bundleIdentifier ? "explicit" : bundleIdentifier ? "xcode" : "missing";
   if (!bundleIdentifier && prompt) {
@@ -95,10 +102,10 @@ export async function discoverRemote(
     bundleSource = "confirmed";
   }
   if (bundleIdentifier !== undefined && !validBundle(bundleIdentifier))
-    throw new Error("Supply a valid final Bundle ID.");
-  const matches = registrations.filter(
-    (app) => app.bundle_id.toLowerCase() === bundleIdentifier?.toLowerCase(),
-  );
+    throw setupError("Supply a valid final Bundle ID.");
+  const matches = bundleIdentifier
+    ? registrations.filter((app) => bundleIdentifiersEqual(app.bundle_id, bundleIdentifier))
+    : [];
   let appIdPrefix =
     input.appIdPrefix ?? (matches.length === 1 ? matches[0]!.app_id_prefix : undefined);
   let prefixSource = input.appIdPrefix
@@ -117,7 +124,7 @@ export async function discoverRemote(
   }
   const invalidPrefix = appIdPrefix !== undefined && !/^[A-Z0-9]{10}$/.test(appIdPrefix);
   if (invalidPrefix && prefixSource !== "clerk-registration")
-    throw new Error("Supply a valid ten-character Apple App ID Prefix.");
+    throw setupError("Supply a valid ten-character Apple App ID Prefix.");
   const issues = [
     ...(!bundleIdentifier
       ? [
@@ -166,8 +173,8 @@ export function describeIdentity(discovery: IdentityDiscovery) {
     issues: discovery.issues,
   };
 }
-export class IdentityRequired extends Error {
+export class IdentityRequired extends CliError {
   constructor(public discovery: IdentityDiscovery) {
-    super(discovery.issues.join(" "));
+    super(discovery.issues.join(" "), { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE });
   }
 }

@@ -5,6 +5,8 @@ import { configurationNames } from "./project.ts";
 import { type FileSnapshot } from "./files.ts";
 import { selectedSettings, settingsCommand, type Selection, type SetupInput } from "./plan.ts";
 import { compatibleXcode } from "./xcode-tools.ts";
+import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
+import { setupError } from "./types.ts";
 
 export type CommandRunner = (
   command: string[],
@@ -12,7 +14,24 @@ export type CommandRunner = (
   signal?: AbortSignal,
 ) => Promise<string>;
 
-class XcodeInspectionError extends Error {}
+/** An xcodebuild failure that carries the end of Xcode's own explanation. */
+export class XcodeCommandError extends CliError {
+  constructor(
+    message: string,
+    readonly stderr = "",
+  ) {
+    // Package URLs can embed credentials (https://user:token@host/...).
+    const tail = stderr
+      .trim()
+      .split("\n")
+      .slice(-12)
+      .join("\n")
+      .replace(/:\/\/[^\s/@]+@/g, "://***@");
+    super(tail ? `${message}\n\nXcode reported:\n${tail}` : message, {
+      code: ERROR_CODE.IOS_SETUP_BLOCKED,
+    });
+  }
+}
 
 export const runCommand: CommandRunner = async (command, root, signal) => {
   signal?.throwIfAborted();
@@ -34,9 +53,9 @@ export const runCommand: CommandRunner = async (command, root, signal) => {
       signal,
       env: developerDir ? { ...process.env, DEVELOPER_DIR: developerDir } : process.env,
     });
-  } catch {
-    throw new Error(
-      "Xcode could not start. Install/select Xcode or use the manual setup instructions.",
+  } catch (error) {
+    throw new XcodeCommandError(
+      `Xcode could not start (${errorMessage(error)}). Install Xcode and select it with xcode-select, or use the manual setup instructions.`,
     );
   }
   const read = async (stream: ReadableStream<Uint8Array>) => {
@@ -49,7 +68,7 @@ export const runCommand: CommandRunner = async (command, root, signal) => {
         if (item.done) break;
         size += item.value.byteLength;
         if (size > 8_000_000)
-          throw new XcodeInspectionError("Xcode returned more output than this setup can inspect.");
+          throw new XcodeCommandError("Xcode returned more output than this setup can inspect.");
         chunks.push(item.value);
       }
       return Buffer.concat(chunks).toString("utf8");
@@ -61,26 +80,23 @@ export const runCommand: CommandRunner = async (command, root, signal) => {
     }
   };
   try {
-    const [output, , code] = await Promise.all([
+    const [output, stderr, code] = await Promise.all([
       read(child.stdout),
       read(child.stderr),
       child.exited,
     ]);
     signal?.throwIfAborted();
-    if (child.signalCode) throw new Error("Xcode was interrupted.");
+    if (child.signalCode)
+      throw new XcodeCommandError(`\`${command.join(" ")}\` was stopped or timed out.`, stderr);
     if (code !== 0)
-      throw new XcodeInspectionError(
-        "Xcode could not inspect this configuration. Open the project, resolve its packages, and retry; manual setup remains available.",
-      );
+      throw new XcodeCommandError(`\`${command.join(" ")}\` exited with code ${code}.`, stderr);
     return output;
   } catch (error) {
     child.kill();
     await child.exited;
     signal?.throwIfAborted();
-    if (error instanceof XcodeInspectionError) throw error;
-    throw new Error(
-      "Xcode inspection failed or timed out. Resolve the project in Xcode or use manual setup.",
-    );
+    if (error instanceof XcodeCommandError) throw error;
+    throw new XcodeCommandError(`\`${command.join(" ")}\` failed: ${errorMessage(error)}`);
   }
 };
 
@@ -137,12 +153,12 @@ export async function inspectSelectedProject(
   const target = { id: chosen.targetId, name: chosen.targetName };
   const declared = configurationNames(document.source, projectFormat, target.id);
   if (!declared.length || new Set(declared).size !== declared.length)
-    throw new Error("The selected target must declare unambiguous build configurations.");
+    throw setupError("The selected target must declare unambiguous build configurations.");
   const configurations = options.configuration
     ? [options.configuration]
     : ["Debug", "Release"].filter((name) => declared.includes(name));
   if (!configurations.length || configurations.some((name) => !declared.includes(name)))
-    throw new Error("Choose a declared --configuration explicitly.");
+    throw setupError("Choose a declared --xcode-configuration explicitly.");
   const contexts: Inspection["contexts"] = [];
   let resolved = false;
   for (const configuration of configurations) {
@@ -160,7 +176,11 @@ export async function inspectSelectedProject(
     try {
       output = await run(command, root, options.signal);
     } catch (error) {
-      if (!options.resolvePackages || resolved || options.signal?.aborted) throw error;
+      // Only a missing package checkout is fixed by resolving packages; anything
+      // else (license, Command Line Tools, a broken project) would just retry.
+      const needsPackages = error instanceof XcodeCommandError && /package/i.test(error.stderr);
+      if (!options.resolvePackages || resolved || !needsPackages || options.signal?.aborted)
+        throw error;
       await resolvePackages(root, project, run, options.signal, options.progress);
       resolved = true;
       output = await run(command, root, options.signal);
@@ -169,31 +189,32 @@ export async function inspectSelectedProject(
     try {
       rows = JSON.parse(output);
     } catch {
-      throw new Error("Xcode did not return valid settings JSON.");
+      throw setupError("Xcode did not return valid settings JSON.");
+    }
+    // Xcode may spell /private/var as /var on macOS; compare filesystem identity,
+    // for every target, since ownership checks compare their paths too.
+    for (const item of Array.isArray(rows) ? rows : []) {
+      const settings = object(item) && object(item.buildSettings) ? item.buildSettings : undefined;
+      for (const key of ["PROJECT_FILE_PATH", "SRCROOT"])
+        if (typeof settings?.[key] === "string") settings[key] = await realpath(settings[key]);
     }
     const row = Array.isArray(rows)
       ? rows.find((item) => object(item) && item.target === target.name)
       : undefined;
     const reported = object(row) && object(row.buildSettings) ? row.buildSettings : undefined;
-    if (reported && typeof reported.PROJECT_FILE_PATH === "string") {
-      // Xcode may spell /private/var as /var on macOS; compare filesystem identity.
-      reported.PROJECT_FILE_PATH = await realpath(reported.PROJECT_FILE_PATH);
-    }
-    if (reported && typeof reported.SRCROOT === "string")
-      reported.SRCROOT = await realpath(reported.SRCROOT);
     const settingsJSON = JSON.stringify(rows);
     if (!options.sdk) {
       const sdk = reported?.PLATFORM_NAME;
       if (sdk !== "iphoneos" && sdk !== "iphonesimulator" && sdk !== "macosx")
-        throw new Error("Select an iOS or macOS build context; this platform needs manual setup.");
+        throw setupError("Select an iOS or macOS build context; this platform needs manual setup.");
       selection.sdk = sdk;
     }
     const settings = selectedSettings(selection, settingsJSON);
     contexts.push({ selection, settingsJSON, settings });
   }
   if (new Set(contexts.map((context) => context.selection.sdk)).size !== 1)
-    throw new Error(
-      "Configurations resolve to different platforms; inspect them separately with --configuration.",
+    throw setupError(
+      "Configurations resolve to different platforms; inspect them separately with --xcode-configuration.",
     );
   const { selection, settingsJSON, settings } = contexts[0]!;
   return {
@@ -226,13 +247,13 @@ export async function resolvePackages(
   try {
     await run(["xcodebuild", "-resolvePackageDependencies", "-project", project], root, signal);
     progress?.("Swift packages resolved.");
-  } catch {
-    throw new PackageResolutionError(
-      "Swift package resolution failed or was cancelled. Check network access and private-package credentials in Xcode, then retry. Project edits and downloaded packages may remain.",
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw new XcodeCommandError(
+      "Swift package resolution failed. Check network access and private-package credentials in Xcode, then retry. Project edits and downloaded packages may remain.",
+      error instanceof XcodeCommandError ? error.stderr : errorMessage(error),
     );
   } finally {
     clearInterval(timer);
   }
 }
-
-export class PackageResolutionError extends Error {}

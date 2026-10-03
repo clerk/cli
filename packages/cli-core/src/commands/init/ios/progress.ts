@@ -3,7 +3,7 @@ import { isHuman } from "../../../mode.ts";
 import { getLogLevel } from "../../../lib/log.ts";
 import { createSpinner, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 
-export function compactNativeOutput(): boolean {
+function compactNativeOutput(): boolean {
   return isHuman() && getLogLevel() !== "debug";
 }
 
