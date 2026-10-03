@@ -19,8 +19,12 @@ const {
   getApplicationDomainStatus,
   triggerApplicationDomainDNSCheck,
   listApplicationDomains,
+  getNativeSettings,
+  enableNativeApi,
+  listIOSApplications,
+  createIOSApplication,
 } = await import("./plapi.ts");
-const { AuthError, PlapiError } = await import("./errors.ts");
+const { AuthError, ERROR_CODE, PlapiError } = await import("./errors.ts");
 
 describe("plapi", () => {
   const originalEnv = { ...process.env };
@@ -252,6 +256,22 @@ describe("plapi", () => {
       expect(capturedHeaders?.get("Content-Type")).toBe("application/json");
     });
 
+    test("sends If-Match when a config version is supplied", async () => {
+      let capturedHeaders: Headers | undefined;
+      stubFetch(async (_input, init) => {
+        capturedHeaders = new Headers(init?.headers);
+        return new Response(JSON.stringify({}), { status: 200 });
+      });
+
+      await patchInstanceConfig(
+        "app_1",
+        "ins_1",
+        { connection_oauth_apple: { enabled: true } },
+        { ifMatch: "v1_12345678" },
+      );
+      expect(capturedHeaders?.get("If-Match")).toBe("v1_12345678");
+    });
+
     test("sends JSON body", async () => {
       let capturedBody = "";
       stubFetch(async (_input, init) => {
@@ -293,7 +313,7 @@ describe("plapi", () => {
       ],
     };
 
-    test("always sends include_secret_keys=true", async () => {
+    test("sends include_secret_keys=true by default", async () => {
       let requestedUrl = "";
       stubFetch(async (input) => {
         requestedUrl = input.toString();
@@ -304,6 +324,17 @@ describe("plapi", () => {
       const url = new URL(requestedUrl);
       expect(url.pathname).toBe("/v1/platform/applications/app_abc");
       expect(url.searchParams.get("include_secret_keys")).toBe("true");
+    });
+
+    test("sends include_secret_keys=false when the caller opts out", async () => {
+      let requestedUrl = "";
+      stubFetch(async (input) => {
+        requestedUrl = input.toString();
+        return new Response(JSON.stringify(mockApp), { status: 200 });
+      });
+
+      await fetchApplication("app_abc", { includeSecretKeys: false });
+      expect(new URL(requestedUrl).searchParams.get("include_secret_keys")).toBe("false");
     });
 
     test("returns parsed application JSON", async () => {
@@ -560,6 +591,86 @@ describe("plapi", () => {
       expect(capturedMethod).toBe("GET");
       expect(capturedUrl).toBe("https://api.clerk.com/v1/platform/applications/app_abc/domains");
       expect(result).toEqual(responseBody);
+    });
+  });
+
+  describe("native applications", () => {
+    function captureRequests(body: unknown): Request[] {
+      const requests: Request[] = [];
+      stubFetch(async (input, init) => {
+        requests.push(new Request(input.toString(), init));
+        return Response.json(body);
+      });
+      return requests;
+    }
+
+    const iosApp = {
+      object: "ios_application" as const,
+      id: "iosapp_1",
+      app_id_prefix: "ABCD123456",
+      bundle_id: "com.example.app",
+    };
+
+    test("reads native settings", async () => {
+      const requests = captureRequests({ object: "native_settings", api_enabled: false });
+
+      expect(await getNativeSettings("app_1", "ins_1")).toEqual({
+        object: "native_settings",
+        api_enabled: false,
+      });
+      expect(requests[0]?.method).toBe("GET");
+      expect(requests[0]?.url).toBe(
+        "https://api.clerk.com/v1/platform/applications/app_1/instances/ins_1/native_settings",
+      );
+    });
+
+    test("enables Native API", async () => {
+      const requests = captureRequests({ object: "native_settings", api_enabled: true });
+
+      await enableNativeApi("app_1", "ins_1");
+      expect(requests[0]?.method).toBe("PATCH");
+      expect(await requests[0]?.json()).toEqual({ api_enabled: true });
+    });
+
+    test("lists iOS registrations", async () => {
+      const requests = captureRequests([{ ...iosApp, created_at: 1 }]);
+
+      expect(await listIOSApplications("app_1", "ins_1")).toEqual([iosApp]);
+      expect(requests[0]?.url).toBe(
+        "https://api.clerk.com/v1/platform/applications/app_1/instances/ins_1/native_applications/ios",
+      );
+    });
+
+    test("creates an iOS registration with an idempotency key", async () => {
+      const requests = captureRequests(iosApp);
+
+      await createIOSApplication(
+        "app_1",
+        "ins_1",
+        { app_id_prefix: "ABCD123456", bundle_id: "com.example.app" },
+        "key_1",
+      );
+      expect(requests[0]?.method).toBe("POST");
+      expect(requests[0]?.headers.get("Idempotency-Key")).toBe("key_1");
+      expect(await requests[0]?.json()).toEqual({
+        app_id_prefix: "ABCD123456",
+        bundle_id: "com.example.app",
+      });
+    });
+
+    test.each([
+      { name: "native settings", request: () => getNativeSettings("app_1", "ins_1"), body: [] },
+      {
+        name: "an iOS registration list",
+        request: () => listIOSApplications("app_1", "ins_1"),
+        body: [{ ...iosApp, bundle_id: undefined }],
+      },
+    ])("rejects unexpected $name", async ({ request, body }) => {
+      stubFetch(async () => Response.json(body));
+
+      await expect(request()).rejects.toMatchObject({
+        code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+      });
     });
   });
 });

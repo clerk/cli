@@ -453,6 +453,7 @@ export async function storeToken(value: OAuthSession): Promise<void> {
 }
 
 let tokenOverride: string | null | undefined;
+let validTokenPromise: Promise<string | null> | undefined;
 
 /** Test-only: override getToken() result. Pass undefined to clear. */
 export function _setTokenOverride(value: string | null | undefined): void {
@@ -486,7 +487,7 @@ export async function hasAccountCredentials(): Promise<boolean> {
   return hasStoredCredentials();
 }
 
-export async function getValidToken(): Promise<string | null> {
+async function resolveValidToken(): Promise<string | null> {
   const session = await getStoredSession();
   if (!session) {
     if (await hasStoredCredentials()) {
@@ -496,6 +497,25 @@ export async function getValidToken(): Promise<string | null> {
   }
 
   return getValidAccessToken(session);
+}
+
+/**
+ * Refresh tokens rotate when redeemed, so concurrent callers in this process
+ * share one in-flight resolution instead of racing each other to
+ * `invalid_grant`. `refreshStoredSession` still handles another process winning.
+ */
+export async function getValidToken(): Promise<string | null> {
+  if (validTokenPromise) return validTokenPromise;
+
+  const pending = resolveValidToken();
+  validTokenPromise = pending;
+  try {
+    return await pending;
+  } finally {
+    if (validTokenPromise === pending) {
+      validTokenPromise = undefined;
+    }
+  }
 }
 
 export async function deleteToken(): Promise<void> {

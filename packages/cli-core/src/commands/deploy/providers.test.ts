@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildOAuthProviderDescriptors,
+  inspectNativeAppleConfiguration,
   providerFields,
   providerLabel,
+  type NativeAppleStatus,
   type OAuthProviderDescriptor,
 } from "./providers.ts";
-import type { InstanceConfigSchema } from "../../lib/plapi.ts";
+import type { IOSApplication, InstanceConfigSchema } from "../../lib/plapi.ts";
 
 const oauthSchema = (properties: Record<string, unknown>) => ({
   type: "object",
@@ -27,6 +29,21 @@ const basicOAuthSchema = oauthSchema({
   },
 });
 
+const appleOAuthSchema = oauthSchema({
+  client_id: { type: "string", description: "Apple Services ID" },
+  client_secret: {
+    type: "string",
+    description: "Apple Private Key",
+    "x-clerk-sensitive": true,
+  },
+  key_id: { type: "string", description: "Apple Key ID" },
+  team_id: { type: "string", description: "Apple Team ID" },
+  bundle_id: {
+    type: "string",
+    description: "iOS app Bundle ID for native Sign in with Apple",
+  },
+});
+
 const schemaResponse = (properties: Record<string, unknown>): InstanceConfigSchema => ({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "https://clerk.com/schemas/platform-config/2025-01-01",
@@ -41,6 +58,19 @@ function descriptorByProvider(
   const descriptor = descriptors.find((item) => item.provider === provider);
   if (!descriptor) throw new Error(`missing descriptor for ${provider}`);
   return descriptor;
+}
+
+function iosApplication(
+  bundleId: string,
+  appIdPrefix = "ABCDE12345",
+  id = `ios_${appIdPrefix}_${bundleId}`,
+): IOSApplication {
+  return {
+    object: "ios_application",
+    id,
+    app_id_prefix: appIdPrefix,
+    bundle_id: bundleId,
+  };
 }
 
 describe("deploy OAuth provider descriptors", () => {
@@ -147,22 +177,7 @@ describe("deploy OAuth provider descriptors", () => {
   test("applies Apple production credential overrides", () => {
     const result = buildOAuthProviderDescriptors(
       ["apple"],
-      schemaResponse({
-        connection_oauth_apple: oauthSchema({
-          client_id: { type: "string", description: "Apple Services ID" },
-          client_secret: {
-            type: "string",
-            description: "Apple Private Key",
-            "x-clerk-sensitive": true,
-          },
-          key_id: { type: "string", description: "Apple Key ID" },
-          team_id: { type: "string", description: "Apple Team ID" },
-          bundle_id: {
-            type: "string",
-            description: "iOS app Bundle ID for native Sign in with Apple",
-          },
-        }),
-      }),
+      schemaResponse({ connection_oauth_apple: appleOAuthSchema }),
     );
 
     const apple = descriptorByProvider(result.supported, "apple");
@@ -188,6 +203,89 @@ describe("deploy OAuth provider descriptors", () => {
       "key_id",
       "client_secret",
     ]);
+  });
+
+  describe("native-only Apple readiness", () => {
+    const apple = descriptorByProvider(
+      buildOAuthProviderDescriptors(
+        ["apple"],
+        schemaResponse({ connection_oauth_apple: appleOAuthSchema }),
+      ).supported,
+      "apple",
+    );
+    const connection = { enabled: true, authenticatable: true, bundle_id: "com.example.app" };
+    const registered = [iosApplication("com.example.app")];
+
+    test.each([
+      { name: "an exact registration", apps: registered, expected: "ready" },
+      {
+        name: "duplicate registrations under one prefix",
+        apps: [
+          iosApplication("com.example.app", "PREFIX_ONE", "ios_a"),
+          iosApplication("com.example.app", "PREFIX_ONE", "ios_b"),
+        ],
+        expected: "ready",
+      },
+      {
+        name: "no registration",
+        apps: [iosApplication("com.example.other")],
+        expected: "registration-missing",
+      },
+      {
+        name: "registrations under two prefixes",
+        apps: [
+          iosApplication("com.example.app", "PREFIX_ONE"),
+          iosApplication("com.example.app", "PREFIX_TWO"),
+        ],
+        expected: "registration-ambiguous",
+      },
+      {
+        name: "a registration that differs in case",
+        apps: [iosApplication("COM.EXAMPLE.APP")],
+        expected: "registration-bundle-case-mismatch",
+      },
+      {
+        name: "Native API disabled",
+        apps: registered,
+        apiEnabled: false,
+        expected: "native-api-disabled",
+      },
+      {
+        name: "a connection that cannot authenticate",
+        apps: registered,
+        override: { authenticatable: false },
+        expected: "authentication-disabled",
+      },
+      {
+        name: "a disabled connection",
+        apps: registered,
+        override: { enabled: false },
+        expected: "authentication-disabled",
+      },
+    ])("reports $expected for $name", ({ apps, apiEnabled = true, override = {}, expected }) => {
+      expect(
+        inspectNativeAppleConfiguration(
+          { connection_oauth_apple: { ...connection, ...override } },
+          apple,
+          apps,
+          { object: "native_settings", api_enabled: apiEnabled },
+        ),
+      ).toEqual({ status: expected as NativeAppleStatus, bundleId: "com.example.app" });
+    });
+
+    test.each(["client_id", "client_secret", "team_id", "key_id"])(
+      "treats Apple with %s as hosted, like the backend",
+      (key) => {
+        expect(
+          inspectNativeAppleConfiguration(
+            { connection_oauth_apple: { ...connection, [key]: "value" } },
+            apple,
+            registered,
+            { object: "native_settings", api_enabled: true },
+          ),
+        ).toBeUndefined();
+      },
+    );
   });
 
   test("keeps compatibility prompt labels only for behavioral overrides", () => {

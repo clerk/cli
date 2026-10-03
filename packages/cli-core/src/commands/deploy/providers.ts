@@ -1,10 +1,16 @@
 import { OAUTH_PROVIDERS } from "@clerk/shared/oauth";
+import { bundleIdentifiersEqual } from "../../lib/apple-native-identity.ts";
 import { bold, cyan, dim, yellow } from "../../lib/color.ts";
 import { clerkSubdomains } from "./copy.ts";
 import { log } from "../../lib/log.ts";
 import { wrap } from "../../lib/wrap.ts";
 import { openBrowser } from "../../lib/open.ts";
-import type { ConfigSchemaProperty, InstanceConfigSchema } from "../../lib/plapi.ts";
+import type {
+  ConfigSchemaProperty,
+  IOSApplication,
+  InstanceConfigSchema,
+  NativeSettings,
+} from "../../lib/plapi.ts";
 
 const DEFAULT_DOCS_URL_PREFIX =
   "https://clerk.com/docs/guides/configure/auth-strategies/social-connections";
@@ -61,6 +67,23 @@ export type OAuthProviderDescriptor = {
 export type OAuthProviderDescriptorResult = {
   supported: OAuthProviderDescriptor[];
   unsupported: string[];
+};
+
+export type NativeAppleStatus =
+  | "ready"
+  | "authentication-disabled"
+  | "registration-missing"
+  | "registration-bundle-case-mismatch"
+  | "registration-ambiguous"
+  | "native-api-disabled"
+  | "verification-unavailable";
+
+export type NativeAppleConfiguration = { status: NativeAppleStatus; bundleId: string };
+
+export type NativeAppleReadinessIssue = {
+  bundleId: string;
+  reason: Exclude<NativeAppleStatus, "ready">;
+  dashboardUrl: string;
 };
 
 type ProviderOverride = {
@@ -211,6 +234,60 @@ export function hasProviderRequiredCredentials(
     const fieldValue = providerConfig[key];
     return typeof fieldValue === "string" && fieldValue.length > 0;
   });
+}
+
+/**
+ * The Bundle ID of a native-only Apple connection, or undefined for hosted or
+ * unconfigured Apple. Mirrors the backend: any hosted identifier makes the
+ * connection hosted, even when it also has a Bundle ID.
+ */
+export function nativeAppleBundleId(
+  config: Record<string, unknown>,
+  descriptor: OAuthProviderDescriptor,
+): string | undefined {
+  if (descriptor.provider !== "apple") return undefined;
+  const value = config[descriptor.configKey];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const providerConfig = value as Record<string, unknown>;
+  const hosted = ["client_id", "client_secret", "team_id", "key_id"].some((key) => {
+    const field = providerConfig[key];
+    return typeof field === "string" && field.trim().length > 0;
+  });
+  if (hosted || typeof providerConfig.bundle_id !== "string") return undefined;
+  return providerConfig.bundle_id.trim() || undefined;
+}
+
+/**
+ * Native-only production Apple sign-in is ready only when it is enabled for
+ * authentication, its Bundle ID has exactly one registration, and Native API
+ * is enabled on that production instance.
+ */
+export function inspectNativeAppleConfiguration(
+  config: Record<string, unknown>,
+  descriptor: OAuthProviderDescriptor,
+  iosApplications: readonly IOSApplication[],
+  nativeSettings: NativeSettings,
+): NativeAppleConfiguration | undefined {
+  const bundleId = nativeAppleBundleId(config, descriptor);
+  if (!bundleId) return undefined;
+  const providerConfig = config[descriptor.configKey] as Record<string, unknown>;
+  if (providerConfig.enabled !== true || providerConfig.authenticatable !== true) {
+    return { status: "authentication-disabled", bundleId };
+  }
+
+  const registeredPrefixes = new Set(
+    iosApplications
+      .filter((application) => bundleIdentifiersEqual(application.bundle_id, bundleId))
+      .map((application) => application.app_id_prefix),
+  );
+  if (registeredPrefixes.size === 0) return { status: "registration-missing", bundleId };
+  if (registeredPrefixes.size > 1) return { status: "registration-ambiguous", bundleId };
+  if (!iosApplications.some((application) => application.bundle_id === bundleId)) {
+    return { status: "registration-bundle-case-mismatch", bundleId };
+  }
+  return nativeSettings.api_enabled
+    ? { status: "ready", bundleId }
+    : { status: "native-api-disabled", bundleId };
 }
 
 function buildOAuthProviderDescriptor(
