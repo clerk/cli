@@ -92,6 +92,18 @@ export function printSetupResult(result: ApplyResult): void {
   for (const step of setupNextSteps(result)) log.info(`  • ${step}`);
 }
 
+/** What an agent needs to do before native setup can run: choose a Clerk application. */
+export function applicationRequired() {
+  return {
+    status: "application-required",
+    appIntegrationComplete: false,
+    next: [
+      'Run `clerk apps list --json` and ask the user which application to use, or create one with `clerk apps create "<name>" --json`. If listing fails because you are not signed in, run `clerk auth login` first.',
+      "Then run `clerk init --app <app_id> --json` to link it, configure the Xcode project, and register the app with Clerk.",
+    ],
+  };
+}
+
 /** The Apple-specific `clerk init` options, as Commander names them. */
 export interface AppleInitOptions {
   root: string;

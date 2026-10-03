@@ -61,7 +61,12 @@ import {
 } from "./bootstrap.js";
 import type { ProjectContext } from "./frameworks/types.js";
 import { type PackageManager, PACKAGE_MANAGERS } from "../../lib/package-manager.ts";
-import { canSetUpXcode, runAppleInit, type AppleInitOptions } from "./ios/coordinator.js";
+import {
+  applicationRequired,
+  canSetUpXcode,
+  runAppleInit,
+  type AppleInitOptions,
+} from "./ios/coordinator.js";
 import { withNativeProgress } from "./ios/progress.js";
 
 type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
@@ -186,6 +191,12 @@ export async function init(options: InitOptions = {}) {
         code: ERROR_CODE.NOT_LINKED,
       });
     return withNativeProgress(async () => runAppleInit(appleOptions, linked.profile.appId));
+  }
+  // An agent that asked for JSON gets the usual "choose an app" guidance as data.
+  if (ctx.framework.dep === "ios" && strategy === "manual" && options.json) {
+    log.data(JSON.stringify(applicationRequired(), null, 2));
+    setTelemetryStage("done");
+    return;
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
