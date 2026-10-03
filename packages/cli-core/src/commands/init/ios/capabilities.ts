@@ -200,7 +200,10 @@ async function planCapabilities(
           return manual("The entitlement file is outside this project root.");
         // Xcode's resolved settings show whether another target uses this file,
         // whether it's set directly, through an xcconfig, or at the project level.
-        for (const other of otherTargetSettings(selection, inspection.input.settingsJSON)) {
+        // Check every inspected configuration: another target may use it only in Release.
+        for (const other of inspection.contexts.flatMap((context) =>
+          otherTargetSettings(selection, context.settingsJSON),
+        )) {
           const value = other.CODE_SIGN_ENTITLEMENTS?.trim();
           if (!value) continue;
           const resolved = resolve(other.SRCROOT ?? sourceRoot, value);
