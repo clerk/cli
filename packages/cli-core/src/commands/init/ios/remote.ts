@@ -1,9 +1,8 @@
+import { createHash } from "node:crypto";
 import * as plapi from "../../../lib/plapi.ts";
+import { bundleIdentifiersEqual } from "../../../lib/apple-native-identity.ts";
+import { CliError, ERROR_CODE, PlapiError, throwUsageError } from "../../../lib/errors.ts";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
-import {
-  cliStateIOSNativeRegistrationRetryStore,
-  type IOSNativeRegistrationRetryStore,
-} from "./native-registration-retry.ts";
 
 export type NativeAPI = Pick<
   typeof plapi,
@@ -21,25 +20,25 @@ export interface RemoteInput {
   bundleIdentifier: string;
   appIdPrefix: string;
 }
-export interface RemoteContext extends RemoteInput {
+interface RemoteContext extends RemoteInput {
   instanceId: string;
   publishableKey: string;
   frontendHost: string;
 }
-export type RemoteAction = "register-application" | "enable-native-api";
+type RemoteAction = "register-application" | "enable-native-api";
 export interface RemotePlan {
   context: RemoteContext;
   actions: RemoteAction[];
 }
 
-export async function resolveRemote(input: RemoteInput, api: NativeAPI): Promise<RemoteContext> {
+async function resolveRemote(input: RemoteInput, api: NativeAPI): Promise<RemoteContext> {
   if (
     !input.applicationId ||
     !/^[A-Z0-9]{10}$/.test(input.appIdPrefix) ||
     input.bundleIdentifier.length > 255 ||
     !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(input.bundleIdentifier)
   ) {
-    throw new Error(
+    throwUsageError(
       "Select a Clerk application and confirm the final Bundle ID and ten-character App ID Prefix.",
     );
   }
@@ -52,18 +51,24 @@ export async function resolveInstance(
 ) {
   const application = await api.fetchApplication(input.applicationId, { includeSecretKeys: false });
   if (application.application_id !== input.applicationId)
-    throw new Error("Clerk returned a different application; review the linked account.");
+    throw new CliError("Clerk returned a different application; review the linked account.", {
+      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+    });
   const instances = application.instances.filter(
     (instance) =>
       instance.environment_type === "development" &&
       (!input.instanceId || instance.instance_id === input.instanceId),
   );
   if (instances.length !== 1 || !instances[0]!.instance_id)
-    throw new Error("Select exactly one development instance for native setup.");
+    throw new CliError("Select exactly one development instance for native setup.", {
+      code: ERROR_CODE.IOS_SETUP_BLOCKED,
+    });
   const instance = instances[0]!;
   const decoded = decodePublishableKey(instance.publishable_key);
   if (decoded.instanceType !== "development")
-    throw new Error("Native setup requires a development publishable key.");
+    throw new CliError("Native setup requires a development publishable key.", {
+      code: ERROR_CODE.IOS_SETUP_BLOCKED,
+    });
   return {
     applicationId: input.applicationId,
     instanceId: instance.instance_id,
@@ -74,23 +79,22 @@ export async function resolveInstance(
 
 function matchingApplication(
   context: RemoteContext,
-  value: unknown,
+  applications: plapi.IOSApplication[],
 ): plapi.IOSApplication | undefined {
-  const matches = plapi
-    .validateIOSApplications(value)
-    .filter((app) => app.bundle_id.toLowerCase() === context.bundleIdentifier.toLowerCase());
-  if (
-    matches.length > 1 ||
-    matches.some((app) => app.app_id_prefix !== context.appIdPrefix || !app.id)
-  ) {
-    throw new Error(
+  const matches = applications.filter((app) =>
+    bundleIdentifiersEqual(app.bundle_id, context.bundleIdentifier),
+  );
+  if (matches.length > 1 || matches.some((app) => app.app_id_prefix !== context.appIdPrefix)) {
+    throw new CliError(
       "Existing native registrations conflict with this identity; review them in the Dashboard.",
+      { code: ERROR_CODE.IOS_SETUP_BLOCKED },
     );
   }
   const match = matches[0];
   if (match && match.bundle_id !== context.bundleIdentifier) {
-    throw new Error(
+    throw new CliError(
       `Bundle ID "${context.bundleIdentifier}" differs in capitalization from Clerk registration "${match.bundle_id}". Match the spelling in Xcode and Clerk, then retry setup.`,
+      { code: ERROR_CODE.IOS_SETUP_BLOCKED },
     );
   }
   return match;
@@ -103,65 +107,68 @@ export async function auditRemote(context: RemoteContext, api: NativeAPI): Promi
   ]);
   const actions: RemoteAction[] = [];
   if (!matchingApplication(context, applications)) actions.push("register-application");
-  if (!plapi.validateNativeSettings(native).api_enabled) actions.push("enable-native-api");
+  if (!native.api_enabled) actions.push("enable-native-api");
   return { context, actions };
 }
 
 export async function revalidateRemote(plan: RemotePlan, api: NativeAPI): Promise<RemotePlan> {
   const context = await resolveRemote(plan.context, api);
   if (context.publishableKey !== plan.context.publishableKey)
-    throw new Error("The instance key changed; review a fresh setup plan.");
+    throw new CliError("The instance key changed; review a fresh setup plan.", {
+      code: ERROR_CODE.IOS_SETUP_STALE,
+    });
   const current = await auditRemote(context, api);
   if (current.actions.some((action) => !plan.actions.includes(action)))
-    throw new Error("Remote setup now requires an additional action; review a fresh plan.");
+    throw new CliError("Remote setup now requires an additional action; review a fresh plan.", {
+      code: ERROR_CODE.IOS_SETUP_STALE,
+    });
   return current;
 }
 
 export async function applyRemote(
   plan: RemotePlan,
   api: NativeAPI,
-  retry: IOSNativeRegistrationRetryStore = cliStateIOSNativeRegistrationRetryStore,
   signal?: AbortSignal,
 ): Promise<void> {
   signal?.throwIfAborted();
   const { context, actions } = await revalidateRemote(plan, api);
-  let key = actions.length ? await retry.getOrCreate(context) : await retry.peek(context);
-  signal?.throwIfAborted();
   if (actions.includes("register-application")) {
-    const created = plapi.validateIOSApplication(
-      await api.createIOSApplication(
+    const params = { app_id_prefix: context.appIdPrefix, bundle_id: context.bundleIdentifier };
+    // Deterministic, so a rerun within the server's idempotency window replays
+    // the original response instead of creating a second registration.
+    const key = createHash("sha256")
+      .update(JSON.stringify([context.applicationId, context.instanceId, params]))
+      .digest("hex");
+    try {
+      const created = await api.createIOSApplication(
         context.applicationId,
         context.instanceId,
-        {
-          appIdPrefix: context.appIdPrefix,
-          bundleId: context.bundleIdentifier,
-        },
-        { idempotencyKey: key! },
-      ),
-    );
-    if (!matchingApplication(context, [created]))
-      throw new Error(
-        "Clerk did not confirm the requested native identity; retry setup to reconcile it.",
+        params,
+        `ios-init-${key}`,
       );
+      if (!matchingApplication(context, [created]))
+        throw new CliError("Clerk did not confirm the requested native identity; retry setup.", {
+          code: ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
+        });
+    } catch (error) {
+      // A concurrent creator or a lost successful response can leave the row in
+      // place. Reconcile it; never create a second registration.
+      if (
+        !(error instanceof TypeError) &&
+        !(error instanceof PlapiError && (error.status === 422 || error.status >= 500))
+      )
+        throw error;
+      const current = await api.listIOSApplications(context.applicationId, context.instanceId);
+      if (!matchingApplication(context, current)) throw error;
+    }
   }
   signal?.throwIfAborted();
-  // Registration must be observable before enabling the instance-wide API.
-  const registered = await auditRemote(context, api);
-  if (registered.actions.includes("register-application"))
-    throw new Error("Native registration is not yet observable; retry setup.");
-  if (registered.actions.includes("enable-native-api")) {
-    if (!plan.actions.includes("enable-native-api"))
-      throw new Error("Enabling Native API now requires a fresh preview.");
-    key ??= await retry.getOrCreate(context);
-    signal?.throwIfAborted();
-    plapi.validateNativeSettings(
-      await api.enableNativeApi(context.applicationId, context.instanceId, {
-        idempotencyKey: key!,
-      }),
-    );
-  }
+  // Enable the instance-wide API only once the registration exists.
+  if (actions.includes("enable-native-api"))
+    await api.enableNativeApi(context.applicationId, context.instanceId);
   signal?.throwIfAborted();
   if ((await auditRemote(context, api)).actions.length)
-    throw new Error("Remote setup is not yet verified; retry setup to reconcile it.");
-  if (key) await retry.clear(context, key);
+    throw new CliError("Remote setup is not yet verified; retry setup to reconcile it.", {
+      code: ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
+    });
 }

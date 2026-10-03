@@ -16,17 +16,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createIOSFixture, treeDigest } from "./test-helpers.ts";
-import { createIOSNativeRegistrationRetryStore } from "./native-registration-retry.ts";
 import type { IOSApplication } from "../../../lib/plapi.ts";
-import {
-  applySetup,
-  describePreview,
-  doctor,
-  prepareSetup,
-  type SetupOptions,
-} from "./workflow.ts";
+import { applySetup, describePreview, prepareSetup, type SetupOptions } from "./workflow.ts";
+import { doctor } from "./doctor.ts";
 import { type NativeAPI, type RemoteInput } from "./remote.ts";
-import { runCommand, type CommandRunner } from "./xcode.ts";
+import { runCommand, XcodeCommandError, type CommandRunner } from "./xcode.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -76,20 +70,18 @@ function server() {
     async listIOSApplications() {
       return [...state.applications];
     },
-    async createIOSApplication(_app, _instance, params, options) {
+    async createIOSApplication(_app, _instance, params, idempotencyKey) {
       state.events.push("register");
-      state.keys.push(options.idempotencyKey);
+      state.keys.push(idempotencyKey);
       if (state.failCreate) throw new Error("Ambiguous connection failure");
       const created: IOSApplication = {
         object: "ios_application",
         id: "ios_test",
-        app_id_prefix: params.appIdPrefix,
-        bundle_id: state.wrongCreated ? "com.wrong.App" : params.bundleId,
-        created_at: 1,
-        updated_at: 1,
+        app_id_prefix: params.app_id_prefix,
+        bundle_id: state.wrongCreated ? "com.wrong.App" : params.bundle_id,
       };
       state.applications.push(created);
-      if (state.failAfterCreate) throw new Error("Response lost after server success");
+      if (state.failAfterCreate) throw new TypeError("fetch failed");
       return created;
     },
     async enableNativeApi() {
@@ -141,7 +133,6 @@ async function fixture(platform: "ios" | "macos" = "ios") {
         },
       },
     ]);
-  const retry = createIOSNativeRegistrationRetryStore(() => join(root, "retry-state"));
   return {
     root,
     path,
@@ -150,7 +141,6 @@ async function fixture(platform: "ios" | "macos" = "ios") {
     dependencies: {
       api: remote.api,
       run,
-      retry,
       appleAPI: {
         async fetchInstanceConfig() {
           return {
@@ -182,7 +172,7 @@ for (const platform of ["ios", "macos"] as const) {
     expect(JSON.stringify(describePreview(preview))).not.toContain("NOTPREFIX1");
     const result = await applySetup(preview, f.dependencies);
     expect(result).toMatchObject({ local: "updated", remote: "verified" });
-    expect(await readFile(join(f.root, result.backup!), "utf8")).toBe(source);
+    expect(await readFile(join(f.root, result.backups.at(-1)!), "utf8")).toBe(source);
     expect((await stat(f.path)).mode & 0o777).toBe(0o640);
     expect(f.state.events).toEqual(["register", "enable"]);
     expect(f.state.applications[0]).toMatchObject({
@@ -191,9 +181,6 @@ for (const platform of ["ios", "macos"] as const) {
     });
     expect(result.handoff.publishableKey).toBe(key);
     expect(result.instructions.join("\n")).not.toContain("ClerkProvider");
-    expect(
-      await f.dependencies.retry.peek({ ...identity, instanceId: "ins_test" }),
-    ).toBeUndefined();
     const after = await treeDigest(f.root);
     const rerun = await prepareSetup(f.options, f.dependencies);
     expect((await applySetup(rerun, f.dependencies)).local).toBe("unchanged");
@@ -217,10 +204,10 @@ for (const platform of ["ios", "macos"] as const) {
 test("ambiguous project or target requires explicit selection, including macOS inference", async () => {
   const f = await fixture("macos");
   await expect(prepareSetup({ ...f.options, target: undefined }, f.dependencies)).rejects.toThrow(
-    "--target",
+    "--xcode-target",
   );
   await mkdir(join(f.root, "Other.xcodeproj"));
-  await expect(prepareSetup(f.options, f.dependencies)).rejects.toThrow("--project");
+  await expect(prepareSetup(f.options, f.dependencies)).rejects.toThrow("--xcode-project");
   const preview = await prepareSetup(
     { ...f.options, project: join(f.root, "MyApp.xcodeproj") },
     f.dependencies,
@@ -257,7 +244,41 @@ test("dirty project changes are visible in the preview and backed up without an 
   expect(await git.exited).toBe(0);
   const preview = await prepareSetup(f.options, f.dependencies);
   expect(describePreview(preview).existingGitChanges).toContain("MyApp.xcodeproj/project.pbxproj");
-  expect((await applySetup(preview, f.dependencies)).backup).toBeDefined();
+  expect((await applySetup(preview, f.dependencies)).backups).not.toHaveLength(0);
+});
+
+test("clean committed files leave no backups behind, since Git can restore them", async () => {
+  const f = await fixture();
+  for (const command of [
+    ["git", "init", "--quiet"],
+    ["git", "add", "-A"],
+    ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "init"],
+  ]) {
+    const git = Bun.spawn(command, { cwd: f.root, stdout: "ignore", stderr: "ignore" });
+    expect(await git.exited).toBe(0);
+  }
+  const result = await applySetup(await prepareSetup(f.options, f.dependencies), f.dependencies);
+  expect(result.local).toBe("updated");
+  expect(result.backups).toEqual([]);
+  expect(
+    (await readdir(join(f.root, "MyApp.xcodeproj"))).some((path) => path.includes("clerk-backup")),
+  ).toBe(false);
+});
+
+test("an ignored file keeps its backup, since Git can't restore it", async () => {
+  const f = await fixture();
+  await writeFile(join(f.root, ".gitignore"), "MyApp.xcodeproj/project.pbxproj\n");
+  for (const command of [
+    ["git", "init", "--quiet"],
+    ["git", "add", "-A"],
+    ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "init"],
+  ]) {
+    const git = Bun.spawn(command, { cwd: f.root, stdout: "ignore", stderr: "ignore" });
+    expect(await git.exited).toBe(0);
+  }
+  const result = await applySetup(await prepareSetup(f.options, f.dependencies), f.dependencies);
+  expect(result.local).toBe("updated");
+  expect(result.backups).toEqual([expect.stringContaining("project.pbxproj.clerk-backup-")]);
 });
 
 test("generator-managed projects receive instructions and no project write", async () => {
@@ -282,8 +303,6 @@ test("production, wrong application, missing identity, and conflicting registrat
         id: "existing",
         bundle_id: identity.bundleIdentifier,
         app_id_prefix: failure === "conflict" ? "WRONG12345" : identity.appIdPrefix,
-        created_at: 1,
-        updated_at: 1,
       };
       f.state.applications = failure === "duplicate" ? [app, app] : [app];
     }
@@ -337,11 +356,8 @@ test("a lost successful create response reconciles by reading the registration",
   f.state.failAfterCreate = true;
   expect(
     (await applySetup(await prepareSetup(f.options, f.dependencies), f.dependencies)).remote,
-  ).toBe("incomplete");
-  expect(f.state.applications).toHaveLength(1);
-  expect(
-    (await applySetup(await prepareSetup(f.options, f.dependencies), f.dependencies)).remote,
   ).toBe("verified");
+  expect(f.state.applications).toHaveLength(1);
   expect(f.state.events).toEqual(["register", "enable"]);
 });
 
@@ -354,7 +370,7 @@ test("a wrong create response cannot enable Native API", async () => {
   expect(f.state.events).toEqual(["register"]);
 });
 
-test("cancelled setup, invalid Xcode output, and failed process are bounded and redact diagnostics", async () => {
+test("cancelled setup, invalid Xcode output, and failed processes are bounded and explain themselves", async () => {
   const f = await fixture();
   const preview = await prepareSetup(f.options, f.dependencies);
   await expect(applySetup(preview, f.dependencies, AbortSignal.abort())).rejects.toThrow();
@@ -364,10 +380,14 @@ test("cancelled setup, invalid Xcode output, and failed process are bounded and 
   ).rejects.toThrow();
   await expect(
     runCommand(
-      [process.execPath, "-e", "console.error('secret-build-setting');process.exit(1)"],
+      [
+        process.execPath,
+        "-e",
+        "console.error('You have not agreed to the Xcode license.');process.exit(1)",
+      ],
       f.root,
     ),
-  ).rejects.toThrow("Open the project, resolve its packages, and retry");
+  ).rejects.toThrow(/exited with code 1[\s\S]*You have not agreed to the Xcode license/);
   await expect(
     runCommand([process.execPath, "-e", "console.log('x'.repeat(8_000_001))"], f.root),
   ).rejects.toThrow("Xcode returned more output");
@@ -485,7 +505,10 @@ test("setup resolves preexisting dependencies only after inspection fails, then 
     events.push("inspect");
     if (!failed) {
       failed = true;
-      throw new Error("Missing checkout");
+      throw new XcodeCommandError(
+        "xcodebuild exited with code 74.",
+        "xcodebuild: error: Could not resolve package dependencies: Missing package product 'ClerkKit'",
+      );
     }
     return f.dependencies.run(command, root, signal);
   };
@@ -502,22 +525,42 @@ test("setup resolves preexisting dependencies only after inspection fails, then 
   expect(result.handoff.completed.some((step) => step.id === "swift-packages")).toBe(true);
 });
 
-test("package failure keeps useful SDK edits, reports an incomplete step, and never starts remote writes", async () => {
+test("inspection failures unrelated to packages do not trigger package resolution", async () => {
+  const f = await fixture();
+  const events: string[] = [];
+  const run: CommandRunner = async (command) => {
+    events.push(command.includes("-resolvePackageDependencies") ? "resolve" : "inspect");
+    throw new XcodeCommandError(
+      "xcodebuild exited with code 69.",
+      "You have not agreed to the Xcode license agreements.",
+    );
+  };
+  await expect(
+    prepareSetup({ ...f.options, resolvePackages: true }, { ...f.dependencies, run }),
+  ).rejects.toThrow("Xcode license");
+  expect(events).toEqual(["inspect"]);
+});
+
+test("package failure keeps SDK edits, still registers the app, and redacts credentials", async () => {
   const f = await fixture();
   const preview = await prepareSetup({ ...f.options, resolvePackages: true }, f.dependencies);
   const result = await applySetup(preview, {
     ...f.dependencies,
     run: async () => {
-      throw new Error("private credential must not be printed");
+      throw new XcodeCommandError(
+        "xcodebuild exited with code 74.",
+        "Failed to clone https://octo:ghp_secret@github.com/acme/private.git",
+      );
     },
   });
-  expect(result).toMatchObject({ local: "updated", packages: "incomplete", status: "incomplete" });
+  expect(result).toMatchObject({ local: "updated", packages: "incomplete", remote: "verified" });
   expect(result.handoff.remaining.some((step) => step.id === "swift-packages")).toBe(true);
-  expect(f.state.events).toEqual([]);
-  expect(result.message).not.toContain("private credential must not");
+  expect(f.state.events).toEqual(["register", "enable"]);
+  expect(result.message).toContain("https://***@github.com/acme/private.git");
+  expect(result.message).not.toContain("ghp_secret");
 });
 
-test("a discovered Bundle ID changed after the preview is not registered", async () => {
+test("a Bundle ID changed after the preview is not registered", async () => {
   const f = await discoveredFixture();
   const preview = await prepareSetup(
     {
@@ -526,6 +569,7 @@ test("a discovered Bundle ID changed after the preview is not registered", async
     },
     f.dependencies,
   );
+  // As if an xcconfig changed PRODUCT_BUNDLE_IDENTIFIER while the user reviewed the preview.
   const original = f.dependencies.run;
   const run: CommandRunner = async (command, root, signal) => {
     const rows = JSON.parse(await original(command, root, signal));
@@ -534,6 +578,7 @@ test("a discovered Bundle ID changed after the preview is not registered", async
   };
   const result = await applySetup(preview, { ...f.dependencies, run });
   expect(result.remote).toBe("incomplete");
+  expect(result.message).toContain("Bundle ID changed after the preview");
   expect(f.state.events).toEqual([]);
 });
 

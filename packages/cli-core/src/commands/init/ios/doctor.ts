@@ -2,6 +2,7 @@ import { dirname, resolve } from "node:path";
 import { auditIOSNativeAppleHealth } from "./native-apple.ts";
 import { capabilityXML, planAllCapabilities } from "./capabilities.ts";
 import { snapshotFile } from "./files.ts";
+import { sdkLinked } from "./sdk.ts";
 import { discoverRemote, describeIdentity } from "./identity.ts";
 import { auditRemote, nativeAPI } from "./remote.ts";
 import { resolvedSDKHealth, type Check } from "./sdk-health.ts";
@@ -17,7 +18,6 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
       capabilities: false,
       signInWithApple: false,
       checkAppleConnection: false,
-      allowDirty: true,
     },
     dependencies,
   );
@@ -36,11 +36,7 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
     },
     {
       name: "SDK project linkage",
-      status:
-        sdk.type === "skip" &&
-        sdk.skipReason.startsWith("Requested Clerk products are already linked")
-          ? "pass"
-          : "warn",
+      status: sdk.type === "skip" && sdkLinked(sdk) ? "pass" : "warn",
       message: sdk.type === "skip" ? sdk.skipReason : "Requested SDK products need installation.",
     },
     preview.sdkCheck.status === "fail"
@@ -158,12 +154,6 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
       message:
         "Supply the Clerk application and confirmed native identity to check provider settings.",
     });
-  checks.push({
-    name: "App integration",
-    status: "warn",
-    message:
-      "Doctor does not verify custom Swift integration or run the app. Build and test your sign-in flow.",
-  });
   return {
     ...describePreview(preview),
     identity: discovery ? describeIdentity(discovery) : undefined,

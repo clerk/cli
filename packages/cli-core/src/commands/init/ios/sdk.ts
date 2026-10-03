@@ -8,8 +8,20 @@ import { build, parse } from "@bacons/xcode/json";
 import { isDeepStrictEqual } from "node:util";
 import type { FileAction } from "../frameworks/types.ts";
 
-import { CLERK_URL, isClerkRepository, scaffoldXCProjSDK } from "./xcproj-sdk.ts";
+import {
+  CLERK_URL,
+  hasClerkPackageIdentity,
+  isClerkRepository,
+  scaffoldXCProjSDK,
+} from "./xcproj-sdk.ts";
 const PRODUCTS = ["ClerkKit", "ClerkKitUI"] as const;
+export const ALREADY_LINKED =
+  "Requested Clerk products are already linked; package compatibility is not verified.";
+
+/** Whether the requested products are linked, or will be once this action applies. */
+export function sdkLinked(action: FileAction): boolean {
+  return action.type !== "skip" || action.skipReason === ALREADY_LINKED;
+}
 
 export interface SDKInput {
   path: string;
@@ -85,11 +97,25 @@ export function scaffoldSDK(input: SDKInput): FileAction {
       return skip("The target has shared or multiple Frameworks phases; add Clerk in Xcode.");
     }
 
-    const packages = (project.rootObject.props.packageReferences ?? [])
-      .filter(XCRemoteSwiftPackageReference.is)
-      .filter((item) => isClerkRepository(item.props.repositoryURL));
+    // Match by package identity, so a local checkout or fork is never joined by
+    // a second clerk-ios reference, which Xcode rejects.
+    const packages = (project.rootObject.props.packageReferences ?? []).filter((item) =>
+      hasClerkPackageIdentity(
+        XCRemoteSwiftPackageReference.is(item)
+          ? item.props.repositoryURL
+          : (item.props as { relativePath?: string }).relativePath,
+      ),
+    );
     if (packages.length > 1) return skip("Multiple Clerk package references need review in Xcode.");
     const existing = packages[0];
+    if (
+      existing &&
+      !(
+        XCRemoteSwiftPackageReference.is(existing) &&
+        isClerkRepository(existing.props.repositoryURL)
+      )
+    )
+      return skip("An existing local or forked clerk-ios package needs review in Xcode.");
     const linked = target.getSwiftPackageProductDependencies();
     for (const name of PRODUCTS) {
       const products = linked.filter((item) => item.props.productName === name);
@@ -119,10 +145,7 @@ export function scaffoldSDK(input: SDKInput): FileAction {
     const missing = requested.filter(
       (name) => !linked.some((item) => item.props.productName === name),
     );
-    if (missing.length === 0)
-      return skip(
-        "Requested Clerk products are already linked; package compatibility is not verified.",
-      );
+    if (missing.length === 0) return skip(ALREADY_LINKED);
     const reference =
       existing ??
       project.rootObject.addRemoteSwiftPackage({

@@ -3,7 +3,6 @@ import { parse } from "@bacons/xcode/json";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createIOSFixture, IOS_FIXTURE_IDS as ids } from "./test-helpers.ts";
-import { createIOSNativeRegistrationRetryStore } from "./native-registration-retry.ts";
 import type { IOSNativeAppleAPI } from "./native-apple.ts";
 import type { IOSApplication } from "../../../lib/plapi.ts";
 import type { SetupOptions } from "./workflow.ts";
@@ -56,10 +55,8 @@ export async function capabilityFixture(
       const app: IOSApplication = {
         object: "ios_application",
         id: "ios_test",
-        bundle_id: params.bundleId,
-        app_id_prefix: params.appIdPrefix,
-        created_at: 1,
-        updated_at: 1,
+        bundle_id: params.bundle_id,
+        app_id_prefix: params.app_id_prefix,
       };
       state.apps.push(app);
       return app;
@@ -172,7 +169,6 @@ export async function capabilityFixture(
       api,
       appleAPI,
       run,
-      retry: createIOSNativeRegistrationRetryStore(() => join(root, "retry")),
     },
   };
 }

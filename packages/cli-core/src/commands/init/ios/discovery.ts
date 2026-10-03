@@ -4,17 +4,20 @@ import { DOMParser } from "@xmldom/xmldom";
 import { parse } from "@bacons/xcode/json";
 import { parseXCProjSource, xcprojTargets } from "./xcproj.ts";
 import { containedPath, snapshotFile, type FileSnapshot } from "./files.ts";
+import { setupError } from "./types.ts";
+import { CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
 
-export interface AppChoice {
+interface AppChoice {
   project: string;
   targetId: string;
   targetName: string;
 }
 export type ChooseApp = (choices: AppChoice[]) => Promise<AppChoice>;
-export class SelectionNeeded extends Error {
+export class SelectionNeeded extends CliError {
   constructor(public choices: AppChoice[]) {
     super(
-      `Choose an app with --project / --target: ${choices.map((choice) => `${choice.targetName} (${choice.project})`).join(", ") || "none found"}.`,
+      `Choose an app with --xcode-project / --xcode-target: ${choices.map((choice) => `${choice.targetName} (${choice.project})`).join(", ") || "none found"}.`,
+      { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE },
     );
   }
 }
@@ -22,14 +25,14 @@ export class SelectionNeeded extends Error {
 async function workspaceProjects(root: string, workspace: string): Promise<string[]> {
   const source = (await snapshotFile(root, join(workspace, "contents.xcworkspacedata"))).source;
   if (source.length > 2_000_000 || /<!ENTITY|<!DOCTYPE/i.test(source))
-    throw new Error("Unsupported workspace XML.");
+    throw setupError("Unsupported workspace XML.");
   const xml = new DOMParser({
     errorHandler: () => {
-      throw new Error("Invalid workspace XML.");
+      throw setupError("Invalid workspace XML.");
     },
   }).parseFromString(source, "text/xml");
   if (xml.documentElement.tagName !== "Workspace")
-    throw new Error("Unsupported workspace document.");
+    throw setupError("Unsupported workspace document.");
   const base = resolve(root, dirname(workspace));
   const result: string[] = [];
   const visit = async (node: typeof xml.documentElement, group: string): Promise<void> => {
@@ -37,16 +40,16 @@ async function workspaceProjects(root: string, workspace: string): Promise<strin
       if (child.nodeType !== 1) continue;
       const element = child as typeof node;
       if (!["FileRef", "Group"].includes(element.tagName))
-        throw new Error("Unsupported workspace reference; select --project explicitly.");
+        throw setupError("Unsupported workspace reference; select --xcode-project explicitly.");
       const location = element.getAttribute("location") || "group:";
       const colon = location.indexOf(":");
       const kind = location.slice(0, colon),
         path = location.slice(colon + 1);
       if (!["group", "container", "absolute"].includes(kind))
-        throw new Error("Unsupported workspace location; select --project explicitly.");
+        throw setupError("Unsupported workspace location; select --xcode-project explicitly.");
       const destination = resolve(kind === "container" ? base : group, path);
       if (kind === "absolute" && !isAbsolute(path))
-        throw new Error("Invalid absolute workspace reference.");
+        throw setupError("Invalid absolute workspace reference.");
       let contained: string;
       try {
         contained =
@@ -54,14 +57,14 @@ async function workspaceProjects(root: string, workspace: string): Promise<strin
             ? root
             : await containedPath(root, destination);
       } catch (error) {
-        if (element.tagName === "FileRef" && (error as NodeJS.ErrnoException).code === "ENOENT")
-          continue;
+        // Missing, outside-the-root, or symlinked projects can't be edited here; skip them.
+        if (element.tagName === "FileRef") continue;
         throw error;
       }
       if (element.tagName === "Group") await visit(element, contained);
       else if (contained.endsWith(".xcodeproj")) result.push(relative(root, contained));
       else if (contained.endsWith(".xcworkspace"))
-        throw new Error("Nested workspaces require an explicit --project selection.");
+        throw setupError("Nested workspaces require an explicit --xcode-project selection.");
     }
   };
   await visit(xml.documentElement, base);
@@ -79,16 +82,17 @@ export async function selectApplication(
     projects = await workspaceProjects(root, relative(root, await containedPath(root, supplied)));
   else if (supplied?.endsWith(".xcodeproj"))
     projects = [relative(root, await containedPath(root, supplied))];
-  else if (supplied) throw new Error("Select an .xcodeproj or .xcworkspace directory.");
+  else if (supplied) throw setupError("Select an .xcodeproj or .xcworkspace directory.");
   else {
     const entries = await readdir(root, { withFileTypes: true });
     projects = entries
       .filter((entry) => entry.isDirectory() && entry.name.endsWith(".xcodeproj"))
       .map((entry) => entry.name);
+    // A workspace that can't be read must not hide the projects found beside it.
     for (const workspace of entries.filter(
       (entry) => entry.isDirectory() && entry.name.endsWith(".xcworkspace"),
     ))
-      projects.push(...(await workspaceProjects(root, workspace.name)));
+      projects.push(...(await workspaceProjects(root, workspace.name).catch(() => [])));
   }
   const candidates: (AppChoice & { document: FileSnapshot; format: "pbxproj" | "xcproj" })[] = [];
   for (const project of new Set(projects)) {
@@ -96,8 +100,8 @@ export async function selectApplication(
       ["project.pbxproj", "project.xcproj"].includes(name),
     );
     if (documents.length !== 1)
-      throw new Error(
-        `Select --project explicitly; ${project} has no unambiguous project document.`,
+      throw setupError(
+        `Select --xcode-project explicitly; ${project} has no unambiguous project document.`,
       );
     const document = await snapshotFile(root, join(project, documents[0]!));
     const format = documents[0] === "project.pbxproj" ? "pbxproj" : "xcproj";

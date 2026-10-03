@@ -77,7 +77,7 @@ test("workspace discovery selects the sole nested app and presents one picker wh
   expect(picked.project).toBe("Apps/Second/MyApp.xcodeproj");
 });
 
-test("external and symlinked workspace projects require explicit root selection", async () => {
+test("external and symlinked workspace projects are skipped without hiding the root app", async () => {
   const path = await root(),
     outside = await root();
   await createIOSFixture(outside, { clerkSDK: false });
@@ -87,10 +87,12 @@ test("external and symlinked workspace projects require explicit root selection"
     workspace,
     `<Workspace><FileRef location="absolute:${outside}/MyApp.xcodeproj"/></Workspace>`,
   );
-  await expect(selectApplication(path)).rejects.toThrow("outside");
+  await expect(selectApplication(path)).rejects.toThrow("none found");
   await symlink(join(outside, "MyApp.xcodeproj"), join(path, "Linked.xcodeproj"));
   await writeFile(workspace, '<Workspace><FileRef location="group:Linked.xcodeproj"/></Workspace>');
-  await expect(selectApplication(path)).rejects.toThrow("Symbolic");
+  await expect(selectApplication(path)).rejects.toThrow("none found");
+  await createIOSFixture(path, { clerkSDK: false });
+  expect((await selectApplication(path)).project).toBe("MyApp.xcodeproj");
 });
 
 test("workspace discovery skips missing projects even when their parent folder is absent", async () => {
@@ -103,9 +105,9 @@ test("workspace discovery skips missing projects even when their parent folder i
   );
   expect((await selectApplication(path)).project).toBe("MyApp.xcodeproj");
   expect((await selectApplication(path, "App.xcworkspace")).project).toBe("MyApp.xcodeproj");
-  // A missing project below a symlink must still be rejected.
+  // A project below a symlink is never edited, but it doesn't hide the root app either.
   await symlink(await root(), join(path, "Pods"));
-  await expect(selectApplication(path)).rejects.toThrow("Symbolic");
+  expect((await selectApplication(path)).project).toBe("MyApp.xcodeproj");
 });
 
 test("Bundle ID discovery handles ordinary generated and explicit plists, but not conflicting configurations", async () => {
@@ -124,6 +126,21 @@ test("Bundle ID discovery handles ordinary generated and explicit plists, but no
   }
   expect(await discoverBundleIdentifier(found)).toBe("com.example.App");
   found.contexts[1]!.settings.INFOPLIST_PREPROCESS = "YES";
+  expect(await discoverBundleIdentifier(found)).toBeUndefined();
+});
+
+test("a partial Info.plist merged into a generated one uses the build setting's Bundle ID", async () => {
+  const found = await inspection();
+  await writeFile(
+    join(found.input.selection.root, "MyApp/Info.plist"),
+    '<plist version="1.0"><dict><key>CFBundleURLTypes</key><array/></dict></plist>',
+  );
+  for (const context of found.contexts) {
+    context.settings.GENERATE_INFOPLIST_FILE = "YES";
+    context.settings.INFOPLIST_FILE = "MyApp/Info.plist";
+  }
+  expect(await discoverBundleIdentifier(found)).toBe("com.example.App");
+  for (const context of found.contexts) context.settings.GENERATE_INFOPLIST_FILE = "NO";
   expect(await discoverBundleIdentifier(found)).toBeUndefined();
 });
 

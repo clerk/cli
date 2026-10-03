@@ -1,6 +1,7 @@
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { ScaffoldPlan } from "../frameworks/types.ts";
 import { scaffoldSDK, type SDKInput } from "./sdk.ts";
+import { setupError } from "./types.ts";
 
 export interface Selection {
   root: string;
@@ -16,8 +17,8 @@ export function settingsCommand(selection: Selection): string[] {
     "xcodebuild",
     "-project",
     selection.project,
-    "-target",
-    selection.targetName,
+    // Every target's settings in one call, so ownership checks see what Xcode resolves.
+    "-alltargets",
     "-configuration",
     selection.configuration,
     "-sdk",
@@ -34,10 +35,17 @@ function record(value: unknown): value is Record<string, unknown> {
 
 export function selectedSettings(selection: Selection, output: string): Record<string, string> {
   const rows: unknown = JSON.parse(output);
-  if (!Array.isArray(rows)) throw new Error("Xcode did not return a build-settings array.");
-  const matches = rows.filter((row) => record(row) && row.target === selection.targetName);
+  if (!Array.isArray(rows)) throw setupError("Xcode did not return a build-settings array.");
+  // Xcode can list a target twice with identical settings; only differing rows are ambiguous.
+  const matches = [
+    ...new Map(
+      rows
+        .filter((row) => record(row) && row.target === selection.targetName)
+        .map((row) => [JSON.stringify(row.buildSettings), row]),
+    ).values(),
+  ];
   if (matches.length !== 1 || !record(matches[0]?.buildSettings)) {
-    throw new Error("Xcode must return exactly one settings result for the selected target.");
+    throw setupError("Xcode must return exactly one settings result for the selected target.");
   }
   const settings = matches[0].buildSettings;
   if (
@@ -49,12 +57,26 @@ export function selectedSettings(selection: Selection, output: string): Record<s
     settings.PRODUCT_TYPE !== "com.apple.product-type.application" ||
     settings.IS_MACCATALYST === "YES"
   ) {
-    throw new Error("Xcode settings do not match the selected iOS or macOS application context.");
+    throw setupError("Xcode settings do not match the selected iOS or macOS application context.");
   }
   return Object.fromEntries(
     Object.entries(settings).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
+  );
+}
+
+/** Resolved settings of every other target in the same `-alltargets` output. */
+export function otherTargetSettings(
+  selection: Selection,
+  output: string,
+): Record<string, string>[] {
+  const rows: unknown = JSON.parse(output);
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((row) =>
+    record(row) && row.target !== selection.targetName && record(row.buildSettings)
+      ? [row.buildSettings as Record<string, string>]
+      : [],
   );
 }
 
@@ -91,7 +113,7 @@ export const AUTH_UI_BODY = `UserButton(signedOutContent: {
 export function planAppleSetup(input: SetupInput): ScaffoldPlan {
   const { selection } = input;
   if (!relativePath(selection.project) || !selection.project.endsWith(".xcodeproj")) {
-    throw new Error("Select a root-relative project path without parent traversal.");
+    throw setupError("Select a root-relative project path without parent traversal.");
   }
   const settings = selectedSettings(selection, input.settingsJSON);
   const platform = selection.sdk === "macosx" ? "macOS" : "iOS";
@@ -103,7 +125,7 @@ export function planAppleSetup(input: SetupInput): ScaffoldPlan {
     !/^\d+(\.\d+){0,2}$/.test(deployment) ||
     Number(deployment.split(".")[0]) < minimum
   ) {
-    throw new Error(
+    throw setupError(
       `This recipe requires ${platform} ${minimum} or newer in the selected configuration.`,
     );
   }

@@ -8,7 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IOS_FIXTURE_IDS as ids, treeDigest } from "./test-helpers.ts";
 import { capabilityXML } from "./capabilities.ts";
-import { applySetup, describePreview, doctor, prepareSetup } from "./workflow.ts";
+import { applySetup, describePreview, prepareSetup } from "./workflow.ts";
+import { doctor } from "./doctor.ts";
 import { useStarterSources } from "./setup-test-helpers.ts";
 import { integrationHandoff } from "./handoff.ts";
 
@@ -18,6 +19,19 @@ useCaptureLog();
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
+/** Adds another target to the fake `xcodebuild -alltargets` output, as Xcode resolves it. */
+function reportOtherTarget(
+  f: Awaited<ReturnType<typeof fixture>>,
+  settings: Record<string, string>,
+): void {
+  const run = f.dependencies.run;
+  f.dependencies.run = async (command, root, signal) => {
+    const rows = JSON.parse(await run(command, root, signal));
+    rows.push({ target: "AdminApp", buildSettings: { SRCROOT: f.root, ...settings } });
+    return JSON.stringify(rows);
+  };
+}
+
 async function fixture(platform: "ios" | "macos" = "ios", secondTarget = false) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-apple-capability-")));
   roots.push(root);
@@ -78,7 +92,6 @@ for (const platform of ["ios", "macos"] as const)
     expect(result.handoff.cliStatus).toBe("complete");
     expect(result.handoff.appIntegrationComplete).toBe(false);
     expect(result.handoff.configurations).toEqual(["Debug", "Release"]);
-    expect(report.checks.find((item) => item.name === "App integration")?.status).toBe("warn");
     expect(result.handoff.tasks.some((item) => item.id === "initialize-clerk")).toBe(true);
     expect(
       result.handoff.tasks.find((item) => item.id === "optional-sign-in-ui")?.requiresUserIntent,
@@ -130,6 +143,25 @@ test.each([
   },
 );
 
+test("entitlement edits follow Xcode's tab-indented layout", () => {
+  const plist = (body: string) =>
+    `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n${body}</dict>\n</plist>\n`;
+  expect(
+    capabilityXML(
+      plist(
+        "\t<key>com.apple.developer.associated-domains</key>\n\t<array>\n\t\t<string>applinks:example.com</string>\n\t</array>\n",
+      ),
+      "webcredentials:fixture.clerk.accounts.dev",
+      true,
+    ),
+  ).toBe(
+    plist(
+      "\t<key>com.apple.developer.associated-domains</key>\n\t<array>\n\t\t<string>applinks:example.com</string>\n\t\t<string>webcredentials:fixture.clerk.accounts.dev</string>\n\t</array>\n" +
+        "\t<key>com.apple.developer.applesignin</key>\n\t<array>\n\t\t<string>Default</string>\n\t</array>\n",
+    ),
+  );
+});
+
 test("malformed macOS sandbox entitlements require manual review", () => {
   expect(() =>
     capabilityXML(
@@ -164,15 +196,10 @@ test("shared or inherited entitlement ownership is manual and cannot activate Ap
     const f = await fixture("ios", true);
     const document = parse(await readFile(f.path, "utf8"));
     const objects = document.objects as Record<string, any>;
-    if (ownership === "inherited") {
-      objects.OTHER_CONFIG = {
-        isa: "PBXFileReference",
-        path: "Other.xcconfig",
-        sourceTree: "<group>",
-        lastKnownFileType: "text.xcconfig",
-      };
-      objects[ids.secondDebug].baseConfigurationReference = "OTHER_CONFIG";
-    } else if (ownership === "alias") {
+    if (ownership === "inherited")
+      // As Xcode reports a target that gets the app's entitlements from an xcconfig.
+      reportOtherTarget(f, { CODE_SIGN_ENTITLEMENTS: "MyApp/MyApp.entitlements" });
+    else if (ownership === "alias") {
       await symlink(join(f.root, "MyApp/MyApp.entitlements"), join(f.root, "Other.entitlements"));
       objects[ids.secondDebug].buildSettings.CODE_SIGN_ENTITLEMENTS = "Other.entitlements";
     } else
@@ -187,6 +214,24 @@ test("shared or inherited entitlement ownership is manual and cannot activate Ap
     expect(f.state.events).toEqual(["register", "enable-native"]);
   }
 });
+
+test.each([
+  { name: "no entitlements", settings: {} as Record<string, string>, manual: false },
+  {
+    name: "the app's entitlements",
+    settings: { CODE_SIGN_ENTITLEMENTS: "MyApp/MyApp.entitlements" },
+    manual: true,
+  },
+])(
+  "another target that Xcode resolves to $name decides whether entitlements are edited",
+  async ({ settings, manual }) => {
+    // However the other target's value is set (directly, an xcconfig, CocoaPods), Xcode's answer decides.
+    const f = await fixture("ios", true);
+    reportOtherTarget(f, settings);
+    const preview = await prepareSetup(f.options, f.dependencies);
+    expect(preview.capabilities?.status === "manual").toBe(manual);
+  },
+);
 
 test("stale entitlements and new-file collisions stop before any writes", async () => {
   for (const fresh of [false, true]) {
@@ -214,8 +259,6 @@ test("registration casing conflicts block before local edits or Apple activation
     id: "ios_existing",
     bundle_id: "com.example.myapp",
     app_id_prefix: "TEST123456",
-    created_at: 1,
-    updated_at: 1,
   });
   const before = await treeDigest(f.root);
   await expect(prepareSetup(f.options, f.dependencies)).rejects.toThrow(
@@ -260,6 +303,22 @@ test("capabilities alone never opt into Apple and handoff alone performs no work
   expect(await treeDigest(f.root)).toEqual(before);
   expect(f.state.events).toEqual([]);
 });
+
+test.each([
+  { answer: undefined, entitlement: true, warned: false },
+  { answer: false, entitlement: false, warned: true },
+])(
+  "Apple enabled in Clerk adds the entitlement only when the user wasn't asked (answer: $answer)",
+  async ({ answer, entitlement, warned }) => {
+    const f = await fixture();
+    f.state.apple.enabled = true;
+    f.options.signInWithApple = answer;
+    f.options.checkAppleConnection = true;
+    const preview = await prepareSetup(f.options, f.dependencies);
+    expect(preview.capabilities?.appleEntitlement).toBe(entitlement);
+    expect(preview.appleWarning?.includes("capability was not added") ?? false).toBe(warned);
+  },
+);
 
 test("a later project-write failure restores earlier entitlement edits and attempts no remote mutation", async () => {
   const f = await fixture();

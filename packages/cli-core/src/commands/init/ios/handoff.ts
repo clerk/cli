@@ -1,6 +1,6 @@
 import type { Selection, SetupInput } from "./plan.ts";
 
-export interface HandoffProgress {
+interface HandoffProgress {
   cliStatus: "not-applied" | "complete" | "incomplete" | "manual-steps-required";
   completed: { id: string; detail: string }[];
   remaining: { id: string; detail: string }[];

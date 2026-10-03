@@ -10,7 +10,7 @@ export function configurationNames(
 ): string[] {
   if (format === "xcproj") {
     const { root } = parseXCProjSource(source);
-    return (root.configurations as (string | { name: string })[]).map((value) =>
+    return ((root.configurations ?? []) as (string | { name: string })[]).map((value) =>
       typeof value === "string" ? value : value.name,
     );
   }
@@ -35,25 +35,18 @@ export function capabilitySettings(
     if (!target || targets.filter((item) => item.id === target.id).length !== 1)
       throw new Error("Ambiguous target.");
     const config = `[config=${selection.configuration}]`;
-    const settings = Object.fromEntries(
-      Object.entries(target.buildSettings)
-        .filter(([key]) => !key.includes("[config=") || key.includes(config))
+    // Unconditional values first, so a [config=X] value wins whatever the key order.
+    const entries = Object.entries(target.buildSettings);
+    const settings = Object.fromEntries([
+      ...entries.filter(([key]) => !key.includes("[config=")),
+      ...entries
+        .filter(([key]) => key.includes(config))
         .map(([key, value]) => [key.replace(config, ""), value]),
-    );
+    ]);
     const others = targets.filter((item) => item !== target);
-    const inherits = (value: unknown) =>
-      Array.isArray(value) &&
-      value.some((item) => typeof item === "object" && item !== null && "file" in item);
     let candidate = source;
     return {
       settings,
-      ownershipUnresolved:
-        others.length > 0 &&
-        (inherits(root.configurations) ||
-          Object.keys((root["build-settings"] ?? {}) as object).some((key) =>
-            key.startsWith("CODE_SIGN_ENTITLEMENTS"),
-          ) ||
-          others.some((other) => inherits(other.raw["specialized-configurations"]))),
       otherSettings: others.map((other) => other.buildSettings),
       set(key: string, value: string) {
         const bracket = key.indexOf("[");
@@ -83,21 +76,8 @@ export function capabilitySettings(
     throw new Error("Shared configuration.");
   const settings = objects[configuration.id].buildSettings as Record<string, unknown>;
   if (!settings || Array.isArray(settings)) throw new Error("Unsupported settings.");
-  const inherited = [
-    ...configs(objects[graph.rootObject!]),
-    ...others.flatMap(([, target]) => configs(target)),
-  ];
   return {
     settings,
-    ownershipUnresolved:
-      others.length > 0 &&
-      (inherited.some((config) => config.baseConfigurationReference) ||
-        configs(objects[graph.rootObject!]).some((config) =>
-          Object.keys(config.buildSettings ?? {}).some((key) =>
-            key.startsWith("CODE_SIGN_ENTITLEMENTS"),
-          ),
-        ) ||
-        others.some(([, target]) => configs(target).length === 0)),
     otherSettings: others.flatMap(([, target]) =>
       configs(target).map((config) => config.buildSettings ?? {}),
     ) as Record<string, unknown>[],

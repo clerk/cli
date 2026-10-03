@@ -5,14 +5,31 @@ import { lstat, realpath } from "node:fs/promises";
 import type { FileAction } from "../frameworks/types.ts";
 import { snapshotFile, type FileSnapshot } from "./files.ts";
 import type { Inspection } from "./xcode.ts";
+import { otherTargetSettings } from "./plan.ts";
 
 const DOMAIN = "com.apple.developer.associated-domains";
 const APPLE = "com.apple.developer.applesignin";
 const SANDBOX = "com.apple.security.app-sandbox";
 const NETWORK = "com.apple.security.network.client";
 const EMPTY =
-  '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n';
+  '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict/>\n</plist>\n';
 type Element = ReturnType<DOMParser["parseFromString"]>["documentElement"];
+
+// Appends before the container's closing tag, in Xcode's tab-indented layout
+// unless the file is written compactly.
+function insert(container: Element, node: Element, depth: number, pretty: boolean): void {
+  if (!pretty) {
+    container.appendChild(node);
+    return;
+  }
+  const document = container.ownerDocument;
+  const last = container.lastChild;
+  if (!(last?.nodeType === 3 && !last.textContent?.trim()))
+    container.appendChild(document.createTextNode(`\n${"\t".repeat(depth - 1)}`));
+  const closing = container.lastChild!;
+  container.insertBefore(document.createTextNode(`\n${"\t".repeat(depth)}`), closing);
+  container.insertBefore(node, closing);
+}
 function elements(node: Element): Element[] {
   if (
     ["plist", "dict", "array"].includes(node.tagName) &&
@@ -42,6 +59,7 @@ export function capabilityXML(source: string, domain?: string, apple = false, ma
     throw new Error("Entitlements must contain one dictionary.");
   const dictionary = roots[0]!;
   const children = elements(dictionary);
+  const pretty = !children.length || /\n\s*<key>/.test(source);
   const values = new Map<string, Element>();
   if (children.length % 2) throw new Error("Malformed entitlements dictionary.");
   for (let i = 0; i < children.length; i += 2) {
@@ -69,8 +87,8 @@ export function capabilityXML(source: string, domain?: string, apple = false, ma
       else {
         const name = document.createElement("key");
         name.appendChild(document.createTextNode(NETWORK));
-        dictionary.appendChild(name);
-        dictionary.appendChild(enabled);
+        insert(dictionary, name, 1, pretty);
+        insert(dictionary, enabled, 1, pretty);
       }
       changed = true;
     }
@@ -94,19 +112,24 @@ export function capabilityXML(source: string, domain?: string, apple = false, ma
     } else {
       const name = document.createElement("key");
       name.appendChild(document.createTextNode(key));
-      dictionary.appendChild(name);
+      insert(dictionary, name, 1, pretty);
       array = document.createElement("array");
-      dictionary.appendChild(array);
+      insert(dictionary, array, 1, pretty);
     }
     const string = document.createElement("string");
     string.appendChild(document.createTextNode(value));
-    array.appendChild(string);
+    insert(array, string, 2, pretty);
     changed = true;
   }
-  return changed ? new XMLSerializer().serializeToString(document) : source;
+  if (!changed) return source;
+  // The serializer drops the trailing newline; keep the file's own ending.
+  return (
+    new XMLSerializer().serializeToString(document).trimEnd() +
+    source.slice(source.trimEnd().length)
+  );
 }
 
-export interface CapabilityPlan {
+interface CapabilityPlan {
   status: "planned" | "satisfied" | "manual";
   scope: string;
   reason?: string;
@@ -116,7 +139,7 @@ export interface CapabilityPlan {
   appleEntitlement: boolean;
 }
 
-export async function planCapabilities(
+async function planCapabilities(
   inspection: Inspection,
   projectSource: string,
   frontendHost?: string,
@@ -175,9 +198,16 @@ export async function planCapabilities(
         path = relative(selection.root, resolve(sourceRoot, path));
         if (isAbsolute(path) || path.split(/[\\/]/).includes(".."))
           return manual("The entitlement file is outside this project root.");
-        // No xcconfig interpretation: only plainly separate target files are automated.
-        if (adapter.ownershipUnresolved)
-          return manual("Inherited entitlement settings need manual ownership review.");
+        // Xcode's resolved settings show whether another target uses this file,
+        // whether it's set directly, through an xcconfig, or at the project level.
+        for (const other of otherTargetSettings(selection, inspection.input.settingsJSON)) {
+          const value = other.CODE_SIGN_ENTITLEMENTS?.trim();
+          if (!value) continue;
+          const resolved = resolve(other.SRCROOT ?? sourceRoot, value);
+          if ((await realpath(resolved).catch(() => resolved)) === resolve(selection.root, path))
+            return manual("The entitlement file is shared with another target.");
+        }
+        // Explicit settings in configurations Xcode wasn't asked about.
         for (const other of adapter.otherSettings) {
           for (const [key, value] of Object.entries(other)) {
             if (!key.startsWith("CODE_SIGN_ENTITLEMENTS") || value === "") continue;
