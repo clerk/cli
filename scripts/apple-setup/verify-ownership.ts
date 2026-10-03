@@ -27,8 +27,14 @@ const cases = [
     xcconfig: '#include "Shared.xcconfig"\n',
     manual: true,
   },
+  {
+    name: "app's Debug file used by another target only in Release",
+    xcconfig: "CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements\n",
+    manual: true,
+    releaseOnly: true,
+  },
 ];
-for (const { name, xcconfig, manual } of cases) {
+for (const { name, xcconfig, manual, releaseOnly } of cases) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-ownership-probe-")));
   try {
     await createIOSFixture(root, {
@@ -54,8 +60,17 @@ for (const { name, xcconfig, manual } of cases) {
       sourceTree: "<group>",
     };
     objects[ids.mainGroup].children.push("PODSXCCONFIG000000000000");
-    for (const id of [ids.secondDebug, ids.secondRelease])
+    for (const id of releaseOnly ? [ids.secondRelease] : [ids.secondDebug, ids.secondRelease])
       objects[id].baseConfigurationReference = "PODSXCCONFIG000000000000";
+    if (releaseOnly) {
+      // The app itself uses a different file in Release.
+      objects[ids.targetRelease].buildSettings.CODE_SIGN_ENTITLEMENTS =
+        "MyApp/Release.entitlements";
+      await writeFile(
+        join(root, "MyApp/Release.entitlements"),
+        await readFile(join(root, "MyApp/MyApp.entitlements"), "utf8"),
+      );
+    }
     await writeFile(path, build(document));
     const preview = await prepareSetup({
       root,
