@@ -8,9 +8,8 @@ import { readdir } from "node:fs/promises";
 import { log } from "./log.ts";
 
 /** Where the framework's Clerk SDK is published. Drives how `clerk init`
- *  installs the SDK: npm frameworks run the package manager, iOS has a
- *  dedicated Xcode graph installer, and other native ecosystems print manual
- *  install steps. */
+ *  installs the SDK: npm frameworks run the package manager, native
+ *  ecosystems (Swift Package Manager, Gradle) print manual install steps. */
 export type FrameworkEcosystem = "npm" | "swift" | "gradle";
 
 export interface FrameworkInfo {
@@ -32,6 +31,11 @@ export interface FrameworkInfo {
    *  temporary dev keys). Frameworks without keyless support require API keys
    *  and must authenticate during `clerk init`. */
   supportsKeyless?: boolean;
+  /** When true, `clerk init --dry-run` can inspect an existing project and
+   *  print its setup plan without changing local or remote state. */
+  supportsDryRun?: boolean;
+  /** When true, `clerk init --json` prints the setup result as JSON. */
+  supportsJson?: boolean;
   /** SDK distribution ecosystem. Defaults to "npm" when omitted. */
   ecosystem?: FrameworkEcosystem;
 }
@@ -145,6 +149,8 @@ export const NATIVE_FRAMEWORK_MAP: NativeFrameworkEntry[] = [
     envVar: "CLERK_PUBLISHABLE_KEY",
     envFile: ".env",
     ecosystem: "swift",
+    supportsDryRun: true,
+    supportsJson: true,
     // Xcode project/workspace bundles only — a bare Package.swift could be a
     // server-side Swift or library package, which the Clerk iOS SDK doesn't target.
     markers: ["*.xcodeproj", "*.xcworkspace"],

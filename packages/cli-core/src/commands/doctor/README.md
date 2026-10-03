@@ -2,7 +2,7 @@
 
 Runs a series of diagnostic checks on your Clerk CLI setup and reports
 the status of each check. The command is read-only and never modifies
-project or remote application state unless `--fix` is used.
+any state (unless `--fix` is used).
 
 ## Usage
 
@@ -12,20 +12,19 @@ clerk doctor --verbose   # Show detailed output
 clerk doctor --json      # Output results as JSON
 clerk doctor --spotlight # Only show warnings and failures
 clerk doctor --fix       # Offer to auto-fix issues
-clerk doctor --target MyApp
 ```
 
 ## Options
 
-| Flag              | Description                                                    |
-| ----------------- | -------------------------------------------------------------- |
-| `--verbose`       | Show detailed diagnostic info for each check                   |
-| `--json`          | Output results as machine-readable JSON                        |
-| `--spotlight`     | Only show warnings and failures (hide passing checks)          |
-| `--fix`           | Offer to auto-fix issues with known remedies                   |
-| `--target`        | Select an iOS or macOS application target by name or object ID |
-| `--project`       | Select an Xcode project or workspace                           |
-| `--configuration` | Select a custom build configuration                            |
+| Flag                           | Description                                                      |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `--verbose`                    | Show detailed diagnostic info for each check                     |
+| `--json`                       | Output results as machine-readable JSON                          |
+| `--spotlight`                  | Only show warnings and failures (hide passing checks)            |
+| `--fix`                        | Offer to auto-fix issues with known remedies                     |
+| `--xcode-project <path>`       | Xcode project or workspace to check; also selects the iOS checks |
+| `--xcode-target <name-or-id>`  | Xcode app target to check                                        |
+| `--xcode-configuration <name>` | Xcode build configuration to check                               |
 
 ## Checks
 
@@ -36,30 +35,10 @@ clerk doctor --target MyApp
 | Project linkage       | Project        | Current directory is linked to a Clerk app                                                                                                                                                           |
 | Linked application    | Project        | Linked application ID is accessible via the API                                                                                                                                                      |
 | Instances             | Project        | Configured dev/prod instance IDs match the application's instances                                                                                                                                   |
-| Environment variables | Environment    | Projects without a supported iOS or macOS app have Clerk keys in `.env.local` or `.env`                                                                                                              |
+| Environment variables | Environment    | .env.local or .env has Clerk keys                                                                                                                                                                    |
 | CLI configuration     | Configuration  | CLI config file exists and parses                                                                                                                                                                    |
 | Shell completion      | Configuration  | Shell autocompletion is installed for the detected shell                                                                                                                                             |
 | MCP server            | Integration    | If a Clerk MCP entry is installed, every distinct configured server answers the `initialize` handshake; warns on an unreadable client config (skipped when nothing is installed; warns, never fails) |
-
-### iOS and macOS projects
-
-Doctor uses the same Xcode inspection as native init and replaces the web env-file
-check with SDK linkage/version requirements, Debug/Release coverage, capabilities,
-Native API, native registration, and Apple provider checks. `--project`, `--target`,
-and `--configuration` disambiguate selection. Both Xcode project formats work.
-
-Native API and existing registrations are checked before an App ID Prefix is
-known. Remote outages preserve available local diagnostics. Provider credentials,
-keys, and raw settings never appear in the report. Apple checks are GET-only;
-`doctor --fix` does not change capabilities or remote native settings.
-
-Doctor does not interpret customized Swift startup or authentication code. It
-reports app integration as unverified and links to the quickstart. It initiates
-neither package resolution nor builds; Xcode may touch its own caches. If missing
-packages prevent inspection, normal `clerk init` resolves them. Build, signing,
-and actual sign-in remain separate verification steps.
-
-See [the native setup contract](../../../../../docs/native-established-apps.md).
 
 ### Accountless applications
 
@@ -88,6 +67,16 @@ The Linked application and Instances checks are account-only (the Platform
 API application/instance-list concepts have no accountless equivalent), so they
 continue to skip for an accountless project — the skip reason names the accountless
 application instead of reading like a problem.
+
+### iOS and macOS projects
+
+When the directory is an Xcode project (or an `--xcode-*` flag is given), doctor
+skips the env-file check, since native apps configure Clerk in Swift, and adds
+read-only checks from the same engine as `clerk init`: configuration coverage,
+SDK linkage and version, capabilities, Native API, registration, and the Apple
+connection. It never edits the project, resolves packages, or writes to Clerk.
+Off macOS these checks become one warning, since they need Xcode. If Clerk can't
+be reached, the local checks still run and a warning says so.
 
 ## Auto-Fix (`--fix`)
 
@@ -155,12 +144,8 @@ drift apart.
 
 ## API Endpoints
 
-| Method | Endpoint                                                                           | Description                                                                       |
-| ------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `GET`  | `/oauth/userinfo`                                                                  | Validates the stored auth token                                                   |
-| `GET`  | `/v1/platform/applications/{appId}`                                                | Verifies the linked app and its instances exist                                   |
-| `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/native_settings`         | Verifies Native API state for iOS and macOS projects                              |
-| `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/native_applications/ios` | Verifies the exact native Apple Bundle ID registration                            |
-| `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/config`                  | Audits the Apple connection when native Apple is relevant                         |
-| `GET`  | `/v1/platform/applications/{appId}/instances/{instanceId}/config/schema`           | Determines whether an unhealthy Apple connection can be safely reconciled by init |
-| `GET`  | `/v1/instance`                                                                     | Names the accountless application (best-effort, via its secret key)               |
+| Method | Endpoint                            | Description                                                         |
+| ------ | ----------------------------------- | ------------------------------------------------------------------- |
+| `GET`  | `/oauth/userinfo`                   | Validates the stored auth token                                     |
+| `GET`  | `/v1/platform/applications/{appId}` | Verifies the linked app and its instances exist                     |
+| `GET`  | `/v1/instance`                      | Names the accountless application (best-effort, via its secret key) |

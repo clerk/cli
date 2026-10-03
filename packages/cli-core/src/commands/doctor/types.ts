@@ -111,12 +111,11 @@ export interface DoctorContext {
 export type CheckFn = (ctx: DoctorContext) => Promise<CheckResult>;
 
 export interface DoctorOptions {
-  project?: string;
-  configuration?: string;
   verbose?: boolean;
   json?: boolean;
   spotlight?: boolean;
   fix?: boolean;
-  /** Exact iOS or macOS application target name or PBX object ID. */
-  target?: string;
+  xcodeProject?: string;
+  xcodeTarget?: string;
+  xcodeConfiguration?: string;
 }

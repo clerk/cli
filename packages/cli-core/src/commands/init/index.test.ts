@@ -49,9 +49,9 @@ describe("init", () => {
   test("forwards --app to link when provided", async () => {
     setup({ email: "test@test.com" });
     spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
-    spyOn(config, "resolveProfile")
-      .mockResolvedValueOnce({ profile: { appId: "app_other" } } as never)
-      .mockResolvedValue({ profile: { appId: "app_abc" } } as never);
+    spyOn(config, "resolveProfile").mockResolvedValue({
+      profile: { appId: "app_other" },
+    } as never);
 
     await init({ yes: true, app: "app_abc" });
 
@@ -66,9 +66,7 @@ describe("init", () => {
   test("forwards --app to link when no profile exists", async () => {
     setup({ email: "test@test.com" });
     spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
-    spyOn(config, "resolveProfile")
-      .mockResolvedValueOnce(undefined)
-      .mockResolvedValue({ profile: { appId: "app_abc" } } as never);
+    // resolveProfile already returns undefined by default in setup()
 
     await init({ yes: true, app: "app_abc" });
 
@@ -78,20 +76,6 @@ describe("init", () => {
       cwd: FAKE_CTX.cwd,
       createIfMissing: undefined,
     });
-  });
-
-  test("does not fetch or write keys when an explicit app relink is declined", async () => {
-    setup({ email: "test@test.com" });
-    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
-    spyOn(config, "resolveProfile").mockResolvedValue({
-      profile: { appId: "app_existing" },
-    } as never);
-
-    await expect(init({ yes: true, app: "app_requested" })).rejects.toMatchObject({
-      name: "UserAbortError",
-    });
-
-    expect(pullMod.pull).not.toHaveBeenCalled();
   });
 
   test("agent mode runs existing-project flow without prompts", async () => {
@@ -489,6 +473,95 @@ describe("init", () => {
     await init({ yes: true });
 
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env.local", cwd: mockCtx.cwd });
+  });
+
+  test("native framework skips npm SDK install but still pulls env keys", async () => {
+    setup({ email: "test@test.com" });
+
+    const androidCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      deps: {},
+      envFile: ".env",
+      framework: {
+        dep: "android",
+        name: "Android (Kotlin)",
+        sdk: "com.clerk:clerk-android-ui",
+        envVar: "CLERK_PUBLISHABLE_KEY",
+        envFile: ".env" as const,
+        ecosystem: "gradle" as const,
+      },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(androidCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [],
+      postInstructions: ["Add the Clerk Android SDK via Gradle"],
+    });
+
+    await init({ yes: true });
+
+    expect(heuristics.installSdk).not.toHaveBeenCalled();
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: androidCtx.cwd });
+  });
+
+  test("native framework skips the agent skills install prompt", async () => {
+    setup({ email: "test@test.com" });
+
+    const androidCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      deps: {},
+      envFile: ".env",
+      framework: {
+        dep: "android",
+        name: "Android (Kotlin)",
+        sdk: "com.clerk:clerk-android-ui",
+        envVar: "CLERK_PUBLISHABLE_KEY",
+        envFile: ".env" as const,
+        ecosystem: "gradle" as const,
+      },
+    };
+    spyOn(context, "gatherContext").mockResolvedValue(androidCtx);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [],
+      postInstructions: ["Add the Clerk Android SDK via Gradle"],
+    });
+
+    await init({ yes: true });
+
+    expect(skillsMod.installSkills).not.toHaveBeenCalled();
+  });
+
+  test("--framework android without package.json does not trigger bootstrap", async () => {
+    setup({ email: "test@test.com" });
+
+    const androidFramework = {
+      dep: "android",
+      name: "Android (Kotlin)",
+      sdk: "com.clerk:clerk-android-ui",
+      envVar: "CLERK_PUBLISHABLE_KEY",
+      envFile: ".env" as const,
+      ecosystem: "gradle" as const,
+    };
+    const androidCtx = {
+      ...FAKE_CTX,
+      existingClerk: false,
+      deps: {},
+      envFile: ".env",
+      framework: androidFramework,
+    };
+    spyOn(frameworkMod, "lookupFramework").mockReturnValue(androidFramework);
+    spyOn(context, "gatherContext").mockResolvedValue(androidCtx);
+    spyOn(context, "hasPackageJson").mockResolvedValue(false);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [],
+      postInstructions: ["Add the Clerk Android SDK via Gradle"],
+    });
+
+    await init({ yes: true, framework: "android" });
+
+    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    expect(pullMod.pull).toHaveBeenCalled();
   });
 
   test("bootstrap passes project dir to link, not parent cwd", async () => {

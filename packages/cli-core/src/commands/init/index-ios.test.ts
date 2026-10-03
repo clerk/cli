@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   useInitHarness,
   FAKE_CTX,
@@ -7,167 +7,151 @@ import {
   loginMod,
   pullMod,
   linkMod,
-  plapiMod,
   frameworkMod,
+  bootstrapMod,
+  scaffoldMod,
 } from "../../test/lib/init-harness.ts";
 import * as apple from "./ios/coordinator.ts";
-import { ERROR_CODE } from "../../lib/errors.ts";
 import { init } from "./index.ts";
 
 const iosFramework = frameworkMod.lookupFramework("ios")!;
 
-describe("public Apple init routing", () => {
-  const { setup, track } = useInitHarness();
-  function native(agent = false, email: string | null = "user@example.com") {
-    setup({ isAgent: agent, email });
+describe("clerk init for native Apple projects", () => {
+  const { setup, track, captured } = useInitHarness();
+  const platform = process.platform;
+  beforeEach(() => Object.defineProperty(process, "platform", { value: "darwin" }));
+  afterEach(() => Object.defineProperty(process, "platform", { value: platform }));
+
+  function iosProject(overrides: { isAgent?: boolean; email?: string | null } = {}) {
+    setup({ email: "user@example.com", ...overrides });
     spyOn(context, "gatherContext").mockResolvedValue({
       ...FAKE_CTX,
       deps: {},
-      framework: {
-        dep: "ios",
-        name: "iOS (Swift)",
-        sdk: "ClerkKit",
-        envVar: "CLERK_PUBLISHABLE_KEY",
-        envFile: ".env",
-        ecosystem: "swift",
-      },
+      framework: iosFramework,
     });
-  }
-  test("plain init routes to the new engine and reuses the linked application", async () => {
-    native();
-    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_test" } } as never);
-    const run = spyOn(apple, "runAppleInit").mockImplementation(async (options, authenticate) => {
-      expect(options).toMatchObject({ root: "/tmp/test", agent: false });
-      expect(await authenticate()).toBe("app_test");
-    });
+    const run = spyOn(apple, "runAppleInit").mockResolvedValue();
     track(run);
+    return run;
+  }
+
+  test("sets up the linked app instead of pulling keys into an env file", async () => {
+    const run = iosProject();
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_test" } } as never);
+
     await init({});
-    expect(run).toHaveBeenCalledTimes(1);
+
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({ root: "/tmp/test", agent: false }),
+      "app_test",
+    );
     expect(pullMod.pull).not.toHaveBeenCalled();
-    expect(loginMod.login).not.toHaveBeenCalled();
   });
-  test.each([
-    { project: "native/MyApp.xcodeproj", dryRun: true },
-    { project: "native/MyApp.xcworkspace", dryRun: false },
-  ])("explicit $project routes to Apple setup (dryRun=$dryRun)", async ({ project, dryRun }) => {
+
+  test("links through the usual flow before native setup", async () => {
+    const run = iosProject();
+    spyOn(config, "resolveProfile")
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue({ profile: { appId: "app_picked" } } as never);
+
+    await init({});
+
+    expect(linkMod.link).toHaveBeenCalledWith(expect.objectContaining({ skipIfLinked: true }));
+    expect(run).toHaveBeenCalledWith(expect.anything(), "app_picked");
+  });
+
+  test("an agent with no app or link gets the usual manual guidance, not native setup", async () => {
+    const run = iosProject({ isAgent: true });
+
+    await init({});
+
+    expect(run).not.toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(captured.err).toContain("clerk init --app <app_id>");
+    expect(captured.err).not.toContain("clerk env pull");
+  });
+
+  test("a dry run inspects without signing in", async () => {
+    const run = iosProject({ email: null });
+
+    await init({ dryRun: true, json: true });
+
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ dryRun: true }), undefined);
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
+  });
+
+  test("--xcode-project selects native Apple setup without a root marker", async () => {
     setup();
     spyOn(frameworkMod, "lookupFramework").mockImplementation((name) =>
       name === "ios" ? iosFramework : null,
     );
     spyOn(context, "gatherContext").mockImplementation(async (_cwd, framework) =>
-      framework?.dep === "ios" ? { ...FAKE_CTX, framework } : dryRun ? null : FAKE_CTX,
+      framework ? { ...FAKE_CTX, framework } : null,
     );
     const run = spyOn(apple, "runAppleInit").mockResolvedValue();
     track(run);
 
-    await init({ project, dryRun, json: true, yes: true });
+    await init({ xcodeProject: "ios/MyApp.xcodeproj", dryRun: true });
 
     expect(run).toHaveBeenCalledWith(
-      expect.objectContaining({ project, dryRun, root: "/tmp/test" }),
-      expect.any(Function),
+      expect.objectContaining({ xcodeProject: "ios/MyApp.xcodeproj" }),
+      undefined,
     );
-    expect(loginMod.login).not.toHaveBeenCalled();
-    expect(pullMod.pull).not.toHaveBeenCalled();
   });
-  test("an explicit web framework conflicts with an Apple project selection", async () => {
+
+  test.each([
+    [{ dryRun: true }, "--dry-run isn't supported for React yet"],
+    [{ json: true }, "--json isn't supported for React yet"],
+    [{ appleSdk: "ui" as const }, "--apple-sdk applies only to iOS (Swift) projects"],
+  ])("rejects %o for a web framework", async (options, message) => {
+    setup();
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+
+    await expect(init(options)).rejects.toThrow(message);
+  });
+
+  test("an unsupported flag stops before any project is created", async () => {
     setup();
     spyOn(frameworkMod, "lookupFramework").mockReturnValue(FAKE_CTX.framework);
 
-    await expect(init({ project: "native/MyApp.xcodeproj", framework: "react" })).rejects.toThrow(
-      "apply only to native Apple projects",
+    await expect(init({ framework: "react", xcodeTarget: "MyApp" })).rejects.toThrow(
+      "--xcode-target applies only to iOS (Swift) projects",
     );
+    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     expect(context.gatherContext).not.toHaveBeenCalled();
   });
-  test("an agent without an application receives actionable guidance instead of an interactive picker", async () => {
-    native(true);
-    const run = spyOn(apple, "runAppleInit").mockImplementation(async (_options, authenticate) => {
-      await authenticate();
-    });
-    track(run);
-    await expect(init({ yes: true })).rejects.toThrow("Run `clerk apps list --json`");
-    expect(loginMod.login).not.toHaveBeenCalled();
+
+  test.each([
+    [{ starter: true, json: true }, "not with --starter"],
+    [{ dryRun: true, app: "app_test" }, "--dry-run never signs in"],
+    [{ appIdPrefix: "short" }, "--app-id-prefix must be"],
+    [{ appleSdk: "core" as const, prebuiltAuthUi: true }, "--prebuilt-auth-ui needs ClerkKitUI"],
+  ])("rejects %o before doing anything", async (options, message) => {
+    iosProject();
+    await expect(init(options)).rejects.toThrow(message);
   });
-  test("an unlinked agent can authenticate before being asked to select an application", async () => {
-    native(true, null);
-    const run = spyOn(apple, "runAppleInit").mockImplementation(async (_options, authenticate) => {
-      await authenticate();
+
+  test("without Xcode, links and pulls keys like before", async () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    const run = iosProject();
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_test" } } as never);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+      actions: [],
+      postInstructions: ["Add the Clerk iOS SDK via Swift Package Manager"],
     });
-    track(run);
-    await expect(init({ yes: true })).rejects.toThrow(
-      "You're signed in. Setup needs a Clerk application.",
-    );
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, embedded: true });
-    expect(linkMod.link).not.toHaveBeenCalled();
-    expect(pullMod.pull).not.toHaveBeenCalled();
-  });
-  test("core SDK plus prebuilt UI fails before setup", async () => {
-    native();
-    const run = spyOn(apple, "runAppleInit").mockResolvedValue();
-    track(run);
-    await expect(init({ sdk: "core", prebuiltAuthUI: true })).rejects.toThrow(
-      "requires ClerkKitUI",
-    );
+
+    await init({});
+
     expect(run).not.toHaveBeenCalled();
+    expect(pullMod.pull).toHaveBeenCalled();
   });
 
-  for (const json of [false, true]) {
-    test(`an Apple agent reports a post-link mismatch as failure (json=${json})`, async () => {
-      native(!json);
-      spyOn(config, "resolveProfile").mockResolvedValue({
-        profile: { appId: "app_existing" },
-      } as never);
-      const run = spyOn(apple, "runAppleInit").mockImplementation(
-        async (_options, authenticate) => {
-          await authenticate();
-        },
-      );
-      track(run);
-      await expect(init({ yes: true, json, app: "app_requested" })).rejects.toMatchObject({
-        code: ERROR_CODE.NOT_LINKED,
-      });
-      expect(linkMod.link).toHaveBeenCalledWith(
-        expect.objectContaining({ app: "app_requested", agent: true }),
-      );
-      expect(pullMod.pull).not.toHaveBeenCalled();
-    });
+  test("without Xcode, Apple-only flags fail before anything else", async () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    const run = iosProject();
 
-    test(`an unauthenticated Apple agent can log in and continue (json=${json})`, async () => {
-      native(!json, null);
-      spyOn(config, "resolveProfile")
-        .mockResolvedValueOnce(undefined)
-        .mockResolvedValue({ profile: { appId: "app_test" } } as never);
-      const run = spyOn(apple, "runAppleInit").mockImplementation(
-        async (_options, authenticate) => {
-          expect(await authenticate()).toBe("app_test");
-        },
-      );
-      track(run);
-
-      await init({ yes: true, json, app: "app_test" });
-
-      expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, embedded: true });
-      expect(linkMod.link).toHaveBeenCalledWith(
-        expect.objectContaining({
-          app: "app_test",
-          skipAutolink: true,
-          embedded: true,
-        }),
-      );
-      expect(plapiMod.listApplications).not.toHaveBeenCalled();
-      expect(pullMod.pull).not.toHaveBeenCalled();
-    });
-  }
-
-  test("failed browser login stops Apple setup before linking", async () => {
-    native(true, null);
-    spyOn(loginMod, "login").mockRejectedValue(new Error("Login cancelled"));
-    const run = spyOn(apple, "runAppleInit").mockImplementation(async (_options, authenticate) => {
-      await authenticate();
-    });
-    track(run);
-
-    await expect(init({ yes: true, app: "app_test" })).rejects.toThrow("Login cancelled");
-    expect(linkMod.link).not.toHaveBeenCalled();
-    expect(pullMod.pull).not.toHaveBeenCalled();
+    await expect(init({ dryRun: true })).rejects.toThrow("--dry-run need Xcode");
+    await expect(init({ xcodeTarget: "MyApp" })).rejects.toThrow("--xcode-target need Xcode");
+    expect(run).not.toHaveBeenCalled();
   });
 });

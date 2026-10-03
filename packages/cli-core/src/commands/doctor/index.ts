@@ -1,12 +1,9 @@
 import type { Program } from "../../cli-program.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { bold, green, red } from "../../lib/color.ts";
-import { detectFramework } from "../../lib/framework.ts";
 import { log } from "../../lib/log.ts";
 import { CliError, ERROR_CODE, errorMessage } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
-import { setTelemetryStage } from "../../lib/telemetry.ts";
-import { interruptSignal } from "../../lib/signals.ts";
 import { createDoctorContext } from "./context.ts";
 import {
   checkLoggedIn,
@@ -21,8 +18,9 @@ import {
   checkCliVersion,
 } from "./checks.ts";
 import { checkMcp } from "./check-mcp.ts";
-import { formatCheckResult, formatJson } from "./format.ts";
 import { runIOSDoctorChecks } from "./ios.ts";
+import { detectFramework } from "../../lib/framework.ts";
+import { formatCheckResult, formatJson } from "./format.ts";
 import {
   CHECK_NAME,
   type CheckFn,
@@ -57,45 +55,29 @@ const CHECKS = {
  * Each check paired with the name to report it under if it throws. A check
  * names its own results from the same `CHECK_NAME` entry, so the two agree.
  */
-export function getDoctorChecks(appleNative: boolean): { name: string; run: CheckFn }[] {
-  return (Object.keys(CHECKS) as CheckKey[])
-    .filter((key) => (key !== "hostExecution" || isAgent()) && (key !== "envVars" || !appleNative))
-    .map((key) => ({ name: CHECK_NAME[key], run: CHECKS[key] }));
+function getChecks(apple: boolean): { name: string; run: CheckFn }[] {
+  return (
+    (Object.keys(CHECKS) as CheckKey[])
+      .filter((key) => key !== "hostExecution" || isAgent())
+      // Native Apple apps configure Clerk in Swift, not an env file.
+      .filter((key) => key !== "envVars" || !apple)
+      .map((key) => ({ name: CHECK_NAME[key], run: CHECKS[key] }))
+  );
 }
 
-export interface DoctorRunDependencies {
-  detectFramework: typeof detectFramework;
-  getDoctorChecks: typeof getDoctorChecks;
-  runIOSDoctorChecks: typeof runIOSDoctorChecks;
-}
-
-const defaultDoctorRunDependencies: DoctorRunDependencies = {
-  detectFramework,
-  getDoctorChecks,
-  runIOSDoctorChecks,
-};
-
-interface RunChecksOptions {
-  initialStage?: "doctor_checks" | "doctor_verify";
-  dependencies?: DoctorRunDependencies;
-}
-
-export async function runChecks(
-  ctx: DoctorContext,
-  options: DoctorOptions,
-  runOptions: RunChecksOptions = {},
-): Promise<CheckResult[]> {
-  const dependencies = runOptions.dependencies ?? defaultDoctorRunDependencies;
-  setTelemetryStage(runOptions.initialStage ?? "doctor_checks");
-  const explicitlyRequestsAppleNative =
-    options.target != null || options.project != null || options.configuration != null;
-  const framework = explicitlyRequestsAppleNative
-    ? { dep: "ios" }
-    : await dependencies.detectFramework(process.cwd());
-  const appleNativeCandidate = framework?.dep === "ios";
-  const appleNative = appleNativeCandidate;
-  const common = await Promise.all(
-    dependencies.getDoctorChecks(appleNative).map(async ({ name, run }) => {
+/**
+ * A crash is a bug in the CLI, not a finding about the user's project, so it
+ * says which check broke instead of reporting an anonymous failure the person
+ * cannot act on. It still counts as a failing result: the check was asked a
+ * question and has no answer, and treating that as a pass would hide the one
+ * case where doctor itself is broken.
+ */
+async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<CheckResult[]> {
+  const apple =
+    Boolean(options.xcodeProject || options.xcodeTarget || options.xcodeConfiguration) ||
+    (await detectFramework(process.cwd()))?.dep === "ios";
+  const results = await Promise.all(
+    getChecks(apple).map(async ({ name, run }) => {
       try {
         return await run(ctx);
       } catch (error) {
@@ -108,32 +90,7 @@ export async function runChecks(
       }
     }),
   );
-
-  if (!appleNativeCandidate) return common;
-  let appleNativeChecks: Awaited<ReturnType<typeof runIOSDoctorChecks>>;
-  try {
-    setTelemetryStage("doctor_ios_audit");
-    appleNativeChecks = await dependencies.runIOSDoctorChecks(ctx, {
-      root: process.cwd(),
-      ...(options.target ? { target: options.target } : {}),
-      project: options.project,
-      configuration: options.configuration,
-    });
-  } catch {
-    interruptSignal().throwIfAborted();
-    return [
-      ...common,
-      {
-        name: "Apple-native inspection",
-        status: "fail",
-        message: "Apple-native project inspection failed",
-        detail:
-          "Xcode could not inspect the selected project. Open it in a compatible Xcode and retry.",
-        remedy: "Run from the Xcode project root and pass `--target <name-or-id>` if needed.",
-      },
-    ];
-  }
-  return [...common, ...appleNativeChecks.results];
+  return apple ? [...results, ...(await runIOSDoctorChecks(ctx, options))] : results;
 }
 
 /**
@@ -191,7 +148,6 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
     });
 
     if (uniqueFixable.length > 0) {
-      setTelemetryStage("doctor_fix");
       log.blank();
       log.info(bold("Auto-fix"));
       log.blank();
@@ -220,7 +176,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
 
       const verifyCtx = createDoctorContext();
       const verifyResults = await withSpinner("Verifying fixes...", async () =>
-        runChecks(verifyCtx, options, { initialStage: "doctor_verify" }),
+        runChecks(verifyCtx, options),
       );
       printResults(verifyResults, { ...options, fix: false, spotlight: false });
 
@@ -228,12 +184,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
       if (hasVerifyFailure) {
         throw failureFor(verifyResults, "Some checks still failing after auto-fix");
       }
-      setTelemetryStage("done");
-      await outro(
-        verifyResults.some((r) => r.status === "warn")
-          ? "Checks complete; review remaining warnings"
-          : "All checks passing",
-      );
+      await outro("All checks passing");
       return;
     }
   }
@@ -242,12 +193,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
   if (hasFailure) {
     throw failureFor(allResults, "Doctor found issues with your Clerk integration");
   }
-  setTelemetryStage("done");
-  await outro(
-    allResults.some((r) => r.status === "warn")
-      ? "Checks complete; review remaining warnings"
-      : "All checks passing",
-  );
+  await outro("All checks passing");
 }
 
 export function registerDoctor(program: Program): void {
@@ -258,19 +204,15 @@ export function registerDoctor(program: Program): void {
     .option("--json", "Output results as JSON")
     .option("--spotlight", "Only show warnings and failures")
     .option("--fix", "Attempt to auto-fix issues")
-    .option("--project <path>", "Select an Xcode project or workspace")
-    .option("--configuration <name>", "Select a custom build configuration")
-    .option("--target <name-or-id>", "Select an iOS or macOS application target")
+    .option("--xcode-project <path>", "Xcode project or workspace to check")
+    .option("--xcode-target <name-or-id>", "Xcode app target to check, by name or ID")
+    .option("--xcode-configuration <name>", "Xcode build configuration to check")
     .setExamples([
       { command: "clerk doctor", description: "Run all health checks" },
       { command: "clerk doctor --verbose", description: "Show detailed output for each check" },
       { command: "clerk doctor --json", description: "Output results as machine-readable JSON" },
       { command: "clerk doctor --fix", description: "Auto-fix detected issues" },
       { command: "clerk doctor --spotlight", description: "Only show warnings and failures" },
-      {
-        command: "clerk doctor --target MyApp",
-        description: "Audit a specific iOS or macOS application target",
-      },
     ])
     .action(doctor);
 }

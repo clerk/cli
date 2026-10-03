@@ -1,19 +1,14 @@
-import type { InitOptions } from "../index.ts";
 import { confirm, text } from "../../../lib/prompts.ts";
 import { select } from "../../../lib/listage.ts";
 import { log } from "../../../lib/log.ts";
-import {
-  ApiError,
-  CliError,
-  ERROR_CODE,
-  throwUsageError,
-  throwUserAbort,
-} from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUserAbort } from "../../../lib/errors.ts";
+import { setTelemetryStage } from "../../../lib/telemetry.ts";
 import { interruptSignal } from "../../../lib/signals.ts";
 import { outro } from "../../../lib/spinner.ts";
 import { stopNativeProgress, withNativeSpinner } from "./progress.ts";
 import { isUnchangedStarter } from "./starter.ts";
 import { planAppleSetup } from "./plan.ts";
+import { sdkLinked } from "./sdk.ts";
 import { inspectSelectedProject } from "./xcode.ts";
 import { SelectionNeeded } from "./discovery.ts";
 import { IdentityRequired, describeIdentity } from "./identity.ts";
@@ -26,6 +21,11 @@ import {
   type SetupOptions,
   type SetupPreview,
 } from "./workflow.ts";
+
+/** Native setup drives Xcode, which runs only on macOS; elsewhere init prints the manual steps. */
+export function canSetUpXcode(): boolean {
+  return process.platform === "darwin";
+}
 
 // Tested recipe baseline. Xcode resolves the newest compatible release in this major.
 export const CLERK_SWIFT_MINIMUM_VERSION = "1.5.8";
@@ -48,8 +48,7 @@ export function printSetupPreview(preview: SetupPreview): void {
   );
   for (const action of preview.local.actions) {
     if (action.type === "skip") {
-      if (!action.skipReason.startsWith("Requested Clerk products are already linked"))
-        log.warn(action.skipReason);
+      if (!sdkLinked(action)) log.warn(action.skipReason);
     } else log.info(`  ${action.type === "create" ? "Create" : "Update"} ${action.path}`);
   }
   if (preview.remote) {
@@ -93,25 +92,47 @@ export function printSetupResult(result: ApplyResult): void {
   for (const step of setupNextSteps(result)) log.info(`  • ${step}`);
 }
 
+/** The Apple-specific `clerk init` options, as Commander names them. */
+export interface AppleInitOptions {
+  root: string;
+  agent: boolean;
+  yes?: boolean;
+  json?: boolean;
+  dryRun?: boolean;
+  xcodeProject?: string;
+  xcodeTarget?: string;
+  xcodeConfiguration?: string;
+  appleSdk?: "core" | "ui";
+  bundleId?: string;
+  appIdPrefix?: string;
+  signInWithApple?: boolean;
+  prebuiltAuthUi?: boolean;
+}
+
+/**
+ * Sets up an existing Xcode app. `applicationId` is the app `clerk init` already
+ * linked; a dry run passes none and never authenticates or reads remote state.
+ */
 export async function runAppleInit(
-  options: InitOptions & { root: string; agent: boolean },
-  authenticate: () => Promise<string>,
+  options: AppleInitOptions,
+  applicationId: string | undefined,
   dependencies: Dependencies = {},
 ): Promise<void> {
   stopNativeProgress();
-  const machine = options.agent || options.json === true;
-  const interactive = !machine && !options.yes;
+  const json = options.json === true;
+  // As elsewhere in init, agent mode implies --yes.
+  const interactive = !options.agent && !options.yes;
   const signal = interruptSignal();
   const setup: SetupOptions = {
     root: options.root,
-    project: options.project,
-    target: options.target,
-    configuration: options.configuration,
+    project: options.xcodeProject,
+    target: options.xcodeTarget,
+    configuration: options.xcodeConfiguration,
     minimumVersion: CLERK_SWIFT_MINIMUM_VERSION,
-    products: options.sdk ?? "ui",
+    products: options.appleSdk ?? "ui",
     capabilities: true,
     signInWithApple: options.signInWithApple,
-    signInUI: options.prebuiltAuthUI,
+    signInUI: options.prebuiltAuthUi,
     resolvePackages: !options.dryRun,
     inspectOnly: options.dryRun,
     checkAppleConnection: !options.dryRun,
@@ -130,13 +151,13 @@ export async function runAppleInit(
     progress: (message) => log.info(message),
   };
   try {
-    if (options.dryRun) {
-      // No login, profile, or API reads in an inspection-only command.
+    setTelemetryStage("ios_inspect");
+    if (!applicationId) {
       const preview = await prepareSetup(
         { ...setup, capabilities: false, signInWithApple: false },
         dependencies,
       );
-      if (machine)
+      if (json)
         log.data(JSON.stringify({ mode: "read-only", ...describePreview(preview) }, null, 2));
       else {
         printSetupPreview(preview);
@@ -145,25 +166,17 @@ export async function runAppleInit(
       }
       return;
     }
-    if (machine && !options.yes)
-      throwUsageError(
-        "Native setup requires --yes in agent/JSON mode. Use --dry-run to inspect without changes.",
-      );
     const inspection = await withNativeSpinner("Inspecting Xcode project...", async () =>
       inspectSelectedProject(setup, dependencies.run),
     );
     stopNativeProgress();
-    setup.project = inspection.input.selection.project;
-    setup.target = inspection.input.selection.targetId;
+    setup.inspection = inspection;
     const starter = await isUnchangedStarter(inspection);
     let installedProducts: "core" | "ui" | undefined;
-    if (!options.sdk && !options.prebuiltAuthUI) {
+    if (!options.appleSdk && !options.prebuiltAuthUi) {
       for (const products of ["ui", "core"] as const) {
         const action = planAppleSetup({ ...inspection.input, products }).actions[0];
-        if (
-          action?.type === "skip" &&
-          action.skipReason.startsWith("Requested Clerk products are already linked")
-        ) {
+        if (action?.type === "skip" && sdkLinked(action)) {
           installedProducts = products;
           setup.products = products;
           break;
@@ -174,7 +187,7 @@ export async function runAppleInit(
       log.success(
         `Found ${inspection.input.selection.sdk === "macosx" ? "macOS" : "iOS"} app: ${inspection.input.selection.targetName}`,
       );
-      if (!options.sdk && !options.prebuiltAuthUI && !installedProducts && !starter)
+      if (!options.appleSdk && !options.prebuiltAuthUi && !installedProducts && !starter)
         setup.products = await select({
           message: "Which Clerk SDK products should this app use?",
           choices: [
@@ -182,7 +195,7 @@ export async function runAppleInit(
             { name: "ClerkKit (custom authentication UI)", value: "core" as const },
           ],
         });
-      if (options.prebuiltAuthUI == null && starter && setup.products === "ui")
+      if (options.prebuiltAuthUi == null && starter && setup.products === "ui")
         setup.signInUI = await confirm({
           message: "Add Clerk’s prebuilt sign-in screen?",
           default: false,
@@ -193,12 +206,12 @@ export async function runAppleInit(
           default: false,
         });
     }
-    const applicationId = await authenticate();
     setup.remote = {
       applicationId,
       bundleIdentifier: options.bundleId,
       appIdPrefix: options.appIdPrefix?.trim(),
     };
+    setTelemetryStage("ios_plan");
     const preview = await prepareSetup(setup, {
       ...dependencies,
       promptIdentity:
@@ -219,20 +232,22 @@ export async function runAppleInit(
           : undefined),
     });
     stopNativeProgress();
-    if (!machine) printSetupPreview(preview);
+    if (!json) printSetupPreview(preview);
     if (interactive && !(await confirm({ message: "Apply this setup?", default: true })))
       throwUserAbort();
+    setTelemetryStage("ios_apply");
     const result = await applySetup(preview, dependencies, signal);
     stopNativeProgress();
-    if (machine) log.data(JSON.stringify(result, null, 2));
+    if (json) log.data(JSON.stringify(result, null, 2));
     else printSetupResult(result);
     if (result.status === "incomplete")
       throw new CliError(
-        "Native setup is incomplete. Review the reported step and rerun clerk init.",
+        result.message ??
+          "Native setup is incomplete. Review the reported step and rerun clerk init.",
         { code: ERROR_CODE.IOS_SETUP_BLOCKED },
       );
-    if (result.status === "manual-steps-required") process.exitCode = 2;
-    if (!machine)
+    setTelemetryStage("done");
+    if (!json)
       await outro(
         result.status === "manual-steps-required"
           ? "Setup needs attention"
@@ -241,7 +256,7 @@ export async function runAppleInit(
             : "CLI setup complete; app verification remains",
       );
   } catch (error) {
-    if (error instanceof IdentityRequired && machine)
+    if (json && error instanceof IdentityRequired)
       log.data(
         JSON.stringify({
           status: "input-required",
@@ -249,18 +264,13 @@ export async function runAppleInit(
           identity: describeIdentity(error.discovery),
         }),
       );
-    if (error instanceof SelectionNeeded && machine)
+    if (json && error instanceof SelectionNeeded)
       log.data(
         JSON.stringify({
           status: "selection-required",
           choices: error.choices,
           appIntegrationComplete: false,
         }),
-      );
-    if (error instanceof ApiError)
-      throw new CliError(
-        "Could not read Clerk settings. Check your login, application access, and network, then rerun clerk init.",
-        { code: ERROR_CODE.IOS_SETUP_BLOCKED },
       );
     throw error;
   }

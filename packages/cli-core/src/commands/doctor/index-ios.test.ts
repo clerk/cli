@@ -1,80 +1,54 @@
-import { expect, test } from "bun:test";
-import { getDoctorChecks, runChecks, type DoctorRunDependencies } from "./index.ts";
-import { checkEnvVars } from "./checks.ts";
-import type { DoctorContext } from "./types.ts";
-import { abortInFlight, interruptSignal, _resetInterruptState } from "../../lib/signals.ts";
+import { test, expect, describe, beforeEach, mock } from "bun:test";
+import { setMode } from "../../mode.ts";
+import { useCaptureLog } from "../../test/lib/stubs.ts";
+import { CHECK_NAME, type CheckKey, type CheckResult } from "./types.ts";
 
-const ctx = {} as DoctorContext;
-function dependencies(native = true): DoctorRunDependencies {
-  return {
-    detectFramework: async () => ({ dep: native ? "ios" : "react" }) as never,
-    getDoctorChecks: (apple) => {
-      expect(apple).toBe(native);
-      return [
-        { name: "Common", run: async () => ({ name: "Common", status: "pass", message: "ok" }) },
-      ];
-    },
-    runIOSDoctorChecks: async () => ({
-      results: [{ name: "Native", status: "warn", message: "Build the app" }],
-    }),
-  };
-}
-test("native diagnostics replace web env-file checks", () => {
-  expect(getDoctorChecks(true).map((check) => check.run)).not.toContain(checkEnvVars);
-  expect(getDoctorChecks(false).map((check) => check.run)).toContain(checkEnvVars);
-});
-test("Apple projects use native checks; web projects retain their existing checks", async () => {
-  expect(
-    (await runChecks(ctx, {}, { dependencies: dependencies() })).map((item) => item.name),
-  ).toEqual(["Common", "Native"]);
-  expect(
-    (await runChecks(ctx, {}, { dependencies: dependencies(false) })).map((item) => item.name),
-  ).toEqual(["Common"]);
-});
-test("an explicit target bypasses framework ambiguity and reaches the selected native target", async () => {
-  const deps = dependencies();
-  deps.detectFramework = async () => {
-    throw new Error("should not detect");
-  };
-  deps.runIOSDoctorChecks = async (_ctx, options) => {
-    expect(options).toMatchObject({
-      target: "MyApp",
-      configuration: "Staging",
-      project: "App.xcodeproj",
-    });
-    return { results: [] };
-  };
-  expect(
-    await runChecks(
-      ctx,
-      { target: "MyApp", configuration: "Staging", project: "App.xcodeproj" },
-      { dependencies: deps },
-    ),
-  ).toHaveLength(1);
-});
-test("a failed native inspection retains account diagnostics and gives a failing result", async () => {
-  const deps = dependencies();
-  deps.runIOSDoctorChecks = async () => {
-    throw new Error("Xcode failed");
-  };
-  expect(await runChecks(ctx, {}, { dependencies: deps })).toMatchObject([
-    { name: "Common" },
-    { name: "Apple-native inspection", status: "fail" },
-  ]);
+const pass = (key: CheckKey) => async (): Promise<CheckResult> => ({
+  name: CHECK_NAME[key],
+  status: "pass",
+  message: "ok",
 });
 
-test("Ctrl+C during native inspection propagates instead of reporting a failed check", async () => {
-  const deps = dependencies();
-  deps.runIOSDoctorChecks = async () => {
-    abortInFlight();
-    interruptSignal().throwIfAborted();
-    throw new Error("unreachable");
-  };
-  try {
-    await expect(runChecks(ctx, {}, { dependencies: deps })).rejects.toMatchObject({
-      name: "AbortError",
-    });
-  } finally {
-    _resetInterruptState();
+// Replaced wholesale, so every export of checks.ts has to be here.
+mock.module("./checks.ts", () => ({
+  checkCliVersion: pass("cliVersion"),
+  checkHostExecution: pass("hostExecution"),
+  checkLoggedIn: pass("loggedIn"),
+  checkTokenValid: pass("tokenValid"),
+  checkProjectLinked: pass("projectLinked"),
+  checkLinkedAppExists: pass("linkedAppExists"),
+  checkInstances: pass("instances"),
+  checkEnvVars: pass("envVars"),
+  checkConfigFile: pass("configFile"),
+  checkShellCompletion: pass("shellCompletion"),
+}));
+mock.module("./check-mcp.ts", () => ({ checkMcp: pass("mcp") }));
+mock.module("./ios.ts", () => ({
+  runIOSDoctorChecks: async (): Promise<CheckResult[]> => [
+    { name: "SDK project linkage", status: "pass", message: "ok" },
+  ],
+}));
+
+const { doctor } = await import("./index.ts");
+
+describe("doctor for native Apple projects", () => {
+  const captured = useCaptureLog();
+  beforeEach(() => setMode("human"));
+
+  async function names(options: Parameters<typeof doctor>[0]): Promise<string[]> {
+    await doctor({ ...options, json: true });
+    return (JSON.parse(captured.out) as CheckResult[]).map((result) => result.name);
   }
+
+  test("an Xcode selection adds the Apple checks and skips the env file check", async () => {
+    const result = await names({ xcodeTarget: "MyApp" });
+    expect(result).toContain("SDK project linkage");
+    expect(result).not.toContain(CHECK_NAME.envVars);
+  });
+
+  test("other projects keep the usual checks", async () => {
+    const result = await names({});
+    expect(result).toContain(CHECK_NAME.envVars);
+    expect(result).not.toContain("SDK project linkage");
+  });
 });

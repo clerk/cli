@@ -2,10 +2,4 @@
 "clerk": minor
 ---
 
-Add iOS and macOS setup to `clerk init`. Discover Xcode projects and workspace targets, install and resolve Clerk Swift packages, configure capabilities, register the native application, and optionally enable native Sign in with Apple. Support both classic and JSON Xcode project formats.
-
-Initialize unchanged SwiftUI starter apps directly, with optional prebuilt sign-in UI. Preserve customized application code and provide a structured agent handoff with relevant SDK documentation for remaining integration work.
-
-Add read-only native checks to `clerk doctor`. Report unfinished setup clearly and recover earlier local edits when a later write fails.
-
-Allow agent-driven authenticated setup, including explicit `--login`, to open browser login and continue after the user signs in. Preserve automatic accountless selection for supported web frameworks; API keys are checked by setup requests without an extra authentication precheck.
+Set up iOS and macOS apps with `clerk init`. Once init has linked a Clerk application, it links the Clerk Swift packages, configures capabilities, registers the native app, and optionally enables native Sign in with Apple, for both classic and JSON Xcode projects. Unchanged SwiftUI starters are initialized directly. New flags: `--dry-run` and `--json` (iOS only for now), `--xcode-project`, `--xcode-target`, `--xcode-configuration`, `--apple-sdk`, `--bundle-id`, `--app-id-prefix`, `--sign-in-with-apple`, and `--prebuilt-auth-ui`. `clerk doctor` adds read-only checks for Xcode projects.

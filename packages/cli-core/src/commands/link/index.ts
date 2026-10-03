@@ -16,10 +16,6 @@ import { intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
 interface LinkOptions {
-  /** Effective mode of an embedded caller, including JSON setup. */
-  agent?: boolean;
-  /** Called within another command that owns its header and next steps. */
-  embedded?: boolean;
   app?: string;
   skipIfLinked?: boolean;
   cwd?: string;
@@ -30,16 +26,10 @@ interface LinkOptions {
    * interactive end-to-end.
    */
   createIfMissing?: string;
-  /**
-   * Skip generic process-env/dotenv key discovery when those sources are not
-   * runtime inputs for the calling framework. Native iOS direct setup uses
-   * this so a web app's ambient key cannot silently choose the embedded app.
-   */
-  skipAutolink?: boolean;
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
-  const agent = options.agent ?? isAgent();
+  const agent = isAgent();
   const cwd = options.cwd ?? process.cwd();
   const repoRoot = await getGitRepoRoot(cwd);
   const normalizedRemote = await getGitNormalizedRemote(cwd);
@@ -55,7 +45,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     return;
   }
 
-  if (!existing && !options.app && !options.skipAutolink && (options.skipIfLinked || agent)) {
+  if (!existing && !options.app && (options.skipIfLinked || agent)) {
     const autolinked = await autolink(cwd);
     if (autolinked) return;
   }
@@ -66,35 +56,32 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     );
   }
 
-  if (!options.embedded) intro("Linking project");
+  intro("Linking project");
 
   if (existing && agent) {
     printExistingStatus(existing, normalizedRemote);
     if (!targetsDifferentApp) {
-      if (!options.embedded) await outro();
+      await outro();
       return;
     }
   } else if (existing) {
     const shouldRelink = await handleExistingProfile(existing, normalizedRemote, options);
     if (!shouldRelink) {
-      if (!options.embedded) await outro();
+      await outro();
       return;
     }
   }
 
-  await ensureAuth(options.embedded);
+  await ensureAuth();
 
   const app = options.app
-    ? await withApiContext(
-        fetchApplication(options.app, { includeSecretKeys: false }),
-        "Failed to fetch application",
-      )
+    ? await withApiContext(fetchApplication(options.app), "Failed to fetch application")
     : agent && options.createIfMissing
       ? await withApiContext(
           createApplication(options.createIfMissing),
           "Failed to create application",
         )
-      : await resolveApp(cwd, displayPath, !existing && !options.skipAutolink);
+      : await resolveApp(cwd, displayPath, !existing);
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
@@ -116,16 +103,12 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   });
 
   const label = app.name || app.application_id;
-  log.success(
-    options.embedded
-      ? `Linked to ${cyan(label)}`
-      : `Linked to ${cyan(label)} in ${dim(displayPath)}`,
-  );
+  log.success(`Linked to ${cyan(label)} in ${dim(displayPath)}`);
 
-  if (!options.embedded) await outro(NEXT_STEPS.LINK);
+  await outro(NEXT_STEPS.LINK);
 }
 
-async function ensureAuth(embedded?: boolean) {
+async function ensureAuth() {
   // CLERK_PLATFORM_API_KEY is a valid non-interactive auth mechanism.
   // The PLAPI fetch helpers use it directly for API calls, so no OAuth
   // token is needed when this key is present.
@@ -133,7 +116,7 @@ async function ensureAuth(embedded?: boolean) {
   const token = await getToken();
   if (!token) {
     log.info("Not logged in. Authenticating first...");
-    await login({ showNextSteps: false, ...(embedded && { embedded: true }) });
+    await login({ showNextSteps: false });
   }
 }
 
@@ -176,7 +159,7 @@ async function handleExistingProfile(
   if (options.app) {
     await ensureAuth();
     const targetApp = await withApiContext(
-      fetchApplication(options.app, { includeSecretKeys: false }),
+      fetchApplication(options.app),
       "Failed to fetch application",
     );
     return confirm({ message: `Re-link to ${cyan(appLabel(targetApp))}?`, default: false });
