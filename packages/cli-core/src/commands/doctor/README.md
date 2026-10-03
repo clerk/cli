@@ -16,12 +16,15 @@ clerk doctor --fix       # Offer to auto-fix issues
 
 ## Options
 
-| Flag          | Description                                           |
-| ------------- | ----------------------------------------------------- |
-| `--verbose`   | Show detailed diagnostic info for each check          |
-| `--json`      | Output results as machine-readable JSON               |
-| `--spotlight` | Only show warnings and failures (hide passing checks) |
-| `--fix`       | Offer to auto-fix issues with known remedies          |
+| Flag                           | Description                                                      |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `--verbose`                    | Show detailed diagnostic info for each check                     |
+| `--json`                       | Output results as machine-readable JSON                          |
+| `--spotlight`                  | Only show warnings and failures (hide passing checks)            |
+| `--fix`                        | Offer to auto-fix issues with known remedies                     |
+| `--xcode-project <path>`       | Xcode project or workspace to check; also selects the iOS checks |
+| `--xcode-target <name-or-id>`  | Xcode app target to check                                        |
+| `--xcode-configuration <name>` | Xcode build configuration to check                               |
 
 ## Checks
 
@@ -64,6 +67,16 @@ The Linked application and Instances checks are account-only (the Platform
 API application/instance-list concepts have no accountless equivalent), so they
 continue to skip for an accountless project — the skip reason names the accountless
 application instead of reading like a problem.
+
+### iOS and macOS projects
+
+When the directory is an Xcode project (or an `--xcode-*` flag is given), doctor
+skips the env-file check, since native apps configure Clerk in Swift, and adds
+read-only checks from the same engine as `clerk init`: configuration coverage,
+SDK linkage and version, capabilities, Native API, registration, and the Apple
+connection. It never edits the project, resolves packages, or writes to Clerk.
+Off macOS these checks become one warning, since they need Xcode. If Clerk can't
+be reached, the local checks still run and a warning says so.
 
 ## Auto-Fix (`--fix`)
 

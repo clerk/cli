@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { afterEach, test, expect } from "bun:test";
 import { ios } from "./ios.ts";
 import type { ProjectContext } from "./types.ts";
 
@@ -22,34 +22,38 @@ function makeCtx(): ProjectContext {
   };
 }
 
+const platform = process.platform;
+afterEach(() => {
+  Object.defineProperty(process, "platform", { value: platform });
+});
+
 test("matches only the ios framework", () => {
   const ctx = makeCtx();
   expect(ios.matches(ctx)).toBe(true);
   expect(ios.matches({ ...ctx, framework: { ...ctx.framework, dep: "android" } })).toBe(false);
 });
 
-test("writes no files and prints the quickstart steps", async () => {
+test("on macOS, writes no files and explains how to choose an application", async () => {
+  Object.defineProperty(process, "platform", { value: "darwin" });
   const plan = await ios.scaffold(makeCtx());
+  const text = plan.postInstructions.join("\n");
 
   expect(plan.actions).toHaveLength(0);
-  expect(plan.postInstructions.some((i) => i.includes("github.com/clerk/clerk-ios"))).toBe(true);
-  expect(
-    plan.postInstructions.some((i) => i.includes("ClerkKit") && i.includes("ClerkKitUI")),
-  ).toBe(true);
-  expect(
-    plan.postInstructions.some((i) => i.includes("dashboard.clerk.com/~/native-applications")),
-  ).toBe(true);
-  expect(plan.postInstructions.some((i) => i.includes("Clerk.configure"))).toBe(true);
-  // The official quickstart requires injecting Clerk into the SwiftUI
-  // environment — views read it back via @Environment(Clerk.self).
-  expect(plan.postInstructions.some((i) => i.includes(".environment(Clerk.shared)"))).toBe(true);
-  expect(plan.postInstructions.some((i) => i.includes("docs/ios/getting-started/quickstart"))).toBe(
-    true,
-  );
+  expect(text).toContain("clerk apps list --json");
+  expect(text).toContain("clerk apps create");
+  expect(text).toContain("clerk auth login");
+  expect(text).toContain("clerk init --app <app_id> --json");
+  expect(text).toContain("docs/ios/getting-started/quickstart");
+  expect(text).not.toContain("clerk env pull");
 });
 
-test("references the project's env file for the publishable key", async () => {
+test("without Xcode, prints the manual quickstart and points at the env file", async () => {
+  Object.defineProperty(process, "platform", { value: "linux" });
   const plan = await ios.scaffold({ ...makeCtx(), envFile: ".env.local" });
+  const text = plan.postInstructions.join("\n");
 
-  expect(plan.postInstructions.some((i) => i.includes(".env.local"))).toBe(true);
+  expect(plan.actions).toHaveLength(0);
+  expect(text).toContain("github.com/clerk/clerk-ios");
+  expect(text).toContain("Clerk.configure");
+  expect(text).toContain(".env.local");
 });
