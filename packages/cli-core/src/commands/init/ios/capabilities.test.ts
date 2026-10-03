@@ -23,11 +23,13 @@ afterEach(async () => {
 function reportOtherTarget(
   f: Awaited<ReturnType<typeof fixture>>,
   settings: Record<string, string>,
+  configuration?: string,
 ): void {
   const run = f.dependencies.run;
   f.dependencies.run = async (command, root, signal) => {
     const rows = JSON.parse(await run(command, root, signal));
-    rows.push({ target: "AdminApp", buildSettings: { SRCROOT: f.root, ...settings } });
+    if (!configuration || command[command.indexOf("-configuration") + 1] === configuration)
+      rows.push({ target: "AdminApp", buildSettings: { SRCROOT: f.root, ...settings } });
     return JSON.stringify(rows);
   };
 }
@@ -232,6 +234,25 @@ test.each([
     expect(preview.capabilities?.status === "manual").toBe(manual);
   },
 );
+
+test("a file another target uses only in another configuration still counts as shared", async () => {
+  // App: Debug uses MyApp.entitlements, Release uses Release.entitlements.
+  // Another target uses MyApp.entitlements only in Release.
+  const f = await fixture("ios", true);
+  const document = parse(await readFile(f.path, "utf8"));
+  (document.objects![ids.targetRelease] as any).buildSettings.CODE_SIGN_ENTITLEMENTS =
+    "MyApp/Release.entitlements";
+  await writeFile(f.path, build(document));
+  await writeFile(
+    join(f.root, "MyApp/Release.entitlements"),
+    await readFile(join(f.root, "MyApp/MyApp.entitlements"), "utf8"),
+  );
+  reportOtherTarget(f, { CODE_SIGN_ENTITLEMENTS: "MyApp/MyApp.entitlements" }, "Release");
+
+  const preview = await prepareSetup(f.options, f.dependencies);
+  expect(preview.capabilities?.status).toBe("manual");
+  expect(preview.capabilities?.reason).toContain("shared with another target");
+});
 
 test("stale entitlements and new-file collisions stop before any writes", async () => {
   for (const fresh of [false, true]) {
