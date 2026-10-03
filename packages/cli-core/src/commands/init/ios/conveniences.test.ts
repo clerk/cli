@@ -177,6 +177,28 @@ test("ordinary recovery restores previous bytes and removes newly created files 
   expect(await readFile(join(path, "existing"), "utf8")).toBe("User's later edit");
 });
 
+test("a backup that fails to write is removed", async () => {
+  const path = await root();
+  await writeFile(join(path, "existing"), "original");
+  const before = await snapshotFile(path, "existing");
+  const realOpen = fsPromises.open;
+  const open = spyOn(fsPromises, "open").mockImplementation(async (...args) => {
+    const handle = await realOpen(...(args as Parameters<typeof realOpen>));
+    if (String(args[0]).includes(".clerk-backup-"))
+      handle.writeFile = async () => {
+        throw new Error("disk full");
+      };
+    return handle;
+  });
+  try {
+    await expect(replaceProject(path, before, "CLI edit")).rejects.toThrow("disk full");
+  } finally {
+    open.mockRestore();
+  }
+  expect(await readFile(join(path, "existing"), "utf8")).toBe("original");
+  expect(await readdir(path)).toEqual(["existing"]);
+});
+
 test("a replacement that doesn't complete leaves no backup behind", async () => {
   const path = await root();
   await writeFile(join(path, "existing"), "original");

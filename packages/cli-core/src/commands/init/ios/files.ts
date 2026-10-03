@@ -134,9 +134,13 @@ export async function replaceProject(
       await handle.chmod(snapshot.mode);
       await handle.writeFile(source);
       await handle.sync();
-    } finally {
+    } catch (error) {
+      // This call created the file, so a partial copy is safe to remove.
       await handle.close();
+      await unlink(path).catch(() => {});
+      throw error;
     }
+    await handle.close();
   };
   if (backup) await writeExclusive(backupPath, snapshot.source);
   try {
