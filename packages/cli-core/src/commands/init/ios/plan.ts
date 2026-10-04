@@ -145,7 +145,7 @@ export function planAppleSetup(input: SetupInput): ScaffoldPlan {
   if (sdkAction.type === "skip") postInstructions.push(sdkAction.skipReason);
   postInstructions.push(
     "Complete pending source integration using the handoff's documentation. Manual SDK guide: https://clerk.com/docs/ios/getting-started/quickstart.md?manual=1",
-    "Native registration uses the confirmed final Bundle ID and App ID Prefix. DEVELOPMENT_TEAM is not proof of the App ID Prefix; PRODUCT_BUNDLE_IDENTIFIER is not proof of the final Info.plist identity.",
+    "Native registration uses the final Bundle ID and the App ID Prefix from a matching Clerk registration, --app-id-prefix, or the signing team. Supply the prefix explicitly if the App ID uses a legacy prefix that differs from the Team ID; PRODUCT_BUNDLE_IDENTIFIER is not proof of the final Info.plist identity.",
   );
   if (input.products === "ui")
     postInstructions.push(

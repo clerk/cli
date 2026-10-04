@@ -12,6 +12,7 @@ export type RemoteSelection = Pick<RemoteInput, "applicationId" | "instanceId"> 
 export type IdentityPrompt = (
   field: "bundleIdentifier" | "appIdPrefix",
   message: string,
+  suggestion?: string,
 ) => Promise<string>;
 const validBundle = (value: string | undefined): value is string =>
   !!value && value.length <= 255 && /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(value);
@@ -115,12 +116,23 @@ export async function discoverRemote(
       : "missing";
   const conflict =
     matches.length > 1 || matches.some((app) => appIdPrefix && app.app_id_prefix !== appIdPrefix);
-  if (!appIdPrefix && bundleIdentifier && !conflict && prompt) {
-    appIdPrefix = await prompt(
-      "appIdPrefix",
-      `No existing Clerk registration supplies the App ID Prefix for ${bundleIdentifier}. Enter its 10-character Apple App ID Prefix (which may differ from the Team ID):`,
-    );
-    prefixSource = "confirmed";
+  // Apple uses the Team ID as the App ID Prefix for every App ID created since 2011, so one
+  // signing team across the inspected configurations is the best suggestion; a legacy prefix can still be entered.
+  const teams = new Set(inspection.contexts.map(({ settings }) => settings.DEVELOPMENT_TEAM ?? ""));
+  const [team] = teams;
+  const suggestedPrefix = teams.size === 1 && /^[A-Z0-9]{10}$/.test(team!) ? team : undefined;
+  if (!appIdPrefix && bundleIdentifier && !conflict) {
+    if (prompt) {
+      appIdPrefix = await prompt(
+        "appIdPrefix",
+        `No existing Clerk registration supplies the App ID Prefix for ${bundleIdentifier}. ${suggestedPrefix ? "Which App ID Prefix should Clerk register?" : "Enter its 10-character Apple App ID Prefix:"}`,
+        suggestedPrefix,
+      );
+      prefixSource = "confirmed";
+    } else if (suggestedPrefix) {
+      appIdPrefix = suggestedPrefix;
+      prefixSource = "signing-team";
+    }
   }
   const invalidPrefix = appIdPrefix !== undefined && !/^[A-Z0-9]{10}$/.test(appIdPrefix);
   if (invalidPrefix && prefixSource !== "clerk-registration")

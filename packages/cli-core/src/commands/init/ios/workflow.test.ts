@@ -135,7 +135,7 @@ async function fixture(platform: "ios" | "macos" = "ios") {
           PROJECT_FILE_PATH: join(root, "MyApp.xcodeproj"),
           PRODUCT_TYPE: "com.apple.product-type.application",
           PRODUCT_BUNDLE_IDENTIFIER: "com.example.NotFinalIdentity",
-          DEVELOPMENT_TEAM: "NOTPREFIX1",
+          DEVELOPMENT_TEAM: "TEAMID1234",
           IPHONEOS_DEPLOYMENT_TARGET: "17.0",
           MACOSX_DEPLOYMENT_TARGET: "14.0",
           ENABLE_APP_SANDBOX: "YES",
@@ -178,7 +178,7 @@ for (const platform of ["ios", "macos"] as const) {
     expect(await treeDigest(f.root)).toEqual(before);
     expect(f.state.events).toEqual([]);
     expect(JSON.stringify(describePreview(preview))).not.toContain(key);
-    expect(JSON.stringify(describePreview(preview))).not.toContain("NOTPREFIX1");
+    expect(JSON.stringify(describePreview(preview))).not.toContain("TEAMID1234");
     const result = await applySetup(preview, f.dependencies);
     expect(result).toMatchObject({ local: "updated", remote: "verified" });
     expect(await readFile(join(f.root, result.backups.at(-1)!), "utf8")).toBe(source);
@@ -305,7 +305,12 @@ test("production, wrong application, missing identity, and conflicting registrat
     const f = await fixture();
     if (failure === "production") f.state.production = true;
     if (failure === "wrongApp") f.state.wrongApp = true;
-    if (failure === "missingPrefix") f.options.remote = { ...identity, appIdPrefix: "" };
+    if (failure === "missingPrefix") {
+      f.options.remote = { ...identity, appIdPrefix: "" };
+      const original = f.dependencies.run;
+      f.dependencies.run = async (command, root, signal) =>
+        (await original(command, root, signal)).replace("TEAMID1234", "");
+    }
     if (failure === "conflict" || failure === "duplicate") {
       const app: IOSApplication = {
         object: "ios_application",
@@ -492,24 +497,44 @@ test("Doctor reads Native API and registrations without requiring or prompting f
     nativeApiEnabled: false,
     registrations: [],
     bundleIdentifier: identity.bundleIdentifier,
-    prefixSource: "missing",
+    appIdPrefix: "TEAMID1234",
+    prefixSource: "signing-team",
   });
   expect(report.checks.find((check) => check.name === "Native API")?.status).toBe("warn");
   expect(JSON.stringify(report)).not.toContain(key);
   expect(f.state.events).toEqual([]);
-  const questions: string[] = [];
+  const questions: (string | undefined)[][] = [];
   const preview = await prepareSetup(
     { ...f.options, remote: { applicationId: identity.applicationId } },
     {
       ...f.dependencies,
-      promptIdentity: async (field) => {
-        questions.push(field);
+      promptIdentity: async (field, _message, suggestion) => {
+        questions.push([field, suggestion]);
         return identity.appIdPrefix;
       },
     },
   );
-  expect(questions).toEqual(["appIdPrefix"]);
-  expect(preview.remote?.context.bundleIdentifier).toBe(identity.bundleIdentifier);
+  expect(questions).toEqual([["appIdPrefix", "TEAMID1234"]]);
+  expect(preview.remote?.context).toMatchObject({
+    bundleIdentifier: identity.bundleIdentifier,
+    appIdPrefix: identity.appIdPrefix,
+  });
+});
+
+test("without a prompt, one signing team supplies the App ID Prefix; differing teams don't", async () => {
+  const f = await discoveredFixture();
+  const options = { ...f.options, remote: { applicationId: identity.applicationId } };
+  expect(describePreview(await prepareSetup(options, f.dependencies)).identity).toMatchObject({
+    appIdPrefix: "TEAMID1234",
+    prefixSource: "signing-team",
+  });
+
+  const original = f.dependencies.run;
+  f.dependencies.run = async (command, root, signal) => {
+    const output = await original(command, root, signal);
+    return command.includes("Release") ? output.replace("TEAMID1234", "OTHERTEAM1") : output;
+  };
+  await expect(prepareSetup(options, f.dependencies)).rejects.toThrow();
 });
 
 test("setup resolves preexisting dependencies only after inspection fails, then resolves the added SDK", async () => {
