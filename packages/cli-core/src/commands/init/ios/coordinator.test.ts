@@ -164,11 +164,14 @@ test("dry run reads no remote settings, resolves no packages, and edits nothing"
   const run = spyOn(f.dependencies, "run");
   spies.push(run);
   await runAppleInit(
-    { root: f.root, agent: true, dryRun: true, json: true },
+    { root: f.root, agent: true, dryRun: true, json: true, signInWithApple: true },
     undefined,
     f.dependencies,
   );
-  expect(JSON.parse(captured.out).mode).toBe("read-only");
+  expect(JSON.parse(captured.out)).toMatchObject({
+    mode: "read-only",
+    apple: "Requested; planned once a Clerk application is chosen",
+  });
   expect(read).not.toHaveBeenCalled();
   expect(run.mock.calls.some((call) => call[0].includes("-resolvePackageDependencies"))).toBe(
     false,

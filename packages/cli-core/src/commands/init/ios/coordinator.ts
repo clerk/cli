@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { confirm, text } from "../../../lib/prompts.ts";
 import { select } from "../../../lib/listage.ts";
 import { log } from "../../../lib/log.ts";
@@ -22,9 +23,26 @@ import {
   type SetupPreview,
 } from "./workflow.ts";
 
-/** Native setup drives Xcode, which runs only on macOS; elsewhere init prints the manual steps. */
+let xcodeInstalled: boolean | undefined;
+/** Native setup drives Xcode; without it (off macOS, or with only the Command Line Tools) init prints the manual steps. */
 export function canSetUpXcode(): boolean {
-  return process.platform === "darwin";
+  if (process.platform !== "darwin") return false;
+  xcodeInstalled ??= (() => {
+    try {
+      const { exitCode } = Bun.spawnSync(["xcodebuild", "-version"], {
+        stdout: "ignore",
+        stderr: "ignore",
+        timeout: 10_000,
+      });
+      // A JSON project can use an Xcode in /Applications that xcode-select doesn't point at.
+      return (
+        exitCode === 0 || readdirSync("/Applications").some((name) => /^Xcode.*\.app$/.test(name))
+      );
+    } catch {
+      return false;
+    }
+  })();
+  return xcodeInstalled;
 }
 
 // Tested recipe baseline. Xcode resolves the newest compatible release in this major.
@@ -169,11 +187,25 @@ export async function runAppleInit(
         { ...setup, capabilities: false, signInWithApple: false },
         dependencies,
       );
+      // Capabilities and Apple setup need the chosen application, so a dry run says they're deferred.
+      const deferred = `its capabilities${options.signInWithApple ? " and native Sign in with Apple" : ""}`;
       if (json)
-        log.data(JSON.stringify({ mode: "read-only", ...describePreview(preview) }, null, 2));
+        log.data(
+          JSON.stringify(
+            {
+              mode: "read-only",
+              ...describePreview(preview),
+              ...(options.signInWithApple
+                ? { apple: "Requested; planned once a Clerk application is chosen" }
+                : {}),
+            },
+            null,
+            2,
+          ),
+        );
       else {
         printSetupPreview(preview);
-        log.info("Run clerk init to choose a Clerk application and configure its capabilities.");
+        log.info(`Run clerk init to choose a Clerk application and configure ${deferred}.`);
         await outro("Inspection complete; no setup applied");
       }
       return;

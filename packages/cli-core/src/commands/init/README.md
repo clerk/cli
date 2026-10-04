@@ -248,7 +248,7 @@ No files are written. The scaffold plan prints the quickstart steps: SDK install
 
 ### iOS and macOS (Swift)
 
-Once init has linked a Clerk application (the usual authenticated flow), it sets up the Xcode project directly instead of scaffolding files or pulling keys into `.env`. Xcode is required; JSON (`project.xcproj`) projects need Xcode 27, which init finds in `/Applications` without changing `xcode-select`.
+Once init has linked a Clerk application (the usual authenticated flow), it sets up the Xcode project directly instead of scaffolding files or pulling keys into `.env`. Xcode is required; JSON (`project.xcproj`) projects need Xcode 27, which init finds in `/Applications` without changing `xcode-select`. Without Xcode (another OS, or a Mac with only the Command Line Tools), init links the app, prints the manual steps, and pulls the key into `.env` as before.
 
 - **Discovery.** Finds app targets in root `.xcodeproj` and `.xcworkspace` bundles and asks when there's more than one. `--xcode-project` and `--xcode-target` select explicitly; projects in subdirectories such as `ios/` need `--xcode-project`. Debug and Release are inspected unless `--xcode-configuration` is given.
 - **Changes**, previewed before they're applied:
@@ -262,7 +262,7 @@ Once init has linked a Clerk application (the usual authenticated flow), it sets
 - **Safety.** Every write checks the file hasn't changed since the preview. Files git can't restore are backed up beside the original, and a failed write restores earlier ones. Registration is idempotent, so rerunning init finishes anything left incomplete.
 - **Exit codes.** 0 when setup succeeds, even if Swift integration or manual steps remain (the JSON `status` says which); nonzero when a step fails.
 
-`--dry-run` inspects the project without signing in or reading Clerk. `XcodeGen` and `Tuist` projects get instructions instead of project edits.
+`--dry-run` inspects the project without signing in or reading Clerk, so capabilities and Sign in with Apple are planned only once an application is chosen. `XcodeGen` and `Tuist` projects get instructions instead of project edits.
 
 ## Agent skills install
 

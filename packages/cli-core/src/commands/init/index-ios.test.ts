@@ -18,9 +18,11 @@ const iosFramework = frameworkMod.lookupFramework("ios")!;
 
 describe("clerk init for native Apple projects", () => {
   const { setup, track, captured } = useInitHarness();
-  const platform = process.platform;
-  beforeEach(() => Object.defineProperty(process, "platform", { value: "darwin" }));
-  afterEach(() => Object.defineProperty(process, "platform", { value: platform }));
+  let xcode: ReturnType<typeof spyOn>;
+  beforeEach(() => {
+    xcode = spyOn(apple, "canSetUpXcode").mockReturnValue(true);
+  });
+  afterEach(() => xcode.mockRestore());
 
   function iosProject(overrides: { isAgent?: boolean; email?: string | null } = {}) {
     setup({ email: "user@example.com", ...overrides });
@@ -149,7 +151,7 @@ describe("clerk init for native Apple projects", () => {
   });
 
   test("without Xcode, links and pulls keys like before", async () => {
-    Object.defineProperty(process, "platform", { value: "linux" });
+    xcode.mockReturnValue(false);
     const run = iosProject();
     spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_test" } } as never);
     spyOn(scaffoldMod, "scaffold").mockResolvedValue({
@@ -164,7 +166,7 @@ describe("clerk init for native Apple projects", () => {
   });
 
   test("without Xcode, Apple-only flags fail before anything else", async () => {
-    Object.defineProperty(process, "platform", { value: "linux" });
+    xcode.mockReturnValue(false);
     const run = iosProject();
 
     await expect(init({ dryRun: true })).rejects.toThrow("--dry-run need Xcode");

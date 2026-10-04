@@ -1,4 +1,5 @@
-import { afterEach, test, expect } from "bun:test";
+import { afterEach, spyOn, test, expect } from "bun:test";
+import * as apple from "../ios/coordinator.ts";
 import { ios } from "./ios.ts";
 import type { ProjectContext } from "./types.ts";
 
@@ -22,10 +23,8 @@ function makeCtx(): ProjectContext {
   };
 }
 
-const platform = process.platform;
-afterEach(() => {
-  Object.defineProperty(process, "platform", { value: platform });
-});
+const xcode = spyOn(apple, "canSetUpXcode");
+afterEach(() => xcode.mockReset());
 
 test("matches only the ios framework", () => {
   const ctx = makeCtx();
@@ -33,8 +32,8 @@ test("matches only the ios framework", () => {
   expect(ios.matches({ ...ctx, framework: { ...ctx.framework, dep: "android" } })).toBe(false);
 });
 
-test("on macOS, writes no files and explains how to choose an application", async () => {
-  Object.defineProperty(process, "platform", { value: "darwin" });
+test("with Xcode, writes no files and explains how to choose an application", async () => {
+  xcode.mockReturnValue(true);
   const plan = await ios.scaffold(makeCtx());
   const text = plan.postInstructions.join("\n");
 
@@ -48,7 +47,7 @@ test("on macOS, writes no files and explains how to choose an application", asyn
 });
 
 test("without Xcode, prints the manual quickstart and points at the env file", async () => {
-  Object.defineProperty(process, "platform", { value: "linux" });
+  xcode.mockReturnValue(false);
   const plan = await ios.scaffold({ ...makeCtx(), envFile: ".env.local" });
   const text = plan.postInstructions.join("\n");
 

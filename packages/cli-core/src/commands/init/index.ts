@@ -324,7 +324,7 @@ function assertFrameworkFlags(options: InitOptions, framework: FrameworkInfo): v
     (options.dryRun || options.json || apple.length)
   )
     throwUsageError(
-      `${[options.dryRun && "--dry-run", options.json && "--json", ...apple].filter(Boolean).join(", ")} need Xcode, which runs only on macOS. Without them, clerk init links your app and prints the setup steps.`,
+      `${[options.dryRun && "--dry-run", options.json && "--json", ...apple].filter(Boolean).join(", ")} need Xcode on macOS. Without them, clerk init links your app and prints the setup steps.`,
     );
   if (apple.length && framework.dep !== "ios")
     throwUsageError(
