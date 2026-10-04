@@ -105,6 +105,33 @@ test.each([
   },
 );
 
+test("--yes registers the signing team's App ID Prefix; an agent is asked to confirm it", async () => {
+  const f = await fixture(true);
+  f.state.apps.length = 0;
+  const run = f.dependencies.run;
+  f.dependencies.run = async (command, root, signal) => {
+    const output = await run(command, root, signal);
+    if (!command.includes("-showBuildSettings")) return output;
+    const rows = JSON.parse(output);
+    rows[0].buildSettings.DEVELOPMENT_TEAM = "ABCDE12345";
+    return JSON.stringify(rows);
+  };
+  spies.push(spyOn(spinner, "outro").mockResolvedValue(undefined));
+
+  await expect(
+    runAppleInit({ root: f.root, agent: true, yes: true, json: true }, "app_test", f.dependencies),
+  ).rejects.toThrow("the signing team suggests ABCDE12345");
+  expect(JSON.parse(captured.out)).toMatchObject({
+    status: "input-required",
+    identity: { prefixSource: "missing", suggestedAppIdPrefix: "ABCDE12345" },
+  });
+  expect(f.state.apps).toEqual([]);
+
+  await runAppleInit({ root: f.root, agent: false, yes: true }, "app_test", f.dependencies);
+  expect(f.state.apps.map((app) => app.app_id_prefix)).toEqual(["ABCDE12345"]);
+  expect(captured.err).toContain("App ID Prefix from the signing team");
+});
+
 test("existing app receives capabilities and a precise JSON handoff without rewriting Swift; reruns are idempotent", async () => {
   const f = await fixture();
   const before = await readFile(join(f.root, "MyApp/MyAppApp.swift"), "utf8");

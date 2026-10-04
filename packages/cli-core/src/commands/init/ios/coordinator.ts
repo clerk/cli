@@ -254,6 +254,8 @@ export async function runAppleInit(
       applicationId,
       bundleIdentifier: options.bundleId,
       appIdPrefix: options.appIdPrefix?.trim(),
+      // --yes accepts the signing team's prefix; an agent confirms it with the user first.
+      acceptSuggestedPrefix: options.yes === true && !options.agent,
     };
     setTelemetryStage("ios_plan");
     const preview = await prepareSetup(setup, {
