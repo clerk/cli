@@ -117,6 +117,11 @@ test("existing app receives capabilities and a precise JSON handoff without rewr
     remote: "verified",
     packages: "resolved",
     capabilities: { status: "configured" },
+    identity: {
+      bundleIdentifier: "com.example.MyApp",
+      appIdPrefix: "TEST123456",
+      prefixSource: "clerk-registration",
+    },
   });
   expect(
     result.handoff.tasks.find((task: { id: string }) => task.id === "initialize-clerk").status,
