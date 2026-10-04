@@ -179,7 +179,13 @@ export async function init(options: InitOptions = {}) {
     const createIfMissing = agent
       ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
       : undefined;
-    await authenticateAndLink(ctx.cwd, options.app, createIfMissing);
+    await authenticateAndLink(
+      ctx.cwd,
+      options.app,
+      createIfMissing,
+      // Native setup continues right after linking, so link's `clerk env pull` advice doesn't apply.
+      ctx.framework.dep === "ios" && canSetUpXcode() ? { showNextSteps: false } : {},
+    );
   }
 
   // Native Apple setup edits the Xcode project and registers the app instead of
@@ -600,6 +606,7 @@ async function authenticateAndLink(
   cwd: string,
   app: string | undefined,
   createIfMissing: string | undefined,
+  linkOptions: { showNextSteps?: false } = {},
 ): Promise<void> {
   const label = await resolveAuthLabel();
   const profile = await resolveProfile(cwd);
@@ -615,7 +622,7 @@ async function authenticateAndLink(
     log.info(dim(label));
   }
 
-  await link({ skipIfLinked: true, app, cwd, createIfMissing });
+  await link({ skipIfLinked: true, app, cwd, createIfMissing, ...linkOptions });
 }
 
 // --- Keyless app setup ---

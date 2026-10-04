@@ -26,6 +26,8 @@ interface LinkOptions {
    * interactive end-to-end.
    */
   createIfMissing?: string;
+  /** Callers that continue setup themselves (native `clerk init`) skip link's own next steps. */
+  showNextSteps?: boolean;
 }
 
 export async function link(options: LinkOptions = {}): Promise<void> {
@@ -105,7 +107,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   const label = app.name || app.application_id;
   log.success(`Linked to ${cyan(label)} in ${dim(displayPath)}`);
 
-  await outro(NEXT_STEPS.LINK);
+  await outro(options.showNextSteps === false ? undefined : NEXT_STEPS.LINK);
 }
 
 async function ensureAuth() {

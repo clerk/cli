@@ -55,7 +55,9 @@ describe("clerk init for native Apple projects", () => {
 
     await init({});
 
-    expect(linkMod.link).toHaveBeenCalledWith(expect.objectContaining({ skipIfLinked: true }));
+    expect(linkMod.link).toHaveBeenCalledWith(
+      expect.objectContaining({ skipIfLinked: true, showNextSteps: false }),
+    );
     expect(run).toHaveBeenCalledWith(expect.anything(), "app_picked");
   });
 
