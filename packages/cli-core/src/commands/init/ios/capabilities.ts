@@ -294,7 +294,9 @@ export async function planAllCapabilities(
 ) {
   const actions = new Map<string, FileAction>();
   const snapshots = new Map<string, FileSnapshot>();
-  const contexts: Pick<CapabilityPlan, "status" | "scope" | "reason">[] = [];
+  const contexts: (Pick<CapabilityPlan, "status" | "scope" | "reason"> & {
+    configuration: string;
+  })[] = [];
   let source = projectSource;
   for (const context of inspection.contexts) {
     const plan = await planCapabilities(
@@ -315,7 +317,12 @@ export async function planAllCapabilities(
     source = plan.projectSource;
     for (const action of plan.actions) actions.set(action.path, action);
     for (const snapshot of plan.snapshots) snapshots.set(snapshot.path, snapshot);
-    contexts.push({ status: plan.status, scope: plan.scope, reason: plan.reason });
+    contexts.push({
+      status: plan.status,
+      scope: plan.scope,
+      reason: plan.reason,
+      configuration: context.selection.configuration,
+    });
   }
   const manual = contexts.filter((context) => context.status === "manual");
   return {

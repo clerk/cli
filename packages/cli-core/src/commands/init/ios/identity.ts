@@ -125,7 +125,9 @@ export async function discoverRemote(
     if (prompt) {
       appIdPrefix = await prompt(
         "appIdPrefix",
-        `No existing Clerk registration supplies the App ID Prefix for ${bundleIdentifier}. ${suggestedPrefix ? "Which App ID Prefix should Clerk register?" : "Enter its 10-character Apple App ID Prefix:"}`,
+        suggestedPrefix
+          ? `Which App ID Prefix should Clerk register for ${bundleIdentifier}?`
+          : `Enter the 10-character Apple App ID Prefix for ${bundleIdentifier}:`,
         suggestedPrefix,
       );
       prefixSource = "confirmed";

@@ -100,13 +100,13 @@ export interface SetupInput {
 
 export const AUTH_UI_STATE = "@State private var authIsPresented = false";
 export const AUTH_UI_BODY = `UserButton(signedOutContent: {
-  Button("Sign in") {
-    authIsPresented = true
-  }
+    Button("Sign in") {
+        authIsPresented = true
+    }
 })
 .prefetchClerkImages()
 .sheet(isPresented: $authIsPresented) {
-  AuthView()
+    AuthView()
 }
 `;
 

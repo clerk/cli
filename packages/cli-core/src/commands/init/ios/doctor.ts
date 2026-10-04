@@ -78,8 +78,8 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
       message:
         context.reason ??
         (context.status === "planned"
-          ? "Local capability changes are still needed."
-          : "The inspected capability settings are present; signing remains unverified."),
+          ? `Local capability changes are still needed for ${context.configuration}.`
+          : `${context.configuration} capability settings are present; signing remains unverified.`),
     });
   if (discovery?.bundleIdentifier) {
     try {
@@ -110,8 +110,7 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
       if (required)
         for (const context of preview.inspection.contexts) {
           let status: Check["status"] = "fail";
-          let message =
-            "Apple sign-in is requested or enabled in Clerk, but this configuration has no Apple entitlement.";
+          let message = `Apple sign-in is requested or enabled in Clerk, but ${context.selection.configuration} has no Apple entitlement.`;
           const path = context.settings.CODE_SIGN_ENTITLEMENTS;
           if (path) {
             try {
@@ -125,12 +124,11 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
               );
               if (capabilityXML(snapshot.source, undefined, true) === snapshot.source) {
                 status = "pass";
-                message =
-                  "The Apple entitlement is present. Provisioning and sign-in remain unverified.";
+                message = `${context.selection.configuration} has the Apple entitlement. Provisioning and sign-in remain unverified.`;
               }
             } catch {
               status = "warn";
-              message = "The Apple entitlement file could not be verified; inspect it in Xcode.";
+              message = `The ${context.selection.configuration} Apple entitlement file could not be verified; inspect it in Xcode.`;
             }
           }
           checks.push({

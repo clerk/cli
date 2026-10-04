@@ -187,7 +187,9 @@ export async function planStarter(
     const viewContent = `import SwiftUI\nimport ClerkKit\nimport ClerkKitUI\n\nstruct ContentView: View {\n    ${AUTH_UI_STATE}\n\n    var body: some View {\n${AUTH_UI_BODY.trim()
       .split("\n")
       .map((line) => `        ${line}`)
-      .join("\n")}\n    }\n}\n`;
+      .join(
+        "\n",
+      )}\n    }\n}\n\n#Preview {\n    ContentView()\n        .environment(Clerk.preview())\n}\n`;
     const appReady = tokens(app.source) === tokens(content);
     const viewReady = tokens(view.source) === tokens(viewContent);
     if (

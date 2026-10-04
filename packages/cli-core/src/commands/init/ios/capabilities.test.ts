@@ -414,9 +414,10 @@ test("Doctor checks an already-enabled Apple provider without mutation opt-in an
   expect(report.checks.find((item) => item.name === "Apple entitlement: Debug")?.status).toBe(
     "pass",
   );
-  expect(report.checks.find((item) => item.name === "Apple entitlement: Release")?.status).toBe(
-    "fail",
-  );
+  expect(report.checks.find((item) => item.name === "Apple entitlement: Release")).toMatchObject({
+    status: "fail",
+    message: expect.stringContaining("Release has no Apple entitlement"),
+  });
   expect(report.status).toBe("failed");
   expect(f.state.events).toEqual(events);
   expect(await treeDigest(f.root)).toEqual(before);
@@ -517,8 +518,12 @@ for (const signInUI of [false, true])
     expect(app).toContain("Clerk.configure");
     expect(app).toContain(".environment(Clerk.shared)");
     const view = await readFile(join(f.root, "MyApp/ContentView.swift"), "utf8");
-    if (signInUI) expect(view).toContain("AuthView()");
-    else expect(view).toBe(viewBefore);
+    if (signInUI) {
+      expect(view).toContain('    Button("Sign in") {\n                authIsPresented = true');
+      expect(view).toContain(
+        "#Preview {\n    ContentView()\n        .environment(Clerk.preview())\n}",
+      );
+    } else expect(view).toBe(viewBefore);
     expect(
       (await prepareSetup({ ...f.options, signInUI }, f.dependencies)).starter?.actions,
     ).toEqual([]);
