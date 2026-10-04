@@ -54,7 +54,7 @@ export function printSetupPreview(preview: SetupPreview): void {
   if (preview.remote) {
     log.info(`  Clerk app: ${preview.remote.context.applicationId}`);
     log.info(
-      `  Native identity: ${preview.remote.context.appIdPrefix}.${preview.remote.context.bundleIdentifier}`,
+      `  Native identity: ${preview.remote.context.appIdPrefix}.${preview.remote.context.bundleIdentifier}${preview.discovery?.prefixSource === "signing-team" ? " (App ID Prefix from the signing team; pass --app-id-prefix to change it)" : ""}`,
     );
     if (preview.remote.actions.includes("register-application"))
       log.info("  Register the native app in Clerk");
@@ -229,10 +229,23 @@ export async function runAppleInit(
       promptIdentity:
         dependencies.promptIdentity ??
         (interactive
-          ? async (field, message) =>
-              (
-                await text({
+          ? async (field, message, suggestion) => {
+              if (
+                suggestion &&
+                (await select({
                   message,
+                  choices: [
+                    { name: `${suggestion} (signing team)`, value: true },
+                    { name: "Enter a different App ID Prefix", value: false },
+                  ],
+                }))
+              )
+                return suggestion;
+              return (
+                await text({
+                  message: suggestion
+                    ? "Enter the 10-character App ID Prefix from Apple Developer:"
+                    : message,
                   validate: (value) =>
                     field === "appIdPrefix"
                       ? /^[A-Z0-9]{10}$/.test(value?.trim() ?? "") ||
@@ -240,7 +253,8 @@ export async function runAppleInit(
                       : /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(value ?? "") ||
                         "Enter the final Bundle ID.",
                 })
-              ).trim()
+              ).trim();
+            }
           : undefined),
     });
     stopNativeProgress();

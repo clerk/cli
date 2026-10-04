@@ -75,6 +75,36 @@ test("plain interactive starter setup discovers identity, downloads packages, co
   expect(captured.err).not.toContain("Swift integration remains");
 });
 
+test.each([
+  [true, "ABCDE12345"],
+  [false, "LEGACY1234"],
+])(
+  "a new registration offers the signing team as the App ID Prefix (accepted: %p)",
+  async (accept, prefix) => {
+    const f = await fixture(true);
+    f.state.apps.length = 0;
+    const run = f.dependencies.run;
+    f.dependencies.run = async (command, root, signal) => {
+      const output = await run(command, root, signal);
+      if (!command.includes("-showBuildSettings")) return output;
+      const rows = JSON.parse(output);
+      rows[0].buildSettings.DEVELOPMENT_TEAM = "ABCDE12345";
+      return JSON.stringify(rows);
+    };
+    const p = promptsFor(true);
+    p.select.mockResolvedValue(accept);
+    p.text.mockResolvedValue("LEGACY1234");
+    spies.push(spyOn(spinner, "outro").mockResolvedValue(undefined));
+    await runAppleInit({ root: f.root, agent: false }, "app_test", f.dependencies);
+    expect(p.select.mock.calls[0]![0].choices).toEqual([
+      { name: "ABCDE12345 (signing team)", value: true },
+      { name: "Enter a different App ID Prefix", value: false },
+    ]);
+    expect(p.text).toHaveBeenCalledTimes(accept ? 0 : 1);
+    expect(f.state.apps.map((app) => app.app_id_prefix)).toEqual([prefix]);
+  },
+);
+
 test("existing app receives capabilities and a precise JSON handoff without rewriting Swift; reruns are idempotent", async () => {
   const f = await fixture();
   const before = await readFile(join(f.root, "MyApp/MyAppApp.swift"), "utf8");
