@@ -19,7 +19,6 @@ import { createIOSFixture, treeDigest } from "./test-helpers.ts";
 import type { IOSApplication } from "../../../lib/plapi.ts";
 import { applySetup, describePreview, prepareSetup, type SetupOptions } from "./workflow.ts";
 import { doctor } from "./doctor.ts";
-import { describeIdentity, IdentityRequired } from "./identity.ts";
 import { PlapiError } from "../../../lib/errors.ts";
 import { type NativeAPI, type RemoteInput } from "./remote.ts";
 import { runCommand, XcodeCommandError, type CommandRunner } from "./xcode.ts";
@@ -498,8 +497,8 @@ test("Doctor reads Native API and registrations without requiring or prompting f
     nativeApiEnabled: false,
     registrations: [],
     bundleIdentifier: identity.bundleIdentifier,
-    prefixSource: "missing",
-    suggestedAppIdPrefix: "TEAMID1234",
+    appIdPrefix: "TEAMID1234",
+    prefixSource: "signing-team",
   });
   expect(report.checks.find((check) => check.name === "Native API")?.status).toBe("warn");
   expect(JSON.stringify(report)).not.toContain(key);
@@ -522,21 +521,10 @@ test("Doctor reads Native API and registrations without requiring or prompting f
   });
 });
 
-test("without a prompt, the signing team is only suggested unless accepted; differing teams aren't", async () => {
+test("without a prompt, one signing team supplies the App ID Prefix; differing teams don't", async () => {
   const f = await discoveredFixture();
-  const remote = { applicationId: identity.applicationId };
-  const suggested = await prepareSetup({ ...f.options, remote }, f.dependencies).catch(
-    (error: unknown) => error,
-  );
-  expect(suggested).toBeInstanceOf(IdentityRequired);
-  expect(describeIdentity((suggested as IdentityRequired).discovery)).toMatchObject({
-    prefixSource: "missing",
-    suggestedAppIdPrefix: "TEAMID1234",
-    issues: [expect.stringContaining("the signing team suggests TEAMID1234")],
-  });
-
-  const accepted = { ...f.options, remote: { ...remote, acceptSuggestedPrefix: true } };
-  expect(describePreview(await prepareSetup(accepted, f.dependencies)).identity).toMatchObject({
+  const options = { ...f.options, remote: { applicationId: identity.applicationId } };
+  expect(describePreview(await prepareSetup(options, f.dependencies)).identity).toMatchObject({
     appIdPrefix: "TEAMID1234",
     prefixSource: "signing-team",
   });
@@ -546,7 +534,7 @@ test("without a prompt, the signing team is only suggested unless accepted; diff
     const output = await original(command, root, signal);
     return command.includes("Release") ? output.replace("TEAMID1234", "OTHERTEAM1") : output;
   };
-  await expect(prepareSetup(accepted, f.dependencies)).rejects.toBeInstanceOf(IdentityRequired);
+  await expect(prepareSetup(options, f.dependencies)).rejects.toThrow();
 });
 
 test("setup resolves preexisting dependencies only after inspection fails, then resolves the added SDK", async () => {
