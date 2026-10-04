@@ -328,6 +328,8 @@ export interface ApplyResult {
   apple: "verified" | "manual" | "incomplete";
   handoff: ReturnType<typeof integrationHandoff>;
   capabilities: { status: "manual" | "configured"; scope?: string; reason?: string };
+  /** The native identity registered with Clerk and where its App ID Prefix came from. */
+  identity?: { bundleIdentifier: string; appIdPrefix: string; prefixSource: string };
 }
 
 export async function applySetup(
@@ -375,6 +377,15 @@ export async function applySetup(
       scope: preview.capabilities?.scope,
       reason: preview.capabilities?.reason,
     },
+    ...(preview.remote && preview.discovery
+      ? {
+          identity: {
+            bundleIdentifier: preview.remote.context.bundleIdentifier,
+            appIdPrefix: preview.remote.context.appIdPrefix,
+            prefixSource: preview.discovery.prefixSource,
+          },
+        }
+      : {}),
   };
   let sdkCheck = preview.sdkCheck;
   const finish = () => {

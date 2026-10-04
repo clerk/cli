@@ -118,11 +118,13 @@ export async function discoverRemote(
     matches.length > 1 || matches.some((app) => appIdPrefix && app.app_id_prefix !== appIdPrefix);
   // Apple uses the Team ID as the App ID Prefix for every App ID created since 2011, so one
   // signing team across the inspected configurations is the best suggestion; a legacy prefix can still be entered.
+  // macOS never supported legacy prefixes, so there the signing team is the prefix.
   const teams = new Set(inspection.contexts.map(({ settings }) => settings.DEVELOPMENT_TEAM ?? ""));
   const [team] = teams;
   const suggestedPrefix = teams.size === 1 && /^[A-Z0-9]{10}$/.test(team!) ? team : undefined;
+  const macOS = inspection.contexts.every(({ selection }) => selection.sdk === "macosx");
   if (!appIdPrefix && bundleIdentifier && !conflict) {
-    if (prompt) {
+    if (prompt && !(macOS && suggestedPrefix)) {
       appIdPrefix = await prompt(
         "appIdPrefix",
         suggestedPrefix

@@ -181,6 +181,11 @@ for (const platform of ["ios", "macos"] as const) {
     expect(JSON.stringify(describePreview(preview))).not.toContain("TEAMID1234");
     const result = await applySetup(preview, f.dependencies);
     expect(result).toMatchObject({ local: "updated", remote: "verified" });
+    expect(result.identity).toEqual({
+      bundleIdentifier: identity.bundleIdentifier,
+      appIdPrefix: identity.appIdPrefix,
+      prefixSource: "explicit",
+    });
     expect(await readFile(join(f.root, result.backups.at(-1)!), "utf8")).toBe(source);
     expect((await stat(f.path)).mode & 0o777).toBe(0o640);
     expect(f.state.events).toEqual(["register", "enable"]);
@@ -518,6 +523,32 @@ test("Doctor reads Native API and registrations without requiring or prompting f
   expect(preview.remote?.context).toMatchObject({
     bundleIdentifier: identity.bundleIdentifier,
     appIdPrefix: identity.appIdPrefix,
+  });
+});
+
+test("macOS uses the signing team as the App ID Prefix without asking", async () => {
+  const f = await fixture("macos");
+  const original = f.dependencies.run;
+  f.dependencies.run = async (command, root, signal) => {
+    const rows = JSON.parse(await original(command, root, signal));
+    Object.assign(rows[0].buildSettings, {
+      GENERATE_INFOPLIST_FILE: "YES",
+      PRODUCT_BUNDLE_IDENTIFIER: identity.bundleIdentifier,
+    });
+    return JSON.stringify(rows);
+  };
+  const preview = await prepareSetup(
+    { ...f.options, remote: { applicationId: identity.applicationId } },
+    {
+      ...f.dependencies,
+      promptIdentity: async () => {
+        throw new Error("macOS must not ask for the App ID Prefix");
+      },
+    },
+  );
+  expect(describePreview(preview).identity).toMatchObject({
+    appIdPrefix: "TEAMID1234",
+    prefixSource: "signing-team",
   });
 });
 
