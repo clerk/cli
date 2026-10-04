@@ -8,7 +8,10 @@ import { setupError } from "./types.ts";
 import { CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
 
 export type RemoteSelection = Pick<RemoteInput, "applicationId" | "instanceId"> &
-  Partial<Pick<RemoteInput, "bundleIdentifier" | "appIdPrefix">>;
+  Partial<Pick<RemoteInput, "bundleIdentifier" | "appIdPrefix">> & {
+    /** Use the signing team without asking (`--yes`); otherwise it's only offered as a suggestion. */
+    acceptSuggestedPrefix?: boolean;
+  };
 export type IdentityPrompt = (
   field: "bundleIdentifier" | "appIdPrefix",
   message: string,
@@ -122,7 +125,10 @@ export async function discoverRemote(
   const [team] = teams;
   const suggestedPrefix = teams.size === 1 && /^[A-Z0-9]{10}$/.test(team!) ? team : undefined;
   if (!appIdPrefix && bundleIdentifier && !conflict) {
-    if (prompt) {
+    if (suggestedPrefix && input.acceptSuggestedPrefix) {
+      appIdPrefix = suggestedPrefix;
+      prefixSource = "signing-team";
+    } else if (prompt) {
       appIdPrefix = await prompt(
         "appIdPrefix",
         suggestedPrefix
@@ -131,9 +137,6 @@ export async function discoverRemote(
         suggestedPrefix,
       );
       prefixSource = "confirmed";
-    } else if (suggestedPrefix) {
-      appIdPrefix = suggestedPrefix;
-      prefixSource = "signing-team";
     }
   }
   const invalidPrefix = appIdPrefix !== undefined && !/^[A-Z0-9]{10}$/.test(appIdPrefix);
@@ -146,7 +149,11 @@ export async function discoverRemote(
         ]
       : []),
     ...(!appIdPrefix
-      ? ["Supply the Apple App ID Prefix; no unique matching Clerk registration supplies it."]
+      ? [
+          suggestedPrefix && !conflict
+            ? `Confirm the Apple App ID Prefix with the user: the signing team suggests ${suggestedPrefix}, or they can enter a different one.`
+            : "Supply the Apple App ID Prefix; no unique matching Clerk registration supplies it.",
+        ]
       : []),
     ...(conflict
       ? ["Existing native registrations conflict; review them in the Clerk Dashboard."]
@@ -165,6 +172,7 @@ export async function discoverRemote(
     appIdPrefix,
     bundleSource,
     prefixSource,
+    suggestedPrefix,
     issues,
     context:
       bundleIdentifier && appIdPrefix && !conflict && !invalidPrefix
@@ -184,6 +192,9 @@ export function describeIdentity(discovery: IdentityDiscovery) {
     appIdPrefix: discovery.appIdPrefix,
     bundleSource: discovery.bundleSource,
     prefixSource: discovery.prefixSource,
+    ...(discovery.appIdPrefix || !discovery.suggestedPrefix
+      ? {}
+      : { suggestedAppIdPrefix: discovery.suggestedPrefix }),
     issues: discovery.issues,
   };
 }
