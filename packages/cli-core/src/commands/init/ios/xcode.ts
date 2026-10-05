@@ -223,12 +223,11 @@ export async function inspectSelectedProject(
   // Another target may use the app's entitlements only in a configuration that wasn't selected.
   let uncheckedSettingsJSON: string[] | undefined = [];
   for (const configuration of uncheckedConfigurations) {
+    // No -sdk: each target resolves for its own platform, so SDK-conditional entitlements stay visible.
+    const command = settingsCommand({ ...selection, configuration });
+    command.splice(command.indexOf("-sdk"), 2);
     try {
-      const output = await run(
-        settingsCommand({ ...selection, configuration }),
-        root,
-        options.signal,
-      );
+      const output = await run(command, root, options.signal);
       JSON.parse(output);
       uncheckedSettingsJSON.push(output);
     } catch (error) {

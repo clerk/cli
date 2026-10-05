@@ -258,6 +258,21 @@ test.each([undefined, "Debug"])(
   },
 );
 
+test("ownership lookups for unselected configurations let each target use its own SDK", async () => {
+  const f = await fixture("ios", true);
+  f.options.configuration = "Debug";
+  const commands: string[][] = [];
+  const run = f.dependencies.run;
+  f.dependencies.run = async (command, root, signal) => {
+    commands.push(command);
+    return run(command, root, signal);
+  };
+  await prepareSetup(f.options, f.dependencies);
+  const release = commands.filter((command) => command.includes("Release"));
+  expect(release.length).toBeGreaterThan(0);
+  for (const command of release) expect(command).not.toContain("-sdk");
+});
+
 test("a selected configuration falls back to manual setup when Xcode can't report the others", async () => {
   const f = await fixture("ios", true);
   f.options.configuration = "Debug";
