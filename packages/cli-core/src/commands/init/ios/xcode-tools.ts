@@ -1,8 +1,14 @@
 import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 
 let selection: Promise<string | undefined> | undefined;
+let note: string | undefined;
+
+/** Why setup used an Xcode other than the xcode-select default, if it did. */
+export function nonDefaultXcodeNote(): string | undefined {
+  return note;
+}
 
 /** Choose a compatible installed Xcode for JSON projects without changing xcode-select. */
 export async function compatibleXcode(signal?: AbortSignal): Promise<string | undefined> {
@@ -55,7 +61,11 @@ async function selectXcode(signal?: AbortSignal): Promise<string | undefined> {
       (a, b) =>
         (b.version[0] ?? 0) - (a.version[0] ?? 0) || (b.version[1] ?? 0) - (a.version[1] ?? 0),
     );
-    if ((candidates[0]?.version[0] ?? 0) >= 27) return candidates[0]!.path;
+    const chosen = candidates[0];
+    if (chosen && (chosen.version[0] ?? 0) >= 27) {
+      note = `Using Xcode ${chosen.version.join(".")} (${dirname(dirname(chosen.path))}): ${current.length ? `the default Xcode ${current.join(".")}` : "the default developer directory"} can't open project.xcproj projects.`;
+      return chosen.path;
+    }
   }
   throw new CliError(
     "This .xcproj project requires Xcode 27 or newer. Select a compatible Xcode in Xcode Settings > Locations, then rerun clerk init.",
