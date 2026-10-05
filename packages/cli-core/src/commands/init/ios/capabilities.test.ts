@@ -117,7 +117,8 @@ test("macOS sandbox declared only in entitlements gets network access without Ap
     report.checks
       .filter((item) => item.name.startsWith("Capabilities:"))
       .map((item) => item.status);
-  expect(checks(await doctor(f.options, f.dependencies))).toContain("warn");
+  // Debug and Release share this file, so both report the pending change.
+  expect(checks(await doctor(f.options, f.dependencies))).toEqual(["warn", "warn"]);
   const preview = await prepareSetup(f.options, f.dependencies);
   expect(preview.capabilities?.actions).toHaveLength(1);
   expect((await applySetup(preview, f.dependencies)).capabilities.status).toBe("configured");

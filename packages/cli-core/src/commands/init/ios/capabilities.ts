@@ -190,6 +190,7 @@ async function planCapabilities(
     }
     const actions: FileAction[] = [];
     const snapshots: FileSnapshot[] = [];
+    let pendingOnDisk = false;
     let path = inspection.settings.CODE_SIGN_ENTITLEMENTS?.trim();
     if (domain || apple || (mac && path)) {
       let snapshot: FileSnapshot | undefined;
@@ -261,6 +262,8 @@ async function planCapabilities(
       const source =
         previous && previous.type !== "skip" ? previous.content : (snapshot?.source ?? EMPTY);
       const content = capabilityXML(source, domain, apple, mac);
+      // A file shared with an earlier configuration may already be planned, but it's unchanged on disk.
+      pendingOnDisk = snapshot !== undefined && content !== snapshot.source;
       if (!snapshot || content !== source)
         actions.push({
           type: snapshot ? "modify" : "create",
@@ -272,7 +275,7 @@ async function planCapabilities(
         });
     }
     return {
-      status: actions.length || changedProject ? "planned" : "satisfied",
+      status: actions.length || changedProject || pendingOnDisk ? "planned" : "satisfied",
       scope,
       projectSource: changedProject ? adapter.serialize() : projectSource,
       actions,
