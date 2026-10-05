@@ -352,6 +352,17 @@ export type ImportUsersOptions = {
   limits: ResolvedLimits;
   /** Receives each user's lines as they happen. */
   record: (line: UserLine) => void;
+  /**
+   * Users a continued run created whose extra identifiers never attached: their
+   * latest `created` line, with `pending`. Only the attaches are sent.
+   */
+  attachOnly?: UserLine[];
+  /**
+   * Source ID → Clerk ID for users whose create a stopped run sent with no
+   * answer, and which a continued run then found in the instance. They are
+   * not created again; only their extra identifiers are sent.
+   */
+  adopted?: Map<string, string>;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
   /** Carried into the summary so the report covers the whole file. */
@@ -365,8 +376,7 @@ export type ImportUsersOptions = {
  *
  * A failed user is recorded and the run continues; a 429 backs off (honouring
  * `Retry-After`) and retries up to {@link MAX_RETRIES} times. A create with no
- * answer keeps its `creating` line: Clerk may hold the user, and a re-run's
- * checks look it up before creating it again.
+ * answer keeps its `creating` line, for a continued run or `undo` to resolve.
  */
 export async function importUsers(options: ImportUsersOptions): Promise<ImportSummary> {
   const {
@@ -374,6 +384,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     secretKey,
     limits,
     record,
+    attachOnly = [],
+    adopted = new Map<string, string>(),
     skipPasswordRequirement = true,
     validationFailed = 0,
     progress: report,
@@ -419,8 +431,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
 
   /**
    * Attaches a created user's extra identifiers. The user goes on record with
-   * them `pending` first, so a run stopped before they attach records which
-   * never did.
+   * them `pending` first, so a run stopped before they attach can finish them.
    */
   const finishUser = async (line: UserLine, toAttach: PendingIdentifier[], notes: string[]) => {
     const { error: _error, pending: _pending, ...base } = line;
@@ -441,22 +452,25 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     const retries: string[] = [];
     const identifiers = splitIdentifiers(user);
     let created: { clerkUserId: string; notes: string[]; phoneRefusal?: string };
+    const adoptedId = adopted.get(user.userId);
     let sent = false;
     try {
-      created = await retryOn429(
-        async () =>
-          createUser(ctx, user, identifiers, skipPasswordRequirement, () => {
-            sent = true;
-            record({ sourceId: user.userId, status: "creating" });
-          }),
-        {
-          signal: ctx.stop,
-          onRetry: ({ message, delaySeconds }) => {
-            retries.push(message);
-            ctx.schedule.pause(delaySeconds * 1000);
-          },
-        },
-      );
+      created = adoptedId
+        ? { clerkUserId: adoptedId, notes: [] }
+        : await retryOn429(
+            async () =>
+              createUser(ctx, user, identifiers, skipPasswordRequirement, () => {
+                sent = true;
+                record({ sourceId: user.userId, status: "creating" });
+              }),
+            {
+              signal: ctx.stop,
+              onRetry: ({ message, delaySeconds }) => {
+                retries.push(message);
+                ctx.schedule.pause(delaySeconds * 1000);
+              },
+            },
+          );
     } catch (error) {
       // Unrecorded, so a re-run picks the user up like any other. A user whose
       // first create went out (a 429, a refused phone) has its `creating` line
@@ -505,7 +519,10 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   };
 
   progress();
-  await Promise.all(users.map(async (user) => processUser(user)));
+  await Promise.all([
+    ...users.map(async (user) => processUser(user)),
+    ...attachOnly.map(async (line) => finishUser(line, line.pending ?? [], [])),
+  ]);
 
   return {
     totalProcessed: total,

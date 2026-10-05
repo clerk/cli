@@ -376,7 +376,7 @@ describe("importUsers", () => {
     expect(lines.at(-1)).not.toHaveProperty("pending");
   });
 
-  test("keeps an attach with no answer pending", async () => {
+  test("keeps an attach with no answer pending, for a continued run", async () => {
     stub((url) =>
       url.endsWith("/v1/email_addresses") ? clerkError(503, "unavailable") : ok("user_created"),
     );
@@ -415,6 +415,49 @@ describe("importUsers", () => {
       "/v1/users",
       "/v1/email_addresses",
     ]);
+  });
+
+  test("attachOnly sends just the pending attaches, and clears them", async () => {
+    stub(() => ok("idn_1"));
+
+    await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          clerkId: "user_1",
+          status: "created",
+          pending: [{ kind: "phone", value: "+15555550100", verified: false }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(requests.map((r) => [new URL(r.url).pathname, r.body])).toEqual([
+      [
+        "/v1/phone_numbers",
+        { user_id: "user_1", phone_number: "+15555550100", primary: false, verified: false },
+      ],
+    ]);
+    expect(lines.at(-1)).toEqual({ sourceId: "u1", clerkId: "user_1", status: "created" });
+  });
+
+  test("an adopted user is not created again; only its extras attach", async () => {
+    stub(() => ok("idn_1"));
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+      adopted: new Map([["u1", "user_found"]]),
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(requests.map((r) => new URL(r.url).pathname)).toEqual(["/v1/email_addresses"]);
+    expect(summary.successful).toBe(1);
+    expect(lines.at(-1)).toMatchObject({ clerkId: "user_found", status: "created" });
   });
 
   // Shapes from clerk_go's apierror: the country error carries its own code

@@ -75,9 +75,13 @@ export const NEXT_STEPS = {
     "Run `clerk apps list` to see your other applications",
     "Run `clerk config pull` to inspect the live configuration of this instance",
   ],
-  MIGRATE_DONE: (runFolder: string) => [`See each user's outcome in ${runFolder}/users.ndjson`],
-  MIGRATE_DONE_WITH_ERRORS: (runFolder: string) => [
-    `See every user that failed, and why, in ${runFolder}/users.ndjson`,
+  MIGRATE_DONE: (runId: string) => [
+    `Run \`clerk migrate runs ${runId}\` to see what happened to each user`,
+    `Run \`clerk migrate undo ${runId}\` to delete the users it created`,
+  ],
+  MIGRATE_DONE_WITH_ERRORS: (runId: string) => [
+    `Run \`clerk migrate runs ${runId}\` to see every user that failed and why`,
+    `Run \`clerk migrate undo ${runId}\` to delete the users it created`,
   ],
 } as const;
 
@@ -99,9 +103,9 @@ export function printNextSteps(steps: readonly string[]): void {
  *
  * Opt-in rather than folded into `printNextSteps`, because most steps are a
  * nudge towards a command someone might like to run next. The migrate ones are
- * not: they name the file holding the per-user record of what landed. An agent
- * that imported 10,000 users and lost 300 of them needs it, and has no gutter
- * to read it from.
+ * not: they name the log file holding the per-user record of what landed, and
+ * the command that undoes the run. An agent that imported 10,000 users and lost
+ * 300 of them needs both, and has no gutter to read them from.
  */
 export function printAgentNextSteps(steps: readonly string[]): void {
   if (isHuman()) return;

@@ -15,11 +15,13 @@ import os from "node:os";
 import path from "node:path";
 import { _setConfigDir } from "../../../lib/config.ts";
 import {
+  continueRun,
   latestUserLines,
-  liveLockPid,
+  listRuns,
   newRunId,
   readRun,
   resolveRunsDir,
+  runState,
   RUNS_DIR_ENV,
   startRun,
 } from "./run-store.ts";
@@ -125,6 +127,17 @@ describe("a run's life", () => {
     expect([...latestUserLines(runsDir, run.record.id).keys()]).toEqual(["a"]);
   });
 
+  test("a continued run starts a fresh line after one a crash cut short", () => {
+    const run = startRun(runsDir, init);
+    run.append({ sourceId: "a", status: "created" });
+    fs.appendFileSync(path.join(run.dir, "users.ndjson"), '{"sourceId":"b","sta');
+    fs.rmSync(path.join(run.dir, "lock"));
+
+    continueRun(runsDir, run.record).append({ sourceId: "c", status: "created" });
+
+    expect([...latestUserLines(runsDir, run.record.id).keys()]).toEqual(["a", "c"]);
+  });
+
   // A user created with no line is beyond both undo and a re-run, so the
   // create that would follow must not go out.
   test("append throws when the line cannot be written", () => {
@@ -135,26 +148,53 @@ describe("a run's life", () => {
   });
 });
 
-describe("locks", () => {
-  test("a lock whose process died is stale", () => {
+describe("locks and interruptions", () => {
+  // A PID no process can have.
+  const DEAD_PID = "2147483646";
+
+  test("a run whose process died is interrupted", () => {
     const run = startRun(runsDir, init);
-    // A PID no process can have.
-    fs.writeFileSync(path.join(run.dir, "lock"), "2147483646");
-    expect(liveLockPid(runsDir, run.record.id)).toBeUndefined();
+    fs.writeFileSync(path.join(run.dir, "lock"), DEAD_PID);
+    expect(runState(runsDir, run.record)).toBe("interrupted");
+  });
+
+  test("a run with no lock and no finish time is interrupted", () => {
+    const run = startRun(runsDir, init);
+    fs.rmSync(path.join(run.dir, "lock"));
+    expect(runState(runsDir, run.record)).toBe("interrupted");
+  });
+
+  // Undo marks an interrupted import undone, but leaves it with no finish time.
+  test("an interrupted run that was undone reads as undone", () => {
+    const run = startRun(runsDir, init);
+    fs.rmSync(path.join(run.dir, "lock"));
+    expect(runState(runsDir, { ...run.record, status: "undone" })).toBe("undone");
+  });
+
+  test("continuing takes the lock from a dead process and reopens the run", () => {
+    const run = startRun(runsDir, init);
+    run.append({ sourceId: "a", status: "created" });
+    run.finish();
+
+    const again = continueRun(runsDir, readRun(runsDir, run.record.id)!);
+    expect(again.record).toMatchObject({ id: run.record.id, status: "running" });
+    expect(again.record.finishedAt).toBeUndefined();
+    again.append({ sourceId: "b", status: "created" });
+    expect(again.finish().counts.total).toBe(2);
   });
 
   // In a container the CLI often gets the same PID every run, so a killed
   // run's lock can hold this process's own PID.
   test("a lock holding this process's own PID is stale", () => {
     const run = startRun(runsDir, init);
-    expect(liveLockPid(runsDir, run.record.id)).toBeUndefined();
+    expect(runState(runsDir, run.record)).toBe("interrupted");
+    expect(() => continueRun(runsDir, run.record)).not.toThrow();
   });
 
-  test("a lock another live process holds is live", () => {
+  test("reads as running while another live process holds the lock", () => {
     const run = startRun(runsDir, init);
-    // PID 1 is always alive, and never this test.
     fs.writeFileSync(path.join(run.dir, "lock"), "1");
-    expect(liveLockPid(runsDir, run.record.id)).toBe(1);
+    expect(runState(runsDir, run.record)).toBe("running");
   });
 
   // Two runs in the same second share an ID one time in 65,536.
@@ -209,5 +249,37 @@ describe("locks", () => {
     for (const file of ["run.json", "users.ndjson", "lock"]) {
       expect(fs.statSync(path.join(run.dir, file)).mode & 0o777).toBe(0o600);
     }
+  });
+
+  test("refuses a run another live process holds, with exit 2", () => {
+    const run = startRun(runsDir, init);
+    // PID 1 is always alive, and never this test.
+    fs.writeFileSync(path.join(run.dir, "lock"), "1");
+
+    expect(() => continueRun(runsDir, run.record)).toThrow(
+      new RegExp(
+        `in use by another process \\(PID 1\\).*delete ${path.join(run.dir, "lock")}`,
+        "s",
+      ),
+    );
+  });
+});
+
+describe("listRuns", () => {
+  test("lists newest first and ignores folders that are not runs", () => {
+    const first = startRun(runsDir, init);
+    first.update({ startedAt: "2026-01-01T00:00:00.000Z" });
+    const second = startRun(runsDir, { ...init, kind: "export" });
+    second.update({ startedAt: "2026-02-01T00:00:00.000Z" });
+    fs.mkdirSync(path.join(runsDir, "not-a-run"));
+
+    expect(listRuns(runsDir).map((record) => record.id)).toEqual([
+      second.record.id,
+      first.record.id,
+    ]);
+  });
+
+  test("is empty when the folder does not exist", () => {
+    expect(listRuns(path.join(workDir, "nowhere"))).toEqual([]);
   });
 });

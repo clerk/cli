@@ -31,8 +31,12 @@ describe("registerMigrate", () => {
     expect(migrate?.description()).toContain("Migrate users");
   });
 
-  test("registers import as its only subcommand", () => {
-    expect(findCommand(["migrate"])?.commands.map((cmd) => cmd.name())).toEqual(["import"]);
+  test("registers import, undo and runs", () => {
+    expect(findCommand(["migrate"])?.commands.map((cmd) => cmd.name())).toEqual([
+      "import",
+      "undo",
+      "runs",
+    ]);
   });
 
   test("leaves migrate with no default subcommand", () => {
@@ -45,8 +49,29 @@ describe("registerMigrate", () => {
       "--source",
       "--dry-run",
       "--allow-partial",
+      "--new-run",
       "--require-password",
       "--skip-legal-checks",
+      "--yes",
+      "--json",
+      "--secret-key",
+      "--app",
+      "--instance",
+      "--runs-dir",
+    ]);
+  });
+
+  test("registers runs with an optional run ID", () => {
+    const runsCommand = findCommand(["migrate", "runs"]);
+    expect(runsCommand?.registeredArguments[0]?.required).toBe(false);
+    expect(runsCommand?.options.map((option) => option.long)).toEqual(["--json", "--runs-dir"]);
+  });
+
+  test("registers undo with a required run ID and its flags", () => {
+    const undoCommand = findCommand(["migrate", "undo"]);
+    expect(undoCommand?.registeredArguments[0]?.required).toBe(true);
+    expect(undoCommand?.options.map((option) => option.long)).toEqual([
+      "--dry-run",
       "--yes",
       "--json",
       "--secret-key",

@@ -9,9 +9,11 @@ import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 // Every test below names its own `--secret-key`, which short-circuits the
 // signed-in check — except the one that asserts what happens without it.
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
-import { _resetInterruptState, abortInFlight, beginInterrupt } from "../../lib/signals.ts";
-import { latestUserLines, readRun, type RunRecord } from "./lib/run-store.ts";
+import { latestUserLines, listRuns, readRun, startRun } from "./lib/run-store.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
+// After run.ts: imported first, signals.ts loads version.ts ahead of its Bun
+// macro here, and the file fails to load.
+import { _resetInterruptState, abortInFlight, beginInterrupt } from "../../lib/signals.ts";
 
 /** A real-shaped bcrypt digest: the checks reject anything that is not. */
 const BCRYPT = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
@@ -22,13 +24,6 @@ let originalCwd: string;
 
 /** Where runs land for a project rooted at `workDir`. */
 const runsDir = () => path.join(workDir, ".clerk", "migrate");
-
-/** The runs in `dir`, newest first. */
-const runsIn = (dir: string): RunRecord[] =>
-  (fs.existsSync(dir) ? fs.readdirSync(dir) : [])
-    .map((id) => readRun(dir, id))
-    .filter((record): record is RunRecord => record !== undefined)
-    .sort((a, b) => b.id.localeCompare(a.id));
 
 beforeAll(() => {
   originalCwd = process.cwd();
@@ -251,7 +246,7 @@ describe("run", () => {
   test("records the run in the project's run store", async () => {
     await run(baseOptions);
 
-    const [record, ...rest] = runsIn(runsDir());
+    const [record, ...rest] = listRuns(runsDir());
     expect(rest).toHaveLength(0);
     expect(record).toMatchObject({
       kind: "import",
@@ -270,6 +265,22 @@ describe("run", () => {
     ]);
   });
 
+  // A complete import leaves the export's user data behind; say how to remove it.
+  test("names the folders a complete import no longer needs", async () => {
+    await run(baseOptions);
+    const [record] = listRuns(runsDir());
+    expect(captured.err).toContain(`rm -rf ${path.join(runsDir(), record!.id)}`);
+  });
+
+  // Pasted unquoted, `rm -rf …/app copy/…` deletes `…/app`.
+  test("quotes the cleanup paths", async () => {
+    const spaced = path.join(workDir, "app copy");
+    await run({ ...baseOptions, runsDir: spaced });
+
+    const [record] = listRuns(spaced);
+    expect(captured.err).toContain(`rm -rf '${path.join(spaced, record!.id)}'`);
+  });
+
   test("gitignores the project's .clerk folder before writing a run", async () => {
     await run(baseOptions);
     expect(fs.readFileSync(path.join(workDir, ".gitignore"), "utf-8")).toContain(".clerk/");
@@ -285,8 +296,8 @@ describe("run", () => {
 
   test("--runs-dir puts the run somewhere else", async () => {
     await run({ ...baseOptions, runsDir: "elsewhere" });
-    expect(runsIn(path.join(workDir, "elsewhere"))).toHaveLength(1);
-    expect(runsIn(runsDir())).toHaveLength(0);
+    expect(listRuns(path.join(workDir, "elsewhere"))).toHaveLength(1);
+    expect(listRuns(runsDir())).toHaveLength(0);
   });
 
   test("--require-password leaves out the users without one", async () => {
@@ -294,7 +305,7 @@ describe("run", () => {
 
     expect(created()).toEqual(["u1"]);
     expect(captured.err).toContain("leaving out 1 user without a password");
-    const [record] = runsIn(runsDir());
+    const [record] = listRuns(runsDir());
     expect(latestUserLines(runsDir(), record!.id).get("u2")).toMatchObject({
       status: "skipped",
       reason: "no password (--require-password)",
@@ -339,7 +350,7 @@ describe("run", () => {
     await run(baseOptions);
 
     expect(process.exitCode).toBe(1);
-    expect(runsIn(runsDir())[0]).toMatchObject({ status: "partial", counts: { failed: 1 } });
+    expect(listRuns(runsDir())[0]).toMatchObject({ status: "partial", counts: { failed: 1 } });
   });
 
   // Tests run non-TTY, the same signal an agent gives.
@@ -371,7 +382,7 @@ describe("run", () => {
       expect(error.message).toContain("1 user would be rejected, so nothing was imported");
       expect(error.examples?.[0]?.command).toContain("--allow-partial --yes");
       expect(created()).toHaveLength(0);
-      expect(runsIn(runsDir())).toHaveLength(0);
+      expect(listRuns(runsDir())).toHaveLength(0);
     });
 
     // "will create 0 users" hides that the run records the rest as skipped.
@@ -392,7 +403,7 @@ describe("run", () => {
       await run({ ...baseOptions, allowPartial: true });
 
       expect(created()).toEqual(["u1", "u2"]);
-      const [record] = runsIn(runsDir());
+      const [record] = listRuns(runsDir());
       expect(record).toMatchObject({ status: "partial", counts: { created: 2, skipped: 1 } });
       expect(latestUserLines(runsDir(), record!.id).get("u3")).toMatchObject({
         status: "skipped",
@@ -411,7 +422,7 @@ describe("run", () => {
       await run({ ...baseOptions, dryRun: true });
 
       expect(created()).toHaveLength(0);
-      expect(runsIn(runsDir())).toHaveLength(0);
+      expect(listRuns(runsDir())).toHaveLength(0);
       expect(captured.err).toContain("Dry run: nothing was written.");
       expect(process.exitCode).toBe(2);
     });
@@ -493,7 +504,7 @@ describe("run", () => {
 
       await run({ ...baseOptions, allowPartial: true });
       expect(created()).toEqual(["u1"]);
-      const [record] = runsIn(runsDir());
+      const [record] = listRuns(runsDir());
       expect(latestUserLines(runsDir(), record!.id).get("u2")?.reason).toContain("100-user limit");
     });
 
@@ -630,7 +641,7 @@ describe("run", () => {
         delete process.env.CLERK_MIGRATE_CONCURRENCY_LIMIT;
       }
 
-      const [record] = runsIn(runsDir());
+      const [record] = listRuns(runsDir());
       // The run folder is the only record of who was created.
       expect(captured.err).toContain(`Run ${record?.id}: `);
       expect(record?.finishedAt).toBeUndefined();
@@ -757,22 +768,205 @@ describe("run", () => {
     });
   });
 
-  describe("re-running", () => {
-    // Slice 1 has no continuing: the second run sees the first run's users in
-    // the instance, and refuses until --allow-partial.
-    test("a second import of the same file rejects the users the first created", async () => {
+  describe("continuing an earlier run", () => {
+    test("a complete run is not imported again", async () => {
       await run(baseOptions);
-      stubClerk({
-        existing: [
-          { id: "user_u1", external_id: "u1" },
-          { id: "user_u2", external_id: "u2" },
-        ],
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(created()).toHaveLength(0);
+      expect(captured.err).toContain("Already imported in run");
+      expect(listRuns(runsDir())).toHaveLength(1);
+    });
+
+    test("--new-run imports it again as a new run", async () => {
+      await run(baseOptions);
+      requests = [];
+
+      await run({ ...baseOptions, newRun: true });
+
+      expect(created()).toEqual(["u1", "u2"]);
+      expect(listRuns(runsDir())).toHaveLength(2);
+    });
+
+    test("a partial run retries only the users that did not make it, in the same run", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u2"]);
+      expect(captured.err).toContain(`Continuing run ${first!.id}, which finished partial`);
+      const runs = listRuns(runsDir());
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({ id: first!.id, status: "complete", counts: { created: 2 } });
+    });
+
+    test("an interrupted run skips the users it already created", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      // A crash never writes a finish time.
+      const record = readRun(runsDir(), first!.id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(path.join(runsDir(), first!.id, "run.json"), JSON.stringify(record));
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u2"]);
+      expect(captured.err).toContain("which was interrupted");
+    });
+
+    /** Rewrites a finished run as one a crash stopped: no finish time. */
+    const interrupt = (id: string, patch: Record<string, unknown> = {}) => {
+      const record = readRun(runsDir(), id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(
+        path.join(runsDir(), id, "run.json"),
+        JSON.stringify({ ...record, ...patch }),
+      );
+    };
+
+    // The create went out and the run stopped before the answer came back.
+    test("an interrupted run adopts a user Clerk created with no ID on record", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating" })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({ existing: [{ id: "user_found", external_id: "u2" }] });
+      await run(baseOptions);
+
+      expect(created()).toEqual([]);
+      expect(captured.err).toContain("1 user whose create was cut off is already in the instance");
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
       });
+      expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
+    });
+
+    test("an interrupted run creates a user whose in-flight create never landed", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating" })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u2"]);
+    });
+
+    test("a continued run with nothing left to do is finished", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      interrupt(first!.id);
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(created()).toEqual([]);
+      expect(captured.err).toContain("No users left to import");
+      expect(readRun(runsDir(), first!.id)).toMatchObject({ status: "complete" });
+      expect(readRun(runsDir(), first!.id)?.finishedAt).toBeDefined();
+    });
+
+    // "Interrupted, so undo it and start over": the undo marks the run undone
+    // but leaves it with no finish time.
+    test("an interrupted run that was then undone is imported again as a new run", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      interrupt(first!.id, { status: "undone" });
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u1", "u2"]);
+      expect(listRuns(runsDir()).filter((record) => record.kind === "import")).toHaveLength(2);
+    });
+
+    test("a run with an undo that did not finish refuses with exit 2", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      const undoRun = startRun(runsDir(), {
+        kind: "undo",
+        target: { instanceId: "ins_1" },
+        undoes: first!.id,
+      });
+      undoRun.append({ sourceId: "u1", status: "deleted", clerkId: "user_u1" });
+      undoRun.append({ sourceId: "u2", status: "failed", clerkId: "user_u2" });
+      undoRun.finish();
+      requests = [];
+
+      const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain(`clerk migrate undo ${first!.id}`);
+      expect(created()).toEqual([]);
+    });
+
+    test("an undone run is imported again as a new run", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      const record = readRun(runsDir(), first!.id)!;
+      fs.writeFileSync(
+        path.join(runsDir(), first!.id, "run.json"),
+        JSON.stringify({ ...record, status: "undone" }),
+      );
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u1", "u2"]);
+      expect(listRuns(runsDir())).toHaveLength(2);
+    });
+
+    test("a run another live process holds refuses with exit 2", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      const record = readRun(runsDir(), first!.id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(path.join(runsDir(), first!.id, "run.json"), JSON.stringify(record));
+      // PID 1 is always alive, and never this test.
+      fs.writeFileSync(path.join(runsDir(), first!.id, "lock"), "1");
 
       expect(await exitCodeOf(run(baseOptions))).toBe(EXIT_CODE.USAGE);
-      expect(captured.err).toContain("already in the instance, with this source ID");
-      expect(created()).toEqual(["u1", "u2"]);
-      expect(runsIn(runsDir())).toHaveLength(1);
+    });
+
+    // An edited file is a different job.
+    test("a changed file is a new run", async () => {
+      await run(baseOptions);
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([...export2, { id: "u3", primary_email_address: "c@x.dev" }]),
+      );
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(listRuns(runsDir())).toHaveLength(2);
     });
   });
 

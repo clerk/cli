@@ -325,6 +325,15 @@ describe("rejects", () => {
     expect(checks.importable.map((u) => u.userId)).toEqual(["kept"]);
   });
 
+  // A continued run found this user behind its own in-flight create.
+  test("not a user the continued run adopted", async () => {
+    existing = [{ id: "user_1", external_id: "mine" }];
+
+    expect(
+      await reasonsOf({ users: [user("mine")], adoptedClerkIds: new Set(["user_1"]) }),
+    ).toEqual({});
+  });
+
   test("a supabase user whose only provider is disabled", async () => {
     const rows = [
       { id: "only-discord", raw_app_meta_data: { providers: ["discord"] } },

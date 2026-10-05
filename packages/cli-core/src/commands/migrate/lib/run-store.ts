@@ -11,8 +11,8 @@
  *   second writer; a dead one, or a run with no `finishedAt`, means the run
  *   was interrupted.
  *
- * Everything `clerk migrate` records lives here, so there is no second record
- * to drift out of step.
+ * `runs`, `undo` and re-runs all read or write it, so there is no second
+ * record to drift out of step.
  *
  * Appends are synchronous so a run interrupted with Ctrl-C still leaves a
  * complete record of everything already processed.
@@ -101,6 +101,9 @@ export type UserLine = {
   code?: string;
   passwordDropped?: boolean;
 };
+
+/** What `runs` shows for a run: its stored status, or how it stopped. */
+export type RunState = RunStatus | "interrupted";
 
 const RUN_FILE = "run.json";
 const USERS_FILE = "users.ndjson";
@@ -281,6 +284,48 @@ export function latestUserLines(runsDir: string, id: string): Map<string, UserLi
   return latest;
 }
 
+/**
+ * How a run stands now. A run that never finished and whose process is gone
+ * was interrupted, whatever its stored status says.
+ */
+export function runState(runsDir: string, record: RunRecord): RunState {
+  // An interrupted run that was then undone has no finish time of its own.
+  if (record.finishedAt || record.status === "undone") return record.status;
+  return liveLockPid(runsDir, record.id) === undefined ? "interrupted" : "running";
+}
+
+/**
+ * Clerk IDs that import runs other than `exceptId` record as created.
+ *
+ * A user found by `external_id` may belong to another run of the same source
+ * IDs, so lookups for in-flight creates leave these out.
+ */
+export function clerkIdsCreatedByOtherRuns(runsDir: string, exceptId: string): Set<string> {
+  const ids = new Set<string>();
+  for (const record of listRuns(runsDir)) {
+    if (record.kind !== "import" || record.id === exceptId) continue;
+    for (const line of latestUserLines(runsDir, record.id).values()) {
+      if (line.status === "created" && line.clerkId) ids.add(line.clerkId);
+    }
+  }
+  return ids;
+}
+
+/** Every readable run, newest first. */
+export function listRuns(runsDir: string): RunRecord[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(runsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readRun(runsDir, entry.name))
+    .filter((record): record is RunRecord => record !== undefined)
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id));
+}
+
 // --- Writing ---------------------------------------------------------------
 
 function writeRecord(runsDir: string, record: RunRecord): void {
@@ -396,4 +441,30 @@ export function startRun(runsDir: string, init: StartRunInit): Run {
   writeRecord(runsDir, record);
   log.debug(`migrate: started ${init.kind} run ${id} in ${runsDir}`);
   return openRun(runsDir, record);
+}
+
+/**
+ * Reopens a finished or interrupted run to keep working on it.
+ *
+ * @throws UsageError when another live process holds its lock.
+ */
+export function continueRun(runsDir: string, record: RunRecord): Run {
+  acquireLock(runsDir, record.id);
+  // A crash mid-write leaves a torn last line; end it so the next append
+  // starts a line of its own instead of fusing with it.
+  const usersFile = path.join(runDir(runsDir, record.id), USERS_FILE);
+  const written = fs.existsSync(usersFile) ? fs.readFileSync(usersFile, "utf-8") : "";
+  if (written && !written.endsWith("\n")) fs.appendFileSync(usersFile, "\n");
+  const run = openRun(runsDir, record);
+  run.record = { ...record, status: "running" };
+  delete run.record.finishedAt;
+  writeRecord(runsDir, run.record);
+  log.debug(`migrate: continuing ${record.kind} run ${record.id} in ${runsDir}`);
+  return run;
+}
+
+/** Merges fields into a run this process is not writing, such as `undoneBy`. */
+export function patchRun(runsDir: string, id: string, patch: Partial<RunRecord>): void {
+  const record = readRun(runsDir, id);
+  if (record) writeRecord(runsDir, { ...record, ...patch });
 }

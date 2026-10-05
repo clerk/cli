@@ -103,6 +103,11 @@ export type CheckInput = {
    * sending `skip_legal_checks`. Without it they are rejected.
    */
   skipLegalChecks?: boolean;
+  /**
+   * Clerk IDs a continued run found behind its own in-flight creates: finding
+   * them in the instance is expected.
+   */
+  adoptedClerkIds?: Set<string>;
   spinner?: SpinnerControls;
 };
 
@@ -625,6 +630,7 @@ async function findInstanceDuplicates(
   };
 
   for (const existing of found) {
+    if (input.adoptedClerkIds?.has(existing.id)) continue;
     if (existing.external_id) {
       claim(byExternalId.get(existing.external_id), "already in the instance, with this source ID");
     }
