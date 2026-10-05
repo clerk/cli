@@ -98,7 +98,7 @@ for (const platform of ["ios", "macos"] as const)
       );
       if (!lock.pins.some((pin: { identity: string }) => pin.identity === "clerk-ios"))
         throw new Error("Clerk is not in Package.resolved");
-      const developerDir = format === "xcproj" ? await compatibleXcode() : undefined;
+      const developerDir = await compatibleXcode(format === "xcproj" ? 27 : 1);
       const buildLog = `/tmp/clerk-setup-build-${platform}-${format}.log`;
       const child = Bun.spawn(
         [
