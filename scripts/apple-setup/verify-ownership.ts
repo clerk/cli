@@ -6,7 +6,8 @@ import {
   createIOSFixture,
   IOS_FIXTURE_IDS as ids,
 } from "../../packages/cli-core/src/commands/init/ios/test-helpers.ts";
-import { prepareSetup } from "../../packages/cli-core/src/commands/init/ios/workflow.ts";
+import { planAllCapabilities } from "../../packages/cli-core/src/commands/init/ios/capabilities.ts";
+import { inspectSelectedProject } from "../../packages/cli-core/src/commands/init/ios/xcode.ts";
 
 // Real xcodebuild decides whether another target shares the app's entitlements,
 // however its value is set. A CocoaPods-style xcconfig without entitlements stays
@@ -33,8 +34,15 @@ const cases = [
     manual: true,
     releaseOnly: true,
   },
+  {
+    name: "same, with only Debug selected",
+    xcconfig: "CODE_SIGN_ENTITLEMENTS = MyApp/MyApp.entitlements\n",
+    manual: true,
+    releaseOnly: true,
+    configuration: "Debug",
+  },
 ];
-for (const { name, xcconfig, manual, releaseOnly } of cases) {
+for (const { name, xcconfig, manual, releaseOnly, configuration } of cases) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-ownership-probe-")));
   try {
     await createIOSFixture(root, {
@@ -72,17 +80,25 @@ for (const { name, xcconfig, manual, releaseOnly } of cases) {
       );
     }
     await writeFile(path, build(document));
-    const preview = await prepareSetup({
+    // Capability planning needs a Clerk Frontend API host; ownership is decided before any write.
+    const inspection = await inspectSelectedProject({
       root,
       target: "MyApp",
+      configuration,
       products: "core",
       minimumVersion: "1.0.0",
       resolvePackages: false,
-      capabilities: true,
     });
-    if ((preview.capabilities?.status === "manual") !== manual)
-      throw new Error(`${name}: expected ${manual ? "manual" : "automatic"} entitlements.`);
-    console.log(JSON.stringify({ case: name, capabilities: preview.capabilities?.status }));
+    const capabilities = await planAllCapabilities(
+      inspection,
+      inspection.document.source,
+      "fixture.clerk.accounts.dev",
+    );
+    if ((capabilities.status === "manual") !== manual)
+      throw new Error(
+        `${name}: expected ${manual ? "manual" : "automatic"} entitlements, got ${capabilities.status}${capabilities.reason ? ` (${capabilities.reason})` : ""}.`,
+      );
+    console.log(JSON.stringify({ case: name, capabilities: capabilities.status }));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
