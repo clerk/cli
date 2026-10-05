@@ -217,18 +217,6 @@ async function planCapabilities(
           if ((await realpath(resolved).catch(() => resolved)) === resolve(selection.root, path))
             return manual("The entitlement file is shared with another target.");
         }
-        // Explicit settings in configurations Xcode wasn't asked about.
-        for (const other of adapter.otherSettings) {
-          for (const [key, value] of Object.entries(other)) {
-            if (!key.startsWith("CODE_SIGN_ENTITLEMENTS") || value === "") continue;
-            if (
-              typeof value !== "string" ||
-              value.includes("$") ||
-              (await realpath(resolve(sourceRoot, value))) === resolve(selection.root, path)
-            )
-              return manual("The entitlement file may be shared with another target.");
-          }
-        }
         snapshot = await snapshotFile(selection.root, path);
         snapshots.push(snapshot);
       } else {

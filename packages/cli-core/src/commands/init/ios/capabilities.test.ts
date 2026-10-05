@@ -204,8 +204,12 @@ test("shared or inherited entitlement ownership is manual and cannot activate Ap
     else if (ownership === "alias") {
       await symlink(join(f.root, "MyApp/MyApp.entitlements"), join(f.root, "Other.entitlements"));
       objects[ids.secondDebug].buildSettings.CODE_SIGN_ENTITLEMENTS = "Other.entitlements";
-    } else
+      // xcodebuild -alltargets reports the other target's setting too.
+      reportOtherTarget(f, { CODE_SIGN_ENTITLEMENTS: "Other.entitlements" }, "Debug");
+    } else {
       objects[ids.secondDebug].buildSettings.CODE_SIGN_ENTITLEMENTS = "MyApp/MyApp.entitlements";
+      reportOtherTarget(f, { CODE_SIGN_ENTITLEMENTS: "MyApp/MyApp.entitlements" }, "Debug");
+    }
     await writeFile(f.path, build(document));
     const source = await readFile(join(f.root, "MyApp/MyApp.entitlements"), "utf8");
     const preview = await prepareSetup(f.options, f.dependencies);
@@ -284,6 +288,19 @@ test("a selected configuration falls back to manual setup when Xcode can't repor
   const preview = await prepareSetup(f.options, f.dependencies);
   expect(preview.capabilities?.status).toBe("manual");
   expect(preview.capabilities?.reason).toContain("couldn't report every configuration");
+});
+
+test("another target's variable entitlements path doesn't block setup when Xcode resolves it elsewhere", async () => {
+  const f = await fixture("ios", true);
+  const document = parse(await readFile(f.path, "utf8"));
+  for (const id of [ids.secondDebug, ids.secondRelease])
+    (document.objects![id] as any).buildSettings.CODE_SIGN_ENTITLEMENTS =
+      "$(SRCROOT)/AdminApp/AdminApp.entitlements";
+  await writeFile(f.path, build(document));
+  reportOtherTarget(f, { CODE_SIGN_ENTITLEMENTS: "AdminApp/AdminApp.entitlements" });
+
+  const preview = await prepareSetup(f.options, f.dependencies);
+  expect(preview.capabilities?.status).toBe("planned");
 });
 
 test("stale entitlements and new-file collisions stop before any writes", async () => {
