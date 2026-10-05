@@ -129,6 +129,18 @@ describe("clerk init for native Apple projects", () => {
     await expect(init(options)).rejects.toThrow(message);
   });
 
+  test.each([
+    [{ json: true }, "--json needs an existing project"],
+    [{ xcodeTarget: "MyApp" }, "--xcode-target needs an existing project"],
+    [{ dryRun: true, json: true }, "--dry-run, --json need an existing project"],
+  ])("%o never bootstraps a new project", async (options, message) => {
+    setup();
+    spyOn(context, "gatherContext").mockResolvedValue(null);
+
+    await expect(init(options)).rejects.toThrow(message);
+    expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+  });
+
   test("an unsupported flag stops before any project is created", async () => {
     setup();
     spyOn(frameworkMod, "lookupFramework").mockReturnValue(FAKE_CTX.framework);

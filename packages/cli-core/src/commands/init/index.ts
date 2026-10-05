@@ -122,8 +122,15 @@ export async function init(options: InitOptions = {}) {
   intro("Setting up Clerk");
 
   setTelemetryStage("detect");
-  const resolved = options.dryRun
-    ? await resolveExistingProjectContext(cwd, frameworkOverride, overrides)
+  // Only an existing native Apple project supports these, and init never bootstraps one,
+  // so they skip project creation instead of being rejected after it.
+  const existingProjectFlags = [
+    options.dryRun && "--dry-run",
+    options.json && "--json",
+    ...APPLE_FLAGS.filter(([key]) => options[key] != null).map(([, flag]) => flag),
+  ].filter((flag): flag is string => Boolean(flag));
+  const resolved = existingProjectFlags.length
+    ? await resolveExistingProjectContext(cwd, frameworkOverride, overrides, existingProjectFlags)
     : options.starter
       ? await handleStarter(cwd, frameworkOverride, overrides)
       : await resolveProjectContext(cwd, frameworkOverride, overrides);
@@ -478,14 +485,16 @@ async function resolveExistingProjectContext(
   cwd: string,
   frameworkOverride: FrameworkInfo | undefined,
   overrides: BootstrapOverrides,
+  flags: readonly string[],
 ): Promise<ResolvedContext> {
   const ctx = await withSpinner("Detecting framework...", async () =>
     gatherContext(cwd, frameworkOverride, overrides.pmOverride),
   );
   if (!ctx)
-    throw new CliError("--dry-run inspects an existing project, and none was detected here.", {
-      code: ERROR_CODE.FRAMEWORK_UNDETECTED,
-    });
+    throw new CliError(
+      `${flags.join(", ")} ${flags.length === 1 ? "needs" : "need"} an existing project, and none was detected here.`,
+      { code: ERROR_CODE.FRAMEWORK_UNDETECTED },
+    );
   return { ctx, bootstrap: null };
 }
 
