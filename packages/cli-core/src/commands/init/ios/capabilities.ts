@@ -165,8 +165,9 @@ async function planCapabilities(
     const sourceRoot =
       inspection.settings.SRCROOT ?? resolve(selection.root, dirname(selection.project));
     const mac = selection.sdk === "macosx";
-    const domain = !mac && frontendHost ? `webcredentials:${frontendHost}` : undefined;
-    if (!mac && !frontendHost)
+    // Passkeys and credential AutoFill need the web-credentials domain on macOS too.
+    const domain = frontendHost ? `webcredentials:${frontendHost}` : undefined;
+    if (!frontendHost)
       return manual("Link the intended Clerk instance before adding its Associated Domain.");
     let changedProject = false;
     // Xcode's native setting adds the outgoing-network entitlement during signing.

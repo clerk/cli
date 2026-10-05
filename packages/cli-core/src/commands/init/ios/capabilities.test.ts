@@ -62,8 +62,7 @@ for (const platform of ["ios", "macos"] as const)
     });
     const entitlements = await readFile(join(f.root, "MyApp/MyApp.entitlements"), "utf8");
     expect(entitlements).toContain("com.apple.developer.applesignin");
-    if (platform === "ios")
-      expect(entitlements).toContain("webcredentials:fixture.clerk.accounts.dev");
+    expect(entitlements).toContain("webcredentials:fixture.clerk.accounts.dev");
     const projectAfter = parse(await readFile(f.path, "utf8")).objects as Record<string, any>;
     if (platform === "ios")
       expect(projectAfter[ids.targetRelease]).toEqual(projectBefore[ids.targetRelease]);
