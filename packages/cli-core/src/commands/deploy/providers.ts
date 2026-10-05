@@ -59,6 +59,8 @@ export type OAuthProviderDescriptor = {
   fields: OAuthPromptField[];
   requiredCredentialKeys: string[];
   credentialSources: Array<"manual" | "google-json">;
+  /** Development's native-only Apple Bundle ID; creating production drops it from the clone. */
+  developmentNativeBundleId?: string;
 };
 
 /**
@@ -71,6 +73,7 @@ export type OAuthProviderDescriptorResult = {
 
 export type NativeAppleStatus =
   | "ready"
+  | "bundle-id-missing"
   | "authentication-disabled"
   | "registration-missing"
   | "registration-bundle-case-mismatch"
@@ -249,12 +252,17 @@ export function nativeAppleBundleId(
   const value = config[descriptor.configKey];
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const providerConfig = value as Record<string, unknown>;
-  const hosted = ["client_id", "client_secret", "team_id", "key_id"].some((key) => {
+  if (hasHostedAppleIdentifier(providerConfig) || typeof providerConfig.bundle_id !== "string")
+    return undefined;
+  return providerConfig.bundle_id.trim() || undefined;
+}
+
+/** Whether Apple has any hosted (web) identifier, which makes the connection hosted. */
+export function hasHostedAppleIdentifier(providerConfig: Record<string, unknown>): boolean {
+  return ["client_id", "client_secret", "team_id", "key_id"].some((key) => {
     const field = providerConfig[key];
     return typeof field === "string" && field.trim().length > 0;
   });
-  if (hosted || typeof providerConfig.bundle_id !== "string") return undefined;
-  return providerConfig.bundle_id.trim() || undefined;
 }
 
 /**

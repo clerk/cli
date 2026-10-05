@@ -235,12 +235,15 @@ describe("resolveDeployState", () => {
       bundle_id: "com.example.native",
     };
 
-    function mockProductionApple(connection: Record<string, unknown>): void {
+    function mockProductionApple(
+      connection: Record<string, unknown>,
+      development: Record<string, unknown> = { enabled: true },
+    ): void {
       mockActiveProductionEnvironment();
       mockFetchInstanceConfig.mockImplementation((_appId: string, instanceId: string) =>
         instanceId === "ins_prod"
           ? { connection_oauth_apple: connection }
-          : { connection_oauth_apple: { enabled: true } },
+          : { connection_oauth_apple: development },
       );
     }
 
@@ -286,6 +289,26 @@ describe("resolveDeployState", () => {
       }
     });
 
+    test("keeps development's native-only intent when production was cloned without a Bundle ID", async () => {
+      // Creating production clones Apple without its provider settings.
+      mockProductionApple({ enabled: true, authenticatable: true }, nativeConnection);
+
+      const state = await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" });
+
+      expect(state.kind).toBe("active");
+      if (state.kind === "active") {
+        expect(state.snapshot.pending).toEqual({ type: "oauth", provider: "apple" });
+        expect(state.snapshot.nativeAppleReadinessIssue).toMatchObject({
+          bundleId: "com.example.native",
+          reason: "bundle-id-missing",
+        });
+        const report = buildDeployStatusReport(state, null);
+        expect(report.nextAction).toContain("has no Bundle ID");
+        expect(report.nextAction).not.toContain("missing production credentials: apple");
+      }
+      expect(mockListIOSApplications).not.toHaveBeenCalled();
+    });
+
     test("reports unverifiable rather than missing when native reads fail", async () => {
       mockProductionApple(nativeConnection);
       mockListIOSApplications.mockRejectedValue(new Error("native endpoint unavailable"));
@@ -302,14 +325,17 @@ describe("resolveDeployState", () => {
     });
 
     test("leaves hosted Apple credential-based without native reads", async () => {
-      mockProductionApple({
-        enabled: true,
-        bundle_id: "com.example.native",
-        client_id: "com.example.web",
-        client_secret: "REDACTED",
-        team_id: "TEAM123456",
-        key_id: "KEY1234567",
-      });
+      mockProductionApple(
+        {
+          enabled: true,
+          bundle_id: "com.example.native",
+          client_id: "com.example.web",
+          client_secret: "REDACTED",
+          team_id: "TEAM123456",
+          key_id: "KEY1234567",
+        },
+        nativeConnection,
+      );
 
       const state = await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" });
 

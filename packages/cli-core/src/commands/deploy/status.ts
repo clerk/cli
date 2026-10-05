@@ -34,6 +34,7 @@ import {
   buildOAuthProviderDescriptors,
   hasProviderRequiredCredentials,
   inspectNativeAppleConfiguration,
+  hasHostedAppleIdentifier,
   nativeAppleBundleId,
   type NativeAppleConfiguration,
   type NativeAppleReadinessIssue,
@@ -271,6 +272,10 @@ export async function loadDevelopmentOAuthProviders(
         ? await fetchInstanceConfigSchema(ctx.appId, ctx.developmentInstanceId, schemaKeys)
         : { properties: {} };
     const result = buildOAuthProviderDescriptors(providerSlugs, schema);
+    for (const descriptor of result.supported) {
+      const bundleId = nativeAppleBundleId(config, descriptor);
+      if (bundleId) descriptor.developmentNativeBundleId = bundleId;
+    }
     return {
       descriptors: result.supported,
       unsupported: result.unsupported,
@@ -290,8 +295,20 @@ export async function resolveNativeAppleConfiguration(
   descriptors: readonly OAuthProviderDescriptor[],
 ): Promise<NativeAppleConfiguration | undefined> {
   const descriptor = descriptors.find((candidate) => candidate.provider === "apple");
-  const bundleId = descriptor && nativeAppleBundleId(config, descriptor);
-  if (!descriptor || !bundleId) return undefined;
+  if (!descriptor) return undefined;
+  const bundleId = nativeAppleBundleId(config, descriptor);
+  if (!bundleId) {
+    // Creating production clones Apple without its provider settings, so a native-only
+    // development connection arrives with neither a Bundle ID nor web credentials.
+    const production = config[descriptor.configKey];
+    const hosted =
+      typeof production === "object" &&
+      production !== null &&
+      hasHostedAppleIdentifier(production as Record<string, unknown>);
+    return descriptor.developmentNativeBundleId && !hosted
+      ? { status: "bundle-id-missing", bundleId: descriptor.developmentNativeBundleId }
+      : undefined;
+  }
   try {
     const [iosApplications, nativeSettings] = await Promise.all([
       listIOSApplications(appId, productionInstanceId),

@@ -1398,14 +1398,16 @@ describe("deploy", () => {
         bundle_id: "com.example.native",
       };
 
-      async function nativeAppleDeploy(): Promise<void> {
+      async function nativeAppleDeploy(
+        productionConnection: Record<string, unknown> = nativeConnection,
+      ): Promise<void> {
         await linkedProject({
           instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
         });
         mockLiveProduction({
           instanceId: "ins_prod_native_apple",
           developmentConfig: { connection_oauth_apple: nativeConnection },
-          productionConfig: { connection_oauth_apple: nativeConnection },
+          productionConfig: { connection_oauth_apple: productionConnection },
         });
         mockIsAgent.mockReturnValue(false);
       }
@@ -1437,6 +1439,23 @@ describe("deploy", () => {
           "https://dashboard.clerk.com/apps/app_xyz789/instances/ins_prod_native_apple/native-applications",
         );
         expect(mockSelect).not.toHaveBeenCalled();
+        expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+      });
+
+      test("explains a production Apple connection cloned without its Bundle ID", async () => {
+        await nativeAppleDeploy({ enabled: true, authenticatable: true });
+        mockConfirm.mockResolvedValueOnce(false);
+
+        const error = await runDeploy({}).catch((caught: unknown) => caught as CliError);
+
+        expect(mockConfirm).toHaveBeenCalledWith({
+          message: expect.stringContaining("Also configure Apple web sign-in credentials?"),
+          default: false,
+        });
+        expect(error?.message).toContain("Deploy paused at: Apple OAuth credential setup");
+        expect(flat(stripAnsi(captured.err))).toContain(
+          "Production Sign in with Apple has no Bundle ID",
+        );
         expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
       });
 

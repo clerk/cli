@@ -620,6 +620,8 @@ export function nativeApplicationsDashboardUrl(
 export function nativeAppleGuidance(issue: NativeAppleReadinessIssue): string {
   const { bundleId, dashboardUrl } = issue;
   switch (issue.reason) {
+    case "bundle-id-missing":
+      return `Production Sign in with Apple has no Bundle ID, so native sign-in for ${bundleId} isn't set up there yet. In the Clerk Dashboard, set the production Apple connection's Bundle ID to ${bundleId}, then register the app and enable Native API at ${dashboardUrl}`;
     case "authentication-disabled":
       return `Sign in with Apple for ${bundleId} is not enabled for authentication in production. Enable it in the Apple connection settings in the Clerk Dashboard.`;
     case "registration-missing":
