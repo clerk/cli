@@ -41,12 +41,21 @@ const cases = [
     releaseOnly: true,
     configuration: "Debug",
   },
+  {
+    // The other target resolves its own SDK, so SDK-conditional settings stay visible.
+    name: "iOS app, Debug selected, macOS target uses its file in Release via an SDK condition",
+    xcconfig: "CODE_SIGN_ENTITLEMENTS[sdk=macosx*] = MyApp/MyApp.entitlements\n",
+    manual: true,
+    releaseOnly: true,
+    configuration: "Debug",
+    macOSTarget: true,
+  },
 ];
-for (const { name, xcconfig, manual, releaseOnly, configuration } of cases) {
+for (const { name, xcconfig, manual, releaseOnly, configuration, macOSTarget } of cases) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-ownership-probe-")));
   try {
     await createIOSFixture(root, {
-      platform: "macos",
+      platform: macOSTarget ? "ios" : "macos",
       clerkSDK: false,
       includeKey: false,
       secondTarget: true,
@@ -70,6 +79,13 @@ for (const { name, xcconfig, manual, releaseOnly, configuration } of cases) {
     objects[ids.mainGroup].children.push("PODSXCCONFIG000000000000");
     for (const id of releaseOnly ? [ids.secondRelease] : [ids.secondDebug, ids.secondRelease])
       objects[id].baseConfigurationReference = "PODSXCCONFIG000000000000";
+    if (macOSTarget)
+      for (const id of [ids.secondDebug, ids.secondRelease])
+        Object.assign(objects[id].buildSettings, {
+          SDKROOT: "macosx",
+          SUPPORTED_PLATFORMS: "macosx",
+          MACOSX_DEPLOYMENT_TARGET: "14.0",
+        });
     if (releaseOnly) {
       // The app itself uses a different file in Release.
       objects[ids.targetRelease].buildSettings.CODE_SIGN_ENTITLEMENTS =
