@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 import * as plapi from "../../../lib/plapi.ts";
 import { bundleIdentifiersEqual } from "../../../lib/apple-native-identity.ts";
-import { CliError, ERROR_CODE, PlapiError, throwUsageError } from "../../../lib/errors.ts";
+import {
+  ApiError,
+  CliError,
+  ERROR_CODE,
+  PlapiError,
+  throwUsageError,
+} from "../../../lib/errors.ts";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
 
 export type NativeAPI = Pick<
@@ -125,6 +131,17 @@ export async function revalidateRemote(plan: RemotePlan, api: NativeAPI): Promis
   return current;
 }
 
+/** A request whose connection failed: Node's fetch throws TypeError, Bun's an Error with a string code such as ECONNRESET. */
+function lostConnection(error: unknown): boolean {
+  if (error instanceof TypeError) return true;
+  return (
+    error instanceof Error &&
+    !(error instanceof CliError) &&
+    !(error instanceof ApiError) &&
+    typeof (error as NodeJS.ErrnoException).code === "string"
+  );
+}
+
 export async function applyRemote(
   plan: RemotePlan,
   api: NativeAPI,
@@ -154,7 +171,7 @@ export async function applyRemote(
       // A concurrent creator or a lost successful response can leave the row in
       // place. Reconcile it; never create a second registration.
       if (
-        !(error instanceof TypeError) &&
+        !lostConnection(error) &&
         !(error instanceof PlapiError && (error.status === 422 || error.status >= 500))
       )
         throw error;

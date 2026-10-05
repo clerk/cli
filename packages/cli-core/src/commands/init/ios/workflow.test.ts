@@ -1,3 +1,4 @@
+import { createServer, type AddressInfo } from "node:net";
 import { afterEach, expect, test } from "bun:test";
 import {
   chmod,
@@ -388,6 +389,30 @@ test("a lost successful create response reconciles by reading the registration",
   ).toBe("verified");
   expect(f.state.applications).toHaveLength(1);
   expect(f.state.events).toEqual(["register", "enable"]);
+});
+
+test("a connection dropped after Clerk creates the registration reconciles it", async () => {
+  // A real dropped connection: Bun reports it as an Error with code ECONNRESET, not a TypeError.
+  const server = createServer((socket) => socket.once("data", () => socket.resetAndDestroy()));
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  try {
+    const f = await fixture();
+    const api = f.dependencies.api!;
+    const create = api.createIOSApplication.bind(api);
+    api.createIOSApplication = async (...args) => {
+      await create(...args);
+      const { port } = server.address() as AddressInfo;
+      await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body: "{}" });
+      throw new Error("The dropped connection should have thrown");
+    };
+    expect(
+      (await applySetup(await prepareSetup(f.options, f.dependencies), f.dependencies)).remote,
+    ).toBe("verified");
+    expect(f.state.applications).toHaveLength(1);
+    expect(f.state.events).toEqual(["register", "enable"]);
+  } finally {
+    server.close();
+  }
 });
 
 test("a wrong create response cannot enable Native API", async () => {
