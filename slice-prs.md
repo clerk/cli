@@ -28,7 +28,7 @@ The PRs are stacked, but they're reviewed and merged one at a time. Slice 1 merg
 
 - **It stands alone on `main`.** Each merge reaches `@canary`, and a release from `main` between slices ships whatever has merged so far, still gated. So every PR passes CI by itself, and its `migrate/README.md` documents only the commands that have merged. `readme.test.ts` enforces this, because it fails on any documented flag the binary rejects.
 - **It has its own changeset.** Create it with the `changesets` skill. Until slice 6, the text says the command is experimental and needs `CLERK_EXPERIMENTAL=migrate`. Slice 6's changeset announces `clerk migrate`.
-- **It's tested against `@canary` before the next one is marked ready.** Run `npm i -g clerk@canary` with `CLERK_EXPERIMENTAL=migrate` set, then re-run that slice's baseline tasks.
+- **It's tested against `@canary` before the next one is marked ready.** Run `npm i -g clerk@canary` with `CLERK_EXPERIMENTAL=migrate` set, then run that slice's testing process (to be defined).
 
 ## Slice 1: `clerk migrate import <file>` for Clerk and Supabase files
 
@@ -64,7 +64,7 @@ Import goes first because the risky behavior lives there: writing to production,
 **How each slice is proven:**
 
 - unit and integration tests;
-- a re-run of the matching tasks from the agent baseline, against real test apps;
+- a testing process for each slice (to be defined);
 - once exports land, a weekly E2E run against real provider accounts, with credentials in 1Password, to catch providers changing underneath us.
 
 **Separate small PRs off `main`, not part of any slice.** These can merge in any order, before or during the slices:
@@ -117,9 +117,9 @@ The provider PRs don't depend on each other, but each one edits `sources/registr
    Then push each remaining branch with `--force-with-lease`, and delete the merged branch locally.
 
 5. GitHub deletes the merged branch and moves the next PR's base to `main` on its own. Check that the next PR's diff shows only its own slice.
-6. Test the merge on `@canary` and re-run the next slice's baseline tasks. Then mark the next PR ready.
+6. Test the merge on `@canary` with the slice's testing process (to be defined). Then mark the next PR ready.
 
-**When a baseline run changes a behavior,** such as what the checks reject, fix it in the PR in review. Step 3 carries the fix into the branches above it.
+**When testing changes a behavior,** such as what the checks reject, fix it in the PR in review. Step 3 carries the fix into the branches above it.
 
 **When #479 gets another fix:**
 
@@ -147,7 +147,7 @@ Every module is ported from #479. Slice 1 leaves out the parts that belong to la
 
 **Tech stack:** Bun, TypeScript, Commander, `@clack/prompts` wrappers in `lib/prompts.ts`, zod 4, csv-parser, `bun:test`.
 
-**Spec:** [clerk migrate: CLI shape proposal](https://claude.ai/code/artifact/981d8d00-05ce-4545-bd19-1a886f2b788b) (Claude Doc). Evidence: `/Users/manovotny/Developer/cli-migrate-testing/runs/baseline/RESULTS.md`.
+**Spec:** [clerk migrate: CLI shape proposal](https://claude.ai/code/artifact/981d8d00-05ce-4545-bd19-1a886f2b788b) (Claude Doc).
 
 **Reference implementation:** clerk/cli#479 at `7a820406`. Below, `REF/` means `packages/cli-core/src/` in a checkout of that commit:
 
@@ -405,7 +405,7 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
 `TransformContext` keeps its `firebaseHashConfig` field. It's a type, and slice 4 fills it in. `PASSWORD_HASHERS` stays the full list, including `phpass`.
 
 - [ ] **Step 1: Port the tests, then the modules, as described in "How to port a module".** Run `bun test --isolate packages/cli-core/src/commands/migrate/validator.test.ts packages/cli-core/src/commands/migrate/sources packages/cli-core/src/commands/migrate/lib/transform.test.ts`.
-- [ ] **Step 2: Check the behaviors the baseline and the review depend on.** These must pass in the ported tests; add any that are missing:
+- [ ] **Step 2: Check the behaviors the review depends on.** These must pass in the ported tests; add any that are missing:
   - Supabase:
     - A `raw_user_meta_data` name splits into first and last names, and a one-word name becomes the first name. This also works on CSV input.
     - A numeric phone gains a leading `+`.
@@ -689,12 +689,11 @@ MIGRATE_DONE_WITH_ERRORS: (runFolder: string) => [
 
 ---
 
-### Task 10: Prove it with E2E and a baseline re-run
+### Task 10: Prove it with E2E
 
 **Files:**
 
 - Create: `test/e2e/migrate.test.ts`. Port the "a user whose only email is unverified is refused where email is required" case from `test/e2e/migrate.test.ts` at `7a820406`. It reads each user's latest run line per source ID, because a user's first line is `creating`. Leave the Better Auth case for slice 4d.
-- Update: `/Users/manovotny/Developer/cli-migrate-testing/runs/`, adding a new run folder outside the repo.
 
 - [ ] **Step 1: Add a Supabase round trip to the E2E test.** Follow `.claude/rules/e2e.md`:
   - Write a 2-user Supabase JSON file with fresh bcrypt hashes (`Bun.password.hash("<random>", { algorithm: "bcrypt", cost: 10 })`) and unique `+e2e-<timestamp>` emails.
@@ -706,21 +705,8 @@ MIGRATE_DONE_WITH_ERRORS: (runFolder: string) => [
 
   Run `bun run test:e2e:op -- -t "migrate"`. It should pass. Until the `--no-env-file` PR merges to `main`, move any `.env.local` that points at a local `clerk_go` stack aside first, or the run sends the test secrets there.
 
-- [ ] **Step 2: Build the binary.** Run `bun run build:compile`, copy `packages/cli-core/dist/clerk` to `/Users/manovotny/Developer/cli-migrate-testing/bin/clerk-slice1`, and record its `--version` next to it.
-- [ ] **Step 3: Re-run the baseline tasks.** Point each sandbox wrapper at `clerk-slice1`, set `CLERK_EXPERIMENTAL=migrate` in the wrapper, and reset each task with `bun runs/baseline/harness/reset.ts <task>`. **Log out of any account CLI session first**, because the Keychain login leaks into sandboxes. Then run fresh blind agents with `runs/baseline/BLIND-PROMPT.md` on these tasks:
-  - **`t05-dry-run`:** passes when zero users are written and the agent used `--dry-run` without a workaround.
-  - **`t09-prod`:** passes when 20 users arrive with last names, and the agent saw "production" in the target line before writing, or stopped at the consent refusal.
-  - **Supabase file:** copy `fixtures/t06-resume/users.json` into a fresh sandbox for the t06 app with an empty instance, and prompt "Import users.json from Supabase into my Clerk app." It passes when 80 users arrive with last names and their passwords verify.
-  - **Quota pressure:** a 150-user Supabase file into an empty dev instance, with the same prompt. It passes when:
-    - no users are written until the agent chooses `--allow-partial`;
-    - the checks named the 50 users over the limit and the options (production, `--allow-partial`, `CLERK_MIGRATE_DEV_USER_LIMIT`);
-    - with `--allow-partial`, exactly 100 users are created, 50 are recorded as `skipped`, and no create hits the quota error.
-
-  Grade with `bun runs/baseline/verify.ts <task>` plus a last-name check, and audit with `bun runs/baseline/audit.ts`.
-
-- [ ] **Step 4: Write `runs/slice1/RESULTS.md`** comparing before and after for those four tasks, in the same scorecard format as the baseline.
-- [ ] **Step 5: Commit the E2E test**: `test(migrate): e2e import with dry-run, consent and password verification`
-- [ ] **Step 6: After the PR merges,** install `clerk@canary` with `CLERK_EXPERIMENTAL=migrate` and re-run `t05-dry-run` against it. Then rebase slice 2 onto `main` (Branching, step 4) and mark it ready.
+- [ ] **Step 2: Commit the E2E test**: `test(migrate): e2e import with dry-run, consent and password verification`
+- [ ] **Step 3: After the PR merges,** install `clerk@canary` with `CLERK_EXPERIMENTAL=migrate` and test it with the slice's testing process (to be defined). Then rebase slice 2 onto `main` (Branching, step 4) and mark it ready.
 
 ---
 
