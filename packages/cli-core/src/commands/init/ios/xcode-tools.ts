@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 
-let selection: Promise<string | undefined> | undefined;
+const selections = new Map<number, Promise<string | undefined>>();
 let note: string | undefined;
 
 /** Why setup used an Xcode other than the xcode-select default, if it did. */
@@ -10,17 +10,31 @@ export function nonDefaultXcodeNote(): string | undefined {
   return note;
 }
 
-/** Choose a compatible installed Xcode for JSON projects without changing xcode-select. */
-export async function compatibleXcode(signal?: AbortSignal): Promise<string | undefined> {
+/**
+ * Choose an installed Xcode of at least `minimumMajor` without changing xcode-select:
+ * Xcode 27 for JSON projects, or any full Xcode when xcode-select points at the
+ * Command Line Tools. Undefined means the default developer directory is fine.
+ */
+export async function compatibleXcode(
+  minimumMajor: number,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
   // Cache a found Xcode, but let a failed or cancelled lookup run again.
-  selection ??= selectXcode(signal).catch((error: unknown) => {
-    selection = undefined;
-    throw error;
-  });
+  let selection = selections.get(minimumMajor);
+  if (!selection) {
+    selection = selectXcode(minimumMajor, signal).catch((error: unknown) => {
+      selections.delete(minimumMajor);
+      throw error;
+    });
+    selections.set(minimumMajor, selection);
+  }
   return selection;
 }
 
-async function selectXcode(signal?: AbortSignal): Promise<string | undefined> {
+async function selectXcode(
+  minimumMajor: number,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
   const version = async (developerDir?: string): Promise<number[]> => {
     signal?.throwIfAborted();
     try {
@@ -46,7 +60,7 @@ async function selectXcode(signal?: AbortSignal): Promise<string | undefined> {
     }
   };
   const current = await version();
-  if ((current[0] ?? 0) >= 27) return undefined;
+  if ((current[0] ?? 0) >= minimumMajor) return undefined;
   if (!process.env.DEVELOPER_DIR) {
     const applications = await readdir("/Applications").catch(() => [] as string[]);
     const candidates = await Promise.all(
@@ -62,13 +76,18 @@ async function selectXcode(signal?: AbortSignal): Promise<string | undefined> {
         (b.version[0] ?? 0) - (a.version[0] ?? 0) || (b.version[1] ?? 0) - (a.version[1] ?? 0),
     );
     const chosen = candidates[0];
-    if (chosen && (chosen.version[0] ?? 0) >= 27) {
-      note = `Using Xcode ${chosen.version.join(".")} (${dirname(dirname(chosen.path))}): ${current.length ? `the default Xcode ${current.join(".")}` : "the default developer directory"} can't open project.xcproj projects.`;
+    if (chosen && (chosen.version[0] ?? 0) >= minimumMajor) {
+      const reason = !current.length
+        ? "the selected developer directory isn't a full Xcode"
+        : `the default Xcode ${current.join(".")} can't open project.xcproj projects`;
+      note = `Using Xcode ${chosen.version.join(".")} (${dirname(dirname(chosen.path))}): ${reason}.`;
       return chosen.path;
     }
   }
   throw new CliError(
-    "This .xcproj project requires Xcode 27 or newer. Select a compatible Xcode in Xcode Settings > Locations, then rerun clerk init.",
+    minimumMajor > 1
+      ? "This .xcproj project requires Xcode 27 or newer. Select a compatible Xcode in Xcode Settings > Locations, then rerun clerk init."
+      : "Setup needs Xcode, and the selected developer directory isn't a full Xcode. Install Xcode, or select it with `sudo xcode-select -s /Applications/Xcode.app`, then rerun clerk init.",
     { code: ERROR_CODE.IOS_SETUP_BLOCKED },
   );
 }

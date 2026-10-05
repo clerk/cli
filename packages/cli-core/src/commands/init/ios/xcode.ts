@@ -36,11 +36,13 @@ export class XcodeCommandError extends CliError {
 export const runCommand: CommandRunner = async (command, root, signal) => {
   signal?.throwIfAborted();
   const project = command[command.indexOf("-project") + 1];
+  // JSON projects need Xcode 27; any project needs a full Xcode, not the Command Line Tools.
   const developerDir =
-    command[0] === "xcodebuild" &&
-    project &&
-    (await Bun.file(join(root, project, "project.xcproj")).exists())
-      ? await compatibleXcode(signal)
+    command[0] === "xcodebuild" && project
+      ? await compatibleXcode(
+          (await Bun.file(join(root, project, "project.xcproj")).exists()) ? 27 : 1,
+          signal,
+        )
       : undefined;
   let child: Bun.Subprocess<"ignore", "pipe", "pipe">;
   try {
