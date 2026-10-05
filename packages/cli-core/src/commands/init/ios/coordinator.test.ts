@@ -5,6 +5,7 @@ import { join } from "node:path";
 import * as prompts from "../../../lib/prompts.ts";
 import * as lists from "../../../lib/listage.ts";
 import * as spinner from "../../../lib/spinner.ts";
+import * as xcodeTools from "./xcode-tools.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { capabilityFixture } from "./capability-test-helpers.ts";
 import { useStarterSources } from "./setup-test-helpers.ts";
@@ -182,6 +183,16 @@ test("dry run reads no remote settings, resolves no packages, and edits nothing"
     false,
   );
   expect(await treeDigest(f.root)).toEqual(before);
+});
+
+test("the plan says when setup uses an Xcode other than the default", async () => {
+  const f = await fixture();
+  const note =
+    "Using Xcode 27.2 (/Applications/Xcode-beta.app): the default Xcode 26.5 can't open project.xcproj projects.";
+  spies.push(spyOn(xcodeTools, "nonDefaultXcodeNote").mockReturnValue(note));
+  spies.push(spyOn(spinner, "outro").mockResolvedValue(undefined));
+  await runAppleInit({ root: f.root, agent: false, dryRun: true }, undefined, f.dependencies);
+  expect(captured.err).toContain(note);
 });
 
 test("declining the final preview leaves local files and remote settings unchanged", async () => {

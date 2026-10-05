@@ -11,6 +11,7 @@ import { isUnchangedStarter } from "./starter.ts";
 import { planAppleSetup } from "./plan.ts";
 import { sdkLinked } from "./sdk.ts";
 import { inspectSelectedProject } from "./xcode.ts";
+import { nonDefaultXcodeNote } from "./xcode-tools.ts";
 import { SelectionNeeded } from "./discovery.ts";
 import { IdentityRequired, describeIdentity } from "./identity.ts";
 import {
@@ -64,6 +65,8 @@ export function printSetupPreview(preview: SetupPreview): void {
   log.info(
     `\nSet up ${selection.targetName} (${preview.inspection.contexts.map((c) => c.selection.configuration).join(", ")})`,
   );
+  const xcodeNote = nonDefaultXcodeNote();
+  if (xcodeNote) log.info(`  ${xcodeNote}`);
   for (const action of preview.local.actions) {
     if (action.type === "skip") {
       if (!sdkLinked(action)) log.warn(action.skipReason);
