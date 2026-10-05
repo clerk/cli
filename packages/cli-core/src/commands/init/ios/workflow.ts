@@ -343,6 +343,33 @@ export async function applySetup(
   await assertUnchanged(root, document);
   const api = dependencies.api ?? nativeAPI;
   if (preview.remote) await revalidateRemote(preview.remote, api);
+  // A Bundle ID read from Xcode can come from an xcconfig the snapshots don't cover, so
+  // read it again. Do it before the local edits add the Clerk package: until that
+  // resolves, xcodebuild can't report settings, and registration shouldn't wait on it.
+  let bundleIdentifierError: unknown;
+  if (preview.remote && preview.discovery?.bundleSource === "xcode") {
+    try {
+      const { input, contexts } = preview.inspection;
+      const current = await inspectSelectedProject(
+        {
+          root,
+          project: input.selection.project,
+          target: input.selection.targetId,
+          configuration: contexts.length === 1 ? input.selection.configuration : undefined,
+          sdk: input.selection.sdk,
+          products: input.products,
+          minimumVersion: input.minimumVersion,
+          signal,
+        },
+        dependencies.run,
+      );
+      if ((await discoverBundleIdentifier(current)) !== preview.remote.context.bundleIdentifier)
+        throw setupError("The Bundle ID changed after the preview; rerun clerk init.", true);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      bundleIdentifierError = error;
+    }
+  }
   const snapshots = [
     document,
     ...(preview.capabilities?.snapshots ?? []),
@@ -589,26 +616,7 @@ export async function applySetup(
   if (preview.remote) {
     try {
       await revalidateLocal();
-      // A Bundle ID read from Xcode can come from an xcconfig the snapshots don't
-      // cover, so read it again rather than register a stale one.
-      if (preview.discovery?.bundleSource === "xcode") {
-        const { input, contexts } = preview.inspection;
-        const current = await inspectSelectedProject(
-          {
-            root,
-            project: input.selection.project,
-            target: input.selection.targetId,
-            configuration: contexts.length === 1 ? input.selection.configuration : undefined,
-            sdk: input.selection.sdk,
-            products: input.products,
-            minimumVersion: input.minimumVersion,
-            signal,
-          },
-          dependencies.run,
-        );
-        if ((await discoverBundleIdentifier(current)) !== preview.remote.context.bundleIdentifier)
-          throw setupError("The Bundle ID changed after the preview; rerun clerk init.", true);
-      }
+      if (bundleIdentifierError) throw bundleIdentifierError;
       await applyRemote(preview.remote, api, signal);
       result.remote = "verified";
     } catch (error) {

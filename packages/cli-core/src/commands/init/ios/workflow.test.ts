@@ -660,6 +660,32 @@ test("package failure keeps SDK edits, still registers the app, and redacts cred
   expect(result.message).not.toContain("ghp_secret");
 });
 
+test("a Bundle ID read from Xcode still registers when the added package can't resolve", async () => {
+  const f = await discoveredFixture();
+  const preview = await prepareSetup(
+    {
+      ...f.options,
+      resolvePackages: true,
+      remote: { applicationId: identity.applicationId, appIdPrefix: identity.appIdPrefix },
+    },
+    f.dependencies,
+  );
+  // Like real Xcode: once the project references the unresolved package, settings fail too.
+  const original = f.dependencies.run;
+  const run: CommandRunner = async (command, root, signal) => {
+    const packageAdded = (await readFile(f.path, "utf8")).includes("clerk-ios");
+    if (command.includes("-resolvePackageDependencies") || packageAdded)
+      throw new XcodeCommandError(
+        "xcodebuild exited with code 74.",
+        "Could not resolve package dependencies: a resolved file is required",
+      );
+    return original(command, root, signal);
+  };
+  const result = await applySetup(preview, { ...f.dependencies, run });
+  expect(result).toMatchObject({ local: "updated", packages: "incomplete", remote: "verified" });
+  expect(f.state.events).toEqual(["register", "enable"]);
+});
+
 test("a Bundle ID changed after the preview is not registered", async () => {
   const f = await discoveredFixture();
   const preview = await prepareSetup(
