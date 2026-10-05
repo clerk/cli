@@ -235,23 +235,40 @@ test.each([
   },
 );
 
-test("a file another target uses only in another configuration still counts as shared", async () => {
-  // App: Debug uses MyApp.entitlements, Release uses Release.entitlements.
-  // Another target uses MyApp.entitlements only in Release.
-  const f = await fixture("ios", true);
-  const document = parse(await readFile(f.path, "utf8"));
-  (document.objects![ids.targetRelease] as any).buildSettings.CODE_SIGN_ENTITLEMENTS =
-    "MyApp/Release.entitlements";
-  await writeFile(f.path, build(document));
-  await writeFile(
-    join(f.root, "MyApp/Release.entitlements"),
-    await readFile(join(f.root, "MyApp/MyApp.entitlements"), "utf8"),
-  );
-  reportOtherTarget(f, { CODE_SIGN_ENTITLEMENTS: "MyApp/MyApp.entitlements" }, "Release");
+test.each([undefined, "Debug"])(
+  "a file another target uses only in another configuration still counts as shared (--xcode-configuration %p)",
+  async (configuration) => {
+    // App: Debug uses MyApp.entitlements, Release uses Release.entitlements.
+    // Another target uses MyApp.entitlements only in Release, even when only Debug is selected.
+    const f = await fixture("ios", true);
+    f.options.configuration = configuration;
+    const document = parse(await readFile(f.path, "utf8"));
+    (document.objects![ids.targetRelease] as any).buildSettings.CODE_SIGN_ENTITLEMENTS =
+      "MyApp/Release.entitlements";
+    await writeFile(f.path, build(document));
+    await writeFile(
+      join(f.root, "MyApp/Release.entitlements"),
+      await readFile(join(f.root, "MyApp/MyApp.entitlements"), "utf8"),
+    );
+    reportOtherTarget(f, { CODE_SIGN_ENTITLEMENTS: "MyApp/MyApp.entitlements" }, "Release");
 
+    const preview = await prepareSetup(f.options, f.dependencies);
+    expect(preview.capabilities?.status).toBe("manual");
+    expect(preview.capabilities?.reason).toContain("shared with another target");
+  },
+);
+
+test("a selected configuration falls back to manual setup when Xcode can't report the others", async () => {
+  const f = await fixture("ios", true);
+  f.options.configuration = "Debug";
+  const run = f.dependencies.run;
+  f.dependencies.run = async (command, root, signal) => {
+    if (command.includes("Release")) throw new Error("xcodebuild failed");
+    return run(command, root, signal);
+  };
   const preview = await prepareSetup(f.options, f.dependencies);
   expect(preview.capabilities?.status).toBe("manual");
-  expect(preview.capabilities?.reason).toContain("shared with another target");
+  expect(preview.capabilities?.reason).toContain("couldn't report every configuration");
 });
 
 test("stale entitlements and new-file collisions stop before any writes", async () => {

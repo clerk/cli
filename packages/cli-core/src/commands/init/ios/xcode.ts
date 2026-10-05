@@ -124,6 +124,8 @@ export interface Inspection {
   settings: Record<string, string>;
   contexts: { selection: Selection; settingsJSON: string; settings: Record<string, string> }[];
   uncheckedConfigurations: string[];
+  /** Every target's resolved settings in the unchecked configurations, for ownership checks; undefined when Xcode couldn't report them. */
+  uncheckedSettingsJSON: string[] | undefined;
 }
 
 async function generator(root: string, project: string): Promise<SetupInput["managedBy"]> {
@@ -217,11 +219,30 @@ export async function inspectSelectedProject(
       "Configurations resolve to different platforms; inspect them separately with --xcode-configuration.",
     );
   const { selection, settingsJSON, settings } = contexts[0]!;
+  const uncheckedConfigurations = declared.filter((name) => !configurations.includes(name));
+  // Another target may use the app's entitlements only in a configuration that wasn't selected.
+  let uncheckedSettingsJSON: string[] | undefined = [];
+  for (const configuration of uncheckedConfigurations) {
+    try {
+      const output = await run(
+        settingsCommand({ ...selection, configuration }),
+        root,
+        options.signal,
+      );
+      JSON.parse(output);
+      uncheckedSettingsJSON.push(output);
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      uncheckedSettingsJSON = undefined;
+      break;
+    }
+  }
   return {
     document,
     settings,
     contexts,
-    uncheckedConfigurations: declared.filter((name) => !configurations.includes(name)),
+    uncheckedConfigurations,
+    uncheckedSettingsJSON,
     input: {
       selection,
       settingsJSON,
