@@ -58,7 +58,8 @@ async function generatePlatformPackage(target: Target, version: string): Promise
   const pkg: Record<string, unknown> = {
     name: packageName(target.name),
     version,
-    description: `Clerk CLI binary for ${target.name}`,
+    description: `Platform binary (${target.name}) for the clerk package. Install clerk instead of this package.`,
+    keywords: [],
     license: "MIT",
     repository: { type: "git", url: "https://github.com/clerk/cli.git" },
     homepage: "https://clerk.com/docs",
@@ -98,17 +99,28 @@ await publishDependenciesBeforePackage(
         }
         console.log(`Publishing ${name}@${version}...`);
         const dir = await generatePlatformPackage(target, version);
-        await publish(dir, { dryRun, tag });
+        if ((await publish(dir, { dryRun, tag })) === "already-published") {
+          console.log(`${name}@${version} was already published by an earlier attempt`);
+        }
       },
       waitUntilAvailable: dryRun
         ? undefined
         : async () => {
+            // Best effort. npm accepted the publish, so the version exists; the
+            // registry can take several minutes to serve it back (observed
+            // >5 min on the uncached per-version endpoint). Failing here only
+            // strands the wrapper, which is subject to the same read lag.
             console.log(`Waiting for ${name}@${version} to become available on npm...`);
-            await waitUntilPublished(name, version, {
-              intervalMs: 2_000,
-              timeoutMs: 120_000,
-              isPublished,
-            });
+            try {
+              await waitUntilPublished(name, version, {
+                intervalMs: 5_000,
+                timeoutMs: 120_000,
+                isPublished,
+              });
+            } catch (error) {
+              const reason = error instanceof Error ? error.message : String(error);
+              console.log(`::warning::${reason}; continuing because npm accepted the publish`);
+            }
           },
     };
   }),
@@ -134,7 +146,10 @@ await publishDependenciesBeforePackage(
           console.log(`Skipping ${wrapperName}@${version} (already published)`);
         } else {
           console.log(`Publishing ${wrapperName}@${version}...`);
-          await publish(join(import.meta.dir, "../packages/cli"), { dryRun, tag });
+          const result = await publish(join(import.meta.dir, "../packages/cli"), { dryRun, tag });
+          if (result === "already-published") {
+            console.log(`${wrapperName}@${version} was already published by an earlier attempt`);
+          }
         }
       } finally {
         await Bun.write(WRAPPER_PKG_PATH, wrapperRaw);

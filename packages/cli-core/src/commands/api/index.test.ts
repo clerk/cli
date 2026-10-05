@@ -10,6 +10,7 @@ import {
   configStubs,
   libPromptsStubs,
   stubFetch,
+  captureTelemetryPayload,
 } from "../../test/lib/stubs.ts";
 
 let mockStoredToken: string | null = null;
@@ -877,5 +878,126 @@ describe("api command", () => {
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
     }
+  });
+
+  // The API error is caught here to put the raw body on stdout, so the throw
+  // path never classifies it. What the event carries instead — per status,
+  // since telemetry has neither the status nor the endpoint.
+  describe("what telemetry records as the error code", () => {
+    const clerkBody = (code: string) => JSON.stringify({ errors: [{ code, message: "" }] });
+
+    function recordedFor(
+      endpoint: string,
+      options: Record<string, unknown> = {},
+      caller: { userSuppliedPath?: boolean } = {},
+    ) {
+      return captureTelemetryPayload("api", async () => {
+        const { api } = await import("./index.ts");
+        await api(endpoint, undefined, options, caller);
+      });
+    }
+
+    test("a Clerk error code in the response body", async () => {
+      stubFetch(async () => new Response(clerkBody("resource_not_found"), { status: 404 }));
+      const { payload } = await recordedFor("/users/bad_id");
+      expect(payload.outcome).toBe("error");
+      expect(payload.exit_code).toBe(1);
+      expect(payload.error_code).toBe("resource_not_found");
+    });
+
+    test.each([
+      [429, "api_rate_limited"],
+      [404, "api_not_found"],
+      [400, "api_client_error"],
+      [500, "api_error"],
+    ])("an uncoded %i is api-prefixed by status", async (status, expected) => {
+      stubFetch(async () => new Response("<html>nope</html>", { status }));
+      const { payload } = await recordedFor("/organization_role");
+      expect(payload.outcome).toBe("error");
+      expect(payload.exit_code).toBe(1);
+      expect(payload.error_code).toBe(expected);
+    });
+
+    // `--fapi` only decides whether there is a catalog to suggest searching;
+    // the status is the status.
+    test("--fapi makes no difference to an uncoded 404", async () => {
+      process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform";
+      const pk = `pk_test_${btoa("clerk.example.com$")}`;
+      stubFetch(async (input) => {
+        if (input.toString().includes("/v1/platform/applications/app_1")) {
+          return new Response(
+            JSON.stringify({
+              application_id: "app_1",
+              instances: [
+                { instance_id: "ins_dev", environment_type: "development", publishable_key: pk },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response("404 page not found", { status: 404 });
+      });
+      const { payload } = await recordedFor("/bogus", {
+        fapi: true,
+        app: "app_1",
+        instance: "dev",
+      });
+      expect(payload.error_code).toBe("api_not_found");
+      expect(captured.err).not.toContain("clerk api ls");
+    });
+
+    // The same bare 404 on a path the interactive builder chose from the
+    // CLI's own catalog is the CLI's failure, not a typo, and must not be
+    // filed with the typed ones.
+    test("an uncoded 404 on a catalog endpoint is cli_endpoint_not_found", async () => {
+      stubFetch(async () => new Response("404 page not found", { status: 404 }));
+      const { payload } = await recordedFor("/organization_role", {}, { userSuppliedPath: false });
+      expect(payload.outcome).toBe("error");
+      expect(payload.exit_code).toBe(1);
+      expect(payload.error_code).toBe("cli_endpoint_not_found");
+      // A coded 404 names the resource, whoever wrote the path.
+      stubFetch(async () => new Response(clerkBody("resource_not_found"), { status: 404 }));
+      const coded = await recordedFor("/users/bad_id", {}, { userSuppliedPath: false });
+      expect(coded.payload.error_code).toBe("resource_not_found");
+    });
+
+    // Not an ApiError, so the local catch rethrows and the throw path
+    // classifies it — unchanged, and pinned so the split cannot widen into it.
+    test("a rejected fetch is still a thrown unexpected_error", async () => {
+      stubFetch(async () => {
+        throw new Error("socket hang up");
+      });
+      const { payload, error } = await captureTelemetryPayload("api", () => runApi("/users"), {
+        captureError: true,
+      });
+      expect(error).toBeInstanceOf(Error);
+      expect(payload.outcome).toBe("error");
+      expect(payload.error_code).toBe("unexpected_error");
+    });
+
+    test("a successful request is a success with no code", async () => {
+      const { payload } = await recordedFor("/users");
+      expect(payload.outcome).toBe("success");
+      expect(payload.exit_code).toBe(0);
+      expect(payload.error_code).toBeNull();
+    });
+
+    // The printed output is the reason the error is caught locally; recording
+    // it must not change a byte of it.
+    test("--include on an error still prints the headers and body, with the code on the event", async () => {
+      stubFetch(
+        async () =>
+          new Response('{"error":"bad"}', {
+            status: 400,
+            headers: { "x-request-id": "req_err" },
+          }),
+      );
+      const { payload } = await recordedFor("/users", { include: true });
+      expect(captured.err).toContain("HTTP 400");
+      expect(captured.err).toContain("x-request-id: req_err");
+      expect(captured.out).toContain('"error": "bad"');
+      expect(payload.error_code).toBe("api_client_error");
+      expect(payload.exit_code).toBe(1);
+    });
   });
 });

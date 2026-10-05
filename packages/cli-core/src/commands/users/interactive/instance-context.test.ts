@@ -1,6 +1,6 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
-import { stubFetch } from "../../../test/lib/stubs.ts";
+import { configStubs, stubFetch } from "../../../test/lib/stubs.ts";
 
 const mockResolveAppContext = mock();
 const mockResolveProfile = mock();
@@ -15,9 +15,7 @@ mock.module("../../../lib/listage.ts", () => ({
 }));
 
 mock.module("../../../lib/config.ts", () => ({
-  // fetch.ts (imported process-wide) reads these from config.ts.
-  getTelemetryDisabled: async () => false,
-  getTelemetryNoticeShown: async () => true,
+  ...configStubs,
   resolveAppContext: (...args: unknown[]) => mockResolveAppContext(...args),
   resolveProfile: (...args: unknown[]) => mockResolveProfile(...args),
   resolveFetchedApplicationInstance: (

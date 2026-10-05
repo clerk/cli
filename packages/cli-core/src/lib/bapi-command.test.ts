@@ -1,6 +1,9 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { BapiError, CliError, ERROR_CODE } from "./errors.ts";
-import { useCaptureLog } from "../test/lib/stubs.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { captureTelemetryPayload, useCaptureLog } from "../test/lib/stubs.ts";
 
 const configModule = await import("./config.ts");
 const plapiModule = await import("./plapi.ts");
@@ -71,6 +74,30 @@ describe("bapi-command", () => {
       ],
     });
     expect(process.exitCode).toBe(1);
+  });
+
+  // Same catch-and-print shape as `users create`: the error never reaches the
+  // throw path, so this is where its code has to be handed to telemetry.
+  test("hands telemetry the code of the BAPI error it swallowed", async () => {
+    const configDir = await mkdtemp(join(tmpdir(), "clerk-bapi-command-telemetry-"));
+    configModule._setConfigDir(configDir);
+    try {
+      const { payload } = await captureTelemetryPayload("users ban", () => {
+        handleBapiError(
+          BapiError.fromBody(
+            404,
+            JSON.stringify({ errors: [{ code: "resource_not_found", message: "" }] }),
+            new Headers(),
+          ),
+        );
+      });
+      expect(payload.outcome).toBe("error");
+      expect(payload.exit_code).toBe(1);
+      expect(payload.error_code).toBe("resource_not_found");
+    } finally {
+      configModule._setConfigDir(undefined);
+      await rm(configDir, { recursive: true, force: true });
+    }
   });
 
   test("resolves secret key from explicit app and instance", async () => {

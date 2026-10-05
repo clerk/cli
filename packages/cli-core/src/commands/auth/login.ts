@@ -6,7 +6,7 @@ import {
   revokeToken,
   type UserInfo,
 } from "../../lib/token-exchange.ts";
-import { getOAuthConfig } from "../../lib/environment.ts";
+import { buildDashboardUrl, getOAuthConfig } from "../../lib/environment.ts";
 import {
   createOAuthSession,
   getStoredSession,
@@ -224,15 +224,34 @@ const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
     "Auto-claim failed due to a temporary error. It will be retried on your next `clerk auth login`.",
 };
 
+function claimWarning(result: AutoclaimResult): string | undefined {
+  if (result.status === "managed_workspace") {
+    // The API message already names the provider and says what to do.
+    return `Unable to claim - ${result.longMessage ?? "this workspace is managed by an integration provider."}`;
+  }
+  return CLAIM_WARNINGS[result.status];
+}
+
 async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
   const result = await attemptAutoclaim(cwd);
 
   if (result.status === "claimed") {
     const label = result.app.name || result.app.application_id;
     log.success(`Claimed and linked application: \`${label}\``);
+    // First time this app has a home in an account; say where it is.
+    // Deserialized API JSON; a missing array must not fail a claim that
+    // already succeeded server-side.
+    const development = result.app.instances?.find(
+      (instance) => instance.environment_type === "development",
+    );
+    if (development) {
+      // URL on its own line: with it, the sentence is wider than the frame.
+      log.info("Your app now lives in your Clerk account:");
+      log.info(`  ${buildDashboardUrl(result.app.application_id, development.instance_id)}`);
+    }
   }
 
-  const warning = CLAIM_WARNINGS[result.status];
+  const warning = claimWarning(result);
   if (warning) log.warn(warning);
 
   return result;
@@ -243,6 +262,7 @@ async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[
     return result.envPulled ? NEXT_STEPS.AUTOCLAIMED : NEXT_STEPS.AUTOCLAIMED_NO_ENV;
   }
   if (result.status === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
+  if (result.status === "managed_workspace") return NEXT_STEPS.AUTOCLAIM_SWITCH_WORKSPACE;
   if (result.status === "not_found" || result.status === "no_organization") {
     return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   }

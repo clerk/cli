@@ -49,9 +49,10 @@ In agent mode, `clerk deploy status` emits JSON on stdout with:
 - `complete`: `true` only when the domain is verified and all supported OAuth providers enabled in development have production credentials.
 - `state`: `complete`, `domain_pending`, `oauth_pending`, `domain_provisioning`, `not_started`, or `interrupted`.
 - `domainStatus`: per-component DNS, SSL, and email DNS status when a domain exists.
-- `pendingDnsRecords`: CNAME records still tied to pending DNS-backed checks.
+- `pendingDnsRecords`: CNAME records still tied to pending DNS-backed checks, each with `host`, `value`, and Clerk's `required` flag (some targets are optional).
 - `oauth`: configured, pending, and unsupported provider slugs.
-- `nextAction`: the next step an agent should present to the user, including the Clerk Dashboard domains URL when a production instance exists. Agents should ask whether to open that URL for the user.
+- `urls`: the production instance's Dashboard page (`instance`) and its Domains page (`domains`), or `null` before a production instance exists. The same URLs appear in `nextAction` prose; this field is the one to read programmatically.
+- `nextAction`: the next step an agent should present to the user. While domain setup remains (`domain_provisioning` and `domain_pending`) it includes the Clerk Dashboard domains URL, and agents should ask whether to open that URL for the user; `not_started`, `interrupted`, and `oauth_pending` carry no URL, and `complete` carries the instance root instead. While DNS or email DNS records are unverified it says to add the records in `pendingDnsRecords` at the domain's DNS provider rather than to keep polling; if that list is empty (the API returned no CNAME targets) it says so and points at the Dashboard Domains page instead; when only SSL is pending it says to wait. At `complete` it says the production keys still have to reach the host (`clerk env pull --instance prod`, alongside the other Clerk variables in the env file) and to sign up on the domain to confirm — "complete" is Clerk's side only — and links the instance root (users, settings, billing) instead of the domains page, since nothing is left to monitor there. At `complete` and `oauth_pending` it also names any providers in `oauth.unsupported`, since `oauth.complete` covers only what the CLI manages and those providers' sign-in fails in production until configured in the Dashboard. `oauth_pending` carries no Domains URL (the domain is verified). Human mode prints its own sentence, rendered from the same classification of the report (`deployNextStep` in `status.ts`) rather than by rewriting the agent's: no unsupported-provider clause (the warning row above already says it), no "ask the user" (the reader is the user), no `--wait` (human mode always waits; the wizard is what resumes setup), and, when records are pending, the records themselves printed first so the sentence only says what happens once they are added. Before a production instance exists, human mode omits the OAuth row rather than printing "pending: none" for something that was never checked.
 
 Exit codes:
 
@@ -60,6 +61,33 @@ Exit codes:
 | `0`  | Deploy is complete and verified.                                                              |
 | `1`  | The check ran successfully, but deploy is incomplete. Inspect `state` and `nextAction`.       |
 | else | A real CLI error occurred, such as not linked or an API failure, via the standard error path. |
+
+### What telemetry records about a deploy run
+
+Telemetry's `outcome` says what happened to the _command_, not to the deploy. A `clerk deploy status` run on a deploy that is not finished records `outcome: "incomplete"` rather than `"error"`: the check ran and answered, and nothing failed. It still exits 1, so `clerk deploy status && ./cutover.sh` stops as before, and it carries no error code, because nothing was thrown. A run that fails for a real reason — not linked, an API error — throws and is recorded as an error with that error's code, unchanged.
+
+`success` does not mean the deploy is finished either. `clerk deploy` under an agent prints a status report and exits 0 even when no production instance exists. How far a deploy got is carried by the `stage` and `components` payload fields, never by `outcome`.
+
+Four ways a run ends with the deploy unfinished and nothing broken. All four exit the way they always have, and the three that exit nonzero are told apart by their error code rather than by `exit_code`, which cannot separate the first from the third since both are 1. An actual failure — an unresolvable production instance, a domain Clerk did not return — is not one of these and carries its own code.
+
+| Ending                                                              | `outcome` | `error_code`        | `pause_step`             | Exit |
+| ------------------------------------------------------------------- | --------- | ------------------- | ------------------------ | ---- |
+| The user skipped an OAuth provider                                  | `error`   | `deploy_paused`     | the step they stopped on | 1    |
+| The user interrupted a prompt after the production instance existed | `abort`   | `deploy_cancelled`  | the step they stopped on | 130  |
+| Every DNS component verified, Clerk still provisioning              | `error`   | `deploy_finalizing` | null                     | 1    |
+| The user chose "skip" at DNS verification                           | `success` | null                | null                     | 0    |
+
+`pause_step` is null on the finalizing row on purpose: nobody stopped there, the deploy is waiting on Clerk, and recording `dns` would count a drop-off that never happened. The DNS skip is a finished command, not a pause — the wizard prints its summary and exits 0 — so it carries no code, and it is the row to remember when the `paused` class contains no DNS traffic. A Ctrl-C at a prompt _before_ the production instance exists is not any of these either — there is no state to preserve, so it stays a plain `abort` at exit 0 (a Ctrl-C while a request is in flight is the signal handler's, at exit 130).
+
+The interrupted row is `abort`, like a Ctrl-C anywhere else, so the same keypress is not counted as an error when it happens to land on a prompt; `deploy_cancelled` and `pause_step` still say which prompt.
+
+`stage` is the state the deploy was in when the run ended, on every `deploy` and `deploy status` event: the same value the status report's `state` field prints, so a wizard run and a `clerk deploy status` run a second later agree about the same deploy. It is the deploy's state, not the wizard's position. On a fresh deploy the DNS handoff comes before OAuth setup, so someone who skips a provider is at `domain_pending` with `pause_step: "oauth"`; `oauth_pending` there would contradict the status command. One value per run, the last one observed.
+
+It is null when no reliable state was established by the time the run ended, and that null is a different answer from `not_started`. That covers a run that failed before reading anything — not linked, a failed sign-in, an API error on the first read — and two cases where a state was invalidated or never observed: a resume whose domain read failed and substituted an all-pending status so the user could retry from the screen, where the user then skipped verification; and a fresh run whose create call answered that an instance already exists, after which the resume could not read it. Two states are known without a status read: a fresh deploy starts at `not_started`, and a newly created instance is at `domain_pending` the moment Clerk returns it with a domain (`domain_provisioning` if it did not). Every other value comes from a read that succeeded.
+
+`components` says which of the four pieces were verified when the run ended: `dns`, `ssl` and `mail` from the domain-status response, `oauth` from whether every required provider has production credentials — the same facts the status report's `domainStatus` and `oauth.complete` print. Each is `true`, `false` or null, and null means never observed, which is a different answer from `false`: a failed status call is not a DNS failure. The four come from two reads, so they are two observations. A domain poll rewrites the first three and leaves `oauth` as it was; a production-configuration read or a credential save rewrites `oauth` and leaves the other three. Within a group the last observation wins. A read that never happened, or a substituted one, writes nothing, and each read is recorded the moment it succeeds, so a failure in the other read does not discard it. So a resume whose domain read failed sends `oauth` from its configuration read and null for the other three; a `clerk deploy status` whose domain read failed does the same, with a null stage, since no state was established. On a fresh deploy, `oauth` is written only once every required credential is saved (`true`), because until then nothing has read the production configuration — a save proves only the provider it saved. A fresh run that pauses part-way through OAuth setup therefore sends null for `oauth` even though `clerk deploy status` on the same deploy would read the configuration and say `false`; that is the one place the two are allowed to differ, and null rather than an assumed `false` is deliberate. A fresh run that saves every provider's credentials and skips DNS verification sends `oauth: true` with the other three null. `oauth` reflects the CLI's required-provider rule as it stands; when GROW-1236 changes that rule, this value follows, because it is computed from the same report.
+
+What the warehouse depends on, as of data-platform#604, so a change here is checked there too. Its classifier reads `outcome` before anything else, which is why a command may not declare `success` for a nonzero exit. Its payload contract test accepts exactly the five deploy `stage` values on `deploy run` and `deploy status`, which is why a finished deploy is `complete` and never the shared `done`. It alarms on a missing `pause_step` only for `deploy_paused` and `deploy_cancelled`, so a new ending that should carry a step needs adding there. `pause_step` and `components` are top-level payload keys, null on other commands, because the staging model reads those exact paths.
 
 Agent mode is detected via the mode system (`src/mode.ts`), which checks in priority order:
 
@@ -176,10 +204,10 @@ Most providers ask for `client_id` and `client_secret`. Provider-specific schema
 
 The CLI keeps small local overrides for provider setup details that schema does not fully describe:
 
-| Provider | Override                                                                                   |
-| -------- | ------------------------------------------------------------------------------------------ |
-| Google   | Optional Google Cloud Console JSON import and OAuth consent screen warning                 |
-| Apple    | `.p8` file import, production-required `team_id` and `key_id`, native-only field omissions |
+| Provider | Override                                                                                                                                                                   |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Google   | Optional Google Cloud Console JSON import, OAuth consent screen warning, and a tip that the consent-screen name is what users see, so choose the name you want them to see |
+| Apple    | `.p8` file import, production-required `team_id` and `key_id`, native-only field omissions                                                                                 |
 
 For Google, the wizard can load `client_id` and `client_secret` from the top-level `web` object in a Google Cloud Console OAuth client JSON file, or from `installed` for desktop-style client downloads. The file contents are used in memory and are not written to CLI config.
 
