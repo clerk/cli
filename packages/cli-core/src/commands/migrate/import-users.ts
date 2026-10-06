@@ -176,6 +176,9 @@ type CreateContext = {
   schedule: ApiScheduler;
 };
 
+/** A create a Ctrl-C stopped before it went out: neither a failure nor unknown. */
+class NotSentError extends Error {}
+
 /**
  * True when no answer says whether a request landed: an abort, a network
  * error, or a 5xx after which Clerk may still have committed it. A 4xx, and a
@@ -288,7 +291,7 @@ async function createUser(
   const create = async (body: Record<string, unknown>) =>
     ctx.schedule(async () => {
       // A Ctrl-C hands the slot on to queued creates; none of them was sent.
-      interruptSignal().throwIfAborted();
+      if (interruptSignal().aborted) throw new NotSentError();
       sending();
       return bapiRequest({
         method: "POST",
@@ -419,6 +422,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         { onRetry: ({ message }) => retries.push(message) },
       );
     } catch (error) {
+      // Unrecorded, so a re-run picks the user up like any other.
+      if (error instanceof NotSentError) return;
       if (error instanceof RateLimitExceededError) {
         recordFailure(user.userId, error.message, "429", retries, false);
         return;
