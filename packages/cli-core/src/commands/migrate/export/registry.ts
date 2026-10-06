@@ -11,6 +11,7 @@
  */
 
 import { exportAuth0 } from "./auth0.ts";
+import { exportBetterAuth } from "./betterauth.ts";
 import { exportClerk } from "./clerk.ts";
 import { exportFirebase } from "./firebase.ts";
 import { exportSupabase } from "./supabase.ts";
@@ -53,6 +54,13 @@ export const exportPlatforms: ExportRegistryEntry[] = [
     description: "A Firebase project, via Identity Toolkit",
     sourceKey: "firebase",
     run: async (options) => exportFirebase(options),
+  },
+  {
+    key: "betterauth",
+    label: "Better Auth",
+    description: "A Better Auth database — plugin columns detected automatically",
+    sourceKey: "betterauth",
+    run: async (options) => exportBetterAuth(options),
   },
   {
     key: "workos",
