@@ -221,9 +221,20 @@ describe("generateCompletions", () => {
     });
 
     test("completes --source with the built-in migrate sources", () => {
-      const names = completionNames("migrate", "import", "--source", "");
-      expect(names).toContain("clerk");
-      expect(names).toContain("betterauth");
+      const saved = process.env.CLERK_EXPERIMENTAL;
+      process.env.CLERK_EXPERIMENTAL = "migrate";
+      try {
+        const names = generateCompletions(createProgram(), [
+          "migrate",
+          "import",
+          "--source",
+          "",
+        ]).completions.map((c) => c.name);
+        expect(names).toEqual(["clerk", "supabase"]);
+      } finally {
+        if (saved === undefined) delete process.env.CLERK_EXPERIMENTAL;
+        else process.env.CLERK_EXPERIMENTAL = saved;
+      }
     });
 
     test("returns empty for options with unknown values (file paths)", () => {
@@ -276,12 +287,6 @@ describe("generateCompletions", () => {
       expect(names).toContain("users");
       expect(names).toContain("api-keys");
       expect(names).toContain("settings");
-    });
-
-    test("migrate sources: suggests the built-in sources", () => {
-      const names = completionNames("migrate", "sources", "");
-      expect(names).toContain("supabase");
-      expect(names).toContain("workos");
     });
 
     test("open dashboard: filters subpaths by prefix", () => {

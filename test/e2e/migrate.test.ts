@@ -2,8 +2,9 @@
  * Live-BAPI tests for `clerk migrate import`, covering what only a real
  * instance can answer:
  *
- * - A Better Auth scrypt hash, sent as `scrypt_werkzeug`, verifies against the
- *   password it was made from. A unit test can only check the string shape.
+ * - A Supabase export round-trips: the dry run counts it without writing, the
+ *   import creates every user, and each bcrypt hash verifies against the
+ *   password it was made from.
  * - A user whose only email is unverified, imported into an instance that
  *   requires an email, is refused by Clerk. The import's checks reject that
  *   user up front on the strength of this test, so it checks both halves.
@@ -13,7 +14,7 @@
  */
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { randomBytes, scryptSync } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,7 +24,8 @@ const CLI_PATH = join(import.meta.dir, "../../packages/cli-core/src/cli.ts");
 let APP_ID: string;
 let workDir: string;
 let emailRequired = false;
-const importRuns: string[] = [];
+/** Every Clerk user an import created, deleted in `afterAll`. */
+const createdIds: string[] = [];
 
 async function cli(args: string[]) {
   return Bun.$`bun ${CLI_PATH} ${args} --app ${APP_ID}`
@@ -31,6 +33,7 @@ async function cli(args: string[]) {
       ...process.env,
       CLERK_CONFIG_DIR: join(workDir, "config"),
       CLERK_MIGRATE_DIR: join(workDir, "runs"),
+      CLERK_EXPERIMENTAL: "migrate",
       CLERK_TELEMETRY_DISABLED: "1",
     })
     .cwd(workDir)
@@ -58,77 +61,99 @@ beforeAll(async () => {
   emailRequired = Boolean(authEmail?.required_for_sign_up);
 });
 
-// Undo every import, so the test app does not fill up with migrated users.
+// Delete every imported user, so the test app does not fill up.
 afterAll(async () => {
-  await Promise.all(importRuns.map(async (runId) => cli(["migrate", "undo", runId, "--yes"])));
+  await Promise.all(createdIds.map(async (id) => cli(["api", `/users/${id}`, "-X", "DELETE"])));
   rmSync(workDir, { recursive: true, force: true });
 }, 60_000);
 
 /**
- * Imports `users` as a Better Auth export and returns each user's latest run
- * line. A user has several (`creating`, then `created`); the last one wins,
- * as it does for `runs` and `undo`.
+ * Each user's latest line in run `runId`. A user has several (`creating`,
+ * then `created`); the last one wins.
  */
-async function importBetterAuth(users: Record<string, unknown>[], extra: string[] = []) {
-  const file = join(workDir, `betterauth-${randomBytes(4).toString("hex")}.json`);
-  writeFileSync(file, JSON.stringify(users));
-
-  await cli(["migrate", "import", file, "--source", "betterauth", "--yes", ...extra]);
-
-  const runsDir = join(workDir, "runs");
-  const [runId] = readdirSync(runsDir)
-    .filter(
-      (id) => JSON.parse(readFileSync(join(runsDir, id, "run.json"), "utf-8")).kind === "import",
-    )
-    .filter((id) => !importRuns.includes(id));
-  if (!runId) throw new Error("The import recorded no run.");
-  importRuns.push(runId);
-
+function latestLines(runId: string): Record<string, unknown>[] {
   const latest = new Map<unknown, Record<string, unknown>>();
-  for (const line of readFileSync(join(runsDir, runId, "users.ndjson"), "utf-8")
+  for (const line of readFileSync(join(workDir, "runs", runId, "users.ndjson"), "utf-8")
     .trim()
     .split("\n")) {
     const parsed = JSON.parse(line) as Record<string, unknown>;
     latest.set(parsed.sourceId, parsed);
   }
+  for (const line of latest.values()) {
+    if (line.status === "created" && typeof line.clerkId === "string")
+      createdIds.push(line.clerkId);
+  }
   return [...latest.values()];
 }
 
-/** A password hashed exactly the way Better Auth's default hasher does it. */
-function betterAuthHash(password: string): string {
-  const salt = randomBytes(16).toString("hex");
-  const key = scryptSync(password.normalize("NFKC"), salt, 64, {
-    N: 16384,
-    r: 16,
-    p: 1,
-    maxmem: 128 * 16384 * 16 * 2,
-  });
-  return `${salt}:${key.toString("hex")}`;
+function writeExport(users: Record<string, unknown>[]): string {
+  const file = join(workDir, `supabase-${randomBytes(4).toString("hex")}.json`);
+  writeFileSync(file, JSON.stringify(users));
+  return file;
 }
 
-test("a Better Auth scrypt hash imports and verifies against its password", async () => {
-  const hex = randomBytes(6).toString("hex");
-  const password = `Migrate${hex}!1`;
+test("a Supabase export dry-runs, imports, and its passwords verify", async () => {
+  const users = await Promise.all(
+    [0, 1].map(async () => {
+      const hex = randomBytes(6).toString("hex");
+      const password = `Migrate${hex}!1`;
+      return {
+        password,
+        record: {
+          id: `sb_${hex}`,
+          email: `e2e-${hex}+clerk_test@clerkcookie.com`,
+          email_confirmed_at: "2024-06-29 20:25:06+00",
+          encrypted_password: await Bun.password.hash(password, { algorithm: "bcrypt", cost: 10 }),
+        },
+      };
+    }),
+  );
+  const file = writeExport(users.map((user) => user.record));
 
-  const [line] = await importBetterAuth([
-    {
-      user_id: `ba_${hex}`,
-      email: `${hex}+clerk_test@clerkcookie.com`,
-      email_verified: true,
-      password_hash: betterAuthHash(password),
-    },
+  const dryRun = await cli([
+    "migrate",
+    "import",
+    file,
+    "--source",
+    "supabase",
+    "--dry-run",
+    "--json",
   ]);
-  expect(line).toMatchObject({ status: "created" });
+  expect(JSON.parse(dryRun.stdout.toString())).toMatchObject({
+    dryRun: true,
+    checks: { importable: 2 },
+  });
+  expect(readdirSync(workDir)).not.toContain("runs");
 
-  const verify = await cli([
-    "api",
-    `/users/${line?.clerkId as string}/verify_password`,
-    "-X",
-    "POST",
-    "-d",
-    JSON.stringify({ password }),
+  const imported = await cli([
+    "migrate",
+    "import",
+    file,
+    "--source",
+    "supabase",
+    "--yes",
+    "--json",
   ]);
-  expect(JSON.parse(verify.stdout.toString())).toMatchObject({ verified: true });
+  const result = JSON.parse(imported.stdout.toString()) as {
+    run: { id: string };
+    result: { created: number };
+  };
+  expect(result.result.created).toBe(2);
+
+  const lines = latestLines(result.run.id);
+  for (const { password, record } of users) {
+    const line = lines.find((candidate) => candidate.sourceId === record.id);
+    expect(line).toMatchObject({ status: "created" });
+    const verify = await cli([
+      "api",
+      `/users/${line?.clerkId as string}/verify_password`,
+      "-X",
+      "POST",
+      "-d",
+      JSON.stringify({ password }),
+    ]);
+    expect(JSON.parse(verify.stdout.toString())).toMatchObject({ verified: true });
+  }
 }, 60_000);
 
 test("a user whose only email is unverified is refused where email is required", async () => {
@@ -150,12 +175,22 @@ test("a user whose only email is unverified is refused where email is required",
   expect(direct.exitCode).not.toBe(0);
 
   // And the import's checks reject them before asking Clerk.
-  const [line] = await importBetterAuth(
-    [{ user_id: `ba_${hex}`, email: `${hex}+clerk_test@clerkcookie.com`, email_verified: false }],
-    ["--allow-partial"],
-  );
-  expect(line).toMatchObject({
-    status: "skipped",
-    reason: "only has an unverified email, and this instance requires an email",
-  });
+  const file = writeExport([{ id: `sb_${hex}`, email: `e2e-${hex}+clerk_test@clerkcookie.com` }]);
+  const imported = await cli([
+    "migrate",
+    "import",
+    file,
+    "--source",
+    "supabase",
+    "--allow-partial",
+    "--yes",
+    "--json",
+  ]);
+  const { run } = JSON.parse(imported.stdout.toString()) as { run: { id: string } };
+  expect(latestLines(run.id)).toEqual([
+    expect.objectContaining({
+      status: "skipped",
+      reason: "only has an unverified email, and this instance requires an email",
+    }),
+  ]);
 }, 60_000);
