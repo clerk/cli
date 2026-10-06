@@ -297,6 +297,23 @@ describe("generateCompletions", () => {
       expect(names).toContain("settings");
     });
 
+    test("migrate sources: suggests the built-in sources", () => {
+      const saved = process.env.CLERK_EXPERIMENTAL;
+      process.env.CLERK_EXPERIMENTAL = "migrate";
+      try {
+        const names = generateCompletions(createProgram(), [
+          "migrate",
+          "sources",
+          "",
+        ]).completions.map((c) => c.name);
+        expect(names).toContain("supabase");
+        expect(names).toContain("workos");
+      } finally {
+        if (saved === undefined) delete process.env.CLERK_EXPERIMENTAL;
+        else process.env.CLERK_EXPERIMENTAL = saved;
+      }
+    });
+
     test("open dashboard: filters subpaths by prefix", () => {
       const names = completionNames("open", "dashboard", "u");
       expect(names).toContain("users");
