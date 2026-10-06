@@ -93,7 +93,7 @@ Agent mode is detected via the mode system (`src/mode.ts`), which checks in prio
 
 1. `--mode` CLI flag
 2. `CLERK_MODE` environment variable
-3. Codex markers (`CODEX_*`, see `lib/env-signals.ts`): Codex attaches a TTY to every command, so it is agent mode regardless of the next check
+3. The Codex run markers in `CODEX_ENV_VARS` (`lib/env-signals.ts`): Codex attaches a TTY to every command, so it is agent mode regardless of the next check
 4. TTY detection (`process.stdout.isTTY`)
 
 The human-mode wizard still starts only in human mode.

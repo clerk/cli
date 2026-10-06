@@ -47,6 +47,8 @@ describe("isCodexEnv", () => {
 
   test("false for other agents, empty values, and nothing set", () => {
     expect(isCodexEnv({ CLAUDECODE: "1" })).toBe(false);
+    // CODEX_HOME is user shell config, not a run marker; see the CODEX_ENV_VARS comment.
+    expect(isCodexEnv({ CODEX_HOME: "/Users/me/.codex" })).toBe(false);
     expect(isCodexEnv({ CODEX_THREAD_ID: "" })).toBe(false);
     expect(isCodexEnv({})).toBe(false);
   });
