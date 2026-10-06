@@ -1,8 +1,8 @@
 /**
  * Resolving a `--db-url` for the database-backed exports.
  *
- * Shared by the database-backed exports: each takes one connection string,
- * from a flag, an environment variable, or a prompt.
+ * Shared by supabase, authjs and betterauth: all three take one connection
+ * string, from a flag, an environment variable, or a prompt.
  */
 
 import { CliError, throwUsageError } from "../../../lib/errors.ts";

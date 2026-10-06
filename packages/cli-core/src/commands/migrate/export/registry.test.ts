@@ -8,6 +8,7 @@ describe("export registry", () => {
       "clerk",
       "auth0",
       "supabase",
+      "authjs",
       "firebase",
       "betterauth",
       "workos",
