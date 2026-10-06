@@ -167,7 +167,7 @@ describe("consent", () => {
     expect(created()).toHaveLength(0);
   });
 
-  test("an unrecognized password hasher aborts before any request", async () => {
+  test("an unrecognized password hasher is rejected before any request", async () => {
     fs.writeFileSync(
       path.join(workDir, "export.json"),
       JSON.stringify([
@@ -180,7 +180,7 @@ describe("consent", () => {
       ]),
     );
 
-    await expect(run(importOptions)).rejects.toThrow(/Invalid password hasher/);
+    await expect(run(importOptions)).rejects.toThrow(/1 user would be rejected/);
     expect(created()).toHaveLength(0);
   });
 });
