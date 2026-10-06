@@ -584,6 +584,22 @@ describe("supabase", () => {
     expect(user?.firstName).toBe("Ada");
   });
 
+  test.each([
+    ["an object", { first_name: "Mary Ann", last_name: "Doe" }],
+    ["JSON text", JSON.stringify({ first_name: "Mary Ann", last_name: "Doe" })],
+  ])("maps separate metadata name fields as-is, given as %s", (_, raw_user_meta_data) => {
+    const user = one("supabase", { ...base, raw_user_meta_data });
+    expect(user?.firstName).toBe("Mary Ann");
+    expect(user?.lastName).toBe("Doe");
+  });
+
+  // Supabase's own social logins write `full_name`.
+  test("splits a metadata full_name", () => {
+    const user = one("supabase", { ...base, raw_user_meta_data: { full_name: "Ada Lovelace" } });
+    expect(user?.firstName).toBe("Ada");
+    expect(user?.lastName).toBe("Lovelace");
+  });
+
   test("prefers explicit name columns over metadata", () => {
     const user = one("supabase", {
       ...base,
