@@ -14,6 +14,7 @@ import { exportAuth0 } from "./auth0.ts";
 import { exportClerk } from "./clerk.ts";
 import { exportFirebase } from "./firebase.ts";
 import { exportSupabase } from "./supabase.ts";
+import { exportWorkOs } from "./workos.ts";
 
 export type ExportRegistryEntry = {
   key: string;
@@ -52,6 +53,13 @@ export const exportPlatforms: ExportRegistryEntry[] = [
     description: "A Firebase project, via Identity Toolkit",
     sourceKey: "firebase",
     run: async (options) => exportFirebase(options),
+  },
+  {
+    key: "workos",
+    label: "WorkOS",
+    description: "A WorkOS tenant, via the User Management API — no password hashes",
+    sourceKey: "workos",
+    run: async (options) => exportWorkOs(options),
   },
 ];
 

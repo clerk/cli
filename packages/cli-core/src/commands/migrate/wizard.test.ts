@@ -64,6 +64,7 @@ describe("promptForSource", () => {
       "auth0",
       "firebase",
       "supabase",
+      "workos",
     ]);
   });
 
