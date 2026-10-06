@@ -269,4 +269,11 @@ describe("loadUsersFromFile", () => {
     fs.writeFileSync(path.join(workDir, "wrapped.json"), JSON.stringify({ users: [] }));
     await expect(loadUsersFromFile("wrapped.json", "clerk")).rejects.toThrow(CliError);
   });
+
+  test("rejects a JSON row that is not a user object, naming the row", async () => {
+    fs.writeFileSync(path.join(workDir, "null-row.json"), JSON.stringify([{ id: "u1" }, null]));
+    await expect(loadUsersFromFile("null-row.json", "clerk")).rejects.toThrow(
+      new CliError("null-row.json: row 2 is not a user object."),
+    );
+  });
 });
