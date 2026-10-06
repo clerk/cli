@@ -489,9 +489,10 @@ Plus the targeting flags: `--secret-key`, `--app` and `--instance`.
 
 It prints the target first, then a preview: how many users will be deleted, and
 how many of them have signed in since the import (from each user's
-`last_sign_in_at`). Nothing is deleted without consent: a yes at the prompt, or
-`--yes`. Without either — an agent, a non-TTY run, or `--json` — it prints the
-preview and exits 2 with the command to run.
+`last_sign_in_at`). When users remain to delete or record as gone, nothing is
+deleted without consent: a yes at the prompt, or `--yes`. Without either — an
+agent, a non-TTY run, or `--json` — it prints the preview and exits 2 with the
+command to run. When none remain, undo completes without prompting.
 
 It refuses with exit 2, and deletes nothing, when:
 
