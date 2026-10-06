@@ -9,6 +9,7 @@ import {
   latestUserLines,
   listRuns,
   lockFile,
+  patchRun,
   readRun,
   startRun,
   type RunRecord,
@@ -182,7 +183,7 @@ describe("refusals, all exit 2 and delete nothing", () => {
   });
 
   // Another process continues the import while the undo previews it.
-  describe("a re-import of the run during the preview", () => {
+  describe("the run changing during the preview", () => {
     const duringPreview = (act: () => void) => {
       const stubbed = globalThis.fetch;
       let acted = false;
@@ -219,6 +220,20 @@ describe("refusals, all exit 2 and delete nothing", () => {
       );
       expect(deletes()).toHaveLength(0);
       expect(fs.existsSync(lockFile(runsDir, record.id))).toBe(false);
+    });
+
+    test("undone by another undo: refused, and its undo is kept", async () => {
+      const record = importRun();
+      duringPreview(() =>
+        patchRun(runsDir, record.id, { status: "undone", undoneBy: "20260901-000000-beef" }),
+      );
+
+      await expect(undo(record.id, withDir({ yes: true }))).rejects.toThrow(
+        /already undone by run 20260901-000000-beef/,
+      );
+      expect(deletes()).toHaveLength(0);
+      expect(readRun(runsDir, record.id)?.undoneBy).toBe("20260901-000000-beef");
+      expect(listRuns(runsDir).filter((run) => run.kind === "undo")).toHaveLength(0);
     });
   });
 });
