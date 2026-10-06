@@ -323,7 +323,7 @@ export async function createDbClient(
   }
 }
 
-export type DbPlatform = "supabase";
+export type DbPlatform = "supabase" | "betterauth";
 
 /**
  * Turns a driver error into something a user can act on.
