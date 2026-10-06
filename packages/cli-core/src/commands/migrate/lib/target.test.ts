@@ -147,6 +147,24 @@ describe("resolveClerkTarget --instance", () => {
     expect(error.message).toContain("does not match the key");
   });
 
+  test("says a literal --instance could not be verified when the lookup fails", async () => {
+    delete process.env.CLERK_SECRET_KEY;
+    const working = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response("nope", { status: 500 })) as unknown as typeof fetch;
+    try {
+      const error = (await resolveClerkTarget({
+        instance: "ins_prod",
+        secretKey: "sk_live_x",
+      }).catch((e: unknown) => e)) as CliError;
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain("Could not verify");
+      expect(error.message).not.toContain("does not match");
+    } finally {
+      globalThis.fetch = working;
+    }
+  });
+
   test.each([["prod"], ["production"], ["ins_prod"]])("accepts --instance %s", async (instance) => {
     delete process.env.CLERK_SECRET_KEY;
     const { target } = await resolveClerkTarget({ instance, secretKey: "sk_live_x" });
