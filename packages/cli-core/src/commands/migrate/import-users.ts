@@ -321,7 +321,13 @@ async function createUser(
     );
   }
 
-  return { clerkUserId: (response.body as { id?: string })?.id ?? "", notes };
+  // Untracked, the user could never be undone. Thrown, the outcome is unknown,
+  // so `creating` stays the latest line and a re-run looks the user up.
+  const clerkUserId = (response.body as { id?: unknown })?.id;
+  if (typeof clerkUserId !== "string" || !clerkUserId) {
+    throw new Error("Clerk answered POST /v1/users without a user ID");
+  }
+  return { clerkUserId, notes };
 }
 
 export type ImportUsersOptions = {

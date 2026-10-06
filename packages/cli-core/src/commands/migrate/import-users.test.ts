@@ -517,6 +517,20 @@ describe("importUsers", () => {
     expect([...summary.errorBreakdown.keys()][0]).toContain("a re-run checks");
   });
 
+  test("leaves a create answered without a user ID as unknown, never created", async () => {
+    stub(() => new Response(JSON.stringify({}), { status: 200 }));
+
+    const summary = await importUsers({
+      users: [user({ userId: "u1" })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(summary).toMatchObject({ successful: 0, failed: 1 });
+    expect(allLines).toEqual([{ sourceId: "u1", status: "creating" }]);
+  });
+
   test("records a failed user and keeps going", async () => {
     stub((_url, attempt) =>
       attempt === 1 ? clerkError(422, "that email is taken") : ok("user_ok"),
