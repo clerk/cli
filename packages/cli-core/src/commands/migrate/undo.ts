@@ -32,8 +32,10 @@ import {
   listRuns,
   liveLockPid,
   lockFile,
+  lockRun,
   patchRun,
   readRun,
+  readUserLines,
   resolveRunsDir,
   runState,
   startRun,
@@ -323,6 +325,7 @@ function jsonResult(
 export async function undo(runId: string, options: UndoOptions = {}): Promise<void> {
   const runsDir = await resolveRunsDir(options.runsDir);
   const record = readImportRun(runsDir, runId);
+  const importLines = readUserLines(runsDir, record.id).length;
 
   const { secretKey, target } = await resolveClerkTarget(options);
   if (!options.json) printTarget(target);
@@ -399,26 +402,46 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
 
   // Gitignored only now, once there is consent to write a run.
   await resolveRunsDir(options.runsDir, { write: true });
-  const run = openUndo
-    ? continueRun(runsDir, openUndo)
-    : startRun(runsDir, { kind: "undo", target, undoes: record.id, source: record.source });
 
-  // Users the import created that are no longer there: the undo's goal for
-  // them is already met, so they count as deleted without another request.
-  for (const user of gone) {
-    run.append({ ...user, status: "deleted", reason: "not found in the instance" });
-  }
+  // Held until the import is marked undone, so a re-import cannot continue
+  // the run while its users are deleted and overwrite the `undone` mark.
+  const releaseImport = lockRun(runsDir, record.id);
+  let run: Run;
+  let summary: UndoSummary;
+  let undoRecord: RunRecord;
+  try {
+    // A re-import that continued the run during the preview created users
+    // the preview never listed.
+    if (readUserLines(runsDir, record.id).length !== importLines) {
+      throwUsageError(
+        `Run ${record.id} changed while this undo was waiting, so the preview is out of date. ` +
+          `Nothing was deleted. Run \`clerk migrate undo ${record.id}\` again.`,
+      );
+    }
 
-  const summary =
-    present.length > 0
-      ? await withProgress({ total: present.length, verb: "deleted" }, async (progress) =>
-          deleteUsers({ users: present, secretKey, limits, run, progress }),
-        )
-      : { deleted: 0, failed: 0, errorBreakdown: new Map<string, number>() };
+    run = openUndo
+      ? continueRun(runsDir, openUndo)
+      : startRun(runsDir, { kind: "undo", target, undoes: record.id, source: record.source });
 
-  const undoRecord = run.finish();
-  if (undoRecord.status === "complete") {
-    patchRun(runsDir, record.id, { status: "undone", undoneBy: undoRecord.id });
+    // Users the import created that are no longer there: the undo's goal for
+    // them is already met, so they count as deleted without another request.
+    for (const user of gone) {
+      run.append({ ...user, status: "deleted", reason: "not found in the instance" });
+    }
+
+    summary =
+      present.length > 0
+        ? await withProgress({ total: present.length, verb: "deleted" }, async (progress) =>
+            deleteUsers({ users: present, secretKey, limits, run, progress }),
+          )
+        : { deleted: 0, failed: 0, errorBreakdown: new Map<string, number>() };
+
+    undoRecord = run.finish();
+    if (undoRecord.status === "complete") {
+      patchRun(runsDir, record.id, { status: "undone", undoneBy: undoRecord.id });
+    }
+  } finally {
+    releaseImport();
   }
 
   if (options.json) {
