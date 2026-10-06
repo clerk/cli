@@ -18,6 +18,7 @@ import {
   startRun,
 } from "./lib/run-store.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
+import { __resetCustomSourcesForTesting } from "./sources/registry.ts";
 // After run.ts: imported first, signals.ts loads version.ts ahead of its Bun
 // macro here, and the file fails to load.
 import { _resetInterruptState, abortInFlight, beginInterrupt } from "../../lib/signals.ts";
@@ -1291,6 +1292,141 @@ describe("run", () => {
       await run(baseOptions);
 
       expect(listRuns(runsDir())).toHaveLength(2);
+    });
+  });
+
+  describe("--source <path>", () => {
+    const CUSTOM = `export default {
+      key: "myplatform",
+      label: "My Platform",
+      description: "Exports from My Platform.",
+      transformer: { account_ref: "userId", contact_email: "email", given: "firstName", pw: "password" },
+      carries: {
+        passwords: { level: "yes", note: "bcrypt." },
+        mfa: { level: "no", note: "None." },
+        metadata: { level: "no", note: "None." },
+      },
+      defaults: { passwordHasher: "bcrypt" },
+      postTransform: (user) => { if (!user.firstName) delete user.firstName; },
+    };`;
+
+    let customFile: string;
+    let customCounter = 0;
+
+    beforeEach(() => {
+      // A fresh filename each time: dynamic import() caches by URL, so reusing
+      // one would silently return a previous test's module.
+      customFile = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, customFile), CUSTOM);
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { account_ref: "mp_1", contact_email: "a@x.dev", given: "Ada", pw: BCRYPT },
+          { account_ref: "mp_2", contact_email: "b@x.dev", given: "", pw: BCRYPT },
+        ]),
+      );
+    });
+
+    afterEach(() => {
+      __resetCustomSourcesForTesting();
+    });
+
+    const created = () => requests.filter((r) => r.url.endsWith("/v1/users"));
+
+    // The registered key isn't something --source accepts; the path is.
+    test("the printed command names the source's path, not its key", async () => {
+      const error = (await run({
+        input: "export.json",
+        source: customFile,
+        secretKey: "sk_test_x",
+        json: true,
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.examples?.[0]?.command).toBe(
+        `clerk migrate import export.json --source ${customFile} --secret-key <key> --json --yes`,
+      );
+    });
+
+    test("imports through a user-authored source", async () => {
+      await run({
+        input: "export.json",
+        source: customFile,
+        yes: true,
+        secretKey: "sk_test_x",
+      });
+
+      expect(created().map((r) => (r.body as { external_id: string }).external_id)).toEqual([
+        "mp_1",
+        "mp_2",
+      ]);
+      expect(captured.err).toContain("myplatform");
+      expect(captured.err).toContain("source from");
+    });
+
+    test("applies the custom source's defaults and postTransform", async () => {
+      await run({
+        input: "export.json",
+        source: customFile,
+        yes: true,
+        secretKey: "sk_test_x",
+      });
+
+      const bodies = created().map((r) => r.body as Record<string, unknown>);
+      expect(bodies[0]).toMatchObject({ first_name: "Ada", password_hasher: "bcrypt" });
+      // postTransform dropped the empty given name rather than sending "".
+      expect("first_name" in (bodies[1] ?? {})).toBe(false);
+    });
+
+    // An edited source is a different source, so the run records which one.
+    test("records the custom source's content hash on the run", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+
+      const [record] = listRuns(runsDir());
+      expect(record?.source).toBe("myplatform");
+      expect(record?.sourceHash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    test("an unknown built-in key is a usage error listing the valid ones", async () => {
+      await expect(
+        run({ input: "export.json", source: "okta", yes: true, secretKey: "sk_test_x" }),
+      ).rejects.toThrow(/Unknown source "okta". Valid sources: clerk, auth0/);
+      expect(created()).toHaveLength(0);
+    });
+
+    test("fails before any request when the file is not there", async () => {
+      await expect(
+        run({
+          input: "export.json",
+          source: "./nope.ts",
+          yes: true,
+          secretKey: "sk_test_x",
+        }),
+      ).rejects.toThrow(/No source file at/);
+      expect(requests).toHaveLength(0);
+    });
+
+    test("fails before any request when the file is malformed", async () => {
+      const bad = `./bad-${customCounter++}.ts`;
+      fs.writeFileSync(
+        path.join(workDir, bad),
+        `export default { key: "x", label: "X", transformer: {} };`,
+      );
+
+      const error = (await run({
+        input: "export.json",
+        source: bad,
+        yes: true,
+        secretKey: "sk_test_x",
+      }).catch((caught: unknown) => caught)) as CliError;
+      expect(error.message).toMatch(/no source field maps to `userId`/);
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(requests).toHaveLength(0);
+    });
+
+    test("still requires a file", async () => {
+      await expect(run({ source: customFile, yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
+        /needs the file to import/,
+      );
     });
   });
 

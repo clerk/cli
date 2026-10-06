@@ -86,8 +86,12 @@ import { link } from "../link/index.ts";
 export type MigrateRunOptions = {
   /** An export file, or the ID of the export run that wrote one. */
   input?: string;
-  /** A built-in source key. */
+  /** A built-in source key, or the path to a source you wrote. */
   source?: string;
+  /** Content hash of a custom `--source`, set once it is loaded. */
+  sourceHash?: string;
+  /** `--source` as typed, for printed commands: a custom source's path. Not a flag. */
+  sourceArg?: string;
   /** The file to read, once `input` is resolved. Not a flag. */
   file?: string;
   requirePassword?: boolean;
@@ -122,7 +126,7 @@ function canPrompt(options: MigrateRunOptions): boolean {
  * Validates what a run needs before anything is read or sent.
  *
  * `--source` has already been resolved to a registered key by the time this
- * runs.
+ * runs, custom sources included.
  *
  * @returns The source key and file path, both guaranteed present.
  */
@@ -132,7 +136,7 @@ export function validateRunOptions(options: MigrateRunOptions): {
 } {
   if (!options.source) {
     throwUsageError(
-      `Missing --source. Valid values: ${sourceKeys().join(", ")}.`,
+      `Missing --source. Valid values: ${sourceKeys().join(", ")}, or the path to a source you wrote.`,
       undefined,
       ERROR_CODE.USAGE_ERROR,
       [
@@ -340,14 +344,23 @@ function throwChangedExport(runId: string, file: string): never {
 }
 
 /**
- * Resolves `--source` to a registered key.
+ * Resolves `--source` to a registered key, loading a custom source from its
+ * path so the rest of the run treats it exactly like a built-in.
  *
  * @throws UsageError for an unknown key.
  */
 async function applySource(options: MigrateRunOptions): Promise<MigrateRunOptions> {
   if (!options.source) return options;
   const resolved = await resolveSource(options.source);
-  return { ...options, source: resolved.key };
+  if (resolved.path && !options.json) {
+    log.info(`Loaded the \`${resolved.key}\` source from ${options.source}.`);
+  }
+  return {
+    ...options,
+    source: resolved.key,
+    sourceArg: options.source,
+    ...(resolved.hash ? { sourceHash: resolved.hash } : {}),
+  };
 }
 
 /**
@@ -380,8 +393,8 @@ export type ResumeCase =
   | { kind: "complete"; record: RunRecord };
 
 /**
- * Finds the latest import run of this file (by sha256), this source and this
- * instance, and decides what a re-run does:
+ * Finds the latest import run of this file (by sha256), this source (and a
+ * custom source's hash) and this instance, and decides what a re-run does:
  *
  * - none, or undone: a new run
  * - interrupted: continue it, skipping the users it created
@@ -397,6 +410,7 @@ export function findResume(
   match: {
     sha256: string;
     source: string;
+    sourceHash?: string;
     instanceId: string;
     /** The key's stand-in ID, for a run recorded while Clerk could not name the instance. */
     keyInstanceId?: string;
@@ -407,6 +421,7 @@ export function findResume(
       record.kind === "import" &&
       record.file?.sha256 === match.sha256 &&
       record.source === match.source &&
+      record.sourceHash === match.sourceHash &&
       (record.target.instanceId === match.instanceId ||
         record.target.instanceId === match.keyInstanceId),
   );
@@ -602,7 +617,8 @@ function cleanupLines(runsDir: string, record: RunRecord): string[] {
 function commandFor(options: MigrateRunOptions, fromExport: string | undefined, extra: string[]) {
   const input = fromExport ?? options.input ?? options.file ?? "<file>";
   const parts = ["clerk migrate import", quoteArg(input)];
-  if (!fromExport && options.source) parts.push("--source", quoteArg(options.source));
+  const source = options.sourceArg ?? options.source;
+  if (!fromExport && source) parts.push("--source", quoteArg(source));
   if (options.allowPartial) parts.push("--allow-partial");
   if (options.newRun) parts.push("--new-run");
   if (options.requirePassword) parts.push("--require-password");
@@ -707,6 +723,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         : findResume(runsDir, {
             sha256,
             source,
+            ...(options.sourceHash ? { sourceHash: options.sourceHash } : {}),
             instanceId: target.instanceId,
             keyInstanceId: keyInstanceId(secretKey),
           });
@@ -970,6 +987,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             kind: "import",
             target,
             source,
+            ...(options.sourceHash ? { sourceHash: options.sourceHash } : {}),
             file: { path: filePath, sha256 },
             ...(input.fromExport ? { fromExport: input.fromExport } : {}),
             ...(firebaseHash ? { firebaseHash } : {}),

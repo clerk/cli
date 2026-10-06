@@ -32,12 +32,13 @@ describe("registerMigrate", () => {
     expect(migrate?.description()).toContain("Migrate users");
   });
 
-  test("registers import, export, undo and runs", () => {
+  test("registers import, export, undo, runs and sources", () => {
     expect(findCommand(["migrate"])?.commands.map((cmd) => cmd.name())).toEqual([
       "import",
       "export",
       "undo",
       "runs",
+      "sources",
     ]);
   });
 
@@ -157,6 +158,12 @@ describe("registerMigrate", () => {
     expect(runsCommand?.options.map((option) => option.long)).toEqual(["--json", "--runs-dir"]);
   });
 
+  test("registers sources with an optional source and --json", () => {
+    const sourcesCommand = findCommand(["migrate", "sources"]);
+    expect(sourcesCommand?.registeredArguments[0]?.required).toBe(false);
+    expect(sourcesCommand?.options.map((option) => option.long)).toEqual(["--json"]);
+  });
+
   test("registers undo with a required run ID and its flags", () => {
     const undoCommand = findCommand(["migrate", "undo"]);
     expect(undoCommand?.registeredArguments[0]?.required).toBe(true);
@@ -171,9 +178,9 @@ describe("registerMigrate", () => {
     ]);
   });
 
-  // No `.choices()`: an unknown key reaches resolveSource, whose error lists
-  // the valid ones. Completion offers them through `KNOWN_OPTION_VALUES`.
-  test("--source accepts any value", () => {
+  // It also takes a path, so it cannot use `.choices()`: completion offers the
+  // built-in keys through `KNOWN_OPTION_VALUES` instead.
+  test("--source accepts any value, so a path to a source you wrote gets through", () => {
     const option = findCommand(["migrate", "import"])?.options.find((o) => o.long === "--source");
     expect(option?.argChoices).toBeUndefined();
   });
