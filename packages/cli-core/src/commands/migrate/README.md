@@ -4,8 +4,8 @@ Migrate users into a Clerk instance from another auth provider, or from another
 Clerk instance.
 
 ```
-clerk migrate export <source> [-o <path>] [--json]
-clerk migrate import <file|export-run-id> [--source <source>] [--dry-run] [--allow-partial] [--new-run] [--yes] [--json]
+clerk migrate export [platform] [-o <path>] [--json]
+clerk migrate import [file|export-run-id] [--source <source>] [--dry-run] [--allow-partial] [--new-run] [--yes] [--json]
 clerk migrate runs [run-id] [--json]
 clerk migrate undo <run-id> [--dry-run] [--yes] [--json]
 clerk migrate sources [source] [--json]
@@ -21,8 +21,8 @@ clerk migrate import 20260929-141502-a1b2 --yes       # 3. import it
 ```
 
 `clerk migrate undo <run-id>` takes an import back out, and `clerk migrate runs`
-shows what every run did. Every subcommand takes `--runs-dir <path>` (or
-`CLERK_MIGRATE_DIR`) to keep its runs somewhere else.
+shows what every run did. Every subcommand but `sources` takes `--runs-dir <path>`
+(or `CLERK_MIGRATE_DIR`) to keep its runs somewhere else.
 `clerk migrate` on its own is a group name, not a command: it prints its help.
 
 ## The rules
@@ -257,7 +257,7 @@ the flag to pass.
 | Flag                       | Platforms                          | Description                                               |
 | -------------------------- | ---------------------------------- | --------------------------------------------------------- |
 | `-o, --output <path>`      | all                                | Write the export here instead of the run folder           |
-| `-y, --yes`                | all                                | Do not prompt: fail on a bad credential                   |
+| `-y, --yes`                | all                                | Do not prompt: fail on a rejected credential              |
 | `--json`                   | all                                | Print the result as JSON; never prompts                   |
 | `--runs-dir <path>`        | all                                | Where runs are kept (see [the run store](#the-run-store)) |
 | `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Connection string (Postgres only for `supabase`)          |
@@ -374,7 +374,9 @@ only opens local files and `@libsql/client` ships native optional dependencies.
 Nothing native ships in the binary — that is the whole reason the `engines.bun`
 floor exists. Resolution is `--db-url`, then `SUPABASE_DB_URL` / `AUTHJS_DB_URL`
 / `BETTERAUTH_DB_URL`, then a masked prompt, since a connection string carries the password inline. A password
-pasted unencoded (`#`, `@`, `/` and the like) is percent-encoded for you.
+pasted unencoded (`#`, `@`, `/` and the like) is percent-encoded for you. A libsql
+token comes from `?authToken=` on the URL, or from `TURSO_AUTH_TOKEN` /
+`LIBSQL_AUTH_TOKEN`, and is redacted like a password.
 
 **Connection strings are redacted everywhere.** Errors show
 `postgres://***@host/db`, including when the password itself contains an
