@@ -1,4 +1,5 @@
 import type { CommandUnknownOpts, Option } from "@commander-js/extra-typings";
+import { sources } from "../migrate/sources/registry.ts";
 import { KNOWN_DASHBOARD_PATHS } from "../open/dashboard-paths.ts";
 
 const DIRECTIVE = {
@@ -34,6 +35,15 @@ const HTTP_METHOD_COMPLETIONS: Completion[] = [
 ];
 
 /**
+ * The built-in migrate sources. `--source` also takes a path to a source you
+ * wrote, so it cannot use `.choices()`.
+ */
+const SOURCE_COMPLETIONS: Completion[] = sources.map((entry) => ({
+  name: entry.key,
+  description: entry.label,
+}));
+
+/**
  * Hardcoded option-value completions for options that don't use Commander's `.choices()`.
  * Keys are the long or short flag (e.g., "--mode", "-X").
  */
@@ -52,6 +62,7 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
     { name: "latest", description: "Latest stable release" },
     { name: "canary", description: "Latest canary (pre-release) build" },
   ],
+  "--source": SOURCE_COMPLETIONS,
   "--for": [
     { name: "orgs", description: "Organizations only" },
     { name: "users", description: "Users only" },
@@ -66,6 +77,7 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
  * to root, e.g. "open dashboard".
  */
 const KNOWN_POSITIONAL_COMPLETIONS: Record<string, Completion[]> = {
+  "migrate sources": SOURCE_COMPLETIONS,
   "open dashboard": KNOWN_DASHBOARD_PATHS.map((path) => ({
     name: path,
     description: "Dashboard subpath",
