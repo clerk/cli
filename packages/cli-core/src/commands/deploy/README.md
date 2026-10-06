@@ -26,7 +26,7 @@ clerk deploy status --mode agent --wait # Agent verification with retrying wait
 
 ## Agent Mode
 
-When running `clerk deploy` in agent mode (`--mode agent`, `CLERK_MODE=agent`, a Codex run, or non-TTY context), the command emits a structured JSON handoff via `log.data` on stdout. The handoff is read-only: it resolves the linked app, production instance, domain, domain status snapshot, and OAuth completeness, but it does not prompt, mutate config, trigger a DNS check, or poll.
+When running `clerk deploy` in agent mode (`--mode agent`, `CLERK_MODE=agent`, a recognized agent run, or non-TTY context), the command emits a structured JSON handoff via `log.data` on stdout. The handoff is read-only: it resolves the linked app, production instance, domain, domain status snapshot, and OAuth completeness, but it does not prompt, mutate config, trigger a DNS check, or poll.
 
 The handoff state is one of:
 

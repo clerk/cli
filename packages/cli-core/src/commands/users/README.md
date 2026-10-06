@@ -32,7 +32,7 @@ The users commands talk to the instance's Backend API. Identifier and required-f
 
 ## Interactive mode
 
-In human mode (a TTY outside Codex), `clerk users` invoked with no subcommand opens an interactive menu that lists every registered action and dispatches to its handler.
+In human mode (a TTY outside a recognized agent run), `clerk users` invoked with no subcommand opens an interactive menu that lists every registered action and dispatches to its handler.
 
 `clerk users create` invoked without curated flags or `--input-json` / `-d` / `--file` enters a guided wizard. The wizard fetches the instance's Frontend API configuration to prompt only for fields the instance accepts (and marks required fields). When run with `--secret-key` only (no app context), the wizard falls back to prompting the full curated-flag set as optional and lets the Backend API validate.
 

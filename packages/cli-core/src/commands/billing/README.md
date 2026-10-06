@@ -49,7 +49,7 @@ clerk enable billing                     # defaults to both
 After a successful `enable billing`, the command offers to install the upstream `clerk-billing` agent skill from [`clerk/skills`](https://github.com/clerk/skills). `clerk init` doesn't bundle this one as a default — billing is opt-in — so this is the natural moment to surface it.
 
 - **Human mode**: prompts `Install the` `clerk-billing` `agent skill?` defaulting to yes. Decline returns silently.
-- **Agent mode (Codex or no TTY) or `--yes`**: installs non-interactively (`-y -g`).
+- **Agent mode (recognized agent run or no TTY) or `--yes`**: installs non-interactively (`-y -g`).
 - **`--no-skills`**: skips the install entirely.
 - **`--dry-run`**: skips the install (no real side-effects in dry-run).
 
