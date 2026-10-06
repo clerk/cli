@@ -44,6 +44,7 @@ mock.module("../../lib/prompts.ts", () => ({
 const { run } = await import("./run.ts");
 const { UserAbortError } = await import("../../lib/errors.ts");
 const { _setConfigDir } = await import("../../lib/config.ts");
+const { listRuns, startRun } = await import("./lib/run-store.ts");
 
 const captured = useCaptureLog();
 
@@ -140,6 +141,33 @@ describe("prompts for what was not passed", () => {
     expect(mockText).not.toHaveBeenCalled();
     expect(mockSelect).not.toHaveBeenCalled();
   });
+
+  // The envelope names the source, so asking would only invite a wrong answer.
+  test("does not ask for a source when the file names its own", async () => {
+    const exportRun = startRun(runsDir(), {
+      kind: "export",
+      target: { platform: "clerk" },
+      source: "clerk",
+    });
+    const file = path.join(exportRun.dir, "export.json");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        clerkMigrate: 1,
+        source: "clerk",
+        exportedAt: "2026-09-01T00:00:00.000Z",
+        runId: exportRun.record.id,
+        users: EXPORT,
+      }),
+    );
+    exportRun.update({ file: { path: file, sha256: "x" } });
+    exportRun.finish();
+
+    await run({ input: exportRun.record.id, secretKey: "sk_test_x" });
+
+    expect(mockSelect).not.toHaveBeenCalled();
+    expect(created()).toHaveLength(2);
+  });
 });
 
 describe("consent", () => {
@@ -168,7 +196,7 @@ describe("consent", () => {
     await expect(run(importOptions)).rejects.toThrow(UserAbortError);
 
     expect(created()).toHaveLength(0);
-    expect(fs.existsSync(runsDir())).toBe(false);
+    expect(listRuns(runsDir())).toHaveLength(0);
   });
 
   test("--yes does not ask", async () => {

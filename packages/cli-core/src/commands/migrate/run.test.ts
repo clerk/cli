@@ -287,6 +287,73 @@ describe("run", () => {
     expect(captured.err).toContain(`rm -rf '${path.join(spaced, record!.id)}'`);
   });
 
+  describe("export envelopes", () => {
+    /** An export run whose envelope holds `users`, as `clerk migrate export` writes it. */
+    function exportRun(source: string, rows: unknown[]) {
+      const run = startRun(runsDir(), { kind: "export", target: { platform: source }, source });
+      const file = path.join(run.dir, "export.json");
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          clerkMigrate: 1,
+          source,
+          exportedAt: "2026-09-01T00:00:00.000Z",
+          runId: run.record.id,
+          users: rows,
+        }),
+      );
+      run.update({ file: { path: file, sha256: "x" } });
+      return { record: run.finish(), file };
+    }
+
+    const { source: _source, input: _input, ...noSource } = baseOptions;
+
+    test("imports by export run ID, with the source the envelope names", async () => {
+      const { record } = exportRun("clerk", export2);
+
+      await run({ ...noSource, input: record.id });
+
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+      const imported = listRuns(runsDir()).find((candidate) => candidate.kind === "import");
+      expect(imported).toMatchObject({ source: "clerk", fromExport: record.id });
+      // The export holds password hashes and PII, so the cleanup names it too.
+      expect(captured.err).toContain(`The export in run ${record.id} holds your users' data`);
+    });
+
+    test("imports an envelope file with no source named", async () => {
+      const { file } = exportRun("clerk", export2);
+
+      await run({ ...noSource, input: file });
+
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+    });
+
+    test("refuses a source that contradicts the envelope", async () => {
+      const { record } = exportRun("clerk", export2);
+
+      await expect(run({ ...noSource, source: "supabase", input: record.id })).rejects.toThrow(
+        /exported from clerk, but --source names supabase/,
+      );
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
+    test("refuses a run ID that is not an export", async () => {
+      await run(baseOptions);
+      const [imported] = listRuns(runsDir());
+
+      await expect(run({ ...noSource, input: imported!.id })).rejects.toThrow(
+        /is an import run, which has no file to import/,
+      );
+    });
+
+    test("refuses a run ID with no run behind it", async () => {
+      await expect(run({ ...noSource, input: "20260101-000000-abcd" })).rejects.toThrow(
+        /No run `20260101-000000-abcd`/,
+      );
+      expect(requests).toHaveLength(0);
+    });
+  });
+
   test("gitignores the project's .clerk folder before writing a run", async () => {
     await run(baseOptions);
     expect(fs.readFileSync(path.join(workDir, ".gitignore"), "utf-8")).toContain(".clerk/");
@@ -363,7 +430,7 @@ describe("run", () => {
   describe("without a file or a source", () => {
     test("names what to pass rather than prompting for the file", async () => {
       await expect(run({ source: "clerk", yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
-        /needs the file to import, and cannot prompt here/,
+        /needs the file to import, or the export run that wrote it, and cannot prompt here/,
       );
       expect(requests).toHaveLength(0);
     });
