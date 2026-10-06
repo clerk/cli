@@ -34,10 +34,7 @@ const HTTP_METHOD_COMPLETIONS: Completion[] = [
   { name: "DELETE", description: "Delete resource" },
 ];
 
-/**
- * The built-in migrate sources. `--source` also takes a path to a source you
- * wrote, so it cannot use `.choices()`.
- */
+/** The built-in migrate sources. Kept off `.choices()` so an unknown key gets the source error. */
 const SOURCE_COMPLETIONS: Completion[] = sources.map((entry) => ({
   name: entry.key,
   description: entry.label,
@@ -77,7 +74,6 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
  * to root, e.g. "open dashboard".
  */
 const KNOWN_POSITIONAL_COMPLETIONS: Record<string, Completion[]> = {
-  "migrate sources": SOURCE_COMPLETIONS,
   "open dashboard": KNOWN_DASHBOARD_PATHS.map((path) => ({
     name: path,
     description: "Dashboard subpath",

@@ -9,8 +9,7 @@ import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 // Every test below names its own `--secret-key`, which short-circuits the
 // signed-in check — except the one that asserts what happens without it.
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
-import { latestUserLines, listRuns, readRun, startRun } from "./lib/run-store.ts";
-import { __resetCustomSourcesForTesting } from "./sources/registry.ts";
+import { latestUserLines, readRun, type RunRecord } from "./lib/run-store.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
 
 /** A real-shaped bcrypt digest: the checks reject anything that is not. */
@@ -22,6 +21,13 @@ let originalCwd: string;
 
 /** Where runs land for a project rooted at `workDir`. */
 const runsDir = () => path.join(workDir, ".clerk", "migrate");
+
+/** The runs in `dir`, newest first. */
+const runsIn = (dir: string): RunRecord[] =>
+  (fs.existsSync(dir) ? fs.readdirSync(dir) : [])
+    .map((id) => readRun(dir, id))
+    .filter((record): record is RunRecord => record !== undefined)
+    .sort((a, b) => b.id.localeCompare(a.id));
 
 beforeAll(() => {
   originalCwd = process.cwd();
@@ -209,7 +215,7 @@ describe("run", () => {
   test("records the run in the project's run store", async () => {
     await run(baseOptions);
 
-    const [record, ...rest] = listRuns(runsDir());
+    const [record, ...rest] = runsIn(runsDir());
     expect(rest).toHaveLength(0);
     expect(record).toMatchObject({
       kind: "import",
@@ -228,130 +234,6 @@ describe("run", () => {
     ]);
   });
 
-  // A complete import leaves the export's user data behind; say how to remove it.
-  test("names the folders a complete import no longer needs", async () => {
-    await run(baseOptions);
-    const [record] = listRuns(runsDir());
-    expect(captured.err).toContain(`rm -rf ${path.join(runsDir(), record!.id)}`);
-  });
-
-  // Pasted unquoted, `rm -rf …/app copy/…` deletes `…/app`.
-  test("quotes the cleanup paths", async () => {
-    const spaced = path.join(workDir, "app copy");
-    await run({ ...baseOptions, runsDir: spaced });
-
-    const [record] = listRuns(spaced);
-    expect(captured.err).toContain(`rm -rf '${path.join(spaced, record!.id)}'`);
-  });
-
-  describe("export envelopes", () => {
-    /** An export run whose envelope holds `users`, as `clerk migrate export` writes it. */
-    function exportRun(source: string, rows: unknown[], extra: Record<string, unknown> = {}) {
-      const run = startRun(runsDir(), { kind: "export", target: { platform: source }, source });
-      const file = path.join(run.dir, "export.json");
-      fs.writeFileSync(
-        file,
-        JSON.stringify({
-          clerkMigrate: 1,
-          source,
-          exportedAt: "2026-09-01T00:00:00.000Z",
-          runId: run.record.id,
-          users: rows,
-          ...extra,
-        }),
-      );
-      run.update({ file: { path: file, sha256: "x" } });
-      return { record: run.finish(), file };
-    }
-
-    const { source: _source, input: _input, ...noSource } = baseOptions;
-
-    test("imports by export run ID, with the source the envelope names", async () => {
-      const { record } = exportRun("clerk", export2);
-
-      await run({ ...noSource, input: record.id });
-
-      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
-      const imported = listRuns(runsDir()).find((candidate) => candidate.kind === "import");
-      expect(imported).toMatchObject({ source: "clerk", fromExport: record.id });
-    });
-
-    test("imports an envelope file with no source named", async () => {
-      const { file } = exportRun("clerk", export2);
-
-      await run({ ...noSource, input: file });
-
-      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
-    });
-
-    test("refuses a source that contradicts the envelope", async () => {
-      const { record } = exportRun("clerk", export2);
-
-      await expect(run({ ...noSource, source: "auth0", input: record.id })).rejects.toThrow(
-        /exported from clerk, but --source names auth0/,
-      );
-      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
-    });
-
-    test("refuses a run ID that is not an export", async () => {
-      await run(baseOptions);
-      const [imported] = listRuns(runsDir());
-
-      await expect(run({ ...noSource, input: imported!.id })).rejects.toThrow(
-        /is an import run, which has no file to import/,
-      );
-    });
-
-    test("reads Firebase's hash parameters from the envelope", async () => {
-      const firebase = {
-        base64_signer_key: "SIGNER",
-        base64_salt_separator: "Bw==",
-        rounds: 8,
-        mem_cost: 14,
-      };
-      const { record } = exportRun(
-        "firebase",
-        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
-        { firebase },
-      );
-
-      await run({ ...noSource, input: record.id });
-
-      const created = requests.find((r) => r.url.endsWith("/v1/users"));
-      expect(created?.body).toMatchObject({
-        password_hasher: "scrypt_firebase",
-        password_digest: "HASH$SALT$SIGNER$Bw==$8$14",
-      });
-    });
-
-    test("lets the --firebase-* flags override the envelope", async () => {
-      const { record } = exportRun(
-        "firebase",
-        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
-        {
-          firebase: {
-            base64_signer_key: "OLD",
-            base64_salt_separator: "Bw==",
-            rounds: 8,
-            mem_cost: 14,
-          },
-        },
-      );
-
-      await run({
-        ...noSource,
-        input: record.id,
-        firebaseSignerKey: "NEW",
-        firebaseSaltSeparator: "Bw==",
-        firebaseRounds: 8,
-        firebaseMemCost: 14,
-      });
-
-      const created = requests.find((r) => r.url.endsWith("/v1/users"));
-      expect((created!.body as { password_digest: string }).password_digest).toContain("$NEW$");
-    });
-  });
-
   test("gitignores the project's .clerk folder before writing a run", async () => {
     await run(baseOptions);
     expect(fs.readFileSync(path.join(workDir, ".gitignore"), "utf-8")).toContain(".clerk/");
@@ -367,8 +249,8 @@ describe("run", () => {
 
   test("--runs-dir puts the run somewhere else", async () => {
     await run({ ...baseOptions, runsDir: "elsewhere" });
-    expect(listRuns(path.join(workDir, "elsewhere"))).toHaveLength(1);
-    expect(listRuns(runsDir())).toHaveLength(0);
+    expect(runsIn(path.join(workDir, "elsewhere"))).toHaveLength(1);
+    expect(runsIn(runsDir())).toHaveLength(0);
   });
 
   test("--require-password leaves out the users without one", async () => {
@@ -376,8 +258,7 @@ describe("run", () => {
 
     expect(created()).toEqual(["u1"]);
     expect(captured.err).toContain("leaving out 1 user without a password");
-    // On record, so the run is partial rather than "Already imported".
-    const [record] = listRuns(runsDir());
+    const [record] = runsIn(runsDir());
     expect(latestUserLines(runsDir(), record!.id).get("u2")).toMatchObject({
       status: "skipped",
       reason: "no password (--require-password)",
@@ -411,14 +292,14 @@ describe("run", () => {
     await run(baseOptions);
 
     expect(process.exitCode).toBe(1);
-    expect(listRuns(runsDir())[0]).toMatchObject({ status: "partial", counts: { failed: 1 } });
+    expect(runsIn(runsDir())[0]).toMatchObject({ status: "partial", counts: { failed: 1 } });
   });
 
   // Tests run non-TTY, the same signal an agent gives.
   describe("without a file or a source", () => {
     test("names what to pass rather than prompting for the file", async () => {
       await expect(run({ source: "clerk", yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
-        /needs the file to import, or the export run that wrote it, and cannot prompt here/,
+        /needs the file to import, and cannot prompt here/,
       );
       expect(requests).toHaveLength(0);
     });
@@ -427,208 +308,6 @@ describe("run", () => {
       await expect(
         run({ input: "export.json", yes: true, secretKey: "sk_test_x" }),
       ).rejects.toThrow(/Missing --source/);
-    });
-  });
-
-  describe("continuing an earlier run", () => {
-    test("a complete run is not imported again", async () => {
-      await run(baseOptions);
-      requests = [];
-
-      await run(baseOptions);
-
-      expect(created()).toHaveLength(0);
-      expect(captured.err).toContain("Already imported in run");
-      expect(listRuns(runsDir())).toHaveLength(1);
-    });
-
-    test("--new-run imports it again as a new run", async () => {
-      await run(baseOptions);
-      requests = [];
-
-      await run({ ...baseOptions, newRun: true });
-
-      expect(created()).toEqual(["u1", "u2"]);
-      expect(listRuns(runsDir())).toHaveLength(2);
-    });
-
-    test("a partial run retries only the users that did not make it, in the same run", async () => {
-      stubClerk({ failing: new Set(["u2"]) });
-      await run(baseOptions);
-      const [first] = listRuns(runsDir());
-
-      requests = [];
-      process.exitCode = 0;
-      stubClerk();
-      await run(baseOptions);
-
-      expect(created()).toEqual(["u2"]);
-      expect(captured.err).toContain(`Continuing run ${first!.id}, which finished partial`);
-      const runs = listRuns(runsDir());
-      expect(runs).toHaveLength(1);
-      expect(runs[0]).toMatchObject({ id: first!.id, status: "complete", counts: { created: 2 } });
-    });
-
-    test("an interrupted run skips the users it already created", async () => {
-      stubClerk({ failing: new Set(["u2"]) });
-      await run(baseOptions);
-      const [first] = listRuns(runsDir());
-      // A crash never writes a finish time.
-      const record = readRun(runsDir(), first!.id)!;
-      delete record.finishedAt;
-      fs.writeFileSync(path.join(runsDir(), first!.id, "run.json"), JSON.stringify(record));
-
-      requests = [];
-      process.exitCode = 0;
-      stubClerk();
-      await run(baseOptions);
-
-      expect(created()).toEqual(["u2"]);
-      expect(captured.err).toContain("which was interrupted");
-    });
-
-    /** Rewrites a finished run as one a crash stopped: no finish time. */
-    const interrupt = (id: string, patch: Record<string, unknown> = {}) => {
-      const record = readRun(runsDir(), id)!;
-      delete record.finishedAt;
-      fs.writeFileSync(
-        path.join(runsDir(), id, "run.json"),
-        JSON.stringify({ ...record, ...patch }),
-      );
-    };
-
-    // The create went out and the run stopped before the answer came back.
-    test("an interrupted run adopts a user Clerk created with no ID on record", async () => {
-      stubClerk({ failing: new Set(["u2"]) });
-      await run(baseOptions);
-      const [first] = listRuns(runsDir());
-      fs.appendFileSync(
-        path.join(runsDir(), first!.id, "users.ndjson"),
-        `${JSON.stringify({ sourceId: "u2", status: "creating" })}\n`,
-      );
-      interrupt(first!.id);
-
-      requests = [];
-      process.exitCode = 0;
-      stubClerk({ existing: [{ id: "user_found", external_id: "u2" }] });
-      await run(baseOptions);
-
-      expect(created()).toEqual([]);
-      expect(captured.err).toContain("1 user whose create was cut off is already in the instance");
-      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
-        status: "created",
-        clerkId: "user_found",
-      });
-      expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
-    });
-
-    test("an interrupted run creates a user whose in-flight create never landed", async () => {
-      stubClerk({ failing: new Set(["u2"]) });
-      await run(baseOptions);
-      const [first] = listRuns(runsDir());
-      fs.appendFileSync(
-        path.join(runsDir(), first!.id, "users.ndjson"),
-        `${JSON.stringify({ sourceId: "u2", status: "creating" })}\n`,
-      );
-      interrupt(first!.id);
-
-      requests = [];
-      process.exitCode = 0;
-      stubClerk();
-      await run(baseOptions);
-
-      expect(created()).toEqual(["u2"]);
-    });
-
-    test("a continued run with nothing left to do is finished", async () => {
-      await run(baseOptions);
-      const [first] = listRuns(runsDir());
-      interrupt(first!.id);
-      requests = [];
-
-      await run(baseOptions);
-
-      expect(created()).toEqual([]);
-      expect(captured.err).toContain("No users left to import");
-      expect(readRun(runsDir(), first!.id)).toMatchObject({ status: "complete" });
-      expect(readRun(runsDir(), first!.id)?.finishedAt).toBeDefined();
-    });
-
-    // "Interrupted, so undo it and start over": the undo marks the run undone
-    // but leaves it with no finish time.
-    test("an interrupted run that was then undone is imported again as a new run", async () => {
-      await run(baseOptions);
-      const [first] = listRuns(runsDir());
-      interrupt(first!.id, { status: "undone" });
-      requests = [];
-
-      await run(baseOptions);
-
-      expect(created()).toEqual(["u1", "u2"]);
-      expect(listRuns(runsDir()).filter((record) => record.kind === "import")).toHaveLength(2);
-    });
-
-    test("a run with an undo that did not finish refuses with exit 2", async () => {
-      await run(baseOptions);
-      const [first] = listRuns(runsDir());
-      const undoRun = startRun(runsDir(), {
-        kind: "undo",
-        target: { instanceId: "ins_1" },
-        undoes: first!.id,
-      });
-      undoRun.append({ sourceId: "u1", status: "deleted", clerkId: "user_u1" });
-      undoRun.append({ sourceId: "u2", status: "failed", clerkId: "user_u2" });
-      undoRun.finish();
-      requests = [];
-
-      const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
-
-      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
-      expect(error.message).toContain(`clerk migrate undo ${first!.id}`);
-      expect(created()).toEqual([]);
-    });
-
-    test("an undone run is imported again as a new run", async () => {
-      await run(baseOptions);
-      const [first] = listRuns(runsDir());
-      const record = readRun(runsDir(), first!.id)!;
-      fs.writeFileSync(
-        path.join(runsDir(), first!.id, "run.json"),
-        JSON.stringify({ ...record, status: "undone" }),
-      );
-      requests = [];
-
-      await run(baseOptions);
-
-      expect(created()).toEqual(["u1", "u2"]);
-      expect(listRuns(runsDir())).toHaveLength(2);
-    });
-
-    test("a run another live process holds refuses with exit 2", async () => {
-      stubClerk({ failing: new Set(["u2"]) });
-      await run(baseOptions);
-      const [first] = listRuns(runsDir());
-      const record = readRun(runsDir(), first!.id)!;
-      delete record.finishedAt;
-      fs.writeFileSync(path.join(runsDir(), first!.id, "run.json"), JSON.stringify(record));
-      // PID 1 is always alive, and never this test.
-      fs.writeFileSync(path.join(runsDir(), first!.id, "lock"), "1");
-
-      expect(await exitCodeOf(run(baseOptions))).toBe(EXIT_CODE.USAGE);
-    });
-
-    // An edited file is a different job.
-    test("a changed file is a new run", async () => {
-      await run(baseOptions);
-      fs.writeFileSync(
-        path.join(workDir, "export.json"),
-        JSON.stringify([...export2, { id: "u3", primary_email_address: "c@x.dev" }]),
-      );
-      requests = [];
-
-      await run(baseOptions);
-
-      expect(listRuns(runsDir())).toHaveLength(2);
     });
   });
 
@@ -645,7 +324,7 @@ describe("run", () => {
       expect(error.message).toContain("1 user would be rejected, so nothing was imported");
       expect(error.examples?.[0]?.command).toContain("--allow-partial --yes");
       expect(created()).toHaveLength(0);
-      expect(listRuns(runsDir())).toHaveLength(0);
+      expect(runsIn(runsDir())).toHaveLength(0);
     });
 
     test("--allow-partial imports the rest and records each reject as skipped", async () => {
@@ -657,7 +336,7 @@ describe("run", () => {
       await run({ ...baseOptions, allowPartial: true });
 
       expect(created()).toEqual(["u1", "u2"]);
-      const [record] = listRuns(runsDir());
+      const [record] = runsIn(runsDir());
       expect(record).toMatchObject({ status: "partial", counts: { created: 2, skipped: 1 } });
       expect(latestUserLines(runsDir(), record!.id).get("u3")).toMatchObject({
         status: "skipped",
@@ -676,7 +355,7 @@ describe("run", () => {
       await run({ ...baseOptions, dryRun: true });
 
       expect(created()).toHaveLength(0);
-      expect(listRuns(runsDir())).toHaveLength(0);
+      expect(runsIn(runsDir())).toHaveLength(0);
       expect(captured.err).toContain("Dry run: nothing was written.");
       expect(process.exitCode).toBe(2);
     });
@@ -752,7 +431,7 @@ describe("run", () => {
 
       await run({ ...baseOptions, allowPartial: true });
       expect(created()).toEqual(["u1"]);
-      const [record] = listRuns(runsDir());
+      const [record] = runsIn(runsDir());
       expect(latestUserLines(runsDir(), record!.id).get("u2")?.reason).toContain("100-user limit");
     });
 
@@ -827,6 +506,12 @@ describe("run", () => {
       });
     });
 
+    // An agent reads stderr as text.
+    test("--json leaves colour codes out of stderr", async () => {
+      await run({ ...baseOptions, json: true });
+      expect(captured.err).not.toContain("\x1b[");
+    });
+
     test("--json without --yes returns the preview with consent required, and exits 2", async () => {
       expect(await exitCodeOf(run({ ...baseOptions, yes: false, json: true }))).toBe(
         EXIT_CODE.USAGE,
@@ -839,260 +524,51 @@ describe("run", () => {
     });
   });
 
-  describe("--source <path>", () => {
-    const CUSTOM = `export default {
-      key: "myplatform",
-      label: "My Platform",
-      description: "Exports from My Platform.",
-      transformer: { account_ref: "userId", contact_email: "email", given: "firstName", pw: "password" },
-      carries: {
-        passwords: { level: "yes", note: "bcrypt." },
-        mfa: { level: "no", note: "None." },
-        metadata: { level: "no", note: "None." },
-      },
-      defaults: { passwordHasher: "bcrypt" },
-      postTransform: (user) => { if (!user.firstName) delete user.firstName; },
-    };`;
-
-    let customFile: string;
-    let customCounter = 0;
-
-    beforeEach(() => {
-      // A fresh filename each time: dynamic import() caches by URL, so reusing
-      // one would silently return a previous test's module.
-      customFile = `./custom-run-${customCounter++}.ts`;
-      fs.writeFileSync(path.join(workDir, customFile), CUSTOM);
-      fs.writeFileSync(
-        path.join(workDir, "export.json"),
-        JSON.stringify([
-          { account_ref: "mp_1", contact_email: "a@x.dev", given: "Ada", pw: BCRYPT },
-          { account_ref: "mp_2", contact_email: "b@x.dev", given: "", pw: BCRYPT },
-        ]),
-      );
-    });
-
-    afterEach(() => {
-      __resetCustomSourcesForTesting();
-    });
-
-    const created = () => requests.filter((r) => r.url.endsWith("/v1/users"));
-
-    // The registered key isn't something --source accepts; the path is.
-    test("the printed command names the source's path, not its key", async () => {
-      const error = (await run({
-        input: "export.json",
-        source: customFile,
-        secretKey: "sk_test_x",
-        json: true,
-      }).catch((caught: unknown) => caught)) as CliError;
-
-      expect(error.examples?.[0]?.command).toBe(
-        `clerk migrate import export.json --source ${customFile} --secret-key <key> --json --yes`,
-      );
-    });
-
-    test("imports through a user-authored source", async () => {
-      await run({
-        input: "export.json",
-        source: customFile,
-        yes: true,
-        secretKey: "sk_test_x",
+  describe("re-running", () => {
+    // Slice 1 has no continuing: the second run sees the first run's users in
+    // the instance, and refuses until --allow-partial.
+    test("a second import of the same file rejects the users the first created", async () => {
+      await run(baseOptions);
+      stubClerk({
+        existing: [
+          { id: "user_u1", external_id: "u1" },
+          { id: "user_u2", external_id: "u2" },
+        ],
       });
 
-      expect(created().map((r) => (r.body as { external_id: string }).external_id)).toEqual([
-        "mp_1",
-        "mp_2",
-      ]);
-      expect(captured.err).toContain("myplatform");
-      expect(captured.err).toContain("source from");
-    });
-
-    test("applies the custom source's defaults and postTransform", async () => {
-      await run({
-        input: "export.json",
-        source: customFile,
-        yes: true,
-        secretKey: "sk_test_x",
-      });
-
-      const bodies = created().map((r) => r.body as Record<string, unknown>);
-      expect(bodies[0]).toMatchObject({ first_name: "Ada", password_hasher: "bcrypt" });
-      // postTransform dropped the empty given name rather than sending "".
-      expect("first_name" in (bodies[1] ?? {})).toBe(false);
-    });
-
-    // An edited source is a different source, so the run records which one.
-    test("records the custom source's content hash on the run", async () => {
-      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
-
-      const [record] = listRuns(runsDir());
-      expect(record?.source).toBe("myplatform");
-      expect(record?.sourceHash).toMatch(/^[0-9a-f]{64}$/);
-    });
-
-    test("an unknown built-in key is a usage error listing the valid ones", async () => {
-      await expect(
-        run({ input: "export.json", source: "okta", yes: true, secretKey: "sk_test_x" }),
-      ).rejects.toThrow(/Unknown source "okta". Valid sources: clerk, auth0/);
-      expect(created()).toHaveLength(0);
-    });
-
-    test("fails before any request when the file is not there", async () => {
-      await expect(
-        run({
-          input: "export.json",
-          source: "./nope.ts",
-          yes: true,
-          secretKey: "sk_test_x",
-        }),
-      ).rejects.toThrow(/No source file at/);
-      expect(requests).toHaveLength(0);
-    });
-
-    test("fails before any request when the file is malformed", async () => {
-      const bad = `./bad-${customCounter++}.ts`;
-      fs.writeFileSync(
-        path.join(workDir, bad),
-        `export default { key: "x", label: "X", transformer: {} };`,
-      );
-
-      const error = (await run({
-        input: "export.json",
-        source: bad,
-        yes: true,
-        secretKey: "sk_test_x",
-      }).catch((caught: unknown) => caught)) as CliError;
-      expect(error.message).toMatch(/no source field maps to `userId`/);
-      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
-      expect(requests).toHaveLength(0);
-    });
-
-    test("still requires a file", async () => {
-      await expect(run({ source: customFile, yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
-        /needs the file to import/,
-      );
+      expect(await exitCodeOf(run(baseOptions))).toBe(EXIT_CODE.USAGE);
+      expect(captured.err).toContain("already in the instance, with this source ID");
+      expect(created()).toEqual(["u1", "u2"]);
+      expect(runsIn(runsDir())).toHaveLength(1);
     });
   });
 
   describe("per-platform imports", () => {
-    /** One realistic record per platform, in that platform's export shape. */
-    const PLATFORMS: [string, unknown, string][] = [
-      [
-        "auth0",
-        [
-          {
-            user_id: "auth0|1",
-            email: "a@x.dev",
-            email_verified: true,
-            given_name: "Ada",
-            family_name: "L",
-          },
-        ],
-        "auth0|1",
-      ],
-      ["authjs", [{ id: "aj1", email: "a@x.dev", email_verified: "2024-01-01T00:00:00Z" }], "aj1"],
-      [
-        "betterauth",
-        [{ user_id: "ba1", email: "a@x.dev", email_verified: true, password_hash: BCRYPT }],
-        "ba1",
-      ],
-      [
-        "supabase",
-        [
+    test("supabase transforms, validates and imports its export", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
           {
             id: "sb1",
             email: "a@x.dev",
             email_confirmed_at: "2024-06-29 20:25:06+00",
             encrypted_password: BCRYPT,
           },
-        ],
-        "sb1",
-      ],
-    ];
-
-    test.each(PLATFORMS)(
-      "%s transforms, validates and imports its export",
-      async (key, records, externalId) => {
-        fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(records));
-
-        await run({ ...baseOptions, source: key });
-
-        const created = requests.filter((r) => r.url.endsWith("/v1/users"));
-        expect(created).toHaveLength(1);
-        expect((created[0]?.body as { external_id: string } | undefined)?.external_id).toBe(
-          externalId,
-        );
-      },
-    );
-
-    test("firebase imports its wrapped export and builds the scrypt digest", async () => {
-      fs.writeFileSync(
-        path.join(workDir, "export.json"),
-        JSON.stringify({
-          users: [
-            {
-              localId: "fb1",
-              email: "a@x.dev",
-              emailVerified: true,
-              passwordHash: "SGFzaA==",
-              salt: "U2FsdA==",
-            },
-          ],
-        }),
+        ]),
       );
 
-      await run({
-        ...baseOptions,
-        source: "firebase",
-        firebaseSignerKey: "SIGNER",
-        firebaseSaltSeparator: "Bw==",
-        firebaseRounds: 8,
-        firebaseMemCost: 14,
-      });
+      await run({ ...baseOptions, source: "supabase" });
 
-      const body = requests.find((r) => r.url.endsWith("/v1/users"))?.body as Record<
-        string,
-        unknown
-      >;
-      expect(body).toMatchObject({
-        external_id: "fb1",
-        password_digest: "SGFzaA==$U2FsdA==$SIGNER$Bw==$8$14",
-        password_hasher: "scrypt_firebase",
-      });
-    });
-
-    test("the printed command keeps the --firebase-* flags, as placeholders", async () => {
-      fs.writeFileSync(
-        path.join(workDir, "export.json"),
-        JSON.stringify({ users: [{ localId: "fb1", email: "a@x.dev", emailVerified: true }] }),
-      );
-
-      const error = (await run({
-        ...baseOptions,
-        yes: false,
-        source: "firebase",
-        firebaseSignerKey: "SIGNER",
-        firebaseSaltSeparator: "Bw==",
-        firebaseRounds: 8,
-        firebaseMemCost: 14,
-      }).catch((caught: unknown) => caught)) as CliError;
-
-      expect(error.examples?.[0]?.command).toContain(
-        "--firebase-signer-key <key> --firebase-salt-separator <separator> --firebase-rounds <n> --firebase-mem-cost <n>",
-      );
-    });
-
-    test("a partial firebase flag set fails before anything is read", async () => {
-      await expect(
-        run({ ...baseOptions, source: "firebase", firebaseSignerKey: "SIGNER" }),
-      ).rejects.toThrow(/--firebase-salt-separator/);
-      expect(requests).toHaveLength(0);
+      expect(created()).toEqual(["sb1"]);
     });
 
     test("an unknown source fails listing the valid keys", async () => {
-      await expect(run({ ...baseOptions, source: "okta" })).rejects.toThrow(
-        /Unknown source "okta".*clerk.*supabase/s,
-      );
+      const error = (await run({ ...baseOptions, source: "nope" }).catch(
+        (caught: unknown) => caught,
+      )) as CliError;
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain('Unknown source "nope". Valid sources: clerk, supabase.');
+      expect(requests).toHaveLength(0);
     });
   });
 });

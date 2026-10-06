@@ -1,16 +1,14 @@
 /**
- * `clerk migrate import <file|export-run-id>` — the user import itself.
+ * `clerk migrate import <file>` — the user import itself.
  *
  * Registered as the `import` subcommand. The exported handler keeps the name
  * `run` because `import` is a reserved word.
  *
  * An import goes through the same steps every time:
  *
- * 1. Settle the file (an export run ID stands for the file that run wrote),
- *    the source (a file from `clerk migrate export` names its own) and the
- *    target instance, and print the target.
- * 2. Decide whether this continues an earlier run of the same file, source and
- *    instance, from the run store.
+ * 1. Settle the file, the source and the target instance, and print the target.
+ * 2. Load the users: read the file, map it through the source, then normalize
+ *    and validate it.
  * 3. Run `checkImport()` against the real instance. `--dry-run` stops here.
  * 4. Refuse on any reject unless `--allow-partial`, then ask for consent.
  *    Nothing is written without `--yes` or a yes at the prompt.
@@ -38,31 +36,12 @@ import { isAgent, isHuman } from "../../mode.ts";
 import { importUsers } from "./import-users.ts";
 import { checkImport, type ImportChecks } from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
-import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
-import { resolveFirebaseHashConfig, type FirebaseHashFlags } from "./lib/firebase-hash.ts";
 import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
-import {
-  continueRun,
-  latestUserLines,
-  listRuns,
-  liveLockPid,
-  lockFile,
-  readRun,
-  resolveRunsDir,
-  RUN_ID_PATTERN,
-  runDir,
-  runState,
-  sha256File,
-  startRun,
-  type Run,
-  type RunRecord,
-  type UserLine,
-} from "./lib/run-store.ts";
+import { resolveRunsDir, sha256File, startRun, type Run, type RunRecord } from "./lib/run-store.ts";
 import { withProgress } from "./lib/progress.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
 import { readSupabaseRows } from "./lib/supabase-providers.ts";
-import { keyInstanceId, printTarget, resolveClerkTarget } from "./lib/target.ts";
-import { findInFlight } from "./lib/user-lookup.ts";
+import { printTarget, resolveClerkTarget } from "./lib/target.ts";
 import {
   fileExists,
   getFileType,
@@ -71,19 +50,15 @@ import {
 } from "./lib/transform.ts";
 import { resolveSource, sourceKeys } from "./sources/registry.ts";
 import type { ImportSummary, User } from "./types.ts";
-import { promptForFile, promptForFirebaseHashConfig, promptForSource } from "./wizard.ts";
+import { promptForFile, promptForSource } from "./wizard.ts";
 import { login } from "../auth/login.ts";
 import { link } from "../link/index.ts";
 
 export type MigrateRunOptions = {
-  /** An export file, or the ID of the export run that wrote one. */
+  /** The export file. */
   input?: string;
-  /** A built-in source key, or the path to a source you wrote. */
+  /** A built-in source key. */
   source?: string;
-  /** Content hash of a custom `--source`, set once it is loaded. */
-  sourceHash?: string;
-  /** `--source` as typed, for printed commands: a custom source's path. Not a flag. */
-  sourceArg?: string;
   /** The file to read, once `input` is resolved. Not a flag. */
   file?: string;
   requirePassword?: boolean;
@@ -96,8 +71,6 @@ export type MigrateRunOptions = {
   dryRun?: boolean;
   /** Import the users that pass, and record the rest as skipped. */
   allowPartial?: boolean;
-  /** Start a fresh run even when an earlier one matches. */
-  newRun?: boolean;
   yes?: boolean;
   json?: boolean;
   secretKey?: string;
@@ -105,7 +78,7 @@ export type MigrateRunOptions = {
   instance?: string;
   /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
   runsDir?: string;
-} & FirebaseHashFlags;
+};
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
@@ -118,7 +91,7 @@ function canPrompt(options: MigrateRunOptions): boolean {
  * Validates what a run needs before anything is read or sent.
  *
  * `--source` has already been resolved to a registered key by the time this
- * runs, custom sources included.
+ * runs.
  *
  * @returns The source key and file path, both guaranteed present.
  */
@@ -128,7 +101,7 @@ export function validateRunOptions(options: MigrateRunOptions): {
 } {
   if (!options.source) {
     throwUsageError(
-      `Missing --source. Valid values: ${sourceKeys().join(", ")}, or the path to a source you wrote.`,
+      `Missing --source. Valid values: ${sourceKeys().join(", ")}.`,
       undefined,
       ERROR_CODE.USAGE_ERROR,
       [
@@ -141,7 +114,7 @@ export function validateRunOptions(options: MigrateRunOptions): {
   }
   if (!options.file) {
     throwUsageError(
-      "Missing the file to import (a JSON or CSV export, or an export run ID).",
+      "Missing the file to import (a JSON or CSV export).",
       undefined,
       ERROR_CODE.USAGE_ERROR,
       [
@@ -262,159 +235,35 @@ async function ensureImportTarget(options: MigrateRunOptions): Promise<void> {
 }
 
 /**
- * Settles which file to read. The argument may name the export run that wrote
- * the file; a human who gave none is asked for a path.
+ * Settles which file to read. A human who gave none is asked for a path.
  */
-async function resolveInput(
-  options: MigrateRunOptions,
-): Promise<{ file: string; fromExport?: string }> {
-  const value = options.input;
-  if (!value) {
-    if (!canPrompt(options)) {
-      throwUsageError(
-        "`clerk migrate import` needs the file to import, or the export run that wrote it, and cannot prompt here.",
-        undefined,
-        undefined,
-        [
-          {
-            command: "clerk migrate import 20260929-141502-a1b2 --yes",
-            description: "Import what an export run wrote",
-          },
-          {
-            command: "clerk migrate import users.json --source clerk --yes",
-            description: "Import a file",
-          },
-        ],
-      );
-    }
-    return { file: await promptForFile() };
-  }
-  if (!RUN_ID_PATTERN.test(value) || fileExists(value)) return { file: value };
-
-  const runsDir = await resolveRunsDir(options.runsDir);
-  const record = readRun(runsDir, value);
-  if (!record) {
-    throwUsageError(`No run \`${value}\` in ${runsDir}. Run \`clerk migrate runs\` to list them.`);
-  }
-  if (record.kind !== "export" || !record.file) {
+async function resolveInput(options: MigrateRunOptions): Promise<string> {
+  if (options.input) return options.input;
+  if (!canPrompt(options)) {
     throwUsageError(
-      `Run ${value} is an ${record.kind} run, which has no file to import. Name an export run, or a file.`,
+      "`clerk migrate import` needs the file to import, and cannot prompt here.",
+      undefined,
+      undefined,
+      [
+        {
+          command: "clerk migrate import users.json --source clerk --yes",
+          description: "Import a file",
+        },
+      ],
     );
   }
-  return { file: record.file.path, fromExport: record.id };
+  return promptForFile();
 }
 
 /**
- * Resolves `--source` to a registered key, loading a custom source from its
- * path so the rest of the run treats it exactly like a built-in.
+ * Resolves `--source` to a registered key.
  *
  * @throws UsageError for an unknown key.
  */
 async function applySource(options: MigrateRunOptions): Promise<MigrateRunOptions> {
   if (!options.source) return options;
   const resolved = await resolveSource(options.source);
-  if (resolved.path && !options.json) {
-    log.info(`Loaded the \`${resolved.key}\` source from ${options.source}.`);
-  }
-  return {
-    ...options,
-    source: resolved.key,
-    sourceArg: options.source,
-    ...(resolved.hash ? { sourceHash: resolved.hash } : {}),
-  };
-}
-
-/**
- * The source an export file names for itself, checked against the one the
- * flags name.
- *
- * @throws UsageError when the two disagree: importing an Auth0 export through
- *   the Supabase mapping would create users with the wrong fields.
- */
-function applyEnvelope(
-  options: MigrateRunOptions,
-  envelope: ExportEnvelope | undefined,
-): MigrateRunOptions {
-  if (!envelope) return options;
-  if (options.source && options.source !== envelope.source) {
-    throwUsageError(
-      `The file was exported from ${envelope.source}, but --source names ${options.source}. ` +
-        "Drop --source: the file already says where it came from.",
-    );
-  }
-  return { ...options, source: envelope.source };
-}
-
-// --- Continuing an earlier run ---------------------------------------------
-
-/** How this import relates to earlier runs of the same file, source and instance. */
-export type ResumeCase =
-  | { kind: "new" }
-  | { kind: "continue"; record: RunRecord; because: "interrupted" | "partial" }
-  | { kind: "complete"; record: RunRecord };
-
-/**
- * Finds the latest import run of this file (by sha256), this source (and a
- * custom source's hash) and this instance, and decides what a re-run does:
- *
- * - none, or undone: a new run
- * - interrupted: continue it, skipping the users it created
- * - partial: continue it, retrying the users that failed or were skipped
- * - complete: nothing; the file is already in
- *
- * @throws UsageError when that run is still running in another process, or
- *   has an undo that never finished: some of its users are gone and some are
- *   not, so neither continuing it nor starting over is safe.
- */
-export function findResume(
-  runsDir: string,
-  match: {
-    sha256: string;
-    source: string;
-    sourceHash?: string;
-    instanceId: string;
-    /** The key's stand-in ID, for a run recorded while Clerk could not name the instance. */
-    keyInstanceId?: string;
-  },
-): ResumeCase {
-  const latest = listRuns(runsDir).find(
-    (record) =>
-      record.kind === "import" &&
-      record.file?.sha256 === match.sha256 &&
-      record.source === match.source &&
-      record.sourceHash === match.sourceHash &&
-      (record.target.instanceId === match.instanceId ||
-        record.target.instanceId === match.keyInstanceId),
-  );
-  if (!latest) return { kind: "new" };
-
-  const state = runState(runsDir, latest);
-  if (state === "running") {
-    throwUsageError(
-      `Run ${latest.id} is importing this file right now in another process (PID ${liveLockPid(runsDir, latest.id)}). ` +
-        `Wait for it to finish. If that process is not a migrate run, delete ${lockFile(runsDir, latest.id)}.`,
-    );
-  }
-  if (state === "undone") return { kind: "new" };
-
-  const undoRun = listRuns(runsDir).find(
-    (record) => record.kind === "undo" && record.undoes === latest.id,
-  );
-  if (undoRun && runState(runsDir, undoRun) !== "complete") {
-    throwUsageError(
-      `Run ${latest.id} has an undo that did not finish (run ${undoRun.id}). ` +
-        `Finish it with \`clerk migrate undo ${latest.id}\`, or pass --new-run to import into a new run.`,
-    );
-  }
-  // Undone in full, though the import run was never marked so.
-  if (undoRun) return { kind: "new" };
-
-  if (state === "complete") return { kind: "complete", record: latest };
-  return {
-    kind: "continue",
-    record: latest,
-    because: state === "interrupted" ? "interrupted" : "partial",
-  };
+  return { ...options, source: resolved.key };
 }
 
 // --- Reporting -------------------------------------------------------------
@@ -506,45 +355,19 @@ function formatSummary(
   return lines;
 }
 
-/**
- * Once every user is in, the files that hold them are only a liability: the
- * export carries user data and password hashes, and the run is only needed
- * for `undo`.
- */
-function cleanupLines(runsDir: string, record: RunRecord): string[] {
-  const lines: string[] = [];
-  if (record.fromExport) {
-    lines.push(
-      `The export in run ${record.fromExport} holds your users' data. Once you have checked the import, delete it:`,
-      dim(`  rm -rf ${quoteArg(runDir(runsDir, record.fromExport))}`),
-    );
-  }
-  lines.push(
-    `Keep run ${record.id} while you might still undo it. After that:`,
-    dim(`  rm -rf ${quoteArg(runDir(runsDir, record.id))}`),
-  );
-  return lines;
-}
-
 // --- The import ------------------------------------------------------------
 
 /**
  * The exact command that would carry on from here, for the consent and
  * refusal messages. Every value is shell-quoted; secrets are placeholders.
  */
-function commandFor(options: MigrateRunOptions, fromExport: string | undefined, extra: string[]) {
-  const input = fromExport ?? options.input ?? options.file ?? "<file>";
+function commandFor(options: MigrateRunOptions, extra: string[]) {
+  const input = options.input ?? options.file ?? "<file>";
   const parts = ["clerk migrate import", quoteArg(input)];
-  const source = options.sourceArg ?? options.source;
-  if (!fromExport && source) parts.push("--source", quoteArg(source));
+  if (options.source) parts.push("--source", quoteArg(options.source));
   if (options.allowPartial) parts.push("--allow-partial");
-  if (options.newRun) parts.push("--new-run");
   if (options.requirePassword) parts.push("--require-password");
   if (options.skipLegalChecks) parts.push("--skip-legal-checks");
-  if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "<key>");
-  if (options.firebaseSaltSeparator) parts.push("--firebase-salt-separator", "<separator>");
-  if (options.firebaseRounds) parts.push("--firebase-rounds", "<n>");
-  if (options.firebaseMemCost) parts.push("--firebase-mem-cost", "<n>");
   if (options.secretKey) parts.push("--secret-key", "<key>");
   if (options.app) parts.push("--app", quoteArg(options.app));
   if (options.instance) parts.push("--instance", quoteArg(options.instance));
@@ -553,15 +376,9 @@ function commandFor(options: MigrateRunOptions, fromExport: string | undefined, 
   return [...parts, ...extra].join(" ");
 }
 
-/**
- * Records the checks' rejects as skipped users, so the run says who they were.
- *
- * An adopted user keeps its `creating` line: it exists in Clerk, and `undo`
- * finds it only through that line.
- */
-function recordRejects(run: Run, checks: ImportChecks, adopted: Map<string, string>): void {
+/** Records the checks' rejects as skipped users, so the run says who they were. */
+function recordRejects(run: Run, checks: ImportChecks): void {
   for (const { sourceId, reason, keptSourceId } of checks.rejects) {
-    if (adopted.has(sourceId)) continue;
     run.append({
       sourceId,
       status: "skipped",
@@ -575,25 +392,13 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   let options = await applySource(rawOptions);
 
   const input = await resolveInput(options);
-  options = { ...options, file: input.file };
-  const envelope = fileExists(input.file)
-    ? readEnvelope(resolveImportFilePath(input.file))
-    : undefined;
-  options = applyEnvelope(options, envelope);
+  options = { ...options, file: input };
 
-  // Asked only when the file does not say where it came from.
-  if (!options.source && canPrompt(options) && fileExists(input.file)) {
+  if (!options.source && canPrompt(options) && fileExists(input)) {
     options = { ...options, source: await promptForSource() };
   }
 
   const { source, file } = validateRunOptions(options);
-  // The flags win, so a rotated key can be passed without re-exporting.
-  let firebaseHashConfig =
-    resolveFirebaseHashConfig(options, source) ??
-    (source === "firebase" ? envelope?.firebase : undefined);
-  if (source === "firebase" && !firebaseHashConfig && canPrompt(options)) {
-    firebaseHashConfig = await promptForFirebaseHashConfig();
-  }
 
   await withGutter(
     "Migrating users to Clerk",
@@ -605,84 +410,18 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const filePath = resolveImportFilePath(file);
       const sha256 = sha256File(filePath);
       const runsDir = await resolveRunsDir(options.runsDir);
-
-      const resume: ResumeCase = options.newRun
-        ? { kind: "new" }
-        : findResume(runsDir, {
-            sha256,
-            source,
-            ...(options.sourceHash ? { sourceHash: options.sourceHash } : {}),
-            instanceId: target.instanceId,
-            keyInstanceId: keyInstanceId(secretKey),
-          });
-
-      if (resume.kind === "complete") {
-        if (options.json) {
-          log.data(JSON.stringify({ target, run: resume.record, alreadyImported: true }, null, 2));
-        } else {
-          log.success(
-            `Already imported in run ${resume.record.id}. Pass --new-run to import it again.`,
-          );
-        }
-        return;
-      }
-
-      // Users the run being continued already created are done: they are not
-      // checked or sent again. Those whose extra identifiers never attached
-      // get just the attaches.
-      const continued = resume.kind === "continue" ? resume.record : undefined;
-      const done = new Map<string, string>();
-      const attachOnly: UserLine[] = [];
-      const inFlight: string[] = [];
-      if (continued) {
-        for (const line of latestUserLines(runsDir, continued.id).values()) {
-          if (line.status === "creating") inFlight.push(line.sourceId);
-          if (line.status !== "created" || !line.clerkId) continue;
-          done.set(line.sourceId, line.clerkId);
-          if (line.pending?.length) attachOnly.push(line);
-        }
-      }
-
-      // Creates the run stopped with no answer to. Those Clerk holds are
-      // adopted: checked as usual, but never created again.
       const schedule = createApiScheduler(limits.concurrencyLimit, limits.rateLimit);
-      const adopted = new Map<string, string>();
-      if (continued) {
-        const found = await findInFlight({
-          runsDir,
-          runId: continued.id,
-          sourceIds: inFlight,
-          secretKey,
-          schedule,
-        });
-        for (const user of found) adopted.set(user.sourceId, user.clerkId);
-      }
-
-      if (!options.json) {
-        log.info(
-          resume.kind === "continue"
-            ? `Continuing run ${resume.record.id}, which ${resume.because === "interrupted" ? "was interrupted" : "finished partial"}: ` +
-                `${plural(done.size, "user")} already imported ${done.size === 1 ? "is" : "are"} left alone.`
-            : "Starting a new run.",
-        );
-        if (adopted.size > 0) {
-          log.info(
-            `${plural(adopted.size, "user")} whose create was cut off ${adopted.size === 1 ? "is" : "are"} already in the instance, and won't be created again.`,
-          );
-        }
-      }
 
       const loaded = await withSpinner(`Loading users from ${file}...`, async () =>
-        loadUsersFromFile(file, source, { context: { firebaseHashConfig } }),
+        loadUsersFromFile(file, source),
       );
-      let users = loaded.users.filter((user) => !done.has(user.userId));
-      const failures = loaded.failures.filter((failure) => !done.has(failure.userId));
+      let users = loaded.users;
 
       // An instruction about this import, not a prediction: users without a
-      // password are left out of the job rather than recorded as skipped.
+      // password are left out of the job rather than recorded as rejects.
       let withoutPassword: User[] = [];
       if (options.requirePassword) {
-        withoutPassword = users.filter((user) => !user.password && !adopted.has(user.userId));
+        withoutPassword = users.filter((user) => !user.password);
         if (withoutPassword.length > 0 && !options.json) {
           log.info(
             `--require-password: leaving out ${plural(withoutPassword.length, "user")} without a password.`,
@@ -724,7 +463,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         checkImport({
           users,
           skipLegalChecks,
-          failures,
+          failures: loaded.failures,
           unknownFields: loaded.unknownFields,
           ...(supabaseRows ? { supabaseRows } : {}),
           settings,
@@ -733,7 +472,6 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           target,
           secretKey,
           schedule,
-          adoptedClerkIds: new Set(adopted.values()),
           spinner,
         }),
       );
@@ -741,17 +479,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const refused = checks.rejects.length > 0 && !options.allowPartial;
       const preview = (extra: Record<string, unknown>) =>
         log.data(
-          JSON.stringify(
-            {
-              target,
-              run: continued ?? null,
-              resume: resume.kind,
-              checks: checksJson(checks),
-              ...extra,
-            },
-            null,
-            2,
-          ),
+          JSON.stringify({ target, run: null, checks: checksJson(checks), ...extra }, null, 2),
         );
 
       if (!options.json) printChecks(checks);
@@ -776,7 +504,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           undefined,
           [
             {
-              command: commandFor(options, input.fromExport, ["--allow-partial", "--yes"]),
+              command: commandFor(options, ["--allow-partial", "--yes"]),
               description: "Import the users that pass",
             },
           ],
@@ -786,11 +514,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       if (
         checks.importable.length === 0 &&
         checks.rejects.length === 0 &&
-        withoutPassword.length === 0 &&
-        attachOnly.length === 0
+        withoutPassword.length === 0
       ) {
-        // Settled, so a continued run is finished rather than left interrupted.
-        if (continued) continueRun(runsDir, continued).finish();
         if (options.json) preview({ nothingToImport: true });
         else log.warn("No users left to import.");
         return;
@@ -807,7 +532,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             undefined,
             [
               {
-                command: commandFor(options, input.fromExport, ["--yes"]),
+                command: commandFor(options, ["--yes"]),
                 description: "Run the import",
               },
             ],
@@ -823,17 +548,13 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       // Gitignored only now, once there is consent to write a run.
       await resolveRunsDir(options.runsDir, { write: true });
-      const run = continued
-        ? continueRun(runsDir, continued)
-        : startRun(runsDir, {
-            kind: "import",
-            target,
-            source,
-            ...(options.sourceHash ? { sourceHash: options.sourceHash } : {}),
-            file: { path: filePath, sha256 },
-            ...(input.fromExport ? { fromExport: input.fromExport } : {}),
-          });
-      recordRejects(run, checks, adopted);
+      const run = startRun(runsDir, {
+        kind: "import",
+        target,
+        source,
+        file: { path: filePath, sha256 },
+      });
+      recordRejects(run, checks);
       for (const user of withoutPassword) {
         run.append({
           sourceId: user.userId,
@@ -842,8 +563,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         });
       }
 
-      const summary =
-        checks.importable.length > 0 || attachOnly.length > 0
+      const summary: ImportSummary =
+        checks.importable.length > 0
           ? await withProgress(
               { total: checks.importable.length, verb: "created" },
               async (progress) =>
@@ -852,8 +573,6 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
                   secretKey,
                   limits,
                   record: run.append,
-                  attachOnly,
-                  adopted,
                   skipPasswordRequirement: !options.requirePassword,
                   progress,
                 }),
@@ -874,7 +593,6 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             {
               target,
               run: record,
-              resume: resume.kind,
               checks: checksJson(checks),
               result: {
                 created: summary.successful,
@@ -900,15 +618,11 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       )) {
         log.info(line);
       }
-      if (record.status === "complete") {
-        log.blank();
-        for (const line of cleanupLines(runsDir, record)) log.info(line);
-      }
 
       const steps =
         summary.failed > 0
-          ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(record.id)
-          : NEXT_STEPS.MIGRATE_DONE(record.id);
+          ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(run.dir)
+          : NEXT_STEPS.MIGRATE_DONE(run.dir);
       setNextSteps(steps);
       printAgentNextSteps(steps);
     },
