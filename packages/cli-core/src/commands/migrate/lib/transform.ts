@@ -10,10 +10,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import csvParser from "csv-parser";
-import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 import { getSource } from "../sources/registry.ts";
 import { normalizeBooleanField } from "../sources/shared.ts";
-import { PASSWORD_HASHERS, type TransformContext, type SourceEntry, type User } from "../types.ts";
+import { type TransformContext, type SourceEntry, type User } from "../types.ts";
 import { userSchema } from "../validator.ts";
 import { isEnvelope, readJsonFile } from "./export-file.ts";
 
@@ -290,17 +290,13 @@ export function consolidateClerkIdentifiers(user: Record<string, unknown>): void
 
 // --- Validation ------------------------------------------------------------
 
-/**
- * Validates prepared users, dropping each failure from the run and returning
- * it for the caller to record.
- *
- * An unrecognized `passwordHasher` is the one failure that aborts instead:
- * importing those users would store credentials nobody can ever sign in with,
- * and the fix is a one-word edit to the transformer.
- */
 /** Every field the import schema declares; anything else is stripped. */
 const SCHEMA_FIELDS: ReadonlySet<string> = new Set(Object.keys(userSchema.shape));
 
+/**
+ * Validates prepared users, dropping each failure from the run and returning
+ * it for the caller to record.
+ */
 export function validatePreparedUsers(users: Record<string, unknown>[]): {
   users: User[];
   validationFailed: number;
@@ -330,18 +326,6 @@ export function validatePreparedUsers(users: Record<string, unknown>[]): {
     validationFailed++;
     const firstIssue = result.error.issues[0];
     if (!firstIssue) continue;
-
-    if (firstIssue.path.includes("passwordHasher") && user.passwordHasher) {
-      const invalidHasher =
-        typeof user.passwordHasher === "string"
-          ? user.passwordHasher
-          : JSON.stringify(user.passwordHasher);
-      throwUsageError(
-        `Invalid password hasher "${invalidHasher}" on user ${String(user.userId)} (row ${i + 1}).\n` +
-          `Expected one of: ${PASSWORD_HASHERS.join(", ")}`,
-        "https://clerk.com/docs/guides/development/migrating/overview",
-      );
-    }
 
     failures.push({
       error: firstIssue.message,

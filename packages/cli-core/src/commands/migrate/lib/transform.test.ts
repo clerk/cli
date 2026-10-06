@@ -163,12 +163,22 @@ describe("validatePreparedUsers", () => {
     expect(result.failures).toMatchObject([{ userId: "u2", row: 1 }]);
   });
 
-  test("aborts the whole run on an unknown password hasher", () => {
-    expect(() =>
-      validatePreparedUsers([
-        { userId: "u1", email: "a@x.dev", password: "d", passwordHasher: "rot13" },
-      ]),
-    ).toThrow(CliError);
+  // A failed row is never imported, so a bad hasher is an ordinary reject that
+  // `--allow-partial` can skip, whatever else is wrong with the row.
+  test("fails only the rows with an unknown password hasher, naming it", () => {
+    const result = validatePreparedUsers([
+      { userId: "u1", email: "a@x.dev", password: "d", passwordHasher: "rot13" },
+      { email: "b@x.dev", password: "d", passwordHasher: "rot13" },
+      { userId: "u3", email: "c@x.dev" },
+    ]);
+    expect(result.users.map((user) => user.userId)).toEqual(["u3"]);
+    expect(result.failures).toMatchObject([
+      { userId: "u1", path: ["passwordHasher"] },
+      { userId: "row-1" },
+    ]);
+    expect(result.failures[0]?.error).toStartWith(
+      'Unknown password hasher "rot13". Expected one of:',
+    );
   });
 });
 
