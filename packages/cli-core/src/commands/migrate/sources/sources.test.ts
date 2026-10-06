@@ -46,7 +46,7 @@ const one = (key: string, record: Record<string, unknown>, context = {}) =>
 
 describe("registry", () => {
   test("registers the built-in platforms", () => {
-    expect(sourceKeys()).toEqual(["clerk", "firebase", "supabase"]);
+    expect(sourceKeys()).toEqual(["clerk", "auth0", "firebase", "supabase"]);
   });
 
   test.each([...sources])("$key maps a source field to userId", (source) => {
@@ -110,6 +110,86 @@ describe("isVerified", () => {
     [undefined, false],
   ])("timestamp style: %p -> %p", (value, expected) => {
     expect(isVerified(value, "timestamp")).toBe(expected);
+  });
+});
+
+describe("auth0", () => {
+  const base = { user_id: "auth0|abc", email: "a@x.dev", passwordHash: "$2b$10$hash" };
+
+  test("maps identity, name and metadata onto the Clerk schema", async () => {
+    const { users } = await load("auth0", [
+      { ...base, email_verified: true, given_name: "Ada", family_name: "Lovelace" },
+    ]);
+    expect(users[0]).toMatchObject({
+      userId: "auth0|abc",
+      email: "a@x.dev",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      password: "$2b$10$hash",
+      passwordHasher: "bcrypt",
+    });
+  });
+
+  test.each([
+    [true, "email", undefined],
+    [false, undefined, "a@x.dev"],
+    [undefined, undefined, "a@x.dev"],
+  ])("email_verified=%p routes the address correctly", (verified, kept, unverified) => {
+    const user = one("auth0", { ...base, email_verified: verified });
+    expect(user?.email).toBe(kept ? "a@x.dev" : undefined);
+    expect(user?.unverifiedEmailAddresses).toBe(unverified);
+  });
+
+  test("routes an unverified phone away from the primary field", () => {
+    const user = one("auth0", { ...base, phone_number: "+15555550100", phone_verified: false });
+    expect(user?.phone).toBeUndefined();
+    expect(user?.unverifiedPhoneNumbers).toBe("+15555550100");
+  });
+
+  test("drops the platform's verification markers", () => {
+    const user = one("auth0", { ...base, email_verified: true, phone_verified: true });
+    expect("emailVerified" in (user ?? {})).toBe(false);
+    expect("phoneVerified" in (user ?? {})).toBe(false);
+  });
+
+  // `user_metadata` is the user's own to edit in Auth0, which is what Clerk's
+  // unsafe metadata is; public metadata is read-only to the user.
+  test("sends user_metadata to unsafe metadata and app_metadata to private", async () => {
+    const { users } = await load("auth0", [
+      {
+        ...base,
+        email_verified: true,
+        user_metadata: { theme: "dark" },
+        app_metadata: { plan: "pro" },
+      },
+    ]);
+    expect(users[0]?.unsafeMetadata).toEqual({ theme: "dark" });
+    expect(users[0]?.publicMetadata).toBeUndefined();
+    expect(users[0]?.privateMetadata).toEqual({ plan: "pro" });
+  });
+
+  test.each([
+    [true, true],
+    ["true", true],
+    [false, undefined],
+    [undefined, undefined],
+  ])("blocked=%p is carried as banned=%p", (blocked, expected) => {
+    expect(one("auth0", { ...base, blocked })?.banned).toBe(expected as boolean | undefined);
+  });
+
+  test("splits name when given_name and family_name are absent", () => {
+    const user = one("auth0", { ...base, name: "Ada King Lovelace" });
+    expect(user).toMatchObject({ firstName: "Ada", lastName: "King Lovelace" });
+  });
+
+  test("prefers given_name/family_name over name", () => {
+    const user = one("auth0", { ...base, name: "a@x.dev", given_name: "Ada", family_name: "L" });
+    expect(user).toMatchObject({ firstName: "Ada", lastName: "L" });
+  });
+
+  test("leaves Auth0's email-default name unset", () => {
+    const user = one("auth0", { ...base, name: "a@x.dev" });
+    expect(user?.firstName).toBeUndefined();
   });
 });
 
@@ -521,6 +601,7 @@ describe("fields the CLI's own export adds", () => {
 
 describe("invalid records", () => {
   const INVALID: [string, Record<string, unknown>][] = [
+    ["auth0", { user_id: "a1" }],
     ["firebase", { localId: "a4" }],
     ["supabase", { id: "a5" }],
   ];
@@ -543,6 +624,7 @@ describe("invalid records", () => {
 
 /** The per-platform source field that becomes a Clerk identifier. */
 function identifierFor(key: string, email = "ok@x.dev"): Record<string, unknown> {
+  if (key === "auth0") return { email, email_verified: true };
   if (key === "firebase") return { email, emailVerified: true };
   return { email, email_confirmed_at: "2024-01-01 00:00:00+00" };
 }

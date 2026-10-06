@@ -56,11 +56,12 @@ const selectCall = (index: number): SelectPrompt | undefined => mockSelect.mock.
 
 describe("promptForSource", () => {
   test("is built from the registry, so every platform appears", async () => {
-    mockSelect.mockResolvedValue("supabase");
+    mockSelect.mockResolvedValue("auth0");
 
-    expect(await promptForSource()).toBe("supabase");
+    expect(await promptForSource()).toBe("auth0");
     expect(selectCall(0)?.choices.map((choice) => choice.value)).toEqual([
       "clerk",
+      "auth0",
       "firebase",
       "supabase",
     ]);

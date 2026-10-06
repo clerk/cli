@@ -2,6 +2,7 @@ import type { Command } from "@commander-js/extra-typings";
 import { throwUsageError } from "../../../lib/errors.ts";
 import { select } from "../../../lib/listage.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
+import { exportAuth0 } from "./auth0.ts";
 import { exportClerk } from "./clerk.ts";
 import { exportFirebase } from "./firebase.ts";
 import { exportSupabase } from "./supabase.ts";
@@ -49,6 +50,7 @@ export async function exportPicker(options: Record<string, unknown> = {}): Promi
 const handlers = {
   picker: exportPicker,
   clerk: exportClerk,
+  auth0: exportAuth0,
   supabase: exportSupabase,
   firebase: exportFirebase,
 };
@@ -75,8 +77,9 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
         description: "Export from a Clerk instance into a new run",
       },
       {
-        command: "clerk migrate export supabase",
-        description: "Export from a Supabase database",
+        command:
+          "clerk migrate export auth0 --domain my-tenant.us.auth0.com --client-id … --client-secret …",
+        description: "Export from an Auth0 tenant",
       },
     ])
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
@@ -107,6 +110,31 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     ])
     .action(async (_opts, cmd) =>
       handlers.clerk(cmd.optsWithGlobals() as Parameters<typeof handlers.clerk>[0]),
+    );
+
+  exportCommand
+    .command("auth0")
+    .description("Export users from an Auth0 tenant")
+    .option("--domain <domain>", "Auth0 tenant domain, e.g. my-tenant.us.auth0.com")
+    .option("--client-id <id>", "Machine-to-machine application client ID")
+    .option("--client-secret <secret>", "Machine-to-machine application client secret")
+    .option("-o, --output <path>", "Write the export here instead of the run folder")
+    .option("-y, --yes", "Do not prompt: fail on a rejected credential")
+    .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
+    .option("--json", "Print the result as JSON; never prompts")
+    .setExamples([
+      {
+        command:
+          "clerk migrate export auth0 --domain my-tenant.us.auth0.com --client-id … --client-secret …",
+        description: "Export with explicit credentials",
+      },
+      {
+        command: "clerk migrate export auth0",
+        description: "Read AUTH0_DOMAIN, AUTH0_CLIENT_ID and AUTH0_CLIENT_SECRET, or prompt",
+      },
+    ])
+    .action(async (_opts, cmd) =>
+      handlers.auth0(cmd.optsWithGlobals() as Parameters<typeof handlers.auth0>[0]),
     );
 
   exportCommand

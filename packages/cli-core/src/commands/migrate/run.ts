@@ -354,7 +354,7 @@ async function applySource(options: MigrateRunOptions): Promise<MigrateRunOption
  * The source an export file names for itself, checked against the one the
  * flags name.
  *
- * @throws UsageError when the two disagree: importing a Clerk export through
+ * @throws UsageError when the two disagree: importing an Auth0 export through
  *   the Supabase mapping would create users with the wrong fields.
  */
 function applyEnvelope(
