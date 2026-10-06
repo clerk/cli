@@ -26,7 +26,7 @@ mock.module("../../lib/prompts.ts", () => ({
   editor: async () => "{}",
 }));
 
-const { promptForFile, promptForSource } = await import("./wizard.ts");
+const { promptForFile, promptForFirebaseHashConfig, promptForSource } = await import("./wizard.ts");
 
 let workDir: string;
 let originalCwd: string;
@@ -59,7 +59,11 @@ describe("promptForSource", () => {
     mockSelect.mockResolvedValue("supabase");
 
     expect(await promptForSource()).toBe("supabase");
-    expect(selectCall(0)?.choices.map((choice) => choice.value)).toEqual(["clerk", "supabase"]);
+    expect(selectCall(0)?.choices.map((choice) => choice.value)).toEqual([
+      "clerk",
+      "firebase",
+      "supabase",
+    ]);
   });
 
   test("labels each choice with the source's display name", async () => {
@@ -94,5 +98,30 @@ describe("promptForFile", () => {
   ])("rejects %p", async (value, message) => {
     const check = await validate();
     expect(check(value)).toMatch(message);
+  });
+});
+
+describe("promptForFirebaseHashConfig", () => {
+  test("collects all four parameters as a set", async () => {
+    mockText
+      .mockResolvedValueOnce("SIGNER")
+      .mockResolvedValueOnce("Bw==")
+      .mockResolvedValueOnce("8")
+      .mockResolvedValueOnce("14");
+
+    expect(await promptForFirebaseHashConfig()).toEqual({
+      base64_signer_key: "SIGNER",
+      base64_salt_separator: "Bw==",
+      rounds: 8,
+      mem_cost: 14,
+    });
+  });
+
+  // An export with no password hashes needs none of them.
+  test("stops when the signer key is left blank", async () => {
+    mockText.mockResolvedValueOnce("");
+
+    expect(await promptForFirebaseHashConfig()).toBeUndefined();
+    expect(mockText).toHaveBeenCalledTimes(1);
   });
 });
