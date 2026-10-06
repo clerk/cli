@@ -2,18 +2,16 @@
  * The human-mode half of `migrate import`: the prompts fill in what was not
  * passed, and nothing is written until the operator says yes.
  *
- * Kept in its own file because `mock.module` registrations are process-lifetime,
- * and `bun test --parallel` puts several files in each worker — so a mocked
- * `prompts.ts` would leak into any file that later lands in the same worker and
- * imports the real one. Human mode itself needs no mock: `setMode` is the
- * supported override.
+ * Kept in its own file because `mock.module` replaces `prompts.ts` for the whole
+ * file; `bun test --parallel` isolates each file, so the mock ends with it.
+ * Human mode is set through `CLERK_MODE` rather than `setMode`, because
+ * `mode.ts` has no way to clear a forced mode once the file is done.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getMode, setMode, type Mode } from "../../mode.ts";
 import { listageStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockSelect = mock(async () => "clerk" as unknown);
@@ -21,7 +19,7 @@ const mockText = mock(async () => "export.json" as unknown);
 let confirmAnswer = true;
 /** Every confirmation the run put up, in order — the wording is the assertion. */
 let confirmMessages: string[] = [];
-let originalMode: Mode;
+let originalMode: string | undefined;
 
 mock.module("../../lib/listage.ts", () => ({
   ...listageStubs,
@@ -62,8 +60,8 @@ const EXPORT = [
 const runsDir = () => path.join(workDir, ".clerk", "migrate");
 
 beforeAll(() => {
-  originalMode = getMode();
-  setMode("human");
+  originalMode = process.env.CLERK_MODE;
+  process.env.CLERK_MODE = "human";
   originalCwd = process.cwd();
   originalFetch = globalThis.fetch;
   workDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-interactive-")));
@@ -73,7 +71,8 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  setMode(originalMode);
+  if (originalMode === undefined) delete process.env.CLERK_MODE;
+  else process.env.CLERK_MODE = originalMode;
   globalThis.fetch = originalFetch;
   _setConfigDir(undefined);
   process.chdir(originalCwd);
