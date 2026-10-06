@@ -20,7 +20,10 @@ const dateStringSchema = z.string().refine((value) => !Number.isNaN(new Date(val
 });
 
 /** Zod enum of the password hashers Clerk accepts on import. */
-export const passwordHasherEnum = z.enum(PASSWORD_HASHERS);
+export const passwordHasherEnum = z.enum(PASSWORD_HASHERS, {
+  error: (issue) =>
+    `Unknown password hasher ${JSON.stringify(issue.input)}. Expected one of: ${PASSWORD_HASHERS.join(", ")}`,
+});
 
 /**
  * Validates user data before sending it to Clerk.
