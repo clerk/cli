@@ -450,15 +450,7 @@ async function readUsersFromFile(
 
   if (type === "application/json") {
     const parsed = readJsonFile(filePath);
-    if (!transformer.preTransform) {
-      if (!Array.isArray(parsed)) {
-        throw new CliError(
-          `Expected ${file} to contain a JSON array of users, got ${typeof parsed}.`,
-          { code: ERROR_CODE.INVALID_JSON },
-        );
-      }
-      return parsed as Record<string, unknown>[];
-    }
+    if (!transformer.preTransform) return assertUserRows(parsed, file);
   }
 
   if (transformer.preTransform) {
@@ -472,9 +464,19 @@ async function readUsersFromFile(
   if (preExtracted) return preExtracted;
   if (type === "text/csv") return readCsv(filePath, csvHeaders);
 
-  const parsed = readJsonFile(filePath);
+  return assertUserRows(readJsonFile(filePath), file);
+}
+
+/** A JSON export's rows, refusing anything but an array of objects. */
+function assertUserRows(parsed: unknown, file: string): Record<string, unknown>[] {
   if (!Array.isArray(parsed)) {
     throw new CliError(`Expected ${file} to contain a JSON array of users, got ${typeof parsed}.`, {
+      code: ERROR_CODE.INVALID_JSON,
+    });
+  }
+  const bad = parsed.findIndex((row) => !row || typeof row !== "object" || Array.isArray(row));
+  if (bad !== -1) {
+    throw new CliError(`${file}: row ${bad + 1} is not a user object.`, {
       code: ERROR_CODE.INVALID_JSON,
     });
   }
