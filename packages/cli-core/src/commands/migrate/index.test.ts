@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,16 +6,6 @@ import { getMode, setMode } from "../../mode.ts";
 import { createProgram } from "../../cli-program.ts";
 import { exportPlatformKeys } from "./export/registry.ts";
 import { isAssumeYes, setAssumeYes } from "./lib/assume-yes.ts";
-
-let saved: string | undefined;
-beforeAll(() => {
-  saved = process.env.CLERK_EXPERIMENTAL;
-  process.env.CLERK_EXPERIMENTAL = "migrate";
-});
-afterAll(() => {
-  if (saved === undefined) delete process.env.CLERK_EXPERIMENTAL;
-  else process.env.CLERK_EXPERIMENTAL = saved;
-});
 
 function findCommand(names: string[]) {
   let current = createProgram().commands.find((cmd) => cmd.name() === names[0]);

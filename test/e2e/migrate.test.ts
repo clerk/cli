@@ -36,7 +36,6 @@ async function cli(args: string[]) {
       ...process.env,
       CLERK_CONFIG_DIR: join(workDir, "config"),
       CLERK_MIGRATE_DIR: join(workDir, "runs"),
-      CLERK_EXPERIMENTAL: "migrate",
       CLERK_TELEMETRY_DISABLED: "1",
     })
     .cwd(workDir)

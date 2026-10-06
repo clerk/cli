@@ -9,18 +9,9 @@
  * be written down — so neither renaming a flag nor adding one passes silently.
  */
 
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { Command } from "commander";
 import { createProgram } from "../../cli-program.ts";
-
-// Without it `migrate` is the gate's stub, with no subcommands to check. Set at
-// load, because the cases below are built from the command tree.
-const savedExperimental = process.env.CLERK_EXPERIMENTAL;
-process.env.CLERK_EXPERIMENTAL = "migrate";
-afterAll(() => {
-  if (savedExperimental === undefined) delete process.env.CLERK_EXPERIMENTAL;
-  else process.env.CLERK_EXPERIMENTAL = savedExperimental;
-});
 
 const README = await Bun.file(new URL("./README.md", import.meta.url)).text();
 
