@@ -5,6 +5,7 @@ import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
 import clerkSource from "../sources/clerk.ts";
 import { __resetCustomSourcesForTesting, registerCustomSource } from "../sources/registry.ts";
+import type { SourceEntry } from "../types.ts";
 import {
   consolidateClerkIdentifiers,
   flattenObjectSelectively,
@@ -294,6 +295,28 @@ describe("loadUsersFromFile", () => {
       expect(users.map((user) => user.userId)).toEqual(["from-pretransform"]);
     } finally {
       __resetCustomSourcesForTesting();
+    }
+  });
+
+  test("keeps a row's own value over the source's default", async () => {
+    const source: SourceEntry = clerkSource;
+    source.defaults = { passwordHasher: "bcrypt" };
+    try {
+      fs.writeFileSync(
+        path.join(workDir, "hasher.json"),
+        JSON.stringify([
+          {
+            id: "u1",
+            primary_email_address: "a@x.dev",
+            password_digest: "d",
+            password_hasher: "argon2id",
+          },
+        ]),
+      );
+      const { users } = await loadUsersFromFile("hasher.json", "clerk");
+      expect(users[0]?.passwordHasher).toBe("argon2id");
+    } finally {
+      delete source.defaults;
     }
   });
 
