@@ -266,7 +266,7 @@ describe("run", () => {
     expect(record?.status).toBe("partial");
   });
 
-  test("aborts before any API call when the hasher is unrecognized", async () => {
+  test("rejects a user with an unrecognized hasher, naming it", async () => {
     fs.writeFileSync(
       path.join(workDir, "export.json"),
       JSON.stringify([
@@ -280,8 +280,8 @@ describe("run", () => {
     );
 
     const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
-    expect(error.message).toContain("Invalid password hasher");
-    // A usage error, not "some users failed" (exit 1).
+    expect(error.message).toContain("1 user would be rejected, so nothing was imported");
+    expect(captured.err).toContain('Unknown password hasher "rot13"');
     expect(error.exitCode).toBe(EXIT_CODE.USAGE);
     expect(created()).toHaveLength(0);
   });

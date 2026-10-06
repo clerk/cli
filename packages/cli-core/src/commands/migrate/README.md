@@ -225,9 +225,6 @@ honouring `Retry-After` when the response carries it — and retries up to 5
 times before the user is recorded as failed. The command exits 1 if any user
 failed.
 
-An **unrecognized password hasher** aborts the whole run before anything is
-sent, because it would import credentials nobody can sign in with.
-
 `--require-password` records each user it leaves out as `skipped`, so the run
 ends `partial`.
 
@@ -465,8 +462,8 @@ source actually used:
 `pbkdf2_sha256_django`, `pbkdf2_sha512`, `pbkdf2_sha512_hex`, `scrypt_firebase`,
 `scrypt_werkzeug`, `sha256`, `sha256_salted`, `sha512_symfony`
 
-An unrecognized hasher aborts the run rather than importing credentials nobody
-can sign in with.
+A user with an unrecognized hasher is rejected by the checks, naming the
+hasher, like any other invalid user.
 
 **Metadata.**
 
