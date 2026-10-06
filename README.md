@@ -66,7 +66,7 @@ Options:
   --input-json <json>  Pass command options as a JSON string, @file.json, or -
                        for stdin
   --mode <mode>        Force interaction mode (human or agent). Defaults to
-                       auto-detect based on TTY.
+                       agent under Codex, otherwise auto-detects based on TTY.
   -v, --version        Output the version number
   --verbose            Show detailed output (enables debug messages)
 

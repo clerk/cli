@@ -105,7 +105,7 @@ export function createProgram(): Program {
     )
     .option(
       "--mode <mode>",
-      "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
+      "Force interaction mode (human or agent). Defaults to agent under Codex, otherwise auto-detects based on TTY.",
     )
     .option("--verbose", "Show detailed output (enables debug messages)") as Program;
 

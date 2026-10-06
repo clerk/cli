@@ -188,7 +188,7 @@ When run with no arguments in a TTY, launches an interactive request builder:
 4. Optionally provide a request body (opens `$EDITOR`)
 5. Preview and confirm before executing
 
-Requires human mode (TTY). In agent mode, prints usage help instead.
+Requires human mode (a TTY outside Codex). In agent mode, prints usage help instead.
 
 ## Safety
 
