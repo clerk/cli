@@ -98,6 +98,20 @@ describe("registerMigrate", () => {
     ).toEqual(["--output", "--yes", "--runs-dir", "--json", "--secret-key", "--app", "--instance"]);
   });
 
+  test("migrate export auth0 takes exactly its flags", () => {
+    expect(
+      findCommand(["migrate", "export", "auth0"])?.options.map((option) => option.long),
+    ).toEqual([
+      "--domain",
+      "--client-id",
+      "--client-secret",
+      "--output",
+      "--yes",
+      "--runs-dir",
+      "--json",
+    ]);
+  });
+
   test("migrate export supabase takes exactly its flags", () => {
     expect(
       findCommand(["migrate", "export", "supabase"])?.options.map((option) => option.long),
