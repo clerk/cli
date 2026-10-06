@@ -169,12 +169,12 @@ Nuxt's module system auto-configures middleware and auto-imports components.
 
 ### TanStack Start
 
-| Action | File                       | Description                                 |
-| ------ | -------------------------- | ------------------------------------------- |
-| MODIFY | `src/start.ts`             | Add `clerkMiddleware` to request middleware |
-| MODIFY | `src/routes/__root.tsx`    | Add `ClerkProvider` and wrap body contents  |
-| CREATE | `src/routes/sign-in.$.tsx` | Sign-in route with `<SignIn />` component   |
-| CREATE | `src/routes/sign-up.$.tsx` | Sign-up route with `<SignUp />` component   |
+| Action        | File                       | Description                                                 |
+| ------------- | -------------------------- | ----------------------------------------------------------- |
+| CREATE/MODIFY | `src/start.ts`             | Add Clerk middleware; new files also enable CSRF protection |
+| MODIFY        | `src/routes/__root.tsx`    | Add `ClerkProvider` and wrap body contents                  |
+| CREATE        | `src/routes/sign-in.$.tsx` | Sign-in route with `<SignIn />` component                   |
+| CREATE        | `src/routes/sign-up.$.tsx` | Sign-up route with `<SignUp />` component                   |
 
 ### Astro
 

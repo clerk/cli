@@ -64,7 +64,126 @@ test("creates src/start.ts with clerkMiddleware when no start file exists", asyn
     expect(serverAction.content).toContain("clerkMiddleware");
     expect(serverAction.content).toContain("@clerk/tanstack-react-start/server");
     expect(serverAction.content).toContain("requestMiddleware");
+    expect(serverAction.content).toContain("createCsrfMiddleware");
+    expect(serverAction.content).toContain('context.handlerType === "serverFn"');
+    expect(serverAction.content).toContain(
+      "requestMiddleware: [csrfMiddleware, clerkMiddleware()]",
+    );
   }
+});
+
+test("adds Clerk after existing CSRF middleware in an expression-body start callback", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart, createCsrfMiddleware } from "@tanstack/react-start";
+import { ClerkProvider } from "@clerk/tanstack-react-start";
+
+const csrfMiddleware = createCsrfMiddleware({ filter: (context) => context.handlerType === "serverFn" });
+export const startInstance = createStart(() => ({
+  requestMiddleware: [csrfMiddleware],
+}));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain("requestMiddleware: [csrfMiddleware, clerkMiddleware()]");
+  expect(action.content.match(/requestMiddleware:/g)).toHaveLength(1);
+  expect(action.content).toContain(
+    'import { clerkMiddleware } from "@clerk/tanstack-react-start/server"',
+  );
+});
+
+test("preserves an existing requestMiddleware array in a block-body callback", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart } from "@tanstack/react-start";
+export const startInstance = createStart(() => {
+  return { requestMiddleware: [csrfMiddleware, customMiddleware] };
+});
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain(
+    "requestMiddleware: [csrfMiddleware, customMiddleware, clerkMiddleware()]",
+  );
+  expect(action.content.match(/requestMiddleware:/g)).toHaveLength(1);
+});
+
+test("adds a requestMiddleware property when the existing config has none", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart } from "@tanstack/react-start";
+export const startInstance = createStart(() => ({ defaultSsr: false }));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain("requestMiddleware: [clerkMiddleware()]");
+  expect(action.content).toContain("defaultSsr: false");
+});
+
+test("reports unsupported start config without writing an unused import", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart } from "@tanstack/react-start";
+export const startInstance = createStart(getConfig);
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("skip");
+  if (action?.type !== "skip") throw new Error("Expected skip action");
+  expect(action.skipReason).toContain("add clerkMiddleware() manually");
+});
+
+test("does not replace a requestMiddleware value it cannot safely extend", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart } from "@tanstack/react-start";
+export const startInstance = createStart(() => ({ requestMiddleware: customMiddleware }));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("skip");
+  if (action?.type !== "skip") throw new Error("Expected skip action");
+  expect(action.skipReason).toContain("add clerkMiddleware() manually");
+});
+
+test("skips a start config that already registers Clerk middleware", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart } from "@tanstack/react-start";
+import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+export const startInstance = createStart(() => ({ requestMiddleware: [clerkMiddleware()] }));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action).toEqual({
+    type: "skip",
+    path: "src/start.ts",
+    skipReason: "Already has Clerk middleware",
+  });
 });
 
 test("creates app/start.ts when no start file exists and app base dir is detected", async () => {

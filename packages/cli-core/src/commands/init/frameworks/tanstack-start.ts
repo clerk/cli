@@ -1,4 +1,6 @@
 import { join } from "node:path";
+import { builders, parseModule } from "magicast";
+import type { ASTNode } from "magicast";
 import {
   addBootstrapHeader,
   authComponentName,
@@ -6,7 +8,6 @@ import {
   findFirstFile,
   findFirstDirMatch,
   hasTailwindStyles,
-  hasClerkImport,
   indentBlock,
   jsxAuthComponentMarkup,
   jsxExt,
@@ -122,14 +123,119 @@ async function scaffoldAuthRoutes(
 
 function newStartFileContent(): string {
   return `import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
-import { createStart } from "@tanstack/react-start";
+import { createCsrfMiddleware, createStart } from "@tanstack/react-start";
 
-export const startInstance = createStart(() => {
-  return {
-    requestMiddleware: [clerkMiddleware()],
-  };
+const csrfMiddleware = createCsrfMiddleware({
+  filter: (context) => context.handlerType === "serverFn",
 });
+
+export const startInstance = createStart(() => ({
+  requestMiddleware: [csrfMiddleware, clerkMiddleware()],
+}));
 `;
+}
+
+function addClerkToStart(content: string): string | null {
+  try {
+    const mod = parseModule(content);
+    const calls: Extract<ASTNode, { type: "CallExpression" }>[] = [];
+    const visited = new WeakSet<object>();
+
+    function visit(node: ASTNode): void {
+      if (visited.has(node)) return;
+      visited.add(node);
+      if (
+        node.type === "CallExpression" &&
+        node.callee.type === "Identifier" &&
+        node.callee.name === "createStart"
+      ) {
+        calls.push(node);
+      }
+      for (const [key, value] of Object.entries(node)) {
+        if (key === "original" || key === "loc" || key === "comments") continue;
+        for (const child of Array.isArray(value) ? value : [value]) {
+          if (child && typeof child === "object" && "type" in child) visit(child as ASTNode);
+        }
+      }
+    }
+
+    visit(mod.$ast);
+    if (calls.length !== 1) return null;
+
+    const callback = calls[0]!.arguments[0];
+    if (!callback || callback.type !== "ArrowFunctionExpression") return null;
+
+    let config: Extract<ASTNode, { type: "ObjectExpression" }> | null = null;
+    if (callback.body.type === "ObjectExpression") {
+      config = callback.body;
+    } else if (callback.body.type === "BlockStatement") {
+      const returns = callback.body.body.filter(
+        (statement) => statement.type === "ReturnStatement",
+      );
+      if (returns.length === 1 && returns[0]!.argument?.type === "ObjectExpression") {
+        config = returns[0]!.argument;
+      }
+    }
+    if (!config) return null;
+
+    // A spread could override requestMiddleware after our edit, and its contents are unknown.
+    if (config.properties.some((property) => property.type === "SpreadElement")) return null;
+
+    const middlewareProperties = config.properties.filter(
+      (property) =>
+        (property.type === "ObjectProperty" || property.type === "ObjectMethod") &&
+        ((property.key.type === "Identifier" && property.key.name === "requestMiddleware") ||
+          (property.key.type === "StringLiteral" && property.key.value === "requestMiddleware")),
+    );
+    if (middlewareProperties.length > 1) return null;
+
+    const middlewareProperty = middlewareProperties[0];
+    const clerkCall = builders.raw("clerkMiddleware()").$ast;
+    if (clerkCall.type !== "CallExpression") return null;
+
+    if (middlewareProperty) {
+      if (
+        middlewareProperty.type !== "ObjectProperty" ||
+        middlewareProperty.value.type !== "ArrayExpression"
+      ) {
+        return null;
+      }
+      const middleware = middlewareProperty.value.elements;
+      if (
+        middleware.some(
+          (element) =>
+            element?.type === "CallExpression" &&
+            element.callee.type === "Identifier" &&
+            element.callee.name === "clerkMiddleware",
+        )
+      ) {
+        return content;
+      }
+      middleware.push(clerkCall);
+    } else {
+      const property = builders.raw("({ requestMiddleware: [clerkMiddleware()] })").$ast;
+      if (property.type !== "ObjectExpression") return null;
+      config.properties.unshift(property.properties[0]!);
+    }
+
+    const result = mod.generate().code;
+    const hasImport =
+      mod.$ast.type === "Program" &&
+      mod.$ast.body.some(
+        (statement) =>
+          statement.type === "ImportDeclaration" &&
+          statement.source.value === "@clerk/tanstack-react-start/server" &&
+          statement.specifiers.some(
+            (specifier) =>
+              specifier.type === "ImportSpecifier" && specifier.local.name === "clerkMiddleware",
+          ),
+      );
+    return hasImport
+      ? result
+      : safeAddImport(result, "@clerk/tanstack-react-start/server", "clerkMiddleware");
+  } catch {
+    return null;
+  }
 }
 
 async function scaffoldStartServer(
@@ -144,24 +250,23 @@ async function scaffoldStartServer(
       path: newPath,
       type: "create",
       content: newStartFileContent(),
-      description: "Create start.ts with clerkMiddleware",
+      description: "Create start.ts with CSRF and Clerk middleware",
     };
   }
 
   const content = await Bun.file(join(ctx.cwd, serverPath)).text();
 
-  if (hasClerkImport(content)) {
-    return { type: "skip", path: serverPath, skipReason: "Already has Clerk middleware" };
+  const newContent = addClerkToStart(content);
+  if (newContent === null) {
+    return {
+      type: "skip",
+      path: serverPath,
+      skipReason:
+        "Could not safely add Clerk to requestMiddleware — add clerkMiddleware() manually",
+    };
   }
-
-  let newContent = safeAddImport(content, "@clerk/tanstack-react-start/server", "clerkMiddleware");
-
-  // Insert requestMiddleware into createStart config
-  if (newContent.includes("createStart")) {
-    newContent = newContent.replace(
-      /(createStart\s*\(\s*\(\)\s*=>\s*\{[\s\S]*?return\s*\{)/,
-      "$1\n    requestMiddleware: [clerkMiddleware()],",
-    );
+  if (newContent === content) {
+    return { type: "skip", path: serverPath, skipReason: "Already has Clerk middleware" };
   }
 
   return {
