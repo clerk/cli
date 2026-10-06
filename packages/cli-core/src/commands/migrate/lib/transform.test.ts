@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
 import clerkSource from "../sources/clerk.ts";
+import type { SourceEntry } from "../types.ts";
 import {
   consolidateClerkIdentifiers,
   flattenObjectSelectively,
@@ -273,6 +274,28 @@ describe("loadUsersFromFile", () => {
     fs.writeFileSync(path.join(workDir, "hash.csv"), "id,primary_email_address\n#7,a@x.dev\n");
     const { users } = await loadUsersFromFile("hash.csv", "clerk");
     expect(users.map((user) => user.userId)).toEqual(["#7"]);
+  });
+
+  test("keeps a row's own value over the source's default", async () => {
+    const source: SourceEntry = clerkSource;
+    source.defaults = { passwordHasher: "bcrypt" };
+    try {
+      fs.writeFileSync(
+        path.join(workDir, "hasher.json"),
+        JSON.stringify([
+          {
+            id: "u1",
+            primary_email_address: "a@x.dev",
+            password_digest: "d",
+            password_hasher: "argon2id",
+          },
+        ]),
+      );
+      const { users } = await loadUsersFromFile("hasher.json", "clerk");
+      expect(users[0]?.passwordHasher).toBe("argon2id");
+    } finally {
+      delete source.defaults;
+    }
   });
 
   test("rejects a JSON file that is not an array of users", async () => {

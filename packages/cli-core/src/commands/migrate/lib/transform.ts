@@ -343,7 +343,9 @@ function addDefaultFields(
   transformer: SourceEntry,
 ): Record<string, unknown>[] {
   if (!transformer.defaults) return users;
-  return users.map((user) => ({ ...user, ...transformer.defaults }));
+  // Defaults go first: `transformKeys` maps keys in order, so a later default
+  // `passwordHasher` would overwrite the row's own `password_hasher`.
+  return users.map((user) => ({ ...transformer.defaults, ...user }));
 }
 
 /**
