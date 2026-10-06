@@ -327,17 +327,6 @@ export type ImportUsersOptions = {
   limits: ResolvedLimits;
   /** Receives each user's lines as they happen. */
   record: (line: UserLine) => void;
-  /**
-   * Users a continued run created whose extra identifiers never attached: their
-   * latest `created` line, with `pending`. Only the attaches are sent.
-   */
-  attachOnly?: UserLine[];
-  /**
-   * Source ID → Clerk ID for users whose create a stopped run sent with no
-   * answer, and which a continued run then found in the instance. They are
-   * not created again; only their extra identifiers are sent.
-   */
-  adopted?: Map<string, string>;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
   /** Carried into the summary so the report covers the whole file. */
@@ -351,7 +340,8 @@ export type ImportUsersOptions = {
  *
  * A failed user is recorded and the run continues; a 429 backs off (honouring
  * `Retry-After`) and retries up to {@link MAX_RETRIES} times. A create with no
- * answer keeps its `creating` line, for a continued run or `undo` to resolve.
+ * answer keeps its `creating` line: Clerk may hold the user, and a re-run's
+ * checks look it up before creating it again.
  */
 export async function importUsers(options: ImportUsersOptions): Promise<ImportSummary> {
   const {
@@ -359,8 +349,6 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     secretKey,
     limits,
     record,
-    attachOnly = [],
-    adopted = new Map<string, string>(),
     skipPasswordRequirement = true,
     validationFailed = 0,
     progress: report,
@@ -400,7 +388,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
 
   /**
    * Attaches a created user's extra identifiers. The user goes on record with
-   * them `pending` first, so a run stopped before they attach can finish them.
+   * them `pending` first, so a run stopped before they attach records which
+   * never did.
    */
   const finishUser = async (line: UserLine, toAttach: PendingIdentifier[], notes: string[]) => {
     const { error: _error, pending: _pending, ...base } = line;
@@ -421,17 +410,14 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     const retries: string[] = [];
     const identifiers = splitIdentifiers(user);
     let created: { clerkUserId: string; notes: string[] };
-    const adoptedId = adopted.get(user.userId);
     try {
-      created = adoptedId
-        ? { clerkUserId: adoptedId, notes: [] }
-        : await retryOn429(
-            async () =>
-              createUser(ctx, user, identifiers, skipPasswordRequirement, () =>
-                record({ sourceId: user.userId, status: "creating" }),
-              ),
-            { onRetry: ({ message }) => retries.push(message) },
-          );
+      created = await retryOn429(
+        async () =>
+          createUser(ctx, user, identifiers, skipPasswordRequirement, () =>
+            record({ sourceId: user.userId, status: "creating" }),
+          ),
+        { onRetry: ({ message }) => retries.push(message) },
+      );
     } catch (error) {
       if (error instanceof RateLimitExceededError) {
         recordFailure(user.userId, error.message, "429", retries, false);
@@ -464,10 +450,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   };
 
   progress();
-  await Promise.all([
-    ...users.map(async (user) => processUser(user)),
-    ...attachOnly.map(async (line) => finishUser(line, line.pending ?? [], [])),
-  ]);
+  await Promise.all(users.map(async (user) => processUser(user)));
 
   return { totalProcessed: total, successful, failed, validationFailed, errorBreakdown };
 }
