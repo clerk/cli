@@ -463,6 +463,17 @@ export function continueRun(runsDir: string, record: RunRecord): Run {
   return run;
 }
 
+/**
+ * Takes a run's lock without opening it, so no other process can continue it.
+ *
+ * @returns Releases the lock.
+ * @throws UsageError when another live process holds it.
+ */
+export function lockRun(runsDir: string, id: string): () => void {
+  acquireLock(runsDir, id);
+  return () => fs.rmSync(lockFile(runsDir, id), { force: true });
+}
+
 /** Merges fields into a run this process is not writing, such as `undoneBy`. */
 export function patchRun(runsDir: string, id: string, patch: Partial<RunRecord>): void {
   const record = readRun(runsDir, id);
