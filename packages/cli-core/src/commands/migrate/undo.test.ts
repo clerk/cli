@@ -4,7 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import { EXIT_CODE, type CliError } from "../../lib/errors.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
-import { latestUserLines, listRuns, readRun, startRun, type RunRecord } from "./lib/run-store.ts";
+import {
+  continueRun,
+  latestUserLines,
+  listRuns,
+  lockFile,
+  readRun,
+  startRun,
+  type RunRecord,
+} from "./lib/run-store.ts";
 import { keyInstanceId } from "./lib/target.ts";
 import { undo } from "./undo.ts";
 
@@ -171,6 +179,47 @@ describe("refusals, all exit 2 and delete nothing", () => {
     expect(error.message).toContain("Pass --yes to confirm");
     expect(captured.err).toContain("Will delete 2 users");
     expect(deletes()).toHaveLength(0);
+  });
+
+  // Another process continues the import while the undo previews it.
+  describe("a re-import of the run during the preview", () => {
+    const duringPreview = (act: () => void) => {
+      const stubbed = globalThis.fetch;
+      let acted = false;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        if (!acted && new URL(input.toString()).searchParams.has("user_id")) {
+          acted = true;
+          act();
+        }
+        return stubbed(input, init);
+      }) as typeof fetch;
+    };
+
+    test("still running: refused by the import run's lock", async () => {
+      const record = importRun();
+      duringPreview(() => fs.writeFileSync(lockFile(runsDir, record.id), String(process.ppid)));
+
+      await expect(undo(record.id, withDir({ yes: true }))).rejects.toThrow(
+        /in use by another process/,
+      );
+      expect(deletes()).toHaveLength(0);
+      expect(readRun(runsDir, record.id)?.status).not.toBe("undone");
+    });
+
+    test("finished: refused because the preview is out of date", async () => {
+      const record = importRun();
+      duringPreview(() => {
+        const run = continueRun(runsDir, record);
+        run.append({ sourceId: "c", status: "created", clerkId: "user_c" });
+        run.finish();
+      });
+
+      await expect(undo(record.id, withDir({ yes: true }))).rejects.toThrow(
+        /preview is out of date/,
+      );
+      expect(deletes()).toHaveLength(0);
+      expect(fs.existsSync(lockFile(runsDir, record.id))).toBe(false);
+    });
   });
 });
 
