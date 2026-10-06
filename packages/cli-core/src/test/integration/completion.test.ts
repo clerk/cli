@@ -221,28 +221,21 @@ describe("generateCompletions", () => {
     });
 
     test("completes --source with the built-in migrate sources", () => {
-      const saved = process.env.CLERK_EXPERIMENTAL;
-      process.env.CLERK_EXPERIMENTAL = "migrate";
-      try {
-        const names = generateCompletions(createProgram(), [
-          "migrate",
-          "import",
-          "--source",
-          "",
-        ]).completions.map((c) => c.name);
-        expect(names).toEqual([
-          "clerk",
-          "auth0",
-          "authjs",
-          "betterauth",
-          "firebase",
-          "supabase",
-          "workos",
-        ]);
-      } finally {
-        if (saved === undefined) delete process.env.CLERK_EXPERIMENTAL;
-        else process.env.CLERK_EXPERIMENTAL = saved;
-      }
+      const names = generateCompletions(createProgram(), [
+        "migrate",
+        "import",
+        "--source",
+        "",
+      ]).completions.map((c) => c.name);
+      expect(names).toEqual([
+        "clerk",
+        "auth0",
+        "authjs",
+        "betterauth",
+        "firebase",
+        "supabase",
+        "workos",
+      ]);
     });
 
     test("returns empty for options with unknown values (file paths)", () => {
@@ -298,20 +291,13 @@ describe("generateCompletions", () => {
     });
 
     test("migrate sources: suggests the built-in sources", () => {
-      const saved = process.env.CLERK_EXPERIMENTAL;
-      process.env.CLERK_EXPERIMENTAL = "migrate";
-      try {
-        const names = generateCompletions(createProgram(), [
-          "migrate",
-          "sources",
-          "",
-        ]).completions.map((c) => c.name);
-        expect(names).toContain("supabase");
-        expect(names).toContain("workos");
-      } finally {
-        if (saved === undefined) delete process.env.CLERK_EXPERIMENTAL;
-        else process.env.CLERK_EXPERIMENTAL = saved;
-      }
+      const names = generateCompletions(createProgram(), [
+        "migrate",
+        "sources",
+        "",
+      ]).completions.map((c) => c.name);
+      expect(names).toContain("supabase");
+      expect(names).toContain("workos");
     });
 
     test("open dashboard: filters subpaths by prefix", () => {
