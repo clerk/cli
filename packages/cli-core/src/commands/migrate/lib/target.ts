@@ -120,6 +120,15 @@ function assertInstanceFlagMatches(
   const wanted = INSTANCE_ALIASES[flag];
   const matches = wanted ? identity.env === wanted : identity.instanceId === flag;
   if (matches) return;
+  // A `key_` ID means Clerk did not name the instance, so a literal ID cannot
+  // be checked; saying it "does not match" would blame the flag.
+  if (!wanted && identity.instanceId.startsWith("key_")) {
+    throwUsageError(
+      `Could not verify that the key from ${keySource} addresses --instance ${flag}: ` +
+        "Clerk did not answer GET /v1/instance. Nothing was changed.\n" +
+        "Try again, or pass --instance dev or --instance prod.",
+    );
+  }
   throwUsageError(
     `--instance ${flag} does not match the key from ${keySource}, which addresses the ` +
       `${identity.env} instance ${identity.instanceId}. Nothing was changed.\n` +
