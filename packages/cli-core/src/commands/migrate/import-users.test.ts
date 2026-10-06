@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { BapiError } from "../../lib/errors.ts";
+import { _resetInterruptState, abortInFlight } from "../../lib/signals.ts";
 import {
   buildCreateUserBody,
   importUsers,
@@ -220,6 +221,26 @@ describe("importUsers", () => {
     expect(summary).toMatchObject({ totalProcessed: 2, successful: 2, failed: 0 });
     expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
     expect(lines.filter((line) => line.status === "created")).toHaveLength(2);
+  });
+
+  test("neither fails nor records a create a Ctrl-C stopped before it was sent", async () => {
+    stub(() => ok("user_created"));
+    abortInFlight();
+    try {
+      const summary = await importUsers({
+        users: [user({ userId: "u1" }), user({ userId: "u2", email: "b@x.dev" })],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+      });
+
+      expect(summary).toMatchObject({ successful: 0, failed: 0 });
+      expect(summary.errorBreakdown.size).toBe(0);
+      expect(requests).toHaveLength(0);
+      expect(allLines).toHaveLength(0);
+    } finally {
+      _resetInterruptState();
+    }
   });
 
   test("attaches additional and unverified identifiers after the user exists", async () => {
