@@ -1,0 +1,123 @@
+import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
+import { readJsonFile } from "../lib/export-file.ts";
+import type { PreTransformResult, SourceEntry } from "../types.ts";
+import { isVerified, routeByVerification, splitName, toIsoDate } from "./shared.ts";
+
+/**
+ * Column order of `firebase auth:export --format=csv`, which writes no header
+ * row. Without these the CSV parser would treat the first user as the header.
+ */
+const FIREBASE_CSV_HEADERS =
+  "localId,email,emailVerified,passwordHash,passwordSalt,displayName,photoUrl," +
+  "googleId,googleEmail,googleDisplayName,googlePhotoUrl," +
+  "facebookId,facebookEmail,facebookDisplayName,facebookPhotoUrl," +
+  "twitterId,twitterEmail,twitterDisplayName,twitterPhotoUrl," +
+  "githubId,githubEmail,githubDisplayName,githubPhotoUrl," +
+  "createdAt,lastSignedInAt,phoneNumber,disabled,customAttributes,providerUserInfo";
+
+/**
+ * Firebase → Clerk transformer.
+ *
+ * Handles both shapes `firebase auth:export` produces: a headerless CSV, and
+ * JSON wrapped in `{ users: [...] }`.
+ *
+ * Firebase's scrypt is a modified variant, so Clerk needs the project's four
+ * hash parameters alongside each digest. They arrive on the run's
+ * {@link TransformContext} from `--firebase-*` flags or the matching
+ * `CLERK_FIREBASE_*` environment variables; they are never persisted.
+ *
+ * See https://clerk.com/docs/guides/development/migrating/firebase
+ */
+const firebaseSource = {
+  key: "firebase",
+  label: "Firebase",
+  description:
+    "Works with `firebase auth:export` (CSV or JSON). Requires the project's four password hash parameters to migrate passwords.",
+
+  preTransform: (filePath: string, fileType: string): PreTransformResult => {
+    // The CSV has no header row; name the columns rather than writing a copy
+    // with one, which would leave the hashes and salts in a temp file.
+    if (fileType === "text/csv") return { filePath, csvHeaders: FIREBASE_CSV_HEADERS.split(",") };
+
+    if (fileType === "application/json") {
+      const parsed = readJsonFile(filePath);
+      if (Array.isArray(parsed)) return { filePath, data: parsed as Record<string, unknown>[] };
+
+      const users = (parsed as { users?: unknown })?.users;
+      if (Array.isArray(users)) return { filePath, data: users as Record<string, unknown>[] };
+
+      throw new CliError(
+        "Invalid Firebase JSON export: expected `{ users: [...] }` or an array of users.",
+        { code: ERROR_CODE.INVALID_JSON },
+      );
+    }
+
+    return { filePath };
+  },
+
+  carries: {
+    passwords: {
+      level: "yes",
+      note: "scrypt hashes come across with the project's hash parameters, read by the export or passed as `--firebase-*`.",
+    },
+    mfa: { level: "no", note: "Firebase exports no MFA enrolments. Users enrol again in Clerk." },
+    metadata: { level: "no", note: "Custom claims are not exported." },
+  },
+  transformer: {
+    localId: "userId",
+    email: "email",
+    emailVerified: "emailVerified",
+    passwordHash: "passwordHash",
+    passwordSalt: "salt",
+    phoneNumber: "phone",
+    displayName: "name",
+    disabled: "banned",
+  },
+
+  postTransform: (user, context) => {
+    const passwordHash = user.passwordHash;
+    const salt = user.salt;
+
+    if (passwordHash && salt) {
+      const config = context.firebaseHashConfig;
+      if (!config) {
+        throwUsageError(
+          "This export contains Firebase password hashes, which need the project's hash parameters to import.\n" +
+            "Find them in the Firebase console under Authentication → Users → (⋮) → Password hash parameters, then pass:\n" +
+            "  --firebase-signer-key --firebase-salt-separator --firebase-rounds --firebase-mem-cost",
+          "https://clerk.com/docs/guides/development/migrating/firebase",
+        );
+      }
+
+      // Clerk's scrypt_firebase hasher expects every parameter inline:
+      // hash$salt$signerKey$saltSeparator$rounds$memCost
+      user.password = [
+        passwordHash,
+        salt,
+        config.base64_signer_key,
+        config.base64_salt_separator,
+        config.rounds,
+        config.mem_cost,
+      ].join("$");
+
+      delete user.passwordHash;
+      delete user.salt;
+    }
+
+    routeByVerification(user, "email", "emailVerified", "boolean");
+    // Firebase exports timestamps as Unix milliseconds, often as strings.
+    user.createdAt = toIsoDate(user.createdAt, true);
+    splitName(user);
+
+    // A disabled Firebase account is Clerk's banned. Runs before
+    // normalizeUserData, so accept CSV's "true" as well.
+    if (isVerified(user.banned, "boolean")) user.banned = true;
+    else delete user.banned;
+  },
+
+  defaults: {
+    passwordHasher: "scrypt_firebase" as const,
+  },
+} satisfies SourceEntry;
+
+export default firebaseSource;

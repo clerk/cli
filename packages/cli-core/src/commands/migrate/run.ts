@@ -49,6 +49,7 @@ import { importUsers } from "./import-users.ts";
 import { ALREADY_IMPORTED, checkImport, type ImportChecks } from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
+import { resolveFirebaseHashConfig, type FirebaseHashFlags } from "./lib/firebase-hash.ts";
 import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
 import {
   continueRun,
@@ -96,7 +97,7 @@ import {
 } from "./lib/transform.ts";
 import { resolveSource, sourceKeys } from "./sources/registry.ts";
 import type { ImportSummary, User } from "./types.ts";
-import { promptForFile, promptForSource } from "./wizard.ts";
+import { promptForFile, promptForFirebaseHashConfig, promptForSource } from "./wizard.ts";
 import { login } from "../auth/login.ts";
 import { link } from "../link/index.ts";
 
@@ -126,7 +127,7 @@ export type MigrateRunOptions = {
   instance?: string;
   /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
   runsDir?: string;
-};
+} & FirebaseHashFlags;
 
 /**
  * Validates what a run needs before anything is read or sent.
@@ -651,6 +652,10 @@ function commandFor(
   if (!fromExport && options.source) parts.push("--source", quoteArg(options.source));
   if (options.newRun) parts.push("--new-run");
   parts.push(...importFlags(options));
+  if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "<key>");
+  if (options.firebaseSaltSeparator) parts.push("--firebase-salt-separator", "<separator>");
+  if (options.firebaseRounds) parts.push("--firebase-rounds", "<n>");
+  if (options.firebaseMemCost) parts.push("--firebase-mem-cost", "<n>");
   parts.push(...carry);
   if (options.json) parts.push("--json");
   return [...parts, ...extra].join(" ");
@@ -784,6 +789,14 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   // The flags every suggested command needs to reach this runs folder and instance.
   const carry = carryFlags(options);
 
+  // The flags win, so a rotated key can be passed without re-exporting.
+  let firebaseHashConfig =
+    resolveFirebaseHashConfig(options, source) ??
+    (source === "firebase" ? envelope?.firebase : undefined);
+  if (source === "firebase" && !firebaseHashConfig && canPrompt(options)) {
+    firebaseHashConfig = await promptForFirebaseHashConfig();
+  }
+
   await withGutter(
     "Migrating users to Clerk",
     async ({ setNextSteps }) => {
@@ -882,7 +895,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       }
 
       const loaded = await withSpinner(`Loading users from ${file}...`, async () =>
-        loadUsersFromFile(file, source),
+        loadUsersFromFile(file, source, { context: { firebaseHashConfig } }),
       );
       let users = loaded.users.filter((user) => !done.has(user.userId));
       const failures = loaded.failures.filter((failure) => !done.has(failure.userId));
