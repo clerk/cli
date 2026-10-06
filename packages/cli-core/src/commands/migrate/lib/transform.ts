@@ -457,7 +457,7 @@ async function readUsersFromFile(
   }
 
   // A pre-transform's rows win over the file, CSV or not.
-  if (preExtracted) return preExtracted;
+  if (preExtracted) return assertUserRows(preExtracted, file);
   if (type === "text/csv") return readCsv(filePath, csvHeaders);
 
   return assertUserRows(readJsonFile(filePath), file);

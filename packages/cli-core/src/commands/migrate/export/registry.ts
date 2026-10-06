@@ -11,6 +11,7 @@
  */
 
 import { exportClerk } from "./clerk.ts";
+import { exportFirebase } from "./firebase.ts";
 import { exportSupabase } from "./supabase.ts";
 
 export type ExportRegistryEntry = {
@@ -36,6 +37,13 @@ export const exportPlatforms: ExportRegistryEntry[] = [
     description: "A Supabase Postgres database — includes password hashes",
     sourceKey: "supabase",
     run: async (options) => exportSupabase(options),
+  },
+  {
+    key: "firebase",
+    label: "Firebase",
+    description: "A Firebase project, via Identity Toolkit",
+    sourceKey: "firebase",
+    run: async (options) => exportFirebase(options),
   },
 ];
 

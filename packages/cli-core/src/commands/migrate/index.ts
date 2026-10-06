@@ -1,5 +1,6 @@
 import type { Program } from "../../cli-program.ts";
 import { isExperimentEnabled, requireExperiment } from "../../lib/experimental.ts";
+import { parseIntegerOption } from "../../lib/option-parsers.ts";
 import { setMode } from "../../mode.ts";
 import { setAssumeYes } from "./lib/assume-yes.ts";
 import { registerMigrateExport } from "./export/index.ts";
@@ -90,6 +91,14 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
     .option(
       "--skip-legal-checks",
       "Import users with no legal acceptance on record into an instance that requires it",
+    )
+    .option("--firebase-signer-key <key>", "Firebase base64 signer key (overrides the export file)")
+    .option("--firebase-salt-separator <separator>", "Firebase base64 salt separator")
+    .option("--firebase-rounds <n>", "Firebase scrypt rounds", (value: string) =>
+      parseIntegerOption(value, "--firebase-rounds", { min: 1 }),
+    )
+    .option("--firebase-mem-cost <n>", "Firebase scrypt memory cost", (value: string) =>
+      parseIntegerOption(value, "--firebase-mem-cost", { min: 1 }),
     )
     .option("-y, --yes", "Import without prompting")
     .option("--json", "Output as JSON; never prompts, so pair it with --yes to import")

@@ -1,10 +1,19 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { CliError } from "../../../lib/errors.ts";
 import { loadUsersFromFile, transformUsers } from "../lib/transform.ts";
+import type { FirebaseHashConfig } from "../types.ts";
 import { getSource, sourceKeys, sources } from "./registry.ts";
 import { isVerified } from "./shared.ts";
+
+const FIREBASE_HASH: FirebaseHashConfig = {
+  base64_signer_key: "SIGNERKEY==",
+  base64_salt_separator: "Bw==",
+  rounds: 8,
+  mem_cost: 14,
+};
 
 let workDir: string;
 let originalCwd: string;
@@ -37,7 +46,7 @@ const one = (key: string, record: Record<string, unknown>, context = {}) =>
 
 describe("registry", () => {
   test("registers the built-in platforms", () => {
-    expect(sourceKeys()).toEqual(["clerk", "supabase"]);
+    expect(sourceKeys()).toEqual(["clerk", "firebase", "supabase"]);
   });
 
   test.each([...sources])("$key maps a source field to userId", (source) => {
@@ -101,6 +110,91 @@ describe("isVerified", () => {
     [undefined, false],
   ])("timestamp style: %p -> %p", (value, expected) => {
     expect(isVerified(value, "timestamp")).toBe(expected);
+  });
+});
+
+describe("firebase", () => {
+  const base = { localId: "fb1", email: "a@x.dev", emailVerified: true };
+
+  test.each([
+    [true, true],
+    ["true", true],
+    [false, undefined],
+    [undefined, undefined],
+  ])("disabled=%p carries as banned=%p", (disabled, expected) => {
+    expect(one("firebase", { ...base, disabled })?.banned).toBe(expected as boolean | undefined);
+  });
+  const withHash = { ...base, passwordHash: "SGFzaA==", salt: "U2FsdA==" };
+
+  test("builds the scrypt digest Clerk expects, parameters inline", async () => {
+    const { users } = await load("firebase", { users: [withHash] }, "json", {
+      firebaseHashConfig: FIREBASE_HASH,
+    });
+    expect(users[0]?.password).toBe("SGFzaA==$U2FsdA==$SIGNERKEY==$Bw==$8$14");
+    expect(users[0]?.passwordHasher).toBe("scrypt_firebase");
+  });
+
+  test("refuses to import hashes without the project's hash parameters", async () => {
+    await expect(load("firebase", { users: [withHash] })).rejects.toThrow(
+      /Firebase password hashes/,
+    );
+  });
+
+  test("imports a passwordless export with no hash parameters at all", async () => {
+    const { users } = await load("firebase", { users: [base] });
+    expect(users).toHaveLength(1);
+    expect(users[0]?.password).toBeUndefined();
+  });
+
+  test("unwraps the { users: [...] } export shape", async () => {
+    const { users } = await load("firebase", { users: [base, { ...base, localId: "fb2" }] });
+    expect(users.map((u) => u.userId)).toEqual(["fb1", "fb2"]);
+  });
+
+  test("accepts a bare array too", async () => {
+    const { users } = await load("firebase", [base]);
+    expect(users).toHaveLength(1);
+  });
+
+  test("rejects a JSON export that is neither", async () => {
+    await expect(load("firebase", { records: [] })).rejects.toThrow(CliError);
+  });
+
+  test("rejects a wrapped row that is not a user object", async () => {
+    await expect(load("firebase", { users: [base, null] })).rejects.toThrow(
+      /row 2 is not a user object/,
+    );
+  });
+
+  // Named, not prepended: a copy with a header row would leave the hashes and
+  // salts in a temp file nobody deletes.
+  test("names the columns of a headerless CSV export, writing no copy", async () => {
+    const csv = "fb9,a@x.dev,true,,,Ada Lovelace,,,,,,,,,,,,,,,,,,1704067200000,,,,,\n";
+    const mkdtemp = spyOn(fs, "mkdtempSync");
+    try {
+      const { users } = await load("firebase", csv, "csv");
+      expect(users[0]).toMatchObject({ userId: "fb9", email: "a@x.dev", firstName: "Ada" });
+      expect(mkdtemp).not.toHaveBeenCalled();
+    } finally {
+      mkdtemp.mockRestore();
+    }
+  });
+
+  test.each([
+    ["1704067200000", "2024-01-01T00:00:00.000Z"],
+    [1704067200000, "2024-01-01T00:00:00.000Z"],
+  ])("converts the Unix-millisecond createdAt %p", (createdAt, expected) => {
+    expect(one("firebase", { ...base, createdAt })?.createdAt).toBe(expected);
+  });
+
+  test.each([
+    [true, true],
+    ["true", true],
+    [false, false],
+    ["false", false],
+  ])("emailVerified=%p keeps the address primary: %p", (emailVerified, verified) => {
+    const user = one("firebase", { ...base, emailVerified });
+    expect(user?.email !== undefined).toBe(verified);
   });
 });
 
@@ -426,7 +520,10 @@ describe("fields the CLI's own export adds", () => {
 });
 
 describe("invalid records", () => {
-  const INVALID: [string, Record<string, unknown>][] = [["supabase", { id: "a5" }]];
+  const INVALID: [string, Record<string, unknown>][] = [
+    ["firebase", { localId: "a4" }],
+    ["supabase", { id: "a5" }],
+  ];
 
   test.each(INVALID)(
     "%s reports a user with no identifier instead of crashing",
@@ -445,6 +542,7 @@ describe("invalid records", () => {
 });
 
 /** The per-platform source field that becomes a Clerk identifier. */
-function identifierFor(_key: string, email = "ok@x.dev"): Record<string, unknown> {
+function identifierFor(key: string, email = "ok@x.dev"): Record<string, unknown> {
+  if (key === "firebase") return { email, emailVerified: true };
   return { email, email_confirmed_at: "2024-01-01 00:00:00+00" };
 }

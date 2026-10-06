@@ -3,6 +3,7 @@ import { throwUsageError } from "../../../lib/errors.ts";
 import { select } from "../../../lib/listage.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import { exportClerk } from "./clerk.ts";
+import { exportFirebase } from "./firebase.ts";
 import { exportSupabase } from "./supabase.ts";
 import type { DbExportOptions } from "./db-options.ts";
 import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "../lib/run-store.ts";
@@ -49,6 +50,7 @@ const handlers = {
   picker: exportPicker,
   clerk: exportClerk,
   supabase: exportSupabase,
+  firebase: exportFirebase,
 };
 
 /** The platforms that read a database, which share `--db-url`. */
@@ -105,6 +107,24 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     ])
     .action(async (_opts, cmd) =>
       handlers.clerk(cmd.optsWithGlobals() as Parameters<typeof handlers.clerk>[0]),
+    );
+
+  exportCommand
+    .command("firebase")
+    .description("Export users from a Firebase project")
+    .option("--service-account <path>", "Path to a service account key JSON file")
+    .option("-o, --output <path>", "Write the export here instead of the run folder")
+    .option("-y, --yes", "Do not prompt: fail on a rejected credential")
+    .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
+    .option("--json", "Print the result as JSON; never prompts")
+    .setExamples([
+      {
+        command: "clerk migrate export firebase --service-account ./service-account.json",
+        description: "Export using a downloaded service account key",
+      },
+    ])
+    .action(async (_opts, cmd) =>
+      handlers.firebase(cmd.optsWithGlobals() as Parameters<typeof handlers.firebase>[0]),
     );
 
   // Each takes exactly one connection string, so they are registered from a

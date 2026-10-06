@@ -204,6 +204,7 @@ Gets users **out** of a source platform, so there is something to feed
 clerk migrate export                                    # pick a platform
 clerk migrate export clerk --output users.json
 clerk migrate export supabase --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
+clerk migrate export firebase --service-account ./service-account.json
 ```
 
 The platform is an optional positional. Omitted, you get a picker built from
@@ -211,11 +212,12 @@ the registry; given, it runs directly. Each platform resolves its own flags —
 what a Clerk export needs (a secret key) has nothing in common with what a
 database export needs.
 
-**A credential the far end rejects is asked for again.** A connection string is
-long, pasted by hand, masked as it is typed, and wrong in ways nothing local can
-check: a typo'd host, a revoked password, the right server but the wrong
-database. Only the connection can say, and by then the operator has answered
-every other question the command asked. So that step — and only that step,
+**A credential the far end rejects is asked for again.** Connection strings and
+Firebase service account keys are long, pasted by hand, masked as they are
+typed, and wrong in ways nothing local can check: a typo'd host, a revoked key,
+an expired token, the right server but the wrong database. Only the connection
+or the token exchange can say, and by then the operator has answered every
+other question the command asked. So that step — and only that step,
 never a fetch already under way or a file already written — runs inside a
 retry: the failure is explained, the prompt comes back, and the rest of the
 export continues against whichever credential worked. Agent mode and a non-TTY
@@ -226,6 +228,7 @@ told not to.
 | ---------- | -------------------------------- | ------------------- |
 | `clerk`    | Clerk Backend API                | `--source clerk`    |
 | `supabase` | Supabase Postgres (`auth.users`) | `--source supabase` |
+| `firebase` | Firebase Identity Toolkit        | `--source firebase` |
 
 Every export is a [run](#the-run-store), and the file lands in the run
 folder as `export.json`. `--output` writes it somewhere else instead,
@@ -245,19 +248,21 @@ The file is an envelope around the users:
 ```
 
 `source` is what lets `clerk migrate import <export-run-id>` run with no
-`--source`.
+`--source`. A Firebase export adds `firebase`, the project's hash
+parameters, so the import needs no `--firebase-*` flags.
 
 `--json` prints the result on stdout instead — `{ target, run, output, users,
 coverage, next }` — and never prompts, so a missing credential exits 2 naming
 the flag to pass.
 
-| Flag                  | Platforms  | Description                                               |
-| --------------------- | ---------- | --------------------------------------------------------- |
-| `-o, --output <path>` | all        | Write the export here instead of the run folder           |
-| `-y, --yes`           | all        | Do not prompt: fail on a bad credential                   |
-| `--json`              | all        | Print the result as JSON; never prompts                   |
-| `--runs-dir <path>`   | all        | Where runs are kept (see [the run store](#the-run-store)) |
-| `--db-url <url>`      | `supabase` | Postgres connection string                                |
+| Flag                       | Platforms  | Description                                               |
+| -------------------------- | ---------- | --------------------------------------------------------- |
+| `-o, --output <path>`      | all        | Write the export here instead of the run folder           |
+| `-y, --yes`                | all        | Do not prompt: fail on a bad credential                   |
+| `--json`                   | all        | Print the result as JSON; never prompts                   |
+| `--runs-dir <path>`        | all        | Where runs are kept (see [the run store](#the-run-store)) |
+| `--db-url <url>`           | `supabase` | Postgres connection string                                |
+| `--service-account <path>` | `firebase` | Path to a service account key JSON file                   |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
 so it resolves a key the same way `clerk migrate import` does, with one extra
@@ -365,6 +370,77 @@ user to reset their password; this one carries the bcrypt digests across. It
 also keeps `raw_app_meta_data`, which is what the import's
 [checks](#checks) read for each user's providers.
 
+#### `firebase`
+
+```sh
+clerk migrate export firebase --service-account ./service-account.json
+```
+
+Create a key at **Project settings → Service accounts → Generate new private
+key**. The account needs to read users and the project's password hash
+parameters (`signIn.hashConfig`). Either of these works, both verified live:
+
+- **Firebase Authentication Admin** (`roles/firebaseauth.admin`). The simplest
+  option, but it can also modify users and auth settings.
+- **Read-only:** Firebase Authentication Viewer (`roles/firebaseauth.viewer`)
+  plus a custom role that adds `firebaseauth.configs.getHashConfig`:
+
+  ```sh
+  gcloud iam roles create clerkMigrateHashExport --project=PROJECT_ID \
+    --title="Clerk migrate hash export" \
+    --permissions=firebaseauth.configs.get,firebaseauth.configs.getHashConfig,firebaseauth.users.get
+  gcloud projects add-iam-policy-binding PROJECT_ID \
+    --member=serviceAccount:SA_EMAIL --role=roles/firebaseauth.viewer
+  gcloud projects add-iam-policy-binding PROJECT_ID \
+    --member=serviceAccount:SA_EMAIL --role=projects/PROJECT_ID/roles/clerkMigrateHashExport
+  ```
+
+Without `firebaseauth.configs.getHashConfig`, users still export, but the
+export can't read the hash parameters. It says which permission is missing, and
+the import then needs `--firebase-signer-key`, `--firebase-salt-separator`,
+`--firebase-rounds` and `--firebase-mem-cost` (from **Authentication → Users →
+⋮ → Password hash parameters** in the Firebase console).
+
+Without `--service-account` you are prompted for it, the way `export supabase`
+prompts for its connection string. The answer can be a path to the downloaded
+file _or_ the key's JSON pasted whole, so a key kept in a password manager or a
+CI secret never has to be written to disk. The prompt is masked, since the key
+carries a private key. Agent mode cannot prompt, so it names the flag instead.
+
+Either way the key is validated before anything reaches the network, so
+downloading the web app config by mistake fails in a second with the right
+console page named rather than after an auth round-trip. Key material never
+appears in output.
+
+Firebase's scrypt is a modified variant, so a digest is worthless without the
+project's four hash parameters. The export **reads them from the project** and
+saves them in the export file's envelope, so the import needs nothing more:
+
+```
+Password hash parameters
+Read from the project and saved in the export file, so the import needs nothing more.
+```
+
+Reading the config needs a broader role than listing users, so if it is denied
+the export still succeeds and points at **Authentication → Users → (⋮) →
+Password hash parameters** instead. An export with no password hashes says so
+and asks for nothing.
+
+A user whose hash is present but whose salt is not (or the reverse) has both
+dropped: half a credential produces a user nobody can sign in as.
+
+`FIREBASE_AUTH_EMULATOR_HOST` is honoured, so this works against the local
+Firebase emulator as well as production. The target line names the emulator
+when it is set.
+
+**No `firebase-admin`.** The spike the plan called for was run and _passed_ — a
+compiled binary can import the SDK and complete `listUsers`, so the known
+Firestore-under-compile bug does not reach the Auth Admin surface. It was still
+not adopted: the SDK is 74 MB across 158 packages, including Firestore and
+Cloud Storage, which would roughly double the ~62 MB binary every user
+downloads, to serve one subcommand. What it does here is two REST calls and an
+RS256 JWT, and Bun's Web Crypto signs RS256 with no dependency at all.
+
 ### `clerk migrate import`
 
 Reads an exported user file, maps it onto Clerk's user schema, checks every
@@ -380,24 +456,30 @@ clerk migrate import users.json --source clerk --new-run --yes
 clerk migrate import users.json --source clerk --json --yes
 clerk migrate import users.json --source clerk --require-password --yes
 clerk migrate import users.json --source clerk --skip-legal-checks --yes
+clerk migrate import users.json --source firebase --firebase-signer-key <key> \
+  --firebase-salt-separator <sep> --firebase-rounds 8 --firebase-mem-cost 14 --yes
 clerk migrate import users.json --source clerk --runs-dir ./runs --yes
 clerk migrate import users.json --source clerk --app app_123 --instance prod --yes
 clerk migrate import users.json --source clerk --secret-key sk_test_... -y
 clerk migrate import                                          # a human is asked
 ```
 
-| Flag                    | Description                                                         |
-| ----------------------- | ------------------------------------------------------------------- |
-| `[file\|export-run-id]` | The export file, or the ID of the export run that wrote it          |
-| `--source <key>`        | Where the file came from: one of the [sources](#sources)            |
-| `--dry-run`             | Run the [checks](#checks) against the instance, and write nothing   |
-| `--allow-partial`       | Import the users that pass, and record the rest as skipped          |
-| `--new-run`             | Start a new run instead of [continuing](#re-running) an earlier one |
-| `--require-password`    | Import only users that carry a password digest                      |
-| `--skip-legal-checks`   | Import users with no legal acceptance into an instance requiring it |
-| `-y, --yes`             | Import without prompting                                            |
-| `--json`                | Output as JSON. Never prompts, so importing needs `--yes`           |
-| `--runs-dir <path>`     | Where runs are kept (see [the run store](#the-run-store))           |
+| Flag                                    | Description                                                         |
+| --------------------------------------- | ------------------------------------------------------------------- |
+| `[file\|export-run-id]`                 | The export file, or the ID of the export run that wrote it          |
+| `--source <key>`                        | Where the file came from: one of the [sources](#sources)            |
+| `--dry-run`                             | Run the [checks](#checks) against the instance, and write nothing   |
+| `--allow-partial`                       | Import the users that pass, and record the rest as skipped          |
+| `--new-run`                             | Start a new run instead of [continuing](#re-running) an earlier one |
+| `--require-password`                    | Import only users that carry a password digest                      |
+| `--skip-legal-checks`                   | Import users with no legal acceptance into an instance requiring it |
+| `--firebase-signer-key <key>`           | Firebase base64 signer key (overrides the export file)              |
+| `--firebase-salt-separator <separator>` | Firebase base64 salt separator                                      |
+| `--firebase-rounds <n>`                 | Firebase scrypt rounds                                              |
+| `--firebase-mem-cost <n>`               | Firebase scrypt memory cost                                         |
+| `-y, --yes`                             | Import without prompting                                            |
+| `--json`                                | Output as JSON. Never prompts, so importing needs `--yes`           |
+| `--runs-dir <path>`                     | Where runs are kept (see [the run store](#the-run-store))           |
 
 Plus the targeting flags from the table above: `--secret-key`, `--app` and
 `--instance`.
@@ -407,7 +489,7 @@ has changed since (an `--output` path another export or an edit overwrote), the
 import exits 2 and imports nothing. The import records it
 as `fromExport`. A file `clerk migrate export` wrote carries its source, so it
 needs no `--source`, and a `--source` that contradicts it exits 2. Any other
-file needs `--source`: a JSON array, a CSV, or NDJSON, one user per line (what
+file needs `--source`: a JSON array, Firebase's own `{ "users": [...] }`, a CSV, or NDJSON, one user per line (what
 Auth0's bulk export job writes). NDJSON is read always for `.ndjson` and
 `.jsonl`, and for a `.json` file that doesn't parse whole. A leading BOM is
 ignored in JSON and CSV. A file that isn't valid JSON is named in the error.
@@ -726,6 +808,7 @@ brings across. Adding a platform is one file in `sources/` plus one line in
 | Key        | Reads                        | Passwords | MFA     | Metadata |
 | ---------- | ---------------------------- | --------- | ------- | -------- |
 | `clerk`    | Clerk Dashboard export       | partial   | partial | partial  |
+| `firebase` | `firebase auth:export`       | yes       | no      | no       |
 | `supabase` | Supabase `auth.users` export | yes       | no      | partial  |
 
 An unknown `--source` exits 2 with the list of valid keys.
@@ -750,13 +833,38 @@ which style it uses. An identifier the source never confirmed is routed to
 field, because Clerk creates primary identifiers **verified** — sending an
 unconfirmed address there would silently promote it.
 
-- **Boolean**: `true`/`false`. A CSV export stringifies these, so `"false"` is
+- **Boolean** (`firebase`): `true`/`false`. A CSV export stringifies these, so `"false"` is
   read as false, not as a non-empty string. `TRUE`, `FALSE`, `t` and `f` read
   too, as a spreadsheet or psql writes them.
 - **Timestamp** (`supabase`): a nullable confirmation time. Any real value
   means verified; `""`, `null` and `\N` do not.
 
 A Clerk export keeps an unverified primary email or phone unverified.
+
+### Firebase hash parameters
+
+Firebase uses a modified scrypt, so Clerk needs the project's four parameters
+alongside each digest. Find them in the Firebase console under
+**Authentication → Users → (⋮) → Password hash parameters**.
+
+```sh
+clerk migrate import users.json --source firebase -y \
+  --firebase-signer-key <key> --firebase-salt-separator <sep> \
+  --firebase-rounds 8 --firebase-mem-cost 14
+```
+
+All four are **required as a set** — supplying some but not all is a usage error
+naming what is missing. A partial set produces a well-formed digest that
+verifies against nothing, so users would import successfully and then be unable
+to sign in.
+
+The flags are read first, then the export file's envelope, which carries the
+parameters when `clerk migrate export firebase` could read them from the
+project. The flags win, so a rotated key can be passed without re-exporting.
+The envelope sits in the gitignored run folder, since the signer key is a
+Firebase secret.
+
+An export with no password hashes needs no parameters at all.
 
 ## Schema fields
 
@@ -852,6 +960,17 @@ The checks also read the instance's Frontend API `GET /v1/environment`
 (bootstrapping a dev browser first on development instances) for its
 attributes and enabled social providers. Nothing in `clerk migrate` writes
 instance settings: the checks print the `clerk config patch` to run instead.
+
+`export firebase` talks to Google rather than to Clerk:
+
+| Method | Path                                           | Used by                                              |
+| ------ | ---------------------------------------------- | ---------------------------------------------------- |
+| `POST` | `https://oauth2.googleapis.com/token`          | `export firebase` — RS256 assertion → access token   |
+| `GET`  | `…/v1/projects/{project_id}/accounts:batchGet` | `export firebase` — pages users, 1000 at a time      |
+| `GET`  | `…/admin/v2/projects/{project_id}/config`      | `export firebase` — reads the scrypt hash parameters |
+
+The two Identity Toolkit paths are on `identitytoolkit.googleapis.com`, or on
+`FIREBASE_AUTH_EMULATOR_HOST` when that is set.
 
 ## Notes
 
