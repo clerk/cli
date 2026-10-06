@@ -1,16 +1,5 @@
 # `clerk migrate`
 
-> **Experimental.** `clerk migrate` is hidden from help and completion, and
-> refuses to run (exit 2, `experiment_disabled`), unless `CLERK_EXPERIMENTAL`
-> includes `migrate`:
->
-> ```sh
-> CLERK_EXPERIMENTAL=migrate clerk migrate import --help
-> ```
->
-> `CLERK_EXPERIMENTAL` is a comma-separated list. Names are trimmed and
-> case-insensitive, and unknown names are ignored.
-
 Migrate users into a Clerk instance from another auth provider, or from another
 Clerk instance.
 
