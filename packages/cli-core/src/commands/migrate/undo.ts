@@ -410,6 +410,8 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   let summary: UndoSummary;
   let undoRecord: RunRecord;
   try {
+    // Another undo that finished during the preview has already marked it.
+    readImportRun(runsDir, record.id);
     // A re-import that continued the run during the preview created users
     // the preview never listed.
     if (readUserLines(runsDir, record.id).length !== importLines) {
