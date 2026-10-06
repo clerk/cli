@@ -2057,6 +2057,7 @@ describe("run", () => {
         ],
         "sb1",
       ],
+      ["workos", [{ id: "user_01ABC", email: "a@x.dev", email_verified: true }], "user_01ABC"],
     ];
 
     test.each(PLATFORMS)(
@@ -2188,7 +2189,7 @@ describe("run", () => {
       )) as CliError;
       expect(error.exitCode).toBe(EXIT_CODE.USAGE);
       expect(error.message).toContain(
-        'Unknown source "nope". Valid sources: clerk, auth0, firebase, supabase.',
+        'Unknown source "nope". Valid sources: clerk, auth0, firebase, supabase, workos.',
       );
       expect(requests).toHaveLength(0);
     });

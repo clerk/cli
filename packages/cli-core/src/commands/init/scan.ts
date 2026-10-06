@@ -55,6 +55,11 @@ const AUTH_LIBRARY_SCANS: AuthLibraryScan[] = [
     docsUrl: "https://clerk.com/docs/migrations/overview",
   },
   {
+    packages: ["@workos-inc/authkit-nextjs", "@workos-inc/node"],
+    name: "WorkOS",
+    docsUrl: "https://clerk.com/docs/migrations/overview",
+  },
+  {
     packages: ["@kinde-oss/kinde-auth-nextjs"],
     name: "Kinde",
     docsUrl: "https://clerk.com/docs/migrations/overview",
