@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  CODEX_ENV_VARS,
   detectAiAgent,
+  isCodexEnv,
   detectInScreen,
   detectInstallMethod,
   detectInTmux,
@@ -30,6 +32,23 @@ describe("detectAiAgent", () => {
 
   test("ignores empty-string values", () => {
     expect(detectAiAgent({ CLAUDECODE: "" })).toBe("");
+  });
+});
+
+describe("isCodexEnv", () => {
+  test.each([...CODEX_ENV_VARS])("%s set means Codex", (envVar) => {
+    expect(isCodexEnv({ [envVar]: "x" })).toBe(true);
+  });
+
+  test("recognizes Codex even when another agent's marker comes first", () => {
+    // detectAiAgent would say "claude_code" here; the mode decision must not.
+    expect(isCodexEnv({ CLAUDECODE: "1", CODEX_THREAD_ID: "x" })).toBe(true);
+  });
+
+  test("false for other agents, empty values, and nothing set", () => {
+    expect(isCodexEnv({ CLAUDECODE: "1" })).toBe(false);
+    expect(isCodexEnv({ CODEX_THREAD_ID: "" })).toBe(false);
+    expect(isCodexEnv({})).toBe(false);
   });
 });
 
