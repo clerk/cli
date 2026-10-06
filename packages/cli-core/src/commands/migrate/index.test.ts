@@ -112,11 +112,14 @@ describe("registerMigrate", () => {
     ]);
   });
 
-  test.each(["supabase", "betterauth"])("migrate export %s takes exactly its flags", (platform) => {
-    expect(
-      findCommand(["migrate", "export", platform])?.options.map((option) => option.long),
-    ).toEqual(["--db-url", "--output", "--yes", "--runs-dir", "--json"]);
-  });
+  test.each(["supabase", "authjs", "betterauth"])(
+    "migrate export %s takes exactly its flags",
+    (platform) => {
+      expect(
+        findCommand(["migrate", "export", platform])?.options.map((option) => option.long),
+      ).toEqual(["--db-url", "--output", "--yes", "--runs-dir", "--json"]);
+    },
+  );
 
   test("migrate export firebase takes exactly its flags", () => {
     expect(

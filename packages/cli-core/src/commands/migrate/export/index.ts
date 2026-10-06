@@ -3,6 +3,7 @@ import { throwUsageError } from "../../../lib/errors.ts";
 import { select } from "../../../lib/listage.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import { exportAuth0 } from "./auth0.ts";
+import { exportAuthJs } from "./authjs.ts";
 import { exportBetterAuth } from "./betterauth.ts";
 import { exportClerk } from "./clerk.ts";
 import { exportFirebase } from "./firebase.ts";
@@ -54,12 +55,13 @@ const handlers = {
   clerk: exportClerk,
   auth0: exportAuth0,
   supabase: exportSupabase,
+  authjs: exportAuthJs,
   betterauth: exportBetterAuth,
   firebase: exportFirebase,
   workos: exportWorkOs,
 };
 
-/** The platforms that read a database, which share `--db-url`. */
+/** The three platforms that read a database, which share `--db-url`. */
 const DB_PLATFORMS = [
   {
     key: "supabase",
@@ -67,6 +69,13 @@ const DB_PLATFORMS = [
     envVar: "SUPABASE_DB_URL",
     dbUrl: "Postgres connection string",
     example: "postgres://postgres:password@db.xxx.supabase.co:5432/postgres",
+  },
+  {
+    key: "authjs",
+    summary: "Export users from an Auth.js database",
+    envVar: "AUTHJS_DB_URL",
+    dbUrl: "Postgres, MySQL, libsql/Turso or SQLite connection string",
+    example: "mysql://user:password@127.0.0.1:3306/authjs",
   },
   {
     key: "betterauth",
@@ -211,8 +220,8 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       handlers.workos(cmd.optsWithGlobals() as Parameters<typeof handlers.workos>[0]),
     );
 
-  // Each takes exactly one connection string, so they are registered from a
-  // table rather than near-identical blocks.
+  // All three take exactly one connection string, so they are registered from
+  // a table rather than three near-identical blocks.
   for (const platform of DB_PLATFORMS) {
     exportCommand
       .command(platform.key)

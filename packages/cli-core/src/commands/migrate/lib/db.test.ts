@@ -303,13 +303,20 @@ describe("withDbClient", () => {
 
   // A schema the export cannot read is a refusal (exit 2), and the advice is
   // about the columns, not the connection.
-  test("names a missing column, and exits 2", async () => {
-    const error = (await withDbClient(dbPath, "supabase", (client) =>
-      client.query(`SELECT no_such_column FROM sqlite_master`),
+  test("names the columns for a missing one, and exits 2", async () => {
+    const db = new Database(dbPath);
+    db.run(
+      `CREATE TABLE IF NOT EXISTS "User" (id TEXT, name TEXT, email TEXT, email_verified TEXT)`,
+    );
+    db.close();
+
+    const error = (await withDbClient(dbPath, "authjs", (client) =>
+      client.query(`SELECT no_such_column FROM "User"`),
     ).catch((caught: unknown) => caught)) as CliError;
 
     expect(error.exitCode).toBe(EXIT_CODE.USAGE);
-    expect(error.message).toContain("missing a column the export reads");
+    expect(error.message).toContain("reads `id`, `name`, `email` and `emailVerified`");
+    expect(error.message).toContain("SELECT id, full_name AS name, email, email_verified");
     expect(error.message).not.toContain("Check the connection string");
   });
 
