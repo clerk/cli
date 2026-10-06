@@ -15,7 +15,7 @@ import { getSource } from "../sources/registry.ts";
 import { normalizeBooleanField } from "../sources/shared.ts";
 import { PASSWORD_HASHERS, type TransformContext, type SourceEntry, type User } from "../types.ts";
 import { userSchema } from "../validator.ts";
-import { isEnvelope, readJsonFile } from "./export-file.ts";
+import { readJsonFile } from "./export-file.ts";
 
 export type FileType = "application/json" | "text/csv";
 
@@ -448,11 +448,8 @@ async function readUsersFromFile(
   let preExtracted: Record<string, unknown>[] | undefined;
   let csvHeaders: string[] | undefined;
 
-  // An export's envelope already holds the users in the source's own shape,
-  // so there is nothing left for a pre-transform to unwrap.
   if (type === "application/json") {
     const parsed = readJsonFile(filePath);
-    if (isEnvelope(parsed)) return parsed.users;
     if (!transformer.preTransform) {
       if (!Array.isArray(parsed)) {
         throw new CliError(
