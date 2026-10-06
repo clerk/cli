@@ -1,19 +1,29 @@
 /**
- * The database-backed exports: resolving the connection string, the Supabase
- * export's row mapping, and connection failures against a real SQLite file.
+ * The database-backed exports, driven against a real SQLite database:
+ * resolving the connection string, the Supabase export's row mapping, the
+ * Better Auth export's schema detection, and connection failures.
  *
  * SQLite because it is the one engine that needs no container, and it
- * exercises the same client. Postgres and MySQL are covered by the manual
- * matrix run recorded in the ticket.
+ * exercises the same client, the same query building and the same plugin
+ * detection path (via `PRAGMA` rather than `information_schema`). Postgres and
+ * MySQL are covered by the manual matrix run recorded in the ticket.
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { DbClient } from "../lib/db.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
+import { createDbClient, type DbClient } from "../lib/db.ts";
+import {
+  buildBetterAuthExport,
+  buildBetterAuthQuery,
+  detectSchema,
+  exportBetterAuth,
+  PLUGIN_COLUMNS,
+} from "./betterauth.ts";
 import { buildSupabaseExport, exportSupabase, fetchSupabaseUsers } from "./supabase.ts";
 import {
   looksLikeConnectionString,
@@ -25,6 +35,7 @@ const captured = useCaptureLog();
 
 let workDir: string;
 let originalCwd: string;
+let counter = 0;
 
 beforeAll(() => {
   originalCwd = process.cwd();
@@ -40,6 +51,42 @@ afterAll(() => {
 beforeEach(() => {
   fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
 });
+
+/** Builds a fresh SQLite file so each test starts from a known schema. */
+function makeDb(build: (db: Database) => void): string {
+  const file = path.join(workDir, `db-${counter++}.sqlite`);
+  const db = new Database(file, { create: true });
+  build(db);
+  db.close();
+  return file;
+}
+
+function betterAuthDb(pluginColumns: string[], rows: Record<string, unknown>[] = []): string {
+  return makeDb((db) => {
+    const extra = pluginColumns.map((column) => `, "${column}" TEXT`).join("");
+    db.run(
+      `CREATE TABLE "user" (id TEXT PRIMARY KEY, email TEXT, "emailVerified" INTEGER, name TEXT,
+       "createdAt" TEXT, "updatedAt" TEXT${extra})`,
+    );
+    db.run(`CREATE TABLE "account" (id TEXT, "userId" TEXT, "providerId" TEXT, password TEXT)`);
+    for (const row of rows) {
+      const keys = Object.keys(row);
+      db.run(
+        `INSERT INTO "user" (${keys.map((k) => `"${k}"`).join(",")}) VALUES (${keys.map(() => "?").join(",")})`,
+        keys.map((k) => row[k]) as never[],
+      );
+    }
+  });
+}
+
+async function withClient<T>(file: string, work: (client: DbClient) => Promise<T>): Promise<T> {
+  const client = await createDbClient(file);
+  try {
+    return await work(client);
+  } finally {
+    await client.close();
+  }
+}
 
 describe("looksLikeConnectionString", () => {
   test.each([
@@ -126,6 +173,128 @@ describe("resolveDbUrl", () => {
 
   test("names both the flag and the variable when it cannot prompt", async () => {
     await expect(resolveDbUrl({}, config, {})).rejects.toThrow(/--db-url.*SUPABASE_DB_URL/s);
+  });
+});
+
+describe("betterauth export", () => {
+  test("detects only the plugin columns that exist", async () => {
+    await withClient(betterAuthDb(["username", "banned"]), async (client) => {
+      expect([...(await detectSchema(client)).plugins].sort()).toEqual(["banned", "username"]);
+    });
+  });
+
+  test("detects nothing on a core-only schema", async () => {
+    await withClient(betterAuthDb([]), async (client) => {
+      expect((await detectSchema(client)).plugins.size).toBe(0);
+    });
+  });
+
+  test("detects every plugin column when all are present", async () => {
+    await withClient(betterAuthDb([...PLUGIN_COLUMNS]), async (client) => {
+      expect((await detectSchema(client)).plugins.size).toBe(PLUGIN_COLUMNS.length);
+    });
+  });
+
+  // Selecting a column that is not there fails the whole query, which is why
+  // the columns are detected rather than assumed.
+  test("selects only detected columns", async () => {
+    await withClient(betterAuthDb(["username"]), async (client) => {
+      const query = buildBetterAuthQuery(client, await detectSchema(client));
+      expect(query).toContain('"username"');
+      expect(query).not.toContain('"twoFactorEnabled"');
+    });
+  });
+
+  test("the built query actually runs against the schema it was built for", async () => {
+    const file = betterAuthDb(
+      ["username", "role"],
+      [{ id: "u1", email: "a@x.dev", username: "a" }],
+    );
+    const rows = await withClient(file, async (client) =>
+      client.query(buildBetterAuthQuery(client, await detectSchema(client))),
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  // A user who only ever signed in with OAuth has no credential account;
+  // an INNER JOIN would drop them and silently shrink the export.
+  test("keeps a user with no credential account", async () => {
+    const file = betterAuthDb(
+      [],
+      [
+        { id: "u1", email: "a@x.dev" },
+        { id: "u2", email: "b@x.dev" },
+      ],
+    );
+    const rows = await withClient(file, async (client) =>
+      client.query(buildBetterAuthQuery(client, await detectSchema(client))),
+    );
+    expect(rows).toHaveLength(2);
+  });
+
+  // Better Auth's Drizzle generator writes snake_case unless `camelCase: true`,
+  // and `usePlural: true` pluralizes the tables.
+  test.each([
+    ["snake_case columns", "user", "account"],
+    ["snake_case columns and plural tables", "users", "accounts"],
+  ])("reads a Drizzle schema with %s", async (_label, userTable, accountTable) => {
+    const file = makeDb((db) => {
+      db.run(
+        `CREATE TABLE "${userTable}" (id TEXT PRIMARY KEY, email TEXT, email_verified INTEGER, name TEXT,
+         created_at TEXT, updated_at TEXT, ban_expires TEXT, banned INTEGER)`,
+      );
+      db.run(
+        `CREATE TABLE "${accountTable}" (id TEXT, user_id TEXT, provider_id TEXT, password TEXT)`,
+      );
+      db.run(
+        `INSERT INTO "${userTable}" (id, email, email_verified, banned) VALUES ('u1', 'a@x.dev', 1, 1)`,
+      );
+      db.run(`INSERT INTO "${accountTable}" VALUES ('a1', 'u1', 'credential', 'salt:hash')`);
+    });
+
+    const { rows, schema } = await withClient(file, async (client) => {
+      const detected = await detectSchema(client);
+      return { rows: await client.query(buildBetterAuthQuery(client, detected)), schema: detected };
+    });
+
+    expect([...schema.plugins].sort()).toEqual(["banExpires", "banned"]);
+    // Read back under the camelCase names the rest of the export expects.
+    expect(rows).toEqual([
+      expect.objectContaining({
+        id: "u1",
+        emailVerified: 1,
+        banned: 1,
+        password_hash: "salt:hash",
+      }),
+    ]);
+  });
+
+  test("renames camelCase columns onto what the transformer reads", () => {
+    const { users } = buildBetterAuthExport([
+      { id: "u1", emailVerified: 1, phoneNumber: "+1555", createdAt: "2025-01-01" },
+    ]);
+    expect(users[0]).toMatchObject({
+      user_id: "u1",
+      email_verified: 1,
+      phone_number: "+1555",
+      created_at: "2025-01-01",
+    });
+  });
+
+  test("exports end to end and reports the detected plugins", async () => {
+    const file = betterAuthDb(["username"], [{ id: "u1", email: "a@x.dev", username: "ada" }]);
+
+    await exportBetterAuth({ dbUrl: file, output: "ba.json" });
+
+    expect(captured.err).toContain("Detected plugin columns: username");
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "ba.json"), "utf-8")).users).toHaveLength(
+      1,
+    );
+  });
+
+  test("says so plainly when no plugins are in use", async () => {
+    await exportBetterAuth({ dbUrl: betterAuthDb([]), output: "ba2.json" });
+    expect(captured.err).toContain("No plugin columns detected");
   });
 });
 

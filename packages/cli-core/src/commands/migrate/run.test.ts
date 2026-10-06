@@ -1311,6 +1311,11 @@ describe("run", () => {
         "auth0|1",
       ],
       [
+        "betterauth",
+        [{ user_id: "ba1", email: "a@x.dev", email_verified: true, password_hash: BCRYPT }],
+        "ba1",
+      ],
+      [
         "supabase",
         [
           {
@@ -1451,7 +1456,7 @@ describe("run", () => {
       )) as CliError;
       expect(error.exitCode).toBe(EXIT_CODE.USAGE);
       expect(error.message).toContain(
-        'Unknown source "nope". Valid sources: clerk, auth0, firebase, supabase, workos.',
+        'Unknown source "nope". Valid sources: clerk, auth0, betterauth, firebase, supabase, workos.',
       );
       expect(requests).toHaveLength(0);
     });

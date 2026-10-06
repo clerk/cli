@@ -206,6 +206,7 @@ clerk migrate export clerk --output users.json
 clerk migrate export auth0 --domain my-tenant.us.auth0.com \
   --client-id … --client-secret …
 clerk migrate export supabase --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
+clerk migrate export betterauth --db-url "./db.sqlite"
 clerk migrate export firebase --service-account ./service-account.json
 clerk migrate export workos --api-key sk_…
 ```
@@ -227,13 +228,14 @@ export continues against whichever credential worked. Agent mode and a non-TTY
 fail outright instead, having nobody to ask, and `-y` fails too, having been
 told not to.
 
-| Platform   | Source                           | Feeds               |
-| ---------- | -------------------------------- | ------------------- |
-| `clerk`    | Clerk Backend API                | `--source clerk`    |
-| `auth0`    | Auth0 Management API             | `--source auth0`    |
-| `supabase` | Supabase Postgres (`auth.users`) | `--source supabase` |
-| `firebase` | Firebase Identity Toolkit        | `--source firebase` |
-| `workos`   | WorkOS User Management API       | `--source workos`   |
+| Platform     | Source                           | Feeds                 |
+| ------------ | -------------------------------- | --------------------- |
+| `clerk`      | Clerk Backend API                | `--source clerk`      |
+| `auth0`      | Auth0 Management API             | `--source auth0`      |
+| `supabase`   | Supabase Postgres (`auth.users`) | `--source supabase`   |
+| `betterauth` | Better Auth database             | `--source betterauth` |
+| `firebase`   | Firebase Identity Toolkit        | `--source firebase`   |
+| `workos`     | WorkOS User Management API       | `--source workos`     |
 
 Every export is a [run](#the-run-store), and the file lands in the run
 folder as `export.json`. `--output` writes it somewhere else instead,
@@ -260,20 +262,20 @@ parameters, so the import needs no `--firebase-*` flags.
 coverage, next }` — and never prompts, so a missing credential exits 2 naming
 the flag to pass.
 
-| Flag                       | Platforms  | Description                                               |
-| -------------------------- | ---------- | --------------------------------------------------------- |
-| `-o, --output <path>`      | all        | Write the export here instead of the run folder           |
-| `-y, --yes`                | all        | Do not prompt: fail on a bad credential                   |
-| `--json`                   | all        | Print the result as JSON; never prompts                   |
-| `--runs-dir <path>`        | all        | Where runs are kept (see [the run store](#the-run-store)) |
-| `--db-url <url>`           | `supabase` | Postgres connection string                                |
-| `--service-account <path>` | `firebase` | Path to a service account key JSON file                   |
-| `--domain <domain>`        | `auth0`    | Tenant domain, e.g. `my-tenant.us.auth0.com`              |
-| `--client-id <id>`         | `auth0`    | Machine-to-machine application client ID                  |
-| `--client-secret <secret>` | `auth0`    | Machine-to-machine application client secret              |
-| `--api-key <key>`          | `workos`   | WorkOS secret API key, the one starting `sk_`             |
-| `--with-identities`        | `workos`   | Also record each user's OAuth providers                   |
-| `--no-with-identities`     | `workos`   | Skip the OAuth provider fan-out without being asked       |
+| Flag                       | Platforms                | Description                                               |
+| -------------------------- | ------------------------ | --------------------------------------------------------- |
+| `-o, --output <path>`      | all                      | Write the export here instead of the run folder           |
+| `-y, --yes`                | all                      | Do not prompt: fail on a bad credential                   |
+| `--json`                   | all                      | Print the result as JSON; never prompts                   |
+| `--runs-dir <path>`        | all                      | Where runs are kept (see [the run store](#the-run-store)) |
+| `--db-url <url>`           | `supabase`, `betterauth` | Connection string (Postgres only for `supabase`)          |
+| `--service-account <path>` | `firebase`               | Path to a service account key JSON file                   |
+| `--domain <domain>`        | `auth0`                  | Tenant domain, e.g. `my-tenant.us.auth0.com`              |
+| `--client-id <id>`         | `auth0`                  | Machine-to-machine application client ID                  |
+| `--client-secret <secret>` | `auth0`                  | Machine-to-machine application client secret              |
+| `--api-key <key>`          | `workos`                 | WorkOS secret API key, the one starting `sk_`             |
+| `--with-identities`        | `workos`                 | Also record each user's OAuth providers                   |
+| `--no-with-identities`     | `workos`                 | Skip the OAuth provider fan-out without being asked       |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
 so it resolves a key the same way `clerk migrate import` does, with one extra
@@ -358,16 +360,23 @@ users who _have_ a password, so the size of the gap is visible up front —
 `workos` prints that row at zero unconditionally, because zero is the only value
 it can take.
 
-#### `supabase` reads the database
+#### Database-backed exports (`supabase`, `betterauth`)
+
+These two read the database directly, over **`--db-url`**:
 
 ```sh
-clerk migrate export supabase --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
+clerk migrate export supabase   --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
+clerk migrate export betterauth --db-url "./db.sqlite"
+clerk migrate export betterauth --db-url "libsql://app-org.turso.io?authToken=..."   # or set TURSO_AUTH_TOKEN
 ```
 
-Supabase's database is Postgres, read through `Bun.sql`: any URL but
-`postgres://` or `postgresql://` is refused before connecting. Nothing native
-ships in the binary — that is the whole reason the `engines.bun` floor exists. Resolution is `--db-url`, then `SUPABASE_DB_URL`, then a masked
-prompt, since a connection string carries the password inline. A password
+`export supabase` takes Postgres only, and refuses any other URL before
+connecting. Postgres and MySQL go through `Bun.sql`; SQLite through `bun:sqlite`;
+`libsql://` (Turso) over the server's HTTP pipeline endpoint, since `bun:sqlite`
+only opens local files and `@libsql/client` ships native optional dependencies.
+Nothing native ships in the binary — that is the whole reason the `engines.bun`
+floor exists. Resolution is `--db-url`, then `SUPABASE_DB_URL` /
+`BETTERAUTH_DB_URL`, then a masked prompt, since a connection string carries the password inline. A password
 pasted unencoded (`#`, `@`, `/` and the like) is percent-encoded for you.
 
 **Connection strings are redacted everywhere.** Errors show
@@ -385,11 +394,21 @@ unreachable host and a closed port as "Connection closed", so:
 | Table missing            | Check the database name and SELECT permission. On Supabase: enable Auth, connect as `postgres`    |
 | SQLite file missing      | Check the path and that the file is readable                                                      |
 
-**It reads the database rather than the Admin API** because
+**`supabase` reads the database rather than the Admin API** because
 `encrypted_password` exists only there. An API-based export would force every
 user to reset their password; this one carries the bcrypt digests across. It
 also keeps `raw_app_meta_data`, which is what the import's
 [checks](#checks) read for each user's providers.
+
+**`betterauth` reads its schema before it queries.** It finds the tables
+(`user` and `account`, or `users` and `accounts` under `usePlural: true`), how
+the columns are spelled (camelCase, or the snake_case Better Auth's Drizzle
+generator writes by default), and which plugin columns exist. The username
+plugin adds `username`, admin adds `banned` (carried only while `banExpires` is
+unset or in the future), phone-number adds `phoneNumber`, and so on; selecting a column that is not there fails the whole query, and the
+database answers the question better than the user can. Passwords come from a
+`LEFT JOIN` onto the credential `account` row — left, not inner, so a user who
+only ever signed in with OAuth is still exported.
 
 #### `firebase`
 
@@ -673,7 +692,8 @@ after them. They sort the users three ways:
 - **Rejected** — users Clerk would refuse. Each gets the first reason that
   applies:
   - it failed schema validation
-  - its source requested a skip (Supabase: a soft-deleted user)
+  - its source requested a skip (Better Auth: an anonymous guest; Supabase: a
+    soft-deleted user)
   - its only emails are ones Clerk refuses: malformed, or a domain that can't
     receive mail (`.local`, `.invalid`, `.test`, `.example`, `.arpa`,
     `.internal`, `.lan`, `.corp` and the like). Such an email is dropped from
@@ -727,8 +747,9 @@ after them. They sort the users three ways:
   instance is not set up to store, fields Clerk has no place for (`Clerk won't
 store: …`), passwords a source had to drop, emails Clerk refuses (malformed,
   or a domain that can't receive mail), and names Clerk refuses (a phone
-  number, a URL, HTML, blank, or over 256 bytes). A password, username or name
-  whose setting is off is stored, and works or shows once it is turned on.
+  number, a URL, HTML, blank, or over 256 bytes: Better Auth's phone sign-up
+  stores the number as the name). A password, username or name whose setting
+  is off is stored, and works or shows once it is turned on.
 - **Imported** — everyone else.
 
 Any reject stops the import, and it exits 2 with the command that adds
@@ -901,13 +922,14 @@ A source maps one platform's export onto Clerk's user schema, and says what it
 brings across. Adding a platform is one file in `sources/` plus one line in
 `sources/registry.ts`; `--source`'s tab-completion reads from that array.
 
-| Key        | Reads                        | Passwords | MFA     | Metadata |
-| ---------- | ---------------------------- | --------- | ------- | -------- |
-| `clerk`    | Clerk Dashboard export       | partial   | partial | partial  |
-| `auth0`    | Auth0 Management API         | partial   | no      | yes      |
-| `firebase` | `firebase auth:export`       | yes       | no      | no       |
-| `supabase` | Supabase `auth.users` export | yes       | no      | partial  |
-| `workos`   | WorkOS User Management API   | no        | no      | yes      |
+| Key          | Reads                        | Passwords | MFA     | Metadata |
+| ------------ | ---------------------------- | --------- | ------- | -------- |
+| `clerk`      | Clerk Dashboard export       | partial   | partial | partial  |
+| `auth0`      | Auth0 Management API         | partial   | no      | yes      |
+| `betterauth` | Better Auth export           | yes       | no      | no       |
+| `firebase`   | `firebase auth:export`       | yes       | no      | no       |
+| `supabase`   | Supabase `auth.users` export | yes       | no      | partial  |
+| `workos`     | WorkOS User Management API   | no        | no      | yes      |
 
 An unknown `--source` exits 2 with the list of valid keys.
 
@@ -924,6 +946,28 @@ Supabase's `raw_user_meta_data`, WorkOS's `metadata` — goes to Clerk's
 to the user, so putting it there would take away an edit the user had. Auth0's
 `app_metadata` goes to `private_metadata`. A Clerk Dashboard CSV carries no metadata.
 
+### Better Auth passwords
+
+Better Auth hashes with its own scrypt by default and lets an app swap in bcrypt
+or argon2, so one database can hold more than one kind. The hasher is detected
+per user:
+
+| Stored value                | Sent as                                                    |
+| --------------------------- | ---------------------------------------------------------- |
+| `<32 hex>:<128 hex>`        | `scrypt:16384:16:1$<salt>$<key>`, hasher `scrypt_werkzeug` |
+| `$2a$`, `$2b$` or `$2y$`    | `bcrypt`                                                   |
+| `$argon2id$` or `$argon2i$` | `argon2id` or `argon2i`                                    |
+| anything else               | dropped                                                    |
+
+Better Auth's scrypt uses the hex salt string as the salt and a 64-byte key,
+which is what `scrypt_werkzeug` verifies once N, r and p are written inline. It
+also normalizes a password to NFKC before hashing, and Clerk does not, so a
+password whose NFKC form differs will not verify and that user resets it.
+
+A password Clerk cannot verify is **dropped, not rejected**: the user imports
+without it and can sign in another way or reset it. Their run line carries
+`passwordDropped: true`.
+
 ### Verified vs unverified identifiers
 
 Every platform records verification differently, and each source declares
@@ -932,7 +976,7 @@ which style it uses. An identifier the source never confirmed is routed to
 field, because Clerk creates primary identifiers **verified** — sending an
 unconfirmed address there would silently promote it.
 
-- **Boolean** (`auth0`, `firebase`, `workos`): `true`/`false`. A CSV export stringifies these, so `"false"` is
+- **Boolean** (`auth0`, `betterauth`, `firebase`, `workos`): `true`/`false`. A CSV export stringifies these, so `"false"` is
   read as false, not as a non-empty string. `TRUE`, `FALSE`, `t` and `f` read
   too, as a spreadsheet or psql writes them.
 - **Timestamp** (`supabase`): a nullable confirmation time. Any real value
@@ -1076,6 +1120,9 @@ Three exports talk to their own platform rather than to Clerk:
 The two Identity Toolkit paths are on `identitytoolkit.googleapis.com`, or on
 `FIREBASE_AUTH_EMULATOR_HOST` when that is set. The two WorkOS paths are on
 `api.workos.com`.
+
+The database exports (`supabase`, `betterauth`) make no HTTP calls at all —
+they connect over `--db-url`.
 
 ## Notes
 
