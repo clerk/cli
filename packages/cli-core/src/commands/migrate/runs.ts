@@ -124,16 +124,19 @@ function continueCommand(record: RunRecord, carry: string[]): string | undefined
   const input = record.fromExport ?? record.file?.path;
   if (!input) return undefined;
   const parts = ["clerk migrate import", quoteArg(input)];
-  if (!record.fromExport && record.source) parts.push("--source", quoteArg(record.source));
+  // A source you wrote is a file the record knows only by its hash. A name,
+  // not `<…>`: pasted as is, a shell reads `<file>` as a redirect.
+  if (record.sourceHash) parts.push("--source", "SOURCE_FILE");
+  else if (!record.fromExport && record.source) parts.push("--source", quoteArg(record.source));
   return withFlags(parts.join(" "), [...importFlags(record.flags), ...carry, "--yes"]);
 }
 
 /**
  * Whether importing the record's file again continues this run, rather than
- * starting another or refusing: no newer import of that file and source may
- * be for the same instance, the file is unchanged, and no undo of it exists.
- * An unfinished undo makes an import refuse; a finished one that never marked
- * the run makes it start a new one.
+ * starting another or refusing: no newer import of that file and source (and
+ * version of a source you wrote) may be for the same instance, the file is
+ * unchanged, and no undo of it exists. An unfinished undo makes an import
+ * refuse; a finished one that never marked the run makes it start a new one.
  */
 function continuesThisRun(runsDir: string, record: RunRecord): boolean {
   const file = record.file;
@@ -146,8 +149,8 @@ function continuesThisRun(runsDir: string, record: RunRecord): boolean {
     id === record.target.instanceId ||
     isStandInInstanceId(id) ||
     isStandInInstanceId(record.target.instanceId);
-  const newest = importsOfFile(runs, { sha256: file.sha256, source: record.source }).find((other) =>
-    mayBeSameInstance(other.target.instanceId),
+  const newest = importsOfFile(runs, { sha256: file.sha256, source: record.source }).find(
+    (other) => other.sourceHash === record.sourceHash && mayBeSameInstance(other.target.instanceId),
   );
   if (newest?.id !== record.id) return false;
   if (undosOf(runs, record.id).length > 0) return false;
