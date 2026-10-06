@@ -92,12 +92,17 @@ const supabaseSource = {
     // user metadata instead, under whichever key the provider happened to use.
     // A CSV carries the metadata as JSON text, still unparsed at this point.
     const meta = parseObject(user.unsafeMetadata);
-    if (!user.firstName && meta) {
-      const displayName = stripDiscriminator(meta.display_name ?? meta.first_name ?? meta.name);
-      if (displayName) {
-        const parts = displayName.split(/\s+/);
-        user.firstName = parts[0];
-        if (parts.length > 1 && !user.lastName) user.lastName = parts.slice(1).join(" ");
+    if (meta) {
+      // Separate name fields map as-is and are never split.
+      if (!user.firstName && typeof meta.first_name === "string") user.firstName = meta.first_name;
+      if (!user.lastName && typeof meta.last_name === "string") user.lastName = meta.last_name;
+      if (!user.firstName) {
+        const displayName = stripDiscriminator(meta.display_name ?? meta.full_name ?? meta.name);
+        if (displayName) {
+          const parts = displayName.split(/\s+/);
+          user.firstName = parts[0];
+          if (parts.length > 1 && !user.lastName) user.lastName = parts.slice(1).join(" ");
+        }
       }
     }
 
