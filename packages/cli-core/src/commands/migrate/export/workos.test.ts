@@ -114,6 +114,11 @@ describe("resolveWorkOsApiKey", () => {
       /Missing: --api-key \(or WORKOS_API_KEY\)\./,
     );
   });
+
+  test("does not prompt under --json, even with a human at the TTY", async () => {
+    process.env.CLERK_MODE = "human";
+    await expect(resolveWorkOsApiKey({ json: true }, {})).rejects.toThrow(/cannot prompt here/);
+  });
 });
 
 describe("fetchWorkOsPage", () => {
@@ -200,6 +205,11 @@ describe("resolveWithIdentities", () => {
     } finally {
       setAssumeYes(false);
     }
+  });
+
+  test("is off under --json, even with a human at the TTY", async () => {
+    process.env.CLERK_MODE = "human";
+    expect(await resolveWithIdentities({ json: true }, 10)).toBe(false);
   });
 
   test("does not ask when there are no users to ask about", async () => {
