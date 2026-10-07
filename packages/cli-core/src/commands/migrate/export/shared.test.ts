@@ -58,6 +58,16 @@ describe("finishExport", () => {
     expect(fs.statSync(path.dirname(outputPath)).mode & 0o777).toBe(0o700);
   });
 
+  test("tightens an existing --output file to owner-only", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "supabase" });
+    const output = path.join(runsDir, "existing.json");
+    fs.writeFileSync(output, "", { mode: 0o644 });
+
+    const { outputPath } = finishExport({ run, options: { output }, users, coverage });
+
+    expect(fs.statSync(outputPath).mode & 0o777).toBe(0o600);
+  });
+
   test("--output writes somewhere else, and the run still records where", async () => {
     const run = await startExportRun({ runsDir }, { platform: "auth0" });
 
