@@ -304,6 +304,31 @@ describe("unverified identifiers", () => {
     expect(statuses()).toEqual([undefined, undefined]);
   });
 
+  // A yes at the prompt is a choice; the re-run the refusal suggests must
+  // keep it, or it would reject the users it let through.
+  test("a yes carries into the command a refusal suggests", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify([
+        ...withUnverified,
+        {
+          id: "u3",
+          primary_email_address: "d@x.dev",
+          password_digest: "d",
+          password_hasher: "rot13",
+        },
+      ]),
+    );
+
+    const error = (await run(importOptions).catch((caught: unknown) => caught)) as {
+      examples?: { command: string }[];
+    };
+
+    expect(error.examples?.map((example) => example.command)).toEqual([
+      "clerk migrate import export.json --source clerk --reserve-unverified --secret-key <key> --allow-partial --yes",
+    ]);
+  });
+
   test("--reserve-unverified does not ask, and creates them reserved", async () => {
     await run({ ...importOptions, reserveUnverified: true });
 
