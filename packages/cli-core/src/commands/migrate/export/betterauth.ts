@@ -104,6 +104,20 @@ const TABLE_CANDIDATES = [
 ] as const;
 
 /**
+ * A field's column: as named when the table has it, else its snake_case form
+ * when the table has that, else the table's general guess. Better Auth maps
+ * each field on its own, so one table can mix the two; a column that is truly
+ * missing still fails the query, which names it.
+ */
+function resolveColumn(columns: Set<string>, snake: boolean): (field: string) => string {
+  return (field) => {
+    if (columns.has(field)) return field;
+    const snaked = toSnakeCase(field);
+    return columns.has(snaked) || snake ? snaked : field;
+  };
+}
+
+/**
  * Asks the database how it names Better Auth's tables and columns, and which
  * plugin columns it has. Selecting a column that is not there fails the whole
  * query, so nothing is assumed.
@@ -111,9 +125,11 @@ const TABLE_CANDIDATES = [
 export async function detectSchema(client: DbClient): Promise<BetterAuthSchema> {
   for (const [userTable, accountTable] of TABLE_CANDIDATES) {
     const columns = await tableColumns(client, userTable);
-    if (columns.size === 0) continue;
-    const snake = !columns.has("emailVerified") && columns.has("email_verified");
-    const column = (field: string) => (snake ? toSnakeCase(field) : field);
+    // A table without Better Auth's verified column is some other `user`
+    // table, so the plural one is tried next.
+    if (!columns.has("emailVerified") && !columns.has("email_verified")) continue;
+    const snake = !columns.has("emailVerified");
+    const column = resolveColumn(columns, snake);
     const plugins = new Set(PLUGIN_COLUMNS.filter((field) => columns.has(column(field))));
     // No account table: keep the user table's casing, and let the query's
     // "no such table" error say what is missing.
@@ -122,7 +138,7 @@ export async function detectSchema(client: DbClient): Promise<BetterAuthSchema> 
       accountColumns.size === 0
         ? snake
         : !accountColumns.has("userId") && accountColumns.has("user_id");
-    const accountColumn = (field: string) => (accountSnake ? toSnakeCase(field) : field);
+    const accountColumn = resolveColumn(accountColumns, accountSnake);
     return { userTable, accountTable, column, accountColumn, plugins };
   }
   // No table found: the query names the default, and its "no such table"
