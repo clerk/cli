@@ -65,7 +65,7 @@ test("creates src/start.ts with clerkMiddleware when no start file exists", asyn
     expect(serverAction.content).toContain("@clerk/tanstack-react-start/server");
     expect(serverAction.content).toContain("requestMiddleware");
     expect(serverAction.content).toContain("createCsrfMiddleware");
-    expect(serverAction.content).toContain('context.handlerType === "serverFn"');
+    expect(serverAction.content).toContain('ctx.handlerType === "serverFn"');
     expect(serverAction.content).toContain(
       "requestMiddleware: [csrfMiddleware, clerkMiddleware()]",
     );
@@ -79,7 +79,7 @@ test("adds Clerk after existing CSRF middleware in an expression-body start call
     `import { createStart, createCsrfMiddleware } from "@tanstack/react-start";
 import { ClerkProvider } from "@clerk/tanstack-react-start";
 
-const csrfMiddleware = createCsrfMiddleware({ filter: (context) => context.handlerType === "serverFn" });
+const csrfMiddleware = createCsrfMiddleware({ filter: (ctx) => ctx.handlerType === "serverFn" });
 export const startInstance = createStart(() => ({
   requestMiddleware: [csrfMiddleware],
 }));

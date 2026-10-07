@@ -132,7 +132,7 @@ function newStartFileContent(): string {
 import { createCsrfMiddleware, createStart } from "@tanstack/react-start";
 
 const csrfMiddleware = createCsrfMiddleware({
-  filter: (context) => context.handlerType === "serverFn",
+  filter: (ctx) => ctx.handlerType === "serverFn",
 });
 
 export const startInstance = createStart(() => ({
