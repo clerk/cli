@@ -28,8 +28,8 @@ import { isAssumeYes } from "./assume-yes.ts";
  * already written a file, or a long fetch the credential has already been
  * accepted for, does not belong in here.
  *
- * `-y`, agent mode and a non-TTY get the failure unchanged: there is nobody to
- * ask, and a loop that cannot prompt is a loop that cannot end. A cancelled
+ * `-y`, `--json`, agent mode and a non-TTY get the failure unchanged: there is
+ * nobody to ask, and a loop that cannot prompt is a loop that cannot end. A cancelled
  * prompt throws {@link UserAbortError}, which is not a `CliError` and so leaves
  * the loop — declining the question is an answer.
  *
@@ -37,6 +37,7 @@ import { isAssumeYes } from "./assume-yes.ts";
  *   answer to the prompt the caller has already put up.
  * @param reprompt - Asks for a replacement. Called once per failure.
  * @param work - The step the input has to survive.
+ * @param options - The command's options; `--json` never prompts.
  * @returns The result, and the input that produced it — which is not `input`
  *   when it took a retry, and later steps need the one that worked.
  */
@@ -44,6 +45,7 @@ export async function withInputRetry<I, T>(
   input: I,
   reprompt: () => Promise<I>,
   work: (input: I) => Promise<T>,
+  options: { json?: boolean } = {},
 ): Promise<{ value: T; input: I }> {
   let candidate = input;
 
@@ -56,7 +58,7 @@ export async function withInputRetry<I, T>(
       // connection is not fixed by another credential, and anything else (an
       // interrupt, a bug) is not ours to retry.
       const badInput = error instanceof CliError && error.exitCode === EXIT_CODE.USAGE;
-      if (!badInput || !isHuman() || isAgent() || isAssumeYes()) throw error;
+      if (!badInput || options.json || !isHuman() || isAgent() || isAssumeYes()) throw error;
 
       log.error(error.message);
       candidate = await reprompt();
