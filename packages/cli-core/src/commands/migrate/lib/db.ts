@@ -67,7 +67,7 @@ export function redactConnectionString(connectionString: string): string {
   // Turso carries its credential as `?authToken=`, not as userinfo, and a
   // `?password=` (which Bun.SQL ignores) still must not be printed.
   return connectionString
-    .replace(/^([a-z0-9+]+:\/\/)(.*)@/i, "$1***@")
+    .replace(/^([a-z][a-z0-9+.-]*:\/\/)(.*)@/i, "$1***@")
     .replace(/([?&](?:authToken|password)=)[^&]*/gi, "$1***");
 }
 
