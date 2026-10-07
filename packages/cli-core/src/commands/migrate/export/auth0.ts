@@ -63,6 +63,17 @@ export function normalizeAuth0Domain(domain: string): string {
 }
 
 /**
+ * True for a bare host name. The client secret goes to this host, so userinfo
+ * (`tenant.auth0.com@elsewhere`), a port, a path or a query is refused rather
+ * than letting URL parsing pick a different host.
+ */
+export function isAuth0Domain(domain: string): boolean {
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(normalizeAuth0Domain(domain));
+}
+
+const DOMAIN_HINT = "Pass just the tenant's host name, e.g. my-tenant.us.auth0.com.";
+
+/**
  * Resolves the tenant credentials: flags, then environment, then a prompt.
  *
  * @throws CliError in agent mode when anything is still missing, naming each
@@ -77,6 +88,10 @@ export async function resolveAuth0Credentials(
     clientId: options.clientId ?? env.AUTH0_CLIENT_ID,
     clientSecret: options.clientSecret ?? env.AUTH0_CLIENT_SECRET,
   };
+
+  if (resolved.domain && !isAuth0Domain(resolved.domain)) {
+    throwUsageError(`"${resolved.domain}" is not an Auth0 domain. ${DOMAIN_HINT}`, DOCS_URL);
+  }
 
   const missing = (
     [
@@ -131,7 +146,10 @@ export async function promptAuth0Credentials(
     known.domain ??
     (await text({
       message: "Auth0 tenant domain (e.g. my-tenant.us.auth0.com)",
-      validate: (value) => (value?.trim() ? undefined : "A domain is required"),
+      validate: (value) => {
+        if (!value?.trim()) return "A domain is required";
+        return isAuth0Domain(value) ? undefined : DOMAIN_HINT;
+      },
     }));
   const clientId =
     known.clientId ??
