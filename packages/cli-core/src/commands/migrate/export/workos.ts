@@ -91,7 +91,7 @@ export async function resolveWorkOsApiKey(
 
   if (resolved) return resolved.trim();
 
-  if (isAgent() || !isHuman()) {
+  if (options.json || isAgent() || !isHuman()) {
     throwUsageError(
       "`clerk migrate export workos` needs a WorkOS API key and cannot prompt here.\n" +
         "Missing: --api-key (or WORKOS_API_KEY).",
@@ -219,7 +219,8 @@ export async function fetchAllWorkOsUsers(options: {
  * returns can be imported, because `POST /v1/users` has no external-accounts
  * field. It is a line in the coverage report, and a record kept in the file.
  *
- * Agent mode gets the flag's answer and no question: there is nobody to ask.
+ * Agent mode and `--json` get the flag's answer and no question: there is
+ * nobody to ask.
  * `-y` answers the question the way a `yes` would, so `--no-with-identities`
  * is the way to say no without being asked.
  */
@@ -230,7 +231,7 @@ export async function resolveWithIdentities(
   if (options.withIdentities !== undefined) return options.withIdentities;
   if (userCount === 0) return false;
   if (isAssumeYes()) return true;
-  if (isAgent() || !isHuman()) return false;
+  if (options.json || isAgent() || !isHuman()) return false;
 
   return confirm({
     message: `Also fetch each user's OAuth providers? That is ${userCount} extra request${userCount === 1 ? "" : "s"}, and the result is report-only — Clerk's import cannot take external accounts.`,
@@ -459,6 +460,7 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
       async () => promptWorkOsApiKey(),
       async (candidate) =>
         withSpinner("Authenticating with WorkOS...", async () => fetchWorkOsPage(candidate)),
+      options,
     );
 
     const users = await withSpinner("Fetching users from WorkOS...", async (spinner) =>
