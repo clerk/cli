@@ -166,6 +166,18 @@ describe("fetchAllWorkOsUsers", () => {
     expect(requests).toHaveLength(1);
   });
 
+  test("stops when WorkOS hands back the cursor it was given", async () => {
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      requests.push(input.toString());
+      return Response.json({ data: [workosUser(0)], list_metadata: { after: "stuck" } });
+    }) as unknown as typeof fetch;
+
+    await expect(fetchAllWorkOsUsers({ apiKey: API_KEY })).rejects.toThrow(
+      /same pagination cursor twice \(stuck\)/,
+    );
+    expect(requests).toHaveLength(2);
+  });
+
   test("reuses a page already fetched rather than asking twice", async () => {
     stubWorkOs([[workosUser(0)]]);
     const firstPage = await fetchWorkOsPage(API_KEY);
