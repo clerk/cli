@@ -842,9 +842,11 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       const done = new Map<string, string>();
       const attachOnly: UserLine[] = [];
       const inFlight: string[] = [];
+      const inFlightReserved = new Set<string>();
       if (continued) {
         for (const line of latestUserLines(runsDir, continued.id).values()) {
           if (line.status === "creating") inFlight.push(line.sourceId);
+          if (line.status === "creating" && line.reserved) inFlightReserved.add(line.sourceId);
           if (line.status !== "created" || !line.clerkId) continue;
           done.set(line.sourceId, line.clerkId);
           if (line.pending?.length) attachOnly.push(line);
@@ -1116,6 +1118,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                   runId: run.record.id,
                   attachOnly,
                   adopted,
+                  adoptedReserved: inFlightReserved,
                   skipPasswordRequirement: !options.requirePassword,
                   reserveUnverified,
                   progress,
