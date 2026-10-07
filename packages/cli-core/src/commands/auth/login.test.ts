@@ -1,11 +1,12 @@
 import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
-import { AuthError } from "../../lib/errors.ts";
+import { AuthError, ERROR_CODE, UserAbortError } from "../../lib/errors.ts";
 import { useCaptureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 import type { AutoclaimResult } from "../../lib/autoclaim.ts";
 import type { Application } from "../../lib/plapi.ts";
 
 const actualConstants = await import("../../lib/constants.ts");
 const actualEnvironment = await import("../../lib/environment.ts");
+const { parseCallback } = await import("../../lib/auth-server.ts");
 
 const mockGetValidToken = mock();
 const mockStoreToken = mock();
@@ -20,6 +21,7 @@ const mockGetStoredSession = mock();
 const mockStartAuthServer = mock();
 const mockIsHuman = mock();
 const mockConfirm = mock();
+const mockText = mock();
 const mockOpenBrowser = mock();
 const mockEnsureFirstApplication = mock<() => Promise<void>>(() => Promise.resolve());
 
@@ -70,6 +72,7 @@ mock.module("../../lib/pkce.ts", () => ({
 
 mock.module("../../lib/auth-server.ts", () => ({
   startAuthServer: (...args: unknown[]) => mockStartAuthServer(...args),
+  parseCallback,
 }));
 
 mock.module("../../mode.ts", () => ({
@@ -81,7 +84,7 @@ mock.module("../../mode.ts", () => ({
 
 mock.module("../../lib/prompts.ts", () => ({
   confirm: (...args: unknown[]) => mockConfirm(...args),
-  text: async () => "",
+  text: (...args: unknown[]) => mockText(...args),
   password: async () => "",
   editor: async () => "",
 }));
@@ -111,9 +114,13 @@ describe("login", () => {
   let consoleErrorSpy: ReturnType<typeof spyOn>;
   const captured = useCaptureLog();
   const origSpawn = Bun.spawn;
+  const origStdinIsTTY = process.stdin.isTTY;
 
   beforeEach(() => {
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    // The paste-back prompt only appears on an interactive stdin. Pin it off
+    // so the suite doesn't change behaviour when run from a terminal.
+    process.stdin.isTTY = false;
   });
 
   afterEach(() => {
@@ -130,6 +137,8 @@ describe("login", () => {
     mockStartAuthServer.mockReset();
     mockIsHuman.mockReset();
     mockConfirm.mockReset();
+    mockText.mockReset();
+    process.stdin.isTTY = origStdinIsTTY;
     mockOpenBrowser.mockReset();
     mockEnsureFirstApplication.mockReset();
     mockEnsureFirstApplication.mockResolvedValue(undefined);
@@ -293,6 +302,130 @@ describe("login", () => {
 
     await expect(runLogin()).rejects.toThrow("Authentication timed out");
     expect(mockServer.stop).toHaveBeenCalled();
+  });
+
+  describe("paste-back sign-in", () => {
+    const PASTED_URL = "http://127.0.0.1:54321/callback?code=pasted-code&state=test-state-value";
+
+    /** A prompt nobody types into: it stays open until its signal aborts. */
+    function idlePrompt(config: { signal: AbortSignal }) {
+      return new Promise<string>((_resolve, reject) => {
+        config.signal.addEventListener("abort", () => reject(new UserAbortError()), {
+          once: true,
+        });
+      });
+    }
+
+    /** The validator login hands the paste prompt, captured from the first call. */
+    async function captureValidator() {
+      mockText.mockImplementation(idlePrompt);
+      await runLogin();
+      return mockText.mock.calls[0]![0].validate as (value: string) => string | undefined;
+    }
+
+    beforeEach(() => {
+      mockIsHuman.mockReturnValue(true);
+      process.stdin.isTTY = true;
+      mockGetValidToken.mockResolvedValue(null);
+    });
+
+    test("signs in with a pasted redirect URL when the loopback never fires", async () => {
+      const server = mockOAuthSuccess();
+      server.waitForCallback.mockReturnValue(new Promise(() => {}));
+      mockText.mockResolvedValue(PASTED_URL);
+
+      const result = await runLogin();
+
+      expect(result).toEqual({ userId: "user_new", email: "new@example.com" });
+      // The token exchange must quote the loopback redirect URI the authorize
+      // request used, even though the code arrived by paste.
+      expect(mockExchangeCodeForToken).toHaveBeenCalledWith({
+        code: "pasted-code",
+        codeVerifier: "test-code-verifier",
+        redirectUri: "http://127.0.0.1:54321/callback",
+      });
+      expect(server.stop).toHaveBeenCalled();
+    });
+
+    test("closes the paste prompt when the loopback redirect wins", async () => {
+      mockOAuthSuccess();
+      mockText.mockImplementation(idlePrompt);
+
+      await runLogin();
+
+      const { signal } = mockText.mock.calls[0]![0] as { signal: AbortSignal };
+      expect(signal.aborted).toBe(true);
+      expect(mockExchangeCodeForToken).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "fresh-auth-code" }),
+      );
+    });
+
+    test("fails the login when the pasted URL carries an OAuth error", async () => {
+      const server = mockOAuthSuccess();
+      server.waitForCallback.mockReturnValue(new Promise(() => {}));
+      mockText.mockResolvedValue(
+        "http://127.0.0.1:54321/callback?error=access_denied&error_description=User+denied+access",
+      );
+
+      await expect(runLogin()).rejects.toMatchObject({
+        code: ERROR_CODE.OAUTH_PROVIDER_ERROR,
+      });
+      expect(mockExchangeCodeForToken).not.toHaveBeenCalled();
+      expect(server.stop).toHaveBeenCalled();
+    });
+
+    test("does not offer the paste prompt when stdin is not a terminal", async () => {
+      process.stdin.isTTY = false;
+      mockOAuthSuccess();
+
+      await runLogin();
+
+      expect(mockText).not.toHaveBeenCalled();
+    });
+
+    test("does not offer the paste prompt in agent mode", async () => {
+      mockIsHuman.mockReturnValue(false);
+      mockOAuthSuccess();
+
+      await runLogin();
+
+      expect(mockText).not.toHaveBeenCalled();
+    });
+
+    test("accepts a matching redirect URL", async () => {
+      mockOAuthSuccess();
+      const validate = await captureValidator();
+
+      expect(validate(PASTED_URL)).toBeUndefined();
+    });
+
+    // A denied consent is a real answer, not a typo: let it through so the
+    // login fails the same way it does on the loopback path.
+    test("lets a redirect carrying an OAuth error through to end the login", async () => {
+      mockOAuthSuccess();
+      const validate = await captureValidator();
+
+      expect(validate("http://127.0.0.1:54321/callback?error=access_denied")).toBeUndefined();
+    });
+
+    test.each([
+      ["not a URL", "pasted-code", "full URL"],
+      [
+        "a redirect from another sign-in attempt",
+        "http://127.0.0.1:54321/callback?code=other-code&state=other-state",
+        "different sign-in attempt",
+      ],
+      [
+        "a URL without a code",
+        "http://127.0.0.1:54321/callback?state=test-state-value",
+        "no authorization code",
+      ],
+    ])("re-prompts on %s", async (_label, input, message) => {
+      mockOAuthSuccess();
+      const validate = await captureValidator();
+
+      expect(validate(input)).toContain(message);
+    });
   });
 
   test("proceeds with login when token exists but no auth config", async () => {
