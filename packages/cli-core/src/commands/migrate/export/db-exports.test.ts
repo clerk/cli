@@ -300,6 +300,43 @@ describe("betterauth export", () => {
     ]);
   });
 
+  // Each field is mapped on its own, so one table can mix the two casings.
+  test("resolves each column on its own when a table mixes casings", async () => {
+    const file = makeDb((db) => {
+      db.run(
+        `CREATE TABLE "user" (id TEXT PRIMARY KEY, email TEXT, email_verified INTEGER, name TEXT,
+         "createdAt" TEXT, updated_at TEXT)`,
+      );
+      db.run(`CREATE TABLE "account" (id TEXT, user_id TEXT, "providerId" TEXT, password TEXT)`);
+      db.run(`INSERT INTO "user" (id, email, email_verified) VALUES ('u1', 'a@x.dev', 1)`);
+      db.run(`INSERT INTO "account" VALUES ('a1', 'u1', 'credential', 'salt:hash')`);
+    });
+
+    const rows = await withClient(file, async (client) =>
+      client.query(buildBetterAuthQuery(client, await detectSchema(client))),
+    );
+
+    expect(rows).toEqual([
+      expect.objectContaining({ id: "u1", emailVerified: 1, password_hash: "salt:hash" }),
+    ]);
+  });
+
+  test("passes over a `user` table that is not Better Auth's for the plural one", async () => {
+    const file = makeDb((db) => {
+      db.run(`CREATE TABLE "user" (id TEXT PRIMARY KEY, handle TEXT)`);
+      db.run(
+        `CREATE TABLE "users" (id TEXT PRIMARY KEY, email TEXT, "emailVerified" INTEGER, name TEXT,
+         "createdAt" TEXT, "updatedAt" TEXT)`,
+      );
+      db.run(`CREATE TABLE "accounts" (id TEXT, "userId" TEXT, "providerId" TEXT, password TEXT)`);
+      db.run(`INSERT INTO "users" (id, email) VALUES ('u1', 'a@x.dev')`);
+    });
+
+    const schema = await withClient(file, async (client) => detectSchema(client));
+
+    expect(schema).toMatchObject({ userTable: "users", accountTable: "accounts" });
+  });
+
   test("exports a user with two matching credential accounts once", () => {
     const lines: UserLine[] = [];
     const { users, coverage } = buildBetterAuthExport(
