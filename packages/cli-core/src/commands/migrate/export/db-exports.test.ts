@@ -224,6 +224,23 @@ describe("authjs export", () => {
     expect(rows.map((row) => row.email_verified)).toEqual([null, "2024-01-15"]);
   });
 
+  // Postgres keeps a quoted "User" apart from "user"; SQLite does not, so the
+  // plural table stands in for the later candidate here.
+  test("passes over a candidate table without the columns for a later one", async () => {
+    const file = makeDb((db) => {
+      db.run(`CREATE TABLE "User" (id TEXT PRIMARY KEY, handle TEXT)`);
+      db.run(
+        `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, "emailVerified" TEXT)`,
+      );
+      db.run(`INSERT INTO users VALUES (?,?,?,?)`, ["u1", "U", "u@x.dev", null]);
+    });
+
+    const { rows, table } = await withClient(file, fetchAuthJsUsers);
+
+    expect(table).toBe("users");
+    expect(rows).toHaveLength(1);
+  });
+
   test("a missing column is an error, not a literal", async () => {
     const file = makeDb((db) => {
       db.run(`CREATE TABLE "User" (id TEXT PRIMARY KEY, email TEXT, "emailVerified" TEXT)`);
