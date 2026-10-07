@@ -74,22 +74,26 @@ function isMissingTable(error: unknown): boolean {
 /**
  * Reads the user table, trying each casing until one answers.
  *
+ * A table that exists but lacks the columns is passed over too: Postgres
+ * keeps a quoted `"User"` apart from `"user"`, and an app's own `User` table
+ * must not hide Auth.js's. When nothing reads, the first column error is the
+ * one thrown, since it names a table that was there.
+ *
  * @returns The rows and the table they came from, so the run can say which.
  */
 export async function fetchAuthJsUsers(
   client: DbClient,
 ): Promise<{ rows: AuthJsRow[]; table: string }> {
   let lastError: unknown;
+  let columnError: unknown;
 
   for (const table of TABLE_CANDIDATES) {
-    let columnError: unknown;
     for (const column of VERIFIED_COLUMNS) {
       try {
         const rows = await client.query<AuthJsRow>(buildAuthJsQuery(client, table, column));
         return { rows, table };
       } catch (error) {
-        // The table is there: try the other name for the verified column, and
-        // report the first failure if neither reads.
+        // The table is there: try the other name for the verified column.
         if (isMissingColumn(error)) {
           columnError ??= error;
           continue;
@@ -99,9 +103,9 @@ export async function fetchAuthJsUsers(
         break;
       }
     }
-    if (columnError) throw columnError;
   }
 
+  if (columnError) throw columnError;
   throw lastError instanceof Error
     ? new Error(
         `No Auth.js user table found. Tried ${TABLE_CANDIDATES.join(", ")}. ${lastError.message}`,
