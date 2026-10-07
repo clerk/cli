@@ -305,11 +305,35 @@ function updateStartFile(content: string, startVersion: StartVersionCheck): Star
     if (middleware.some((element) => element === null)) {
       return { status: "manual", needsClerk: true };
     }
+    const callbackStatements = callback.body.type === "BlockStatement" ? callback.body.body : [];
+    const isClerkVariable = (name: string): boolean => {
+      for (const statements of [callbackStatements, program.body]) {
+        const declarations = statements.flatMap((statement) =>
+          statement.type === "VariableDeclaration" && statement.kind === "const"
+            ? statement.declarations.filter(
+                (declaration) =>
+                  declaration.id.type === "Identifier" && declaration.id.name === name,
+              )
+            : [],
+        );
+        if (declarations.length > 0) {
+          const declaration = declarations[0]!;
+          return (
+            declarations.length === 1 &&
+            declaration.init?.type === "CallExpression" &&
+            declaration.init.callee.type === "Identifier" &&
+            declaration.init.callee.name === "clerkMiddleware"
+          );
+        }
+      }
+      return false;
+    };
     const hasClerk = middleware.some(
       (element) =>
-        element?.type === "CallExpression" &&
-        element.callee.type === "Identifier" &&
-        element.callee.name === "clerkMiddleware",
+        (element?.type === "CallExpression" &&
+          element.callee.type === "Identifier" &&
+          element.callee.name === "clerkMiddleware") ||
+        (element?.type === "Identifier" && isClerkVariable(element.name)),
     );
 
     const hasImport = (source: string, name: string) =>

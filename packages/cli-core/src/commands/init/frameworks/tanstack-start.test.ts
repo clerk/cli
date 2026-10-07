@@ -142,6 +142,48 @@ export const startInstance = createStart(() => ({
   );
 });
 
+test("does not duplicate Clerk middleware held in a variable", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+import { createCsrfMiddleware, createStart } from "@tanstack/react-start";
+
+const csrfMiddleware = createCsrfMiddleware({ filter: (ctx) => ctx.handlerType === "serverFn" });
+const clerk = clerkMiddleware();
+export const startInstance = createStart(() => ({ requestMiddleware: [csrfMiddleware, clerk] }));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("skip");
+  if (action?.type !== "skip") throw new Error("Expected skip action");
+  expect(action.skipReason).toBe("Already has Clerk middleware");
+});
+
+test("adds CSRF before a callback-local Clerk middleware variable", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+import { createStart } from "@tanstack/react-start";
+
+export const startInstance = createStart(() => {
+  const clerk = clerkMiddleware();
+  return { requestMiddleware: [clerk] };
+});
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain("requestMiddleware: [csrfMiddleware, clerk]");
+  expect(action.content.match(/clerkMiddleware\(\)/g)).toHaveLength(1);
+});
+
 test("preserves an existing requestMiddleware array in a block-body callback", async () => {
   await mkdir(join(tempDir, "src"), { recursive: true });
   await Bun.write(
