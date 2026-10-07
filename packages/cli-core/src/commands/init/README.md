@@ -176,7 +176,7 @@ Nuxt's module system auto-configures middleware and auto-imports components.
 | CREATE        | `src/routes/sign-in.$.tsx` | Sign-in route with `<SignIn />` component       |
 | CREATE        | `src/routes/sign-up.$.tsx` | Sign-up route with `<SignUp />` component       |
 
-CSRF middleware needs `@tanstack/react-start` 1.168.10 or later. When the version is older or can't be confirmed, or an existing `start.ts` can't be edited safely, `clerk init` leaves the file unchanged and prints the manual steps.
+CSRF middleware needs `@tanstack/react-start` 1.168.10 or later, with `@tanstack/react-router` 1.170.7 or later. When the version is older or can't be confirmed, or an existing `start.ts` can't be edited safely, `clerk init` leaves the file unchanged and prints the manual steps.
 
 ### Astro
 

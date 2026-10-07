@@ -378,6 +378,28 @@ export const startInstance = createStart(() => ({
   );
 });
 
+test("only merges the CSRF import into an import from @tanstack/react-start itself", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { getRequest } from "@tanstack/react-start/server";
+import { createStart } from "@tanstack/react-start";
+import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+
+export const startInstance = createStart(() => ({ requestMiddleware: [clerkMiddleware()] }));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain('import { getRequest } from "@tanstack/react-start/server";');
+  expect(action.content).toContain(
+    'import { createCsrfMiddleware, createStart } from "@tanstack/react-start";',
+  );
+});
+
 test("asks for manual CSRF setup when existing middleware is not Clerk-only", async () => {
   await mkdir(join(tempDir, "src"), { recursive: true });
   await Bun.write(

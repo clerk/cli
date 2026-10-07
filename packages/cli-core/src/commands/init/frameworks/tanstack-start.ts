@@ -216,8 +216,9 @@ function codeStyle(content: string): CodeStyle {
 
 /** Add a named import in the file's style, merging into a one-line import from the same source. */
 function addNamedImport(code: string, source: string, name: string, style: CodeStyle): string {
-  const escaped = source.replace(/[/.]/g, "\\$&");
-  const existing = new RegExp(`^import \\{([^}\\n]*)\\} from (["'])${escaped}\\2`, "m").exec(code);
+  const existing = [...code.matchAll(/^import \{([^}\n]*)\} from (["'])([^"'\n]+)\2/gm)].find(
+    (match) => match[3] === source,
+  );
   if (existing) {
     const names = existing[1]!
       .split(",")
