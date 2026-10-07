@@ -178,6 +178,9 @@ export async function fetchAuth0Token(credentials: Auth0Credentials): Promise<st
   const response = await loggedFetch(url, {
     tag: "auth0",
     method: "POST",
+    // A followed 307/308 would resend the client secret to wherever it points.
+    // Unfollowed, a 3xx is just a failed response.
+    redirect: "manual",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       grant_type: "client_credentials",
@@ -228,6 +231,7 @@ async function fetchAuth0Page(
   const response = await loggedFetch(url, {
     tag: "auth0",
     method: "GET",
+    redirect: "manual",
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
 
