@@ -259,6 +259,24 @@ async function confirmUpdate(currentVersion: string, latestVersion: string): Pro
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
+/**
+ * What a failed registry lookup throws.
+ *
+ * A registry that answered — badly, or without the requested channel —
+ * already carries its own code, and a Ctrl-C is the user's decision, not the
+ * network's. Only transport and timeout failures are genuinely "unreachable",
+ * and retrying is only right for those. `loggedFetch` reports a refused
+ * connection as NETWORK_UNREACHABLE, naming the host; this command has always
+ * called it the registry.
+ */
+export function asRegistryError(error: unknown): unknown {
+  const unreachable = error instanceof CliError && error.code === ERROR_CODE.NETWORK_UNREACHABLE;
+  if ((error instanceof CliError && !unreachable) || isCancelled(error)) return error;
+  return new CliError("Could not reach npm registry. Check your network connection.", {
+    code: ERROR_CODE.REGISTRY_UNREACHABLE,
+  });
+}
+
 export async function update(options: UpdateOptions): Promise<void> {
   if (IS_DEV_BUILD) {
     log.info(`Running development build (${CURRENT_VERSION}); update not applicable.`);
@@ -272,14 +290,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   const [latest, installDirs] = await Promise.all([
     withSpinner("Checking for updates...", async () => fetchLatestVersion(channel)).catch(
       (error: unknown) => {
-        // A registry that answered — badly, or without the requested channel —
-        // already carries its own code, and a Ctrl-C is the user's decision,
-        // not the network's. Only transport and timeout failures are genuinely
-        // "unreachable", and retrying is only right for those.
-        if (error instanceof CliError || isCancelled(error)) throw error;
-        throw new CliError("Could not reach npm registry. Check your network connection.", {
-          code: ERROR_CODE.REGISTRY_UNREACHABLE,
-        });
+        throw asRegistryError(error);
       },
     ),
     getInstallerPackageDirs(),

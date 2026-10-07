@@ -30,7 +30,7 @@ Default to using Bun instead of Node.js.
 - `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
 - `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
 - `Bun.redis` for Redis. Don't use `ioredis`.
-- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `Bun.sql` for Postgres and MySQL. Don't use `pg`, `postgres.js`, or `mysql2`.
 - `WebSocket` is built-in. Don't use `ws`.
 - Prefer `Bun.file` over `node:fs`'s readFile/writeFile
 - Bun.$`ls` instead of execa.
@@ -48,13 +48,15 @@ bun run test:e2e:op  # Run E2E tests with secrets resolved from 1Password (prefe
 bun run test:e2e     # Run E2E tests with env vars already set (used by CI)
 ```
 
-Locally, prefer `bun run test:e2e:op` so secrets are injected from 1Password in-memory and never written to disk. `bun run test:e2e` is for CI or for cases where the required env vars are already exported.
+Locally, prefer `bun run test:e2e:op` so secrets are injected from 1Password in-memory and never written to disk. `bun run test:e2e` is for CI or for cases where the required env vars are already exported. Both run `bun test` with `--no-env-file`, so a `.env.local` pointing the CLI at a local `clerk_go` stack can't send the production test secrets there.
 
 CI runs `bun run format:check` (fails if unformatted), `bun run lint`, `bun run test`, and `bun run test:e2e` on every PR to `main`. E2E tests only run for PRs from the same repository (not external forks) and target the production Clerk API with a dedicated test application.
 
 When running multiple test files directly with `bun test`, always pass `--isolate` or `--parallel`. `--parallel` implies `--isolate`. Without isolation, Bun can share module mocks across files and produce order-dependent failures. Prefer `bun run test` for the full suite because it already passes `--parallel`.
 
 These flags require Bun >= 1.3.13 — older versions silently ignore them and lose isolation. `bun run test` and `bun run test:e2e` run `scripts/check-bun-version.ts` first, which fails fast when the installed Bun is older than the `engines.bun` floor in package.json.
+
+The same floor also covers `Bun.sql`'s MySQL adapter used by the DB-backed export commands: MySQL support landed in Bun 1.2.21, but binary columns (password hashes) only decoded correctly from 1.3.6. See the header of `scripts/check-bun-version.ts`.
 
 ## Versioning
 

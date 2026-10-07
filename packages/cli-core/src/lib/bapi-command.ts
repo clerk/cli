@@ -19,39 +19,44 @@ interface ResolveBapiSecretKeyOptions {
   cwd?: string;
 }
 
+/**
+ * Names the instance {@link resolveBapiSecretKey} will reach, and where its key
+ * comes from, for prose ("… for My App (development) via the linked profile").
+ *
+ * Walks the same chain in the same order. An exported `CLERK_SECRET_KEY` wins
+ * over a linked profile there, so it wins here too: naming the linked app for
+ * a key that may belong to any app at all would point the reader at the wrong
+ * instance.
+ */
 export async function describeBapiTarget(
   options: ResolveBapiSecretKeyOptions,
 ): Promise<string | undefined> {
-  // An explicit --secret-key wins in resolveBapiSecretKey, so it has no
-  // app/instance context to describe.
-  if (options.secretKey) return undefined;
+  if (options.secretKey) return "the instance behind --secret-key";
 
-  // Mirrors resolveBapiSecretKey's precedence: an unclaimed keyless project has
-  // no app/instance to describe, only the key's own source.
-  const keyless = await resolveKeylessTarget({
-    app: options.app,
-    instance: options.instance,
-    cwd: options.cwd,
-  });
-  if (keyless) {
-    return `this accountless application (secret key from ${keyless.source})`;
-  }
-
-  try {
+  if (options.app) {
     const ctx = await resolveAppContext({
       app: options.app,
       instance: options.instance,
       cwd: options.cwd,
     });
-    return `${ctx.appLabel} (${ctx.instanceLabel})`;
+    return `${ctx.appLabel} (${ctx.instanceLabel}) via --app`;
+  }
+
+  if (process.env.CLERK_SECRET_KEY) return "the instance behind the CLERK_SECRET_KEY env var";
+
+  // An unclaimed keyless project has no app/instance to describe, only the
+  // key's own source.
+  const keyless = await resolveKeylessTarget({ instance: options.instance, cwd: options.cwd });
+  if (keyless) {
+    return `this accountless application (secret key from ${keyless.source})`;
+  }
+
+  try {
+    const ctx = await resolveAppContext({ instance: options.instance, cwd: options.cwd });
+    return `${ctx.appLabel} (${ctx.instanceLabel}) via the linked profile`;
   } catch (error) {
-    if (
-      error instanceof CliError &&
-      error.code === ERROR_CODE.NOT_LINKED &&
-      (options.secretKey || process.env.CLERK_SECRET_KEY)
-    ) {
-      return undefined;
-    }
+    // Nothing to name; resolveBapiSecretKey raises the error worth reading.
+    if (error instanceof CliError && error.code === ERROR_CODE.NOT_LINKED) return undefined;
     throw error;
   }
 }
