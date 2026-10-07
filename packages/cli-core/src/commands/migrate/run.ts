@@ -749,6 +749,9 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           default: false,
         });
       }
+      // The answers carry into every command printed from here on, so a
+      // suggested re-run does not quietly drop what the operator chose.
+      options = { ...options, skipLegalChecks, reserveUnverified };
 
       const checks = await withSpinner("Checking users against the instance...", async (spinner) =>
         checkImport({
