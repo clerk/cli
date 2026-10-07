@@ -45,7 +45,7 @@ import { NEXT_STEPS, printAgentNextSteps } from "../../lib/next-steps.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
-import { importUsers } from "./import-users.ts";
+import { importUsers, splitIdentifiers } from "./import-users.ts";
 import { ALREADY_IMPORTED, checkImport, type ImportChecks } from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
@@ -128,6 +128,12 @@ export type MigrateRunOptions = {
    * Without it, a prompt asks; where nobody can be asked, they are rejected.
    */
   skipLegalChecks?: boolean;
+  /**
+   * Create the emails and phones the source never verified as reserved, not
+   * unverified. Without it, a prompt asks; where nobody can be asked, they
+   * stay unverified.
+   */
+  reserveUnverified?: boolean;
   /** Check against the instance, report, and write nothing. */
   dryRun?: boolean;
   /** Import the users that pass, and record the rest as skipped. */
@@ -778,6 +784,7 @@ function commandFor(
   if ((!fromExport || options.envelopeSource) && source) parts.push("--source", quoteArg(source));
   if (options.newRun) parts.push("--new-run");
   parts.push(...importFlags(options));
+  if (options.reserveUnverified) parts.push("--reserve-unverified");
   // Names, not `<…>`: pasted as is, a shell reads `<key>` as a redirect.
   if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "SIGNER_KEY");
   if (options.firebaseSaltSeparator !== undefined)
@@ -1192,10 +1199,32 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         options = { ...options, skipLegalChecks };
       }
 
+      // Unverified stays the default: reserved makes an address the source never
+      // confirmed usable for sign-in, which is the operator's call to make.
+      let reserveUnverified = options.reserveUnverified ?? false;
+      const withUnverified = users.filter((user) => {
+        const { unverifiedEmails, unverifiedPhones } = splitIdentifiers(user);
+        return unverifiedEmails.length > 0 || unverifiedPhones.length > 0;
+      }).length;
+      // `-y` is consent to write, not a yes to this, so it does not ask.
+      if (
+        !reserveUnverified &&
+        withUnverified > 0 &&
+        !options.dryRun &&
+        !options.yes &&
+        canPrompt(options)
+      ) {
+        reserveUnverified = await confirm({
+          message: `${plural(withUnverified, "user")} ${withUnverified === 1 ? "has" : "have"} an email or phone the source never verified. Create them reserved (usable for sign-in, locked to the user) instead of unverified?`,
+          default: false,
+        });
+      }
+
       const checks = await withSpinner("Checking users against the instance...", async (spinner) =>
         checkImport({
           users,
           skipLegalChecks,
+          reserveUnverified,
           failures,
           unknownFields: loaded.unknownFields,
           ...(supabaseRows ? { supabaseRows } : {}),
@@ -1440,6 +1469,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                   attachOnly,
                   adopted,
                   skipPasswordRequirement: !options.requirePassword,
+                  reserveUnverified,
                   progress,
                 }),
             )
