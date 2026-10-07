@@ -266,6 +266,14 @@ describe("fetchAllWorkOsIdentities", () => {
   });
 });
 
+test("fetchWorkOsIdentities keeps the user ID inside its path segment", async () => {
+  stubWorkOs([[]]);
+  await fetchWorkOsIdentities(API_KEY, "user_01/../x?y#z");
+  expect(requests[0]).toBe(
+    "https://api.workos.com/user_management/users/user_01%2F..%2Fx%3Fy%23z/identities",
+  );
+});
+
 // A key revoked partway would otherwise mark every later user unreadable and
 // let the export finish as if it had worked.
 test("fetchAllWorkOsIdentities stops on a rejected key rather than counting it", async () => {
