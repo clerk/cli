@@ -272,7 +272,9 @@ describe("fetchAllAuth0Users", () => {
     expect(captured.err).toContain("bulk user export job");
   });
 
-  test("a tenant of exactly 1000 users is complete, with no warning", async () => {
+  // Auth0 reports a larger tenant's total as 1000, so 1000 of 1000 cannot be
+  // told apart from 1000 of 50,000.
+  test("a total of exactly 1000 may hide more, and says so", async () => {
     stubAuth0(
       Array.from({ length: 10 }, () => Array.from({ length: 100 }, (_, i) => auth0User(i))),
     );
@@ -283,8 +285,8 @@ describe("fetchAllAuth0Users", () => {
     });
 
     expect(all).toHaveLength(1000);
-    expect(truncated).toBe(false);
-    expect(captured.err).not.toContain("only pages through");
+    expect(truncated).toBe(true);
+    expect(captured.err).toContain("so there may be more");
   });
 
   test("does not follow a redirect with the bearer token", async () => {

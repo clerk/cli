@@ -463,8 +463,9 @@ it exits naming **every** missing credential at once rather than one per run.
 Auth0 pages this endpoint only through the first **1000** users. Past that the
 export stops and says so, pointing at Auth0's bulk export job — silently
 returning the first thousand would read as "that is everyone". It still exits
-0, and `--json` carries `truncated: true`. A tenant of exactly 1000 is
-complete, and gets no warning. The bulk job's NDJSON file imports as it is.
+0, and `--json` carries `truncated: true`. A tenant of exactly 1000 gets the
+warning too: Auth0 reports a larger tenant's total as 1000, so the two look the
+same. The bulk job's NDJSON file imports as it is.
 
 A credential the platform rejects (400, 401 or 403) is asked for again at a
 terminal. An outage, a `429` or a refused connection is not: another
