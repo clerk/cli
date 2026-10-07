@@ -32,7 +32,7 @@ mock.module("../../../lib/prompts.ts", () => ({
 }));
 
 const { withInputRetry } = await import("./input-retry.ts");
-const { promptDbUrl } = await import("../export/db-options.ts");
+const { promptDbUrl, resolveDbUrl } = await import("../export/db-options.ts");
 const { setAssumeYes } = await import("./assume-yes.ts");
 
 const captured = useCaptureLog();
@@ -172,6 +172,25 @@ describe("withInputRetry", () => {
     expect(attempts).toBe(1);
   });
 
+  // `--json` is non-interactive by contract, even when a human is at the TTY.
+  test("throws without prompting under --json", async () => {
+    let attempts = 0;
+
+    await expect(
+      withInputRetry(
+        FIRST,
+        () => promptDbUrl(CONFIG),
+        () => {
+          attempts++;
+          throw rejected();
+        },
+        { json: true },
+      ),
+    ).rejects.toThrow(CliError);
+
+    expect(attempts).toBe(1);
+  });
+
   // `-y` is a human on a TTY who could be asked and said not to. Agent mode
   // cannot reach the prompt at all; this one can and declines to, so it needs
   // its own check rather than riding on the mode assertion above.
@@ -233,5 +252,16 @@ describe("withInputRetry", () => {
     ).rejects.toThrow(TypeError);
 
     expect(attempts).toBe(1);
+  });
+});
+
+// Here rather than in `db-exports.test.ts` because the prompt is mocked: a
+// missed guard reaches it and returns, where a real prompt would hang the run.
+describe("resolveDbUrl", () => {
+  test("does not prompt under --json, even with a human at the TTY", async () => {
+    answers = [FIRST];
+
+    await expect(resolveDbUrl({ json: true }, CONFIG, {})).rejects.toThrow(/cannot prompt here/);
+    expect(answers).toEqual([FIRST]);
   });
 });

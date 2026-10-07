@@ -125,7 +125,7 @@ export async function resolveDbUrl(
     log.warn(`${config.envVar} is not a valid connection string; ignoring it.`);
   }
 
-  if (isAgent() || !isHuman()) {
+  if (options.json || isAgent() || !isHuman()) {
     throwUsageError(
       `\`clerk migrate export ${config.platform}\` needs a database connection and cannot prompt here.\n` +
         `Pass --db-url, or set ${config.envVar}.`,

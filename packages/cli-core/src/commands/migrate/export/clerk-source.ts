@@ -47,6 +47,8 @@ export type ResolveClerkSourceOptions = {
   app?: string;
   instance?: string;
   cwd?: string;
+  /** `--json` never prompts. */
+  json?: boolean;
 };
 
 export type ClerkExportSource = {
@@ -88,6 +90,7 @@ async function resolveSource(options: ResolveClerkSourceOptions): Promise<Resolv
     };
   } catch (error) {
     if (
+      options.json ||
       !isHuman() ||
       named ||
       !(error instanceof CliError) ||
@@ -173,7 +176,7 @@ export async function resolveClerkSource(
   options: ResolveClerkSourceOptions,
 ): Promise<ClerkExportSource> {
   const { chosen, ...source } = await resolveSource(options);
-  if (chosen || !source.target || !isHuman()) return source;
+  if (chosen || !source.target || options.json || !isHuman()) return source;
 
   const picked = await pickInstance(await currentAppId(options));
   if (picked) return picked;

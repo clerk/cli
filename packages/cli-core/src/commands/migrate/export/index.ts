@@ -21,7 +21,7 @@ import { exportPlatformKeys, exportPlatforms, getExportPlatform } from "./regist
  * platform name, it prompts for itself.
  */
 export async function exportPicker(options: Record<string, unknown> = {}): Promise<void> {
-  if (isAgent() || !isHuman()) {
+  if (options.json || isAgent() || !isHuman()) {
     throwUsageError(
       `\`clerk migrate export\` needs a platform and cannot prompt here. Name one: ${exportPlatformKeys().join(", ")}.`,
       undefined,
