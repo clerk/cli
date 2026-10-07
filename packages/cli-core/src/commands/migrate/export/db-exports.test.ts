@@ -362,6 +362,47 @@ describe("betterauth export", () => {
     ]);
   });
 
+  test("exports a user with two matching credential accounts once", () => {
+    const lines: UserLine[] = [];
+    const { users, coverage } = buildBetterAuthExport(
+      [
+        { id: "u1", email: "a@x.dev", password_hash: "salt:hash" },
+        { id: "u1", email: "a@x.dev", password_hash: "salt:hash" },
+        { id: "u2", email: "b@x.dev", password_hash: null },
+      ],
+      (line) => lines.push(line),
+    );
+
+    expect(users.map((user) => user.user_id)).toEqual(["u1", "u2"]);
+    expect(coverage.find((row) => row.label === "have a password hash")?.count).toBe(1);
+    expect(lines).toEqual([
+      { sourceId: "u1", status: "exported" },
+      { sourceId: "u2", status: "exported" },
+    ]);
+  });
+
+  // Picking one hash would leave the user unable to sign in with the other.
+  test("skips a user whose credential accounts hold different hashes, and says so", () => {
+    const lines: UserLine[] = [];
+    const { users } = buildBetterAuthExport(
+      [
+        { id: "u1", email: "a@x.dev", password_hash: "salt:one" },
+        { id: "u1", email: "a@x.dev", password_hash: "salt:two" },
+      ],
+      (line) => lines.push(line),
+    );
+
+    expect(users).toEqual([]);
+    expect(lines).toEqual([
+      expect.objectContaining({
+        sourceId: "u1",
+        status: "skipped",
+        error: expect.stringContaining("2 credential accounts with different password hashes"),
+      }),
+    ]);
+    expect(captured.err).toContain("Skipped 1 user with more than one credential account");
+  });
+
   test("renames camelCase columns onto what the transformer reads", () => {
     const { users } = buildBetterAuthExport([
       { id: "u1", emailVerified: 1, phoneNumber: "+1555", createdAt: "2025-01-01" },
