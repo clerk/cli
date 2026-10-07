@@ -305,35 +305,46 @@ function updateStartFile(content: string, startVersion: StartVersionCheck): Star
     if (middleware.some((element) => element === null)) {
       return { status: "manual", needsClerk: true };
     }
+    // Local names the Clerk middleware is imported under, so aliases count.
+    const clerkImports = program.body.flatMap((statement) =>
+      statement.type === "ImportDeclaration" &&
+      statement.source.value === "@clerk/tanstack-react-start/server"
+        ? statement.specifiers.flatMap((specifier) =>
+            specifier.type === "ImportSpecifier" &&
+            specifier.imported.type === "Identifier" &&
+            specifier.imported.name === "clerkMiddleware"
+              ? [specifier.local.name]
+              : [],
+          )
+        : [],
+    );
+    const clerkName = clerkImports[0] ?? "clerkMiddleware";
+    const isClerkCall = (node: ASTNode | null | undefined): boolean =>
+      node?.type === "CallExpression" &&
+      node.callee.type === "Identifier" &&
+      (node.callee.name === "clerkMiddleware" || clerkImports.includes(node.callee.name));
     const callbackStatements = callback.body.type === "BlockStatement" ? callback.body.body : [];
+    // Resolve a middleware variable to its nearest declaration, callback scope first.
     const isClerkVariable = (name: string): boolean => {
       for (const statements of [callbackStatements, program.body]) {
-        const declarations = statements.flatMap((statement) =>
-          statement.type === "VariableDeclaration" && statement.kind === "const"
-            ? statement.declarations.filter(
-                (declaration) =>
-                  declaration.id.type === "Identifier" && declaration.id.name === name,
+        const declarations = statements.flatMap((statement) => {
+          const declaration =
+            statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+          return declaration?.type === "VariableDeclaration"
+            ? declaration.declarations.filter(
+                (declarator) => declarator.id.type === "Identifier" && declarator.id.name === name,
               )
-            : [],
-        );
+            : [];
+        });
         if (declarations.length > 0) {
-          const declaration = declarations[0]!;
-          return (
-            declarations.length === 1 &&
-            declaration.init?.type === "CallExpression" &&
-            declaration.init.callee.type === "Identifier" &&
-            declaration.init.callee.name === "clerkMiddleware"
-          );
+          return declarations.length === 1 && isClerkCall(declarations[0]!.init);
         }
       }
       return false;
     };
     const hasClerk = middleware.some(
       (element) =>
-        (element?.type === "CallExpression" &&
-          element.callee.type === "Identifier" &&
-          element.callee.name === "clerkMiddleware") ||
-        (element?.type === "Identifier" && isClerkVariable(element.name)),
+        isClerkCall(element) || (element?.type === "Identifier" && isClerkVariable(element.name)),
     );
 
     const hasImport = (source: string, name: string) =>
@@ -392,7 +403,7 @@ function updateStartFile(content: string, startVersion: StartVersionCheck): Star
     // Splice text at the AST positions instead of regenerating the module, so
     // the rest of the file keeps its exact formatting.
     const before = hasCsrf ? [] : ["csrfMiddleware"];
-    const after = hasClerk ? [] : ["clerkMiddleware()"];
+    const after = hasClerk ? [] : [`${clerkName}()`];
     const edits: { at: number; text: string }[] = [];
     const first = middleware[0];
     const last = middleware.at(-1);
@@ -431,7 +442,7 @@ function updateStartFile(content: string, startVersion: StartVersionCheck): Star
     }
 
     const style = codeStyle(content);
-    if (!hasImport("@clerk/tanstack-react-start/server", "clerkMiddleware")) {
+    if (clerkImports.length === 0) {
       result = addNamedImport(
         result,
         "@clerk/tanstack-react-start/server",
