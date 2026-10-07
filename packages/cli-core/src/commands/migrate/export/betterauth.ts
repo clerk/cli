@@ -227,6 +227,7 @@ export async function exportBetterAuth(options: DbExportOptions): Promise<void> 
             return { rows, plugins: schema.plugins };
           }),
         ),
+      options,
     );
 
     log.info(
