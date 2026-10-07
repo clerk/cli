@@ -463,6 +463,12 @@ describe("firebase", () => {
     await expect(load("firebase", { records: [] })).rejects.toThrow(CliError);
   });
 
+  test("rejects a wrapped row that is not a user object", async () => {
+    await expect(load("firebase", { users: [base, null] })).rejects.toThrow(
+      /row 2 is not a user object/,
+    );
+  });
+
   // Named, not prepended: a copy with a header row would leave the hashes and
   // salts in a temp file nobody deletes.
   test("names the columns of a headerless CSV export, writing no copy", async () => {

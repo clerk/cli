@@ -113,8 +113,13 @@ describe("resolveWorkOsApiKey", () => {
   });
 
   test("does not prompt under --json, even with a human at the TTY", async () => {
-    process.env.CLERK_MODE = "human";
-    await expect(resolveWorkOsApiKey({ json: true }, {})).rejects.toThrow(/cannot prompt here/);
+    const originalMode = getMode();
+    setMode("human");
+    try {
+      await expect(resolveWorkOsApiKey({ json: true }, {})).rejects.toThrow(/cannot prompt here/);
+    } finally {
+      setMode(originalMode);
+    }
   });
 });
 
@@ -219,8 +224,13 @@ describe("resolveWithIdentities", () => {
   });
 
   test("is off under --json, even with a human at the TTY", async () => {
-    process.env.CLERK_MODE = "human";
-    expect(await resolveWithIdentities({ json: true }, 10)).toBe(false);
+    const originalMode = getMode();
+    setMode("human");
+    try {
+      expect(await resolveWithIdentities({ json: true }, 10)).toBe(false);
+    } finally {
+      setMode(originalMode);
+    }
   });
 
   test("does not ask when there are no users to ask about", async () => {

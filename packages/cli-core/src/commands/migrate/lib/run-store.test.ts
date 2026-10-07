@@ -215,6 +215,11 @@ describe("locks and interruptions", () => {
     }
   });
 
+  test("run folders are owner-only", () => {
+    const run = startRun(runsDir, init);
+    expect(fs.statSync(run.dir).mode & 0o777).toBe(0o700);
+  });
+
   test("refuses a run another live process holds, with exit 2", () => {
     const run = startRun(runsDir, init);
     // PID 1 is always alive, and never this test.

@@ -331,4 +331,19 @@ describe("loadUsersFromFile", () => {
       new CliError("null-row.json: row 2 is not a user object."),
     );
   });
+  test("reads the users out of an export's envelope", async () => {
+    const envelope = (users: unknown[]) =>
+      JSON.stringify({ clerkMigrate: 1, source: "clerk", exportedAt: "", runId: "r", users });
+    fs.writeFileSync(
+      path.join(workDir, "envelope.json"),
+      envelope([{ id: "u1", primary_email_address: "a@x.dev" }]),
+    );
+    const { users } = await loadUsersFromFile("envelope.json", "clerk");
+    expect(users.map((user) => user.userId)).toEqual(["u1"]);
+
+    fs.writeFileSync(path.join(workDir, "envelope-null.json"), envelope([null]));
+    await expect(loadUsersFromFile("envelope-null.json", "clerk")).rejects.toThrow(
+      new CliError("envelope-null.json: row 1 is not a user object."),
+    );
+  });
 });

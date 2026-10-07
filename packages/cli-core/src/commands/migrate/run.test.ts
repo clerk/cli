@@ -302,6 +302,13 @@ describe("run", () => {
       );
     });
 
+    test("refuses a run ID with no run behind it", async () => {
+      await expect(run({ ...noSource, input: "20260101-000000-abcd" })).rejects.toThrow(
+        /No run `20260101-000000-abcd`/,
+      );
+      expect(requests).toHaveLength(0);
+    });
+
     test("reads Firebase's hash parameters from the envelope", async () => {
       const firebase = {
         base64_signer_key: "SIGNER",
@@ -825,6 +832,11 @@ describe("run", () => {
         checks: { total: 2, importable: 2, rejects: [] },
         result: { created: 2, failed: 0, skipped: 0 },
       });
+    });
+
+    test("--json leaves colour codes out of stderr", async () => {
+      await run({ ...baseOptions, json: true });
+      expect(captured.err).not.toContain("\x1b[");
     });
 
     test("--json without --yes returns the preview with consent required, and exits 2", async () => {

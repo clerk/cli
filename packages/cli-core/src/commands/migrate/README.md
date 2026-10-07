@@ -15,7 +15,7 @@ clerk migrate help
 A migration is usually three steps:
 
 ```sh
-clerk migrate export supabase                   # 1. a run, holding export.json
+clerk migrate export supabase                         # 1. a run, holding export.json
 clerk migrate import 20260929-141502-a1b2 --dry-run   # 2. check it against the instance
 clerk migrate import 20260929-141502-a1b2 --yes       # 3. import it
 ```
@@ -31,8 +31,7 @@ Every command follows these:
 
 1. **Nothing writes without consent.** Consent is a yes at a terminal prompt, or
    `--yes`. Without either, `import` and `undo` print what they would do and
-   exit 2 with the command to run. `--json` means non-interactive: it never
-   prompts.
+   exit 2 with the command to run. `--json` means non-interactive: it never prompts.
 2. **`--dry-run` checks against the real instance, and writes nothing.** An
    import's [checks](#checks) run before anything is written. Predicted
    rejects stop the import unless `--allow-partial` is passed; fields that would
@@ -48,8 +47,8 @@ Every command follows these:
    Ctrl-C stops an import or an undo partway. The UI goes to stderr and data to
    stdout.
 
-   While users are created or deleted, a terminal shows a bar and the counts
-   under it, not a spinner:
+   While users are created or deleted, a terminal shows a bar and the counts under it, not
+   a spinner:
 
    ```
    │  ██████████████████████████████████████████████████████░░░░░░░░░░░░░░░░░░  75%
@@ -77,15 +76,16 @@ from `clerk link`.
 
 With a key from `--secret-key` or `CLERK_SECRET_KEY`, the key alone picks the
 instance, so `import` and `undo` refuse (exit 2) an `--instance` that names a
-different one. `--instance dev` next to an exported `sk_live_…` key would
-otherwise write to production.
+different one. `--instance dev` next to an exported `sk_live_…` key would otherwise write
+to production.
 
 The **instance type is read from the key**: `sk_live_…` is treated as
 production, anything else as development. That choice drives the throughput
 defaults and the development-instance user limit below.
 
 **Every command prints its target first.** `import` and `undo` name the
-instance — its environment, its app when the key came from one, and its ID from
+instance — its
+environment, its app when the key came from one, and its ID from
 `GET /v1/instance` — and where the key came from: `--secret-key`, `--app`, the
 `CLERK_SECRET_KEY` env var, an accountless app's `.env.local`, or the linked
 profile. An export names its source platform instead, and `export clerk` the
@@ -114,8 +114,10 @@ The first of these that is set:
 3. `<project root>/.clerk/migrate/`
 
 The project root is the linked profile's directory, then the git toplevel, then
-the current directory. Writing to the default location adds `.clerk/` to the
-project's `.gitignore` first, because run files carry user data.
+the current directory. The first run written to the default location adds
+`.clerk/` to the project's `.gitignore`, because run files carry user data. That
+happens only once there is consent to write: a dry run or a refused import
+leaves `.gitignore` alone.
 
 ### What a run holds
 
@@ -128,9 +130,8 @@ Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 | `lock`         | The PID of the process writing the run, while it runs                                                                                  |
 
 A user's status is `creating`, `created`, `failed`, `skipped`, `deleted` or
-`exported`. The last line for each `sourceId` wins. A `429` retry, an extra
-email or phone that did not attach, and a validation failure all land in
-`error`.
+`exported`. The last line for each `sourceId` wins. A `429` retry, an extra email or phone that did not
+attach, and a validation failure all land in `error`.
 
 `creating` is written as a user's `POST /v1/users` goes out. It stays the
 latest line when no answer says whether the create landed: an abort, a
@@ -138,19 +139,19 @@ network error, or a 5xx. A `created` line with `pending` lists the extra emails
 and phones not yet attached.
 
 A run is `partial` when any user failed, was skipped or is still `creating`,
-and `complete` otherwise. A run whose process died, or that never recorded a finish time,
-lists as `interrupted`. A lock held by another live process refuses a second
-writer with exit 2, and names the lock file to delete if that process is not a
-migrate run. A lock holding this process's own PID is stale: in a container the
-CLI often gets the same PID every run.
+and `complete` otherwise. A run whose process died, or that never recorded a
+finish time, lists as `interrupted`. A lock held by another live process
+refuses a second writer with exit 2, and names the lock file to delete if that
+process is not a migrate run. A lock holding this process's own PID is stale:
+in a container the CLI often gets the same PID every run.
 
 Run folders are created owner-only (`0700`), and export files `0600`: they hold
 password hashes and user data.
 
 `users.ndjson` writes are synchronous appends, so a run interrupted with Ctrl-C
 still leaves a complete record of everything already processed. A line that
-cannot be written stops that user's create from going out. An export's
-file lands in its run folder as `export.json` unless `--output` says otherwise.
+cannot be written stops that user's create from going out. An export's file
+lands in its run folder as `export.json` unless `--output` says otherwise.
 
 ### Why `users.ndjson` is NDJSON
 
@@ -187,6 +188,10 @@ clerk migrate export                                    # pick a platform
 clerk migrate export clerk --output users.json
 clerk migrate export auth0 --domain my-tenant.us.auth0.com \
   --client-id … --client-secret …
+clerk migrate export supabase --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
+clerk migrate export authjs --db-url "mysql://user:...@127.0.0.1:3306/authjs"
+clerk migrate export betterauth --db-url "./db.sqlite"
+clerk migrate export firebase --service-account ./service-account.json
 clerk migrate export workos --api-key sk_…
 ```
 
@@ -197,15 +202,15 @@ with what a database export needs.
 
 **A credential the far end rejects is asked for again.** Connection strings,
 Firebase service account keys and Auth0 client secrets are all long, pasted by
-hand, masked as they are typed, and wrong in ways nothing local can check: a
-typo'd host, a revoked key, an expired token, the right server but the wrong
-database. Only the connection or the token exchange can say, and by then the
-operator has answered every other question the command asked. So that step —
-and only that step, never a fetch already under way or a file already written —
-runs inside a retry: the failure is explained, the prompt comes back, and the
-rest of the export continues against whichever credential worked. Agent mode
-and a non-TTY fail outright instead, having nobody to ask, and `-y` fails too,
-having been told not to.
+hand, masked as they are typed, and wrong in ways nothing local can check: a typo'd host, a revoked key,
+an expired token, the right server but the wrong database. Only the connection
+or the token exchange can say, and by then the operator has answered every
+other question the command asked. So that step — and only that step,
+never a fetch already under way or a file already written — runs inside a
+retry: the failure is explained, the prompt comes back, and the rest of the
+export continues against whichever credential worked. Agent mode and a non-TTY
+fail outright instead, having nobody to ask, and `-y` fails too, having been
+told not to.
 
 | Platform     | Source                           | Feeds                 |
 | ------------ | -------------------------------- | --------------------- |
@@ -247,6 +252,7 @@ the flag to pass.
 | `-o, --output <path>`      | all                                | Write the export here instead of the run folder           |
 | `-y, --yes`                | all                                | Do not prompt: fail on a rejected credential              |
 | `--json`                   | all                                | Print the result as JSON; never prompts                   |
+| `--runs-dir <path>`        | all                                | Where runs are kept (see [the run store](#the-run-store)) |
 | `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Postgres, MySQL, libsql/Turso or SQLite connection string |
 | `--service-account <path>` | `firebase`                         | Path to a service account key JSON file                   |
 | `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com`              |
@@ -320,8 +326,7 @@ flag's absence means "development" — the resolved key decides, through
 profile in that order.
 
 The export run has one line per exported user, so `clerk migrate runs` lists it
-alongside imports. Every export takes `--runs-dir <path>` to keep that run
-somewhere else.
+alongside imports.
 
 #### Three platforms export no passwords
 
@@ -548,10 +553,20 @@ user against the destination instance, and creates them through the Backend
 API.
 
 ```sh
-clerk migrate import 20260929-141502-a1b2 --dry-run     # check, write nothing
-clerk migrate import 20260929-141502-a1b2 --yes         # an export run
-clerk migrate import users.json --source clerk --yes    # any other file
-clerk migrate import                                    # a human is asked
+clerk migrate import 20260929-141502-a1b2 --dry-run           # check, write nothing
+clerk migrate import 20260929-141502-a1b2 --yes               # an export run
+clerk migrate import users.json --source supabase --yes       # any other file
+clerk migrate import users.json --source clerk --allow-partial --yes
+clerk migrate import users.json --source clerk --new-run --yes
+clerk migrate import users.json --source clerk --json --yes
+clerk migrate import users.json --source clerk --require-password --yes
+clerk migrate import users.json --source clerk --skip-legal-checks --yes
+clerk migrate import users.json --source firebase --firebase-signer-key <key> \
+  --firebase-salt-separator <sep> --firebase-rounds 8 --firebase-mem-cost 14 --yes
+clerk migrate import users.json --source clerk --runs-dir ./runs --yes
+clerk migrate import users.json --source clerk --app app_123 --instance prod --yes
+clerk migrate import users.json --source clerk --secret-key sk_test_... -y
+clerk migrate import                                          # a human is asked
 ```
 
 | Flag                                    | Description                                                         |
@@ -577,20 +592,22 @@ Plus the targeting flags from the table above: `--secret-key`, `--app` and
 An export run ID stands for the file that run wrote, and the import records it
 as `fromExport`. A file `clerk migrate export` wrote carries its source, so it
 needs no `--source`, and a `--source` that contradicts it exits 2. Any other
-file — a bare JSON array, a CSV, Firebase's own `{ "users": [...] }` — needs
-`--source`. NDJSON, one user per line (what Auth0's bulk export job writes), is
-read too: always for `.ndjson` and `.jsonl`, and for a `.json` file that
-doesn't parse whole. A leading BOM is ignored in JSON and CSV.
+file needs `--source`: a JSON array, Firebase's own `{ "users": [...] }`, a CSV, or NDJSON, one user per line (what
+Auth0's bulk export job writes). NDJSON is read always for `.ndjson` and
+`.jsonl`, and for a `.json` file that doesn't parse whole. A leading BOM is
+ignored in JSON and CSV. A file that isn't valid JSON is named in the error.
 
 **What a human is asked, and what an agent is told.** A human at a terminal who
 leaves out the file is asked for its path, and is asked for a source only when
 the file does not name one. An agent, a non-TTY run, or `--json` without the
-file exits 2 naming what to pass.
+file, or without `--source` for a file that does not name one, exits 2 naming
+what to pass.
 
 **Nothing is written without consent.** After the checks, a human is asked
 `Import N users?`, and declining writes nothing. `--yes` skips the question.
 Without either — an agent, a non-TTY run, `--json` — the run prints the checks
-and exits 2 with the exact command to run.
+and exits 2 with the exact command to run. Printed commands shell-quote their
+paths, keep `--json`, and put `<key>` in place of a secret key.
 
 **Every run prints its target first**, then which [case](#re-running) applies,
 then the checks.
@@ -601,7 +618,13 @@ honouring `Retry-After` when the response carries it — and retries up to 5
 times before the user is recorded as failed. The command exits 1 if any user
 failed.
 
-`--json` returns `{ target, run, resume, checks, result }`.
+`--require-password` records each user it leaves out as `skipped`, so the run
+ends `partial`.
+
+`--json` returns `{ target, run, resume, checks, result }`. When a run stops
+before importing, it carries one of `dryRun: true`, `refused: true`,
+`consent: "required"` or `nothingToImport: true` in place of `result`, and a
+file already imported in full returns `alreadyImported: true`.
 
 #### Re-running
 
@@ -627,9 +650,6 @@ A continued run also finishes what the last one left open:
 - A user whose `created` line has `pending` identifiers gets just those
   attaches.
 
-`--require-password` records each user it leaves out as `skipped`, so the run
-ends `partial`.
-
 When an import completes, it names the folders it no longer needs: the export it
 read, which holds your users' data, and its own run, which only `undo` needs.
 Each comes with the `rm -rf` to remove it.
@@ -648,10 +668,6 @@ after them. They sort the users three ways:
     receive mail (`.local`, `.invalid`, `.test`, `.example`, `.arpa`,
     `.internal`, `.lan`, `.corp` and the like). Such an email is dropped from
     any other user, with a warning
-  - its source ID, email, phone or username repeats an earlier user in the file
-    that passes the other checks. Usernames compare case-insensitively and
-    phones ignore punctuation. The first record in the file is kept, whatever
-    either holds, and the reject names it (`kept: …`)
   - it lacks an identifier the instance requires. An email or phone counts
     only when it is verified, because an unverified one is attached after the
     user exists
@@ -673,6 +689,10 @@ after them. They sort the users three ways:
   - Supabase: its only providers are ones Clerk has off, or doesn't offer at all
     (Figma, Kakao, Keycloak, WorkOS, Zoom, Fly). The checks offer to turn on
     the first kind; nothing can turn on the second
+  - its source ID, email, phone or username repeats an earlier user in the file
+    that passes the checks above. Usernames compare case-insensitively and
+    phones ignore punctuation. The first record in the file is kept, whatever
+    either holds, and the reject names it (`kept: …`)
   - the instance already has a user with its source ID, email, phone or
     username (a batched `GET /v1/users` lookup, 100 values a request, through
     the scheduler). A user a continued run found behind its own interrupted
@@ -719,7 +739,8 @@ The fixes are offers, not corrections: an instance that requires an email is
 configured as its owner intended, and fixing the export may be the answer. When
 the instance settings cannot be read (BAPI `/v1/domains` → the instance's
 Frontend API `/v1/environment`), required fields are not checked and the run
-says so.
+says so. When a development instance's user count cannot be read, the run says
+so too, rather than checking the headroom against zero.
 
 #### Sign-up restrictions
 
@@ -803,6 +824,7 @@ that another import run in the runs folder records as created is left out.
 clerk migrate undo 20260929-141502-a1b2 --dry-run   # preview, delete nothing
 clerk migrate undo 20260929-141502-a1b2             # confirms first
 clerk migrate undo 20260929-141502-a1b2 --yes       # no prompt
+clerk migrate undo 20260929-141502-a1b2 --json --yes
 ```
 
 | Flag                | Description                                              |
@@ -826,7 +848,7 @@ It refuses with exit 2, and deletes nothing, when:
 
 - the resolved key addresses a different instance than the run imported into
   (the error names both)
-- the run is an export or undo run
+- the run is not an import run
 - the run has already been undone
 
 Deletes go through the same scheduler and `429` backoff as the import. A user
@@ -849,7 +871,7 @@ clerk migrate sources --json
 | `[source]` | A built-in key, or the path to a source you wrote, to show fully |
 | `--json`   | The same data, on stdout                                         |
 
-`sources` alone prints the table above. `sources <source>` shows one source in
+`sources` alone prints the table under [Sources](#sources). `sources <source>` shows one source in
 full: its export command, what it carries with a note for each, where each
 field lands (`encrypted_password → password`), its fixed defaults, and any
 caveats. An unknown key exits 2 and lists the valid ones. There is no
@@ -962,7 +984,7 @@ Metadata a user can edit on the source platform — Auth0's `user_metadata`,
 Supabase's `raw_user_meta_data`, WorkOS's `metadata` — goes to Clerk's
 `unsafe_metadata`, which is the user-editable one. Public metadata is read-only
 to the user, so putting it there would take away an edit the user had. Auth0's
-`app_metadata` goes to `private_metadata`.
+`app_metadata` goes to `private_metadata`. A Clerk Dashboard CSV carries no metadata.
 
 ### Better Auth passwords
 
@@ -995,10 +1017,13 @@ which style it uses. An identifier the source never confirmed is routed to
 field, because Clerk creates primary identifiers **verified** — sending an
 unconfirmed address there would silently promote it.
 
-- **Boolean** (`auth0`, `betterauth`, `firebase`): `true`/`false`. A CSV export
-  stringifies these, so `"false"` is read as false, not as a non-empty string.
-- **Timestamp** (`authjs`, `supabase`): a nullable confirmation time. Any real
-  value means verified; `""`, `null` and `\N` do not.
+- **Boolean** (`auth0`, `betterauth`, `firebase`, `workos`): `true`/`false`. A CSV export stringifies these, so `"false"` is
+  read as false, not as a non-empty string. `TRUE`, `FALSE`, `t` and `f` read
+  too, as a spreadsheet or psql writes them.
+- **Timestamp** (`authjs`, `supabase`): a nullable confirmation time. Any real value
+  means verified; `""`, `null` and `\N` do not.
+
+A Clerk export keeps an unverified primary email or phone unverified.
 
 ### Firebase hash parameters
 
