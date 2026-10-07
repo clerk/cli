@@ -24,6 +24,8 @@ export interface ApplyPatchOptions {
   warning?: string;
   /** Pre-fetched current config; skips the extra GET when caller already has it. */
   currentConfig?: Record<string, unknown>;
+  /** Receives the response body: the written document, or the projection under `--dry-run`. */
+  onWritten?: (body: Record<string, unknown>) => void;
 }
 
 /** Fetch + diff + confirm + PATCH, matching `clerk config patch` semantics. */
@@ -67,6 +69,7 @@ export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<boolean
   );
 
   log.debug(`config: ${JSON.stringify(result.body)}`);
+  opts.onWritten?.(result.body);
   if (dryRun) {
     log.success("[dry-run] Validation passed — no changes applied");
   } else {
