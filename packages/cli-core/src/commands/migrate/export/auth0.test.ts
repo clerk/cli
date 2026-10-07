@@ -199,6 +199,20 @@ describe("fetchAuth0Token", () => {
     expect(error.exitCode).not.toBe(EXIT_CODE.USAGE);
   });
 
+  test("does not follow a redirect with the client secret", async () => {
+    let redirect: RequestInit["redirect"];
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      redirect = init?.redirect;
+      return new Response(null, {
+        status: 307,
+        headers: { location: "https://elsewhere.example/" },
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(fetchAuth0Token(CREDENTIALS)).rejects.toThrow(/did not issue a token \(307\)/);
+    expect(redirect).toBe("manual");
+  });
+
   test("mentions the read:users scope, the usual cause", async () => {
     stubAuth0([[]], new Response("{}", { status: 403 }));
     await expect(fetchAuth0Token(CREDENTIALS)).rejects.toThrow(/read:users/);
@@ -267,6 +281,22 @@ describe("fetchAllAuth0Users", () => {
     expect(all).toHaveLength(1000);
     expect(truncated).toBe(false);
     expect(captured.err).not.toContain("only pages through");
+  });
+
+  test("does not follow a redirect with the bearer token", async () => {
+    let redirect: RequestInit["redirect"];
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      redirect = init?.redirect;
+      return new Response(null, {
+        status: 302,
+        headers: { location: "https://elsewhere.example/" },
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" })).rejects.toThrow(
+      /Auth0 returned 302 listing users/,
+    );
+    expect(redirect).toBe("manual");
   });
 
   test("raises a clear error on a failed page request", async () => {
