@@ -394,6 +394,12 @@ export type ImportUsersOptions = {
    * not created again; only their extra identifiers are sent.
    */
   adopted?: Map<string, string>;
+  /**
+   * The adopted users whose create reserved their unverified identifiers, from
+   * its `creating` line. The rest had them attached unverified, whatever this
+   * run's `reserveUnverified` says.
+   */
+  adoptedReserved?: Set<string>;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
   /** Create the identifiers the source never verified as reserved. */
@@ -420,6 +426,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     attachOnly = [],
     runId,
     adopted = new Map<string, string>(),
+    adoptedReserved = new Set<string>(),
     skipPasswordRequirement = true,
     reserveUnverified = false,
     validationFailed = 0,
@@ -510,6 +517,12 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     const identifiers = splitIdentifiers(user);
     let created: { clerkUserId: string; notes: string[]; phoneRefusal?: string };
     const adoptedId = adopted.get(user.userId);
+    // What the create did with the unverified identifiers decides what is left
+    // to attach: an adopted user's create may have run in the other mode.
+    const reserved = adoptedId
+      ? adoptedReserved.has(user.userId)
+      : reserveUnverified &&
+        (identifiers.unverifiedEmails.length > 0 || identifiers.unverifiedPhones.length > 0);
     let sent = false;
     try {
       created = adoptedId
@@ -517,7 +530,11 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         : await retryOn429(
             async () =>
               createUser(ctx, user, identifiers, skipPasswordRequirement, () => {
-                record({ sourceId: user.userId, status: "creating" });
+                record({
+                  sourceId: user.userId,
+                  status: "creating",
+                  ...(reserved ? { reserved: true } : {}),
+                });
                 sent = true;
               }),
             {
@@ -574,7 +591,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     };
     // One line, pending and all: a run stopped between a `created` line and a
     // later `pending` one would read the user as settled, its extras unsent.
-    const toAttach = pendingIdentifiers(identifiers, reserveUnverified);
+    const toAttach = pendingIdentifiers(identifiers, reserved);
     record(toAttach.length > 0 ? { ...line, pending: toAttach } : line);
     if (created.phoneRefusal) {
       const reason = normalizeErrorMessage(created.phoneRefusal);
