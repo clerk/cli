@@ -362,6 +362,37 @@ describe("betterauth export", () => {
     ]);
   });
 
+  // Better Auth maps each model's fields on its own, so the two tables can
+  // disagree on casing.
+  test.each([
+    ["snake_case user table, camelCase account table", "snake", "userId", "providerId"],
+    ["camelCase user table, snake_case account table", "camel", "user_id", "provider_id"],
+  ])("joins a %s", async (_label, userCase, userId, providerId) => {
+    const [verified, created, updated] =
+      userCase === "snake"
+        ? ["email_verified", "created_at", "updated_at"]
+        : ["emailVerified", "createdAt", "updatedAt"];
+    const file = makeDb((db) => {
+      db.run(
+        `CREATE TABLE "user" (id TEXT PRIMARY KEY, email TEXT, "${verified}" INTEGER, name TEXT,
+         "${created}" TEXT, "${updated}" TEXT)`,
+      );
+      db.run(
+        `CREATE TABLE "account" (id TEXT, "${userId}" TEXT, "${providerId}" TEXT, password TEXT)`,
+      );
+      db.run(`INSERT INTO "user" (id, email, "${verified}") VALUES ('u1', 'a@x.dev', 1)`);
+      db.run(`INSERT INTO "account" VALUES ('a1', 'u1', 'credential', 'salt:hash')`);
+    });
+
+    const rows = await withClient(file, async (client) =>
+      client.query(buildBetterAuthQuery(client, await detectSchema(client))),
+    );
+
+    expect(rows).toEqual([
+      expect.objectContaining({ id: "u1", emailVerified: 1, password_hash: "salt:hash" }),
+    ]);
+  });
+
   test("exports a user with two matching credential accounts once", () => {
     const lines: UserLine[] = [];
     const { users, coverage } = buildBetterAuthExport(
