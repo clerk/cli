@@ -693,10 +693,13 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
 
   // An unverified email does not satisfy a required one, so a file of only
   // unverified addresses flags the requirement even when every user has one.
-  const unverifiedOnly = users.some((user) => {
-    const identifiers = splitIdentifiers(user);
-    return !identifiers.primaryEmail && identifiers.unverifiedEmails.length > 0;
-  });
+  // Created reserved, it does, and making email optional fixes nothing.
+  const unverifiedOnly =
+    !input.reserveUnverified &&
+    users.some((user) => {
+      const identifiers = splitIdentifiers(user);
+      return !identifiers.primaryEmail && identifiers.unverifiedEmails.length > 0;
+    });
   const flagged = report.blocking.slice();
   if (
     unverifiedOnly &&
