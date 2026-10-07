@@ -151,7 +151,7 @@ export function loadServiceAccount(source: string): ServiceAccount {
 async function resolveServiceAccount(options: ExportFirebaseOptions): Promise<ServiceAccount> {
   if (options.serviceAccount) return loadServiceAccount(options.serviceAccount);
 
-  if (!isHuman()) {
+  if (options.json || !isHuman()) {
     throwUsageError(
       "`clerk migrate export firebase` needs a service account key file and cannot prompt here. " +
         "Pass --service-account <path>.",
@@ -571,6 +571,7 @@ export async function exportFirebase(options: ExportFirebaseOptions): Promise<vo
           fetchAccessToken(candidate),
         );
       },
+      options,
     );
 
     const users = await withSpinner("Fetching users from Firebase...", async (spinner) =>
