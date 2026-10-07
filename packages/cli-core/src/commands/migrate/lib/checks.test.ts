@@ -269,6 +269,18 @@ describe("rejects", () => {
     });
   });
 
+  // Reserved is usable for sign-in, so it meets the requirement (checked live
+  // against the E2E test app, which requires an email).
+  test("a reserved email meets an email requirement", async () => {
+    expect(
+      await reasonsOf({
+        settings: EMAIL_REQUIRED,
+        reserveUnverified: true,
+        users: [user("unverified", { email: undefined, unverifiedEmailAddresses: ["u@x.dev"] })],
+      }),
+    ).toEqual({});
+  });
+
   test("a password that is not the shape its hasher says", async () => {
     expect(
       await reasonsOf({
