@@ -1035,15 +1035,15 @@ edited source counts as a different source.
 The file is code the CLI executes, so its shape is checked before use and
 rejected with the specific problem rather than crashing mid-pipeline:
 
-| Problem                            | Message                                                                                                    |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Path does not exist                | `No source file at /abs/path.ts.`                                                                          |
-| No default export, but a named one | ``has no default export. Found named export `myPlatform` — did you mean `export default`?``                |
-| Does not parse                     | `Could not load ./f.ts: Expected identifier but found ","`                                                 |
-| Nothing maps to `userId`           | ``no source field maps to `userId`. Every user needs one — it becomes the Clerk user's external_id``       |
-| No `carries`                       | `` `carries` must say what the source brings across: { passwords, mfa, metadata }, each { level, note } `` |
-| `key` clashes with a built-in      | `key is "clerk", which is already a built-in source`                                                       |
-| A hook is not a function           | `postTransform must be a function when present`                                                            |
+| Problem                                             | Message                                                                                                    |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Path does not exist                                 | `No source file at /abs/path.ts.`                                                                          |
+| No default export, but a named one                  | ``has no default export. Found named export `myPlatform` — did you mean `export default`?``                |
+| Does not parse                                      | `Could not load ./f.ts: Expected identifier but found ","`                                                 |
+| Nothing maps to `userId`                            | ``no source field maps to `userId`. Every user needs one — it becomes the Clerk user's external_id``       |
+| No `carries`                                        | `` `carries` must say what the source brings across: { passwords, mfa, metadata }, each { level, note } `` |
+| `key` clashes with a built-in                       | `key is "clerk", which is already a built-in source`                                                       |
+| `preTransform` or `postTransform` is not a function | `` `preTransform` must be a function when present `` (likewise `postTransform`)                            |
 
 The `userId` check is the load-bearing one: without it the import would run to
 completion and create every user with no `external_id`, which is what makes a
