@@ -320,6 +320,18 @@ describe("withDbClient", () => {
     expect(error.message).not.toContain("Check the connection string");
   });
 
+  // Supabase and Better Auth get the generic advice; only Auth.js has its own.
+  test("gives the generic column advice outside Auth.js, and exits 2", async () => {
+    const error = (await withDbClient(dbPath, "supabase", (client) =>
+      client.query(`SELECT no_such_column FROM sqlite_master`),
+    ).catch((caught: unknown) => caught)) as CliError;
+
+    expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+    expect(error.message).toContain("missing a column the export reads");
+    expect(error.message).not.toContain("reads `id`, `name`, `email`");
+    expect(error.message).not.toContain("Check the connection string");
+  });
+
   test("passes a CliError through unchanged", async () => {
     await expect(
       withDbClient(dbPath, undefined, async () => {
