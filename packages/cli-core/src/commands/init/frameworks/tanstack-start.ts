@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { builders, parseModule } from "magicast";
 import type { ASTNode } from "magicast";
+import { gte, minVersion } from "semver";
 import {
   addBootstrapHeader,
   authComponentName,
@@ -23,9 +24,14 @@ type TanstackBaseDir = "app" | "src";
 
 type StartScaffoldResult = {
   action: FileAction;
-  /** True when the start file exists but Clerk couldn't be added — user must register it manually. */
-  needsManualMiddleware: boolean;
+  postInstructions: string[];
 };
+
+type StartFileUpdate =
+  | { status: "manual"; needsClerk: boolean }
+  | { status: "upgrade"; needsClerk: boolean }
+  | { status: "unchanged"; content: string }
+  | { status: "modified"; content: string; addedCsrf: boolean };
 
 const START_FILE_CANDIDATES = [
   "src/start.ts",
@@ -141,12 +147,14 @@ export const startInstance = createStart(() => ({
 `;
 }
 
-function addClerkToStart(content: string): string | null {
+function updateStartFile(content: string, startVersion: string | undefined): StartFileUpdate {
   try {
     const mod = parseModule(content);
+    const program = mod.$ast;
+    if (program.type !== "Program") return { status: "manual", needsClerk: true };
+
     const calls: Extract<ASTNode, { type: "CallExpression" }>[] = [];
     const visited = new WeakSet<object>();
-
     function visit(node: ASTNode): void {
       if (visited.has(node)) return;
       visited.add(node);
@@ -164,13 +172,13 @@ function addClerkToStart(content: string): string | null {
         }
       }
     }
-
     visit(mod.$ast);
-    if (calls.length !== 1) return null;
+    if (calls.length !== 1) return { status: "manual", needsClerk: true };
 
     const callback = calls[0]!.arguments[0];
-    if (!callback || callback.type !== "ArrowFunctionExpression") return null;
-
+    if (!callback || callback.type !== "ArrowFunctionExpression") {
+      return { status: "manual", needsClerk: true };
+    }
     let config: Extract<ASTNode, { type: "ObjectExpression" }> | null = null;
     if (callback.body.type === "ObjectExpression") {
       config = callback.body;
@@ -182,65 +190,114 @@ function addClerkToStart(content: string): string | null {
         config = returns[0]!.argument;
       }
     }
-    if (!config) return null;
+    if (!config || config.properties.some((property) => property.type === "SpreadElement")) {
+      return { status: "manual", needsClerk: true };
+    }
 
-    // A spread could override requestMiddleware after our edit, and its contents are unknown.
-    if (config.properties.some((property) => property.type === "SpreadElement")) return null;
-
-    const middlewareProperties = config.properties.filter(
+    const properties = config.properties.filter(
       (property) =>
         (property.type === "ObjectProperty" || property.type === "ObjectMethod") &&
         ((property.key.type === "Identifier" && property.key.name === "requestMiddleware") ||
           (property.key.type === "StringLiteral" && property.key.value === "requestMiddleware")),
     );
-    if (middlewareProperties.length > 1) return null;
-
-    const middlewareProperty = middlewareProperties[0];
-    const clerkCall = builders.raw("clerkMiddleware()").$ast;
-    if (clerkCall.type !== "CallExpression") return null;
-
-    if (middlewareProperty) {
-      if (
-        middlewareProperty.type !== "ObjectProperty" ||
-        middlewareProperty.value.type !== "ArrayExpression"
-      ) {
-        return null;
-      }
-      const middleware = middlewareProperty.value.elements;
-      if (
-        middleware.some(
-          (element) =>
-            element?.type === "CallExpression" &&
-            element.callee.type === "Identifier" &&
-            element.callee.name === "clerkMiddleware",
-        )
-      ) {
-        return content;
-      }
-      middleware.push(clerkCall);
-    } else {
-      const property = builders.raw("({ requestMiddleware: [clerkMiddleware()] })").$ast;
-      if (property.type !== "ObjectExpression") return null;
-      config.properties.unshift(property.properties[0]!);
+    if (properties.length > 1) return { status: "manual", needsClerk: true };
+    let property = properties[0];
+    if (!property) {
+      const empty = builders.raw("({ requestMiddleware: [] })").$ast;
+      if (empty.type !== "ObjectExpression") return { status: "manual", needsClerk: true };
+      property = empty.properties[0];
+      config.properties.unshift(property!);
     }
+    if (property?.type !== "ObjectProperty" || property.value.type !== "ArrayExpression") {
+      return { status: "manual", needsClerk: true };
+    }
+    const middleware = property.value.elements;
+    const hasClerk = middleware.some(
+      (element) =>
+        element?.type === "CallExpression" &&
+        element.callee.type === "Identifier" &&
+        element.callee.name === "clerkMiddleware",
+    );
 
-    const result = mod.generate().code;
-    const hasImport =
-      mod.$ast.type === "Program" &&
-      mod.$ast.body.some(
+    const hasImport = (source: string, name: string) =>
+      program.body.some(
         (statement) =>
           statement.type === "ImportDeclaration" &&
-          statement.source.value === "@clerk/tanstack-react-start/server" &&
+          statement.source.value === source &&
           statement.specifiers.some(
             (specifier) =>
-              specifier.type === "ImportSpecifier" && specifier.local.name === "clerkMiddleware",
+              specifier.type === "ImportSpecifier" &&
+              specifier.imported.type === "Identifier" &&
+              specifier.imported.name === name &&
+              specifier.local.name === name,
           ),
       );
-    return hasImport
-      ? result
-      : safeAddImport(result, "@clerk/tanstack-react-start/server", "clerkMiddleware");
+    const csrfDeclared = program.body.some(
+      (statement) =>
+        statement.type === "VariableDeclaration" &&
+        statement.declarations.some(
+          (declaration) =>
+            declaration.id.type === "Identifier" &&
+            declaration.id.name === "csrfMiddleware" &&
+            declaration.init?.type === "CallExpression" &&
+            declaration.init.callee.type === "Identifier" &&
+            declaration.init.callee.name === "createCsrfMiddleware",
+        ),
+    );
+    const hasCsrf =
+      hasImport("@tanstack/react-start", "createCsrfMiddleware") &&
+      middleware.some(
+        (element) =>
+          (element?.type === "Identifier" && element.name === "csrfMiddleware" && csrfDeclared) ||
+          (element?.type === "CallExpression" &&
+            element.callee.type === "Identifier" &&
+            element.callee.name === "createCsrfMiddleware"),
+      );
+
+    if (!hasCsrf) {
+      const minimum = startVersion ? minVersion(startVersion) : null;
+      if (!minimum || !gte(minimum, "1.168.0")) {
+        return { status: "upgrade", needsClerk: !hasClerk };
+      }
+      // Only an empty array or the old Clerk-only array is safe to rewrite automatically.
+      if (
+        (middleware.length > 0 && !(middleware.length === 1 && hasClerk)) ||
+        content.includes("csrfMiddleware") ||
+        content.includes("createCsrfMiddleware")
+      ) {
+        return { status: "manual", needsClerk: !hasClerk };
+      }
+      const declaration = parseModule(
+        'const csrfMiddleware = createCsrfMiddleware({ filter: (ctx) => ctx.handlerType === "serverFn" });',
+      ).$ast;
+      const csrfElement = builders.raw("csrfMiddleware").$ast;
+      if (declaration.type !== "Program" || csrfElement.type !== "Identifier") {
+        return { status: "manual", needsClerk: !hasClerk };
+      }
+      const insertAt = program.body.findIndex(
+        (statement) => statement.type !== "ImportDeclaration",
+      );
+      program.body.splice(insertAt < 0 ? program.body.length : insertAt, 0, declaration.body[0]!);
+      middleware.unshift(csrfElement);
+    }
+
+    if (!hasClerk) {
+      const clerkCall = builders.raw("clerkMiddleware()").$ast;
+      if (clerkCall.type !== "CallExpression") return { status: "manual", needsClerk: true };
+      middleware.push(clerkCall);
+    }
+    if (hasClerk && hasCsrf) return { status: "unchanged", content };
+
+    let result = mod.generate().code;
+    if (!hasImport("@clerk/tanstack-react-start/server", "clerkMiddleware")) {
+      result = safeAddImport(result, "@clerk/tanstack-react-start/server", "clerkMiddleware");
+    }
+    if (!hasCsrf) {
+      result = safeAddImport(result, "@tanstack/react-start", "createCsrfMiddleware");
+    }
+    return { status: "modified", content: result, addedCsrf: !hasCsrf };
   } catch {
-    return null;
+    return { status: "manual", needsClerk: true };
   }
 }
 
@@ -259,28 +316,43 @@ async function scaffoldStartServer(
         content: newStartFileContent(),
         description: "Create start.ts with CSRF and Clerk middleware",
       },
-      needsManualMiddleware: false,
+      postInstructions: [],
     };
   }
 
   const content = await Bun.file(join(ctx.cwd, serverPath)).text();
+  const update = updateStartFile(content, ctx.deps["@tanstack/react-start"]);
+  const postInstructions: string[] = [];
 
-  const newContent = addClerkToStart(content);
-  if (newContent === null) {
+  if (update.status === "manual" || update.status === "upgrade") {
+    if (update.needsClerk) {
+      postInstructions.push(
+        `Add clerkMiddleware() from @clerk/tanstack-react-start/server to requestMiddleware in ${serverPath}, after any CSRF middleware`,
+      );
+    }
+    if (update.status === "upgrade") {
+      postInstructions.push(
+        "Upgrade @tanstack/react-start to ^1.168.0 and @tanstack/react-router to ^1.170.0 before adding CSRF middleware",
+      );
+    }
+    postInstructions.push(
+      `In ${serverPath}, register createCsrfMiddleware({ filter: (ctx) => ctx.handlerType === "serverFn" }) before clerkMiddleware() in requestMiddleware if equivalent CSRF protection is not already configured`,
+    );
     return {
       action: {
         type: "skip",
         path: serverPath,
-        skipReason:
-          "Could not safely add Clerk to requestMiddleware — add clerkMiddleware() manually",
+        skipReason: update.needsClerk
+          ? "Could not safely add Clerk to requestMiddleware — add clerkMiddleware() manually"
+          : "Could not safely add CSRF middleware automatically",
       },
-      needsManualMiddleware: true,
+      postInstructions,
     };
   }
-  if (newContent === content) {
+  if (update.status === "unchanged") {
     return {
       action: { type: "skip", path: serverPath, skipReason: "Already has Clerk middleware" },
-      needsManualMiddleware: false,
+      postInstructions,
     };
   }
 
@@ -288,10 +360,12 @@ async function scaffoldStartServer(
     action: {
       path: serverPath,
       type: "modify",
-      content: newContent,
-      description: "Add clerkMiddleware to request middleware",
+      content: update.content,
+      description: update.addedCsrf
+        ? "Add CSRF middleware before Clerk in requestMiddleware"
+        : "Add clerkMiddleware to request middleware",
     },
-    needsManualMiddleware: false,
+    postInstructions,
   };
 }
 
@@ -347,13 +421,7 @@ export const tanstackStart: FrameworkScaffold = {
     const actions = [serverResult.action, rootAction, ...authActions, envAction].filter(
       (action): action is FileAction => action !== null,
     );
-    const postInstructions: string[] = [];
-
-    if (serverResult.needsManualMiddleware) {
-      postInstructions.push(
-        `Add clerkMiddleware() from @clerk/tanstack-react-start/server to requestMiddleware in ${serverResult.action.path}, after any CSRF middleware`,
-      );
-    }
+    const postInstructions = [...serverResult.postInstructions];
 
     if (!rootAction) {
       postInstructions.push(
