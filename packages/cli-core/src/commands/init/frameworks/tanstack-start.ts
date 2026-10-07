@@ -21,6 +21,12 @@ import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from
 
 type TanstackBaseDir = "app" | "src";
 
+type StartScaffoldResult = {
+  action: FileAction;
+  /** True when the start file exists but Clerk couldn't be added — user must register it manually. */
+  needsManualMiddleware: boolean;
+};
+
 const START_FILE_CANDIDATES = [
   "src/start.ts",
   "src/start.tsx",
@@ -241,16 +247,19 @@ function addClerkToStart(content: string): string | null {
 async function scaffoldStartServer(
   ctx: ProjectContext,
   baseDir: TanstackBaseDir,
-): Promise<FileAction> {
+): Promise<StartScaffoldResult> {
   const serverPath = await findStartFile(ctx, baseDir);
 
   if (!serverPath) {
     const newPath = `${baseDir}/start.ts`;
     return {
-      path: newPath,
-      type: "create",
-      content: newStartFileContent(),
-      description: "Create start.ts with CSRF and Clerk middleware",
+      action: {
+        path: newPath,
+        type: "create",
+        content: newStartFileContent(),
+        description: "Create start.ts with CSRF and Clerk middleware",
+      },
+      needsManualMiddleware: false,
     };
   }
 
@@ -259,21 +268,30 @@ async function scaffoldStartServer(
   const newContent = addClerkToStart(content);
   if (newContent === null) {
     return {
-      type: "skip",
-      path: serverPath,
-      skipReason:
-        "Could not safely add Clerk to requestMiddleware — add clerkMiddleware() manually",
+      action: {
+        type: "skip",
+        path: serverPath,
+        skipReason:
+          "Could not safely add Clerk to requestMiddleware — add clerkMiddleware() manually",
+      },
+      needsManualMiddleware: true,
     };
   }
   if (newContent === content) {
-    return { type: "skip", path: serverPath, skipReason: "Already has Clerk middleware" };
+    return {
+      action: { type: "skip", path: serverPath, skipReason: "Already has Clerk middleware" },
+      needsManualMiddleware: false,
+    };
   }
 
   return {
-    path: serverPath,
-    type: "modify",
-    content: newContent,
-    description: "Add clerkMiddleware to request middleware",
+    action: {
+      path: serverPath,
+      type: "modify",
+      content: newContent,
+      description: "Add clerkMiddleware to request middleware",
+    },
+    needsManualMiddleware: false,
   };
 }
 
@@ -320,16 +338,22 @@ export const tanstackStart: FrameworkScaffold = {
       detectBaseDir(ctx),
       scaffoldEnvVars(ctx, SIGN_ROUTE_ENV_VARS.vite),
     ]);
-    const [serverAction, localeDir] = await Promise.all([
+    const [serverResult, localeDir] = await Promise.all([
       scaffoldStartServer(ctx, baseDir),
       detectLocaleDir(ctx.cwd, baseDir),
     ]);
     const authActions = await scaffoldAuthRoutes(ctx, baseDir, localeDir);
 
-    const actions = [serverAction, rootAction, ...authActions, envAction].filter(
+    const actions = [serverResult.action, rootAction, ...authActions, envAction].filter(
       (action): action is FileAction => action !== null,
     );
     const postInstructions: string[] = [];
+
+    if (serverResult.needsManualMiddleware) {
+      postInstructions.push(
+        `Add clerkMiddleware() from @clerk/tanstack-react-start/server to requestMiddleware in ${serverResult.action.path}, after any CSRF middleware`,
+      );
+    }
 
     if (!rootAction) {
       postInstructions.push(

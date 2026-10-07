@@ -149,6 +149,9 @@ export const startInstance = createStart(getConfig);
   expect(action?.type).toBe("skip");
   if (action?.type !== "skip") throw new Error("Expected skip action");
   expect(action.skipReason).toContain("add clerkMiddleware() manually");
+  expect(plan.postInstructions).toContain(
+    "Add clerkMiddleware() from @clerk/tanstack-react-start/server to requestMiddleware in src/start.ts, after any CSRF middleware",
+  );
 });
 
 test("does not replace a requestMiddleware value it cannot safely extend", async () => {
@@ -165,6 +168,27 @@ export const startInstance = createStart(() => ({ requestMiddleware: customMiddl
   expect(action?.type).toBe("skip");
   if (action?.type !== "skip") throw new Error("Expected skip action");
   expect(action.skipReason).toContain("add clerkMiddleware() manually");
+});
+
+test("asks for manual setup when an existing config has duplicate requestMiddleware keys", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+import { createStart } from "@tanstack/react-start";
+export const startInstance = createStart(() => {
+  return {
+    requestMiddleware: [clerkMiddleware()],
+    requestMiddleware: [csrfMiddleware],
+  };
+});
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("skip");
+  expect(plan.postInstructions.some((msg) => msg.includes("clerkMiddleware()"))).toBe(true);
 });
 
 test("skips a start config that already registers Clerk middleware", async () => {
@@ -184,6 +208,7 @@ export const startInstance = createStart(() => ({ requestMiddleware: [clerkMiddl
     path: "src/start.ts",
     skipReason: "Already has Clerk middleware",
   });
+  expect(plan.postInstructions.some((msg) => msg.includes("clerkMiddleware()"))).toBe(false);
 });
 
 test("creates app/start.ts when no start file exists and app base dir is detected", async () => {
