@@ -11,6 +11,7 @@ import {
   fetchAllAuth0Users,
   fetchAuth0Token,
   mapAuth0UserToExport,
+  isAuth0Domain,
   normalizeAuth0Domain,
   resolveAuth0Credentials,
 } from "./auth0.ts";
@@ -92,7 +93,41 @@ describe("normalizeAuth0Domain", () => {
   });
 });
 
+// The client secret goes to this host, so anything that could make URL parsing
+// pick a different one is refused.
+describe("isAuth0Domain", () => {
+  test.each(["t.auth0.com", "https://t.auth0.com/", "login.example.com"])(
+    "accepts %s",
+    (domain) => {
+      expect(isAuth0Domain(domain)).toBe(true);
+    },
+  );
+
+  test.each([
+    "t.auth0.com@attacker.example",
+    "t.auth0.com/path",
+    "t.auth0.com:8443",
+    "t.auth0.com?x=1",
+    "localhost",
+  ])("refuses %s", (domain) => {
+    expect(isAuth0Domain(domain)).toBe(false);
+  });
+});
+
 describe("resolveAuth0Credentials", () => {
+  test("refuses a domain that would send the secret to another host", async () => {
+    await expect(
+      resolveAuth0Credentials(
+        {},
+        {
+          AUTH0_DOMAIN: "t.auth0.com@attacker.example",
+          AUTH0_CLIENT_ID: "c",
+          AUTH0_CLIENT_SECRET: "s",
+        },
+      ),
+    ).rejects.toThrow(/is not an Auth0 domain/);
+  });
+
   test("prefers flags", async () => {
     const resolved = await resolveAuth0Credentials(
       { domain: "flag.auth0.com", clientId: "f", clientSecret: "s" },
