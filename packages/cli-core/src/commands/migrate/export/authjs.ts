@@ -177,7 +177,9 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
 
     if (users.length > 0) {
       log.warn(
-        "Auth.js core stores no passwords — its users sign in with OAuth or email links, so they arrive without credentials.",
+        "Auth.js core stores no passwords, so users arrive without one. That covers OAuth and email-link sign-in. " +
+          "If the app also uses the Credentials provider, its passwords live in the app's own tables and were not exported: " +
+          "migrate them separately, or have those users reset their password.",
       );
     }
   });
