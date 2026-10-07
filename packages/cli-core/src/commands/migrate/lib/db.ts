@@ -71,6 +71,55 @@ export function redactConnectionString(connectionString: string): string {
     .replace(/([?&](?:authToken|password)=)[^&]*/gi, "$1***");
 }
 
+/**
+ * A driver's error message with every credential from `connectionString`
+ * replaced by `***`.
+ *
+ * {@link redactConnectionString} covers the string we print; this covers what
+ * the server or driver says back, which can quote the URL, the password or a
+ * libsql token. A short password can blank an unrelated word too, and a
+ * mangled message is the better failure.
+ */
+export function redactDbMessage(
+  message: string,
+  connectionString: string,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const trimmed = connectionString.trim();
+  let redacted = message.split(trimmed).join(redactConnectionString(trimmed));
+
+  const secrets = new Set<string>();
+  try {
+    const url = new URL(trimmed);
+    for (const value of [
+      url.password,
+      url.searchParams.get("authToken"),
+      url.searchParams.get("password"),
+    ]) {
+      if (!value) continue;
+      secrets.add(value);
+      try {
+        secrets.add(decodeURIComponent(value));
+      } catch {
+        // Not valid percent-encoding: the raw form is the only one there is.
+      }
+    }
+  } catch {
+    // A SQLite path is not a URL, and carries no credentials.
+  }
+  if (isLibsqlUrl(trimmed)) {
+    for (const value of [env.TURSO_AUTH_TOKEN, env.LIBSQL_AUTH_TOKEN]) {
+      if (value) secrets.add(value);
+    }
+  }
+
+  // Longest first, so a secret that contains another is replaced whole.
+  for (const secret of [...secrets].sort((a, b) => b.length - a.length)) {
+    redacted = redacted.split(secret).join("***");
+  }
+  return redacted;
+}
+
 /** Strips a `file:` prefix and any URL query, leaving a filesystem path. */
 export function sqlitePath(connectionString: string): string {
   const trimmed = connectionString.trim();
@@ -358,7 +407,10 @@ function connectionError(
   connectionString: string,
   platform?: DbPlatform,
 ): CliError {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = redactDbMessage(
+    error instanceof Error ? error.message : String(error),
+    connectionString,
+  );
   return new CliError(
     `Could not connect to ${redactConnectionString(connectionString)}: ${message}\n\n${describeDbError(error, platform)}`,
     { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE },
@@ -383,10 +435,14 @@ export async function withDbClient<T>(
     // A query failure carries the same actionable hints as a connection one:
     // a missing table is the most common thing that goes wrong here.
     if (error instanceof CliError) throw error;
-    throw new CliError(
-      `${error instanceof Error ? error.message : String(error)}\n\n${describeDbError(error, platform)}`,
-      { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE },
+    const message = redactDbMessage(
+      error instanceof Error ? error.message : String(error),
+      connectionString,
     );
+    throw new CliError(`${message}\n\n${describeDbError(error, platform)}`, {
+      code: ERROR_CODE.USAGE_ERROR,
+      exitCode: EXIT_CODE.USAGE,
+    });
   } finally {
     await client.close().catch(() => {});
   }
