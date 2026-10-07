@@ -94,7 +94,7 @@ export async function resolveAuth0Credentials(
     };
   }
 
-  if (isAgent() || !isHuman()) {
+  if (options.json || isAgent() || !isHuman()) {
     throwUsageError(
       `\`clerk migrate export auth0\` needs credentials for a machine-to-machine application and cannot prompt here.\n` +
         `Missing: ${missing.map(([, flag, variable]) => `${flag} (or ${variable})`).join(", ")}.`,
@@ -363,6 +363,7 @@ export async function exportAuth0(options: ExportAuth0Options): Promise<void> {
         log.info(`Exporting from ${candidate.domain}.`);
         return withSpinner("Authenticating with Auth0...", async () => fetchAuth0Token(candidate));
       },
+      options,
     );
 
     const { users, truncated } = await withSpinner(
