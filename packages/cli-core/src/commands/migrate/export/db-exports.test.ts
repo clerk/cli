@@ -267,6 +267,7 @@ describe("authjs export", () => {
     expect(written.users).toHaveLength(2);
     expect(captured.err).toContain("Read 2 rows from");
     expect(captured.err).toContain("stores no passwords");
+    expect(captured.err).toContain("Credentials provider");
   });
 });
 

@@ -408,7 +408,10 @@ schema — Prisma capitalizes the table, Drizzle does not, and Postgres treats
 the difference as significant once quoted. The run reports which one it found.
 The verified column is read as `emailVerified`, or `email_verified` on a legacy
 NextAuth table. Auth.js core stores no passwords, so its users arrive without
-credentials.
+credentials. That is all an OAuth or email-link app has. An app that also uses
+the Credentials provider keeps passwords in its own tables, which the export
+does not read: migrate those separately, or have those users reset their
+password.
 
 **`betterauth` reads its schema before it queries.** It finds the tables
 (`user` and `account`, or `users` and `accounts` under `usePlural: true`), how
