@@ -1121,8 +1121,9 @@ The two Identity Toolkit paths are on `identitytoolkit.googleapis.com`, or on
 `FIREBASE_AUTH_EMULATOR_HOST` when that is set. The two WorkOS paths are on
 `api.workos.com`.
 
-The database exports (`supabase`, `betterauth`) make no HTTP calls at all —
-they connect over `--db-url`.
+The database exports (`supabase`, `betterauth`) connect over `--db-url`. A
+`libsql://` URL is the one exception that goes over HTTP: it posts to the
+server's pipeline endpoint.
 
 ## Notes
 
