@@ -59,6 +59,11 @@ export type BetterAuthSchema = {
    * and Prisma setups keep camelCase.
    */
   column: (field: string) => string;
+  /**
+   * The same for the account table. Better Auth maps each model's fields on
+   * its own, so its casing is read from that table rather than assumed.
+   */
+  accountColumn: (field: string) => string;
   /** The plugin columns this database has. */
   plugins: Set<PluginColumn>;
 };
@@ -110,7 +115,15 @@ export async function detectSchema(client: DbClient): Promise<BetterAuthSchema> 
     const snake = !columns.has("emailVerified") && columns.has("email_verified");
     const column = (field: string) => (snake ? toSnakeCase(field) : field);
     const plugins = new Set(PLUGIN_COLUMNS.filter((field) => columns.has(column(field))));
-    return { userTable, accountTable, column, plugins };
+    // No account table: keep the user table's casing, and let the query's
+    // "no such table" error say what is missing.
+    const accountColumns = await tableColumns(client, accountTable);
+    const accountSnake =
+      accountColumns.size === 0
+        ? snake
+        : !accountColumns.has("userId") && accountColumns.has("user_id");
+    const accountColumn = (field: string) => (accountSnake ? toSnakeCase(field) : field);
+    return { userTable, accountTable, column, accountColumn, plugins };
   }
   // No table found: the query names the default, and its "no such table"
   // error carries the hint.
@@ -118,6 +131,7 @@ export async function detectSchema(client: DbClient): Promise<BetterAuthSchema> 
     userTable: "user",
     accountTable: "account",
     column: (field) => field,
+    accountColumn: (field) => field,
     plugins: new Set(),
   };
 }
@@ -130,7 +144,7 @@ export async function detectSchema(client: DbClient): Promise<BetterAuthSchema> 
  */
 export function buildBetterAuthQuery(client: DbClient, schema: BetterAuthSchema): string {
   const q = (identifier: string) => client.quote(identifier);
-  const { column } = schema;
+  const { column, accountColumn } = schema;
   const select = (field: string) =>
     column(field) === field ? `u.${q(field)}` : `u.${q(column(field))} AS ${q(field)}`;
   const selected = [
@@ -143,8 +157,8 @@ export function buildBetterAuthQuery(client: DbClient, schema: BetterAuthSchema)
   return (
     `SELECT ${selected.join(", ")}, a.${q("password")} AS ${q("password_hash")} ` +
     `FROM ${q(schema.userTable)} u ` +
-    `LEFT JOIN ${q(schema.accountTable)} a ON a.${q(column("userId"))} = u.${q("id")} ` +
-    `AND a.${q(column("providerId"))} = 'credential' ` +
+    `LEFT JOIN ${q(schema.accountTable)} a ON a.${q(accountColumn("userId"))} = u.${q("id")} ` +
+    `AND a.${q(accountColumn("providerId"))} = 'credential' ` +
     `ORDER BY u.${q("id")} ASC`
   );
 }
