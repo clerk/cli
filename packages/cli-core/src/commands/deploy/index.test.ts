@@ -27,6 +27,8 @@ const mockPatchInstanceConfig = mock();
 const mockFetchInstanceConfig = mock();
 const mockFetchInstanceConfigSchema = mock();
 const mockFetchApplication = mock();
+const mockListIOSApplications = mock();
+const mockGetNativeSettings = mock();
 const mockListApplicationDomains = mock();
 const mockCreateProductionInstance = mock();
 const mockGetApplicationDomainStatus = mock();
@@ -49,6 +51,8 @@ mock.module("../../lib/plapi.ts", () => ({
   fetchInstanceConfig: (...args: unknown[]) => mockFetchInstanceConfig(...args),
   fetchInstanceConfigSchema: (...args: unknown[]) => mockFetchInstanceConfigSchema(...args),
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
+  listIOSApplications: (...args: unknown[]) => mockListIOSApplications(...args),
+  getNativeSettings: (...args: unknown[]) => mockGetNativeSettings(...args),
   listApplicationDomains: (...args: unknown[]) => mockListApplicationDomains(...args),
   createProductionInstance: (...args: unknown[]) => mockCreateProductionInstance(...args),
   getApplicationDomainStatus: (...args: unknown[]) => mockGetApplicationDomainStatus(...args),
@@ -238,6 +242,8 @@ describe("deploy", () => {
     mockGetApplicationDomainStatus.mockResolvedValue(
       domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
     );
+    mockListIOSApplications.mockResolvedValue([]);
+    mockGetNativeSettings.mockResolvedValue({ object: "native_settings", api_enabled: true });
     stubCreateProductionInstance();
     mockTriggerApplicationDomainDNSCheck.mockResolvedValue(
       domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
@@ -272,6 +278,8 @@ describe("deploy", () => {
     mockFetchInstanceConfig.mockReset();
     mockFetchInstanceConfigSchema.mockReset();
     mockFetchApplication.mockReset();
+    mockListIOSApplications.mockReset();
+    mockGetNativeSettings.mockReset();
     mockListApplicationDomains.mockReset();
     mockCreateProductionInstance.mockReset();
     mockGetApplicationDomainStatus.mockReset();
@@ -1377,6 +1385,111 @@ describe("deploy", () => {
       );
     });
 
+    describe("native-only Apple", () => {
+      const nativeConnection = {
+        enabled: true,
+        authenticatable: true,
+        bundle_id: "com.example.native",
+      };
+      const registration = {
+        object: "ios_application",
+        id: "ios_native",
+        app_id_prefix: "ABCDE12345",
+        bundle_id: "com.example.native",
+      };
+
+      async function nativeAppleDeploy(
+        productionConnection: Record<string, unknown> = nativeConnection,
+      ): Promise<void> {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_native_apple" },
+        });
+        mockLiveProduction({
+          instanceId: "ins_prod_native_apple",
+          developmentConfig: { connection_oauth_apple: nativeConnection },
+          productionConfig: { connection_oauth_apple: productionConnection },
+        });
+        mockIsAgent.mockReturnValue(false);
+      }
+
+      test("needs no prompts once the production registration is ready", async () => {
+        await nativeAppleDeploy();
+        mockListIOSApplications.mockResolvedValue([registration]);
+
+        await runDeploy({});
+
+        expect(mockConfirm).not.toHaveBeenCalled();
+        expect(mockSelect).not.toHaveBeenCalled();
+        expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+        expect(stripAnsi(captured.err)).toContain("No deploy actions remain.");
+      });
+
+      test("pauses with production guidance when the user declines web credentials", async () => {
+        await nativeAppleDeploy();
+        mockConfirm.mockResolvedValueOnce(false);
+
+        const error = await runDeploy({}).catch((caught: unknown) => caught as CliError);
+
+        expect(mockConfirm).toHaveBeenCalledWith({
+          message: expect.stringContaining("Also configure Apple web sign-in credentials?"),
+          default: false,
+        });
+        expect(error?.message).toContain("Deploy paused at: Apple OAuth credential setup");
+        expect(flat(stripAnsi(captured.err))).toContain(
+          "https://dashboard.clerk.com/apps/app_xyz789/instances/ins_prod_native_apple/native-applications",
+        );
+        expect(mockSelect).not.toHaveBeenCalled();
+        expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+      });
+
+      test("explains a production Apple connection cloned without its Bundle ID", async () => {
+        await nativeAppleDeploy({ enabled: true, authenticatable: true });
+        mockConfirm.mockResolvedValueOnce(false);
+
+        const error = await runDeploy({}).catch((caught: unknown) => caught as CliError);
+
+        expect(mockConfirm).toHaveBeenCalledWith({
+          message: expect.stringContaining("Also configure Apple web sign-in credentials?"),
+          default: false,
+        });
+        expect(error?.message).toContain("Deploy paused at: Apple OAuth credential setup");
+        expect(flat(stripAnsi(captured.err))).toContain(
+          "Production Sign in with Apple has no Bundle ID",
+        );
+        expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+      });
+
+      test("saves hosted credentials unchanged when the user adds web sign-in", async () => {
+        await nativeAppleDeploy();
+        mockConfirm.mockResolvedValueOnce(true);
+        mockSelect.mockResolvedValueOnce("have-credentials");
+        const keyPath = join(tempDir, "AuthKey.p8");
+        const key = "-----BEGIN PRIVATE KEY-----\nfixture\n-----END PRIVATE KEY-----\n";
+        await Bun.write(keyPath, key);
+        mockInput
+          .mockResolvedValueOnce("services-id")
+          .mockResolvedValueOnce("team-id")
+          .mockResolvedValueOnce("key-id")
+          .mockResolvedValueOnce(keyPath);
+
+        await runDeploy({});
+
+        expect(mockPatchInstanceConfig).toHaveBeenCalledWith(
+          "app_xyz789",
+          "ins_prod_native_apple",
+          {
+            connection_oauth_apple: {
+              enabled: true,
+              client_id: "services-id",
+              team_id: "team-id",
+              key_id: "key-id",
+              client_secret: key,
+            },
+          },
+        );
+      });
+    });
+
     test("Apple .p8 file prompt validates path and PEM framing before continuing", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_apple" },
@@ -1430,6 +1543,8 @@ describe("deploy", () => {
             "-----BEGIN PRIVATE KEY-----\nMIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdwIBAQQg\n-----END PRIVATE KEY-----\n",
         },
       });
+      expect(mockListIOSApplications).not.toHaveBeenCalled();
+      expect(mockGetNativeSettings).not.toHaveBeenCalled();
       const p8Input = mockInput.mock.calls.find((call) =>
         String((call[0] as { message?: string }).message).includes("Apple Private Key"),
       )?.[0] as { validate: (value: string) => Promise<true | string> };

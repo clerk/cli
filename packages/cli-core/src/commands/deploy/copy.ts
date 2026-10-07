@@ -1,5 +1,6 @@
 import { bold, cyan, dim, green, yellow } from "../../lib/color.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
+import type { NativeAppleReadinessIssue } from "./providers.ts";
 import { buildDashboardUrl } from "../../lib/environment.ts";
 import { wrap } from "../../lib/wrap.ts";
 
@@ -606,6 +607,34 @@ export function instanceDashboardUrl(appId: string, instanceId: string): string 
 
 export function domainsDashboardUrl(appId: string, productionInstanceId: string): string {
   return buildDashboardUrl(appId, productionInstanceId, "domains");
+}
+
+export function nativeApplicationsDashboardUrl(
+  appId: string,
+  productionInstanceId: string,
+): string {
+  return buildDashboardUrl(appId, productionInstanceId, "native-applications");
+}
+
+/** What blocks native-only Sign in with Apple in production, and how to fix it. */
+export function nativeAppleGuidance(issue: NativeAppleReadinessIssue): string {
+  const { bundleId, dashboardUrl } = issue;
+  switch (issue.reason) {
+    case "bundle-id-missing":
+      return `Production Sign in with Apple has no Bundle ID, so native sign-in for ${bundleId} isn't set up there yet. In the Clerk Dashboard, set the production Apple connection's Bundle ID to ${bundleId}, then register the app and enable Native API at ${dashboardUrl}`;
+    case "authentication-disabled":
+      return `Sign in with Apple for ${bundleId} is not enabled for authentication in production. Enable it in the Apple connection settings in the Clerk Dashboard.`;
+    case "registration-missing":
+      return `Sign in with Apple needs a production iOS registration for ${bundleId}. Register it at ${dashboardUrl}`;
+    case "registration-ambiguous":
+      return `${bundleId} is registered under more than one App ID Prefix in production. Remove the extra registrations at ${dashboardUrl}`;
+    case "registration-bundle-case-mismatch":
+      return `The Apple connection's Bundle ID ${bundleId} differs in letter case from its production iOS registration. Make them match exactly at ${dashboardUrl}`;
+    case "native-api-disabled":
+      return `Native API is disabled on the production instance. Enable it at ${dashboardUrl}`;
+    case "verification-unavailable":
+      return `Clerk could not verify the production iOS registration for ${bundleId}. Retry shortly, and don't create another registration based on this result.`;
+  }
 }
 
 export function pausedMessage(stepDescription: string): string {

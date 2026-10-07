@@ -69,13 +69,19 @@ export async function getAuthToken(): Promise<string> {
  * throws PlapiError on non-ok responses. Debug logging is centralized in
  * `loggedFetch`; don't add inline `log.debug` calls here or in callers.
  */
-async function plapiFetch(method: string, url: URL, init?: { body?: string }): Promise<Response> {
+async function plapiFetch(
+  method: string,
+  url: URL,
+  init?: { body?: string; idempotencyKey?: string; ifMatch?: string },
+): Promise<Response> {
   const token = await getAuthToken();
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     Accept: "application/json",
   };
   if (init?.body) headers["Content-Type"] = "application/json";
+  if (init?.idempotencyKey) headers["Idempotency-Key"] = init.idempotencyKey;
+  if (init?.ifMatch) headers["If-Match"] = init.ifMatch;
   const response = await loggedFetch(url, {
     tag: "plapi",
     method,
@@ -229,9 +235,12 @@ export type TriggerDNSCheckResponse = DomainStatusResponse & {
   last_run_at: number | null;
 };
 
-export async function fetchApplication(applicationId: string): Promise<Application> {
+export async function fetchApplication(
+  applicationId: string,
+  options?: { includeSecretKeys?: boolean },
+): Promise<Application> {
   const url = new URL(`/v1/platform/applications/${applicationId}`, getPlapiBaseUrl());
-  url.searchParams.set("include_secret_keys", "true");
+  url.searchParams.set("include_secret_keys", String(options?.includeSecretKeys ?? true));
   const response = await plapiFetch("GET", url);
   return response.json() as Promise<Application>;
 }
@@ -282,7 +291,7 @@ async function sendInstanceConfig(
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
-  options?: { destructive?: boolean; dryRun?: boolean },
+  options?: { destructive?: boolean; dryRun?: boolean; ifMatch?: string },
 ): Promise<Record<string, unknown>> {
   const url = new URL(
     `/v1/platform/applications/${applicationId}/instances/${instanceId}/config`,
@@ -294,7 +303,10 @@ async function sendInstanceConfig(
   if (options?.dryRun) {
     url.searchParams.set("dry_run", "true");
   }
-  const response = await plapiFetch(method, url, { body: JSON.stringify(config) });
+  const response = await plapiFetch(method, url, {
+    body: JSON.stringify(config),
+    ifMatch: options?.ifMatch,
+  });
   return response.json() as Promise<Record<string, unknown>>;
 }
 
@@ -302,14 +314,14 @@ export const putInstanceConfig = async (
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
-  options?: { destructive?: boolean; dryRun?: boolean },
+  options?: { destructive?: boolean; dryRun?: boolean; ifMatch?: string },
 ) => sendInstanceConfig("PUT", applicationId, instanceId, config, options);
 
 export const patchInstanceConfig = async (
   applicationId: string,
   instanceId: string,
   config: Record<string, unknown>,
-  options?: { destructive?: boolean; dryRun?: boolean },
+  options?: { destructive?: boolean; dryRun?: boolean; ifMatch?: string },
 ) => sendInstanceConfig("PATCH", applicationId, instanceId, config, options);
 
 export async function createApplication(name: string): Promise<Application> {
@@ -330,4 +342,95 @@ export async function listApplications(): Promise<Application[]> {
   const url = new URL("/v1/platform/applications", getPlapiBaseUrl());
   const response = await plapiFetch("GET", url);
   return response.json() as Promise<Application[]>;
+}
+
+export type NativeSettings = { object: "native_settings"; api_enabled: boolean };
+export type IOSApplication = {
+  object: "ios_application";
+  id: string;
+  app_id_prefix: string;
+  bundle_id: string;
+};
+
+function nativeUrl(appId: string, instanceId: string, path: string): URL {
+  return new URL(
+    `/v1/platform/applications/${encodeURIComponent(appId)}/instances/${encodeURIComponent(instanceId)}/${path}`,
+    getPlapiBaseUrl(),
+  );
+}
+
+function unexpectedResponse(resource: string): CliError {
+  return new CliError(`Clerk returned an unexpected ${resource} response.`, {
+    code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
+  });
+}
+
+async function readNativeSettings(response: Response): Promise<NativeSettings> {
+  const value = (await response.json()) as Partial<NativeSettings> | null;
+  if (value?.object !== "native_settings" || typeof value.api_enabled !== "boolean") {
+    throw unexpectedResponse("Native API settings");
+  }
+  return { object: "native_settings", api_enabled: value.api_enabled };
+}
+
+function readIOSApplication(value: unknown): IOSApplication {
+  const app = value as Partial<IOSApplication> | null;
+  if (
+    app?.object !== "ios_application" ||
+    typeof app.id !== "string" ||
+    typeof app.app_id_prefix !== "string" ||
+    typeof app.bundle_id !== "string"
+  ) {
+    throw unexpectedResponse("iOS registration");
+  }
+  return {
+    object: "ios_application",
+    id: app.id,
+    app_id_prefix: app.app_id_prefix,
+    bundle_id: app.bundle_id,
+  };
+}
+
+export async function getNativeSettings(
+  appId: string,
+  instanceId: string,
+): Promise<NativeSettings> {
+  return readNativeSettings(
+    await plapiFetch("GET", nativeUrl(appId, instanceId, "native_settings")),
+  );
+}
+
+export async function enableNativeApi(appId: string, instanceId: string): Promise<NativeSettings> {
+  return readNativeSettings(
+    await plapiFetch("PATCH", nativeUrl(appId, instanceId, "native_settings"), {
+      body: JSON.stringify({ api_enabled: true }),
+    }),
+  );
+}
+
+export async function listIOSApplications(
+  appId: string,
+  instanceId: string,
+): Promise<IOSApplication[]> {
+  const response = await plapiFetch("GET", nativeUrl(appId, instanceId, "native_applications/ios"));
+  const apps: unknown = await response.json();
+  if (!Array.isArray(apps)) throw unexpectedResponse("iOS registrations");
+  return apps.map(readIOSApplication);
+}
+
+export async function createIOSApplication(
+  appId: string,
+  instanceId: string,
+  params: { app_id_prefix: string; bundle_id: string },
+  idempotencyKey: string,
+): Promise<IOSApplication> {
+  const response = await plapiFetch(
+    "POST",
+    nativeUrl(appId, instanceId, "native_applications/ios"),
+    {
+      body: JSON.stringify(params),
+      idempotencyKey,
+    },
+  );
+  return readIOSApplication(await response.json());
 }
