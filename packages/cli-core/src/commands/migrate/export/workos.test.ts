@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { UserLine } from "../lib/run-store.ts";
+import { CliError, EXIT_CODE } from "../../../lib/errors.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { setAssumeYes } from "../lib/assume-yes.ts";
 import {
@@ -277,6 +278,24 @@ describe("fetchAllWorkOsIdentities", () => {
     expect(identities.get("user_01")).toEqual([]);
     expect(failed).toBe(1);
   });
+});
+
+// A key revoked partway would otherwise mark every later user unreadable and
+// let the export finish as if it had worked.
+test("fetchAllWorkOsIdentities stops on a rejected key rather than counting it", async () => {
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    requests.push(input.toString());
+    return Response.json({ message: "Unauthorized" }, { status: 401 });
+  }) as unknown as typeof fetch;
+  const users = Array.from({ length: 50 }, (_, i) => workosUser(i));
+
+  const error = (await fetchAllWorkOsIdentities({ apiKey: API_KEY, users }).catch(
+    (e: unknown) => e,
+  )) as CliError;
+
+  expect(error).toBeInstanceOf(CliError);
+  expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+  expect(requests.length).toBeLessThan(users.length);
 });
 
 describe("buildIdentityReport", () => {
