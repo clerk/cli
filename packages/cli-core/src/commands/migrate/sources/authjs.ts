@@ -12,9 +12,9 @@ import { routeByVerification, splitName } from "./shared.ts";
  * `email_verified` is a nullable timestamp rather than a boolean — any value
  * means verified.
  *
- * No password default: Auth.js's core is passwordless (OAuth and email links),
- * so users arrive without a digest and are imported with
- * `skip_password_requirement`.
+ * No password default: Auth.js core stores no passwords, so users arrive
+ * without a digest and are imported with `skip_password_requirement`. An app
+ * using the Credentials provider keeps its own, which this does not read.
  */
 const authjsSource = {
   key: "authjs",
@@ -24,7 +24,7 @@ const authjsSource = {
   carries: {
     passwords: {
       level: "no",
-      note: "Auth.js is passwordless (OAuth and email links), so users arrive without one.",
+      note: "Auth.js core stores no passwords. An app using the Credentials provider keeps its own, which this does not read: migrate them separately, or have those users reset their password.",
     },
     mfa: { level: "no", note: "Auth.js has no MFA of its own." },
     metadata: {
