@@ -1281,8 +1281,9 @@ The two Identity Toolkit paths are on `identitytoolkit.googleapis.com`, or on
 the export skips that request, and it may not carry the hash parameters: pass
 them to the import. The two WorkOS paths are on `api.workos.com`.
 
-The database exports (`supabase`, `betterauth`) make no HTTP calls at all —
-they connect over `--db-url`.
+The database exports (`supabase`, `betterauth`) connect over `--db-url`. A
+`libsql://` URL is the one exception that goes over HTTP: it posts to the
+server's pipeline endpoint.
 
 ## Notes
 
