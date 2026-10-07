@@ -9,6 +9,7 @@ import {
   describeDbError,
   detectDbType,
   redactConnectionString,
+  redactDbMessage,
   sqlitePath,
   withDbClient,
 } from "./db.ts";
@@ -85,6 +86,29 @@ describe("redactConnectionString", () => {
   );
 });
 
+describe("redactDbMessage", () => {
+  test.each([
+    ["the whole URL", "failed: postgres://u:pw%40x@h/db", "failed: postgres://***@h/db"],
+    ["the password, raw", 'auth failed for "pw%40x"', 'auth failed for "***"'],
+    ["the password, decoded", 'auth failed for "pw@x"', 'auth failed for "***"'],
+  ])("redacts %s", (_label, message, expected) => {
+    expect(redactDbMessage(message, "postgres://u:pw%40x@h/db")).toBe(expected);
+  });
+
+  test("redacts a libsql token from the URL or the environment", () => {
+    expect(redactDbMessage("token abc is bad", "libsql://h.turso.io?authToken=abc")).toBe(
+      "token *** is bad",
+    );
+    expect(
+      redactDbMessage("token envtok is bad", "libsql://h.turso.io", { TURSO_AUTH_TOKEN: "envtok" }),
+    ).toBe("token *** is bad");
+  });
+
+  test("leaves a message with no credentials alone", () => {
+    expect(redactDbMessage("no such table: user", "./db.sqlite")).toBe("no such table: user");
+  });
+});
+
 describe("sqlitePath", () => {
   test.each([
     ["./db.sqlite", "./db.sqlite"],
@@ -159,6 +183,35 @@ describe("a libsql client", () => {
       },
     ] as never);
     expect(client.dbType).toBe("sqlite");
+  });
+
+  // A server that echoes the token must not get it printed.
+  test("redacts the token from a server error it echoes", async () => {
+    stubFetch({ type: "error", error: { message: "bad auth token t0ken for app-org" } });
+
+    const error = (await createDbClient("libsql://app-org.turso.io?authToken=t0ken").catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.message).not.toContain("t0ken");
+    expect(error.message).toContain("bad auth token *** for app-org");
+  });
+
+  test("redacts the token from a query failure after connecting", async () => {
+    stubFetch(okRows(["1"], [[{ type: "integer", value: "1" }]]));
+
+    const error = (await withDbClient(
+      "libsql://app-org.turso.io?authToken=t0ken",
+      undefined,
+      async () => {
+        throw new Error("query rejected for token t0ken");
+      },
+    ).catch((caught: unknown) => caught)) as CliError;
+
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.message).toContain("query rejected for token ***");
+    expect(error.message).not.toContain("t0ken");
   });
 
   test("reports a server-side error", async () => {
