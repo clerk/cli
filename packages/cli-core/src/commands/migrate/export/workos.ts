@@ -16,10 +16,11 @@
  * discovered when nobody can sign in.
  */
 
-import { CliError, throwUsageError } from "../../../lib/errors.ts";
+import { CliError, EXIT_CODE, throwUsageError } from "../../../lib/errors.ts";
 import { loggedFetch } from "../../../lib/fetch.ts";
 import { dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
+import { isCancelled } from "../../../lib/signals.ts";
 import { confirm, password as passwordPrompt } from "../../../lib/prompts.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
@@ -275,6 +276,9 @@ export async function fetchWorkOsIdentities(
  * A user missing from the returned map is one whose lookup **failed**, which is
  * not the same as one with no providers — so failures are counted and returned
  * separately rather than flattened into an empty list.
+ *
+ * A Ctrl-C, or a key WorkOS stops accepting partway, is not a failed lookup:
+ * every later one would fail the same way. It stops the fan-out and is thrown.
  */
 export async function fetchAllWorkOsIdentities(options: {
   apiKey: string;
@@ -286,14 +290,22 @@ export async function fetchAllWorkOsIdentities(options: {
   const identities = new Map<string, WorkOsIdentity[]>();
   let failed = 0;
   let done = 0;
+  let fatal: unknown;
 
   await Promise.all(
     options.users.map(async (user) =>
       schedule(async () => {
+        if (fatal) return;
         const userId = String(user.id ?? "");
         try {
           if (userId) identities.set(userId, await fetchWorkOsIdentities(options.apiKey, userId));
-        } catch {
+        } catch (error) {
+          const stops =
+            isCancelled(error) || (error instanceof CliError && error.exitCode === EXIT_CODE.USAGE);
+          if (stops) {
+            fatal ??= error;
+            return;
+          }
           failed++;
         }
         done++;
@@ -305,6 +317,7 @@ export async function fetchAllWorkOsIdentities(options: {
     ),
   );
 
+  if (fatal) throw fatal;
   return { identities, failed };
 }
 
