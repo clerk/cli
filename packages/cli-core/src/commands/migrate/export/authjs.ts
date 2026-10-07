@@ -167,6 +167,7 @@ export async function exportAuthJs(options: DbExportOptions): Promise<void> {
         withSpinner("Reading the user table...", async () =>
           withDbClient(connectionString, "authjs", fetchAuthJsUsers),
         ),
+      options,
     );
     log.info(`Read ${rows.length} row${rows.length === 1 ? "" : "s"} from ${table}.`);
 
