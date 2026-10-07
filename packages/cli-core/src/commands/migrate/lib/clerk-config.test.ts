@@ -75,6 +75,30 @@ describe("fetchInstanceSettings", () => {
     expect(urls.some((url) => url.includes("/v1/dev_browser"))).toBe(false);
   });
 
+  // A missing settings read lets the checks pass users the instance refuses.
+  test("retries a rate-limited domains lookup", async () => {
+    route([{ is_satellite: false, frontend_api_url: "https://clerk.example.com" }]);
+    const routed = mockFetch.getMockImplementation()!;
+    let domainCalls = 0;
+    mockFetch.mockImplementation((input: string | URL) => {
+      if (String(input).includes("/v1/domains") && ++domainCalls === 1) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ errors: [{ code: "too_many_requests", message: "slow" }] }),
+            {
+              status: 429,
+              headers: { "Content-Type": "application/json", "Retry-After": "0.01" },
+            },
+          ),
+        );
+      }
+      return routed(input);
+    });
+
+    expect(await fetchInstanceSettings("sk_test_abc")).toEqual(USER_SETTINGS);
+    expect(domainCalls).toBe(2);
+  });
+
   // `null` means "unknown", so callers degrade rather than treating a failed
   // lookup as "nothing is enabled".
   test("returns null when no domain names a Frontend API URL", async () => {
