@@ -705,6 +705,30 @@ describe("run", () => {
       );
     });
 
+    // Reserved meets the requirement, so neither the reject nor the fix applies.
+    test("with --reserve-unverified, an unverified-only user is neither rejected nor a fix", async () => {
+      stubClerk({
+        settings: {
+          attributes: { email_address: { enabled: true, required: true } },
+          // A way in besides a password, so users without one import.
+          enterprise_sso: { enabled: true },
+        },
+      });
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", unverified_email_addresses: "b@x.dev" },
+        ]),
+      );
+
+      await run({ ...baseOptions, dryRun: true, reserveUnverified: true });
+
+      expect(captured.err).not.toContain("only has an unverified email");
+      expect(captured.err).not.toContain("required_for_sign_up");
+      expect(process.exitCode).toBe(0);
+    });
+
     test("legal consent: refused without --skip-legal-checks, sent with skip_legal_checks with it", async () => {
       stubClerk({
         settings: {
