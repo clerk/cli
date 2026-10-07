@@ -1,6 +1,6 @@
 {
   "name": "clerk",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "private": true,
   "description": "The official Clerk CLI. Add authentication to your app with npx -y clerk@latest init (Next.js, React Router, Astro, Nuxt, TanStack Start, Expo, and more). No Clerk account needed to start. Manage users, instances, keys, and deploys from the terminal or a coding agent.",
   "keywords": [
