@@ -80,9 +80,7 @@ export const reactVite: FrameworkScaffold = {
       );
     }
 
-    postInstructions.push(
-      `Ensure ${ctx.framework.envVar} is set in your ${ctx.envFile} (pulled via \`clerk env pull\`)`,
-    );
+    postInstructions.push(`Ensure ${ctx.framework.envVar} is set in your ${ctx.envFile}`);
 
     return { actions, postInstructions };
   },
