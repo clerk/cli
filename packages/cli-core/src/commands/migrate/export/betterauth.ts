@@ -169,8 +169,34 @@ export function buildBetterAuthExport(
   const users: Record<string, unknown>[] = [];
   const counts = { email: 0, emailVerified: 0, password: 0, name: 0, username: 0, phone: 0 };
 
+  // The join returns a row per credential account, and nothing in Better
+  // Auth's schema stops a user having two. Rows that agree are one user. Rows
+  // with different hashes cannot be settled here, so that user is skipped
+  // rather than given whichever hash came first.
+  const byId = new Map<string, { row: BetterAuthRow; accounts: number; hashes: Set<unknown> }>();
   for (const row of rows) {
     const userId = String(row.id ?? "");
+    const entry = byId.get(userId) ?? { row, accounts: 0, hashes: new Set() };
+    entry.accounts++;
+    if (row.password_hash !== null && row.password_hash !== undefined) {
+      entry.hashes.add(row.password_hash);
+      entry.row = row;
+    }
+    byId.set(userId, entry);
+  }
+
+  let conflicts = 0;
+  for (const [userId, { row, accounts, hashes }] of byId) {
+    if (hashes.size > 1) {
+      conflicts++;
+      record({
+        sourceId: userId,
+        status: "skipped",
+        error: `has ${accounts} credential accounts with different password hashes; keep one in Better Auth and export again`,
+      });
+      continue;
+    }
+
     const user: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(row)) {
@@ -187,6 +213,13 @@ export function buildBetterAuthExport(
 
     users.push(user);
     record({ sourceId: userId, status: "exported" });
+  }
+
+  if (conflicts > 0) {
+    log.warn(
+      `Skipped ${conflicts} user${conflicts === 1 ? "" : "s"} with more than one credential account and ` +
+        "different password hashes. Keep one account each in Better Auth, then export again.",
+    );
   }
 
   return {
