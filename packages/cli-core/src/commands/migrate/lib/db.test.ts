@@ -53,6 +53,7 @@ describe("redactConnectionString", () => {
     ["postgres://user:secret@host:5432/db", "postgres://***@host:5432/db"],
     ["mysql://root:hunter2@127.0.0.1:3306/app", "mysql://***@127.0.0.1:3306/app"],
     ["postgres://host/db", "postgres://host/db"],
+    ["postgres-x://u:secret@host/db", "postgres-x://***@host/db"],
     ["libsql://app.turso.io?authToken=secret", "libsql://app.turso.io?authToken=***"],
     ["postgres://u@host/db?password=secret", "postgres://***@host/db?password=***"],
     [
