@@ -61,6 +61,8 @@ export function writeExportFile(file: string, envelope: ExportEnvelope): string 
   // Password hashes, PII and a Firebase signer key: owner-only.
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, JSON.stringify(envelope, null, 2), { mode: 0o600 });
+  // `mode` only applies on create; an existing `--output` keeps its own.
+  fs.chmodSync(file, 0o600);
   return file;
 }
 
