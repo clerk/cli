@@ -405,6 +405,12 @@ export type ImportUsersOptions = {
    * not created again; only their extra identifiers are sent.
    */
   adopted?: Map<string, string>;
+  /**
+   * The adopted users whose create reserved their unverified identifiers, from
+   * its `creating` line. The rest had them attached unverified, whatever this
+   * run's `reserveUnverified` says.
+   */
+  adoptedReserved?: Set<string>;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
   /** Create the identifiers the source never verified as reserved. */
@@ -430,6 +436,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     record,
     attachOnly = [],
     adopted = new Map<string, string>(),
+    adoptedReserved = new Set<string>(),
     skipPasswordRequirement = true,
     reserveUnverified = false,
     validationFailed = 0,
@@ -493,13 +500,23 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     const identifiers = splitIdentifiers(user);
     let created: { clerkUserId: string; notes: string[] };
     const adoptedId = adopted.get(user.userId);
+    // What the create did with the unverified identifiers decides what is left
+    // to attach: an adopted user's create may have run in the other mode.
+    const reserved = adoptedId
+      ? adoptedReserved.has(user.userId)
+      : reserveUnverified &&
+        (identifiers.unverifiedEmails.length > 0 || identifiers.unverifiedPhones.length > 0);
     try {
       created = adoptedId
         ? { clerkUserId: adoptedId, notes: [] }
         : await retryOn429(
             async () =>
               createUser(ctx, user, identifiers, skipPasswordRequirement, () =>
-                record({ sourceId: user.userId, status: "creating" }),
+                record({
+                  sourceId: user.userId,
+                  status: "creating",
+                  ...(reserved ? { reserved: true } : {}),
+                }),
               ),
             { onRetry: ({ message }) => retries.push(message) },
           );
@@ -530,7 +547,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       ...(user.passwordDropped ? { passwordDropped: true } : {}),
     };
     record(line);
-    await finishUser(line, pendingIdentifiers(identifiers, reserveUnverified), [
+    await finishUser(line, pendingIdentifiers(identifiers, reserved), [
       ...created.notes,
       ...retries,
     ]);

@@ -529,6 +529,38 @@ describe("run", () => {
       expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
     });
 
+    // The `creating` line records what the create did; a continued run reads it
+    // back rather than guessing from this run's flags.
+    test("an adopted user whose create reserved its unverified email gets no attach for it", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", primary_email_address: "b@x.dev", unverified_email_addresses: "c@x.dev" },
+        ]),
+      );
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating", reserved: true })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({ existing: [{ id: "user_found", external_id: "u2" }] });
+      await run(baseOptions);
+
+      expect(created()).toEqual([]);
+      expect(requests.filter((r) => r.url.endsWith("/v1/email_addresses"))).toEqual([]);
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+      });
+    });
+
     test("an interrupted run creates a user whose in-flight create never landed", async () => {
       stubClerk({ failing: new Set(["u2"]) });
       await run(baseOptions);

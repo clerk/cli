@@ -469,6 +469,62 @@ describe("importUsers", () => {
     expect(lines.at(-1)).toMatchObject({ clerkId: "user_found", status: "created" });
   });
 
+  // The `creating` line says what the create did, so a continued run that
+  // adopts the user knows what is left to attach.
+  test("marks a creating line reserved only when the create reserved something", async () => {
+    stub(() => ok("user_created"));
+
+    await importUsers({
+      users: [
+        user({ userId: "u1", unverifiedEmailAddresses: ["c@x.dev"] }),
+        user({ userId: "u2", email: "b@x.dev" }),
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      reserveUnverified: true,
+    });
+
+    expect(allLines.filter((line) => line.status === "creating")).toEqual([
+      { sourceId: "u1", status: "creating", reserved: true },
+      { sourceId: "u2", status: "creating" },
+    ]);
+  });
+
+  // Adopted, the user is not created again, so its create's mode decides what
+  // is still missing, not this run's flag.
+  test("attaches an adopted user's unverified email its create left out, even with the flag", async () => {
+    stub(() => ok("idn_1"));
+
+    await importUsers({
+      users: [user({ unverifiedEmailAddresses: ["c@x.dev"] })],
+      adopted: new Map([["u1", "user_found"]]),
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      reserveUnverified: true,
+    });
+
+    expect(requests.map((r) => r.body)).toEqual([
+      { user_id: "user_found", email_address: "c@x.dev", primary: false, verified: false },
+    ]);
+  });
+
+  test("attaches nothing for an adopted user whose create reserved them, even without the flag", async () => {
+    stub(() => ok("idn_1"));
+
+    await importUsers({
+      users: [user({ unverifiedEmailAddresses: ["c@x.dev"] })],
+      adopted: new Map([["u1", "user_found"]]),
+      adoptedReserved: new Set(["u1"]),
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(requests).toEqual([]);
+  });
+
   // Shapes from clerk_go's apierror: the country error carries its own code
   // and no param_name; the E.164 error is a form error on phone_number.
   test.each([
