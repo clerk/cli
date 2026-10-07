@@ -269,17 +269,16 @@ export async function fetchAllAuth0Users(options: {
     if (users.length < PAGE_SIZE) break;
 
     if (all.length >= AUTH0_PAGINATION_CEILING) {
-      // A tenant of exactly the ceiling is complete. Without a total, a full
-      // last page may hide more.
-      const truncated = total ? total > AUTH0_PAGINATION_CEILING : true;
-      if (truncated) {
-        log.warn(
-          `Auth0 only pages through the first ${AUTH0_PAGINATION_CEILING} users on this endpoint` +
-            (total ? `, and this tenant reports ${total}` : "") +
-            ". Exported what is reachable; use Auth0's bulk user export job for the rest.",
-        );
-      }
-      return { users: all, truncated };
+      // Auth0 reports a larger tenant's total as 1000 too, so reaching the
+      // ceiling never proves the export is complete.
+      log.warn(
+        `Auth0 only pages through the first ${AUTH0_PAGINATION_CEILING} users on this endpoint` +
+          (total > AUTH0_PAGINATION_CEILING
+            ? `, and this tenant reports ${total}`
+            : `, and counts no higher, so there may be more`) +
+          ". Exported what is reachable; use Auth0's bulk user export job for the rest.",
+      );
+      return { users: all, truncated: true };
     }
   }
 
