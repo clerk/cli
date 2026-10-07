@@ -662,6 +662,7 @@ clerk migrate import users.json --source clerk --new-run --yes
 clerk migrate import users.json --source clerk --json --yes
 clerk migrate import users.json --source clerk --require-password --yes
 clerk migrate import users.json --source clerk --skip-legal-checks --yes
+clerk migrate import users.json --source workos --reserve-unverified --yes
 clerk migrate import users.json --source firebase --firebase-signer-key SIGNER_KEY \
   --firebase-salt-separator SALT_SEPARATOR --firebase-rounds 8 --firebase-mem-cost 14 --yes
 clerk migrate import users.json --source clerk --runs-dir ./runs --yes
@@ -679,6 +680,7 @@ clerk migrate import                                          # a human is asked
 | `--new-run`                             | Start a new run instead of [continuing](#re-running) an earlier one                               |
 | `--require-password`                    | Import only users that carry a password digest                                                    |
 | `--skip-legal-checks`                   | Import users with no legal acceptance into an instance requiring it                               |
+| `--reserve-unverified`                  | Create [unverified identifiers](#verified-vs-unverified-identifiers) reserved, not unverified     |
 | `--firebase-signer-key <key>`           | Firebase base64 signer key (overrides the export file), or `CLERK_FIREBASE_SIGNER_KEY` (does not) |
 | `--firebase-salt-separator <separator>` | Firebase base64 salt separator, or `CLERK_FIREBASE_SALT_SEPARATOR`                                |
 | `--firebase-rounds <n>`                 | Firebase scrypt rounds, or `CLERK_FIREBASE_ROUNDS`                                                |
@@ -807,8 +809,8 @@ after them. They sort the users three ways:
     not checked
   - it lacks an identifier the instance requires. An email or phone counts
     only when it is verified, because an unverified one is attached after the
-    user exists. A required phone dropped for not being in E.164 form is named
-    as such
+    user exists, or with `--reserve-unverified`, which creates it reserved. A
+    required phone dropped for not being in E.164 form is named as such
   - it has no identifier left once the emails and phones Clerk would refuse
     are stripped: those of an instance that neither has them on nor signs in
     or does MFA with them. A username is kept, as Clerk stores it with
@@ -1284,6 +1286,19 @@ unconfirmed address there would silently promote it.
   (the epoch) or a value that isn't a date.
 
 A Clerk export keeps an unverified primary email or phone unverified.
+
+**Unverified or reserved.** By default an unverified identifier is attached
+after the user exists (`POST /v1/email_addresses`, `verified: false`). The user
+cannot sign in with it, and another user can claim it by verifying it first.
+`--reserve-unverified`, or a yes at the prompt a human gets when the file has
+any, creates them **reserved** instead, on `POST /v1/users` through
+`email_address_identification_status` / `phone_number_identification_status`.
+A reserved identifier is unverified, but usable for sign-in and locked to the
+user, and becomes verified the first time the user signs in with it. That is
+how most source platforms treat an unconfirmed address, but it lets the user
+sign in with one nobody proved they own, so it is opt-in. `-y`, `--json` and
+agent mode never ask, and keep them unverified without the flag. A continued
+run uses whichever the flag or answer says that time.
 
 ### Firebase hash parameters
 
