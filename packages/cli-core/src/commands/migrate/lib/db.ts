@@ -157,6 +157,8 @@ function encodeHrana(param: unknown): HranaValue {
  * prints — or from `TURSO_AUTH_TOKEN`/`LIBSQL_AUTH_TOKEN`. A self-hosted sqld
  * with auth disabled needs neither, so a missing token is not an error here.
  */
+const LIBSQL_TIMEOUT_MS = 120_000;
+
 function libsqlClient(
   connectionString: string,
   env: Record<string, string | undefined> = process.env,
@@ -170,6 +172,8 @@ function libsqlClient(
     async query<T extends Record<string, unknown>>(query: string, params: unknown[] = []) {
       const response = await fetch(endpoint, {
         method: "POST",
+        // Generous, since one unpaginated SELECT can be a whole users table.
+        signal: AbortSignal.timeout(LIBSQL_TIMEOUT_MS),
         headers: {
           "content-type": "application/json",
           ...(token ? { authorization: `Bearer ${token}` } : {}),
