@@ -16,6 +16,7 @@ import {
 } from "../../../lib/fapi.ts";
 import { log } from "../../../lib/log.ts";
 import { detectInstanceType } from "./instance.ts";
+import { retryOn429 } from "./retry.ts";
 
 /**
  * Supabase provider keys whose Clerk strategy is not simply `oauth_<key>`.
@@ -130,7 +131,9 @@ async function fetchFapiHost(secretKey: string): Promise<string | null> {
  */
 export async function fetchInstanceSettings(secretKey: string): Promise<UserSettingsJSON | null> {
   try {
-    const fapiHost = await fetchFapiHost(secretKey);
+    // A 429 is retried: under load, a missing settings read would let the
+    // checks pass users the instance then refuses one create at a time.
+    const fapiHost = await retryOn429(async () => fetchFapiHost(secretKey));
     if (!fapiHost) {
       log.debug("migrate: no domain on this instance named a Frontend API URL");
       return null;
@@ -138,8 +141,10 @@ export async function fetchInstanceSettings(secretKey: string): Promise<UserSett
 
     // Development FAPI rejects an environment request without a dev browser JWT.
     const jwt =
-      detectInstanceType(secretKey) === "dev" ? await bootstrapDevBrowser(fapiHost) : undefined;
-    return await fetchUserSettings(fapiHost, jwt ? { jwt } : {});
+      detectInstanceType(secretKey) === "dev"
+        ? await retryOn429(async () => bootstrapDevBrowser(fapiHost))
+        : undefined;
+    return await retryOn429(async () => fetchUserSettings(fapiHost, jwt ? { jwt } : {}));
   } catch (error) {
     log.debug(
       `migrate: could not read instance settings: ${

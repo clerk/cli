@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BapiError, CliError } from "../../../lib/errors.ts";
+import { BapiError, CliError, FapiError } from "../../../lib/errors.ts";
 import { RateLimitExceededError, readRetryAfter, retryOn429 } from "./retry.ts";
 
 const rateLimited = (headers: Record<string, string> = {}) =>
@@ -62,6 +62,22 @@ describe("retryOn429", () => {
       async () => {
         attempts++;
         if (attempts === 1) throw rateLimited({ "retry-after": "1" });
+        return "ok";
+      },
+      { defaultDelayMs: 5 },
+    );
+
+    expect(result).toBe("ok");
+    expect(attempts).toBe(2);
+  });
+
+  // The settings read goes through FAPI, which is rate limited the same way.
+  test("retries a FAPI 429 as well", async () => {
+    let attempts = 0;
+    const result = await retryOn429(
+      async () => {
+        attempts++;
+        if (attempts === 1) throw new FapiError(429, JSON.stringify({ errors: [] }));
         return "ok";
       },
       { defaultDelayMs: 5 },
