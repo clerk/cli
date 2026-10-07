@@ -16,7 +16,7 @@
  * discovered when nobody can sign in.
  */
 
-import { throwUsageError } from "../../../lib/errors.ts";
+import { CliError, throwUsageError } from "../../../lib/errors.ts";
 import { loggedFetch } from "../../../lib/fetch.ts";
 import { dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
@@ -200,7 +200,12 @@ export async function fetchAllWorkOsUsers(options: {
   // Counted in pages rather than users: a short page would knock a
   // `users % N` check off its multiple and silence every later one.
   for (let pages = 1; page.after; pages++) {
-    page = await fetchWorkOsPage(options.apiKey, page.after);
+    const cursor = page.after;
+    page = await fetchWorkOsPage(options.apiKey, cursor);
+    // A cursor that does not move would refetch the same page forever.
+    if (page.after === cursor) {
+      throw new CliError(`WorkOS returned the same pagination cursor twice (${cursor}).`);
+    }
     all.push(...page.users);
     options.spinner?.update(`Fetching users from WorkOS: ${all.length} so far...`);
     if (!isHuman() && pages % USER_PROGRESS_EVERY_PAGES === 0) {
