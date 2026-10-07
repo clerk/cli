@@ -135,6 +135,7 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
         withSpinner("Reading auth.users...", async () =>
           withDbClient(connectionString, "supabase", fetchSupabaseUsers),
         ),
+      options,
     );
 
     const run = await startExportRun(options, { platform: "supabase" });

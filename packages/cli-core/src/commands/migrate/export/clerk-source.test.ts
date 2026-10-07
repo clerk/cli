@@ -213,6 +213,25 @@ describe("resolveClerkSource", () => {
     expect(mockSearch).not.toHaveBeenCalled();
   });
 
+  // `--json` never prompts, even at a terminal: it takes what an agent would.
+  test("--json takes the resolved instance without prompting", async () => {
+    stubResolved("my-app (production)");
+
+    const source = await resolveClerkSource({ json: true });
+
+    expect(source.secretKey).toBe("sk_test_resolved");
+    expect(mockSearch).not.toHaveBeenCalled();
+  });
+
+  test("--json in an unlinked directory fails rather than opening the picker", async () => {
+    const failure = new CliError("No secret key found.", { code: ERROR_CODE.NO_SECRET_KEY });
+    mockDescribeBapiTarget.mockRejectedValue(failure);
+
+    await expect(resolveClerkSource({ json: true })).rejects.toThrow(failure);
+
+    expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
+  });
+
   test("an unlinked directory picks an application instead of failing", async () => {
     mockDescribeBapiTarget.mockRejectedValue(
       new CliError("No secret key found.", { code: ERROR_CODE.NO_SECRET_KEY }),

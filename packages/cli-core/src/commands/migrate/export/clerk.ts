@@ -254,6 +254,7 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
     secretKey: options.secretKey,
     app: options.app,
     instance: options.instance,
+    json: options.json,
   });
 
   await withGutter("Exporting users from Clerk", async () => {
