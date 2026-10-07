@@ -7,7 +7,7 @@
   },
   "type": "module",
   "scripts": {
-    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node --external @napi-rs/keyring --minify",
+    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node --external @napi-rs/keyring --external bun --external bun:sqlite --minify",
     "build:compile": "bun build --compile --minify --no-compile-autoload-dotenv --no-compile-autoload-bunfig ./src/cli.ts --outfile ./dist/clerk",
     "dev": "bun run ./src/cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
