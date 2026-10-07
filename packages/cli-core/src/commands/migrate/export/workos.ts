@@ -250,11 +250,14 @@ export async function fetchWorkOsIdentities(
   apiKey: string,
   userId: string,
 ): Promise<WorkOsIdentity[]> {
-  const response = await loggedFetch(new URL(`${API_BASE}/users/${userId}/identities`), {
-    tag: "workos",
-    method: "GET",
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-  });
+  const response = await loggedFetch(
+    new URL(`${API_BASE}/users/${encodeURIComponent(userId)}/identities`),
+    {
+      tag: "workos",
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+    },
+  );
 
   if (!response.ok) {
     throwApiFailure(
