@@ -45,6 +45,7 @@ describe("registerMigrate", () => {
       "--new-run",
       "--require-password",
       "--skip-legal-checks",
+      "--reserve-unverified",
       "--firebase-signer-key",
       "--firebase-salt-separator",
       "--firebase-rounds",
