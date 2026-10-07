@@ -1,7 +1,7 @@
-import { join } from "node:path";
-import { builders, parseModule } from "magicast";
+import { dirname, join } from "node:path";
+import { detectCodeFormat, parseModule } from "magicast";
 import type { ASTNode } from "magicast";
-import { gte, minVersion } from "semver";
+import { gte, minVersion, valid, validRange } from "semver";
 import {
   addBootstrapHeader,
   authComponentName,
@@ -10,6 +10,7 @@ import {
   findFirstDirMatch,
   hasTailwindStyles,
   indentBlock,
+  insertAfterLastImport,
   jsxAuthComponentMarkup,
   jsxExt,
   safeAddImport,
@@ -22,6 +23,15 @@ import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from
 
 type TanstackBaseDir = "app" | "src";
 
+// 1.168.10 is the first release that names createCsrfMiddleware in its own
+// exports (TanStack/router#7466); it pins @tanstack/react-router 1.170.7.
+// Keep both in sync with @clerk/tanstack-react-start's peer dependencies.
+const MIN_START_VERSION = "1.168.10";
+const MIN_START_RANGE = `^${MIN_START_VERSION}`;
+const MIN_ROUTER_RANGE = "^1.170.7";
+
+type StartVersionCheck = "supported" | "outdated" | "unknown";
+
 type StartScaffoldResult = {
   action: FileAction;
   postInstructions: string[];
@@ -30,6 +40,7 @@ type StartScaffoldResult = {
 type StartFileUpdate =
   | { status: "manual"; needsClerk: boolean }
   | { status: "upgrade"; needsClerk: boolean }
+  | { status: "unverified"; needsClerk: boolean }
   | { status: "unchanged"; content: string }
   | { status: "modified"; content: string; addedCsrf: boolean };
 
@@ -141,13 +152,93 @@ const csrfMiddleware = createCsrfMiddleware({
   filter: (ctx) => ctx.handlerType === "serverFn",
 });
 
-export const startInstance = createStart(() => ({
-  requestMiddleware: [csrfMiddleware, clerkMiddleware()],
-}));
+export const startInstance = createStart(() => {
+  return {
+    requestMiddleware: [csrfMiddleware, clerkMiddleware()],
+  };
+});
 `;
 }
 
-function updateStartFile(content: string, startVersion: string | undefined): StartFileUpdate {
+/** Read the installed version, walking up so hoisted monorepo installs resolve too. */
+async function installedStartVersion(cwd: string): Promise<string | null> {
+  let dir = cwd;
+  while (true) {
+    const file = Bun.file(join(dir, "node_modules/@tanstack/react-start/package.json"));
+    if (await file.exists()) {
+      try {
+        const { version } = (await file.json()) as { version?: unknown };
+        return typeof version === "string" ? version : null;
+      } catch {
+        return null;
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/**
+ * Check whether the app's Start version exports createCsrfMiddleware. Prefers
+ * the installed version; falls back to the lower bound of the declared range.
+ * Specifiers without a usable lower bound (`latest`, `catalog:`, `workspace:*`,
+ * `*`) can't be verified.
+ */
+function checkStartVersion(
+  installed: string | null,
+  specifier: string | undefined,
+): StartVersionCheck {
+  if (installed && valid(installed)) {
+    return gte(installed, MIN_START_VERSION) ? "supported" : "outdated";
+  }
+  if (!specifier || !validRange(specifier)) return "unknown";
+  const minimum = minVersion(specifier);
+  if (!minimum || minimum.version === "0.0.0") return "unknown";
+  return gte(minimum, MIN_START_VERSION) ? "supported" : "outdated";
+}
+
+function startVersionInstruction(check: StartVersionCheck, specifier: string | undefined): string {
+  return check === "outdated"
+    ? `Upgrade @tanstack/react-start to ${MIN_START_RANGE} and @tanstack/react-router to ${MIN_ROUTER_RANGE} before adding CSRF middleware`
+    : `Could not confirm @tanstack/react-start${specifier ? ` (${specifier})` : ""} is ${MIN_START_VERSION} or newer; make sure it's on ${MIN_START_RANGE} and @tanstack/react-router on ${MIN_ROUTER_RANGE} before adding CSRF middleware`;
+}
+
+type CodeStyle = { quote: string; semi: string };
+
+function codeStyle(content: string): CodeStyle {
+  const format = detectCodeFormat(content);
+  return {
+    quote: format.quote === "single" ? "'" : '"',
+    semi: format.useSemi === false ? "" : ";",
+  };
+}
+
+/** Add a named import in the file's style, merging into a one-line import from the same source. */
+function addNamedImport(code: string, source: string, name: string, style: CodeStyle): string {
+  const escaped = source.replace(/[/.]/g, "\\$&");
+  const existing = new RegExp(`^import \\{([^}\\n]*)\\} from (["'])${escaped}\\2`, "m").exec(code);
+  if (existing) {
+    const names = existing[1]!
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (names.includes(name)) return code;
+    const index = names.findIndex((item) => item > name);
+    names.splice(index < 0 ? names.length : index, 0, name);
+    const quote = existing[2]!;
+    return code.replace(
+      existing[0],
+      () => `import { ${names.join(", ")} } from ${quote}${source}${quote}`,
+    );
+  }
+  return insertAfterLastImport(
+    code,
+    `import { ${name} } from ${style.quote}${source}${style.quote}${style.semi}\n`,
+  );
+}
+
+function updateStartFile(content: string, startVersion: StartVersionCheck): StartFileUpdate {
   try {
     const mod = parseModule(content);
     const program = mod.$ast;
@@ -201,17 +292,18 @@ function updateStartFile(content: string, startVersion: string | undefined): Sta
           (property.key.type === "StringLiteral" && property.key.value === "requestMiddleware")),
     );
     if (properties.length > 1) return { status: "manual", needsClerk: true };
-    let property = properties[0];
-    if (!property) {
-      const empty = builders.raw("({ requestMiddleware: [] })").$ast;
-      if (empty.type !== "ObjectExpression") return { status: "manual", needsClerk: true };
-      property = empty.properties[0];
-      config.properties.unshift(property!);
-    }
-    if (property?.type !== "ObjectProperty" || property.value.type !== "ArrayExpression") {
+    const property = properties[0];
+    if (
+      property &&
+      (property.type !== "ObjectProperty" || property.value.type !== "ArrayExpression")
+    ) {
       return { status: "manual", needsClerk: true };
     }
-    const middleware = property.value.elements;
+    const array = property?.value.type === "ArrayExpression" ? property.value : null;
+    const middleware = array?.elements ?? [];
+    if (middleware.some((element) => element === null)) {
+      return { status: "manual", needsClerk: true };
+    }
     const hasClerk = middleware.some(
       (element) =>
         element?.type === "CallExpression" &&
@@ -255,9 +347,11 @@ function updateStartFile(content: string, startVersion: string | undefined): Sta
       );
 
     if (!hasCsrf) {
-      const minimum = startVersion ? minVersion(startVersion) : null;
-      if (!minimum || !gte(minimum, "1.168.0")) {
-        return { status: "upgrade", needsClerk: !hasClerk };
+      if (startVersion !== "supported") {
+        return {
+          status: startVersion === "outdated" ? "upgrade" : "unverified",
+          needsClerk: !hasClerk,
+        };
       }
       // Only an empty array or the old Clerk-only array is safe to rewrite automatically.
       if (
@@ -267,33 +361,67 @@ function updateStartFile(content: string, startVersion: string | undefined): Sta
       ) {
         return { status: "manual", needsClerk: !hasClerk };
       }
-      const declaration = parseModule(
-        'const csrfMiddleware = createCsrfMiddleware({ filter: (ctx) => ctx.handlerType === "serverFn" });',
-      ).$ast;
-      const csrfElement = builders.raw("csrfMiddleware").$ast;
-      if (declaration.type !== "Program" || csrfElement.type !== "Identifier") {
-        return { status: "manual", needsClerk: !hasClerk };
-      }
-      const insertAt = program.body.findIndex(
-        (statement) => statement.type !== "ImportDeclaration",
-      );
-      program.body.splice(insertAt < 0 ? program.body.length : insertAt, 0, declaration.body[0]!);
-      middleware.unshift(csrfElement);
-    }
-
-    if (!hasClerk) {
-      const clerkCall = builders.raw("clerkMiddleware()").$ast;
-      if (clerkCall.type !== "CallExpression") return { status: "manual", needsClerk: true };
-      middleware.push(clerkCall);
     }
     if (hasClerk && hasCsrf) return { status: "unchanged", content };
 
-    let result = mod.generate().code;
+    // Splice text at the AST positions instead of regenerating the module, so
+    // the rest of the file keeps its exact formatting.
+    const before = hasCsrf ? [] : ["csrfMiddleware"];
+    const after = hasClerk ? [] : ["clerkMiddleware()"];
+    const edits: { at: number; text: string }[] = [];
+    const first = middleware[0];
+    const last = middleware.at(-1);
+    if (array && first && last) {
+      // Keep one element per line when the array is already split across lines.
+      const separator =
+        first.loc!.start.line === array.loc!.start.line
+          ? ", "
+          : `,\n${" ".repeat(first.loc!.start.column)}`;
+      if (before.length > 0) {
+        edits.push({ at: first.start!, text: `${before.join(separator)}${separator}` });
+      }
+      if (after.length > 0) {
+        edits.push({ at: last.end!, text: `${separator}${after.join(separator)}` });
+      }
+    } else if (array) {
+      edits.push({ at: array.start! + 1, text: [...before, ...after].join(", ") });
+    } else {
+      const entry = `requestMiddleware: [${[...before, ...after].join(", ")}]`;
+      const firstProperty = config.properties[0];
+      edits.push(
+        firstProperty
+          ? {
+              at: firstProperty.start!,
+              text: `${entry},\n${" ".repeat(firstProperty.loc!.start.column)}`,
+            }
+          : { at: config.start! + 1, text: ` ${entry} ` },
+      );
+    }
+    if (edits.some((edit) => !Number.isInteger(edit.at))) {
+      return { status: "manual", needsClerk: !hasClerk };
+    }
+    let result = content;
+    for (const edit of edits.sort((a, b) => b.at - a.at)) {
+      result = result.slice(0, edit.at) + edit.text + result.slice(edit.at);
+    }
+
+    const style = codeStyle(content);
     if (!hasImport("@clerk/tanstack-react-start/server", "clerkMiddleware")) {
-      result = safeAddImport(result, "@clerk/tanstack-react-start/server", "clerkMiddleware");
+      result = addNamedImport(
+        result,
+        "@clerk/tanstack-react-start/server",
+        "clerkMiddleware",
+        style,
+      );
     }
     if (!hasCsrf) {
-      result = safeAddImport(result, "@tanstack/react-start", "createCsrfMiddleware");
+      result = addNamedImport(result, "@tanstack/react-start", "createCsrfMiddleware", style);
+      const declaration = `const csrfMiddleware = createCsrfMiddleware({\n  filter: (ctx) => ctx.handlerType === ${style.quote}serverFn${style.quote},\n})${style.semi}\n`;
+      result = insertAfterLastImport(result, `\n${declaration}`);
+      // Keep a blank line between the new declaration and the code after it.
+      result = result.replace(declaration, (match, offset: number, code: string) =>
+        code[offset + match.length] === "\n" ? match : `${match}\n`,
+      );
     }
     return { status: "modified", content: result, addedCsrf: !hasCsrf };
   } catch {
@@ -306,9 +434,24 @@ async function scaffoldStartServer(
   baseDir: TanstackBaseDir,
 ): Promise<StartScaffoldResult> {
   const serverPath = await findStartFile(ctx, baseDir);
+  const specifier = ctx.deps["@tanstack/react-start"];
+  const startVersion = checkStartVersion(await installedStartVersion(ctx.cwd), specifier);
 
   if (!serverPath) {
     const newPath = `${baseDir}/start.ts`;
+    if (startVersion !== "supported") {
+      return {
+        action: {
+          type: "skip",
+          path: newPath,
+          skipReason: `Needs @tanstack/react-start ${MIN_START_RANGE} for CSRF middleware`,
+        },
+        postInstructions: [
+          startVersionInstruction(startVersion, specifier),
+          `Then create ${newPath} that registers createCsrfMiddleware({ filter: (ctx) => ctx.handlerType === "serverFn" }) and clerkMiddleware() in requestMiddleware, in that order`,
+        ],
+      };
+    }
     return {
       action: {
         path: newPath,
@@ -321,19 +464,17 @@ async function scaffoldStartServer(
   }
 
   const content = await Bun.file(join(ctx.cwd, serverPath)).text();
-  const update = updateStartFile(content, ctx.deps["@tanstack/react-start"]);
+  const update = updateStartFile(content, startVersion);
   const postInstructions: string[] = [];
 
-  if (update.status === "manual" || update.status === "upgrade") {
+  if (update.status === "manual" || update.status === "upgrade" || update.status === "unverified") {
     if (update.needsClerk) {
       postInstructions.push(
         `Add clerkMiddleware() from @clerk/tanstack-react-start/server to requestMiddleware in ${serverPath}, after any CSRF middleware`,
       );
     }
-    if (update.status === "upgrade") {
-      postInstructions.push(
-        "Upgrade @tanstack/react-start to ^1.168.0 and @tanstack/react-router to ^1.170.0 before adding CSRF middleware",
-      );
+    if (update.status !== "manual") {
+      postInstructions.push(startVersionInstruction(startVersion, specifier));
     }
     postInstructions.push(
       `In ${serverPath}, register createCsrfMiddleware({ filter: (ctx) => ctx.handlerType === "serverFn" }) before clerkMiddleware() in requestMiddleware if equivalent CSRF protection is not already configured`,

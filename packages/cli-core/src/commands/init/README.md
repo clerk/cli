@@ -169,12 +169,14 @@ Nuxt's module system auto-configures middleware and auto-imports components.
 
 ### TanStack Start
 
-| Action        | File                       | Description                                                 |
-| ------------- | -------------------------- | ----------------------------------------------------------- |
-| CREATE/MODIFY | `src/start.ts`             | Add Clerk middleware; new files also enable CSRF protection |
-| MODIFY        | `src/routes/__root.tsx`    | Add `ClerkProvider` and wrap body contents                  |
-| CREATE        | `src/routes/sign-in.$.tsx` | Sign-in route with `<SignIn />` component                   |
-| CREATE        | `src/routes/sign-up.$.tsx` | Sign-up route with `<SignUp />` component                   |
+| Action        | File                       | Description                                     |
+| ------------- | -------------------------- | ----------------------------------------------- |
+| CREATE/MODIFY | `src/start.ts`             | Register CSRF middleware, then Clerk middleware |
+| MODIFY        | `src/routes/__root.tsx`    | Add `ClerkProvider` and wrap body contents      |
+| CREATE        | `src/routes/sign-in.$.tsx` | Sign-in route with `<SignIn />` component       |
+| CREATE        | `src/routes/sign-up.$.tsx` | Sign-up route with `<SignUp />` component       |
+
+CSRF middleware needs `@tanstack/react-start` 1.168.10 or later. When the version is older or can't be confirmed, or an existing `start.ts` can't be edited safely, `clerk init` leaves the file unchanged and prints the manual steps.
 
 ### Astro
 
