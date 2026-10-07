@@ -39,6 +39,7 @@ describe("registerMigrate", () => {
     "--allow-partial",
     "--new-run",
     "--require-password",
+    "--reserve-unverified",
     "--json",
     "--firebase-signer-key",
     "--firebase-salt-separator",

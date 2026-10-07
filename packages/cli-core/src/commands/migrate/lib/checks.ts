@@ -104,6 +104,8 @@ export type CheckInput = {
    * sending `skip_legal_checks`. Without it they are rejected.
    */
   skipLegalChecks?: boolean;
+  /** Unverified identifiers are created reserved, so they meet a requirement. */
+  reserveUnverified?: boolean;
   /**
    * Clerk IDs a continued run found behind its own in-flight creates: finding
    * them in the instance is expected.
@@ -160,21 +162,32 @@ export function hashShapeProblem(password: string, hasher: string): string | und
  *
  * An email or phone counts only when it is verified: an unverified one is
  * attached after the user exists, so it cannot satisfy a sign-up requirement.
+ * With `reserveUnverified` it goes on the create as reserved, which does.
  */
 function missingRequiredIdentifier(
   user: User,
   settings: UserSettingsJSON | null,
+  reserveUnverified = false,
 ): string | undefined {
   if (!settings) return undefined;
   const required = (attribute: AttributeName) => isRequired(settings, attribute);
   const identifiers = splitIdentifiers(user);
+  const reserved = (unverified: string[]) => reserveUnverified && unverified.length > 0;
 
-  if (required("email_address") && !identifiers.primaryEmail) {
+  if (
+    required("email_address") &&
+    !identifiers.primaryEmail &&
+    !reserved(identifiers.unverifiedEmails)
+  ) {
     return identifiers.unverifiedEmails.length > 0
       ? "only has an unverified email, and this instance requires an email"
       : "no email, which this instance requires";
   }
-  if (required("phone_number") && !identifiers.primaryPhone) {
+  if (
+    required("phone_number") &&
+    !identifiers.primaryPhone &&
+    !reserved(identifiers.unverifiedPhones)
+  ) {
     return identifiers.unverifiedPhones.length > 0
       ? "only has an unverified phone number, and this instance requires one"
       : "no phone number, which this instance requires";
@@ -796,7 +809,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       (refused.length > 0 && !hasAnyIdentifier(user)
         ? "only has emails Clerk refuses (malformed, or a domain that can't receive mail)"
         : undefined) ??
-      missingRequiredIdentifier(user, input.settings) ??
+      missingRequiredIdentifier(user, input.settings, input.reserveUnverified) ??
       // Stripping the identifiers the instance has off can leave nothing to
       // sign in with; Clerk would still create the user.
       (!hasAnyIdentifier(dropDisabledIdentifiers(user, input.settings))

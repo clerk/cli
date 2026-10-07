@@ -10,6 +10,9 @@
  * - A user whose only email is unverified, imported into an instance that
  *   requires an email, is refused by Clerk. The import's checks reject that
  *   user up front on the strength of this test, so it checks both halves.
+ * - The same user imported with `--reserve-unverified` is created, with that
+ *   email reserved and primary. The checks let them through on the strength
+ *   of this test.
  *
  * Requires `CLERK_PLATFORM_API_KEY` and `CLERK_CLI_TEST_APP_ID`. Locally, run
  * via `bun run test:e2e:op` so 1Password resolves both in-memory.
@@ -248,6 +251,39 @@ test("a user whose only email is unverified is refused where email is required",
     expect.objectContaining({
       status: "skipped",
       reason: "only has an unverified email, and this instance requires an email",
+    }),
+  ]);
+}, 60_000);
+
+test("--reserve-unverified creates an unverified-only user with the email reserved", async () => {
+  const hex = randomBytes(6).toString("hex");
+  const email = `e2e-${hex}+clerk_test@clerkcookie.com`;
+  const file = writeExport([{ id: `sb_${hex}`, email }]);
+
+  const imported = await cli([
+    "migrate",
+    "import",
+    file,
+    "--source",
+    "supabase",
+    "--reserve-unverified",
+    "--yes",
+    "--json",
+  ]);
+  const { run } = JSON.parse(imported.stdout.toString()) as { run: { id: string } };
+  const [line] = latestLines(run.id);
+  expect(line).toMatchObject({ status: "created" });
+
+  const fetched = await cli(["api", `/users/${line?.clerkId as string}`]);
+  const user = JSON.parse(fetched.stdout.toString()) as {
+    primary_email_address_id: string;
+    email_addresses: { id: string; email_address: string; reserved: boolean }[];
+  };
+  expect(user.email_addresses).toEqual([
+    expect.objectContaining({
+      id: user.primary_email_address_id,
+      email_address: email,
+      reserved: true,
     }),
   ]);
 }, 60_000);

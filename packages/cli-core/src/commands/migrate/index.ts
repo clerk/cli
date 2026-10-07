@@ -76,6 +76,10 @@ export function registerMigrate(program: Program): void {
       "--skip-legal-checks",
       "Import users with no legal acceptance on record into an instance that requires it",
     )
+    .option(
+      "--reserve-unverified",
+      "Create emails and phones the source never verified as reserved (usable for sign-in, locked to the user) instead of unverified",
+    )
     .option("--firebase-signer-key <key>", "Firebase base64 signer key (overrides the export file)")
     .option("--firebase-salt-separator <separator>", "Firebase base64 salt separator")
     .option("--firebase-rounds <n>", "Firebase scrypt rounds", (value: string) =>

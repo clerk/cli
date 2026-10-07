@@ -83,6 +83,42 @@ describe("buildCreateUserBody", () => {
     ]);
   });
 
+  // Only the create can make a reserved identifier, so it goes here, after the
+  // verified primary, with a status per address in the same order.
+  test("sends unverified identifiers reserved when asked, in order", () => {
+    const target = user({
+      email: "a@x.dev",
+      unverifiedEmailAddresses: ["c@x.dev"],
+      unverifiedPhoneNumbers: ["+15555550101"],
+    });
+    expect(buildCreateUserBody(target, splitIdentifiers(target), true, true)).toMatchObject({
+      email_address: ["a@x.dev", "c@x.dev"],
+      email_address_identification_status: ["verified", "reserved"],
+      phone_number: ["+15555550101"],
+      phone_number_identification_status: ["reserved"],
+    });
+  });
+
+  test("makes a reserved email the primary when there is no verified one", () => {
+    const target = user({ email: undefined, unverifiedEmailAddresses: ["c@x.dev"] });
+    expect(buildCreateUserBody(target, splitIdentifiers(target), true, true)).toMatchObject({
+      email_address: ["c@x.dev"],
+      email_address_identification_status: ["reserved"],
+    });
+  });
+
+  test("sends no status arrays by default, or with nothing to reserve", () => {
+    const unverified = user({ unverifiedEmailAddresses: ["c@x.dev"] });
+    const body = buildCreateUserBody(unverified, splitIdentifiers(unverified), true);
+    expect(body.email_address).toEqual(["a@x.dev"]);
+    expect(body).not.toHaveProperty("email_address_identification_status");
+
+    const verified = user();
+    expect(
+      buildCreateUserBody(verified, splitIdentifiers(verified), true, true),
+    ).not.toHaveProperty("email_address_identification_status");
+  });
+
   // Allowlists and blocklists police sign-ups; these users already signed up.
   test("skips the instance's sign-up restrictions", () => {
     expect(buildCreateUserBody(user(), splitIdentifiers(user()), true)).toMatchObject({
@@ -265,6 +301,29 @@ describe("importUsers", () => {
       { user_id: "user_created", email_address: "c@x.dev", primary: false, verified: false },
     ]);
     expect(requests.filter((r) => r.url.endsWith("/v1/phone_numbers"))).toHaveLength(1);
+  });
+
+  test("creates unverified identifiers reserved rather than attaching them", async () => {
+    stub(() => ok("user_created"));
+
+    await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"], unverifiedEmailAddresses: ["c@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      reserveUnverified: true,
+    });
+
+    expect(requests.find((r) => r.url.endsWith("/v1/users"))?.body).toMatchObject({
+      email_address: ["a@x.dev", "c@x.dev"],
+      email_address_identification_status: ["verified", "reserved"],
+    });
+    expect(
+      requests.filter((r) => r.url.endsWith("/v1/email_addresses")).map((r) => r.body),
+    ).toEqual([
+      { user_id: "user_created", email_address: "b@x.dev", primary: false, verified: true },
+    ]);
+    expect(lines.at(-1)).not.toHaveProperty("pending");
   });
 
   test("marks a user whose password the source dropped", async () => {
@@ -452,6 +511,32 @@ describe("importUsers", () => {
     expect(lines.at(-1)?.error).toContain(
       `Failed to add phone +31612345678: ${clerkErr.long_message}`,
     );
+  });
+
+  test("drops a refused phone's statuses with it", async () => {
+    stub((url, attempt) =>
+      url.endsWith("/v1/users") && attempt === 1
+        ? new Response(
+            JSON.stringify({
+              errors: [{ code: "x", message: "bad phone", meta: { param_name: "phone_number" } }],
+            }),
+            { status: 422 },
+          )
+        : ok("user_created"),
+    );
+
+    await importUsers({
+      users: [user({ unverifiedPhoneNumbers: ["+31612345678"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      reserveUnverified: true,
+    });
+
+    expect(requests[0]?.body).toHaveProperty("phone_number_identification_status");
+    expect(requests[1]?.body).not.toHaveProperty("phone_number");
+    expect(requests[1]?.body).not.toHaveProperty("phone_number_identification_status");
+    expect(lines.at(-1)?.error).toContain("Failed to add phone +31612345678");
   });
 
   test("does not retry without the phone when it is the only identifier", async () => {

@@ -17,6 +17,8 @@ import { listageStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 const mockSelect = mock(async () => "clerk" as unknown);
 const mockText = mock(async () => "export.json" as unknown);
 let confirmAnswer = true;
+/** The answer to the reserved-identifiers question, apart from consent. */
+let reserveAnswer = true;
 /** Every confirmation the run put up, in order — the wording is the assertion. */
 let confirmMessages: string[] = [];
 let originalMode: string | undefined;
@@ -31,7 +33,7 @@ mock.module("../../lib/listage.ts", () => ({
 mock.module("../../lib/prompts.ts", () => ({
   confirm: async ({ message }: { message: string }) => {
     confirmMessages.push(message);
-    return confirmAnswer;
+    return message.includes("never verified") ? reserveAnswer : confirmAnswer;
   },
   multiselect: async () => [],
   text: (...args: unknown[]) => mockText(...(args as [])),
@@ -50,7 +52,7 @@ let workDir: string;
 let configDir: string;
 let originalCwd: string;
 let originalFetch: typeof globalThis.fetch;
-let requests: { method: string; url: string }[];
+let requests: { method: string; url: string; body: unknown }[];
 
 const EXPORT = [
   { id: "u1", primary_email_address: "a@x.dev" },
@@ -83,6 +85,7 @@ afterAll(() => {
 beforeEach(() => {
   requests = [];
   confirmAnswer = true;
+  reserveAnswer = true;
   confirmMessages = [];
   mockSelect.mockReset();
   mockText.mockReset();
@@ -94,7 +97,11 @@ beforeEach(() => {
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(input.toString());
     const method = init?.method ?? "GET";
-    requests.push({ method, url: url.toString() });
+    requests.push({
+      method,
+      url: url.toString(),
+      body: init?.body ? JSON.parse(init.body as string) : null,
+    });
     if (url.pathname === "/v1/instance") {
       return Response.json({ object: "instance", id: "ins_1", environment_type: "development" });
     }
@@ -209,5 +216,52 @@ describe("consent", () => {
 
     await expect(run(importOptions)).rejects.toThrow(/1 user would be rejected/);
     expect(created()).toHaveLength(0);
+  });
+});
+
+describe("unverified identifiers", () => {
+  const withUnverified = [
+    { id: "u1", primary_email_address: "a@x.dev" },
+    { id: "u2", primary_email_address: "b@x.dev", unverified_email_addresses: "c@x.dev" },
+  ];
+  const statuses = () =>
+    created().map((r) => (r.body as Record<string, unknown>)?.email_address_identification_status);
+
+  beforeEach(() => {
+    fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(withUnverified));
+  });
+
+  test("asks whether to reserve them, before consent, and a yes creates them reserved", async () => {
+    await run(importOptions);
+
+    expect(confirmMessages).toEqual([
+      "1 user has an email or phone the source never verified. Create them reserved (usable for sign-in, locked to the user) instead of unverified?",
+      "Import 2 users?",
+    ]);
+    expect(statuses()).toEqual([undefined, ["verified", "reserved"]]);
+  });
+
+  test("a no keeps them unverified, attached after the user exists", async () => {
+    reserveAnswer = false;
+
+    await run(importOptions);
+
+    expect(statuses()).toEqual([undefined, undefined]);
+    expect(requests.some((r) => new URL(r.url).pathname === "/v1/email_addresses")).toBe(true);
+  });
+
+  // `-y` is consent to write, not a yes to making unconfirmed addresses usable.
+  test("--yes does not ask, and keeps them unverified", async () => {
+    await run({ ...importOptions, yes: true });
+
+    expect(confirmMessages).toEqual([]);
+    expect(statuses()).toEqual([undefined, undefined]);
+  });
+
+  test("--reserve-unverified does not ask, and creates them reserved", async () => {
+    await run({ ...importOptions, reserveUnverified: true });
+
+    expect(confirmMessages).toEqual(["Import 2 users?"]);
+    expect(statuses()).toEqual([undefined, ["verified", "reserved"]]);
   });
 });
