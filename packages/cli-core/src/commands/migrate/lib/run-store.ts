@@ -131,6 +131,11 @@ export type UserLine = {
    */
   code?: string;
   passwordDropped?: boolean;
+  /**
+   * On a `creating` line: the create sent this user's unverified identifiers
+   * reserved. A continued run that adopts the user attaches none of them.
+   */
+  reserved?: boolean;
 };
 
 /** What `runs` shows for a run: its stored status, or how it stopped. */
