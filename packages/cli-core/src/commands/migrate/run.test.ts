@@ -385,7 +385,7 @@ describe("run", () => {
         "only has an unverified email, and this instance requires an email",
       );
       expect(captured.err).toContain(
-        `clerk config patch --instance ins_1 --json '{"auth_email":{"required_for_sign_up":false}}'`,
+        `clerk config patch --app <app_id> --instance ins_1 --json '{"auth_email":{"required_for_sign_up":false}}'`,
       );
     });
 

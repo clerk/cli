@@ -273,8 +273,9 @@ after them. They sort the users three ways:
     15, `scrypt_firebase`, `argon2i`/`argon2id` and `scrypt_werkzeug` are
     checked; other hashers are not, and Clerk refuses a bad one at create)
   - Supabase: its only providers are ones Clerk has off, or doesn't offer at all
-    (Figma, Kakao, Keycloak, WorkOS, Zoom, Fly). The checks offer to turn on
-    the first kind; nothing can turn on the second
+    (Figma, Kakao, Keycloak, WorkOS, Zoom, Fly), and it has no verified email or
+    phone the instance signs in with by code or link. The checks offer to turn
+    on the first kind; nothing can turn on the second
   - its source ID, email, phone or username repeats an earlier user in the file
     that passes the checks above. Usernames compare case-insensitively and
     phones ignore punctuation. The first record in the file is kept, whatever
@@ -316,7 +317,9 @@ Or change the instance instead
 ```
 
 Each fix names its instance with `--instance`, so it changes the instance the
-import targets, whatever the key's source. When Clerk could not name the
+import targets, whatever the key's source. A key from `--secret-key` or
+`CLERK_SECRET_KEY` names no app, so its fix reads `--app <app_id>`: fill in the
+app that owns the instance. When Clerk could not name the
 instance (a `key_…` fallback ID), the fix points at the Dashboard instead: in
 `--json` it carries `url` in place of `command`.
 
