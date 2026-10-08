@@ -219,7 +219,7 @@ function acquireLock(runsDir: string, id: string): void {
       `Run ${id} is in use by another process${holder ? ` (PID ${holder})` : ""}. Wait for it to finish, then try again. ` +
         `If that process is not a migrate run, delete ${file}.`,
     );
-  const take = () => fs.writeFileSync(file, String(process.pid), { flag: "wx" });
+  const take = () => fs.writeFileSync(file, String(process.pid), { flag: "wx", mode: 0o600 });
 
   try {
     take();
@@ -286,7 +286,7 @@ function writeRecord(runsDir: string, record: RunRecord): void {
   const file = path.join(runDir(runsDir, record.id), RUN_FILE);
   // Written whole and renamed into place, so a reader never sees half a file.
   const temp = `${file}.tmp`;
-  fs.writeFileSync(temp, `${JSON.stringify(record, null, 2)}\n`);
+  fs.writeFileSync(temp, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   fs.renameSync(temp, file);
 }
 
@@ -329,7 +329,8 @@ function openRun(runsDir: string, record: RunRecord): Run {
     // Throws when the line cannot be written: a user created with no record is
     // beyond both `undo` and a re-run, so the create it precedes must not go out.
     append(line) {
-      fs.appendFileSync(usersFile, `${JSON.stringify(line)}\n`);
+      // Owner-only like the folder: the lines carry emails and phones.
+      fs.appendFileSync(usersFile, `${JSON.stringify(line)}\n`, { mode: 0o600 });
     },
     update(patch) {
       run.record = { ...run.record, ...patch };

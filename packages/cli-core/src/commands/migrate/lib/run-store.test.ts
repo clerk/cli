@@ -179,4 +179,13 @@ describe("locks", () => {
     const run = startRun(runsDir, init);
     expect(fs.statSync(run.dir).mode & 0o777).toBe(0o700);
   });
+
+  // In case a folder's mode is ever looser than the run store sets it.
+  test("run files are owner-only", () => {
+    const run = startRun(runsDir, init);
+    run.append({ sourceId: "u1", status: "creating" });
+    for (const file of ["run.json", "users.ndjson", "lock"]) {
+      expect(fs.statSync(path.join(run.dir, file)).mode & 0o777).toBe(0o600);
+    }
+  });
 });
