@@ -70,7 +70,12 @@ describe("validateRunOptions", () => {
 
 type Stub = {
   /** What `/v1/environment` reports; `null` makes the settings unreadable. */
-  settings?: { attributes?: object; social?: object; sign_up?: object } | null;
+  settings?: {
+    attributes?: object;
+    social?: object;
+    sign_up?: object;
+    enterprise_sso?: object;
+  } | null;
   /** Users already in the instance, as `GET /v1/users` returns them. */
   existing?: {
     id: string;
@@ -394,7 +399,11 @@ describe("run", () => {
 
     test("a user whose only email is unverified is rejected where email is required, with a fix", async () => {
       stubClerk({
-        settings: { attributes: { email_address: { enabled: true, required: true } } },
+        settings: {
+          attributes: { email_address: { enabled: true, required: true } },
+          // A way in besides a password, so users without one import.
+          enterprise_sso: { enabled: true },
+        },
       });
       fs.writeFileSync(
         path.join(workDir, "export.json"),
@@ -410,7 +419,7 @@ describe("run", () => {
         "only has an unverified email, and this instance requires an email",
       );
       expect(captured.err).toContain(
-        `clerk config patch --app <app_id> --instance ins_1 --json '{"auth_email":{"required_for_sign_up":false}}'`,
+        `clerk config patch --app APP_ID --instance ins_1 --json '{"auth_email":{"required_for_sign_up":false}}'`,
       );
     });
 
@@ -419,6 +428,8 @@ describe("run", () => {
         settings: {
           attributes: { email_address: { enabled: true } },
           sign_up: { legal_consent_enabled: true },
+          // A way in besides a password, so users without one import.
+          enterprise_sso: { enabled: true },
         },
       });
 
@@ -465,6 +476,8 @@ describe("run", () => {
         settings: {
           attributes: { email_address: { enabled: true } },
           social: { oauth_google: { enabled: true } },
+          // A way in besides a password, so users without one import.
+          enterprise_sso: { enabled: true },
         },
       });
       fs.writeFileSync(

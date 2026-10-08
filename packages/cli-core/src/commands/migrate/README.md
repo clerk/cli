@@ -258,18 +258,23 @@ after them. They sort the users three ways:
   - it lacks an identifier the instance requires. An email or phone counts
     only when it is verified, because an unverified one is attached after the
     user exists
-  - it has no identifier left once those the instance has turned off are
-    stripped
+  - it has no identifier left once the emails and phones Clerk would refuse
+    are stripped: those of an instance that neither has them on nor signs in
+    or does MFA with them. A username is kept: Clerk stores it with usernames
+    off
   - it lacks a first or last name the instance requires
   - it has an authenticator app secret or backup codes, and the instance has
     that turned off. Importing it without them would take away its second
     factor, so the checks offer to turn the setting on instead
   - it has no password, and password is the instance's only way to sign in
+    (no code, link, social or SSO sign-in; a passkey or a password reset does
+    not count, as in Clerk)
   - it has no legal acceptance on record, and the instance requires legal
     consent. `--skip-legal-checks`, or a yes at the prompt, imports these users
     without it (`skip_legal_checks`), with a warning
   - its username breaks the instance's username rules (length, letters,
-    the allowed special characters)
+    the allowed special characters). The checks offer the setting that allows
+    it. With usernames off, such a username is dropped instead, with a warning
   - its password is not the shape its hasher says (`bcrypt`, with a cost up to
     15, `scrypt_firebase`, `argon2i`/`argon2id` and `scrypt_werkzeug` are
     checked; other hashers are not, and Clerk refuses a bad one at create)
@@ -277,8 +282,10 @@ after them. They sort the users three ways:
     (Figma, Kakao, Keycloak, WorkOS, Zoom, Fly), and it has no verified email or
     phone the instance signs in with by code or link. The checks offer to turn
     on the first kind; nothing can turn on the second
-  - its source ID, email, phone or username repeats an earlier user in the file
-    that passes the checks above. Usernames compare case-insensitively and
+  - its source ID, primary email, primary phone or username repeats an
+    earlier user in the file that passes the checks above. Only what the
+    create sends counts: an extra email is attached after it, and a stripped
+    one never goes out. Usernames compare case-insensitively and
     phones ignore punctuation. The first record in the file is kept, whatever
     either holds, and the reject names it (`kept: …`)
   - the instance already has a user with its source ID, email, phone or
@@ -287,11 +294,12 @@ after them. They sort the users three ways:
   - a development instance: it is past the 100-user headroom
     (`CLERK_MIGRATE_DEV_USER_LIMIT` when Clerk raised it), counted in file
     order
-- **Imported, but not everything comes across** — fields the instance is not
-  set up to store, fields Clerk has no place for (`Clerk won't store: …`),
-  passwords a source had to drop, emails Clerk refuses (malformed, or a domain
-  that can't receive mail), and names Clerk refuses (a phone number, URL or
-  HTML).
+- **Imported, but not everything comes across** — emails or phones the
+  instance is not set up to store, fields Clerk has no place for (`Clerk won't
+store: …`), passwords a source had to drop, emails Clerk refuses (malformed,
+  or a domain that can't receive mail), and names Clerk refuses (a phone
+  number, a URL, HTML, blank, or over 256 bytes). A password, username or name
+  whose setting is off is stored, and works or shows once it is turned on.
 - **Imported** — everyone else.
 
 Any reject stops the import, and it exits 2 with the command that adds
@@ -306,7 +314,7 @@ Checks
       12: only has an unverified email, and this instance requires an email
          u_17, u_22, u_40, u_51, u_88, and 7 more
   ⚠ Imported, but not everything comes across
-      6 users have a username, which this instance is not set up to store
+      6 users have a username, which this instance does not use: it is stored, and works only once usernames are turned on
       Clerk won't store: department (120 users)
   ✓ 108 users to import
 
@@ -319,7 +327,7 @@ Or change the instance instead
 
 Each fix names its instance with `--instance`, so it changes the instance the
 import targets, whatever the key's source. A key from `--secret-key` or
-`CLERK_SECRET_KEY` names no app, so its fix reads `--app <app_id>`: fill in the
+`CLERK_SECRET_KEY` names no app, so its fix reads `--app APP_ID`: fill in the
 app that owns the instance. When Clerk could not name the
 instance (a `key_…` fallback ID), the fix points at the Dashboard instead: in
 `--json` it carries `url` in place of `command`.

@@ -202,6 +202,8 @@ describe("legal consent", () => {
     instanceSettings = {
       attributes: { email_address: { enabled: true } },
       sign_up: { legal_consent_enabled: true },
+      // A way in besides a password, so users without one import.
+      enterprise_sso: { enabled: true },
     };
   });
 
