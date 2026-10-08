@@ -5,6 +5,7 @@ import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
+import { setAssumeYes } from "../lib/assume-yes.ts";
 import {
   buildFirebaseExport,
   exportFirebase,
@@ -472,6 +473,17 @@ function exportedUsers(): Record<string, unknown>[] {
 }
 
 describe("exportFirebase", () => {
+  // `-y` is "do not prompt", at a terminal too.
+  test("does not ask for a service account key under -y", async () => {
+    process.env.CLERK_MODE = "human";
+    setAssumeYes(true);
+    try {
+      await expect(exportFirebase({})).rejects.toThrow(/cannot prompt here/);
+    } finally {
+      setAssumeYes(false);
+    }
+  });
+
   test("exports end to end and reports coverage", async () => {
     stubFirebase([[fbUser(0), fbUser(1)]], {
       signIn: { hashConfig: { signerKey: "K", saltSeparator: "S", rounds: 8, memoryCost: 14 } },

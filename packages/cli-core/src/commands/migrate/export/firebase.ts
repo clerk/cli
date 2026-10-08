@@ -30,6 +30,7 @@ import { loggedFetch } from "../../../lib/fetch.ts";
 import { log } from "../../../lib/log.ts";
 import { password as passwordPrompt } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
+import { isAssumeYes } from "../lib/assume-yes.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
@@ -151,7 +152,8 @@ export function loadServiceAccount(source: string): ServiceAccount {
 async function resolveServiceAccount(options: ExportFirebaseOptions): Promise<ServiceAccount> {
   if (options.serviceAccount) return loadServiceAccount(options.serviceAccount);
 
-  if (options.json || !isHuman()) {
+  // `-y` is "do not prompt", as for the other exports.
+  if (options.json || isAssumeYes() || !isHuman()) {
     throwUsageError(
       "`clerk migrate export firebase` needs a service account key file and cannot prompt here. " +
         "Pass --service-account <path>.",
