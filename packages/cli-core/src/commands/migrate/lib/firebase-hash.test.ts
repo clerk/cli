@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveFirebaseHashConfig } from "./firebase-hash.ts";
+import { firebaseHashConfigProblem, resolveFirebaseHashConfig } from "./firebase-hash.ts";
 
 const ALL_FLAGS = {
   firebaseSignerKey: "SIGNER",
@@ -53,5 +53,37 @@ describe("on a firebase run", () => {
 
   test("returns nothing when no flag supplies a config", () => {
     expect(resolveFirebaseHashConfig({}, "firebase")).toBeUndefined();
+  });
+});
+
+// Clerk's bounds: clerk_go pkg/hash/scrypt.go.
+describe("firebaseHashConfigProblem", () => {
+  const good = {
+    base64_signer_key: "SIGNER",
+    base64_salt_separator: "Bw==",
+    rounds: 8,
+    mem_cost: 14,
+  };
+
+  test("passes Firebase's usual parameters", () => {
+    expect(firebaseHashConfigProblem(good)).toBeUndefined();
+  });
+
+  test.each([
+    [
+      "a signer key that is not base64",
+      { base64_signer_key: "not base64!" },
+      /signer key is not base64/,
+    ],
+    [
+      "a separator with the digest's $",
+      { base64_salt_separator: "Bw$" },
+      /salt separator is not base64/,
+    ],
+    ["rounds of 0", { rounds: 0 }, /rounds must be a whole number from 1 to 16, not 0/],
+    ["rounds of 17", { rounds: 17 }, /rounds must be a whole number from 1 to 16, not 17/],
+    ["a fractional memory cost", { mem_cost: 14.5 }, /memory cost must be a whole number/],
+  ])("names %s", (_label, change, expected) => {
+    expect(firebaseHashConfigProblem({ ...good, ...change })).toMatch(expected);
   });
 });
