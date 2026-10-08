@@ -625,6 +625,15 @@ function rowsFor(input: CheckInput, users: User[]): Record<string, unknown>[] {
   return input.supabaseRows.filter((row) => ids.has(String(row.id)));
 }
 
+/** Each readiness row's field, with its article: "an email", not "a email". */
+const FIELD_NOUNS: Record<string, string> = {
+  email_address: "an email",
+  phone_number: "a phone number",
+  username: "a username",
+  first_name: "a first name",
+  last_name: "a last name",
+};
+
 function buildWarnings(input: CheckInput, importable: User[]): string[] {
   const warnings: string[] = [];
 
@@ -645,13 +654,13 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
         warnings.push(
           item.key === "password"
             ? `${plural(missing, "user")} without a password, which this instance requires: they sign in another way, such as a code or a social account`
-            : `${plural(missing, "user")} without a ${item.label.toLowerCase()}, which this instance requires`,
+            : `${plural(missing, "user")} without ${FIELD_NOUNS[item.key] ?? item.label.toLowerCase()}, which this instance requires`,
         );
       } else {
         warnings.push(
           item.section === "social"
             ? `${plural(item.userCount, "user")} signed in with ${item.label}, which ${clerkOffersProvider(item.key) ? "is not enabled in Clerk" : "Clerk doesn't offer"}`
-            : `${plural(item.userCount, "user")} ${item.userCount === 1 ? "has" : "have"} a ${item.label.toLowerCase()}, which this instance is not set up to store`,
+            : `${plural(item.userCount, "user")} ${item.userCount === 1 ? "has" : "have"} ${FIELD_NOUNS[item.key] ?? item.label.toLowerCase()}, which this instance is not set up to store`,
         );
       }
     }
