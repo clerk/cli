@@ -20,6 +20,18 @@ function stripDiscriminator(value: unknown): string | undefined {
   return value.replace(DISCORD_DISCRIMINATOR, "").trim() || undefined;
 }
 
+/** The nullable `auth.users` columns, by the field each maps to. */
+const NULLABLE_FIELDS = [
+  "email",
+  "emailConfirmedAt",
+  "password",
+  "phone",
+  "phoneConfirmedAt",
+  "unsafeMetadata",
+  "bannedUntil",
+  "deletedAt",
+] as const;
+
 const supabaseSource = {
   key: "supabase",
   label: "Supabase",
@@ -55,9 +67,10 @@ const supabaseSource = {
   },
   postTransform: (user) => {
     // A CSV export writes SQL NULL as text. Left in, `deleted_at: "NULL"`
-    // skips every user, and `raw_user_meta_data: "NULL"` fails the row.
-    for (const [field, value] of Object.entries(user)) {
-      if (isNullish(value)) delete user[field];
+    // skips every user, and `raw_user_meta_data: "NULL"` fails the row. Only
+    // the nullable `auth.users` columns are cleared: a last name of "Null" stays.
+    for (const field of NULLABLE_FIELDS) {
+      if (isNullish(user[field])) delete user[field];
     }
 
     user.createdAt = toIsoDate(user.createdAt);

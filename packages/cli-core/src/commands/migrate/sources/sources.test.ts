@@ -124,6 +124,19 @@ describe("supabase", () => {
     }
   });
 
+  test("keeps a name that reads as NULL", async () => {
+    const { users } = await load(
+      "supabase",
+      ["id,email,email_confirmed_at,last_name,deleted_at", "s2,b@x.dev,2024-01-01,Null,NULL"].join(
+        "\n",
+      ),
+      "csv",
+    );
+
+    expect(users[0]).toMatchObject({ userId: "s2", lastName: "Null" });
+    expect(users[0]).not.toHaveProperty("skipReason");
+  });
+
   const base = { id: "sb1", email: "a@x.dev", email_confirmed_at: "2024-06-29 20:25:06.126079+00" };
 
   // Supabase accepts argon2 hashes on import, so the hasher is read per user.
