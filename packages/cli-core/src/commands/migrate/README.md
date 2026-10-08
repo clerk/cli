@@ -271,7 +271,12 @@ decides what happens:
 | `undone`                                  | a new run                                                              |
 | has an undo that did not finish           | exits 2, naming the `clerk migrate undo` that finishes it              |
 
-`--new-run` skips the lookup. A run another live process holds exits 2.
+`--new-run` skips the lookup. A run another live process holds exits 2. When
+Clerk cannot name the instance (`GET /v1/instance` failed, often from rate
+limiting right after a large import) and a run of this file exists under a real
+instance ID, it exits 2 rather than starting over: try again, or pass
+`--new-run`. A continue whose run changed while it waited at the prompt, from
+an undo or another continue, exits 2 too, with nothing written.
 
 A continued run also finishes what the last one left open:
 
