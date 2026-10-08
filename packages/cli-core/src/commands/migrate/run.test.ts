@@ -860,6 +860,15 @@ describe("run", () => {
       expect(listRuns(runsDir())).toHaveLength(0);
     });
 
+    // "will create 0 users" hides that the run records the rest as skipped.
+    test("--allow-partial without --yes names the users it would skip", async () => {
+      fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify([{ id: "u3" }]));
+
+      await expect(run({ ...baseOptions, allowPartial: true, yes: false })).rejects.toThrow(
+        "will create 0 users and skip 1 user and needs consent",
+      );
+    });
+
     test("--allow-partial imports the rest and records each reject as skipped", async () => {
       fs.writeFileSync(
         path.join(workDir, "export.json"),
