@@ -406,6 +406,8 @@ describe("importUsers", () => {
     });
 
     expect(summary).toMatchObject({ successful: 1, failed: 0 });
+    // Imported, but the summary has to say the phone was lost.
+    expect([...summary.droppedPhones]).toEqual([[clerkErr.long_message, 1]]);
     expect(requests).toHaveLength(2);
     expect(requests[1]?.body).not.toHaveProperty("phone_number");
     expect(lines.at(-1)?.error).toContain(
