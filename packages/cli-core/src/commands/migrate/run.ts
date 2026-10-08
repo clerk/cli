@@ -200,8 +200,9 @@ export function explainErrors(errors: Iterable<string>, instanceType: InstanceTy
  */
 async function ensureImportTarget(options: MigrateRunOptions): Promise<void> {
   // A secret key names the destination instance on its own, with no account
-  // and no linked directory involved — mirroring resolveBapiSecretKey.
-  if (options.secretKey || process.env.CLERK_SECRET_KEY) return;
+  // and no linked directory involved — mirroring resolveBapiSecretKey, which
+  // takes `--app` over an exported CLERK_SECRET_KEY.
+  if (options.secretKey || (!options.app && process.env.CLERK_SECRET_KEY)) return;
   // `--app` names it too, but resolves its key through the Platform API, which
   // needs an account: it goes through the sign-in below, though not the link.
   // An unclaimed accountless application keeps its only secret key on disk.
