@@ -67,8 +67,21 @@ export function resolveFirebaseHashConfig(
 /** Clerk's bounds on Firebase scrypt costs (clerk_go `pkg/hash/scrypt.go`). */
 const MAX_SCRYPT_COST = 16;
 
-/** Standard or URL-safe base64, as Clerk decodes the two keys. */
-const BASE64 = /^[A-Za-z0-9+/_-]+={0,2}$/;
+/** One whole base64 string: full groups of four, padded only at the end. */
+const STRICT_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+/**
+ * True when Clerk can decode it: it maps the URL-safe alphabet onto the
+ * standard one and pads to a multiple of four (`normalizeBase64` in clerk_go
+ * `pkg/hash/scrypt.go`), then decodes strictly. So `Bw` passes and `A` or
+ * `AAAA=` do not.
+ */
+function decodesLikeClerk(value: string): boolean {
+  let normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const rem = normalized.length % 4;
+  if (rem !== 0) normalized += "=".repeat(4 - rem);
+  return normalized.length > 0 && STRICT_BASE64.test(normalized);
+}
 
 /**
  * What is wrong with a set of Firebase hash parameters, or `undefined`.
@@ -83,7 +96,7 @@ export function firebaseHashConfigProblem(config: FirebaseHashConfig): string | 
     ["salt separator", config.base64_salt_separator],
   ] as const;
   for (const [label, value] of keys) {
-    if (typeof value !== "string" || !BASE64.test(value)) return `the ${label} is not base64`;
+    if (typeof value !== "string" || !decodesLikeClerk(value)) return `the ${label} is not base64`;
   }
   const costs = [
     ["rounds", config.rounds],

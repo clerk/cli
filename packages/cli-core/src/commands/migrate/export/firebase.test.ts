@@ -403,12 +403,12 @@ describe("fetchHashConfig", () => {
   test("reads the project's scrypt parameters", async () => {
     stubFirebase([[]], {
       signIn: {
-        hashConfig: { signerKey: "KEY==", saltSeparator: "Bw==", rounds: 8, memoryCost: 14 },
+        hashConfig: { signerKey: "KEY=", saltSeparator: "Bw==", rounds: 8, memoryCost: 14 },
       },
     });
 
     expect(await fetchHashConfig(account, "tok")).toEqual({
-      signerKey: "KEY==",
+      signerKey: "KEY=",
       saltSeparator: "Bw==",
       rounds: 8,
       memoryCost: 14,
@@ -428,7 +428,7 @@ describe("fetchHashConfig", () => {
   test("leaves out parameters Clerk would refuse, and says so", async () => {
     stubFirebase([[]], {
       signIn: {
-        hashConfig: { signerKey: "KEY==", saltSeparator: "Bw==", rounds: 17, memoryCost: 14 },
+        hashConfig: { signerKey: "KEY=", saltSeparator: "Bw==", rounds: 17, memoryCost: 14 },
       },
     });
     expect(await fetchHashConfig(account, "tok")).toBeNull();
