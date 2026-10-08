@@ -24,7 +24,7 @@ import {
   exportBetterAuth,
   PLUGIN_COLUMNS,
 } from "./betterauth.ts";
-import { buildSupabaseExport } from "./supabase.ts";
+import { buildSupabaseExport, fetchSupabaseUsers } from "./supabase.ts";
 import {
   looksLikeConnectionString,
   normalizeConnectionString,
@@ -519,6 +519,20 @@ describe("betterauth export", () => {
 });
 
 describe("supabase export", () => {
+  // The source splits a display or OAuth name, but only when first_name is
+  // empty; coalescing them into first_name here would stop it.
+  test("selects only the metadata's own first_name as first_name", async () => {
+    let sql = "";
+    await fetchSupabaseUsers({
+      query: async (query: string) => {
+        sql = query;
+        return [];
+      },
+    } as unknown as DbClient);
+    expect(sql).toContain("raw_user_meta_data->>'first_name' AS first_name");
+    expect(sql).not.toContain("display_name");
+  });
+
   test("serializes timestamps the transformer can parse", () => {
     const { users } = buildSupabaseExport([
       { id: "u1", email: "a@x.dev", created_at: new Date("2024-01-01T00:00:00Z") },

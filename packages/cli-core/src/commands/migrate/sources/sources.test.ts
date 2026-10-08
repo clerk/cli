@@ -506,6 +506,26 @@ describe("firebase", () => {
 });
 
 describe("supabase", () => {
+  // What `export supabase` hands over: first_name only when the metadata has
+  // one, the rest left in the metadata for this source to split.
+  test.each([
+    ["an OAuth name", { name: "Jane Doe" }, "Jane", "Doe"],
+    [
+      "a display name beside a real last name",
+      { display_name: "Jane Doe", last_name: "Doe" },
+      "Jane",
+      "Doe",
+    ],
+  ])("splits %s from the metadata", (_label, meta, firstName, lastName) => {
+    const user = one("supabase", {
+      id: "s1",
+      email: "a@x.dev",
+      last_name: (meta as { last_name?: string }).last_name,
+      raw_user_meta_data: meta,
+    });
+    expect(user).toMatchObject({ firstName, lastName });
+  });
+
   // `NULL` is how SQL tools write an empty column into a CSV.
   test("reads NULL cells in a CSV as empty, not as values", async () => {
     const { users, failures } = await load(
