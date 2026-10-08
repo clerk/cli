@@ -49,8 +49,11 @@ export type ReadinessItem = {
    *   `skip_password_requirement` (see `import-users.ts`), so the user lands
    *   without one and signs in another way. With no other way, the checks
    *   reject the user (`passwordIsOnlySignIn`).
+   * - `stored` — the user is created with it, but the instance does not use
+   *   it until the setting is turned on. Clerk stores these whatever the
+   *   setting (`create_service.go` validates them but never checks it).
    */
-  consequence?: "rejects" | "drops";
+  consequence?: "rejects" | "drops" | "stored";
   /** Why it blocks — omitted when it does not. */
   detail?: string;
 };
@@ -89,6 +92,22 @@ const REJECTING_ATTRIBUTES = new Set<AttributeName>([
   "last_name",
 ]);
 
+/** Fields Clerk stores with their setting off, where it works once turned on. */
+const STORED_WHEN_OFF = new Set<AttributeName>(["password", "username"]);
+
+/**
+ * True when Clerk keeps an email or phone on create: its setting is on, or
+ * the instance signs in or does MFA with it (`IsEnabledOrFactor` in clerk_go).
+ * Sign-up off alone does not refuse it.
+ */
+export function acceptsIdentifier(
+  settings: UserSettingsJSON,
+  attribute: "email_address" | "phone_number",
+): boolean {
+  const data = settings.attributes?.[attribute];
+  return Boolean(data?.enabled || data?.used_for_first_factor || data?.used_for_second_factor);
+}
+
 /** An identifier or user-model row, with its blocking verdict. */
 function buildAttributeItem(
   label: string,
@@ -100,6 +119,10 @@ function buildAttributeItem(
 ): ReadinessItem {
   const enabled = settings ? isEnabled(settings, attribute) : null;
   const required = settings ? isRequired(settings, attribute) : null;
+  const accepted =
+    settings && (attribute === "email_address" || attribute === "phone_number")
+      ? acceptsIdentifier(settings, attribute)
+      : enabled;
   const missing = totalUsers - userCount;
 
   // Required but not universal is the expensive case: those users fail one by
@@ -122,8 +145,8 @@ function buildAttributeItem(
     };
   }
 
-  // Present in the file but switched off in Clerk: the data is silently dropped.
-  if (enabled === false && userCount > 0) {
+  // Present in the file but switched off in Clerk: dropped, or stored unused.
+  if (accepted === false && userCount > 0) {
     return {
       label,
       key: attribute,
@@ -132,7 +155,7 @@ function buildAttributeItem(
       clerkEnabled: enabled,
       clerkRequired: required,
       blocking: true,
-      consequence: "drops",
+      consequence: STORED_WHEN_OFF.has(attribute) ? "stored" : "drops",
       detail: "not enabled in Clerk",
     };
   }

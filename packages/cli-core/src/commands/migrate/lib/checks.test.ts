@@ -593,11 +593,28 @@ describe("rejects", () => {
       expect(await reasonFor(username)).toContain(reason);
     });
 
-    test("a username is not checked when usernames are off", async () => {
+    // Clerk checks a username with usernames off too, but nothing signs in
+    // with it there, so it costs the user nothing to lose it.
+    test("with usernames off, one Clerk would refuse is dropped, not rejected", async () => {
       const checks = await checkImport(
         input({ settings: EMAIL_REQUIRED, users: [user("a", { username: "a.b" })] }),
       );
       expect(checks.rejects).toEqual([]);
+      expect(checks.importable).toEqual([user("a")]);
+      expect(checks.warnings).toContain(
+        "1 user has a username Clerk refuses, which is dropped: this instance has usernames off",
+      );
+    });
+
+    // Clerk never checks whether usernames are on (create_service.go).
+    test("with usernames off, a valid one is kept and said to be stored", async () => {
+      const checks = await checkImport(
+        input({ settings: EMAIL_REQUIRED, users: [user("a", { username: "ada" })] }),
+      );
+      expect(checks.importable).toEqual([user("a", { username: "ada" })]);
+      expect(checks.warnings).toContain(
+        "1 user has a username, which this instance does not use: it is stored, and works only once usernames are turned on",
+      );
     });
   });
 
@@ -647,6 +664,25 @@ describe("warnings", () => {
       }),
     );
     expect(checks.importable).toEqual([user("a")]);
+  });
+
+  // Clerk keeps an email or phone the instance signs in or does MFA with,
+  // whatever the sign-up setting (`IsEnabledOrFactor` in clerk_go).
+  test.each([
+    ["sign-in", { enabled: false, used_for_first_factor: true, first_factors: ["phone_code"] }],
+    ["MFA", { enabled: false, used_for_second_factor: true, second_factors: ["phone_code"] }],
+  ])("keeps a phone used only for %s, with no warning or fix", async (_label, phone_number) => {
+    const phoneOnly = user("p", { email: undefined, phone: "+15555550100" });
+    const checks = await checkImport(
+      input({
+        settings: settings({ email_address: { enabled: true }, phone_number }),
+        users: [user("a", { phone: "+15555550101" }), phoneOnly],
+      }),
+    );
+    expect(checks.rejects).toEqual([]);
+    expect(checks.importable).toEqual([user("a", { phone: "+15555550101" }), phoneOnly]);
+    expect(checks.warnings).toEqual([]);
+    expect(checks.fixes).toEqual([]);
   });
 
   test("says a password is kept, not dropped, when passwords are off", async () => {
