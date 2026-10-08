@@ -17,6 +17,7 @@
  * 5. Import, one run line per user.
  */
 
+import path from "node:path";
 import { bold, dim, green, red, yellow } from "../../lib/color.ts";
 import { resolveProfile } from "../../lib/config.ts";
 import { hasAccountCredentials } from "../../lib/credential-store.ts";
@@ -540,9 +541,15 @@ function formatSummary(
 function cleanupLines(runsDir: string, record: RunRecord): string[] {
   const lines: string[] = [];
   if (record.fromExport) {
+    const exportDir = runDir(runsDir, record.fromExport);
+    // `export --output` writes the file outside the run folder, and deleting
+    // the folder alone would leave the password hashes on disk.
+    const file = record.file?.path;
+    const outside = file && path.relative(exportDir, file).startsWith("..");
     lines.push(
       `The export in run ${record.fromExport} holds your users' data. Once you have checked the import, delete it:`,
-      dim(`  rm -rf ${quoteArg(runDir(runsDir, record.fromExport))}`),
+      dim(`  rm -rf ${quoteArg(exportDir)}`),
+      ...(outside ? [dim(`  rm ${quoteArg(file)}`)] : []),
     );
   }
   lines.push(
