@@ -14,15 +14,14 @@ import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
-import { withDbClient, type DbClient } from "../lib/db.ts";
+import type { DbClient } from "../lib/db.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 import {
-  promptDbUrl,
   resolveDbUrl,
+  withDbConnection,
   type DbExportOptions,
   type ResolveConfig,
 } from "./db-options.ts";
-import { withInputRetry } from "../lib/input-retry.ts";
 
 /**
  * Only the metadata's own `first_name` and `last_name` are pulled out as
@@ -126,14 +125,8 @@ export async function exportSupabase(options: DbExportOptions): Promise<void> {
 
   await withGutter("Exporting users from Supabase", async () => {
     if (!options.json) printTarget({ platform: "supabase" });
-    const { value: rows } = await withInputRetry(
-      dbUrl,
-      async () => promptDbUrl(SUPABASE_DB),
-      async (connectionString) =>
-        withSpinner("Reading auth.users...", async () =>
-          withDbClient(connectionString, "supabase", fetchSupabaseUsers),
-        ),
-      options,
+    const rows = await withDbConnection(dbUrl, SUPABASE_DB, options, async (client) =>
+      withSpinner("Reading auth.users...", async () => fetchSupabaseUsers(client)),
     );
 
     const run = await startExportRun(options, { platform: "supabase" });
