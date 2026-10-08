@@ -120,9 +120,6 @@ const supabaseSource = {
       }
     }
   },
-  defaults: {
-    passwordHasher: "bcrypt" as const,
-  },
 } satisfies SourceEntry;
 
 /** A metadata value as an object, parsing it when a CSV left it as JSON text. */
