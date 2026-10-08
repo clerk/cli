@@ -784,6 +784,9 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       );
 
       const refused = checks.rejects.length > 0 && !options.allowPartial;
+      // The users --require-password left out never reach the checks, so the
+      // JSON says how many, or `checks.total` would not add up to the file.
+      const leftOut = withoutPassword.length > 0 ? { withoutPassword: withoutPassword.length } : {};
       const preview = (extra: Record<string, unknown>) =>
         log.data(
           JSON.stringify(
@@ -792,6 +795,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
               run: continued ?? null,
               resume: resume.kind,
               checks: checksJson(checks),
+              ...leftOut,
               ...extra,
             },
             null,
@@ -923,6 +927,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
               run: record,
               resume: resume.kind,
               checks: checksJson(checks),
+              ...leftOut,
               result: {
                 created: summary.successful,
                 failed: summary.failed,

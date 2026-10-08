@@ -630,7 +630,9 @@ ends `partial`.
 `--json` returns `{ target, run, resume, checks, result }`. When a run stops
 before importing, it carries one of `dryRun: true`, `refused: true`,
 `consent: "required"` or `nothingToImport: true` in place of `result`, and a
-file already imported in full returns `alreadyImported: true`.
+file already imported in full returns `alreadyImported: true`. With
+`--require-password`, `withoutPassword` counts the users it left out before the
+checks, so `checks.total` plus it is the file's size.
 
 #### Re-running
 
