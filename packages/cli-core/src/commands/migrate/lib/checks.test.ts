@@ -417,6 +417,20 @@ describe("rejects", () => {
     expect(checks.quota).toEqual({ existing: 98, limit: 100, headroom: 2, over: 1 });
   });
 
+  // A continued run's adopted users exist already and are never created again.
+  test("an adopted user does not take headroom twice", async () => {
+    const checks = await checkImport(
+      input({
+        instanceType: "dev",
+        existingUsers: 98,
+        adoptedClerkIds: new Set(["user_c"]),
+        users: [user("a"), user("b"), user("c")],
+      }),
+    );
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["a", "b", "c"]);
+    expect(checks.quota).toEqual({ existing: 98, limit: 100, headroom: 3, over: 0 });
+  });
+
   test("warns that an unreadable user count was checked as empty", async () => {
     const checks = await checkImport(
       input({ instanceType: "dev", existingUsers: null, users: [user("a")] }),
