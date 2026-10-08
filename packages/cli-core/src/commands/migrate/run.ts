@@ -328,7 +328,27 @@ export function findResume(
       (record.target.instanceId === match.instanceId ||
         record.target.instanceId === match.keyInstanceId),
   );
-  if (!latest) return { kind: "new" };
+  if (!latest) {
+    // Clerk did not name the instance (GET /v1/instance failed), so a run of
+    // this file recorded under a real ID can be neither matched nor ruled out.
+    // Starting over would reject every user it created and leave it unfinished.
+    if (match.instanceId.startsWith("key_")) {
+      const unconfirmed = listRuns(runsDir).find(
+        (record) =>
+          record.kind === "import" &&
+          record.file?.sha256 === match.sha256 &&
+          record.source === match.source &&
+          record.target.instanceId?.startsWith("ins_") === true,
+      );
+      if (unconfirmed) {
+        throwUsageError(
+          `Clerk did not confirm which instance this key addresses, so this import cannot tell whether run ${unconfirmed.id} is for it. ` +
+            "Nothing was imported. Try again, or pass --new-run to start a new run.",
+        );
+      }
+    }
+    return { kind: "new" };
+  }
 
   const state = runState(runsDir, latest);
   if (state === "running") {
