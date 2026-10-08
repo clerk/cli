@@ -76,6 +76,8 @@ type Stub = {
   count?: number;
   /** Source IDs whose `POST /v1/users` fails with a 422. */
   failing?: Set<string>;
+  /** `GET /v1/instance` fails, so the target falls back to the key's stand-in ID. */
+  instanceDown?: boolean;
 };
 
 describe("run", () => {
@@ -101,6 +103,9 @@ describe("run", () => {
       const body = init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : null;
       requests.push({ method, url: url.toString(), body });
 
+      if (url.pathname === "/v1/instance" && stub.instanceDown) {
+        return new Response("unavailable", { status: 503 });
+      }
       if (url.pathname === "/v1/instance") {
         return Response.json({ object: "instance", id: "ins_1", environment_type: "development" });
       }
@@ -682,6 +687,23 @@ describe("run", () => {
     });
 
     // An edited file is a different job.
+    // Rate limiting right after a large import is when this lookup fails, and
+    // that is when someone re-runs after an interruption.
+    test("refuses to start over when Clerk can't name the instance a run of this file was in", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({ instanceDown: true });
+      await expect(run(baseOptions)).rejects.toThrow(/did not confirm which instance/);
+      expect(created()).toEqual([]);
+      expect(listRuns(runsDir())).toHaveLength(1);
+
+      await run({ ...baseOptions, newRun: true, allowPartial: true });
+      expect(listRuns(runsDir())).toHaveLength(2);
+    });
+
     test("a changed file is a new run", async () => {
       await run(baseOptions);
       fs.writeFileSync(
