@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { BapiError } from "../../lib/errors.ts";
 import { _resetInterruptState, abortInFlight } from "../../lib/signals.ts";
+import { useCaptureLog } from "../../test/lib/stubs.ts";
 import {
   buildCreateUserBody,
   importUsers,
@@ -191,6 +192,7 @@ describe("normalizeErrorMessage", () => {
 });
 
 describe("importUsers", () => {
+  const captured = useCaptureLog();
   let originalFetch: typeof globalThis.fetch;
   let requests: { method: string; url: string; body: unknown }[];
   let lines: UserLine[];
@@ -713,6 +715,44 @@ describe("importUsers", () => {
 
     expect(summary).toMatchObject({ successful: 0, failed: 1 });
     expect(allLines).toEqual([{ sourceId: "u1", status: "creating" }]);
+  });
+
+  // Every create after the first refusal would be refused too, so none is
+  // sent: they stay unrecorded, and a re-run picks them up.
+  test("stops sending creates once the instance's user quota is reached", async () => {
+    stub((url) =>
+      url.endsWith("/v1/users")
+        ? new Response(
+            JSON.stringify({
+              errors: [
+                {
+                  code: "user_quota_exceeded",
+                  message: "user quota exceeded",
+                  long_message: "You have reached your limit of 100 users.",
+                },
+              ],
+            }),
+            { status: 403 },
+          )
+        : ok("unused"),
+    );
+
+    const summary = await importUsers({
+      users: ["u1", "u2", "u3", "u4"].map((userId) => user({ userId, email: `${userId}@x.dev` })),
+      secretKey: "sk_test_x",
+      limits: { ...LIMITS, concurrencyLimit: 1 },
+      record,
+    });
+
+    expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(1);
+    expect(summary).toMatchObject({ successful: 0, failed: 1 });
+    expect(allLines.filter((line) => line.status !== "creating")).toMatchObject([
+      { sourceId: "u1", status: "failed", code: "403" },
+    ]);
+    expect(allLines.map((line) => line.sourceId)).not.toContain("u2");
+    expect(captured.err).toContain(
+      "You have reached your limit of 100 users. No more users are sent",
+    );
   });
 
   test("records a failed user and keeps going", async () => {
