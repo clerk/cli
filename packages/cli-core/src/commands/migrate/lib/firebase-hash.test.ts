@@ -69,7 +69,19 @@ describe("firebaseHashConfigProblem", () => {
     expect(firebaseHashConfigProblem(good)).toBeUndefined();
   });
 
+  // Clerk pads a short final group itself, and reads the URL-safe alphabet.
+  test.each(["Bw", "Bw==", "a-b_", "YWJjZA"])("passes %s, which Clerk decodes", (separator) => {
+    expect(
+      firebaseHashConfigProblem({ ...good, base64_salt_separator: separator }),
+    ).toBeUndefined();
+  });
+
   test.each([
+    // Clerk pads to a multiple of four, then decodes strictly.
+    ["a one-character key", { base64_signer_key: "A" }, /signer key is not base64/],
+    ["padding after a full group", { base64_signer_key: "AAAA=" }, /signer key is not base64/],
+    ["two pads after a full group", { base64_signer_key: "AAAA==" }, /signer key is not base64/],
+    ["an empty key", { base64_signer_key: "" }, /signer key is not base64/],
     [
       "a signer key that is not base64",
       { base64_signer_key: "not base64!" },
