@@ -52,7 +52,6 @@ export type Reject = {
 
 export type ReasonCount = { reason: string; count: number };
 
-/** A `clerk config patch` that would stop a setting costing users. */
 /**
  * A setting change that would stop users being flagged: a `clerk config patch`
  * command, or a Dashboard link when the instance can't be named for one.
