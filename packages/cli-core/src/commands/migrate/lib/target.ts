@@ -16,6 +16,7 @@ import { INSTANCE_ALIASES, resolveAppContext } from "../../../lib/config.ts";
 import { throwUsageError } from "../../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../../lib/keyless-target.ts";
 import { log } from "../../../lib/log.ts";
+import { isHuman } from "../../../mode.ts";
 import { detectInstanceType } from "./instance.ts";
 import { retryOn429 } from "./retry.ts";
 import type { RunTarget } from "./run-store.ts";
@@ -186,5 +187,9 @@ export function printTarget(target: RunTarget): void {
   const platform = target.platform && target.platform !== "clerk" ? target.platform : undefined;
   const parts = [platform ?? (target.platform === "clerk" ? "Clerk" : undefined), app, instance];
   log.info(`${heading}: ${parts.filter(Boolean).join(", ")}`);
-  if (target.keySource) log.info(dim(`Key from: ${target.keySource}`));
+  if (target.keySource) {
+    // Agents read this without `--json` too; an escape code is noise to them.
+    const line = `Key from: ${target.keySource}`;
+    log.info(isHuman() ? dim(line) : line);
+  }
 }
