@@ -18,6 +18,9 @@ import {
   checkCliVersion,
 } from "./checks.ts";
 import { checkMcp } from "./check-mcp.ts";
+import { runIOSDoctorChecks } from "./ios.ts";
+import { canSetUpXcode } from "../init/ios/coordinator.ts";
+import { detectFramework } from "../../lib/framework.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
 import {
   CHECK_NAME,
@@ -53,10 +56,14 @@ const CHECKS = {
  * Each check paired with the name to report it under if it throws. A check
  * names its own results from the same `CHECK_NAME` entry, so the two agree.
  */
-function getChecks(): { name: string; run: CheckFn }[] {
-  return (Object.keys(CHECKS) as CheckKey[])
-    .filter((key) => key !== "hostExecution" || isAgent())
-    .map((key) => ({ name: CHECK_NAME[key], run: CHECKS[key] }));
+function getChecks(apple: boolean): { name: string; run: CheckFn }[] {
+  return (
+    (Object.keys(CHECKS) as CheckKey[])
+      .filter((key) => key !== "hostExecution" || isAgent())
+      // Native Apple apps configure Clerk in Swift, not an env file.
+      .filter((key) => key !== "envVars" || !apple)
+      .map((key) => ({ name: CHECK_NAME[key], run: CHECKS[key] }))
+  );
 }
 
 /**
@@ -66,9 +73,13 @@ function getChecks(): { name: string; run: CheckFn }[] {
  * question and has no answer, and treating that as a pass would hide the one
  * case where doctor itself is broken.
  */
-async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
-  return Promise.all(
-    getChecks().map(async ({ name, run }) => {
+async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<CheckResult[]> {
+  const apple =
+    Boolean(options.xcodeProject || options.xcodeTarget || options.xcodeConfiguration) ||
+    (await detectFramework(process.cwd()))?.dep === "ios";
+  const results = await Promise.all(
+    // Without Xcode, init pulls the key into an env file as before, so keep checking it.
+    getChecks(apple && canSetUpXcode()).map(async ({ name, run }) => {
       try {
         return await run(ctx);
       } catch (error) {
@@ -81,6 +92,7 @@ async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
       }
     }),
   );
+  return apple ? [...results, ...(await runIOSDoctorChecks(ctx, options))] : results;
 }
 
 /**
@@ -113,7 +125,9 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
   }
 
   const ctx = createDoctorContext();
-  const allResults = await withSpinner("Running diagnostics...", async () => runChecks(ctx));
+  const allResults = await withSpinner("Running diagnostics...", async () =>
+    runChecks(ctx, options),
+  );
 
   if (!options.json) {
     printResults(allResults, options);
@@ -164,7 +178,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
 
       const verifyCtx = createDoctorContext();
       const verifyResults = await withSpinner("Verifying fixes...", async () =>
-        runChecks(verifyCtx),
+        runChecks(verifyCtx, options),
       );
       printResults(verifyResults, { ...options, fix: false, spotlight: false });
 
@@ -192,6 +206,9 @@ export function registerDoctor(program: Program): void {
     .option("--json", "Output results as JSON")
     .option("--spotlight", "Only show warnings and failures")
     .option("--fix", "Attempt to auto-fix issues")
+    .option("--xcode-project <path>", "Xcode project or workspace to check")
+    .option("--xcode-target <name-or-id>", "Xcode app target to check, by name or ID")
+    .option("--xcode-configuration <name>", "Xcode build configuration to check")
     .setExamples([
       { command: "clerk doctor", description: "Run all health checks" },
       { command: "clerk doctor --verbose", description: "Show detailed output for each check" },
