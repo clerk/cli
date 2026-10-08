@@ -377,7 +377,8 @@ export function describeDbError(error: unknown, platform?: DbPlatform): string {
         "The Auth.js export reads `id`, `name`, `email` and `emailVerified` (or `email_verified`). " +
         'For a schema that renames another column (Prisma `@map("full_name")` on `name`, for one), ' +
         "export the users with your own query that aliases it back, " +
-        "`SELECT id, full_name AS name, email, email_verified FROM …`, and import that file with the authjs source.",
+        '`SELECT id, full_name AS name, email, "emailVerified" AS email_verified FROM "User"` on Postgres ' +
+        "(MySQL quotes with backticks), and import that file with the authjs source.",
     };
     return (
       needs[platform as DbPlatform] ??
