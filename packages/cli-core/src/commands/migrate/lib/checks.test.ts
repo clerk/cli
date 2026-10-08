@@ -575,12 +575,15 @@ describe("rejects", () => {
       ["https://spam.example"],
       ["see x.com/win"],
       ["<b>Ada</b>"],
+      ["   "],
+      ["\u200b"],
+      ["é".repeat(129)],
     ])("%p is dropped, and the user still imports", async (firstName) => {
       const checks = await checkImport(input({ users: [user("a", { firstName, lastName: "L" })] }));
       expect(checks.rejects).toEqual([]);
       expect(checks.importable).toEqual([user("a", { lastName: "L" })]);
       expect(checks.warnings).toContain(
-        "1 user has a name Clerk refuses (a phone number, URL or HTML), which is dropped",
+        "1 user has a name Clerk refuses (a phone number, a URL, HTML, blank, or over 256 bytes), which is dropped",
       );
     });
 
@@ -593,6 +596,8 @@ describe("rejects", () => {
       ["redacted.io"],
       ["ada@x.dev"],
       ["ada@x.dev/x"],
+      // 256 bytes exactly.
+      ["é".repeat(128)],
     ])("%p is kept", async (firstName) => {
       const checks = await checkImport(input({ users: [user("a", { firstName })] }));
       expect(checks.importable).toEqual([user("a", { firstName })]);
