@@ -67,3 +67,29 @@ test("treats zero or negative limits as one", async () => {
 
   expect(peak).toBe(1);
 });
+
+// A 429 means the instance is over its limit for everyone, not just the call
+// that hit it.
+test("holds every unsent call through a pause", async () => {
+  const schedule = createApiScheduler(4, 10_000);
+  const started = performance.now();
+  schedule.pause(300);
+
+  const startedAt = await Promise.all(
+    Array.from({ length: 3 }, async () => schedule(async () => performance.now() - started)),
+  );
+
+  for (const at of startedAt) expect(at).toBeGreaterThanOrEqual(290);
+});
+
+test("holds a call already waiting on the pacing interval", async () => {
+  // 2 req/s: the second call waits ~500ms. The first, like a 429, pauses the
+  // run while the second is in that wait.
+  const schedule = createApiScheduler(2, 2);
+  const started = performance.now();
+  const first = schedule(async () => schedule.pause(800));
+  const second = schedule(async () => performance.now() - started);
+
+  await first;
+  expect(await second).toBeGreaterThanOrEqual(790);
+});
