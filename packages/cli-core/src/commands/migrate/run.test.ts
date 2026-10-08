@@ -19,6 +19,9 @@ import {
 } from "./lib/run-store.ts";
 import { __resetCustomSourcesForTesting } from "./sources/registry.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
+// After run.ts: imported first, signals.ts loads version.ts ahead of its Bun
+// macro here, and the file fails to load.
+import { _resetInterruptState, abortInFlight, beginInterrupt } from "../../lib/signals.ts";
 
 /** A real-shaped bcrypt digest: the checks reject anything that is not. */
 const BCRYPT = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
@@ -1201,6 +1204,64 @@ describe("run", () => {
       await expect(run({ source: customFile, yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
         /needs the file to import/,
       );
+    });
+  });
+
+  describe("stopped part-way", () => {
+    // `importUsers` returns normally on a Ctrl-C; the run must not read as done.
+    test("a Ctrl-C after the first create leaves the run unfinished, as interrupted", async () => {
+      process.env.CLERK_MIGRATE_CONCURRENCY_LIMIT = "1";
+      const clerk = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const response = await clerk(input, init);
+        if (init?.method === "POST" && new URL(input.toString()).pathname === "/v1/users") {
+          beginInterrupt();
+          abortInFlight();
+        }
+        return response;
+      }) as typeof fetch;
+      try {
+        await run(baseOptions);
+      } finally {
+        _resetInterruptState();
+        delete process.env.CLERK_MIGRATE_CONCURRENCY_LIMIT;
+      }
+
+      const [record] = listRuns(runsDir());
+      expect(record?.finishedAt).toBeUndefined();
+      expect(fs.existsSync(path.join(runsDir(), record?.id ?? "", "lock"))).toBe(false);
+      expect(created()).toHaveLength(1);
+    });
+
+    test("the user quota leaves the rest not sent, and the run partial", async () => {
+      stubClerk();
+      const clerk = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
+        init?.method === "POST" && new URL(input.toString()).pathname === "/v1/users"
+          ? Response.json(
+              {
+                errors: [
+                  {
+                    code: "user_quota_exceeded",
+                    message: "user quota exceeded",
+                    long_message: "You have reached your limit of 100 users.",
+                  },
+                ],
+              },
+              { status: 403 },
+            )
+          : clerk(input, init)) as typeof fetch;
+      process.env.CLERK_MIGRATE_CONCURRENCY_LIMIT = "1";
+      try {
+        await run({ ...baseOptions, json: true });
+      } finally {
+        delete process.env.CLERK_MIGRATE_CONCURRENCY_LIMIT;
+      }
+
+      expect(JSON.parse(captured.out)).toMatchObject({
+        run: { status: "partial" },
+        result: { created: 0, failed: 1, notSent: 1 },
+      });
     });
   });
 

@@ -34,6 +34,7 @@ import { quoteArg } from "../../lib/json-body.ts";
 import { log } from "../../lib/log.ts";
 import { NEXT_STEPS, printAgentNextSteps } from "../../lib/next-steps.ts";
 import { confirm } from "../../lib/prompts.ts";
+import { interruptedExitCode } from "../../lib/signals.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { importUsers, splitIdentifiers } from "./import-users.ts";
@@ -546,6 +547,8 @@ function formatSummary(
     `${red("Failed:")} ${summary.failed}`,
   ];
   if (skipped > 0) lines.push(`${yellow("Skipped:")} ${skipped}`);
+  // The user quota stopped the run: these go out on a re-run.
+  if (summary.notSent > 0) lines.push(`${yellow("Not sent:")} ${summary.notSent}`);
 
   if (summary.errorBreakdown.size > 0) {
     lines.push("", bold("Error breakdown:"));
@@ -991,10 +994,18 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
               totalProcessed: 0,
               successful: 0,
               failed: 0,
+              notSent: 0,
+              droppedPhones: new Map(),
               validationFailed: 0,
               errorBreakdown: new Map(),
             };
-      const record = run.finish();
+      // A Ctrl-C returns the import early, and the users it never sent have
+      // no line to count. Left unfinished, the run reads as interrupted.
+      if (interruptedExitCode() !== null) {
+        run.release();
+        return;
+      }
+      const record = run.finish({ notSent: summary.notSent });
       if (summary.failed > 0) process.exitCode = 1;
 
       if (options.json) {
@@ -1009,6 +1020,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
               result: {
                 created: summary.successful,
                 failed: summary.failed,
+                notSent: summary.notSent,
                 skipped: checks.rejects.length + withoutPassword.length,
                 errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
               },
