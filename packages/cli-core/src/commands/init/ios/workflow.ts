@@ -172,7 +172,10 @@ export async function prepareSetup(
         type: "modify",
         path: inspection.document.path,
         content: capabilities.projectSource,
-        description: "Update selected SDK linkage and capability settings",
+        description:
+          originalAction.type === "skip"
+            ? "Update capability settings"
+            : "Update selected SDK linkage and capability settings",
       };
     local.actions.push(...capabilities.actions);
   }

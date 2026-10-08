@@ -99,6 +99,21 @@ for (const platform of ["ios", "macos"] as const)
     ).toBe(true);
   });
 
+test("a capability-only project change doesn't claim SDK linkage", async () => {
+  const f = await fixture("macos");
+  await applySetup(await prepareSetup(f.options, f.dependencies), f.dependencies);
+  // The SDK is now linked; drop the network setting so only capabilities change the project.
+  const document = parse(await readFile(f.path, "utf8"));
+  for (const id of [ids.targetDebug, ids.targetRelease])
+    delete (document.objects![id] as any).buildSettings[
+      "ENABLE_OUTGOING_NETWORK_CONNECTIONS[sdk=macosx*]"
+    ];
+  await writeFile(f.path, build(document));
+  const preview = await prepareSetup(f.options, f.dependencies);
+  expect(preview.sdk.type).toBe("skip");
+  expect(preview.local.actions[0]).toMatchObject({ description: "Update capability settings" });
+});
+
 test("macOS sandbox declared only in entitlements gets network access without Apple opt-in", async () => {
   const f = await fixture("macos");
   f.options.signInWithApple = false;
