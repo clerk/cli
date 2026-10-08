@@ -312,10 +312,16 @@ export type Run = {
   /**
    * Counts the outcomes, settles the status and releases the lock.
    *
-   * `partial` when any user failed, was skipped, may not have been created or
-   * has identifiers still pending, `complete` otherwise.
+   * `partial` when any user failed, was skipped, may not have been created,
+   * was never sent (`notSent`: they have no line to count) or has identifiers
+   * still pending, `complete` otherwise.
    */
-  finish(): RunRecord;
+  finish(options?: { notSent?: number }): RunRecord;
+  /**
+   * Releases the lock and leaves the run unfinished: with no `finishedAt` and
+   * no live holder, it reads as interrupted.
+   */
+  release(): void;
 };
 
 function openRun(runsDir: string, record: RunRecord): Run {
@@ -336,7 +342,7 @@ function openRun(runsDir: string, record: RunRecord): Run {
       run.record = { ...run.record, ...patch };
       writeRecord(runsDir, run.record);
     },
-    finish() {
+    finish(options) {
       const lines = [...latestUserLines(runsDir, run.record.id).values()];
       const counts = countLines(lines);
       // A created user whose extra identifiers never attached is left for a continue.
@@ -344,14 +350,21 @@ function openRun(runsDir: string, record: RunRecord): Run {
         (line) => line.status === "created" && (line.pending?.length ?? 0) > 0,
       ).length;
       const unfinished =
-        (counts.failed ?? 0) + (counts.skipped ?? 0) + (counts.creating ?? 0) + pendingAttaches;
+        (counts.failed ?? 0) +
+        (counts.skipped ?? 0) +
+        (counts.creating ?? 0) +
+        (options?.notSent ?? 0) +
+        pendingAttaches;
       run.update({
         counts,
         status: unfinished > 0 ? "partial" : "complete",
         finishedAt: new Date().toISOString(),
       });
-      fs.rmSync(path.join(dir, LOCK_FILE), { force: true });
+      run.release();
       return run.record;
+    },
+    release() {
+      fs.rmSync(path.join(dir, LOCK_FILE), { force: true });
     },
   };
   return run;
