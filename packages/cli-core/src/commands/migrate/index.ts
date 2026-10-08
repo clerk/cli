@@ -40,9 +40,9 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
       },
     ]);
 
-  // `-y` is read below the action, so it is resolved once here rather than
-  // threaded through every call. Hooks are inherited, so this fires for every
-  // subcommand under `migrate`; one that declares no `-y` resolves to false.
+  // `-y` is resolved once here, for code below a command's options to read
+  // rather than having it passed down. Hooks are inherited, so this fires for
+  // every subcommand under `migrate`; one that declares no `-y` resolves to false.
   //
   // `--json` means nobody is reading a prompt, so it runs the command in agent
   // mode: every prompt in this tree already stands down for an agent, with the
