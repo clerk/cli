@@ -138,9 +138,10 @@ test("a Supabase export dry-runs, imports, and its passwords verify", async () =
     run: { id: string };
     result: { created: number };
   };
-  expect(result.result.created).toBe(2);
-
+  // Read first: it registers the created users for cleanup, which a failed
+  // assertion would otherwise skip, leaving them in the shared test app.
   const lines = latestLines(result.run.id);
+  expect(result.result.created).toBe(2);
   for (const { password, record } of users) {
     const line = lines.find((candidate) => candidate.sourceId === record.id);
     expect(line).toMatchObject({ status: "created" });
