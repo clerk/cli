@@ -427,7 +427,10 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             `--require-password: leaving out ${plural(withoutPassword.length, "user")} without a password.`,
           );
         }
-        users = users.filter((user) => !withoutPassword.includes(user));
+        // A Set, not `includes`: half a large Supabase export can lack a
+        // password, and a scan per user would stall before any check runs.
+        const leftOut = new Set(withoutPassword);
+        users = users.filter((user) => !leftOut.has(user));
       }
 
       let supabaseRows: Record<string, unknown>[] | undefined;
