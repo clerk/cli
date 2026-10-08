@@ -59,7 +59,7 @@ Every command follows these:
    the export once the import succeeds would delete it after an interrupted
    one. Without a terminal, the counts are printed at each 10%.
 
-## Targeting And Auth
+## Targeting and auth
 
 `clerk migrate import` resolves its Backend API key through the CLI's standard
 chain:
@@ -1098,8 +1098,9 @@ An export with no password hashes needs no parameters at all.
 
 What a source maps _onto_. Every user is validated against this schema
 before any request is made, so a field a source produces that is not listed
-here is silently dropped — Zod strips unknown keys — and never reaches Clerk.
-Writing a custom source means targeting these names exactly.
+here is dropped — Zod strips unknown keys — and never reaches Clerk. The checks
+warn about each one (`Clerk won't store: …`). Writing a custom source means
+targeting these names exactly.
 
 The schema lives in `validator.ts`; adding a platform means adding a source,
 not editing it.
@@ -1168,7 +1169,7 @@ stamping every user with today's.
 | `skipLegalChecks`           | `boolean` | Skip legal acceptance checks                                                         |
 | `skipPasswordChecks`        | `boolean` | Skip password requirements on import                                                 |
 
-## API Endpoints
+## API endpoints
 
 | Method   | Path                                            | Used by                                                                         |
 | -------- | ----------------------------------------------- | ------------------------------------------------------------------------------- |
