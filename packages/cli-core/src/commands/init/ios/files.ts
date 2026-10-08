@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { link, lstat, open, realpath, rename, unlink } from "node:fs/promises";
+import { link, lstat, mkdir, open, realpath, rename, rmdir, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { setupError } from "./types.ts";
@@ -101,7 +101,7 @@ export async function gitDirty(root: string, path: string): Promise<boolean> {
     timeout: 5_000,
   });
   const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-  // A non-Git project can still be edited; an adjacent backup is always created.
+  // A non-Git project can still be edited; a backup is always created.
   return code === 0 && output.trim().length > 0;
 }
 
@@ -116,6 +116,12 @@ export async function gitTracked(root: string, path: string): Promise<boolean> {
   return (await child.exited) === 0;
 }
 
+/** Removes the backup folders when they hold nothing, so setup leaves no empty folders behind. */
+export async function removeEmptyBackupFolders(root: string): Promise<void> {
+  for (const dir of [join(root, ".clerk", "backups"), join(root, ".clerk")])
+    await rmdir(dir).catch(() => {});
+}
+
 export async function replaceProject(
   root: string,
   snapshot: FileSnapshot,
@@ -126,7 +132,15 @@ export async function replaceProject(
   if (content === snapshot.source) return undefined;
   const destination = await containedPath(root, snapshot.path);
   const suffix = randomUUID();
-  const backupPath = `${destination}.clerk-backup-${suffix}`;
+  // Outside the app's folders: Xcode 16+ adds every file in a synchronized folder to
+  // the target, so a backup beside the file would be copied into the app bundle.
+  const backupPath = join(
+    await realpath(root),
+    ".clerk",
+    "backups",
+    `${snapshot.path.split(/[\\/]/).join("--")}.clerk-backup-${suffix}`,
+  );
+  if (backup) await mkdir(dirname(backupPath), { recursive: true });
   const candidate = join(dirname(destination), `.clerk-project-${suffix}.tmp`);
   const writeExclusive = async (path: string, source: string) => {
     const handle = await open(path, "wx", snapshot.mode);
@@ -142,14 +156,21 @@ export async function replaceProject(
     }
     await handle.close();
   };
-  if (backup) await writeExclusive(backupPath, snapshot.source);
+  if (backup)
+    await writeExclusive(backupPath, snapshot.source).catch(async (error: unknown) => {
+      await removeEmptyBackupFolders(root);
+      throw error;
+    });
   try {
     await writeExclusive(candidate, content);
     await assertUnchanged(root, snapshot);
     await rename(candidate, destination);
   } catch (error) {
     // The original was never replaced, so its backup would only be an unreported copy.
-    if (backup) await unlink(backupPath).catch(() => {});
+    if (backup) {
+      await unlink(backupPath).catch(() => {});
+      await removeEmptyBackupFolders(root);
+    }
     throw error;
   } finally {
     await unlink(candidate).catch((error: unknown) => {

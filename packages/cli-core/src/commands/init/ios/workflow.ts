@@ -9,6 +9,7 @@ import {
   createFile,
   gitDirty,
   gitTracked,
+  removeEmptyBackupFolders,
   replaceProject,
   snapshotFile,
   rollbackFiles,
@@ -584,6 +585,7 @@ export async function applySetup(
       await unlink(join(root, backup));
     else result.backups.push(backup);
   }
+  if (!result.backups.length) await removeEmptyBackupFolders(root);
   if (preview.capabilities && preview.capabilities.status !== "manual")
     result.capabilities.status = "configured";
   if (preview.resolvePackages && sdkLinked(preview.sdk)) {

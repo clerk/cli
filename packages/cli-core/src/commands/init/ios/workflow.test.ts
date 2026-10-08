@@ -245,11 +245,7 @@ test("stale bytes, replacement inode, and symlink edits never reach the remote w
     }
     await expect(applySetup(preview, f.dependencies)).rejects.toThrow();
     expect(f.state.events).toEqual([]);
-    expect(
-      (await readdir(join(f.root, "MyApp.xcodeproj"))).some((path) =>
-        path.includes("clerk-backup"),
-      ),
-    ).toBe(false);
+    expect(await readdir(join(f.root, ".clerk/backups")).catch(() => [])).toEqual([]);
   }
 });
 
@@ -259,7 +255,10 @@ test("dirty project changes are visible in the preview and backed up without an 
   expect(await git.exited).toBe(0);
   const preview = await prepareSetup(f.options, f.dependencies);
   expect(describePreview(preview).existingGitChanges).toContain("MyApp.xcodeproj/project.pbxproj");
-  expect((await applySetup(preview, f.dependencies)).backups).not.toHaveLength(0);
+  const { backups } = await applySetup(preview, f.dependencies);
+  expect(backups).not.toHaveLength(0);
+  // Kept out of the app's folders, which Xcode 16+ would copy into the app bundle.
+  for (const backup of backups) expect(backup).toStartWith(".clerk/backups/");
 });
 
 test("clean committed files leave no backups behind, since Git can restore them", async () => {
@@ -275,9 +274,7 @@ test("clean committed files leave no backups behind, since Git can restore them"
   const result = await applySetup(await prepareSetup(f.options, f.dependencies), f.dependencies);
   expect(result.local).toBe("updated");
   expect(result.backups).toEqual([]);
-  expect(
-    (await readdir(join(f.root, "MyApp.xcodeproj"))).some((path) => path.includes("clerk-backup")),
-  ).toBe(false);
+  expect(await readdir(f.root)).not.toContain(".clerk");
 });
 
 test("an ignored file keeps its backup, since Git can't restore it", async () => {
