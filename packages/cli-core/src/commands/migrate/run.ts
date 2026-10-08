@@ -45,6 +45,7 @@ import {
   listRuns,
   liveLockPid,
   lockFile,
+  readUserLines,
   resolveRunsDir,
   runDir,
   runState,
@@ -562,6 +563,9 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       // checked or sent again. Those whose extra identifiers never attached
       // get just the attaches.
       const continued = resume.kind === "continue" ? resume.record : undefined;
+      // What the plan below is built from; checked again once the run's lock
+      // is held, since a prompt can wait while an undo or a continue writes.
+      const plannedLines = continued ? readUserLines(runsDir, continued.id).length : undefined;
       const done = new Map<string, string>();
       const attachOnly: UserLine[] = [];
       const inFlight: string[] = [];
@@ -736,7 +740,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         attachOnly.length === 0
       ) {
         // Settled, so a continued run is finished rather than left interrupted.
-        if (continued) continueRun(runsDir, continued).finish();
+        if (continued) continueRun(runsDir, continued, plannedLines).finish();
         if (options.json) preview({ nothingToImport: true });
         else log.warn("No users left to import.");
         return;
@@ -774,7 +778,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       // Gitignored only now, once there is consent to write a run.
       await resolveRunsDir(options.runsDir, { write: true });
       const run = continued
-        ? continueRun(runsDir, continued)
+        ? continueRun(runsDir, continued, plannedLines)
         : startRun(runsDir, {
             kind: "import",
             target,
