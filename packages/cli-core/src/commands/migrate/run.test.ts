@@ -227,6 +227,22 @@ describe("run", () => {
     }
   });
 
+  // resolveBapiSecretKey takes --app over the exported key, so the sign-in is
+  // still needed: without it the Platform API call fails instead.
+  test("refuses an --app import when nobody is signed in, even with CLERK_SECRET_KEY set", async () => {
+    const previous = process.env.CLERK_SECRET_KEY;
+    process.env.CLERK_SECRET_KEY = "sk_test_x";
+    try {
+      await expect(
+        run({ source: "clerk", input: "export.json", yes: true, app: "app_123" }),
+      ).rejects.toThrow(/Not logged in/);
+      expect(requests).toHaveLength(0);
+    } finally {
+      if (previous === undefined) delete process.env.CLERK_SECRET_KEY;
+      else process.env.CLERK_SECRET_KEY = previous;
+    }
+  });
+
   test("imports every user in the file end to end", async () => {
     await run(baseOptions);
 
