@@ -41,7 +41,11 @@ import { importUsers } from "./import-users.ts";
 import { checkImport, type ImportChecks } from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
-import { resolveFirebaseHashConfig, type FirebaseHashFlags } from "./lib/firebase-hash.ts";
+import {
+  firebaseHashConfigProblem,
+  resolveFirebaseHashConfig,
+  type FirebaseHashFlags,
+} from "./lib/firebase-hash.ts";
 import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
 import {
   continueRun,
@@ -666,11 +670,21 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
   const { source, file } = validateRunOptions(options);
   // The flags win, so a rotated key can be passed without re-exporting.
-  let firebaseHashConfig =
-    resolveFirebaseHashConfig(options, source) ??
-    (source === "firebase" ? envelope?.firebase : undefined);
+  const fromFlags = resolveFirebaseHashConfig(options, source);
+  let firebaseHashConfig = fromFlags ?? (source === "firebase" ? envelope?.firebase : undefined);
+  let configFrom = fromFlags ? "the --firebase-* flags" : "the export file";
   if (source === "firebase" && !firebaseHashConfig && canPrompt(options)) {
     firebaseHashConfig = await promptForFirebaseHashConfig();
+    configFrom = "the parameters entered";
+  }
+  // Wherever they came from, each goes into every password digest.
+  const problem = firebaseHashConfig && firebaseHashConfigProblem(firebaseHashConfig);
+  if (problem) {
+    throwUsageError(
+      `The Firebase hash parameters from ${configFrom} won't work: ${problem}. Nothing was imported.\n` +
+        "Find all four in the Firebase console under Authentication → Users → (⋮) → Password hash parameters.",
+      "https://clerk.com/docs/guides/development/migrating/firebase",
+    );
   }
 
   await withGutter(

@@ -428,6 +428,19 @@ describe("fetchHashConfig", () => {
     expect(captured.err).toContain("firebaseauth.configs.getHashConfig");
   });
 
+  // Every digest carries these, so a set Clerk would refuse is not written.
+  test("leaves out parameters Clerk would refuse, and says so", async () => {
+    stubFirebase([[]], {
+      signIn: {
+        hashConfig: { signerKey: "KEY==", saltSeparator: "Bw==", rounds: 17, memoryCost: 14 },
+      },
+    });
+    expect(await fetchHashConfig(account, "tok")).toBeNull();
+    expect(captured.err).toContain(
+      "won't work in Clerk (rounds must be a whole number from 1 to 16",
+    );
+  });
+
   test("returns null when the response carries no hash config", async () => {
     stubFirebase([[]], { signIn: {} });
     expect(await fetchHashConfig(account, "tok")).toBeNull();

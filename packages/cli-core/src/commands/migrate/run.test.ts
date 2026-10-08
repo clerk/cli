@@ -464,6 +464,37 @@ describe("run", () => {
       });
     });
 
+    // Each goes into every digest: a bad one would cost every password.
+    test("refuses Firebase hash parameters Clerk would reject, from the envelope or the flags", async () => {
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        {
+          firebase: {
+            base64_signer_key: "SIGNER",
+            base64_salt_separator: "Bw==",
+            rounds: 0,
+            mem_cost: 14,
+          },
+        },
+      );
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /from the export file won't work: rounds must be a whole number from 1 to 16/,
+      );
+      await expect(
+        run({
+          ...noSource,
+          input: record.id,
+          firebaseSignerKey: "SIGNER",
+          firebaseSaltSeparator: "Bw==",
+          firebaseRounds: 8,
+          firebaseMemCost: 17,
+        }),
+      ).rejects.toThrow(/from the --firebase-\* flags won't work: memory cost/);
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
     test("lets the --firebase-* flags override the envelope", async () => {
       const { record } = exportRun(
         "firebase",
