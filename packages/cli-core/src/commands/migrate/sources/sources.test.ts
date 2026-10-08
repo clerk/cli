@@ -575,6 +575,15 @@ describe("supabase", () => {
     expect("bannedUntil" in (user ?? {})).toBe(false);
   });
 
+  // The hasher comes from each digest, so a user without one gets none. Loaded
+  // from a file, because that is where source defaults are applied.
+  test("gives a passwordless user no password hasher", async () => {
+    const { users } = await load("supabase", [
+      { id: "s1", email: "a@x.dev", encrypted_password: "" },
+    ]);
+    expect(users[0]).not.toHaveProperty("passwordHasher");
+  });
+
   test("maps the bcrypt password and converts the PostgreSQL timestamp", async () => {
     const { users } = await load("supabase", [
       { ...base, encrypted_password: "$2b$10$hash", created_at: "2024-06-29 20:25:06.126079+00" },

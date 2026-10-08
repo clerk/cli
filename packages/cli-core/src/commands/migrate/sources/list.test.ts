@@ -85,8 +85,15 @@ describe("sources <source>", () => {
     expect(plain()).toContain("Export with `clerk migrate export supabase`");
     expect(plain()).toContain("encrypted_password → password");
     expect(plain()).toContain("Passwords yes");
-    expect(plain()).toContain("passwordHasher is always");
+    // Supabase's hasher is read from each digest, so it lists no fixed one.
+    expect(plain()).not.toContain("passwordHasher is always");
     expect(captured.err).toContain(ACCOUNT_LINKING_URL);
+  });
+
+  test("lists a source's fixed defaults", async () => {
+    await list("auth0");
+
+    expect(plain()).toContain('passwordHasher is always "bcrypt"');
   });
 
   test("shows a source you wrote, by its path", async () => {
