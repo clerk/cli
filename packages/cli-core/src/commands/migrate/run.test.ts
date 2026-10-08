@@ -328,6 +328,28 @@ describe("run", () => {
       expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
     });
 
+    // A shared --output path can be overwritten after the run-ID check, while
+    // the import is still naming its target.
+    test("refuses an export file overwritten after the run ID was checked", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const served = globalThis.fetch;
+      let overwritten = false;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        if (!overwritten && new URL(input.toString()).pathname === "/v1/instance") {
+          overwritten = true;
+          const envelope = JSON.parse(fs.readFileSync(file, "utf-8"));
+          fs.writeFileSync(file, JSON.stringify({ ...envelope, users: [envelope.users[0]] }));
+        }
+        return served(input, init);
+      }) as typeof fetch;
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /has changed since it was exported/,
+      );
+      expect(overwritten).toBe(true);
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
     test("refuses an export file another run's export overwrote", async () => {
       const { record, file } = exportRun("clerk", export2);
       const envelope = JSON.parse(fs.readFileSync(file, "utf-8"));
