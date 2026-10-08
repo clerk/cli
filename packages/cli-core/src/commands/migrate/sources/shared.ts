@@ -21,6 +21,14 @@ export type VerificationStyle = "boolean" | "timestamp";
 const NULLISH_STRINGS = new Set(["", "null", "nil", "undefined", "\\n"]);
 
 /**
+ * True for a string a CSV export writes in place of SQL NULL. A first name
+ * that really is "Null" reads as one too; the spellings tools write matter more.
+ */
+export function isNullish(value: unknown): boolean {
+  return typeof value === "string" && NULLISH_STRINGS.has(value.trim().toLowerCase());
+}
+
+/**
  * A boolean as a CSV or a database writes it: `TRUE` from a spreadsheet, `t`
  * and `f` from psql, `yes`/`no`. Anything else is returned unchanged, so the
  * schema can reject it.
@@ -47,7 +55,7 @@ export function isVerified(value: unknown, style: VerificationStyle): boolean {
 
   if (value instanceof Date) return !Number.isNaN(value.getTime());
   if (typeof value === "number") return true;
-  return typeof value === "string" && !NULLISH_STRINGS.has(value.trim().toLowerCase());
+  return typeof value === "string" && !isNullish(value);
 }
 
 /**
