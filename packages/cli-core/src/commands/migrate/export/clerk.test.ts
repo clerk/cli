@@ -203,11 +203,33 @@ describe("fetchAllClerkUsers", () => {
 
     expect(all).toHaveLength(512);
     expect(requests).toHaveLength(2);
-    expect(requests[1]).toContain("offset=500");
+    expect(requests[1]).toContain("offset=480");
   });
 
-  // Oldest first, so a sign-up mid-export lands at the end; a row a deletion
-  // shifts onto the next page is dropped as a repeat.
+  // A user deleted after the first page shifts every later row back one. The
+  // overlap re-reads the boundary, so the row that slid onto it isn't lost.
+  test("keeps the user a mid-export deletion slides onto a page boundary", async () => {
+    const users = Array.from({ length: 600 }, (_, i) => user({ id: `u${i}` }));
+    let pages = 0;
+    // A server that answers by offset, and loses u10 after the first page.
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = new URL(input.toString());
+      if (url.pathname === "/v1/instance") {
+        return Response.json({ object: "instance", id: "ins_src", environment_type: "production" });
+      }
+      const offset = Number(url.searchParams.get("offset"));
+      const rows = pages++ === 0 ? users : users.filter((entry) => entry.id !== "u10");
+      return Response.json(rows.slice(offset, offset + 500));
+    }) as unknown as typeof fetch;
+
+    const all = await fetchAllClerkUsers({ secretKey: "sk_test_x" });
+
+    expect(all.map((entry) => entry.id)).toContain("u500");
+    expect(all).toHaveLength(600);
+  });
+
+  // Oldest first, so a sign-up mid-export lands at the end; a repeat the
+  // overlap reads again is dropped.
   test("pages oldest first and drops a user a shifted page repeats", async () => {
     stubPages([
       Array.from({ length: 500 }, (_, i) => user({ id: `u${i}` })),

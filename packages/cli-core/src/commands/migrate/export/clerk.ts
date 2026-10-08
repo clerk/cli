@@ -26,6 +26,13 @@ import { finishExport, startExportRun } from "./shared.ts";
 /** BAPI's maximum page size for `GET /v1/users`. */
 const PAGE_SIZE = 500;
 
+/**
+ * How many rows each page re-reads from the end of the one before. A user
+ * deleted mid-export shifts every later row back one, so without it the row
+ * at each page boundary would be skipped; the Map drops the repeats.
+ */
+const PAGE_OVERLAP = 20;
+
 export type ExportClerkOptions = {
   output?: string;
   secretKey?: string;
@@ -179,9 +186,11 @@ export async function fetchAllClerkUsers(options: {
 
   // Oldest first, so a sign-up during the export lands at the end instead of
   // shifting every later page by one (BAPI's default is newest first). A
-  // deletion can still shift a page; the Map drops the repeat that causes.
-  // ponytail: offset paging; /v1/users has no cursor to page by instead.
-  for (let offset = 0; ; offset += PAGE_SIZE) {
+  // deletion shifts later rows back, which would skip the row at the next
+  // page boundary, so each page overlaps the last.
+  // ponytail: offset paging, safe for up to PAGE_OVERLAP deletions per page
+  // mid-export; /v1/users has no cursor to page by instead.
+  for (let offset = 0; ; offset += PAGE_SIZE - PAGE_OVERLAP) {
     const response = await retryOn429(async () =>
       bapiRequest({
         method: "GET",
