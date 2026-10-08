@@ -25,9 +25,11 @@ import {
 import { withInputRetry } from "../lib/input-retry.ts";
 
 /**
- * `display_name` is coalesced into `first_name` here rather than in the
- * transformer so a user who writes their own SQL sees the shape the
- * transformer expects.
+ * Only the metadata's own `first_name` and `last_name` are pulled out as
+ * columns. A `display_name`, `full_name` or OAuth `name` stays in
+ * `raw_user_meta_data` for the Supabase source to split, which it does only
+ * when `first_name` is empty: coalescing them in here would keep "Jane Doe"
+ * as one first name, and let a display name outrank a real first name.
  */
 const EXPORT_QUERY = `
   SELECT
@@ -37,11 +39,7 @@ const EXPORT_QUERY = `
     encrypted_password,
     phone,
     phone_confirmed_at,
-    COALESCE(
-      raw_user_meta_data->>'display_name',
-      raw_user_meta_data->>'first_name',
-      raw_user_meta_data->>'name'
-    ) AS first_name,
+    raw_user_meta_data->>'first_name' AS first_name,
     raw_user_meta_data->>'last_name' AS last_name,
     raw_user_meta_data,
     raw_app_meta_data,
