@@ -331,8 +331,9 @@ export function validatePreparedUsers(users: Record<string, unknown>[]): {
     failures.push({
       error: firstIssue.message,
       path: firstIssue.path as (string | number)[],
-      userId: (user.userId as string) || `row-${i}`,
-      row: i,
+      // 1-based, like `assertUserRows`: the second user is row 2.
+      userId: (user.userId as string) || `row-${i + 1}`,
+      row: i + 1,
     });
   }
 

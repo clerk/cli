@@ -160,7 +160,7 @@ describe("validatePreparedUsers", () => {
     ]);
     expect(result.users.map((user) => user.userId)).toEqual(["u1", "u3"]);
     expect(result.validationFailed).toBe(1);
-    expect(result.failures).toMatchObject([{ userId: "u2", row: 1 }]);
+    expect(result.failures).toMatchObject([{ userId: "u2", row: 2 }]);
   });
 
   // A failed row is never imported, so a bad hasher is an ordinary reject that
@@ -174,7 +174,7 @@ describe("validatePreparedUsers", () => {
     expect(result.users.map((user) => user.userId)).toEqual(["u3"]);
     expect(result.failures).toMatchObject([
       { userId: "u1", path: ["passwordHasher"] },
-      { userId: "row-1" },
+      { userId: "row-2", row: 2 },
     ]);
     expect(result.failures[0]?.error).toStartWith(
       'Unknown password hasher "rot13". Expected one of:',
