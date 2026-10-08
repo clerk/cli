@@ -231,7 +231,8 @@ ends `partial`.
 `--json` returns `{ target, run, checks, result }`. When a run stops before
 importing, it carries one of `dryRun: true`, `refused: true`,
 `consent: "required"` or `nothingToImport: true` in place of `result`, with
-`run: null`.
+`run: null`. With `--require-password`, `withoutPassword` counts the users it
+left out before the checks, so `checks.total` plus it is the file's size.
 
 #### Re-running
 

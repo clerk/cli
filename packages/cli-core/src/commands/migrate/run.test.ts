@@ -266,6 +266,17 @@ describe("run", () => {
     expect(record?.status).toBe("partial");
   });
 
+  // They never reach the checks, so the preview has to count them itself.
+  test("--require-password counts the users it left out in the --json preview", async () => {
+    await run({ ...baseOptions, requirePassword: true, dryRun: true, json: true });
+
+    expect(JSON.parse(captured.out)).toMatchObject({
+      dryRun: true,
+      withoutPassword: 1,
+      checks: { total: 1 },
+    });
+  });
+
   test("rejects a user with an unrecognized hasher, naming it", async () => {
     fs.writeFileSync(
       path.join(workDir, "export.json"),
