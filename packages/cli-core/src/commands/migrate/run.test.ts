@@ -9,7 +9,14 @@ import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 // Every test below names its own `--secret-key`, which short-circuits the
 // signed-in check — except the one that asserts what happens without it.
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
-import { latestUserLines, listRuns, patchRun, readRun, startRun } from "./lib/run-store.ts";
+import {
+  latestUserLines,
+  listRuns,
+  patchRun,
+  readRun,
+  sha256File,
+  startRun,
+} from "./lib/run-store.ts";
 import { __resetCustomSourcesForTesting } from "./sources/registry.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
 
@@ -279,17 +286,48 @@ describe("run", () => {
           ...extra,
         }),
       );
-      run.update({ file: { path: file, sha256: "x" } });
+      run.update({ file: { path: file, sha256: sha256File(file) } });
       return { record: run.finish(), file };
     }
 
     const { source: _source, input: _input, ...noSource } = baseOptions;
 
+    // The run ID stands for the file that run wrote: a later export or an edit
+    // at the same path must not import under the old run's name.
+    test("refuses an export file that changed since its run wrote it", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const envelope = JSON.parse(fs.readFileSync(file, "utf-8"));
+      fs.writeFileSync(file, JSON.stringify({ ...envelope, users: [envelope.users[0]] }));
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /has changed since it was exported/,
+      );
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
+    test("refuses an export file another run's export overwrote", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const envelope = JSON.parse(fs.readFileSync(file, "utf-8"));
+      fs.writeFileSync(file, JSON.stringify({ ...envelope, runId: "20260101-000000-abcd" }));
+      patchRun(runsDir(), record.id, { file: { path: file, sha256: sha256File(file) } });
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /has changed since it was exported/,
+      );
+    });
+
+    test("refuses an export run whose file is gone", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      fs.rmSync(file);
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(/is gone/);
+    });
+
     test("names an --output export file outside the run folder for deletion too", async () => {
       const { record, file } = exportRun("clerk", export2);
       const outside = path.join(workDir, `users-${record.id}.json`);
       fs.renameSync(file, outside);
-      patchRun(runsDir(), record.id, { file: { path: outside, sha256: "x" } });
+      patchRun(runsDir(), record.id, { file: { path: outside, sha256: sha256File(outside) } });
 
       await run({ ...noSource, input: record.id });
 

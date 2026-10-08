@@ -46,7 +46,7 @@ mock.module("../../lib/prompts.ts", () => ({
 const { run } = await import("./run.ts");
 const { UserAbortError } = await import("../../lib/errors.ts");
 const { _setConfigDir } = await import("../../lib/config.ts");
-const { listRuns, startRun } = await import("./lib/run-store.ts");
+const { listRuns, sha256File, startRun } = await import("./lib/run-store.ts");
 
 const captured = useCaptureLog();
 
@@ -167,7 +167,7 @@ describe("prompts for what was not passed", () => {
         users: EXPORT,
       }),
     );
-    exportRun.update({ file: { path: file, sha256: "x" } });
+    exportRun.update({ file: { path: file, sha256: sha256File(file) } });
     exportRun.finish();
 
     await run({ input: exportRun.record.id, secretKey: "sk_test_x" });
