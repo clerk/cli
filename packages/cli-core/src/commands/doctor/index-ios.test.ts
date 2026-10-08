@@ -29,6 +29,9 @@ mock.module("./ios.ts", () => ({
   ],
 }));
 
+let xcode = true;
+mock.module("../init/ios/coordinator.ts", () => ({ canSetUpXcode: () => xcode }));
+
 const { doctor } = await import("./index.ts");
 
 describe("doctor for native Apple projects", () => {
@@ -44,6 +47,17 @@ describe("doctor for native Apple projects", () => {
     const result = await names({ xcodeTarget: "MyApp" });
     expect(result).toContain("SDK project linkage");
     expect(result).not.toContain(CHECK_NAME.envVars);
+  });
+
+  test("without Xcode, an iOS project keeps the env file check init falls back to", async () => {
+    xcode = false;
+    try {
+      const result = await names({ xcodeTarget: "MyApp" });
+      expect(result).toContain(CHECK_NAME.envVars);
+      expect(result).toContain("SDK project linkage");
+    } finally {
+      xcode = true;
+    }
   });
 
   test("other projects keep the usual checks", async () => {

@@ -19,6 +19,7 @@ import {
 } from "./checks.ts";
 import { checkMcp } from "./check-mcp.ts";
 import { runIOSDoctorChecks } from "./ios.ts";
+import { canSetUpXcode } from "../init/ios/coordinator.ts";
 import { detectFramework } from "../../lib/framework.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
 import {
@@ -77,7 +78,8 @@ async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<Ch
     Boolean(options.xcodeProject || options.xcodeTarget || options.xcodeConfiguration) ||
     (await detectFramework(process.cwd()))?.dep === "ios";
   const results = await Promise.all(
-    getChecks(apple).map(async ({ name, run }) => {
+    // Without Xcode, init pulls the key into an env file as before, so keep checking it.
+    getChecks(apple && canSetUpXcode()).map(async ({ name, run }) => {
       try {
         return await run(ctx);
       } catch (error) {

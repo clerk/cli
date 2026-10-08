@@ -75,7 +75,7 @@ skips the env-file check, since native apps configure Clerk in Swift, and adds
 read-only checks from the same engine as `clerk init`: configuration coverage,
 SDK linkage and version, capabilities, Native API, registration, and the Apple
 connection. It never edits the project, resolves packages, or writes to Clerk.
-Off macOS these checks become one warning, since they need Xcode. If Clerk can't
+Without Xcode (another OS, or a Mac with only the Command Line Tools) these checks become one warning and the env-file check stays, matching `clerk init`'s fallback. If Clerk can't
 be reached, the local checks still run and a warning says so.
 
 ## Auto-Fix (`--fix`)

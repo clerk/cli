@@ -181,8 +181,11 @@ describe("clerk init for native Apple projects", () => {
     xcode.mockReturnValue(false);
     const run = iosProject();
 
-    await expect(init({ dryRun: true })).rejects.toThrow("--dry-run need Xcode");
-    await expect(init({ xcodeTarget: "MyApp" })).rejects.toThrow("--xcode-target need Xcode");
+    await expect(init({ dryRun: true })).rejects.toThrow("--dry-run needs Xcode");
+    await expect(init({ xcodeTarget: "MyApp" })).rejects.toThrow("--xcode-target needs Xcode");
+    await expect(init({ dryRun: true, json: true })).rejects.toThrow(
+      "--dry-run, --json need Xcode",
+    );
     expect(run).not.toHaveBeenCalled();
   });
 });

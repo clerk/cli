@@ -325,13 +325,12 @@ function assertFrameworkFlags(options: InitOptions, framework: FrameworkInfo): v
   if (options.json && !framework.supportsJson)
     throwUsageError(`--json isn't supported for ${framework.name} yet.`);
   const apple = APPLE_FLAGS.filter(([key]) => options[key] != null).map(([, flag]) => flag);
-  if (
-    framework.dep === "ios" &&
-    !canSetUpXcode() &&
-    (options.dryRun || options.json || apple.length)
-  )
+  const needsXcode = [options.dryRun && "--dry-run", options.json && "--json", ...apple].filter(
+    Boolean,
+  );
+  if (framework.dep === "ios" && !canSetUpXcode() && needsXcode.length)
     throwUsageError(
-      `${[options.dryRun && "--dry-run", options.json && "--json", ...apple].filter(Boolean).join(", ")} need Xcode on macOS. Without them, clerk init links your app and prints the setup steps.`,
+      `${needsXcode.join(", ")} ${needsXcode.length === 1 ? "needs" : "need"} Xcode on macOS. Without them, clerk init links your app and prints the setup steps.`,
     );
   if (apple.length && framework.dep !== "ios")
     throwUsageError(

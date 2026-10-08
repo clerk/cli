@@ -1,5 +1,5 @@
 import { doctor } from "../init/ios/doctor.ts";
-import { CLERK_SWIFT_MINIMUM_VERSION } from "../init/ios/coordinator.ts";
+import { CLERK_SWIFT_MINIMUM_VERSION, canSetUpXcode } from "../init/ios/coordinator.ts";
 import type { Dependencies } from "../init/ios/workflow.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { interruptSignal } from "../../lib/signals.ts";
@@ -15,12 +15,13 @@ export async function runIOSDoctorChecks(
   },
   dependencies: Dependencies = {},
 ): Promise<CheckResult[]> {
-  if (process.platform !== "darwin")
+  // Same rule as init: without a usable Xcode, init took the manual (env file) path.
+  if (!canSetUpXcode())
     return [
       {
         name: NAME,
         status: "warn",
-        message: "Checking an Xcode project needs Xcode, which runs only on macOS.",
+        message: "Checking an Xcode project needs Xcode on macOS.",
         remedy: "Run clerk doctor on a Mac with Xcode installed.",
       },
     ];
