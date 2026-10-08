@@ -306,6 +306,27 @@ describe("clerk", () => {
     expect(user?.unverifiedPhoneNumbers).toEqual(["+15555550100"]);
   });
 
+  // The schema accepts an array for a primary identifier, so it must not throw.
+  test("reads a primary email given as an array", () => {
+    const user = one("clerk", {
+      id: "u1",
+      primary_email_address: [" a@x.dev ", "b@x.dev"],
+      verified_email_addresses: ["b@x.dev"],
+    });
+    expect(user?.email).toEqual(["a@x.dev", "b@x.dev"]);
+  });
+
+  test("an array primary listed as unverified stays unverified", () => {
+    const user = one("clerk", {
+      id: "u1",
+      primary_phone_number: ["+15555550100"],
+      primary_email_address: "a@x.dev",
+      unverified_phone_numbers: [" +15555550100 "],
+    });
+    expect(user?.phone).toBeUndefined();
+    expect(user?.unverifiedPhoneNumbers).toEqual(["+15555550100"]);
+  });
+
   test("a prefixed primary email listed as unverified stays unverified", () => {
     const user = one("clerk", {
       id: "u1",
