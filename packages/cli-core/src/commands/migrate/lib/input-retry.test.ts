@@ -265,6 +265,15 @@ describe("resolveDbUrl", () => {
     await expect(resolveDbUrl({ json: true }, CONFIG, {})).rejects.toThrow(/cannot prompt here/);
     expect(answers).toEqual([FIRST]);
   });
+
+  // `-y` is "do not prompt", at a terminal too.
+  test("does not prompt under -y, even with a human at the TTY", async () => {
+    answers = [FIRST];
+    setAssumeYes(true);
+
+    await expect(resolveDbUrl({}, CONFIG, {})).rejects.toThrow(/cannot prompt here/);
+    expect(answers).toEqual([FIRST]);
+  });
 });
 
 // Only the connect proves the connection string. A failure after it is not a
