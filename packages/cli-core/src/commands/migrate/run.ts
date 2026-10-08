@@ -198,11 +198,13 @@ export function explainErrors(errors: Iterable<string>, instanceType: InstanceTy
  * error naming whichever half is missing.
  */
 async function ensureImportTarget(options: MigrateRunOptions): Promise<void> {
-  // Each of these names the destination instance on its own, with no account
+  // A secret key names the destination instance on its own, with no account
   // and no linked directory involved — mirroring resolveBapiSecretKey.
-  if (options.secretKey || options.app || process.env.CLERK_SECRET_KEY) return;
+  if (options.secretKey || process.env.CLERK_SECRET_KEY) return;
+  // `--app` names it too, but resolves its key through the Platform API, which
+  // needs an account: it goes through the sign-in below, though not the link.
   // An unclaimed accountless application keeps its only secret key on disk.
-  if (await resolveKeylessTarget({ instance: options.instance })) return;
+  if (!options.app && (await resolveKeylessTarget({ instance: options.instance }))) return;
 
   const interactive = canPrompt(options);
 
@@ -228,7 +230,7 @@ async function ensureImportTarget(options: MigrateRunOptions): Promise<void> {
 
   // Left to the secret-key chain when non-interactive: its `not_linked` error
   // is the one every other command raises, and there is nothing to add to it.
-  if (interactive && !(await resolveProfile(process.cwd()))) {
+  if (interactive && !options.app && !(await resolveProfile(process.cwd()))) {
     log.info("This directory isn't linked to a Clerk application. Linking one first...");
     await link({ skipIfLinked: true });
   }
