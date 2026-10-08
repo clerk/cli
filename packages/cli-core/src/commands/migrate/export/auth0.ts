@@ -21,6 +21,7 @@ import { log } from "../../../lib/log.ts";
 import { password as passwordPrompt, text } from "../../../lib/prompts.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
+import { isAssumeYes } from "../lib/assume-yes.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
 import { isCredentialStatus, throwApiFailure, withInputRetry } from "../lib/input-retry.ts";
@@ -109,7 +110,8 @@ export async function resolveAuth0Credentials(
     };
   }
 
-  if (options.json || isAgent() || !isHuman()) {
+  // `-y` is "do not prompt", as for the other exports.
+  if (options.json || isAssumeYes() || isAgent() || !isHuman()) {
     throwUsageError(
       `\`clerk migrate export auth0\` needs credentials for a machine-to-machine application and cannot prompt here.\n` +
         `Missing: ${missing.map(([, flag, variable]) => `${flag} (or ${variable})`).join(", ")}.`,
