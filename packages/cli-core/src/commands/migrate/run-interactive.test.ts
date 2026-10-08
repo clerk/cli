@@ -149,6 +149,13 @@ describe("consent", () => {
     expect(confirmMessages).toEqual(["Import 2 users?"]);
   });
 
+  test("names the users it would skip", async () => {
+    fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify([...EXPORT, { id: "u3" }]));
+    await run({ ...importOptions, allowPartial: true });
+
+    expect(confirmMessages).toEqual(["Create 2 users and skip 1 user?"]);
+  });
+
   test("prints the checks before the question", async () => {
     await run(importOptions);
 
