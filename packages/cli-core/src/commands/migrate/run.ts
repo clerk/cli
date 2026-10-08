@@ -455,7 +455,15 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const withoutLegal = settings?.sign_up?.legal_consent_enabled
         ? users.filter((user) => !user.legalAcceptedAt && !user.skipLegalChecks).length
         : 0;
-      if (!skipLegalChecks && withoutLegal > 0 && !options.dryRun && canPrompt(options)) {
+      // `-y` imports without prompting, so it does not stop here either: the
+      // checks reject these users, and --skip-legal-checks is the way through.
+      if (
+        !skipLegalChecks &&
+        withoutLegal > 0 &&
+        !options.dryRun &&
+        !options.yes &&
+        canPrompt(options)
+      ) {
         skipLegalChecks = await confirm({
           message: `${plural(withoutLegal, "user")} ${withoutLegal === 1 ? "has" : "have"} no legal acceptance on record, which this instance requires. Import them without it?`,
           default: false,
