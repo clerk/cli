@@ -175,13 +175,14 @@ describe("locks", () => {
     }
   });
 
-  test("run folders are owner-only", () => {
+  // Windows ignores POSIX modes.
+  test.skipIf(process.platform === "win32")("run folders are owner-only", () => {
     const run = startRun(runsDir, init);
     expect(fs.statSync(run.dir).mode & 0o777).toBe(0o700);
   });
 
   // In case a folder's mode is ever looser than the run store sets it.
-  test("run files are owner-only", () => {
+  test.skipIf(process.platform === "win32")("run files are owner-only", () => {
     const run = startRun(runsDir, init);
     run.append({ sourceId: "u1", status: "creating" });
     for (const file of ["run.json", "users.ndjson", "lock"]) {
