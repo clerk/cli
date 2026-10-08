@@ -689,13 +689,21 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
   return warnings;
 }
 
+/** Each field Clerk stores with its setting off, and what it does once turned on. */
+const STORED_FIELDS: Record<string, { noun: string; then: string }> = {
+  password: { noun: "password", then: "works" },
+  username: { noun: "username", then: "works" },
+  first_name: { noun: "first name", then: "shows" },
+  last_name: { noun: "last name", then: "shows" },
+};
+
 /**
  * A field Clerk stores with its setting off, so nothing is lost: it starts
- * working once the setting is turned on.
+ * working, or showing, once the setting is turned on.
  */
 function storedWarning(key: string, count: number): string {
-  const noun = key === "password" ? "password" : "username";
-  return `${plural(count, "user")} ${count === 1 ? "has" : "have"} a ${noun}, which this instance does not use: it is stored, and works only once ${noun}s are turned on`;
+  const { noun, then } = STORED_FIELDS[key] ?? { noun: key, then: "works" };
+  return `${plural(count, "user")} ${count === 1 ? "has" : "have"} a ${noun}, which this instance does not use: it is stored, and ${then} only once ${noun}s are turned on`;
 }
 
 /** Shell-quotes a JSON payload for a single-quoted argument. */
