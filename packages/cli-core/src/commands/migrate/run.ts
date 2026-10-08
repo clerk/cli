@@ -302,7 +302,21 @@ async function resolveInput(
       `Run ${value} is an ${record.kind} run, which has no file to import. Name an export run, or a file.`,
     );
   }
-  return { file: record.file.path, fromExport: record.id };
+  // `--output` can point a later export, or an edit, at the same path. The run
+  // ID has to still mean the file that run wrote, not whatever is there now.
+  const { path: file, sha256 } = record.file;
+  if (!fileExists(file)) {
+    throwUsageError(
+      `The file run ${value} wrote, ${quoteArg(file)}, is gone. Export again, or import a file by its path.`,
+    );
+  }
+  if (sha256File(file) !== sha256 || readEnvelope(file)?.runId !== record.id) {
+    throwUsageError(
+      `The file run ${value} wrote, ${quoteArg(file)}, has changed since it was exported. Nothing was imported. ` +
+        "Import it by its path if you mean its current contents, or export again.",
+    );
+  }
+  return { file, fromExport: record.id };
 }
 
 /**

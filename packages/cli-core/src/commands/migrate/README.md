@@ -404,7 +404,9 @@ clerk migrate import                                          # a human is asked
 Plus the targeting flags from the table above: `--secret-key`, `--app` and
 `--instance`.
 
-An export run ID stands for the file that run wrote, and the import records it
+An export run ID stands for the file that run wrote: if that file is gone, or
+has changed since (an `--output` path another export or an edit overwrote), the
+import exits 2 and imports nothing. The import records it
 as `fromExport`. A file `clerk migrate export` wrote carries its source, so it
 needs no `--source`, and a `--source` that contradicts it exits 2. Any other
 file needs `--source`: a JSON array, a CSV, or NDJSON, one user per line (what
