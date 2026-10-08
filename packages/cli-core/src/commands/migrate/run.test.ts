@@ -320,6 +320,17 @@ describe("run", () => {
 
     const { source: _source, input: _input, ...noSource } = baseOptions;
 
+    test("names an --output export file outside the run folder for deletion too", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const outside = path.join(workDir, `users-${record.id}.json`);
+      fs.renameSync(file, outside);
+      patchRun(runsDir(), record.id, { file: { path: outside, sha256: "x" } });
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).toContain(`rm ${outside}`);
+    });
+
     test("imports by export run ID, with the source the envelope names", async () => {
       const { record } = exportRun("clerk", export2);
 
