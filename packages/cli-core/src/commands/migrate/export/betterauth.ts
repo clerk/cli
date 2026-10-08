@@ -87,10 +87,22 @@ async function tableColumns(client: DbClient, table: string): Promise<Set<string
     const rows = await client.query<{ name: string }>(`PRAGMA table_info(${client.quote(table)})`);
     return new Set(rows.map((row) => row.name));
   }
-  const scope = client.dbType === "mysql" ? "DATABASE()" : "current_schema()";
+  if (client.dbType === "postgres") {
+    // `to_regclass` resolves the name through the whole search_path, as the
+    // export's unqualified SELECT will. `current_schema()` is only the first
+    // schema there that exists, which misses tables in `public` whenever a
+    // schema named after the role comes first.
+    const rows = await client.query<{ column_name: string }>(
+      `SELECT attname AS column_name FROM pg_attribute
+       WHERE attrelid = to_regclass(quote_ident(${client.placeholder(1)}::text))
+         AND attnum > 0 AND NOT attisdropped`,
+      [table],
+    );
+    return new Set(rows.map((row) => row.column_name));
+  }
   const rows = await client.query<{ column_name?: string; COLUMN_NAME?: string }>(
     `SELECT column_name FROM information_schema.columns
-     WHERE table_name = ${client.placeholder(1)} AND table_schema = ${scope}`,
+     WHERE table_name = ${client.placeholder(1)} AND table_schema = DATABASE()`,
     [table],
   );
   // MySQL 8 answers with an upper-case column label.
