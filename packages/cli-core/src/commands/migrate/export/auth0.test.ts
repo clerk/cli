@@ -6,6 +6,7 @@ import path from "node:path";
 import { CliError, EXIT_CODE } from "../../../lib/errors.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
+import { setAssumeYes } from "../lib/assume-yes.ts";
 import {
   buildAuth0Export,
   exportAuth0,
@@ -150,6 +151,17 @@ describe("resolveAuth0Credentials", () => {
       {},
     );
     expect(resolved.domain).toBe("t.auth0.com");
+  });
+
+  // `-y` is "do not prompt", at a terminal too.
+  test("does not ask for missing credentials under -y", async () => {
+    process.env.CLERK_MODE = "human";
+    setAssumeYes(true);
+    try {
+      await expect(resolveAuth0Credentials({}, {})).rejects.toThrow(/cannot prompt here/);
+    } finally {
+      setAssumeYes(false);
+    }
   });
 
   // Tests run non-TTY, the same signal an agent gives.
