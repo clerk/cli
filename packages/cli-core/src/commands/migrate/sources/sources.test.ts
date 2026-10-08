@@ -105,6 +105,25 @@ describe("isVerified", () => {
 });
 
 describe("supabase", () => {
+  // `NULL` is how SQL tools write an empty column into a CSV.
+  test("reads NULL cells in a CSV as empty, not as values", async () => {
+    const { users, failures } = await load(
+      "supabase",
+      [
+        "id,email,email_confirmed_at,encrypted_password,phone,raw_user_meta_data,deleted_at",
+        "s1,a@x.dev,2024-01-01,NULL,NULL,NULL,NULL",
+      ].join("\n"),
+      "csv",
+    );
+
+    expect(failures).toEqual([]);
+    expect(users).toHaveLength(1);
+    expect(users[0]).toMatchObject({ userId: "s1", email: "a@x.dev" });
+    for (const field of ["skipReason", "phone", "unverifiedPhoneNumbers", "passwordDropped"]) {
+      expect(users[0]).not.toHaveProperty(field);
+    }
+  });
+
   const base = { id: "sb1", email: "a@x.dev", email_confirmed_at: "2024-06-29 20:25:06.126079+00" };
 
   // Supabase accepts argon2 hashes on import, so the hasher is read per user.

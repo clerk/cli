@@ -1,5 +1,5 @@
 import type { SourceEntry } from "../types.ts";
-import { detectStandardHasher, routeByVerification, toIsoDate } from "./shared.ts";
+import { detectStandardHasher, isNullish, routeByVerification, toIsoDate } from "./shared.ts";
 
 /**
  * Supabase Auth → Clerk transformer.
@@ -54,6 +54,12 @@ const supabaseSource = {
     created_at: "createdAt",
   },
   postTransform: (user) => {
+    // A CSV export writes SQL NULL as text. Left in, `deleted_at: "NULL"`
+    // skips every user, and `raw_user_meta_data: "NULL"` fails the row.
+    for (const [field, value] of Object.entries(user)) {
+      if (isNullish(value)) delete user[field];
+    }
+
     user.createdAt = toIsoDate(user.createdAt);
 
     // Supabase accepts bcrypt and argon2 hashes on import, so `bcrypt` (the
