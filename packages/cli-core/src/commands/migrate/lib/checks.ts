@@ -31,7 +31,7 @@ import {
 } from "./clerk-config.ts";
 import { resolveDevUserLimit } from "./instance.ts";
 import { buildChangePayload, buildSettingChanges } from "./modify-settings.ts";
-import { buildReadinessReport } from "./readiness.ts";
+import { acceptsIdentifier, buildReadinessReport } from "./readiness.ts";
 import type { ApiScheduler } from "./scheduler.ts";
 import {
   countSocialProviders,
@@ -282,12 +282,11 @@ const USERNAME_EXTENDED = /^[a-zA-Z0-9!#$'+.^_`~-]+$/;
 /**
  * Clerk's username rules, mirrored from `validate.Username` in clerk_go, so a
  * username the instance would refuse is a reject here rather than a failed
- * create. Skipped when usernames are off: the readiness warnings cover that.
+ * create. Clerk checks them with usernames off too.
  */
 function usernameProblem(user: User, settings: UserSettingsJSON | null): string | undefined {
   const username = user.username;
   if (!settings || typeof username !== "string" || !username) return undefined;
-  if (!isEnabled(settings, "username")) return undefined;
 
   const rules = (settings as { username_settings?: UsernameSettings }).username_settings ?? {};
   const length = [...username].length;
@@ -628,6 +627,10 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
       providerCounts: countSocialProviders(rowsFor(input, importable)),
     });
     for (const item of report.blocking) {
+      if (item.consequence === "stored") {
+        warnings.push(storedWarning(item.key, item.userCount));
+        continue;
+      }
       if (item.consequence !== "drops") continue;
       if (item.clerkRequired === true) {
         const missing = importable.length - item.userCount;
@@ -635,12 +638,6 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
           item.key === "password"
             ? `${plural(missing, "user")} without a password, which this instance requires: they sign in another way, such as a code or a social account`
             : `${plural(missing, "user")} without a ${item.label.toLowerCase()}, which this instance requires`,
-        );
-      } else if (item.key === "password") {
-        // Clerk stores a digest even with passwords off, so nothing is lost:
-        // it starts working if passwords are turned on.
-        warnings.push(
-          `${plural(item.userCount, "user")} ${item.userCount === 1 ? "has" : "have"} a password, which this instance does not use: it is stored, and works only once passwords are turned on`,
         );
       } else {
         warnings.push(
@@ -670,6 +667,15 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
   }
 
   return warnings;
+}
+
+/**
+ * A field Clerk stores with its setting off, so nothing is lost: it starts
+ * working once the setting is turned on.
+ */
+function storedWarning(key: string, count: number): string {
+  const noun = key === "password" ? "password" : "username";
+  return `${plural(count, "user")} ${count === 1 ? "has" : "have"} a ${noun}, which this instance does not use: it is stored, and works only once ${noun}s are turned on`;
 }
 
 /** Shell-quotes a JSON payload for a single-quoted argument. */
@@ -745,29 +751,50 @@ function countReasons(rejects: Reject[]): ReasonCount[] {
 }
 
 /**
- * Removes the emails, phones or usernames of an instance that has that
- * identifier off.
+ * Removes the emails or phones Clerk would refuse: those of an instance that
+ * neither has the identifier on nor signs in or does MFA with it.
  *
- * The warnings already say they are dropped, but Clerk does not drop them. It
- * refuses the whole create for a phone (`phone_number is not a valid
- * parameter`), and for a username it stores it anyway, or refuses the create
- * when the username breaks the default rules.
+ * The warnings already say they are dropped, but Clerk does not drop them: it
+ * refuses the whole create (`phone_number is not a valid parameter`). A
+ * username is not among them: Clerk stores it with usernames off.
  */
 function dropDisabledIdentifiers(user: User, settings: UserSettingsJSON | null): User {
   if (!settings) return user;
   const fields = [
-    ...(isEnabled(settings, "email_address")
+    ...(acceptsIdentifier(settings, "email_address")
       ? []
       : (["email", "emailAddresses", "unverifiedEmailAddresses"] as const)),
-    ...(isEnabled(settings, "phone_number")
+    ...(acceptsIdentifier(settings, "phone_number")
       ? []
       : (["phone", "phoneNumbers", "unverifiedPhoneNumbers"] as const)),
-    ...(isEnabled(settings, "username") ? [] : (["username"] as const)),
   ];
   if (!fields.some((field) => field in user)) return user;
   const kept = { ...user };
   for (const field of fields) delete kept[field];
   return kept;
+}
+
+/**
+ * The user without a username Clerk would refuse, where usernames are off:
+ * Clerk still checks it there, and nothing signs in with it, so it is dropped
+ * rather than costing the user.
+ */
+function dropRefusedOffUsername(
+  user: User,
+  settings: UserSettingsJSON | null,
+): { user: User; dropped: boolean } {
+  if (!settings || isEnabled(settings, "username") || !usernameProblem(user, settings)) {
+    return { user, dropped: false };
+  }
+  const { username: _dropped, ...kept } = user;
+  return { user: kept as User, dropped: true };
+}
+
+function refusedUsernameWarning(count: number): string[] {
+  if (count === 0) return [];
+  return [
+    `${plural(count, "user")} ${count === 1 ? "has" : "have"} a username Clerk refuses, which is dropped: this instance has usernames off`,
+  ];
 }
 
 function refusedNameWarning(count: number): string[] {
@@ -804,10 +831,13 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const passed: User[] = [];
   const placeholderEmails = new Set<string>();
   const refusedNames = new Set<string>();
+  const refusedUsernames = new Set<string>();
   for (const original of input.users) {
     const named = dropRefusedNames(original);
     if (named.dropped) refusedNames.add(original.userId);
-    const { user, refused } = dropRefusedEmails(named.user);
+    const usernamed = dropRefusedOffUsername(named.user, input.settings);
+    if (usernamed.dropped) refusedUsernames.add(original.userId);
+    const { user, refused } = dropRefusedEmails(usernamed.user);
     const reason =
       original.skipReason ??
       (refused.length > 0 && !hasAnyIdentifier(user)
@@ -894,6 +924,9 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       ...buildWarnings(input, candidates),
       ...placeholderWarning(candidates.filter((user) => placeholderEmails.has(user.userId)).length),
       ...refusedNameWarning(candidates.filter((user) => refusedNames.has(user.userId)).length),
+      ...refusedUsernameWarning(
+        candidates.filter((user) => refusedUsernames.has(user.userId)).length,
+      ),
       ...legalWarning(
         candidates.filter((user) => lacksLegalAcceptance(user, input.settings)).length,
       ),
