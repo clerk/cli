@@ -26,7 +26,7 @@ clerk deploy status --mode agent --wait # Agent verification with retrying wait
 
 ## Agent Mode
 
-When running `clerk deploy` in agent mode (`--mode agent`, `CLERK_MODE=agent`, or non-TTY context), the command emits a structured JSON handoff via `log.data` on stdout. The handoff is read-only: it resolves the linked app, production instance, domain, domain status snapshot, and OAuth completeness, but it does not prompt, mutate config, trigger a DNS check, or poll.
+When running `clerk deploy` in agent mode (`--mode agent`, `CLERK_MODE=agent`, a recognized agent run, or non-TTY context), the command emits a structured JSON handoff via `log.data` on stdout. The handoff is read-only: it resolves the linked app, production instance, domain, domain status snapshot, and OAuth completeness, but it does not prompt, mutate config, trigger a DNS check, or poll.
 
 The handoff state is one of:
 
@@ -93,7 +93,8 @@ Agent mode is detected via the mode system (`src/mode.ts`), which checks in prio
 
 1. `--mode` CLI flag
 2. `CLERK_MODE` environment variable
-3. TTY detection (`process.stdout.isTTY`)
+3. The Codex run markers in `CODEX_ENV_VARS` (`lib/env-signals.ts`): Codex attaches a TTY to every command, so it is agent mode regardless of the next check
+4. TTY detection (`process.stdout.isTTY`)
 
 The human-mode wizard still starts only in human mode.
 

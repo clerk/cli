@@ -105,7 +105,7 @@ export function createProgram(): Program {
     )
     .option(
       "--mode <mode>",
-      "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
+      "Force interaction mode (human or agent). Also settable via the CLERK_MODE environment variable. Defaults to agent when run by a known AI agent or without a TTY.",
     )
     .option("--verbose", "Show detailed output (enables debug messages)") as Program;
 

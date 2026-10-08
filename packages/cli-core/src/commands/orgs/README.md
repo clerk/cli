@@ -57,7 +57,7 @@ defaults.
 | `--dry-run`       | Preview the patch without applying it  |
 
 When `billing.organization_enabled` is currently true, `disable` warns and asks
-for confirmation in human mode. In agent mode (no TTY), the command refuses
+for confirmation in human mode. In agent mode (recognized agent run or no TTY), the command refuses
 unless `--yes` is passed — this avoids stranding org billing in a stale state.
 Disabling organizations never disables organization billing automatically; run
 `clerk disable billing --for orgs` first if that's what you intend.

@@ -40,7 +40,7 @@ clerk init --no-skills
 
 ## Agent Mode
 
-When running in agent mode (`--mode agent` or non-TTY), the command runs the full init flow non-interactively:
+When running in agent mode (`--mode agent`, `CLERK_MODE=agent`, a recognized agent run, or non-TTY), the command runs the full init flow non-interactively:
 
 - All confirmation prompts are auto-skipped (as if `--yes` was passed)
 - For **existing projects**: framework and package manager are auto-detected, no flags required

@@ -62,4 +62,4 @@ clerk apps create "My App" --json      # Output as JSON
 
 - Requires authentication via `clerk auth login` or `CLERK_PLATFORM_API_KEY` environment variable.
 - Secret keys are never shown in output.
-- In non-TTY environments (e.g., piped to another command), output defaults to JSON automatically.
+- In agent mode (a recognized agent run, or a non-TTY environment such as piping to another command), output defaults to JSON automatically.

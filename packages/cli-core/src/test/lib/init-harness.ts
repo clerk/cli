@@ -101,8 +101,20 @@ export function mockMiddlewareScaffold(): void {
   });
 }
 
+export interface SetupOverrides {
+  email?: string | null;
+  apiKey?: boolean;
+  isAgent?: boolean;
+  /**
+   * Leave `mode.ts` unfaked so the test exercises real mode detection
+   * (env markers + TTY). The test owns the env and `process.stdout.isTTY` it
+   * needs; `isAgent` is ignored.
+   */
+  realMode?: boolean;
+}
+
 export interface InitHarness {
-  setup: (overrides?: { email?: string | null; apiKey?: boolean; isAgent?: boolean }) => {
+  setup: (overrides?: SetupOverrides) => {
     gatherContextSpy: ReturnType<typeof spyOn>;
     captured: ReturnType<typeof useCaptureLog>;
   };
@@ -125,7 +137,7 @@ export function useInitHarness(): InitHarness {
     spies = [];
   });
 
-  function setup(overrides: { email?: string | null; apiKey?: boolean; isAgent?: boolean } = {}) {
+  function setup(overrides: SetupOverrides = {}) {
     const email = overrides.email ?? null;
     const apiKey = overrides.apiKey ?? false;
     const agent = overrides.isAgent ?? false;
@@ -133,8 +145,12 @@ export function useInitHarness(): InitHarness {
     const gatherContextSpy = spyOn(contextModule, "gatherContext").mockResolvedValue(null);
 
     spies = [
-      spyOn(modeModule, "isAgent").mockReturnValue(agent),
-      spyOn(modeModule, "isHuman").mockReturnValue(!agent),
+      ...(overrides.realMode
+        ? []
+        : [
+            spyOn(modeModule, "isAgent").mockReturnValue(agent),
+            spyOn(modeModule, "isHuman").mockReturnValue(!agent),
+          ]),
       spyOn(configModule, "resolveProfile").mockResolvedValue(undefined),
       spyOn(frameworkModule, "lookupFramework").mockReturnValue(null),
       gatherContextSpy,

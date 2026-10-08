@@ -1,4 +1,4 @@
-import { test, expect, describe, spyOn } from "bun:test";
+import { test, expect, describe, spyOn, beforeEach, afterEach } from "bun:test";
 
 // Pure spyOn approach — Bun's mock.module globally replaces modules for the
 // entire test run, which pollutes other test files that import the same
@@ -21,8 +21,12 @@ import {
   bootstrapMod,
   keylessMod,
   keylessTargetMod,
+  previewMod,
+  skillsMod,
 } from "../../test/lib/init-harness.ts";
 import * as promptsMod from "../../lib/prompts.ts";
+import { CODEX_ENV_VARS } from "../../lib/env-signals.ts";
+import { _resetMode } from "../../mode.ts";
 import { init } from "./index.ts";
 
 const EXISTING_BREADCRUMB = { claimToken: "tok_existing", createdAt: "2024-01-01T00:00:00.000Z" };
@@ -798,6 +802,72 @@ describe("init strategy", () => {
       } finally {
         delete process.env.CLERK_PLATFORM_API_KEY;
       }
+    });
+  });
+
+  describe("Codex runs with a TTY attached are still agent runs (defect: GROW-1260)", () => {
+    // Codex gives every command a pseudo-terminal, so TTY detection alone read
+    // it as a human and `init` blocked on a browser login no one could finish.
+    // These tests leave `mode.ts` unfaked so the env marker drives the strategy.
+    const MODE_ENV_VARS = [...CODEX_ENV_VARS, "CLERK_MODE", "CLERK_PLATFORM_API_KEY"];
+    const savedEnv: Record<string, string | undefined> = {};
+    const savedIsTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+
+    beforeEach(() => {
+      _resetMode();
+      for (const envVar of MODE_ENV_VARS) {
+        savedEnv[envVar] = process.env[envVar];
+        delete process.env[envVar];
+      }
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    });
+
+    afterEach(() => {
+      _resetMode();
+      for (const envVar of MODE_ENV_VARS) {
+        if (savedEnv[envVar] === undefined) delete process.env[envVar];
+        else process.env[envVar] = savedEnv[envVar];
+      }
+      // Under `bun test` stdout is a pipe and `isTTY` is not an own property, so
+      // the delete branch is the usual path; the restore branch covers a real TTY.
+      if (savedIsTTY) Object.defineProperty(process.stdout, "isTTY", savedIsTTY);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+    });
+
+    test("under Codex, an unauthenticated existing project gets accountless keys without a login or a prompt", async () => {
+      process.env.CODEX_THREAD_ID = "thread_123";
+      setup({ realMode: true, email: null });
+      mockExistingProject(KEYLESS_CTX);
+      mockMiddlewareScaffold();
+      // Stubbed so a regression fails on the assertion instead of hanging on stdin.
+      const confirmSpy = spyOn(promptsMod, "confirm").mockResolvedValue(true);
+      track(confirmSpy);
+
+      await init({});
+
+      expect(keylessMod.createAccountlessApp).toHaveBeenCalled();
+      expect(loginMod.login).not.toHaveBeenCalled();
+      expect(linkMod.link).not.toHaveBeenCalled();
+      // The scaffold and skills prompts are behind harness stubs, so watch the
+      // branch choice rather than `confirm` alone.
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(previewMod.previewAndConfirm).not.toHaveBeenCalled();
+      expect(skillsMod.installSkills).toHaveBeenCalledTimes(1);
+      expect((skillsMod.installSkills as ReturnType<typeof spyOn>).mock.calls[0]?.[3]).toBe(true);
+    });
+
+    test("with no agent markers, the same TTY run is a human run and goes to login", async () => {
+      setup({ realMode: true, email: null });
+      mockExistingProject(KEYLESS_CTX);
+      mockMiddlewareScaffold();
+
+      await init({});
+
+      expect(loginMod.login).toHaveBeenCalled();
+      expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
+      // Proves the fixture reaches the scaffold confirmation branch, so the
+      // Codex case's "not called" above means something.
+      expect(previewMod.previewAndConfirm).toHaveBeenCalled();
     });
   });
 });
