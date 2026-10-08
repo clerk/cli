@@ -677,15 +677,18 @@ describe("fixes", () => {
   });
 
   // Without --instance, `clerk config patch` changes the linked profile's
-  // development instance, not the one a --secret-key import targets.
-  test("name the instance even when the key came from --secret-key", async () => {
+  // development instance, not the one a --secret-key import targets; without
+  // --app, the linked profile's app. A key names neither app nor profile.
+  test("name the instance, and leave the app to fill in, when the key came from --secret-key", async () => {
     const checks = await checkImport(
       input({
         settings: EMAIL_REQUIRED,
         users: [user("b", { email: undefined, username: "b" })],
       }),
     );
-    expect(checks.fixes[0]?.command).toStartWith("clerk config patch --instance ins_1 --json");
+    expect(checks.fixes[0]?.command).toStartWith(
+      "clerk config patch --app <app_id> --instance ins_1 --json",
+    );
   });
 
   test("point at the Dashboard when the instance could not be named", async () => {
