@@ -236,12 +236,7 @@ const NOT_ALTERNATIVE_SIGN_IN = new Set([
  * created. Mirrors `create_service.go` and `UserSettings.FirstFactors()`.
  */
 export function passwordIsOnlySignIn(settings: UserSettingsJSON): boolean {
-  const strategies = new Set<string>();
-  for (const attribute of Object.values(settings.attributes ?? {})) {
-    if (attribute?.used_for_first_factor) {
-      for (const strategy of attribute.first_factors ?? []) strategies.add(strategy);
-    }
-  }
+  const strategies = firstFactorStrategies(settings);
   for (const [strategy, social] of Object.entries(settings.social ?? {})) {
     if (social?.enabled && social.authenticatable) strategies.add(strategy);
   }
@@ -250,6 +245,17 @@ export function passwordIsOnlySignIn(settings: UserSettingsJSON): boolean {
     strategies.has("password") &&
     [...strategies].every((strategy) => NOT_ALTERNATIVE_SIGN_IN.has(strategy))
   );
+}
+
+/** The first-factor strategies the instance's identifiers offer (`email_code`, `password`, …). */
+function firstFactorStrategies(settings: UserSettingsJSON): Set<string> {
+  const strategies = new Set<string>();
+  for (const attribute of Object.values(settings.attributes ?? {})) {
+    if (attribute?.used_for_first_factor) {
+      for (const strategy of attribute.first_factors ?? []) strategies.add(strategy);
+    }
+  }
+  return strategies;
 }
 
 /** True when the instance needs legal acceptance this user has no record of. */
@@ -571,9 +577,23 @@ function findDisabledProviderRejects(input: CheckInput): Map<string, string> {
   if (disabled.length === 0) return reasons;
 
   const { excludedIds } = findUsersWithOnlyDisabledProviders(input.supabaseRows, disabled);
+  // A disabled provider only strands a user with no other way in: a verified
+  // email or phone the instance signs in with by code or link still works.
+  const strategies = firstFactorStrategies(input.settings);
+  const usersById = new Map(input.users.map((user) => [user.userId, user]));
+  const canSignInOtherwise = (id: string) => {
+    const user = usersById.get(id);
+    if (!user) return false;
+    const { primaryEmail, primaryPhone } = splitIdentifiers(user);
+    return (
+      (Boolean(primaryEmail) && (strategies.has("email_code") || strategies.has("email_link"))) ||
+      (Boolean(primaryPhone) && strategies.has("phone_code"))
+    );
+  };
   // Each reject names only that user's own providers.
   const rowsById = new Map(input.supabaseRows.map((row) => [String(row.id), row]));
   for (const id of excludedIds) {
+    if (canSignInOtherwise(id)) continue;
     const own = getUserProviders(rowsById.get(id) ?? {}).filter((p) => disabled.includes(p));
     // Clerk can't turn on a provider it doesn't offer, so say which is which.
     const why = (provider: string) =>

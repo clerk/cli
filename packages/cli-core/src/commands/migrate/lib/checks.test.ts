@@ -291,6 +291,54 @@ describe("rejects", () => {
     ).toEqual({ "only-discord": "only signs in with Discord, which is not enabled in Clerk" });
   });
 
+  // A disabled provider strands only a user with no other way in.
+  test("a supabase user on a disabled provider who can sign in by email or phone code", async () => {
+    const rows = [
+      { id: "email", raw_app_meta_data: { providers: ["discord"] } },
+      { id: "phone", raw_app_meta_data: { providers: ["discord"] } },
+      { id: "neither", raw_app_meta_data: { providers: ["discord"] } },
+    ];
+    expect(
+      await reasonsOf({
+        settings: settings({
+          email_address: {
+            enabled: true,
+            used_for_first_factor: true,
+            first_factors: ["email_code"],
+          },
+          phone_number: {
+            enabled: true,
+            used_for_first_factor: true,
+            first_factors: ["phone_code"],
+          },
+          username: { enabled: true },
+        }),
+        supabaseRows: rows,
+        users: [
+          user("email"),
+          user("phone", { email: undefined, phone: "+15555550100" }),
+          user("neither", { email: undefined, username: "neither" }),
+        ],
+      }),
+    ).toEqual({ neither: "only signs in with Discord, which is not enabled in Clerk" });
+  });
+
+  test("an unverified email is no way in for a supabase user on a disabled provider", async () => {
+    expect(
+      await reasonsOf({
+        settings: settings({
+          email_address: {
+            enabled: true,
+            used_for_first_factor: true,
+            first_factors: ["email_link"],
+          },
+        }),
+        supabaseRows: [{ id: "u", raw_app_meta_data: { providers: ["discord"] } }],
+        users: [user("u", { email: undefined, unverifiedEmailAddresses: ["u@x.dev"] })],
+      }),
+    ).toEqual({ u: "only signs in with Discord, which is not enabled in Clerk" });
+  });
+
   // Clerk can't turn on a provider it doesn't offer, so none is suggested.
   test("a provider Clerk doesn't offer is named as such, with no fix", async () => {
     const rows = [
