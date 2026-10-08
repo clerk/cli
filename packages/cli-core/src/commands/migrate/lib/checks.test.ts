@@ -797,6 +797,29 @@ describe("fixes", () => {
     });
   });
 
+  // The rejects name the option; the fix gives the command for it.
+  test.each([
+    ["12345", "allow_numeric_usernames", "Allow numeric usernames"],
+    [
+      "ada.l",
+      "allow_extended_special_characters",
+      "Allow extended special characters in usernames",
+    ],
+  ])("offer the username option %p needs", async (username, rule, label) => {
+    const checks = await checkImport(
+      input({
+        settings: settings({ email_address: { enabled: true }, username: { enabled: true } }),
+        users: [user("a", { username }), user("b", { username: "ada" })],
+      }),
+    );
+    expect(checks.fixes).toEqual([
+      {
+        label,
+        command: `clerk config patch --app APP_ID --instance ins_1 --json '{"auth_username":{"${rule}":true}}'`,
+      },
+    ]);
+  });
+
   test("offer nothing when the settings could not be read", async () => {
     const checks = await checkImport(input({ users: [user("a")] }));
     expect(checks.fixes).toEqual([]);

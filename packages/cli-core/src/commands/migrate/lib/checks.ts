@@ -279,6 +279,21 @@ type UsernameSettings = {
 const USERNAME_DEFAULT = /^[a-zA-Z0-9_-]+$/;
 const USERNAME_EXTENDED = /^[a-zA-Z0-9!#$'+.^_`~-]+$/;
 
+/** The username options a reject asks for, and the config leaf that turns each on. */
+const USERNAME_OPTIONS = [
+  {
+    rule: "allow_numeric_usernames",
+    label: "Allow numeric usernames",
+    needs: (username: string) => !/[a-zA-Z]/.test(username),
+  },
+  {
+    rule: "allow_extended_special_characters",
+    label: "Allow extended special characters in usernames",
+    needs: (username: string) =>
+      !USERNAME_DEFAULT.test(username) && USERNAME_EXTENDED.test(username),
+  },
+] as const;
+
 /**
  * Clerk's username rules, mirrored from `validate.Username` in clerk_go, so a
  * username the instance would refuse is a reject here rather than a failed
@@ -758,8 +773,16 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
     ({ field, attribute }) =>
       !isEnabled(settings, attribute) && users.some((user) => hasValue(user[field])),
   ).map(({ label, path }) => ({ label, writes: [{ path: [...path], value: true }] }));
+  // Usernames off are not checked by these rejects; see `dropRefusedOffUsername`.
+  const rules = (settings as { username_settings?: UsernameSettings }).username_settings ?? {};
+  const usernames = isEnabled(settings, "username")
+    ? users.flatMap((user) => (typeof user.username === "string" ? [user.username] : []))
+    : [];
+  const username = USERNAME_OPTIONS.filter(
+    ({ rule, needs }) => !rules[rule] && usernames.some(needs),
+  ).map(({ rule, label }) => ({ label, writes: [{ path: ["auth_username", rule], value: true }] }));
 
-  return [...buildSettingChanges(flagged), ...mfa].map((change) =>
+  return [...buildSettingChanges(flagged), ...mfa, ...username].map((change) =>
     named
       ? {
           label: change.label,
