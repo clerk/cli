@@ -93,7 +93,7 @@ const REJECTING_ATTRIBUTES = new Set<AttributeName>([
 ]);
 
 /** Fields Clerk stores with their setting off, where it works once turned on. */
-const STORED_WHEN_OFF = new Set<AttributeName>(["password", "username"]);
+const STORED_WHEN_OFF = new Set<AttributeName>(["password", "username", "first_name", "last_name"]);
 
 /**
  * True when Clerk keeps an email or phone on create: its setting is on, or
