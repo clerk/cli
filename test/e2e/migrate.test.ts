@@ -2,9 +2,10 @@
  * Live-BAPI tests for `clerk migrate import`, covering what only a real
  * instance can answer:
  *
- * - A Supabase export round-trips: the dry run counts it without writing, the
- *   import creates every user, each bcrypt hash verifies against the password
- *   it was made from, and `undo` deletes them again.
+ * - A Supabase export round-trips: the dry run counts it without writing, an
+ *   import without `--yes` writes nothing, the import creates every user and
+ *   records the run, each bcrypt hash verifies against the password it was
+ *   made from, and `undo` deletes them again.
  * - A Better Auth scrypt hash, sent as `scrypt_werkzeug`, verifies against the
  *   password it was made from. A unit test can only check the string shape.
  * - A user whose only email is unverified, imported into an instance that
@@ -123,11 +124,26 @@ test("a Supabase export dry-runs, imports, and its passwords verify", async () =
     "--dry-run",
     "--json",
   ]);
+  expect(dryRun.exitCode).toBe(0);
   expect(JSON.parse(dryRun.stdout.toString())).toMatchObject({
     dryRun: true,
     checks: { importable: 2 },
   });
   expect(readdirSync(workDir)).not.toContain("runs");
+
+  // Rule 1, against a real instance: without --yes nobody has consented, so
+  // nothing is written, here or in Clerk.
+  const unconsented = await cli(["migrate", "import", file, "--source", "supabase", "--json"]);
+  expect(unconsented.exitCode).toBe(2);
+  expect(JSON.parse(unconsented.stdout.toString())).toMatchObject({
+    consent: "required",
+    checks: { importable: 2 },
+  });
+  expect(readdirSync(workDir)).not.toContain("runs");
+  for (const { record } of users) {
+    const found = await cli(["api", `/users?external_id=${record.id}`]);
+    expect(JSON.parse(found.stdout.toString())).toEqual([]);
+  }
 
   const imported = await cli([
     "migrate",
@@ -145,7 +161,11 @@ test("a Supabase export dry-runs, imports, and its passwords verify", async () =
   // Read first: it registers the created users for cleanup, which a failed
   // assertion would otherwise skip, leaving them in the shared test app.
   const lines = latestLines(result.run.id);
+  expect(imported.exitCode).toBe(0);
   expect(result.result.created).toBe(2);
+  expect(
+    JSON.parse(readFileSync(join(workDir, "runs", result.run.id, "run.json"), "utf-8")),
+  ).toMatchObject({ status: "complete", counts: { total: 2, created: 2 } });
   for (const { password, record } of users) {
     const line = lines.find((candidate) => candidate.sourceId === record.id);
     expect(line).toMatchObject({ status: "created" });
