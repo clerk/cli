@@ -63,3 +63,36 @@ export function resolveFirebaseHashConfig(
     mem_cost: flags.firebaseMemCost as number,
   };
 }
+
+/** Clerk's bounds on Firebase scrypt costs (clerk_go `pkg/hash/scrypt.go`). */
+const MAX_SCRYPT_COST = 16;
+
+/** Standard or URL-safe base64, as Clerk decodes the two keys. */
+const BASE64 = /^[A-Za-z0-9+/_-]+={0,2}$/;
+
+/**
+ * What is wrong with a set of Firebase hash parameters, or `undefined`.
+ *
+ * Each one goes into every `scrypt_firebase` digest, so a bad one costs every
+ * password in the import: Clerk refuses a cost outside 1..16 and a key that is
+ * not base64, and a `$` would break the digest's segments.
+ */
+export function firebaseHashConfigProblem(config: FirebaseHashConfig): string | undefined {
+  const keys = [
+    ["signer key", config.base64_signer_key],
+    ["salt separator", config.base64_salt_separator],
+  ] as const;
+  for (const [label, value] of keys) {
+    if (typeof value !== "string" || !BASE64.test(value)) return `the ${label} is not base64`;
+  }
+  const costs = [
+    ["rounds", config.rounds],
+    ["memory cost", config.mem_cost],
+  ] as const;
+  for (const [label, value] of costs) {
+    if (!Number.isInteger(value) || value < 1 || value > MAX_SCRYPT_COST) {
+      return `${label} must be a whole number from 1 to ${MAX_SCRYPT_COST}, not ${String(value)}`;
+    }
+  }
+  return undefined;
+}

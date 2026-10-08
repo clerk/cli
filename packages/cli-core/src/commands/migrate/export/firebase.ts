@@ -31,6 +31,7 @@ import { log } from "../../../lib/log.ts";
 import { password as passwordPrompt } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
+import { firebaseHashConfigProblem } from "../lib/firebase-hash.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
@@ -408,12 +409,28 @@ export async function fetchHashConfig(
     const config = body.signIn?.hashConfig;
     if (!config?.signerKey || !config.saltSeparator) return null;
 
-    return {
+    const hashConfig = {
       signerKey: config.signerKey,
       saltSeparator: config.saltSeparator,
       rounds: Number(config.rounds ?? 8),
       memoryCost: Number(config.memoryCost ?? 14),
     };
+    // Every digest the import builds carries these, so a set Clerk would
+    // refuse is left out rather than written: the import then asks for them.
+    const problem = firebaseHashConfigProblem({
+      base64_signer_key: hashConfig.signerKey,
+      base64_salt_separator: hashConfig.saltSeparator,
+      rounds: hashConfig.rounds,
+      mem_cost: hashConfig.memoryCost,
+    });
+    if (problem) {
+      log.warn(
+        `The project's password hash parameters won't work in Clerk (${problem}), so the export carries none. ` +
+          "Pass the right ones to the import with --firebase-*.",
+      );
+      return null;
+    }
+    return hashConfig;
   } catch (error) {
     log.debug(`firebase: could not read the project config: ${String(error)}`);
     return null;
