@@ -17,6 +17,8 @@ import { listageStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 const mockSelect = mock(async () => "clerk" as unknown);
 const mockText = mock(async () => "export.json" as unknown);
 let confirmAnswer = true;
+/** User settings the instance serves, or none (the settings read fails). */
+let instanceSettings: Record<string, unknown> | undefined;
 /** Every confirmation the run put up, in order — the wording is the assertion. */
 let confirmMessages: string[] = [];
 let originalMode: string | undefined;
@@ -82,6 +84,7 @@ afterAll(() => {
 beforeEach(() => {
   requests = [];
   confirmAnswer = true;
+  instanceSettings = undefined;
   confirmMessages = [];
   mockSelect.mockReset();
   mockText.mockReset();
@@ -99,6 +102,16 @@ beforeEach(() => {
     }
     if (url.pathname === "/v1/users" && method === "GET") return Response.json([]);
     if (url.pathname === "/v1/users/count") return Response.json({ total_count: 0 });
+    if (url.pathname === "/v1/domains") {
+      if (!instanceSettings) return new Response("nope", { status: 500 });
+      return Response.json({
+        data: [{ is_satellite: false, frontend_api_url: "https://fapi.example.com" }],
+      });
+    }
+    if (url.pathname.includes("/v1/dev_browser")) return Response.json({ token: "jwt" });
+    if (url.pathname.includes("/v1/environment")) {
+      return Response.json({ user_settings: instanceSettings });
+    }
     return Response.json({ id: "user_created" });
   }) as unknown as typeof fetch;
 });
@@ -180,6 +193,30 @@ describe("consent", () => {
     );
 
     await expect(run(importOptions)).rejects.toThrow(/1 user would be rejected/);
+    expect(created()).toHaveLength(0);
+  });
+});
+
+describe("legal consent", () => {
+  beforeEach(() => {
+    instanceSettings = {
+      attributes: { email_address: { enabled: true } },
+      sign_up: { legal_consent_enabled: true },
+    };
+  });
+
+  test("asks, and a yes imports the users without it", async () => {
+    await run(importOptions);
+
+    expect(confirmMessages[0]).toContain("no legal acceptance on record");
+    expect(created()).toHaveLength(2);
+  });
+
+  // `-y` is "import without prompting": the checks reject these users instead.
+  test("--yes does not ask, and the checks reject them", async () => {
+    await expect(run({ ...importOptions, yes: true })).rejects.toThrow(/2 users would be rejected/);
+
+    expect(confirmMessages).toEqual([]);
     expect(created()).toHaveLength(0);
   });
 });
