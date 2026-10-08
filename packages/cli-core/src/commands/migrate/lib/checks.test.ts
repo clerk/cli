@@ -230,7 +230,9 @@ describe("rejects", () => {
       ["c", undefined],
     ]);
     // The warning still describes the file: the emails are dropped.
-    expect(checks.warnings.join("\n")).toContain("3 users have a email");
+    expect(checks.warnings.join("\n")).toContain(
+      "3 users have an email, which this instance is not set up to store",
+    );
   });
 
   // The source's order decides which duplicate survives, so the dry run says.
@@ -688,7 +690,7 @@ describe("warnings", () => {
       }),
     );
     expect(checks.warnings).toContain(
-      "1 user has a phone, which this instance is not set up to store",
+      "1 user has a phone number, which this instance is not set up to store",
     );
     expect(checks.rejects).toEqual([]);
   });
