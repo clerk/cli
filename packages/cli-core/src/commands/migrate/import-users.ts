@@ -237,17 +237,19 @@ async function attachIdentifier(
       : { user_id: clerkUserId, phone_number: value, primary: false, verified };
 
   try {
-    await retryOn429(async () =>
-      ctx.schedule(
-        async () =>
-          bapiRequest({
-            method: "POST",
-            path,
-            secretKey: ctx.secretKey,
-            body: JSON.stringify(body),
-          }),
-        { first: true },
-      ),
+    await retryOn429(
+      async () =>
+        ctx.schedule(
+          async () =>
+            bapiRequest({
+              method: "POST",
+              path,
+              secretKey: ctx.secretKey,
+              body: JSON.stringify(body),
+            }),
+          { first: true },
+        ),
+      { onRetry: ({ delaySeconds }) => ctx.schedule.pause(delaySeconds * 1000) },
     );
     return {};
   } catch (error) {
@@ -430,7 +432,12 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
           createUser(ctx, user, identifiers, skipPasswordRequirement, () =>
             record({ sourceId: user.userId, status: "creating" }),
           ),
-        { onRetry: ({ message }) => retries.push(message) },
+        {
+          onRetry: ({ message, delaySeconds }) => {
+            retries.push(message);
+            ctx.schedule.pause(delaySeconds * 1000);
+          },
+        },
       );
     } catch (error) {
       // Unrecorded, so a re-run picks the user up like any other.

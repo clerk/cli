@@ -610,6 +610,27 @@ describe("importUsers", () => {
     expect(lines[1]?.error).toContain("Rate limit hit (429)");
   });
 
+  // The instance is over its limit for every user, so the others wait too.
+  test("holds every other user's create through a 429's wait", async () => {
+    const started = performance.now();
+    const sentAt: number[] = [];
+    stub((_url, attempt) => {
+      sentAt.push(performance.now() - started);
+      return attempt === 1 ? clerkError(429, "slow down", { "retry-after": "1" }) : ok("user_ok");
+    });
+
+    const summary = await importUsers({
+      users: [user({ userId: "u1" }), user({ userId: "u2", email: "b@x.dev" })],
+      secretKey: "sk_test_x",
+      limits: { ...LIMITS, concurrencyLimit: 1 },
+      record,
+    });
+
+    expect(summary).toMatchObject({ successful: 2, failed: 0 });
+    expect(sentAt).toHaveLength(3);
+    for (const at of sentAt.slice(1)) expect(at).toBeGreaterThanOrEqual(900);
+  });
+
   test("gives up after the retry ceiling and records the user as failed", async () => {
     stub(() => clerkError(429, "slow down", { "retry-after": "1" }));
 
