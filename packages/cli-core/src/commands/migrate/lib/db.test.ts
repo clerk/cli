@@ -373,6 +373,8 @@ describe("describeDbError", () => {
     ['relation "auth.users" does not exist'],
     ["no such table: user"],
     ["permission denied for table users"],
+    ["Table 'app.users' doesn't exist"],
+    ["Unknown table 'users'"],
   ])("recognizes the missing table in %p", (message) => {
     expect(describeDbError(new Error(message))).toMatch(/table was not found|cannot read it/);
   });
