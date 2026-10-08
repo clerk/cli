@@ -454,6 +454,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   let processed = 0;
   let successful = 0;
   let failed = 0;
+  let notSent = 0;
 
   const ctx: CreateContext = {
     secretKey,
@@ -534,7 +535,10 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
           );
     } catch (error) {
       // Unrecorded, so a re-run picks the user up like any other.
-      if (error instanceof NotSentError) return;
+      if (error instanceof NotSentError) {
+        notSent++;
+        return;
+      }
       if (error instanceof RateLimitExceededError) {
         recordFailure(user.userId, error.message, "429", retries, false);
         return;
@@ -581,5 +585,5 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     ...attachOnly.map(async (line) => finishUser(line, line.pending ?? [], [])),
   ]);
 
-  return { totalProcessed: total, successful, failed, validationFailed, errorBreakdown };
+  return { totalProcessed: total, successful, failed, notSent, validationFailed, errorBreakdown };
 }
