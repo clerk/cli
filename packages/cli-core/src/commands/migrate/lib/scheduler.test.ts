@@ -82,6 +82,20 @@ test("holds every unsent call through a pause", async () => {
   for (const at of startedAt) expect(at).toBeGreaterThanOrEqual(290);
 });
 
+// Released together, the held calls would hit the limit the pause waited out.
+test("keeps calls paced when a pause ends", async () => {
+  const schedule = createApiScheduler(4, 10);
+  const started = performance.now();
+  const first = schedule(async () => schedule.pause(300));
+  const held = [1, 2, 3].map(async () => schedule(async () => performance.now() - started));
+
+  await first;
+  const startedAt = (await Promise.all(held)).sort((a, b) => a - b);
+  for (let i = 1; i < startedAt.length; i++) {
+    expect(startedAt[i]! - startedAt[i - 1]!).toBeGreaterThanOrEqual(90);
+  }
+});
+
 test("holds a call already waiting on the pacing interval", async () => {
   // 2 req/s: the second call waits ~500ms. The first, like a 429, pauses the
   // run while the second is in that wait.

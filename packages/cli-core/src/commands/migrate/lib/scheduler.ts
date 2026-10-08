@@ -58,15 +58,15 @@ export function createApiScheduler(concurrencyLimit: number, rateLimit: number):
   const schedule = async <T>(fn: () => Promise<T>, options?: { first?: boolean }) => {
     await acquire(options?.first ?? false);
     try {
-      const now = Date.now();
-      const waitMs = Math.max(0, nextRequestAt - now);
-      nextRequestAt = Math.max(now, nextRequestAt) + intervalMs;
-      if (waitMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-      }
-      // Checked after the pacing wait too: a pause can start during it.
-      while (Date.now() < pausedUntil) {
-        await new Promise((resolve) => setTimeout(resolve, pausedUntil - Date.now()));
+      // A pause that starts during the wait takes a fresh paced slot after it,
+      // so calls held through a pause resume an interval apart, not together.
+      for (;;) {
+        const pauseSeen = pausedUntil;
+        const now = Date.now();
+        const startAt = Math.max(now, nextRequestAt, pausedUntil);
+        nextRequestAt = startAt + intervalMs;
+        if (startAt > now) await new Promise((resolve) => setTimeout(resolve, startAt - now));
+        if (pausedUntil === pauseSeen) break;
       }
       return await fn();
     } finally {
