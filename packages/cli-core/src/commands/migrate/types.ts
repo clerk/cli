@@ -46,6 +46,11 @@ export type ImportSummary = {
   totalProcessed: number;
   successful: number;
   failed: number;
+  /**
+   * Users never sent: a Ctrl-C or the instance's user quota stopped the run
+   * first. They have no line in the run, so a re-run picks them up.
+   */
+  notSent: number;
   validationFailed: number;
   errorBreakdown: Map<string, number>;
 };
