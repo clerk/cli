@@ -199,6 +199,20 @@ describe("run", () => {
     }
   });
 
+  // --app needs an account to resolve its key, unlike --secret-key.
+  test("refuses an --app import when nobody is signed in", async () => {
+    const previous = process.env.CLERK_SECRET_KEY;
+    delete process.env.CLERK_SECRET_KEY;
+    try {
+      await expect(
+        run({ source: "clerk", input: "export.json", yes: true, app: "app_123" }),
+      ).rejects.toThrow(/Not logged in/);
+      expect(requests).toHaveLength(0);
+    } finally {
+      if (previous !== undefined) process.env.CLERK_SECRET_KEY = previous;
+    }
+  });
+
   test("imports every user in the file end to end", async () => {
     await run(baseOptions);
 
