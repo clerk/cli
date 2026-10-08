@@ -770,10 +770,12 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
   // `key_` ID is a stand-in for an instance Clerk didn't name, so there is
   // nothing to pass; point at the Dashboard instead. A key from --secret-key
   // names no app, and without --app the patch goes to the linked one, so the
-  // command carries a placeholder the user fills in.
+  // command carries a placeholder the user fills in: `APP_ID`, which a shell
+  // passes as is and Clerk answers "app not found", where `<app_id>` would
+  // be read as a redirect.
   const { appId, instanceId } = input.target;
   const named = instanceId.startsWith("ins_");
-  const flags = ` --app ${appId ?? "<app_id>"} --instance ${instanceId}`;
+  const flags = ` --app ${appId ?? "APP_ID"} --instance ${instanceId}`;
   const settings = input.settings;
   const mfa = MFA_SETTINGS.filter(
     ({ field, attribute }) =>

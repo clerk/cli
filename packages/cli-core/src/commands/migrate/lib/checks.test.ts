@@ -809,7 +809,7 @@ describe("fixes", () => {
       }),
     );
     expect(checks.fixes[0]?.command).toStartWith(
-      "clerk config patch --app <app_id> --instance ins_1 --json",
+      "clerk config patch --app APP_ID --instance ins_1 --json",
     );
   });
 
