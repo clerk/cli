@@ -112,8 +112,16 @@ const betterAuthSource = {
     // A ban whose `banExpires` has passed is over: Better Auth lifts it only
     // at the user's next sign-in, so the column still says banned. An expiry
     // that can't be read keeps the ban.
+    // Epoch seconds arrive as a number from the database, and as a string of
+    // digits from a CSV of the same column; both need the seconds read as such.
     const rawExpiry = user.banExpires ?? user.ban_expires;
-    const expiry = typeof rawExpiry === "number" && rawExpiry < 1e11 ? rawExpiry * 1000 : rawExpiry;
+    const epoch =
+      typeof rawExpiry === "number"
+        ? rawExpiry
+        : typeof rawExpiry === "string" && /^\d+$/.test(rawExpiry.trim())
+          ? Number(rawExpiry)
+          : undefined;
+    const expiry = epoch !== undefined && epoch < 1e11 ? epoch * 1000 : (epoch ?? rawExpiry);
     const expired = Date.parse(String(toIsoDate(expiry, true))) <= Date.now();
     if (isVerified(user.banned, "boolean") && !expired) user.banned = true;
     else delete user.banned;
