@@ -184,7 +184,11 @@ export async function fetchEnabledSocialProviders(secretKey: string): Promise<st
  */
 export async function fetchUserCount(secretKey: string): Promise<number | null> {
   try {
-    const response = await bapiRequest({ method: "GET", path: "/v1/users/count", secretKey });
+    // A 429 is retried, as the settings read is: a missing count checks a dev
+    // instance's quota as if it were empty.
+    const response = await retryOn429(async () =>
+      bapiRequest({ method: "GET", path: "/v1/users/count", secretKey }),
+    );
     const total = (response.body as { total_count?: unknown })?.total_count;
     return typeof total === "number" ? total : null;
   } catch (error) {

@@ -1,7 +1,7 @@
 import { test, expect, describe, mock, beforeEach, afterAll } from "bun:test";
 import { stubFetch, useCaptureLog } from "../../../test/lib/stubs.ts";
 import type { UserSettingsJSON } from "../../../lib/fapi.ts";
-import { fetchInstanceSettings } from "./clerk-config.ts";
+import { fetchInstanceSettings, fetchUserCount } from "./clerk-config.ts";
 
 const USER_SETTINGS = {
   attributes: { email_address: { enabled: true, required: true } },
@@ -109,5 +109,40 @@ describe("fetchInstanceSettings", () => {
   test("returns null when the domains lookup fails", async () => {
     mockFetch.mockResolvedValue(new Response("nope", { status: 401 }));
     expect(await fetchInstanceSettings("sk_test_abc")).toBeNull();
+  });
+});
+
+describe("fetchUserCount", () => {
+  const originalFetch = globalThis.fetch;
+  useCaptureLog();
+  const mockFetch = mock();
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+    stubFetch(mockFetch);
+  });
+  afterAll(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  // A missing count checks a dev instance's quota as if it were empty.
+  test("retries a rate-limited count", async () => {
+    let calls = 0;
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(
+        ++calls === 1
+          ? new Response(
+              JSON.stringify({ errors: [{ code: "too_many_requests", message: "slow" }] }),
+              {
+                status: 429,
+                headers: { "Content-Type": "application/json", "Retry-After": "0.01" },
+              },
+            )
+          : json({ object: "total_count", total_count: 42 }),
+      ),
+    );
+
+    expect(await fetchUserCount("sk_test_abc")).toBe(42);
+    expect(calls).toBe(2);
   });
 });
