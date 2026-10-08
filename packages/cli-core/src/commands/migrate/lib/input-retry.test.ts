@@ -9,6 +9,10 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "../../../lib/errors.ts";
 import { getMode, setMode, type Mode } from "../../../mode.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
@@ -32,7 +36,7 @@ mock.module("../../../lib/prompts.ts", () => ({
 }));
 
 const { withInputRetry } = await import("./input-retry.ts");
-const { promptDbUrl, resolveDbUrl } = await import("../export/db-options.ts");
+const { promptDbUrl, resolveDbUrl, withDbConnection } = await import("../export/db-options.ts");
 const { setAssumeYes } = await import("./assume-yes.ts");
 
 const captured = useCaptureLog();
@@ -263,5 +267,43 @@ describe("resolveDbUrl", () => {
 
     await expect(resolveDbUrl({ json: true }, CONFIG, {})).rejects.toThrow(/cannot prompt here/);
     expect(answers).toEqual([FIRST]);
+  });
+});
+
+// Only the connect proves the connection string. A failure after it is not a
+// wrong string, so it is not asked for again, and it is not a usage error.
+describe("withDbConnection", () => {
+  const sqlite = () => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-dbconn-")), "db.sqlite");
+    new Database(file, { create: true }).close();
+    return file;
+  };
+
+  test("asks again when the connection fails, then runs the work once", async () => {
+    answers = [sqlite()];
+    let runs = 0;
+
+    const value = await withDbConnection("./no-such-dir/missing.sqlite", CONFIG, {}, async () => {
+      runs++;
+      return "rows";
+    });
+
+    expect(value).toBe("rows");
+    expect(runs).toBe(1);
+    expect(answers).toEqual([]);
+  });
+
+  test("does not ask again when the read fails after connecting, and exits 1", async () => {
+    answers = [sqlite()];
+    const file = sqlite();
+
+    const error = (await withDbConnection(file, CONFIG, {}, async () => {
+      throw new Error("canceling statement due to statement timeout");
+    }).catch((caught: unknown) => caught)) as CliError;
+
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.exitCode).toBe(EXIT_CODE.GENERAL);
+    expect(error.message).toContain("statement timeout");
+    expect(answers).toHaveLength(1);
   });
 });

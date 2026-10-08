@@ -5,12 +5,23 @@
  * string, from a flag, an environment variable, or a prompt.
  */
 
-import { throwUsageError } from "../../../lib/errors.ts";
+import { CliError, throwUsageError } from "../../../lib/errors.ts";
 import { dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
 import { password as passwordPrompt } from "../../../lib/prompts.ts";
+import { withSpinner } from "../../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
-import { detectDbType, isLibsqlUrl, redactConnectionString, type DbPlatform } from "../lib/db.ts";
+import {
+  createDbClient,
+  describeDbError,
+  detectDbType,
+  isLibsqlUrl,
+  redactConnectionString,
+  redactDbMessage,
+  type DbClient,
+  type DbPlatform,
+} from "../lib/db.ts";
+import { withInputRetry } from "../lib/input-retry.ts";
 
 export type DbExportOptions = {
   dbUrl?: string;
@@ -168,4 +179,41 @@ export async function promptDbUrl(config: ResolveConfig): Promise<string> {
 export function describeTarget(connectionString: string): string {
   const label = isLibsqlUrl(connectionString) ? "libsql" : detectDbType(connectionString);
   return `${label} at ${redactConnectionString(connectionString)}`;
+}
+
+/**
+ * Connects, asking for the connection string again if the server refuses it,
+ * then runs `work` on the client and closes it.
+ *
+ * Only the connect is retried. Once it has worked, the string is right: a
+ * statement timeout or a dropped connection partway through a large read is
+ * not fixed by asking for it again, so it fails (exit 1) with the hint for it.
+ */
+export async function withDbConnection<T>(
+  dbUrl: string,
+  config: ResolveConfig,
+  options: { json?: boolean },
+  work: (client: DbClient) => Promise<T>,
+): Promise<T> {
+  const { value: client, input: connectionString } = await withInputRetry(
+    dbUrl,
+    async () => promptDbUrl(config),
+    async (candidate) =>
+      withSpinner("Connecting to the database...", async () =>
+        createDbClient(candidate, config.platform),
+      ),
+    options,
+  );
+  try {
+    return await work(client);
+  } catch (error) {
+    if (error instanceof CliError) throw error;
+    const message = redactDbMessage(
+      error instanceof Error ? error.message : String(error),
+      connectionString,
+    );
+    throw new CliError(`${message}\n\n${describeDbError(error, config.platform)}`);
+  } finally {
+    await client.close().catch(() => {});
+  }
 }
