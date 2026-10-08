@@ -375,7 +375,12 @@ export function describeDbError(error: unknown, platform?: DbPlatform): string {
     return "The user table is missing a column the export reads. Check the schema matches the platform's default.";
   }
 
-  if (/does not exist|unknown database|no such table|permission denied/i.test(message)) {
+  // MySQL says "doesn't exist" and "Unknown table" where Postgres says "does not exist".
+  if (
+    /does not exist|doesn't exist|unknown table|unknown database|no such table|permission denied/i.test(
+      message,
+    )
+  ) {
     if (platform === "supabase") {
       return (
         "The auth.users table was not readable. It is created automatically when Supabase Auth is enabled.\n" +
