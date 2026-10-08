@@ -312,10 +312,16 @@ export type Run = {
   /**
    * Counts the outcomes, settles the status and releases the lock.
    *
-   * `partial` when any user failed, was skipped or may not have been created,
-   * `complete` otherwise.
+   * `partial` when any user failed, was skipped, may not have been created or
+   * was never sent (`notSent`: they have no line to count), `complete`
+   * otherwise.
    */
-  finish(): RunRecord;
+  finish(options?: { notSent?: number }): RunRecord;
+  /**
+   * Releases the lock and leaves the run unfinished: with no `finishedAt` and
+   * no live holder, it reads as interrupted.
+   */
+  release(): void;
 };
 
 function openRun(runsDir: string, record: RunRecord): Run {
@@ -336,16 +342,23 @@ function openRun(runsDir: string, record: RunRecord): Run {
       run.record = { ...run.record, ...patch };
       writeRecord(runsDir, run.record);
     },
-    finish() {
+    finish(options) {
       const counts = countLines(latestUserLines(runsDir, run.record.id).values());
-      const unfinished = (counts.failed ?? 0) + (counts.skipped ?? 0) + (counts.creating ?? 0);
+      const unfinished =
+        (counts.failed ?? 0) +
+        (counts.skipped ?? 0) +
+        (counts.creating ?? 0) +
+        (options?.notSent ?? 0);
       run.update({
         counts,
         status: unfinished > 0 ? "partial" : "complete",
         finishedAt: new Date().toISOString(),
       });
-      fs.rmSync(path.join(dir, LOCK_FILE), { force: true });
+      run.release();
       return run.record;
+    },
+    release() {
+      fs.rmSync(path.join(dir, LOCK_FILE), { force: true });
     },
   };
   return run;
