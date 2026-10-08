@@ -130,8 +130,9 @@ Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 | `lock`         | The PID of the process writing the run, while it runs                                                                                  |
 
 A user's status is `creating`, `created`, `failed`, `skipped`, `deleted` or
-`exported`. The last line for each `sourceId` wins. A `429` retry, an extra email or phone that did not
-attach, and a validation failure all land in `error`.
+`exported`. The last line for each `sourceId` wins. A `429` retry, an extra
+email or phone that did not attach, a first phone Clerk refused (which the
+summary also counts), and a validation failure all land in `error`.
 
 `creating` is written as a user's `POST /v1/users` goes out. It stays the
 latest line when no answer says whether the create landed: an abort, a
@@ -786,7 +787,9 @@ successful user. An attach with no answer stays `pending` for a re-run.
 
 The first phone gets the same treatment when Clerk refuses it — a country the
 instance does not support, or a number that is not E.164 — and the user has an
-email: the create is retried without the phone, and the refusal is logged.
+email: the create is retried without the phone. The user counts as imported,
+and the summary lists them under "Imported without their phone", by Clerk's
+reason (`result.warnings` in `--json`).
 
 #### Throughput
 
