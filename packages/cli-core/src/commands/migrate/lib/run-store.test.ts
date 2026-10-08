@@ -18,7 +18,9 @@ import {
   continueRun,
   latestUserLines,
   listRuns,
+  lockFile,
   newRunId,
+  patchRun,
   readRun,
   resolveRunsDir,
   runState,
@@ -231,6 +233,40 @@ describe("locks and interruptions", () => {
         "s",
       ),
     );
+  });
+});
+
+// A continue plans from what it read before its consent prompt; an undo or
+// another continue can write to the run while that prompt waits.
+describe("continueRun against a plan", () => {
+  const stopped = () => {
+    const run = startRun(runsDir, init);
+    run.append({ sourceId: "a", status: "created" });
+    return run.finish();
+  };
+
+  test("continues a run nothing touched", () => {
+    const record = stopped();
+    expect(() => continueRun(runsDir, record, 1).finish()).not.toThrow();
+  });
+
+  test("refuses a run an undo marked while it waited, and lets go of the lock", () => {
+    const record = stopped();
+    patchRun(runsDir, record.id, { status: "undone", undoneBy: "20260101-000000-abcd" });
+
+    expect(() => continueRun(runsDir, record, 1)).toThrow(/changed while this import was waiting/);
+    expect(fs.existsSync(lockFile(runsDir, record.id))).toBe(false);
+    expect(readRun(runsDir, record.id)?.status).toBe("undone");
+  });
+
+  test("refuses a run another continue wrote to while it waited", () => {
+    const record = stopped();
+    fs.appendFileSync(
+      path.join(runsDir, record.id, "users.ndjson"),
+      `${JSON.stringify({ sourceId: "b", status: "created", clerkId: "user_b" })}\n`,
+    );
+
+    expect(() => continueRun(runsDir, record, 1)).toThrow(/changed while this import was waiting/);
   });
 });
 

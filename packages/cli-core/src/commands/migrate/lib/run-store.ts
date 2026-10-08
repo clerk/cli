@@ -437,8 +437,32 @@ export function startRun(runsDir: string, init: StartRunInit): Run {
  *
  * @throws UsageError when another live process holds its lock.
  */
-export function continueRun(runsDir: string, record: RunRecord): Run {
+export function continueRun(
+  runsDir: string,
+  record: RunRecord,
+  /**
+   * How many user lines the caller planned against. The record and the lines
+   * were read before the lock was taken, while a prompt may have waited: an
+   * undo, or another continue, can change either in the meantime.
+   */
+  plannedLines?: number,
+): Run {
   acquireLock(runsDir, record.id);
+  if (plannedLines !== undefined) {
+    const fresh = readRun(runsDir, record.id);
+    const changed =
+      !fresh ||
+      fresh.status !== record.status ||
+      fresh.undoneBy !== record.undoneBy ||
+      readUserLines(runsDir, record.id).length !== plannedLines;
+    if (changed) {
+      fs.rmSync(lockFile(runsDir, record.id), { force: true });
+      throwUsageError(
+        `Run ${record.id} changed while this import was waiting, so its plan is out of date. ` +
+          "Nothing was imported. Run the command again.",
+      );
+    }
+  }
   // A crash mid-write leaves a torn last line; end it so the next append
   // starts a line of its own instead of fusing with it.
   const usersFile = path.join(runDir(runsDir, record.id), USERS_FILE);
