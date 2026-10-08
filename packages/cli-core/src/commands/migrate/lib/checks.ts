@@ -1044,7 +1044,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   let quota: Quota | undefined;
   if (input.instanceType === "dev") {
     const limit = resolveDevUserLimit();
-    const headroom = Math.max(0, limit - (input.existingUsers ?? 0));
+    // An adopted user is in the instance's count already and among the
+    // candidates too, though it is never created: counted once, not twice.
+    const occupied = Math.max(0, (input.existingUsers ?? 0) - (input.adoptedClerkIds?.size ?? 0));
+    const headroom = Math.max(0, limit - occupied);
     const over = Math.max(0, candidates.length - headroom);
     quota = { existing: input.existingUsers ?? null, limit, headroom, over };
     if (over > 0) {
