@@ -33,6 +33,7 @@ import { search } from "../../../lib/listage.ts";
 import type { ApplicationInstance } from "../../../lib/plapi.ts";
 import { log } from "../../../lib/log.ts";
 import { isHuman } from "../../../mode.ts";
+import { isAssumeYes } from "../lib/assume-yes.ts";
 import { resolveUsersInstanceContext } from "../../users/interactive/instance-context.ts";
 
 /** e.g. `Development instance`. Unknown environment types print as-is. */
@@ -91,6 +92,7 @@ async function resolveSource(options: ResolveClerkSourceOptions): Promise<Resolv
   } catch (error) {
     if (
       options.json ||
+      isAssumeYes() ||
       !isHuman() ||
       named ||
       !(error instanceof CliError) ||
@@ -176,7 +178,8 @@ export async function resolveClerkSource(
   options: ResolveClerkSourceOptions,
 ): Promise<ClerkExportSource> {
   const { chosen, ...source } = await resolveSource(options);
-  if (chosen || !source.target || options.json || !isHuman()) return source;
+  // `-y` takes the resolved instance without the picker, as an agent does.
+  if (chosen || !source.target || options.json || isAssumeYes() || !isHuman()) return source;
 
   const picked = await pickInstance(await currentAppId(options));
   if (picked) return picked;

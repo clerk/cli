@@ -21,6 +21,7 @@ import {
   type DbClient,
   type DbPlatform,
 } from "../lib/db.ts";
+import { isAssumeYes } from "../lib/assume-yes.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
 
 export type DbExportOptions = {
@@ -136,7 +137,8 @@ export async function resolveDbUrl(
     log.warn(`${config.envVar} is not a valid connection string; ignoring it.`);
   }
 
-  if (options.json || isAgent() || !isHuman()) {
+  // `-y` is "do not prompt": it gets the usage error naming --db-url too.
+  if (options.json || isAssumeYes() || isAgent() || !isHuman()) {
     throwUsageError(
       `\`clerk migrate export ${config.platform}\` needs a database connection and cannot prompt here.\n` +
         `Pass --db-url, or set ${config.envVar}.`,
