@@ -1461,8 +1461,8 @@ describe("explainErrors", () => {
 
   test("explains the user quota only where one applies", () => {
     expect(explainErrors([QUOTA], "dev").join(" ")).toContain("development-instance quota");
-    // Production has no such quota, and the API's message already names the
-    // plan upgrade in the one case it does.
+    // Production has no such quota by default, and the API's message already
+    // names the plan upgrade when a plan sets one.
     expect(explainErrors([QUOTA], "prod")).toEqual([]);
   });
 
