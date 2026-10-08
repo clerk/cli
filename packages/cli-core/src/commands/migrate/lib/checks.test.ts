@@ -193,6 +193,46 @@ describe("rejects", () => {
     });
   });
 
+  // Only what the create carries can clash: an extra email is attached after
+  // it, and a clash there is a note on the user, not a failure.
+  test("an extra email or phone shared with an earlier user is no duplicate", async () => {
+    expect(
+      await reasonsOf({
+        users: [
+          user("a", {
+            emailAddresses: ["shared@x.dev"],
+            phone: ["+15555550101", "+15555550100"],
+          }),
+          user("b", {
+            emailAddresses: ["shared@x.dev"],
+            phone: ["+15555550102", "+15555550100"],
+          }),
+        ],
+      }),
+    ).toEqual({});
+  });
+
+  // A stripped email never goes out, so it cannot clash with anything.
+  test("an email the instance would strip is no duplicate", async () => {
+    existing = [{ id: "user_1", email_addresses: [{ email_address: "taken@x.dev" }] }];
+    const users = [
+      user("a", { email: "same@x.dev", username: "a" }),
+      user("b", { email: "same@x.dev", username: "b" }),
+      user("c", { email: "taken@x.dev", username: "c" }),
+    ];
+    const checks = await checkImport(
+      input({ users, settings: settings({ username: { enabled: true } }) }),
+    );
+    expect(checks.rejects).toEqual([]);
+    expect(checks.importable.map((u) => [u.userId, u.email])).toEqual([
+      ["a", undefined],
+      ["b", undefined],
+      ["c", undefined],
+    ]);
+    // The warning still describes the file: the emails are dropped.
+    expect(checks.warnings.join("\n")).toContain("3 users have a email");
+  });
+
   // The source's order decides which duplicate survives, so the dry run says.
   test("a duplicate names the earlier user kept in its place", async () => {
     const checks = await checkImport(

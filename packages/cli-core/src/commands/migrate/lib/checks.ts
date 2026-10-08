@@ -449,6 +449,10 @@ const hasAnyIdentifier = (user: User) =>
  * Keyed by record, not source ID: two records with one source ID must not
  * share a verdict, or the one kept would be rejected along with its copy.
  *
+ * Only what `POST /v1/users` carries is matched, as in
+ * {@link findInstanceDuplicates}: an extra email is attached after the
+ * create, and a clash there fails only as a note on the user.
+ *
  * @returns Each duplicate's reason, and the earlier user kept in its place.
  */
 function findFileDuplicates(users: User[]): {
@@ -469,13 +473,9 @@ function findFileDuplicates(users: User[]): {
     }
     seenIds.add(user.userId);
 
-    const identifiers = splitIdentifiers(user);
-    const ownEmails = [identifiers.primaryEmail, ...identifiers.additionalEmails].filter(
-      (value): value is string => Boolean(value),
-    );
-    const ownPhones = [identifiers.primaryPhone, ...identifiers.additionalPhones].filter(
-      (value): value is string => Boolean(value),
-    );
+    const { primaryEmail, primaryPhone } = splitIdentifiers(user);
+    const ownEmails = primaryEmail ? [primaryEmail] : [];
+    const ownPhones = primaryPhone ? [primaryPhone] : [];
 
     const emailOwner = ownEmails.map((email) => emails.get(email.toLowerCase())).find(Boolean);
     const phoneOwner = ownPhones.map((phone) => phones.get(phoneKey(phone))).find(Boolean);
@@ -850,8 +850,11 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const disabledProviders = findDisabledProviderRejects(input);
 
   // Users that pass every per-user check. Only these claim identifiers in
-  // the file: a rejected record must not cost a later one its email.
+  // the file: a rejected record must not cost a later one its email. Each is
+  // stripped of what Clerk would refuse, so the duplicate checks see only
+  // what is sent; `unstripped` keeps what the warnings describe.
   const passed: User[] = [];
+  const unstripped = new Map<User, User>();
   const placeholderEmails = new Set<string>();
   const refusedNames = new Set<string>();
   const refusedUsernames = new Set<string>();
@@ -861,6 +864,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     const usernamed = dropRefusedOffUsername(named.user, input.settings);
     if (usernamed.dropped) refusedUsernames.add(original.userId);
     const { user, refused } = dropRefusedEmails(usernamed.user);
+    const sent = dropDisabledIdentifiers(user, input.settings);
     const reason =
       original.skipReason ??
       (refused.length > 0 && !hasAnyIdentifier(user)
@@ -869,7 +873,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       missingRequiredIdentifier(user, input.settings, input.reserveUnverified) ??
       // Stripping the identifiers the instance has off can leave nothing to
       // sign in with; Clerk would still create the user.
-      (!hasAnyIdentifier(dropDisabledIdentifiers(user, input.settings))
+      (!hasAnyIdentifier(sent)
         ? "has no identifier this instance accepts (its email, phone or username is turned off)"
         : undefined) ??
       missingRequiredName(user, input.settings) ??
@@ -888,7 +892,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     if (reason) {
       rejects.push({ sourceId: user.userId, reason });
     } else {
-      passed.push(user);
+      passed.push(sent);
+      unstripped.set(sent, user);
       if (refused.length > 0) placeholderEmails.add(user.userId);
     }
   }
@@ -940,14 +945,16 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
 
   return {
     total: input.users.length + input.failures.length,
-    importable: candidates.map((user) => {
-      const kept = dropDisabledIdentifiers(user, input.settings);
-      return lacksLegalAcceptance(kept, input.settings) ? { ...kept, skipLegalChecks: true } : kept;
-    }),
+    importable: candidates.map((user) =>
+      lacksLegalAcceptance(user, input.settings) ? { ...user, skipLegalChecks: true } : user,
+    ),
     rejects,
     rejectReasons: countReasons(rejects),
     warnings: [
-      ...buildWarnings(input, candidates),
+      ...buildWarnings(
+        input,
+        candidates.map((user) => unstripped.get(user) ?? user),
+      ),
       ...placeholderWarning(candidates.filter((user) => placeholderEmails.has(user.userId)).length),
       ...refusedNameWarning(candidates.filter((user) => refusedNames.has(user.userId)).length),
       ...refusedUsernameWarning(
