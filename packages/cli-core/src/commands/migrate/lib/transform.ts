@@ -264,7 +264,8 @@ export function normalizeUserData(user: Record<string, unknown>): Record<string,
  */
 export function consolidateClerkIdentifiers(user: Record<string, unknown>): void {
   const merge = (primaryKey: string, verifiedKey: string, unverifiedKey: string) => {
-    const primary = user[primaryKey] as string | undefined;
+    // Trimmed like the lists, so the two are compared on the same terms.
+    const primary = (user[primaryKey] as string | undefined)?.trim();
     const verified = parseDelimitedStrings(user[verifiedKey]);
     const unverified = parseDelimitedStrings(user[unverifiedKey]);
 
@@ -373,10 +374,13 @@ export function transformUsers(
   for (const user of users) {
     const mapped = transformKeys(user, transformer);
 
+    // The source's own cleanup first: the Clerk Dashboard's formula-safety TAB
+    // has to come off before identifiers are compared, or "\t+1555…" and
+    // "+1555…" read as two phones.
+    transformer.postTransform?.(mapped, context);
     if (key === "clerk") {
       consolidateClerkIdentifiers(mapped);
     }
-    transformer.postTransform?.(mapped, context);
 
     transformed.push(normalizeUserData(mapped));
   }

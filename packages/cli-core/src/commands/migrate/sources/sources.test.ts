@@ -255,6 +255,38 @@ describe("clerk", () => {
     });
     expect(user?.unverifiedEmailAddresses).toEqual(["-b@x.dev"]);
   });
+
+  // The TAB has to come off before the primary is matched against the lists,
+  // or a phone is sent twice, or an unverified one is created verified.
+  test("a prefixed phone that is primary and verified is one phone", () => {
+    const user = one("clerk", {
+      id: "u1",
+      primary_phone_number: "\t+15555550100",
+      verified_phone_numbers: "\t+15555550100",
+    });
+    expect(user?.phone).toEqual(["+15555550100"]);
+  });
+
+  test("a prefixed primary phone listed as unverified stays unverified", () => {
+    const user = one("clerk", {
+      id: "u1",
+      primary_email_address: "a@x.dev",
+      primary_phone_number: "\t+15555550100",
+      unverified_phone_numbers: "\t+15555550100",
+    });
+    expect(user?.phone).toBeUndefined();
+    expect(user?.unverifiedPhoneNumbers).toEqual(["+15555550100"]);
+  });
+
+  test("a prefixed primary email listed as unverified stays unverified", () => {
+    const user = one("clerk", {
+      id: "u1",
+      primary_email_address: "\t+a@x.dev",
+      unverified_email_addresses: "\t+a@x.dev",
+    });
+    expect(user?.email).toBeUndefined();
+    expect(user?.unverifiedEmailAddresses).toEqual(["+a@x.dev"]);
+  });
 });
 
 // The CLI's own exports add these; reporting them as "Clerk won't store" on
