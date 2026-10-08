@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _setConfigDir } from "../../../lib/config.ts";
-import { _resetMode, setMode } from "../../../mode.ts";
+import { getMode, setMode } from "../../../mode.ts";
 import { EXIT_CODE, type CliError } from "../../../lib/errors.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import {
@@ -48,11 +48,12 @@ describe("printTarget", () => {
   });
 
   test("prints no escape codes for an agent", () => {
+    const original = getMode();
     setMode("agent");
     try {
       printTarget({ env: "development", instanceId: "ins_2", keySource: "--secret-key" });
     } finally {
-      _resetMode();
+      setMode(original);
     }
     expect(captured.err).toBe("Target: development instance ins_2\nKey from: --secret-key");
   });
