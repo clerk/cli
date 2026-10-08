@@ -399,6 +399,10 @@ describe("betterauth", () => {
     ["an expiry in the future", "2999-01-01T00:00:00.000Z", true],
     ["epoch seconds in the past", 1_577_836_800, undefined],
     ["epoch milliseconds in the future", 32_472_144_000_000, true],
+    // A CSV of a Drizzle SQLite `integer({ mode: "timestamp" })` column.
+    ["epoch seconds in the future, as a string", "32472144000", true],
+    ["epoch seconds in the past, as a string", "1577836800", undefined],
+    ["epoch milliseconds in the future, as a string", "32472144000000", true],
     ["an unreadable expiry", "soon", true],
   ])("a ban with %s -> banned %p", (_label, banExpires, expected) => {
     const user = one("betterauth", { ...base, banned: true, banExpires });
