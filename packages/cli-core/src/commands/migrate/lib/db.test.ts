@@ -316,7 +316,10 @@ describe("withDbClient", () => {
 
     expect(error.exitCode).toBe(EXIT_CODE.USAGE);
     expect(error.message).toContain("reads `id`, `name`, `email` and `emailVerified`");
-    expect(error.message).toContain("SELECT id, full_name AS name, email, email_verified");
+    // Prisma's Auth.js schema: a quoted "User" table and camelCase "emailVerified".
+    expect(error.message).toContain(
+      'SELECT id, full_name AS name, email, "emailVerified" AS email_verified FROM "User"',
+    );
     expect(error.message).not.toContain("Check the connection string");
   });
 
