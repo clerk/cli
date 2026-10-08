@@ -18,6 +18,7 @@
 
 import { bapiRequest } from "../../lib/bapi.ts";
 import { BapiError } from "../../lib/errors.ts";
+import { log } from "../../lib/log.ts";
 import { interruptSignal } from "../../lib/signals.ts";
 import type { ResolvedLimits } from "./lib/instance.ts";
 import type { ProgressUpdate } from "./lib/progress.ts";
@@ -174,6 +175,8 @@ export function buildCreateUserBody(
 type CreateContext = {
   secretKey: string;
   schedule: ApiScheduler;
+  /** Set by the first `user_quota_exceeded`: every later create would be refused too. */
+  quotaReached: boolean;
 };
 
 /** A create a Ctrl-C stopped before it went out: neither a failure nor unknown. */
@@ -290,8 +293,9 @@ async function createUser(
 ): Promise<{ clerkUserId: string; notes: string[] }> {
   const create = async (body: Record<string, unknown>) =>
     ctx.schedule(async () => {
-      // A Ctrl-C hands the slot on to queued creates; none of them was sent.
-      if (interruptSignal().aborted) throw new NotSentError();
+      // A Ctrl-C or a full instance hands the slot on to queued creates; none
+      // of them was sent.
+      if (interruptSignal().aborted || ctx.quotaReached) throw new NotSentError();
       sending();
       return bapiRequest({
         method: "POST",
@@ -372,6 +376,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   const ctx: CreateContext = {
     secretKey,
     schedule: createApiScheduler(limits.concurrencyLimit, limits.rateLimit),
+    quotaReached: false,
   };
 
   const progress = () => report?.({ done: processed, ok: successful, failed });
@@ -435,6 +440,13 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         return;
       }
       const apiError = error as BapiError;
+      if (apiError.code === "user_quota_exceeded" && !ctx.quotaReached) {
+        ctx.quotaReached = true;
+        log.warn(
+          `${apiError.longMessage ?? apiError.message} No more users are sent: the rest stay ` +
+            "unrecorded, so running the import again sends them once the limit is raised.",
+        );
+      }
       const unknown = outcomeUnknown(error);
       const message = apiError.longMessage ?? apiError.message ?? "Unknown error";
       recordFailure(
