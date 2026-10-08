@@ -603,7 +603,8 @@ function commandFor(options: MigrateRunOptions, fromExport: string | undefined, 
   if (options.skipLegalChecks) parts.push("--skip-legal-checks");
   if (options.reserveUnverified) parts.push("--reserve-unverified");
   if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "<key>");
-  if (options.firebaseSaltSeparator) parts.push("--firebase-salt-separator", "<separator>");
+  if (options.firebaseSaltSeparator !== undefined)
+    parts.push("--firebase-salt-separator", "<separator>");
   if (options.firebaseRounds) parts.push("--firebase-rounds", "<n>");
   if (options.firebaseMemCost) parts.push("--firebase-mem-cost", "<n>");
   if (options.secretKey) parts.push("--secret-key", "<key>");

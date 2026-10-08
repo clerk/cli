@@ -135,7 +135,8 @@ export function hashShapeProblem(password: string, hasher: string): string | und
       const parts = password.split("$");
       const numeric = (value: string | undefined) => /^\d+$/.test(value ?? "");
       return parts.length === 6 &&
-        parts.slice(0, 4).every(Boolean) &&
+        // The salt separator (parts[3]) may be empty.
+        parts.slice(0, 3).every(Boolean) &&
         numeric(parts[4]) &&
         numeric(parts[5])
         ? undefined

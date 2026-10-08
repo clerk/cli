@@ -415,6 +415,20 @@ describe("fetchHashConfig", () => {
     });
   });
 
+  // Firebase leaves the field out when the project has no separator.
+  test("reads a project with no salt separator as an empty one", async () => {
+    stubFirebase([[]], {
+      signIn: { hashConfig: { signerKey: "KEY=", rounds: 8, memoryCost: 14 } },
+    });
+
+    expect(await fetchHashConfig(account, "tok")).toEqual({
+      signerKey: "KEY=",
+      saltSeparator: "",
+      rounds: 8,
+      memoryCost: 14,
+    });
+  });
+
   // Reading the config needs a broader role than listing users, so a project
   // where it is denied must still export.
   test("returns null rather than failing when the call is not permitted", async () => {
@@ -495,12 +509,20 @@ describe("exportFirebase", () => {
 
   test("exports end to end and reports coverage", async () => {
     stubFirebase([[fbUser(0), fbUser(1)]], {
-      signIn: { hashConfig: { signerKey: "K", saltSeparator: "S", rounds: 8, memoryCost: 14 } },
+      signIn: {
+        hashConfig: { signerKey: "KEY=", saltSeparator: "Bw==", rounds: 8, memoryCost: 14 },
+      },
     });
 
     await exportFirebase({ serviceAccount: "./sa.json" });
     expect(JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8"))).toMatchObject({
       source: "firebase",
+      firebase: {
+        base64_signer_key: "KEY=",
+        base64_salt_separator: "Bw==",
+        rounds: 8,
+        mem_cost: 14,
+      },
     });
     const written = exportedUsers();
     expect(written).toHaveLength(2);

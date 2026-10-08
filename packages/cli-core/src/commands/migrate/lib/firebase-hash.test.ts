@@ -76,6 +76,11 @@ describe("firebaseHashConfigProblem", () => {
     ).toBeUndefined();
   });
 
+  // Clerk decodes it to no bytes; some projects have no separator.
+  test("passes an empty salt separator", () => {
+    expect(firebaseHashConfigProblem({ ...good, base64_salt_separator: "" })).toBeUndefined();
+  });
+
   test.each([
     // Clerk pads to a multiple of four, then decodes strictly.
     ["a one-character key", { base64_signer_key: "A" }, /signer key is not base64/],
