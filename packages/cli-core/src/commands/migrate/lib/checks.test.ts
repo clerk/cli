@@ -690,6 +690,21 @@ describe("warnings", () => {
     expect(checks.fixes).toEqual([]);
   });
 
+  // Clerk validates a name but never checks its setting (create_service.go).
+  test("says a name is kept, not dropped, when names are off", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings({ email_address: { enabled: true }, first_name: { enabled: false } }),
+        users: [user("a", { firstName: "Ada" })],
+      }),
+    );
+    expect(checks.importable).toEqual([user("a", { firstName: "Ada" })]);
+    expect(checks.warnings).toEqual([
+      "1 user has a first name, which this instance does not use: it is stored, and shows only once first names are turned on",
+    ]);
+    expect(checks.fixes.map((fix) => fix.label)).toEqual(["Enable First name"]);
+  });
+
   test("says a password is kept, not dropped, when passwords are off", async () => {
     const checks = await checkImport(
       input({
