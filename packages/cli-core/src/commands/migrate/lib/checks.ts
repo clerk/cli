@@ -713,10 +713,12 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
   // Always name the instance: without it, `clerk config patch` acts on the
   // linked profile's development instance, whatever key this import used. A
   // `key_` ID is a stand-in for an instance Clerk didn't name, so there is
-  // nothing to pass; point at the Dashboard instead.
+  // nothing to pass; point at the Dashboard instead. A key from --secret-key
+  // names no app, and without --app the patch goes to the linked one, so the
+  // command carries a placeholder the user fills in.
   const { appId, instanceId } = input.target;
   const named = instanceId.startsWith("ins_");
-  const flags = `${appId ? ` --app ${appId}` : ""} --instance ${instanceId}`;
+  const flags = ` --app ${appId ?? "<app_id>"} --instance ${instanceId}`;
   const settings = input.settings;
   const mfa = MFA_SETTINGS.filter(
     ({ field, attribute }) =>
