@@ -283,7 +283,7 @@ async function ensureImportTarget(options: MigrateRunOptions): Promise<void> {
  */
 async function resolveInput(
   options: MigrateRunOptions,
-): Promise<{ file: string; fromExport?: string }> {
+): Promise<{ file: string; fromExport?: string; exportSha256?: string }> {
   const value = options.input;
   if (!value) {
     if (!canPrompt(options)) {
@@ -326,12 +326,18 @@ async function resolveInput(
     );
   }
   if (sha256File(file) !== sha256 || readEnvelope(file)?.runId !== record.id) {
-    throwUsageError(
-      `The file run ${value} wrote, ${quoteArg(file)}, has changed since it was exported. Nothing was imported. ` +
-        "Import it by its path if you mean its current contents, or export again.",
-    );
+    throwChangedExport(value, file);
   }
-  return { file, fromExport: record.id };
+  // Carried on, so the file is checked again where the users are read: another
+  // export can still overwrite the path after this.
+  return { file, fromExport: record.id, exportSha256: sha256 };
+}
+
+function throwChangedExport(runId: string, file: string): never {
+  throwUsageError(
+    `The file run ${runId} wrote, ${quoteArg(file)}, has changed since it was exported. Nothing was imported. ` +
+      "Import it by its path if you mean its current contents, or export again.",
+  );
 }
 
 /**
@@ -722,6 +728,9 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       const filePath = resolveImportFilePath(file);
       const sha256 = sha256File(filePath);
+      if (input.fromExport && sha256 !== input.exportSha256) {
+        throwChangedExport(input.fromExport, filePath);
+      }
       const runsDir = await resolveRunsDir(options.runsDir);
 
       const match = {
@@ -798,6 +807,11 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const loaded = await withSpinner(`Loading users from ${file}...`, async () =>
         loadUsersFromFile(file, source),
       );
+      // Read, and checked again before anything is created: the users loaded
+      // came from the file the export run recorded, not one written since.
+      if (input.fromExport && sha256File(filePath) !== input.exportSha256) {
+        throwChangedExport(input.fromExport, filePath);
+      }
       let users = loaded.users.filter((user) => !done.has(user.userId));
       const failures = loaded.failures.filter((failure) => !done.has(failure.userId));
 
