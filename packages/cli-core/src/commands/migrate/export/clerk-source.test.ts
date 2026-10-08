@@ -38,11 +38,13 @@ mock.module("../../../mode.ts", () => ({
 }));
 
 const { resolveClerkSource } = await import("./clerk-source.ts");
+const { setAssumeYes } = await import("../lib/assume-yes.ts");
 
 const captured = useCaptureLog();
 
 beforeEach(() => {
   human = true;
+  setAssumeYes(false);
   mockDescribeBapiTarget.mockReset();
   mockResolveBapiSecretKey.mockReset();
   mockResolveProfile.mockReset();
@@ -214,6 +216,26 @@ describe("resolveClerkSource", () => {
   });
 
   // `--json` never prompts, even at a terminal: it takes what an agent would.
+  // `-y` is "do not prompt": it takes the resolved instance as an agent does.
+  test("-y takes the resolved instance without the picker", async () => {
+    stubResolved("my-app (production)");
+    setAssumeYes(true);
+
+    const source = await resolveClerkSource({});
+
+    expect(source.secretKey).toBe("sk_test_resolved");
+    expect(mockSearch).not.toHaveBeenCalled();
+  });
+
+  test("-y in an unlinked directory fails rather than opening the picker", async () => {
+    const failure = new CliError("No secret key found.", { code: ERROR_CODE.NO_SECRET_KEY });
+    mockDescribeBapiTarget.mockRejectedValue(failure);
+    setAssumeYes(true);
+
+    await expect(resolveClerkSource({})).rejects.toThrow(failure);
+    expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
+  });
+
   test("--json takes the resolved instance without prompting", async () => {
     stubResolved("my-app (production)");
 
