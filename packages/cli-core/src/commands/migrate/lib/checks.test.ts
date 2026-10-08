@@ -58,7 +58,7 @@ function input(overrides: Partial<CheckInput> = {}): CheckInput {
       keySource: "--secret-key",
     },
     secretKey: "sk_live_x",
-    schedule: async (fn) => fn(),
+    schedule: Object.assign(async <T>(fn: () => Promise<T>) => fn(), { pause: () => {} }),
     ...overrides,
   };
 }
