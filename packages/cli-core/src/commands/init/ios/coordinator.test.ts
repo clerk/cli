@@ -10,6 +10,7 @@ import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { capabilityFixture } from "./capability-test-helpers.ts";
 import { useStarterSources } from "./setup-test-helpers.ts";
 import { createIOSFixture, treeDigest } from "./test-helpers.ts";
+import * as coordinator from "./coordinator.ts";
 import { runAppleInit } from "./coordinator.ts";
 import { runIOSDoctorChecks } from "../../doctor/ios.ts";
 import type { DoctorContext } from "../../doctor/types.ts";
@@ -225,11 +226,8 @@ test("package failure returns an incomplete result but still completes native re
 });
 
 test("public doctor reads Native API before a prefix is known and never writes or resolves packages", async () => {
-  const platform = process.platform;
-  Object.defineProperty(process, "platform", { value: "darwin" });
-  spies.push({
-    mockRestore: () => Object.defineProperty(process, "platform", { value: platform }),
-  } as never);
+  // Doctor gates on init's Xcode check; CI runs on Linux.
+  spies.push(spyOn(coordinator, "canSetUpXcode").mockReturnValue(true));
   const f = await fixture();
   f.state.apps = [];
   const before = await treeDigest(f.root);
