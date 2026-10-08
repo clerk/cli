@@ -236,7 +236,7 @@ describe("importUsers", () => {
         record,
       });
 
-      expect(summary).toMatchObject({ successful: 0, failed: 0 });
+      expect(summary).toMatchObject({ successful: 0, failed: 0, notSent: 2 });
       expect(summary.errorBreakdown.size).toBe(0);
       expect(requests).toHaveLength(0);
       expect(allLines).toHaveLength(0);
@@ -561,7 +561,7 @@ describe("importUsers", () => {
     });
 
     expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(1);
-    expect(summary).toMatchObject({ successful: 0, failed: 1 });
+    expect(summary).toMatchObject({ successful: 0, failed: 1, notSent: 3 });
     expect(allLines.filter((line) => line.status !== "creating")).toMatchObject([
       { sourceId: "u1", status: "failed", code: "403" },
     ]);
