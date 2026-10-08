@@ -910,7 +910,11 @@ describe("run", () => {
     // Reserved meets the requirement, so neither the reject nor the fix applies.
     test("with --reserve-unverified, an unverified-only user is neither rejected nor a fix", async () => {
       stubClerk({
-        settings: { attributes: { email_address: { enabled: true, required: true } } },
+        settings: {
+          attributes: { email_address: { enabled: true, required: true } },
+          // A way in besides a password, so users without one import.
+          enterprise_sso: { enabled: true },
+        },
       });
       fs.writeFileSync(
         path.join(workDir, "export.json"),
