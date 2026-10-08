@@ -241,7 +241,6 @@ function mfaProblem(user: User, settings: UserSettingsJSON | null): string | und
 
 /** Sign-in strategies that don't count as a way in without a password, per clerk_go. */
 const NOT_ALTERNATIVE_SIGN_IN = new Set([
-  "password",
   "passkey",
   "ticket",
   "reset_password_email_code",
@@ -249,9 +248,15 @@ const NOT_ALTERNATIVE_SIGN_IN = new Set([
 ]);
 
 /**
- * True when the instance has no sign-in strategy but a password. Clerk then
+ * True when the instance offers no way to sign in but a password. Clerk then
  * refuses `skip_password_requirement`, so a user without a digest can't be
- * created. Mirrors `create_service.go` and `UserSettings.FirstFactors()`.
+ * created. Mirrors `create_service.go`: `FirstFactors()` minus the strategies
+ * that are no way in on their own. Clerk never lists `password` itself as a
+ * first factor, and a password reset doesn't count.
+ *
+ * ponytail: Google One Tap counts for Clerk when Google uses custom
+ * credentials, which FAPI doesn't serve; a Google set up for One Tap alone
+ * reads as no way in, so those users are rejected rather than created.
  */
 export function passwordIsOnlySignIn(settings: UserSettingsJSON): boolean {
   const strategies = firstFactorStrategies(settings);
@@ -259,10 +264,7 @@ export function passwordIsOnlySignIn(settings: UserSettingsJSON): boolean {
     if (social?.enabled && social.authenticatable) strategies.add(strategy);
   }
   if (settings.enterprise_sso?.enabled) strategies.add("enterprise_sso");
-  return (
-    strategies.has("password") &&
-    [...strategies].every((strategy) => NOT_ALTERNATIVE_SIGN_IN.has(strategy))
-  );
+  return [...strategies].every((strategy) => NOT_ALTERNATIVE_SIGN_IN.has(strategy));
 }
 
 /** The first-factor strategies the instance's identifiers offer (`email_code`, `password`, …). */
@@ -651,7 +653,7 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
         const missing = importable.length - item.userCount;
         warnings.push(
           item.key === "password"
-            ? `${plural(missing, "user")} without a password, which this instance requires: they reset it to sign in`
+            ? `${plural(missing, "user")} without a password, which this instance requires: they sign in another way, such as a code or a social account`
             : `${plural(missing, "user")} without a ${item.label.toLowerCase()}, which this instance requires`,
         );
       } else if (item.key === "password") {
@@ -673,7 +675,7 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
   const dropped = importable.filter((user) => user.passwordDropped).length;
   if (dropped > 0) {
     warnings.push(
-      `${plural(dropped, "password")} Clerk cannot verify will be dropped: those users reset it to sign in`,
+      `${plural(dropped, "password")} Clerk cannot verify will be dropped: those users sign in another way, such as a code or a social account`,
     );
   }
 

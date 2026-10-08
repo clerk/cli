@@ -5,8 +5,16 @@ import { checkImport, hashShapeProblem, passwordIsOnlySignIn, type CheckInput } 
 
 const BCRYPT = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
 
-const settings = (attributes: object, social: object = {}) =>
+/** Settings as given, with no way to sign in but what they list. */
+const bare = (attributes: object, social: object = {}) =>
   ({ attributes, social }) as unknown as UserSettingsJSON;
+
+/**
+ * Settings with a way to sign in besides a password (SSO), so users without
+ * one import: Clerk refuses them on an instance with no other way in.
+ */
+const settings = (attributes: object, social: object = {}) =>
+  ({ ...bare(attributes, social), enterprise_sso: { enabled: true } }) as UserSettingsJSON;
 
 const EMAIL_REQUIRED = settings({ email_address: { enabled: true, required: true } });
 
@@ -106,9 +114,10 @@ describe("rejects", () => {
     });
 
     test("no password where password is the only way to sign in", async () => {
-      const passwordOnly = settings({
+      const passwordOnly = bare({
         email_address: { enabled: true, used_for_first_factor: false, first_factors: [] },
-        password: { enabled: true, used_for_first_factor: true, first_factors: ["password"] },
+        // Clerk's real shape: a password is never itself a listed first factor.
+        password: { enabled: true, used_for_first_factor: false, first_factors: [] },
       });
       const reasons = await reasonsOf({
         users: [user("a"), user("b", { password: BCRYPT, passwordHasher: "bcrypt" })],
@@ -555,6 +564,7 @@ describe("rejects", () => {
       ({
         attributes: { email_address: { enabled: true }, username: { enabled: true } },
         social: {},
+        enterprise_sso: { enabled: true },
         username_settings: { min_length: 4, max_length: 64, ...rules },
       }) as unknown as UserSettingsJSON;
     const reasonFor = async (username: string, rules: object = {}) =>
@@ -733,7 +743,7 @@ describe("fixes", () => {
 
 describe("passwordIsOnlySignIn", () => {
   const withFactors = (factors: Record<string, string[]>, social: object = {}) =>
-    settings(
+    bare(
       Object.fromEntries(
         Object.entries(factors).map(([name, first_factors]) => [
           name,
@@ -743,23 +753,26 @@ describe("passwordIsOnlySignIn", () => {
       social,
     );
 
+  // Clerk's shape: `password` lists no first factors of its own.
   test.each([
-    ["password alone", { password: ["password"] }, {}, true],
-    // Mirrors clerk_go: a passkey is not counted as a way in without a password.
-    ["password and passkey", { password: ["password"], passkey: ["passkey"] }, {}, true],
+    ["password alone", { password: [] }, {}, true],
+    ["password, and an email used only for sign-up", { password: [], email_address: [] }, {}, true],
+    // Mirrors clerk_go: neither a passkey nor a reset is a way in on its own.
+    ["password and passkey", { password: [], passkey: ["passkey"] }, {}, true],
     [
-      "password and email codes",
-      { password: ["password"], email_address: ["email_code"] },
+      "password and a reset code",
+      { password: [], email_address: ["reset_password_email_code"] },
       {},
-      false,
+      true,
     ],
+    ["password and email codes", { password: [], email_address: ["email_code"] }, {}, false],
     [
       "password and Google",
-      { password: ["password"] },
+      { password: [] },
       { oauth_google: { enabled: true, authenticatable: true } },
       false,
     ],
-    ["no password factor", { email_address: ["email_code"] }, {}, false],
+    ["email links without passwords", { email_address: ["email_link"] }, {}, false],
   ])("%s -> %p", (_label, factors, social, expected) => {
     expect(passwordIsOnlySignIn(withFactors(factors, social))).toBe(expected);
   });

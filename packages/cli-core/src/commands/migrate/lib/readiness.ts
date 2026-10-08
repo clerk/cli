@@ -47,7 +47,8 @@ export type ReadinessItem = {
    * - `drops` — the user is created, but this piece of them is not. A required
    *   password is in this group rather than `rejects` because the import sends
    *   `skip_password_requirement` (see `import-users.ts`), so the user lands
-   *   without one and has to reset it before they can sign in that way.
+   *   without one and signs in another way. With no other way, the checks
+   *   reject the user (`passwordIsOnlySignIn`).
    */
   consequence?: "rejects" | "drops";
   /** Why it blocks — omitted when it does not. */
