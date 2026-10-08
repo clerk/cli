@@ -80,7 +80,6 @@ type BuildInput = {
  * carry leaves nothing to create them with, so the API refuses them — which is
  * why these are the only attributes whose consequence is `rejects`.
  */
-/** Attributes `POST /v1/users` refuses a user without, when they are required. */
 const REJECTING_ATTRIBUTES = new Set<AttributeName>([
   "email_address",
   "phone_number",
