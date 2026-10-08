@@ -377,13 +377,21 @@ function dropRefusedEmails(user: User): { user: User; refused: string[] } {
   return { user: kept ?? user, refused };
 }
 
+/** Clerk's cap on a first or last name, in bytes (`firstNameMaxLen` in clerk_go). */
+const NAME_MAX_BYTES = 256;
+
 /**
- * A name Clerk refuses, approximating clerk_go's `NameForAbusePreventionLoose`:
- * a phone number (10–15 digits, or fewer behind a `+`/`00`), a URL with a
- * scheme or path that isn't part of an email, or an HTML tag. Better Auth's phone sign-up stores the
- * number as the name, so this is common, not exotic.
+ * A name Clerk refuses: blank (only whitespace or unprintable characters),
+ * over {@link NAME_MAX_BYTES}, or what clerk_go's `NameForAbusePreventionLoose`
+ * refuses, approximated: a phone number (10–15 digits, or fewer behind a
+ * `+`/`00`), a URL with a scheme or path that isn't part of an email, or an
+ * HTML tag. Better Auth's phone sign-up stores the number as the name, so this
+ * is common, not exotic.
  */
 function nameProblem(name: string): string | undefined {
+  // Go's `unicode.IsPrint` refuses control and format characters (\p{C}).
+  if (/^[\s\p{C}]+$/u.test(name)) return "blank";
+  if (Buffer.byteLength(name) > NAME_MAX_BYTES) return "too long";
   for (const candidate of name.match(/(?:\+|00)?\d[\d\s().-]{5,}\d/g) ?? []) {
     const digits = candidate.replace(/\D/g, "").length;
     const international = /^(\+|00)/.test(candidate.trim());
@@ -808,7 +816,7 @@ function refusedUsernameWarning(count: number): string[] {
 function refusedNameWarning(count: number): string[] {
   if (count === 0) return [];
   return [
-    `${plural(count, "user")} ${count === 1 ? "has" : "have"} a name Clerk refuses (a phone number, URL or HTML), which is dropped`,
+    `${plural(count, "user")} ${count === 1 ? "has" : "have"} a name Clerk refuses (a phone number, a URL, HTML, blank, or over ${NAME_MAX_BYTES} bytes), which is dropped`,
   ];
 }
 
