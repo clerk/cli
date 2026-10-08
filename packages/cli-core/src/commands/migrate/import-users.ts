@@ -333,7 +333,8 @@ async function attachAll(
  *
  * @param sending - Called as each `POST /v1/users` goes out, so the run
  *   records the user only once a create may actually land.
- * @returns The Clerk ID, and a note when the phone was dropped.
+ * @returns The Clerk ID, a note when the phone was dropped, and Clerk's
+ *   reason for refusing it.
  */
 async function createUser(
   ctx: CreateContext,
@@ -341,7 +342,7 @@ async function createUser(
   identifiers: Identifiers,
   skipPasswordRequirement: boolean,
   sending: () => void,
-): Promise<{ clerkUserId: string; notes: string[] }> {
+): Promise<{ clerkUserId: string; notes: string[]; phoneRefusal?: string }> {
   const create = async (body: Record<string, unknown>) =>
     ctx.schedule(async () => {
       // A Ctrl-C or a full instance hands the slot on to queued creates; none
@@ -363,6 +364,7 @@ async function createUser(
     ctx.reserveUnverified,
   );
   const notes: string[] = [];
+  let phoneRefusal: string | undefined;
   let response;
   try {
     response = await create(body);
@@ -380,9 +382,8 @@ async function createUser(
       ...withoutPhone
     } = body;
     response = await create(withoutPhone);
-    notes.push(
-      `Failed to add phone ${(dropped as string[]).join(", ")}: ${(error as BapiError).longMessage ?? (error as BapiError).message}`,
-    );
+    phoneRefusal = error.longMessage ?? error.message;
+    notes.push(`Failed to add phone ${(dropped as string[]).join(", ")}: ${phoneRefusal}`);
   }
 
   // Untracked, the user could never be undone. Thrown, the outcome is unknown,
@@ -391,7 +392,7 @@ async function createUser(
   if (typeof clerkUserId !== "string" || !clerkUserId) {
     throw new Error("Clerk answered POST /v1/users without a user ID");
   }
-  return { clerkUserId, notes };
+  return { clerkUserId, notes, ...(phoneRefusal ? { phoneRefusal } : {}) };
 }
 
 export type ImportUsersOptions = {
@@ -455,6 +456,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   let successful = 0;
   let failed = 0;
   let notSent = 0;
+  const droppedPhones = new Map<string, number>();
 
   const ctx: CreateContext = {
     secretKey,
@@ -506,7 +508,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   const processUser = async (user: User): Promise<void> => {
     const retries: string[] = [];
     const identifiers = splitIdentifiers(user);
-    let created: { clerkUserId: string; notes: string[] };
+    let created: { clerkUserId: string; notes: string[]; phoneRefusal?: string };
     const adoptedId = adopted.get(user.userId);
     // What the create did with the unverified identifiers decides what is left
     // to attach: an adopted user's create may have run in the other mode.
@@ -570,6 +572,10 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       ...(user.passwordDropped ? { passwordDropped: true } : {}),
     };
     record(line);
+    if (created.phoneRefusal) {
+      const reason = normalizeErrorMessage(created.phoneRefusal);
+      droppedPhones.set(reason, (droppedPhones.get(reason) ?? 0) + 1);
+    }
     await finishUser(line, pendingIdentifiers(identifiers, reserved), [
       ...created.notes,
       ...retries,
@@ -585,5 +591,13 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     ...attachOnly.map(async (line) => finishUser(line, line.pending ?? [], [])),
   ]);
 
-  return { totalProcessed: total, successful, failed, notSent, validationFailed, errorBreakdown };
+  return {
+    totalProcessed: total,
+    successful,
+    failed,
+    notSent,
+    droppedPhones,
+    validationFailed,
+    errorBreakdown,
+  };
 }

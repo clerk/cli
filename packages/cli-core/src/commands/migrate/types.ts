@@ -51,6 +51,11 @@ export type ImportSummary = {
    * first. They have no line in the run, so a re-run picks them up.
    */
   notSent: number;
+  /**
+   * Users created without the phone Clerk refused, by Clerk's reason. They
+   * count as imported, so these are warnings, not failures.
+   */
+  droppedPhones: Map<string, number>;
   validationFailed: number;
   errorBreakdown: Map<string, number>;
 };
