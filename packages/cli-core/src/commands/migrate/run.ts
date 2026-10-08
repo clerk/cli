@@ -149,7 +149,7 @@ const TEST_NUMBERS_URL = "https://clerk.com/docs/guides/development/testing/test
  * Both of these read as account-level restrictions and are not. Blocked
  * countries are a per-instance SMS blocklist that development instances are
  * created with far more of, and the user limit is a development-instance quota
- * that production does not have at all — so "contact support", which both
+ * that production does not have by default — so "contact support", which both
  * messages point at, is the wrong first move for most readers.
  *
  * @returns One note per recognized error family, empty when none apply.
