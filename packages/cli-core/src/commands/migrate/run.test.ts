@@ -621,6 +621,59 @@ describe("run", () => {
     });
   });
 
+  describe("a phone Clerk refuses", () => {
+    const COUNTRY =
+      "Phone numbers from this country (France) are currently not supported. For more information, please contact support.";
+
+    beforeEach(() => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev", primary_phone_number: "+33612345678" },
+        ]),
+      );
+      const clerk = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const body = init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : {};
+        const isCreate =
+          init?.method === "POST" && new URL(input.toString()).pathname === "/v1/users";
+        if (isCreate && body.phone_number) {
+          requests.push({ method: "POST", url: input.toString(), body });
+          return Response.json(
+            {
+              errors: [
+                { code: "unsupported_country_code", message: "unsupported", long_message: COUNTRY },
+              ],
+            },
+            { status: 403 },
+          );
+        }
+        return clerk(input, init);
+      }) as typeof fetch;
+    });
+
+    // The user imports, so it is no failure, but the phone is gone.
+    test("is counted in the summary, with the SMS note", async () => {
+      await run(baseOptions);
+      const err = Bun.stripANSI(captured.err);
+      expect(err).toContain("Failed: 0");
+      expect(err).toContain(`Imported without their phone:\n  1 user: ${COUNTRY}`);
+      expect(err).toContain("Development instances block SMS");
+    });
+
+    test("is a warning in --json", async () => {
+      await run({ ...baseOptions, json: true });
+      expect(JSON.parse(captured.out)).toMatchObject({
+        result: {
+          created: 1,
+          failed: 0,
+          errors: [],
+          warnings: [{ warning: `imported without their phone: ${COUNTRY}`, count: 1 }],
+        },
+      });
+    });
+  });
+
   describe("re-running", () => {
     // Slice 1 has no continuing: the second run sees the first run's users in
     // the instance, and refuses until --allow-partial.

@@ -352,10 +352,16 @@ function formatSummary(
     for (const [error, count] of summary.errorBreakdown) {
       lines.push(`  ${plural(count, "user")}: ${error}`);
     }
-    for (const note of explainErrors(summary.errorBreakdown.keys(), instanceType)) {
-      lines.push("", note);
+  }
+  // Imported, so not failures, but the phone is gone: say so, and why.
+  if (summary.droppedPhones.size > 0) {
+    lines.push("", bold("Imported without their phone:"));
+    for (const [reason, count] of summary.droppedPhones) {
+      lines.push(`  ${plural(count, "user")}: ${reason}`);
     }
   }
+  const explained = [...summary.errorBreakdown.keys(), ...summary.droppedPhones.keys()];
+  for (const note of explainErrors(explained, instanceType)) lines.push("", note);
   lines.push("", dim(`Run ${record.id}: ${runFolder}`));
   return lines;
 }
@@ -632,6 +638,10 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
                 notSent: summary.notSent,
                 skipped: checks.rejects.length + withoutPassword.length,
                 errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
+                warnings: [...summary.droppedPhones].map(([reason, count]) => ({
+                  warning: `imported without their phone: ${reason}`,
+                  count,
+                })),
               },
             },
             null,
