@@ -54,9 +54,13 @@ async function describeKeySource(
 
   if (process.env.CLERK_SECRET_KEY) return { keySource: "CLERK_SECRET_KEY env var" };
 
+  // Only the SDK's own file says the app is accountless: a key in `.env`
+  // may belong to any app, an account's included.
   const keyless = await resolveKeylessTarget({ instance: options.instance });
   if (keyless) {
-    return { keySource: `accountless app (${keyless.source})`, appLabel: "accountless app" };
+    return keyless.source === ".clerk/.tmp/keyless.json"
+      ? { keySource: `accountless app (${keyless.source})`, appLabel: "accountless app" }
+      : { keySource: keyless.source };
   }
 
   const ctx = await resolveAppContext({ instance: options.instance });
