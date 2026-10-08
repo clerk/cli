@@ -657,7 +657,8 @@ function commandFor(
   if (options.newRun) parts.push("--new-run");
   parts.push(...importFlags(options));
   if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "<key>");
-  if (options.firebaseSaltSeparator) parts.push("--firebase-salt-separator", "<separator>");
+  if (options.firebaseSaltSeparator !== undefined)
+    parts.push("--firebase-salt-separator", "<separator>");
   if (options.firebaseRounds) parts.push("--firebase-rounds", "<n>");
   if (options.firebaseMemCost) parts.push("--firebase-mem-cost", "<n>");
   parts.push(...carry);

@@ -80,11 +80,9 @@ export async function promptForFirebaseHashConfig(): Promise<FirebaseHashConfig 
   ).trim();
   if (!signerKey) return undefined;
 
+  // Blank is a valid separator: some projects have none.
   const saltSeparator = (
-    await text({
-      message: "base64 salt separator",
-      validate: (value) => (value?.trim() ? undefined : "Required alongside the signer key"),
-    })
+    await text({ message: "base64 salt separator (leave blank if the project has none)" })
   ).trim();
 
   return {
