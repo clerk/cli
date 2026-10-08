@@ -754,11 +754,6 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const loaded = await withSpinner(`Loading users from ${file}...`, async () =>
         loadUsersFromFile(file, source, { context: { firebaseHashConfig } }),
       );
-      // Read, and checked again before anything is created: the users loaded
-      // came from the file the export run recorded, not one written since.
-      if (input.fromExport && sha256File(filePath) !== input.exportSha256) {
-        throwChangedExport(input.fromExport, filePath);
-      }
       let users = loaded.users.filter((user) => !done.has(user.userId));
       const failures = loaded.failures.filter((failure) => !done.has(failure.userId));
 
@@ -785,6 +780,13 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         } catch (error) {
           log.debug(`migrate: could not read Supabase providers: ${String(error)}`);
         }
+      }
+
+      // Checked again after the last read of the file, before anything is
+      // created: the users and the provider rows came from the file the export
+      // run recorded, not one written since.
+      if (input.fromExport && sha256File(filePath) !== input.exportSha256) {
+        throwChangedExport(input.fromExport, filePath);
       }
 
       const [settings, existingUsers] = await withSpinner("Checking the instance...", async () =>
