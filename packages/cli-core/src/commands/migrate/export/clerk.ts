@@ -19,7 +19,7 @@ import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { retryOn429 } from "../lib/retry.ts";
-import { fetchInstanceIdentity, printTarget } from "../lib/target.ts";
+import { assertInstanceFlagMatches, fetchInstanceIdentity, printTarget } from "../lib/target.ts";
 import { resolveClerkSource } from "./clerk-source.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 
@@ -259,11 +259,22 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
 
   await withGutter("Exporting users from Clerk", async () => {
     const identity = await fetchInstanceIdentity(source.secretKey);
+    // A key picks the instance on its own and ignores --instance, so the two
+    // must agree, as on import: otherwise this reads the wrong user pool under
+    // the requested instance's name.
+    const keyFrom = options.secretKey
+      ? "--secret-key"
+      : !options.app && process.env.CLERK_SECRET_KEY
+        ? "CLERK_SECRET_KEY env var"
+        : undefined;
+    if (keyFrom) assertInstanceFlagMatches({ instance: options.instance }, keyFrom, identity);
+    // describeBapiTarget already names where the key came from, env key included.
+    const keySource = source.target ?? keyFrom;
     const target = {
       platform: "clerk",
       env: identity.env,
       instanceId: identity.instanceId,
-      ...(source.target ? { keySource: source.target } : {}),
+      ...(keySource ? { keySource } : {}),
     };
     if (!options.json) printTarget(target);
 

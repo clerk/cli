@@ -311,6 +311,17 @@ describe("exportClerk", () => {
     expect(captured.err).toMatch(/clerk migrate import \d{8}-\d{6}-[0-9a-f]{4}/);
   });
 
+  // The key decides the instance; --instance naming a different one would
+  // label a read of one user pool with another's name.
+  test("refuses an --instance the key does not address, before reading any user", async () => {
+    stubPages([[user()], []]);
+
+    await expect(exportClerk({ secretKey: "sk_test_x", instance: "dev" })).rejects.toThrow(
+      /--instance dev does not match the key from --secret-key/,
+    );
+    expect(requests).toEqual([]);
+  });
+
   test("names the instance it reads from first, and records it on the run", async () => {
     stubPages([[user()], []]);
 
