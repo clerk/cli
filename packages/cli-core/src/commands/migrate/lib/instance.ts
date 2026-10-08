@@ -13,7 +13,8 @@
  * (`max_allowed_users`) is not served by BAPI, DAPI or FAPI — only by Clerk's
  * internal staff API. The checks reject users past it, so an instance Clerk has
  * raised overrides it with `CLERK_MIGRATE_DEV_USER_LIMIT` (see
- * {@link resolveDevUserLimit}). Production instances have no limit at all.
+ * {@link resolveDevUserLimit}). A production instance's limit comes from its
+ * plan; the import stops at the first `user_quota_exceeded` either way.
  */
 export const DEV_USER_LIMIT = 100;
 
