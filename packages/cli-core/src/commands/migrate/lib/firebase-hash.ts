@@ -80,7 +80,7 @@ function decodesLikeClerk(value: string): boolean {
   let normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   const rem = normalized.length % 4;
   if (rem !== 0) normalized += "=".repeat(4 - rem);
-  return normalized.length > 0 && STRICT_BASE64.test(normalized);
+  return STRICT_BASE64.test(normalized);
 }
 
 /**
@@ -91,12 +91,15 @@ function decodesLikeClerk(value: string): boolean {
  * not base64, and a `$` would break the digest's segments.
  */
 export function firebaseHashConfigProblem(config: FirebaseHashConfig): string | undefined {
+  // An empty salt separator is a valid one: Clerk decodes it to no bytes.
   const keys = [
-    ["signer key", config.base64_signer_key],
-    ["salt separator", config.base64_salt_separator],
+    ["signer key", config.base64_signer_key, false],
+    ["salt separator", config.base64_salt_separator, true],
   ] as const;
-  for (const [label, value] of keys) {
-    if (typeof value !== "string" || !decodesLikeClerk(value)) return `the ${label} is not base64`;
+  for (const [label, value, mayBeEmpty] of keys) {
+    if (typeof value !== "string" || (!value && !mayBeEmpty) || !decodesLikeClerk(value)) {
+      return `the ${label} is not base64`;
+    }
   }
   const costs = [
     ["rounds", config.rounds],
