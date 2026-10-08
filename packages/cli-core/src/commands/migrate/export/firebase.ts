@@ -407,11 +407,12 @@ export async function fetchHashConfig(
       signIn?: { hashConfig?: Partial<HashConfig> & { algorithm?: string } };
     };
     const config = body.signIn?.hashConfig;
-    if (!config?.signerKey || !config.saltSeparator) return null;
+    if (!config?.signerKey) return null;
 
     const hashConfig = {
       signerKey: config.signerKey,
-      saltSeparator: config.saltSeparator,
+      // Firebase omits an empty separator.
+      saltSeparator: config.saltSeparator ?? "",
       rounds: Number(config.rounds ?? 8),
       memoryCost: Number(config.memoryCost ?? 14),
     };
