@@ -74,6 +74,10 @@ const FORMULA_SAFE_FIELDS = [
   "email",
   "emailAddresses",
   "unverifiedEmailAddresses",
+  // A phone always starts with `+`, so a Dashboard CSV always prefixes it.
+  "phone",
+  "phoneNumbers",
+  "unverifiedPhoneNumbers",
 ] as const;
 
 const unprefix = (value: string) => value.replace(/^\t(?=[=+\-@\t\r\n＝＋－＠])/, "");
