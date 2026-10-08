@@ -15,7 +15,16 @@
  * identifiers attach before the next user is created, so a run stopped midway
  * leaves few users waiting on attaches.
  */
-export type ApiScheduler = <T>(fn: () => Promise<T>, options?: { first?: boolean }) => Promise<T>;
+export type ApiScheduler = (<T>(
+  fn: () => Promise<T>,
+  options?: { first?: boolean },
+) => Promise<T>) & {
+  /**
+   * Holds every call not yet sent until `ms` from now, so a 429 pauses the
+   * whole run rather than only the call that hit it.
+   */
+  pause(ms: number): void;
+};
 
 export function createApiScheduler(concurrencyLimit: number, rateLimit: number): ApiScheduler {
   const maxConcurrent = Math.max(1, Math.floor(concurrencyLimit));
@@ -24,6 +33,7 @@ export function createApiScheduler(concurrencyLimit: number, rateLimit: number):
   const waitingFirst: (() => void)[] = [];
   let active = 0;
   let nextRequestAt = 0;
+  let pausedUntil = 0;
 
   async function acquire(first: boolean): Promise<void> {
     if (active < maxConcurrent) {
@@ -45,7 +55,7 @@ export function createApiScheduler(concurrencyLimit: number, rateLimit: number):
     });
   }
 
-  return async (fn, options) => {
+  const schedule = async <T>(fn: () => Promise<T>, options?: { first?: boolean }) => {
     await acquire(options?.first ?? false);
     try {
       const now = Date.now();
@@ -54,9 +64,19 @@ export function createApiScheduler(concurrencyLimit: number, rateLimit: number):
       if (waitMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, waitMs));
       }
+      // Checked after the pacing wait too: a pause can start during it.
+      while (Date.now() < pausedUntil) {
+        await new Promise((resolve) => setTimeout(resolve, pausedUntil - Date.now()));
+      }
       return await fn();
     } finally {
       release();
     }
   };
+
+  return Object.assign(schedule, {
+    pause(ms: number) {
+      pausedUntil = Math.max(pausedUntil, Date.now() + ms);
+    },
+  });
 }
