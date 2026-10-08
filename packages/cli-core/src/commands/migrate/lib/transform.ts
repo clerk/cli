@@ -122,7 +122,8 @@ function parseJsonValue(value: string): unknown {
 }
 
 function parseDelimitedStrings(field: unknown): string[] {
-  if (Array.isArray(field)) return field as string[];
+  // Trimmed like a split string, so a JSON array compares on the same terms.
+  if (Array.isArray(field)) return field.map((value) => String(value).trim()).filter(Boolean);
   if (typeof field === "string" && field) {
     const parsed = parseJsonValue(field);
     if (Array.isArray(parsed)) {
@@ -264,9 +265,10 @@ export function normalizeUserData(user: Record<string, unknown>): Record<string,
  */
 export function consolidateClerkIdentifiers(user: Record<string, unknown>): void {
   const merge = (primaryKey: string, verifiedKey: string, unverifiedKey: string) => {
-    // Trimmed like the lists, so the two are compared on the same terms.
-    const primary = (user[primaryKey] as string | undefined)?.trim();
-    const verified = parseDelimitedStrings(user[verifiedKey]);
+    // Read like the lists, so the two compare on the same terms. The schema
+    // takes an array here too: its first entry is the primary, the rest verified.
+    const [primary, ...morePrimary] = parseDelimitedStrings(user[primaryKey]);
+    const verified = [...morePrimary, ...parseDelimitedStrings(user[verifiedKey])];
     const unverified = parseDelimitedStrings(user[unverifiedKey]);
 
     // The Dashboard lists an unverified primary under the unverified field.
