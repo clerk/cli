@@ -9,7 +9,7 @@ import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 // Every test below names its own `--secret-key`, which short-circuits the
 // signed-in check — except the one that asserts what happens without it.
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
-import { latestUserLines, listRuns, readRun, startRun } from "./lib/run-store.ts";
+import { latestUserLines, listRuns, patchRun, readRun, startRun } from "./lib/run-store.ts";
 import { __resetCustomSourcesForTesting } from "./sources/registry.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
 
@@ -284,6 +284,17 @@ describe("run", () => {
     }
 
     const { source: _source, input: _input, ...noSource } = baseOptions;
+
+    test("names an --output export file outside the run folder for deletion too", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const outside = path.join(workDir, `users-${record.id}.json`);
+      fs.renameSync(file, outside);
+      patchRun(runsDir(), record.id, { file: { path: outside, sha256: "x" } });
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).toContain(`rm ${outside}`);
+    });
 
     test("imports by export run ID, with the source the envelope names", async () => {
       const { record } = exportRun("clerk", export2);
