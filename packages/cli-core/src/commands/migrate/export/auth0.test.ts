@@ -255,6 +255,38 @@ describe("fetchAllAuth0Users", () => {
     expect(requests).toHaveLength(2);
   });
 
+  // A short page is not always the last: the total says how many there are.
+  test("keeps paging past a short page until the total is reached", async () => {
+    stubAuth0([
+      Array.from({ length: 100 }, (_, i) => auth0User(i)),
+      Array.from({ length: 50 }, (_, i) => auth0User(100 + i)),
+      Array.from({ length: 30 }, (_, i) => auth0User(150 + i)),
+    ]);
+
+    const { users: all, truncated } = await fetchAllAuth0Users({
+      credentials: CREDENTIALS,
+      token: "tok",
+    });
+
+    expect(all).toHaveLength(180);
+    expect(truncated).toBe(false);
+    expect(requests).toHaveLength(3);
+  });
+
+  test("ends on a short page when Auth0 sends no total", async () => {
+    const pages = [Array.from({ length: 100 }, (_, i) => auth0User(i)), [auth0User(100)]];
+    let page = 0;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      requests.push({ url: input.toString(), body: null });
+      return Response.json({ users: pages[page++] ?? [] });
+    }) as unknown as typeof fetch;
+
+    const { users: all } = await fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" });
+
+    expect(all).toHaveLength(101);
+    expect(requests).toHaveLength(2);
+  });
+
   test("asks for totals and the documented page size", async () => {
     stubAuth0([[]]);
     await fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" });
