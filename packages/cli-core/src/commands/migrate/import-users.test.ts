@@ -831,9 +831,10 @@ describe("importUsers", () => {
       { sourceId: "u1", status: "failed", code: "403" },
     ]);
     expect(allLines.map((line) => line.sourceId)).not.toContain("u2");
-    expect(captured.err).toContain(
-      "You have reached your limit of 100 users. No more users are sent",
-    );
+    // Returned for the caller to print after the progress bar, not logged
+    // under it, where the bar would redraw over it.
+    expect(summary.stopReason).toBe("You have reached your limit of 100 users.");
+    expect(captured.err).not.toContain("limit of 100 users");
   });
 
   // On dev, at 10 a second, thousands of queued users would otherwise spend
