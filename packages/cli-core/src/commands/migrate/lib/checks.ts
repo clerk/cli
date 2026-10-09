@@ -126,7 +126,9 @@ export type CheckInput = {
   /**
    * Source IDs of those adopted users. Each already exists in Clerk, so none
    * is rejected: the checks stop creates, and these need none. They count
-   * toward no quota either; the instance's live count has them already.
+   * toward no quota either; the instance's live count has them already. Their
+   * create ran in the mode its `creating` line records, so this run's flag
+   * does not decide what they reserved.
    */
   adoptedSourceIds?: Set<string>;
   spinner?: SpinnerControls;
@@ -568,7 +570,7 @@ const DUPLICATE_SOURCE_ID = "duplicate source ID in the file";
  */
 function findFileDuplicates(
   users: User[],
-  reserveUnverified = false,
+  reserves: (user: User) => boolean = () => false,
 ): {
   reasons: Map<User, string>;
   keptBy: Map<User, string>;
@@ -589,7 +591,7 @@ function findFileDuplicates(
     }
     seenIds.add(user.userId);
 
-    const { emails: ownEmails, phones: ownPhones } = sentIdentifiers(user, reserveUnverified);
+    const { emails: ownEmails, phones: ownPhones } = sentIdentifiers(user, reserves(user));
 
     const emailOwner = ownEmails.map((email) => emails.get(email.toLowerCase())).find(Boolean);
     const phoneOwner = ownPhones.map((phone) => phones.get(phoneKey(phone))).find(Boolean);
@@ -618,6 +620,18 @@ function findFileDuplicates(
     if (username) usernames.set(username, user.userId);
   }
   return { reasons, keptBy };
+}
+
+/**
+ * Whether a user's unverified identifiers are (or will be) created reserved:
+ * an adopted user's by what its create recorded, everyone else's by this
+ * run's flag.
+ */
+function reservesFor(input: CheckInput): (user: User) => boolean {
+  return (user) =>
+    input.adoptedSourceIds?.has(user.userId)
+      ? Boolean(input.reservedSourceIds?.has(user.userId))
+      : Boolean(input.reserveUnverified);
 }
 
 /**
@@ -656,7 +670,7 @@ async function findInstanceDuplicates(
   const byUsername = new Map<string, string>();
 
   for (const user of users) {
-    const sent = sentIdentifiers(user, input.reserveUnverified ?? false);
+    const sent = sentIdentifiers(user, reservesFor(input)(user));
     byExternalId.set(user.userId, user.userId);
     for (const email of sent.emails) byEmail.set(email.toLowerCase(), user.userId);
     for (const phone of sent.phones) byPhone.set(phoneKey(phone), user.userId);
@@ -1071,7 +1085,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       user.password && user.passwordHasher
         ? hashShapeProblem(user.password, user.passwordHasher)
         : undefined;
-    const reserve = input.reserveUnverified || input.reservedSourceIds?.has(user.userId);
+    const reserve = reservesFor(input)(user);
     const reason = adopted(original)
       ? undefined
       : (original.skipReason ??
@@ -1124,7 +1138,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   // one is the create Clerk would refuse, and is not kept in its place.
   const { reasons: fileDuplicates, keptBy } = findFileDuplicates(
     [...passed.filter(adopted), ...passed.filter((user) => !adopted(user))],
-    input.reserveUnverified,
+    reservesFor(input),
   );
   let candidates: User[] = [];
   for (const user of passed) {
