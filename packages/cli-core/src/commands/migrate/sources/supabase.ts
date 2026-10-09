@@ -1,0 +1,165 @@
+import type { SourceEntry } from "../types.ts";
+import { detectStandardHasher, isNullish, routeByVerification, toIsoDate } from "./shared.ts";
+
+/**
+ * Supabase Auth → Clerk transformer.
+ *
+ * Works with a `auth.users` export, per
+ * https://supabase.com/docs/guides/auth/managing-user-data#exporting-users
+ *
+ * Supabase records verification as a nullable confirmation timestamp
+ * (`email_confirmed_at`) rather than a boolean, and stores timestamps in
+ * PostgreSQL's format (`2024-06-29 20:25:06.126079+00`).
+ */
+
+/** Discord writes display names as `name#0`; the suffix reads as a URL to Clerk. */
+const DISCORD_DISCRIMINATOR = /#\d+$/;
+
+function stripDiscriminator(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return value.replace(DISCORD_DISCRIMINATOR, "").trim() || undefined;
+}
+
+/** How far out a Supabase ban may end and still be a temporary one. */
+const TEMPORARY_BAN_MS = 10 * 365 * 24 * 60 * 60_000;
+
+/** The nullable `auth.users` columns, by the field each maps to. */
+const NULLABLE_FIELDS = [
+  "email",
+  "emailConfirmedAt",
+  "password",
+  "phone",
+  "phoneConfirmedAt",
+  "unsafeMetadata",
+  "bannedUntil",
+  "deletedAt",
+  "createdAt",
+] as const;
+
+const supabaseSource = {
+  key: "supabase",
+  label: "Supabase",
+  description:
+    "Works with a Supabase `auth.users` export. Users whose only social provider is not enabled in Clerk are rejected by the import's checks, unless they can sign in by email code, email link or phone code.",
+  carries: {
+    passwords: {
+      level: "yes",
+      note: "bcrypt and argon2 `encrypted_password` hashes come across, detected per user. Any other hash is dropped, and that user signs in another way.",
+    },
+    mfa: {
+      level: "no",
+      note: "Supabase MFA factors are not exported. Users enrol again in Clerk.",
+    },
+    metadata: {
+      level: "partial",
+      note: "`raw_user_meta_data` → unsafe metadata, which users can edit, as in Supabase. `raw_app_meta_data` is not carried.",
+    },
+  },
+  transformer: {
+    id: "userId",
+    email: "email",
+    email_confirmed_at: "emailConfirmedAt",
+    first_name: "firstName",
+    last_name: "lastName",
+    encrypted_password: "password",
+    phone: "phone",
+    phone_confirmed_at: "phoneConfirmedAt",
+    raw_user_meta_data: "unsafeMetadata",
+    banned_until: "bannedUntil",
+    deleted_at: "deletedAt",
+    created_at: "createdAt",
+  },
+  postTransform: (user) => {
+    // A CSV export writes SQL NULL as text. Left in, `deleted_at: "NULL"`
+    // skips every user, and `raw_user_meta_data: "NULL"` fails the row. Only
+    // the nullable `auth.users` columns are cleared: a last name of "Null" stays.
+    for (const field of NULLABLE_FIELDS) {
+      if (isNullish(user[field])) delete user[field];
+    }
+
+    user.createdAt = toIsoDate(user.createdAt);
+
+    // Supabase accepts bcrypt and argon2 hashes on import, so `bcrypt` (the
+    // default it hashes with) is only right for most users, not all.
+    if (typeof user.password === "string" && user.password) {
+      const hasher = detectStandardHasher(user.password);
+      if (hasher) {
+        user.passwordHasher = hasher;
+      } else {
+        delete user.password;
+        user.passwordDropped = true;
+      }
+    }
+
+    // `export supabase` selects this for the provider checks, which read the
+    // raw rows; Clerk has no place for it, so it isn't a field "Clerk won't store".
+    delete user.raw_app_meta_data;
+
+    // A soft-deleted user is gone from the app; Supabase scrambles its email.
+    if (user.deletedAt) user.skipReason = "deleted in Supabase";
+    delete user.deletedAt;
+
+    // Supabase stores E.164 without the leading + (14165550123); Clerk needs it.
+    if (typeof user.phone === "string" && /^\d+$/.test(user.phone)) user.phone = `+${user.phone}`;
+
+    // Supabase bans until a time; a "permanent" ban is just a far-future one.
+    // Clerk's ban has no end, so only a ban still in force carries, and it then
+    // stays until someone lifts it in Clerk; a temporary one keeps its end
+    // date, so the checks can say so.
+    const bannedUntil = Date.parse(String(toIsoDate(user.bannedUntil)));
+    if (bannedUntil > Date.now()) {
+      user.banned = true;
+      // ponytail: Supabase writes "permanent" as about 100 years out, so a ban
+      // ending within 10 years reads as temporary; an odd 20-year ban reads
+      // as permanent.
+      if (bannedUntil - Date.now() < TEMPORARY_BAN_MS) {
+        user.banEndsAt = new Date(bannedUntil).toISOString();
+      }
+    }
+    delete user.bannedUntil;
+    routeByVerification(user, "email", "emailConfirmedAt", "timestamp");
+    routeByVerification(user, "phone", "phoneConfirmedAt", "timestamp");
+
+    // A basic SQL export has no first_name/last_name columns; the name lives in
+    // user metadata instead, under whichever key the provider happened to use.
+    // A CSV carries the metadata as JSON text, still unparsed at this point.
+    const meta = parseObject(user.unsafeMetadata);
+    if (meta) {
+      // Separate name fields map as-is and are never split.
+      if (!user.firstName && typeof meta.first_name === "string") user.firstName = meta.first_name;
+      if (!user.lastName && typeof meta.last_name === "string") user.lastName = meta.last_name;
+      if (!user.firstName) {
+        const displayName = stripDiscriminator(meta.display_name ?? meta.full_name ?? meta.name);
+        if (displayName) {
+          const parts = displayName.split(/\s+/);
+          user.firstName = parts[0];
+          if (parts.length > 1 && !user.lastName) user.lastName = parts.slice(1).join(" ");
+        }
+      }
+    }
+
+    for (const field of ["firstName", "lastName"] as const) {
+      if (typeof user[field] === "string") {
+        const cleaned = stripDiscriminator(user[field]);
+        if (cleaned) user[field] = cleaned;
+        else delete user[field];
+      }
+    }
+  },
+} satisfies SourceEntry;
+
+/** A metadata value as an object, parsing it when a CSV left it as JSON text. */
+function parseObject(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+export default supabaseSource;
