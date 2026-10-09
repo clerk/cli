@@ -379,7 +379,7 @@ describe("run", () => {
       fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify([{ id: "u3" }]));
 
       await expect(run({ ...baseOptions, allowPartial: true, yes: false })).rejects.toThrow(
-        "will create 0 users and skip 1 user and needs consent",
+        "will create 0 users and skip 1 user. Pass --yes to confirm.",
       );
     });
 
@@ -551,7 +551,7 @@ describe("run", () => {
       )) as CliError;
 
       expect(error.exitCode).toBe(EXIT_CODE.USAGE);
-      expect(error.message).toContain("needs consent. Pass --yes to confirm");
+      expect(error.message).toContain(". Pass --yes to confirm");
       expect(error.examples?.[0]?.command).toBe(
         "clerk migrate import export.json --source clerk --secret-key <key> --yes",
       );

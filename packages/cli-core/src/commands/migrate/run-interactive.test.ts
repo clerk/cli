@@ -180,7 +180,7 @@ describe("consent", () => {
 
   // `--json` means nobody reads a prompt, even at a terminal.
   test("--json never asks, and without --yes refuses", async () => {
-    await expect(run({ ...importOptions, json: true })).rejects.toThrow(/needs consent/);
+    await expect(run({ ...importOptions, json: true })).rejects.toThrow(/Pass --yes to confirm/);
 
     expect(confirmMessages).toEqual([]);
     expect(created()).toHaveLength(0);
