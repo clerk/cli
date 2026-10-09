@@ -102,8 +102,10 @@ the key now in use still addresses the same instance.
 
 ## The run store
 
-Every import, export and undo is a **run**, and the run store is the one place
-`clerk migrate` keeps state.
+Every import, export and undo that gets as far as writing is a **run**, and the
+run store is the one place `clerk migrate` keeps state. A dry run, a refusal, a
+run that needs consent and an import with nobody to import write none
+(`run: null`).
 
 ### Where runs are kept
 
