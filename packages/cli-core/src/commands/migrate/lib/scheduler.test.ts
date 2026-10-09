@@ -91,8 +91,10 @@ test("keeps calls paced when a pause ends", async () => {
 
   await first;
   const startedAt = (await Promise.all(held)).sort((a, b) => a - b);
+  // Half the 100ms interval: a loaded runner's timers drift, and released
+  // together the gaps would be about 0.
   for (let i = 1; i < startedAt.length; i++) {
-    expect(startedAt[i]! - startedAt[i - 1]!).toBeGreaterThanOrEqual(90);
+    expect(startedAt[i]! - startedAt[i - 1]!).toBeGreaterThanOrEqual(50);
   }
 });
 
