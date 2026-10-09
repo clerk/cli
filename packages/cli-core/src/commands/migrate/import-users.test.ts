@@ -573,6 +573,33 @@ describe("importUsers", () => {
     );
   });
 
+  // On dev, at 10 a second, thousands of queued users would otherwise spend
+  // minutes taking paced turns only to be skipped.
+  test("after the quota stop, queued creates are skipped without waiting their turn", async () => {
+    stub((url) =>
+      url.endsWith("/v1/users")
+        ? new Response(
+            JSON.stringify({
+              errors: [{ code: "user_quota_exceeded", message: "quota", long_message: "Full." }],
+            }),
+            { status: 403 },
+          )
+        : ok("unused"),
+    );
+
+    const started = performance.now();
+    const summary = await importUsers({
+      users: Array.from({ length: 6 }, (_, i) => user({ userId: `u${i}`, email: `u${i}@x.dev` })),
+      secretKey: "sk_test_x",
+      limits: { ...LIMITS, concurrencyLimit: 1, rateLimit: 2 },
+      record,
+    });
+
+    expect(summary).toMatchObject({ failed: 1, notSent: 5 });
+    // Paced, the five would take about 2.5s; skipped, they take none.
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
   test("records a failed user and keeps going", async () => {
     stub((_url, attempt) =>
       attempt === 1 ? clerkError(422, "that email is taken") : ok("user_ok"),

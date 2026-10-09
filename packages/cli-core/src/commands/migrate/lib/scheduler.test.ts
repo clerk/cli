@@ -109,3 +109,20 @@ test("holds a call already waiting on the pacing interval", async () => {
   await first;
   expect(await second).toBeGreaterThanOrEqual(790);
 });
+
+// A queue that will only find the run stopped should drain, not wait out
+// one paced turn per call.
+test("a call that skips its wait runs at once and takes no paced turn", async () => {
+  const schedule = createApiScheduler(1, 2); // 500ms apart
+  const started = performance.now();
+  await schedule(async () => undefined);
+  const skipped = await Promise.all(
+    [1, 2, 3].map(async () =>
+      schedule(async () => performance.now() - started, { skipWait: () => true }),
+    ),
+  );
+  for (const at of skipped) expect(at).toBeLessThan(250);
+  // Skipped calls took no turn, so the next paced call is the second one.
+  const next = await schedule(async () => performance.now() - started);
+  expect(next).toBeLessThan(750);
+});
