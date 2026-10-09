@@ -315,6 +315,23 @@ type UsernameSettings = {
 const USERNAME_DEFAULT = /^[a-zA-Z0-9_-]+$/;
 const USERNAME_EXTENDED = /^[a-zA-Z0-9!#$'+.^_`~-]+$/;
 
+const PHONE_FIELDS = ["phone", "phoneNumbers", "unverifiedPhoneNumbers"] as const;
+
+/**
+ * Numeric usernames make Clerk require phones in E.164 form, on import and at
+ * sign-up (`requireE164` in clerk_go's create_service.go).
+ */
+const isE164 = (phone: string) => /^\+[1-9]\d{1,14}$/.test(phone);
+
+/** The file's phones Clerk would refuse once numeric usernames are on. */
+function loosePhoneCount(users: User[]): number {
+  return users.reduce((count, user) => {
+    const { primaryPhone, additionalPhones, unverifiedPhones } = splitIdentifiers(user);
+    const phones = [primaryPhone, ...additionalPhones, ...unverifiedPhones];
+    return count + phones.filter((phone) => phone !== undefined && !isE164(phone)).length;
+  }, 0);
+}
+
 /** The username options a reject asks for, and the config leaf that turns each on. */
 const USERNAME_OPTIONS = [
   {
@@ -337,7 +354,11 @@ const USERNAME_OPTIONS = [
  * username the instance would refuse is a reject here rather than a failed
  * create. Clerk checks them with usernames off too.
  */
-function usernameProblem(user: User, settings: UserSettingsJSON | null): string | undefined {
+function usernameProblem(
+  user: User,
+  settings: UserSettingsJSON | null,
+  loosePhones = 0,
+): string | undefined {
   const username = user.username;
   if (!settings || typeof username !== "string" || !username) return undefined;
 
@@ -349,7 +370,11 @@ function usernameProblem(user: User, settings: UserSettingsJSON | null): string 
     }
   }
   if (!rules.allow_numeric_usernames && !/[a-zA-Z]/.test(username)) {
-    return "username has no letters; turn on numeric usernames to allow it";
+    const phones =
+      loosePhones > 0
+        ? `, though Clerk would then refuse the file's ${plural(loosePhones, "phone")} not in E.164 form`
+        : "";
+    return `username has no letters; turn on numeric usernames to allow it${phones}`;
   }
   if (rules.allow_extended_special_characters) {
     if (!USERNAME_EXTENDED.test(username)) return "username has characters Clerk does not allow";
@@ -428,6 +453,38 @@ function dropRefusedEmails(user: User): { user: User; refused: string[] } {
     else delete kept[field];
   }
   return { user: kept ?? user, refused };
+}
+
+/**
+ * The user without the phones Clerk would refuse where numeric usernames are
+ * on: not in E.164 form. Dropped, as the create's retry would drop them, so
+ * the checks see what is sent.
+ */
+function dropLoosePhones(
+  user: User,
+  settings: UserSettingsJSON | null,
+): { user: User; dropped: boolean } {
+  const rules = (settings as { username_settings?: UsernameSettings } | null)?.username_settings;
+  if (!rules?.allow_numeric_usernames) return { user, dropped: false };
+  let kept: User | undefined;
+  for (const field of PHONE_FIELDS) {
+    const value = user[field];
+    if (value === undefined) continue;
+    const list = Array.isArray(value) ? value : [value];
+    if (list.every(isE164)) continue;
+    kept ??= { ...user };
+    const good = list.filter(isE164);
+    if (good.length > 0) kept[field] = good;
+    else delete kept[field];
+  }
+  return { user: kept ?? user, dropped: kept !== undefined };
+}
+
+function loosePhoneWarning(count: number): string[] {
+  if (count === 0) return [];
+  return [
+    `${plural(count, "user")} ${count === 1 ? "has" : "have"} a phone not in E.164 form, which is dropped: with numeric usernames on, Clerk requires E.164`,
+  ];
 }
 
 /** Clerk's cap on a first or last name, in bytes (`firstNameMaxLen` in clerk_go). */
@@ -857,12 +914,7 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
     : [];
   // Numeric usernames make Clerk refuse any phone not in E.164 form, so the
   // fix is not offered to a file whose phones would then be refused.
-  const looseFormat = users.some((user) => {
-    const { primaryPhone, additionalPhones, unverifiedPhones } = splitIdentifiers(user);
-    return [primaryPhone, ...additionalPhones, ...unverifiedPhones].some(
-      (phone) => phone !== undefined && !/^\+[1-9]\d{1,14}$/.test(phone),
-    );
-  });
+  const looseFormat = loosePhoneCount(users) > 0;
   const username = USERNAME_OPTIONS.filter(
     ({ rule, needs }) =>
       !rules[rule] && usernames.some(needs) && !(rule === "allow_numeric_usernames" && looseFormat),
@@ -984,12 +1036,17 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const placeholderEmails = new Set<string>();
   const refusedNames = new Set<string>();
   const refusedUsernames = new Set<string>();
+  const loosePhoneUsers = new Set<string>();
+  const loosePhones = loosePhoneCount(input.users);
   for (const original of input.users) {
     const named = dropRefusedNames(original);
     if (named.dropped) refusedNames.add(original.userId);
     const usernamed = dropRefusedOffUsername(named.user, input.settings);
     if (usernamed.dropped) refusedUsernames.add(original.userId);
-    const { user, refused } = dropRefusedEmails(usernamed.user);
+    const { user: emailed, refused } = dropRefusedEmails(usernamed.user);
+    const phoned = dropLoosePhones(emailed, input.settings);
+    if (phoned.dropped) loosePhoneUsers.add(original.userId);
+    const user = phoned.user;
     const sent = dropDisabledIdentifiers(user, input.settings);
     const adopted = input.adoptedSourceIds?.has(original.userId) ?? false;
     const reason = adopted
@@ -997,6 +1054,9 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       : (original.skipReason ??
         (refused.length > 0 && !hasAnyIdentifier(user)
           ? "only has emails Clerk refuses (malformed, or a domain that can't receive mail)"
+          : undefined) ??
+        (phoned.dropped && !hasAnyIdentifier(user)
+          ? "only has phones not in E.164 form, which this instance refuses (numeric usernames are on)"
           : undefined) ??
         missingRequiredIdentifier(user, input.settings, reservesFor(input)(user)) ??
         // Stripping the identifiers the instance has off can leave nothing to
@@ -1012,7 +1072,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         (!input.skipLegalChecks && lacksLegalAcceptance(user, input.settings)
           ? "no legal acceptance on record, which this instance requires (--skip-legal-checks imports them without it)"
           : undefined) ??
-        usernameProblem(user, input.settings) ??
+        usernameProblem(user, input.settings, loosePhones) ??
         (user.password && user.passwordHasher
           ? hashShapeProblem(user.password, user.passwordHasher)
           : undefined) ??
@@ -1092,6 +1152,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       ...refusedUsernameWarning(
         candidates.filter((user) => refusedUsernames.has(user.userId)).length,
       ),
+      ...loosePhoneWarning(candidates.filter((user) => loosePhoneUsers.has(user.userId)).length),
       ...temporaryBanWarning(candidates),
       ...legalWarning(
         candidates.filter((user) => lacksLegalAcceptance(user, input.settings)).length,
