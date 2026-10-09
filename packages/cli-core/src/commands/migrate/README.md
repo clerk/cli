@@ -100,8 +100,9 @@ The instance ID is what a run records.
 
 ## The run store
 
-Every import is a **run**, and the run store is the one place `clerk migrate`
-keeps state.
+Every import that gets as far as writing is a **run**, and the run store is the
+one place `clerk migrate` keeps state. A dry run, a refusal, a run that needs
+consent and an import with nobody to import write none (`run: null`).
 
 ### Where runs are kept
 
