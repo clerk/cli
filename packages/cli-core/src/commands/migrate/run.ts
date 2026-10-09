@@ -61,6 +61,9 @@ import {
   continueRun,
   latestUserLines,
   listRuns,
+  liveLockPid,
+  lockFile,
+  lockImport,
   readRun,
   readUserLines,
   resolveRunsDir,
@@ -827,6 +830,19 @@ function recordRejects(run: Run, checks: ImportChecks): void {
 }
 
 export async function run(rawOptions: MigrateRunOptions): Promise<void> {
+  // Released however the import ends: a return, a refusal or a Ctrl-C.
+  const lock: ImportLock = {};
+  try {
+    await runImport(rawOptions, lock);
+  } finally {
+    lock.release?.();
+  }
+}
+
+/** The import's identity lock, taken part-way through and released by {@link run}. */
+type ImportLock = { release?: () => void };
+
+async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promise<void> {
   // A mistyped --source fails before any sign-in or link.
   let options = await applySource(rawOptions);
   await ensureImportTarget(options);
@@ -917,6 +933,12 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       if (expectedSha256 !== undefined && sha256 !== expectedSha256) throwChanged(filePath);
       const runsDir = await resolveRunsDir(options.runsDir);
 
+      // Held from before the checks to the end of the run: the scan below
+      // alone leaves a gap a second process can pass through before either
+      // one writes a run.
+      if (!options.dryRun) {
+        lock.release = lockImport(runsDir, { sha256, source, instanceId: target.instanceId });
+      }
       assertNoActiveImport(runsDir, {
         sha256,
         source,
