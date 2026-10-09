@@ -190,7 +190,10 @@ describe("locks", () => {
 
     const stopped = startRun(runsDir, init);
     stopped.append({ sourceId: "a", status: "created", clerkId: "user_a" });
-    expect(stopped.finish({ notSent: 2 }).status).toBe("partial");
+    const record = stopped.finish({ notSent: 2 });
+    expect(record.status).toBe("partial");
+    // Saved, so a later reader can tell how many were never sent.
+    expect(readRun(runsDir, record.id)?.counts).toEqual({ total: 1, created: 1, notSent: 2 });
   });
 
   test("release leaves the run unfinished and unlocked", () => {

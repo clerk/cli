@@ -60,7 +60,8 @@ export type RunTarget = {
 
 export type RunFile = { path: string; sha256: string };
 
-export type RunCounts = Partial<Record<UserStatus, number>> & { total: number };
+/** `notSent`: users a stopped import never sent, so they have no line. */
+export type RunCounts = Partial<Record<UserStatus, number>> & { total: number; notSent?: number };
 
 export type RunRecord = {
   id: string;
@@ -344,11 +345,12 @@ function openRun(runsDir: string, record: RunRecord): Run {
     },
     finish(options) {
       const counts = countLines(latestUserLines(runsDir, run.record.id).values());
+      if (options?.notSent) counts.notSent = options.notSent;
       const unfinished =
         (counts.failed ?? 0) +
         (counts.skipped ?? 0) +
         (counts.creating ?? 0) +
-        (options?.notSent ?? 0);
+        (counts.notSent ?? 0);
       run.update({
         counts,
         status: unfinished > 0 ? "partial" : "complete",
