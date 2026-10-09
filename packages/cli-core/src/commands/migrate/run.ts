@@ -520,13 +520,10 @@ function commandFor(options: MigrateRunOptions, extra: string[]) {
 
 /**
  * Records the checks' rejects as skipped users, so the run says who they were.
- *
- * An adopted user keeps its `creating` line: it exists in Clerk, and `undo`
- * finds it only through that line.
+ * The checks never reject an adopted user: it is created already.
  */
-function recordRejects(run: Run, checks: ImportChecks, adopted: Map<string, string>): void {
+function recordRejects(run: Run, checks: ImportChecks): void {
   for (const { sourceId, reason, keptSourceId } of checks.rejects) {
-    if (adopted.has(sourceId)) continue;
     run.append({
       sourceId,
       status: "skipped",
@@ -809,7 +806,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       // before the import returns, and the folder is the only record of who
       // was created.
       log.info(`Run ${run.record.id}: ${run.dir}`);
-      recordRejects(run, checks, adopted);
+      recordRejects(run, checks);
       for (const user of withoutPassword) {
         run.append({
           sourceId: user.userId,
