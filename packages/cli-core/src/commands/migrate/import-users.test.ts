@@ -210,6 +210,24 @@ describe("importUsers", () => {
       headers,
     });
 
+  // How a continue or an undo tells its own cut-off create from a user
+  // someone else made with the same external_id.
+  test("marks each create with its run, keeping the source's private metadata", async () => {
+    stub(() => ok("user_created"));
+
+    await importUsers({
+      users: [user({ userId: "u1", privateMetadata: { plan: "pro" } })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      runId: "20260101-000000-abcd",
+    });
+
+    expect(requests.find((r) => r.url.endsWith("/v1/users"))?.body).toMatchObject({
+      private_metadata: { plan: "pro", clerkMigrateRun: "20260101-000000-abcd" },
+    });
+  });
+
   test("creates each user and reports them as successful", async () => {
     stub(() => ok("user_created"));
 

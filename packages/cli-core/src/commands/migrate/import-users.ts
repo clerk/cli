@@ -23,6 +23,7 @@ import type { ResolvedLimits } from "./lib/instance.ts";
 import type { ProgressUpdate } from "./lib/progress.ts";
 import { RateLimitExceededError, retryOn429 } from "./lib/retry.ts";
 import type { PendingIdentifier, UserLine } from "./lib/run-store.ts";
+import { RUN_MARKER_KEY } from "./lib/user-lookup.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
 import type { ImportSummary, User } from "./types.ts";
 
@@ -174,6 +175,8 @@ export function buildCreateUserBody(
 type CreateContext = {
   secretKey: string;
   schedule: ApiScheduler;
+  /** The run sending these creates; each carries it as its marker. */
+  runId?: string;
   /** Aborted by the first `user_quota_exceeded`: every later create would be refused too. */
   quota: AbortController;
   /** Aborted by a run-store write that failed. Nothing goes out after it. */
@@ -320,6 +323,15 @@ async function createUser(
     );
 
   const body = buildCreateUserBody(user, identifiers, skipPasswordRequirement);
+  // The run's marker, with whatever private metadata the source brought:
+  // without it a create cut off mid-flight could never be told from a user
+  // someone else made with the same external_id.
+  if (ctx.runId) {
+    body.private_metadata = {
+      ...(body.private_metadata as Record<string, unknown> | undefined),
+      [RUN_MARKER_KEY]: ctx.runId,
+    };
+  }
   const notes: string[] = [];
   let phoneRefusal: string | undefined;
   let response;
@@ -361,6 +373,8 @@ export type ImportUsersOptions = {
    * latest `created` line, with `pending`. Only the attaches are sent.
    */
   attachOnly?: UserLine[];
+  /** The run these creates belong to, sent on each as its marker. */
+  runId?: string;
   /**
    * Source ID → Clerk ID for users whose create a stopped run sent with no
    * answer, and which a continued run then found in the instance. They are
@@ -389,6 +403,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     limits,
     record: recordLine,
     attachOnly = [],
+    runId,
     adopted = new Map<string, string>(),
     skipPasswordRequirement = true,
     validationFailed = 0,
@@ -426,6 +441,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     quota,
     halt: halt.signal,
     stop: AbortSignal.any([interruptSignal(), quota.signal, halt.signal]),
+    ...(runId ? { runId } : {}),
   };
 
   const progress = () => report?.({ done: processed, ok: successful, failed });

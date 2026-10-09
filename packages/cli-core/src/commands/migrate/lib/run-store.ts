@@ -294,23 +294,6 @@ export function runState(runsDir: string, record: RunRecord): RunState {
   return liveLockPid(runsDir, record.id) === undefined ? "interrupted" : "running";
 }
 
-/**
- * Clerk IDs that import runs other than `exceptId` record as created.
- *
- * A user found by `external_id` may belong to another run of the same source
- * IDs, so lookups for in-flight creates leave these out.
- */
-export function clerkIdsCreatedByOtherRuns(runsDir: string, exceptId: string): Set<string> {
-  const ids = new Set<string>();
-  for (const record of listRuns(runsDir)) {
-    if (record.kind !== "import" || record.id === exceptId) continue;
-    for (const line of latestUserLines(runsDir, record.id).values()) {
-      if (line.status === "created" && line.clerkId) ids.add(line.clerkId);
-    }
-  }
-  return ids;
-}
-
 /** Every readable run, newest first. */
 export function listRuns(runsDir: string): RunRecord[] {
   let entries: fs.Dirent[];
