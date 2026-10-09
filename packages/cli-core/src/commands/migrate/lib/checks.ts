@@ -141,10 +141,11 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
 export function hashShapeProblem(password: string, hasher: string): string | undefined {
   switch (hasher) {
     case "bcrypt":
-      // clerk_go caps the cost at 15 (pkg/hash/bcrypt.go).
-      return /^\$2[aby]\$(0\d|1[0-5])\$[./A-Za-z0-9]{53}$/.test(password)
+      // clerk_go caps the cost at 15 (pkg/hash/bcrypt.go), and Go's bcrypt
+      // refuses any cost under 4 at sign-in, so that password could never work.
+      return /^\$2[aby]\$(0[4-9]|1[0-5])\$[./A-Za-z0-9]{53}$/.test(password)
         ? undefined
-        : "password is not a bcrypt hash Clerk accepts ($2a$/$2b$/$2y$, cost up to 15, 60 characters)";
+        : "password is not a bcrypt hash Clerk can verify ($2a$/$2b$/$2y$, cost 4 to 15, 60 characters)";
     case "scrypt_firebase": {
       const parts = password.split("$");
       const numeric = (value: string | undefined) => /^\d+$/.test(value ?? "");
