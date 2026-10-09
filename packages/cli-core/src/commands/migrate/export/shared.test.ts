@@ -68,26 +68,31 @@ describe("finishExport", () => {
     expect(fs.statSync(outputPath).mode & 0o777).toBe(0o600);
   });
 
-  // Tightened before a byte lands: a chmod after the write leaves the data
-  // readable at the old mode in between, or for good if the write fails.
-  test("an existing --output is owner-only before the export is written to it", async () => {
+  // Written to a new file and renamed into place: a failed write leaves an
+  // existing export as it was, and no half-written file behind.
+  test("a failed write keeps an existing --output whole", async () => {
     const run = await startExportRun({ runsDir }, { platform: "supabase" });
     const output = path.join(runsDir, "existing-before.json");
-    fs.writeFileSync(output, "old", { mode: 0o644 });
-    const modesAtWrite: number[] = [];
-    const write = fs.writeSync;
-    const spy = spyOn(fs, "writeSync").mockImplementation(((fd: number, ...rest: unknown[]) => {
-      modesAtWrite.push(fs.fstatSync(fd).mode & 0o777);
-      return (write as (...args: unknown[]) => number)(fd, ...rest);
-    }) as typeof fs.writeSync);
+    fs.writeFileSync(output, "old", { mode: 0o600 });
+    const write = fs.writeFileSync;
+    const spy = spyOn(fs, "writeFileSync").mockImplementation(((
+      target: unknown,
+      ...rest: unknown[]
+    ) => {
+      if (String(target).endsWith(".tmp")) {
+        (write as (...args: unknown[]) => void)(target, "{ half", ...rest.slice(1));
+        throw new Error("ENOSPC: no space left on device");
+      }
+      return (write as (...args: unknown[]) => void)(target, ...rest);
+    }) as typeof fs.writeFileSync);
     try {
-      finishExport({ run, options: { output }, users, coverage });
+      expect(() => finishExport({ run, options: { output }, users, coverage })).toThrow(/ENOSPC/);
     } finally {
       spy.mockRestore();
     }
 
-    expect(modesAtWrite).toEqual([0o600]);
-    expect(fs.readFileSync(output, "utf-8")).not.toContain("old");
+    expect(fs.readFileSync(output, "utf-8")).toBe("old");
+    expect(fs.readdirSync(runsDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
   test("--output writes somewhere else, and the run still records where", async () => {
