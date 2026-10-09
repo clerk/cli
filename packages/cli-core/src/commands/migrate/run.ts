@@ -884,6 +884,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           secretKey,
           schedule,
           adoptedClerkIds: new Set(adopted.values()),
+          // Their `creating` line says how the create ran, not this run's flag.
+          reservedSourceIds: new Set([...adopted.keys()].filter((id) => inFlightReserved.has(id))),
           spinner,
         }),
       );

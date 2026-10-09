@@ -107,6 +107,11 @@ export type CheckInput = {
   /** Unverified identifiers are created reserved, so they meet a requirement. */
   reserveUnverified?: boolean;
   /**
+   * Source IDs of adopted users whose create reserved their unverified
+   * identifiers: those exist reserved, whatever this run's flag says.
+   */
+  reservedSourceIds?: Set<string>;
+  /**
    * Clerk IDs a continued run found behind its own in-flight creates: finding
    * them in the instance is expected.
    */
@@ -942,7 +947,11 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       (refused.length > 0 && !hasAnyIdentifier(user)
         ? "only has emails Clerk refuses (malformed, or a domain that can't receive mail)"
         : undefined) ??
-      missingRequiredIdentifier(user, input.settings, input.reserveUnverified) ??
+      missingRequiredIdentifier(
+        user,
+        input.settings,
+        input.reserveUnverified || input.reservedSourceIds?.has(user.userId),
+      ) ??
       // Stripping the identifiers the instance has off can leave nothing to
       // sign in with; Clerk would still create the user.
       (!hasAnyIdentifier(sent)
