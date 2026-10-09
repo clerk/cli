@@ -687,6 +687,67 @@ describe("importUsers", () => {
     expect(lines.at(-1)?.error).toContain("Failed to add phone +31612345678");
   });
 
+  describe("a refused phone among reserved ones", () => {
+    const refusePhone = (refusals: number) =>
+      stub((url, attempt) =>
+        url.endsWith("/v1/users") && attempt <= refusals
+          ? new Response(
+              JSON.stringify({
+                errors: [{ code: "x", message: "bad phone", meta: { param_name: "phone_number" } }],
+              }),
+              { status: 422 },
+            )
+          : ok("user_created"),
+      );
+    const withPhones = (fields: Partial<User> = {}) =>
+      user({ phone: "+15555550100", unverifiedPhoneNumbers: ["+31612345678"], ...fields });
+
+    // Any of the phones may be the refused one; the verified one goes alone first.
+    test("keeps the verified phone, dropping only the reserved ones", async () => {
+      refusePhone(1);
+      await importUsers({
+        users: [withPhones()],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      expect(requests[1]?.body).toMatchObject({ phone_number: ["+15555550100"] });
+      expect(requests[1]?.body).not.toHaveProperty("phone_number_identification_status");
+      expect(lines.at(-1)?.error).toContain("Failed to add phone +31612345678:");
+      expect(lines.at(-1)?.error).not.toContain("+15555550100");
+    });
+
+    test("creates a user with no email on its verified phone", async () => {
+      refusePhone(1);
+      const summary = await importUsers({
+        users: [withPhones({ email: undefined })],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      expect(summary).toMatchObject({ successful: 1, failed: 0 });
+    });
+
+    test("drops every phone only when the verified one is refused too", async () => {
+      refusePhone(2);
+      await importUsers({
+        users: [withPhones()],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      expect(requests).toHaveLength(3);
+      expect(requests[2]?.body).not.toHaveProperty("phone_number");
+      expect(lines.at(-1)?.error).toContain("Failed to add phone +15555550100, +31612345678:");
+    });
+  });
+
   test("does not retry without the phone when it is the only identifier", async () => {
     stub(
       () =>
