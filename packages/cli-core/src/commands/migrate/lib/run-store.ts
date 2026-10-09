@@ -304,7 +304,10 @@ function releaseLock(runsDir: string, id: string): void {
   fs.rmSync(lockFile(runsDir, id), { force: true });
 }
 
-/** What makes two imports the same job: the file, the source and the instance. */
+/**
+ * What makes two imports the same job: the file, the source and the instance,
+ * named by its key's stand-in ID so it does not depend on `GET /v1/instance`.
+ */
 export type ImportIdentity = { sha256: string; source: string; instanceId: string };
 
 /**
