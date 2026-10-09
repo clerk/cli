@@ -72,6 +72,13 @@ function normalizeRow(row: SupabaseRow): Record<string, unknown> {
   return normalized;
 }
 
+/**
+ * Every `auth.users` row, at once.
+ *
+ * ponytail: the whole table in memory, then the whole envelope. The import
+ * reads the file whole too, so streaming this side alone would buy nothing;
+ * page both (keyset on `created_at, id`) if a project's users outgrow memory.
+ */
 export async function fetchSupabaseUsers(client: DbClient): Promise<SupabaseRow[]> {
   return client.query<SupabaseRow>(EXPORT_QUERY);
 }
