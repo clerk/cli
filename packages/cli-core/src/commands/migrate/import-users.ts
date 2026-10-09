@@ -380,6 +380,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   let successful = 0;
   let failed = 0;
   let notSent = 0;
+  let stopReason: string | undefined;
   const droppedPhones = new Map<string, number>();
 
   const ctx: CreateContext = {
@@ -459,10 +460,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       const apiError = error as BapiError;
       if (apiError.code === "user_quota_exceeded" && !ctx.quotaReached) {
         ctx.quotaReached = true;
-        log.warn(
-          `${apiError.longMessage ?? apiError.message} No more users are sent: the rest stay ` +
-            "unrecorded, so running the import again sends them once the limit is raised.",
-        );
+        // Returned, not logged: a progress bar would redraw over a warning.
+        stopReason = apiError.longMessage ?? apiError.message;
       }
       const unknown = outcomeUnknown(error);
       const message = apiError.longMessage ?? apiError.message ?? "Unknown error";
@@ -501,6 +500,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     successful,
     failed,
     notSent,
+    ...(stopReason ? { stopReason } : {}),
     droppedPhones,
     validationFailed,
     errorBreakdown,
