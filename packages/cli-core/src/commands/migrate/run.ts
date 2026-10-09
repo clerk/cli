@@ -606,11 +606,12 @@ function commandFor(options: MigrateRunOptions, fromExport: string | undefined, 
   if (options.newRun) parts.push("--new-run");
   if (options.requirePassword) parts.push("--require-password");
   if (options.skipLegalChecks) parts.push("--skip-legal-checks");
-  if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "<key>");
+  // Names, not `<…>`: pasted as is, a shell reads `<key>` as a redirect.
+  if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "SIGNER_KEY");
   if (options.firebaseSaltSeparator !== undefined)
-    parts.push("--firebase-salt-separator", "<separator>");
-  if (options.firebaseRounds) parts.push("--firebase-rounds", "<n>");
-  if (options.firebaseMemCost) parts.push("--firebase-mem-cost", "<n>");
+    parts.push("--firebase-salt-separator", "SALT_SEPARATOR");
+  if (options.firebaseRounds) parts.push("--firebase-rounds", "ROUNDS");
+  if (options.firebaseMemCost) parts.push("--firebase-mem-cost", "MEM_COST");
   if (options.secretKey) parts.push("--secret-key", "<key>");
   if (options.app) parts.push("--app", quoteArg(options.app));
   if (options.instance) parts.push("--instance", quoteArg(options.instance));

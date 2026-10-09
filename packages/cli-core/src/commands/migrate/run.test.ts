@@ -1366,7 +1366,7 @@ describe("run", () => {
       }).catch((caught: unknown) => caught)) as CliError;
 
       expect(error.examples?.[0]?.command).toContain(
-        "--firebase-signer-key <key> --firebase-salt-separator <separator> --firebase-rounds <n> --firebase-mem-cost <n>",
+        "--firebase-signer-key SIGNER_KEY --firebase-salt-separator SALT_SEPARATOR --firebase-rounds ROUNDS --firebase-mem-cost MEM_COST",
       );
     });
 
