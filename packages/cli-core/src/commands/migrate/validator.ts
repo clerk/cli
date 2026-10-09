@@ -70,6 +70,9 @@ export const userSchema = z
     privateMetadata: metadataSchema.optional(),
     // Additional Clerk API fields
     banned: z.boolean().optional(),
+    // When a source's ban on this user was due to end (ISO 8601). Clerk's ban
+    // has no end, so the checks warn that it stays until lifted. Never sent.
+    banEndsAt: z.string().optional(),
     bypassClientTrust: z.boolean().optional(),
     createOrganizationEnabled: z.boolean().optional(),
     createOrganizationsLimit: z.number().int().optional(),
