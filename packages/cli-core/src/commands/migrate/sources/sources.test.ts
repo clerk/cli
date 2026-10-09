@@ -560,8 +560,8 @@ describe("supabase", () => {
     const { users, failures } = await load(
       "supabase",
       [
-        "id,email,email_confirmed_at,encrypted_password,phone,raw_user_meta_data,deleted_at",
-        "s1,a@x.dev,2024-01-01,NULL,NULL,NULL,NULL",
+        "id,email,email_confirmed_at,encrypted_password,phone,raw_user_meta_data,deleted_at,created_at",
+        "s1,a@x.dev,2024-01-01,NULL,NULL,NULL,NULL,NULL",
       ].join("\n"),
       "csv",
     );
@@ -569,7 +569,13 @@ describe("supabase", () => {
     expect(failures).toEqual([]);
     expect(users).toHaveLength(1);
     expect(users[0]).toMatchObject({ userId: "s1", email: "a@x.dev" });
-    for (const field of ["skipReason", "phone", "unverifiedPhoneNumbers", "passwordDropped"]) {
+    for (const field of [
+      "skipReason",
+      "phone",
+      "unverifiedPhoneNumbers",
+      "passwordDropped",
+      "createdAt",
+    ]) {
       expect(users[0]).not.toHaveProperty(field);
     }
   });
@@ -601,14 +607,16 @@ describe("supabase", () => {
   });
 
   // The prefix alone said bcrypt, so the user was rejected instead of dropped.
-  test.each([["$2a$10$hash"], ["$2a$31$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"]])(
-    "drops a malformed bcrypt hash (%p), and imports the user",
-    (encrypted_password) => {
-      const user = one("supabase", { ...base, encrypted_password });
-      expect(user?.password).toBeUndefined();
-      expect(user?.passwordDropped).toBe(true);
-    },
-  );
+  // Go's bcrypt refuses a cost under 4 at sign-in, so that digest is unusable.
+  test.each([
+    ["$2a$10$hash"],
+    ["$2a$31$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"],
+    ["$2a$03$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"],
+  ])("drops a malformed bcrypt hash (%p), and imports the user", (encrypted_password) => {
+    const user = one("supabase", { ...base, encrypted_password });
+    expect(user?.password).toBeUndefined();
+    expect(user?.passwordDropped).toBe(true);
+  });
 
   test("drops a hash no hasher fits, and imports the user", () => {
     const user = one("supabase", { ...base, encrypted_password: "md5:abc" });
