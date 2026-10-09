@@ -904,6 +904,19 @@ function refusedNameWarning(count: number): string[] {
   ];
 }
 
+/**
+ * Users whose ban was due to end. Clerk's ban has no end, so they stay banned
+ * until someone lifts it in Clerk; the latest end date says how long to watch.
+ */
+function temporaryBanWarning(users: User[]): string[] {
+  const ends = users.flatMap((user) => (user.banned && user.banEndsAt ? [user.banEndsAt] : []));
+  if (ends.length === 0) return [];
+  const latest = ends.sort().at(-1)?.slice(0, 10);
+  return [
+    `${plural(ends.length, "user")} ${ends.length === 1 ? "has a ban that ends" : "have bans that end"} by ${latest}; Clerk's ban has no end, so ${ends.length === 1 ? "it stays" : "they stay"} banned until unbanned in Clerk`,
+  ];
+}
+
 function legalWarning(count: number): string[] {
   if (count === 0) return [];
   return [
@@ -1041,6 +1054,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       ...refusedUsernameWarning(
         candidates.filter((user) => refusedUsernames.has(user.userId)).length,
       ),
+      ...temporaryBanWarning(candidates),
       ...legalWarning(
         candidates.filter((user) => lacksLegalAcceptance(user, input.settings)).length,
       ),
