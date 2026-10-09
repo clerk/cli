@@ -25,8 +25,8 @@ const { checkMcp } = await import("./check-mcp.ts");
 const HOSTED = "https://mcp.clerk.com/mcp";
 const LOCAL = "http://localhost:9000/mcp";
 
-function entry(client: ListEntry["client"], url: string): ListEntry {
-  return { client, configPath: `/tmp/${client}.json`, name: "clerk", url };
+function entry(client: ListEntry["client"], url: string, legacy = false): ListEntry {
+  return { client, configPath: `/tmp/${client}.json`, name: "clerk", url, legacy };
 }
 
 describe("checkMcp", () => {
@@ -90,6 +90,21 @@ describe("checkMcp", () => {
 
     expect(result.status).toBe("pass");
     expect(result.message).toBe(`Reachable — Clerk MCP Server (${HOSTED})`);
+    expect(probedUrls).toEqual([HOSTED]);
+  });
+
+  test("warns about legacy bridge entries, probing only the URL entries", async () => {
+    collected = {
+      entries: [entry("claude", HOSTED), entry("cursor", LOCAL, true)],
+      failures: [],
+    };
+    probes = { [HOSTED]: { ok: true, status: 200, serverName: "Clerk MCP Server" } };
+
+    const result = await checkMcp();
+
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain("cursor");
+    expect(result.remedy).toContain("clerk mcp install");
     expect(probedUrls).toEqual([HOSTED]);
   });
 

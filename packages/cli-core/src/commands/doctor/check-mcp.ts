@@ -50,7 +50,11 @@ async function probeEntries(entries: ListEntry[]): Promise<UrlProbe[]> {
 export async function checkMcp(): Promise<CheckResult> {
   // Only meaningful if the user actually registered a Clerk MCP entry —
   // otherwise skip silently rather than probing a server they don't use.
-  const { entries, failures } = await collectEntries(process.cwd());
+  const { entries: all, failures } = await collectEntries(process.cwd());
+  // A legacy `clerk mcp run` entry can't connect no matter what the server
+  // does — the bridge it launches was removed — so don't probe on its behalf.
+  const legacy = all.filter((e) => e.legacy);
+  const entries = all.filter((e) => !e.legacy);
   const probes = await probeEntries(entries);
   const unreachable = probes.filter((p) => !isReachable(p.result));
 
@@ -68,6 +72,21 @@ export async function checkMcp(): Promise<CheckResult> {
         ...unreachable.map((p) => `${p.url}: ${describeFailure(p.result)}`),
       ].join("; "),
       remedy: "Fix or remove the unreadable config file, then re-run `clerk mcp install`.",
+    };
+  }
+
+  if (legacy.length > 0) {
+    const clients = [...new Set(legacy.map((e) => e.client))].join(", ");
+    return {
+      name: CHECK_NAME.mcp,
+      status: "warn",
+      message: `Legacy \`clerk mcp run\` entries no longer connect (${clients})`,
+      detail: [
+        ...legacy.map((e) => `${e.client}: "${e.name}" in ${e.configPath}`),
+        ...unreachable.map((p) => `${p.url}: ${describeFailure(p.result)}`),
+      ].join("; "),
+      remedy:
+        "The `clerk mcp run` bridge was removed in clerk 4.0. Re-run `clerk mcp install` to switch to the HTTP-based server.",
     };
   }
 

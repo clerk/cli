@@ -2,10 +2,12 @@
  * `clerk mcp list` — show Clerk-named entries across detected MCP clients.
  *
  * Walks the registry, reads each client's config (if present), and reports
- * any entry whose name is `clerk` or whose URL hostname is under `clerk.com`.
+ * any entry whose name is `clerk` or whose URL hostname is under `clerk.com`,
+ * plus clerk 3.x `clerk mcp run` bridge entries, flagged `legacy` (the bridge
+ * was removed in 4.0; `clerk mcp install` replaces them).
  */
 
-import { cyan, dim } from "../../lib/color.ts";
+import { cyan, dim, yellow } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
 import { withGutter } from "../../lib/spinner.ts";
 import { ui } from "../../lib/ui.ts";
@@ -19,6 +21,14 @@ function columnWidth(header: string, values: string[]): number {
   return Math.max(header.length, ...values.map((v) => v.length)) + COLUMN_PADDING;
 }
 
+// A legacy entry stores no URL, so show what it is instead of the URL it
+// would have resolved to.
+const LEGACY_LABEL = "clerk mcp run (legacy)";
+
+function urlCell(entry: ListEntry): string {
+  return entry.legacy ? LEGACY_LABEL : entry.url;
+}
+
 function formatTable(entries: ListEntry[]): void {
   const clientWidth = columnWidth(
     "CLIENT",
@@ -28,16 +38,14 @@ function formatTable(entries: ListEntry[]): void {
     "NAME",
     entries.map((e) => e.name),
   );
-  const urlWidth = columnWidth(
-    "URL",
-    entries.map((e) => e.url),
-  );
+  const urlWidth = columnWidth("URL", entries.map(urlCell));
 
   const header = `${"CLIENT".padEnd(clientWidth)}${"NAME".padEnd(nameWidth)}${"URL".padEnd(urlWidth)}PATH`;
   const rows = entries.map((e) => {
     const client = cyan(e.client.padEnd(clientWidth));
     const name = e.name.padEnd(nameWidth);
-    const url = e.url.padEnd(urlWidth);
+    const padded = urlCell(e).padEnd(urlWidth);
+    const url = e.legacy ? yellow(padded) : padded;
     return `${client}${name}${url}${dim(e.configPath)}`;
   });
 
@@ -76,7 +84,13 @@ export async function mcpList(options: McpOptions = {}): Promise<void> {
     }
     formatTable(all);
     ui.message(`${all.length} entr${all.length === 1 ? "y" : "ies"}`);
+    const legacySteps = all.some((e) => e.legacy)
+      ? [
+          "Re-run `clerk mcp install` to replace legacy `clerk mcp run` entries — they no longer connect.",
+        ]
+      : [];
     setNextSteps([
+      ...legacySteps,
       "Verify a server is reachable with `clerk doctor`.",
       "Remove an entry with `clerk mcp uninstall`.",
     ]);

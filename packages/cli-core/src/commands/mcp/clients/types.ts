@@ -55,6 +55,11 @@ export interface ListEntry {
   configPath: string;
   name: string;
   url: string;
+  /**
+   * A clerk 3.x `clerk mcp run` bridge entry. The bridge was removed in 4.0,
+   * so the entry no longer connects; `clerk mcp install` replaces it.
+   */
+  legacy: boolean;
 }
 
 export interface McpClient {
@@ -62,12 +67,12 @@ export interface McpClient {
   displayName: string;
   scope: Scope;
   /**
-   * What the user must do *after* the config is written for this client to
-   * connect — typically reload the editor, and sign in if the server requires
-   * it. Writing the file is not enough on its own, so `install` surfaces this
+   * What the user must do *after* the entry `name` is written for this
+   * client to connect — typically reload the client and sign in to Clerk
+   * (each client runs the OAuth flow itself). Writing the file is not enough on its own, so `install` surfaces this
    * as a next step.
    */
-  activation: string;
+  activation(name: string): string;
   configPath(cwd: string): string;
   /**
    * Is this client usable on this machine? File-backed clients check for their
