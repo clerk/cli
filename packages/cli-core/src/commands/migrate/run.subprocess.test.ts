@@ -49,7 +49,13 @@ test("a real Ctrl-C mid-import leaves the run ID and folder on screen", async ()
     await run({ source: "clerk", input: "export.json", yes: true, secretKey: "sk_test_x" });
   `;
 
-  const { CLERK_CLI_NO_SIGNAL_RERAISE: _suppressed, ...cleanEnv } = process.env;
+  // An inherited runs-dir override would send the run somewhere this test
+  // does not look.
+  const {
+    CLERK_CLI_NO_SIGNAL_RERAISE: _suppressed,
+    CLERK_MIGRATE_DIR: _runsDir,
+    ...cleanEnv
+  } = process.env;
   const proc = Bun.spawn(["bun", "-e", source], {
     cwd: workDir,
     stdout: "ignore",
