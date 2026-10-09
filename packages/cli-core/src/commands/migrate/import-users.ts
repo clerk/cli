@@ -348,13 +348,21 @@ async function attachAll(
   };
 }
 
+type CreatedUser = {
+  clerkUserId: string;
+  notes: string[];
+  /** Reserved phones a refusal kept off the create, to attach one by one. */
+  attachLater?: string[];
+  phoneRefusal?: string;
+};
+
 /**
  * Creates one user, retrying without a phone Clerk refuses.
  *
  * @param sending - Called as each `POST /v1/users` goes out, so the run
  *   records the user only once a create may actually land.
- * @returns The Clerk ID, a note when the phone was dropped, and Clerk's
- *   reason for refusing it.
+ * @returns The Clerk ID, a note when the phone was dropped, Clerk's reason
+ *   for refusing it, and the reserved phones still to attach.
  */
 async function createUser(
   ctx: CreateContext,
@@ -362,7 +370,7 @@ async function createUser(
   identifiers: Identifiers,
   skipPasswordRequirement: boolean,
   sending: () => void,
-): Promise<{ clerkUserId: string; notes: string[]; phoneRefusal?: string }> {
+): Promise<CreatedUser> {
   // A Ctrl-C or a full instance hands the slot on to queued creates; none
   // of them is sent, and none waits for a paced turn to find that out.
   const create = async (body: Record<string, unknown>) =>
@@ -398,6 +406,7 @@ async function createUser(
   }
   const notes: string[] = [];
   let phoneRefusal: string | undefined;
+  let attachLater: string[] = [];
   let response;
   try {
     response = await create(body);
@@ -427,8 +436,18 @@ async function createUser(
       if (!body.email_address) throw refusal;
       response = await create(withoutPhone);
     }
-    phoneRefusal = refusal.longMessage ?? refusal.message;
-    notes.push(`Failed to add phone ${dropped.join(", ")}: ${phoneRefusal}`);
+    // Which reserved phone was refused is unknown when there are several, or
+    // when the verified one was refused alone: each is attached on its own once
+    // the user exists, unverified, so only a refused one is lost.
+    const reservedDropped = dropped.filter((phone) => phone !== identifiers.primaryPhone);
+    if (statuses && (refusal !== error || reservedDropped.length > 1)) {
+      attachLater = reservedDropped;
+      dropped = dropped.filter((phone) => !attachLater.includes(phone));
+    }
+    if (dropped.length > 0) {
+      phoneRefusal = refusal.longMessage ?? refusal.message;
+      notes.push(`Failed to add phone ${dropped.join(", ")}: ${phoneRefusal}`);
+    }
   }
 
   // Untracked, the user could never be undone. Thrown, the outcome is unknown,
@@ -437,7 +456,12 @@ async function createUser(
   if (typeof clerkUserId !== "string" || !clerkUserId) {
     throw new Error("Clerk answered POST /v1/users without a user ID");
   }
-  return { clerkUserId, notes, ...(phoneRefusal ? { phoneRefusal } : {}) };
+  return {
+    clerkUserId,
+    notes,
+    attachLater,
+    ...(phoneRefusal ? { phoneRefusal } : {}),
+  };
 }
 
 export type ImportUsersOptions = {
@@ -559,7 +583,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   const processUser = async (user: User): Promise<void> => {
     const retries: string[] = [];
     const identifiers = splitIdentifiers(user);
-    let created: { clerkUserId: string; notes: string[]; phoneRefusal?: string };
+    let created: CreatedUser;
     const adoptedId = adopted.get(user.userId);
     // What the create did with the unverified identifiers decides what is left
     // to attach: an adopted user's create may have run in the other mode.
@@ -627,7 +651,12 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     };
     // One line, pending and all: a run stopped between a `created` line and a
     // later `pending` one would read the user as settled, its extras unsent.
-    const toAttach = pendingIdentifiers(identifiers, reserved);
+    const retried = (created.attachLater ?? []).map((value) => ({
+      kind: "phone" as const,
+      value,
+      verified: false,
+    }));
+    const toAttach = [...pendingIdentifiers(identifiers, reserved), ...retried];
     record(toAttach.length > 0 ? { ...line, pending: toAttach } : line);
     if (created.phoneRefusal) {
       const reason = normalizeErrorMessage(created.phoneRefusal);

@@ -821,6 +821,12 @@ email: the create is retried without the phone. The user counts as imported,
 and the summary lists them under "Imported without their phone", by Clerk's
 reason (`result.warnings` in `--json`).
 
+With [reserved](#verified-vs-unverified-identifiers) phones on the create, the
+refused one may be any of them, so the verified phone is retried alone first.
+Reserved phones the refusal kept off, when Clerk's answer can't say which was
+refused, are attached one by one once the user exists, unverified: only the
+refused one is lost.
+
 #### Throughput
 
 Defaults follow Clerk's documented `POST /v1/users` limits: 100 req/s for
