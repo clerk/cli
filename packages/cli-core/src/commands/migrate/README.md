@@ -280,11 +280,11 @@ an undo or another continue, exits 2 too, with nothing written.
 
 A continued run also finishes what the last one left open:
 
-- A user still `creating` is looked up by `external_id`. One Clerk holds
-  that carries this run's marker is adopted as `created`, and not created
-  again; one it doesn't hold is created. A match without the marker is
-  someone else's user: the checks reject that record as already in the
-  instance.
+- A user still `creating` is looked up by `external_id`. A match that
+  carries this run's marker is adopted as `created`, and not created again.
+  A match without the marker is someone else's user: the checks reject that
+  record as already in the instance. Only when the lookup finds no user at
+  all is it created.
 
 Every create sends the run's ID in the user's private metadata, as
 `clerkMigrateRun`, merged with any private metadata the source carries. It
