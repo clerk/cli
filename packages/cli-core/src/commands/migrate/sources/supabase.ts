@@ -33,17 +33,18 @@ const NULLABLE_FIELDS = [
   "unsafeMetadata",
   "bannedUntil",
   "deletedAt",
+  "createdAt",
 ] as const;
 
 const supabaseSource = {
   key: "supabase",
   label: "Supabase",
   description:
-    "Works with a Supabase `auth.users` export. Users whose only social provider is not enabled in Clerk are rejected by the import's checks.",
+    "Works with a Supabase `auth.users` export. Users whose only social provider is not enabled in Clerk are rejected by the import's checks, unless they can sign in by email or phone code.",
   carries: {
     passwords: {
       level: "yes",
-      note: "bcrypt and argon2 `encrypted_password` hashes come across, detected per user. Any other hash is dropped, and that user resets their password.",
+      note: "bcrypt and argon2 `encrypted_password` hashes come across, detected per user. Any other hash is dropped, and that user signs in another way.",
     },
     mfa: {
       level: "no",
