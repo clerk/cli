@@ -77,6 +77,7 @@ type Stub = {
     id: string;
     external_id?: string;
     username?: string;
+    created_at?: number;
     email_addresses?: { email_address: string }[];
   }[];
   /** `GET /v1/users/count`. */
@@ -853,7 +854,7 @@ describe("run", () => {
 
       requests = [];
       process.exitCode = 0;
-      stubClerk({ existing: [{ id: "user_found", external_id: "u2" }] });
+      stubClerk({ existing: [{ id: "user_found", external_id: "u2", created_at: Date.now() }] });
       await run(baseOptions);
 
       expect(created()).toEqual([]);
@@ -863,6 +864,33 @@ describe("run", () => {
         clerkId: "user_found",
       });
       expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
+    });
+
+    // Same source ID, but Clerk created it before the run began: an app or
+    // another tool's user, not this run's, so it is never adopted.
+    test("an interrupted run does not adopt a match Clerk created outside the run", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating" })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({
+        existing: [{ id: "user_theirs", external_id: "u2", created_at: Date.parse("2020-01-01") }],
+      });
+      await run({ ...baseOptions, allowPartial: true });
+
+      expect(created()).toEqual([]);
+      expect(captured.err).not.toContain("whose create was cut off");
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "skipped",
+        reason: "already in the instance, with this source ID",
+      });
     });
 
     test("an interrupted run creates a user whose in-flight create never landed", async () => {
