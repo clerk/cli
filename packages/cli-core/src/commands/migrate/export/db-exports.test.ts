@@ -582,6 +582,15 @@ describe("connection failures", () => {
     expect(fs.existsSync(path.join(workDir, "exports"))).toBe(false);
   });
 
+  // Supabase is Postgres: anything else would connect and then fail.
+  test.each([["mysql://u:p@127.0.0.1:1/db"], ["./definitely-not-here.sqlite"]])(
+    "refuses %s before connecting or writing a run",
+    async (dbUrl) => {
+      await expect(exportSupabase({ dbUrl })).rejects.toThrow(/Supabase's database is Postgres/);
+      expect(fs.existsSync(path.join(workDir, ".clerk"))).toBe(false);
+    },
+  );
+
   test("the failure never contains the password", async () => {
     await expect(
       exportBetterAuth({ dbUrl: "postgres://user:hunter2@127.0.0.1:1/db" }),
