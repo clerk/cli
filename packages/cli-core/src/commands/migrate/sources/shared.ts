@@ -126,7 +126,10 @@ export function toIsoDate(value: unknown, epochMillis = false): unknown {
  * either, so the hasher is read per user rather than assumed per source.
  */
 export function detectStandardHasher(hash: string): "bcrypt" | "argon2id" | "argon2i" | undefined {
-  if (/^\$2[aby]\$/.test(hash)) return "bcrypt";
+  // The whole digest, not the prefix: a malformed one is dropped like any
+  // other unusable hash, where a prefix match would see the user rejected.
+  // clerk_go caps the cost at 15 (pkg/hash/bcrypt.go).
+  if (/^\$2[aby]\$(0\d|1[0-5])\$[./A-Za-z0-9]{53}$/.test(hash)) return "bcrypt";
   if (hash.startsWith("$argon2id$")) return "argon2id";
   if (hash.startsWith("$argon2i$")) return "argon2i";
   return undefined;

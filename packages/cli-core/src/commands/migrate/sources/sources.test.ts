@@ -571,6 +571,16 @@ describe("supabase", () => {
     expect(user?.password).toBe(encrypted_password);
   });
 
+  // The prefix alone said bcrypt, so the user was rejected instead of dropped.
+  test.each([["$2a$10$hash"], ["$2a$31$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"]])(
+    "drops a malformed bcrypt hash (%p), and imports the user",
+    (encrypted_password) => {
+      const user = one("supabase", { ...base, encrypted_password });
+      expect(user?.password).toBeUndefined();
+      expect(user?.passwordDropped).toBe(true);
+    },
+  );
+
   test("drops a hash no hasher fits, and imports the user", () => {
     const user = one("supabase", { ...base, encrypted_password: "md5:abc" });
     expect(user?.password).toBeUndefined();
@@ -619,10 +629,14 @@ describe("supabase", () => {
 
   test("maps the bcrypt password and converts the PostgreSQL timestamp", async () => {
     const { users } = await load("supabase", [
-      { ...base, encrypted_password: "$2b$10$hash", created_at: "2024-06-29 20:25:06.126079+00" },
+      {
+        ...base,
+        encrypted_password: "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+        created_at: "2024-06-29 20:25:06.126079+00",
+      },
     ]);
     expect(users[0]).toMatchObject({
-      password: "$2b$10$hash",
+      password: "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
       passwordHasher: "bcrypt",
       createdAt: "2024-06-29T20:25:06.126Z",
     });
