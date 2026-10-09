@@ -131,6 +131,11 @@ export type CheckInput = {
   /** Unverified identifiers are created reserved, so they meet a requirement. */
   reserveUnverified?: boolean;
   /**
+   * Source IDs of adopted users whose create reserved their unverified
+   * identifiers: those exist reserved, whatever this run's flag says.
+   */
+  reservedSourceIds?: Set<string>;
+  /**
    * Clerk IDs a continued run found behind its own in-flight creates: finding
    * them in the instance is expected.
    */
@@ -1098,6 +1103,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       user.password && user.passwordHasher
         ? hashShapeProblem(user.password, user.passwordHasher)
         : undefined;
+    const reserve = input.reserveUnverified || input.reservedSourceIds?.has(user.userId);
     const reason = adopted(original)
       ? undefined
       : (original.skipReason ??
@@ -1110,11 +1116,11 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
           : undefined) ??
         // A required phone the file has, but only in a form Clerk refuses here.
         (phoned.dropped &&
-        missingRequiredIdentifier(user, input.settings, input.reserveUnverified) &&
-        !missingRequiredIdentifier(emailed, input.settings, input.reserveUnverified)
+        missingRequiredIdentifier(user, input.settings, reserve) &&
+        !missingRequiredIdentifier(emailed, input.settings, reserve)
           ? "its phones aren't in E.164 form, and this instance requires a phone number (numeric usernames are on)"
           : undefined) ??
-        missingRequiredIdentifier(user, input.settings, input.reserveUnverified) ??
+        missingRequiredIdentifier(user, input.settings, reserve) ??
         // Stripping the identifiers the instance has off can leave nothing to
         // sign in with; Clerk would still create the user.
         (!hasAnyIdentifier(sent)
