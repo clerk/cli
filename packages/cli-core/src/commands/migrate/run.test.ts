@@ -662,8 +662,42 @@ describe("run", () => {
 
       expect(JSON.parse(captured.out)).toMatchObject({
         run: { status: "partial" },
-        result: { created: 0, failed: 1, notSent: 1 },
+        result: {
+          created: 0,
+          failed: 1,
+          notSent: 1,
+          stopReason: "You have reached your limit of 100 users.",
+        },
       });
+    });
+
+    // In the summary, after the progress bar: printed mid-run, the bar redrew
+    // over it.
+    test("the summary says why the import stopped", async () => {
+      stubClerk();
+      const clerk = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
+        init?.method === "POST" && new URL(input.toString()).pathname === "/v1/users"
+          ? Response.json(
+              {
+                errors: [
+                  {
+                    code: "user_quota_exceeded",
+                    message: "user quota exceeded",
+                    long_message: "You have reached your limit of 100 users.",
+                  },
+                ],
+              },
+              { status: 403 },
+            )
+          : clerk(input, init)) as typeof fetch;
+      await run(baseOptions);
+
+      const err = Bun.stripANSI(captured.err);
+      expect(err).toContain("Not sent: 1");
+      expect(err).toContain(
+        "You have reached your limit of 100 users. No more users were sent: running the import again picks up the rest once the limit is raised.",
+      );
     });
   });
 
