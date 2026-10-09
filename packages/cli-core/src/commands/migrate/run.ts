@@ -1093,7 +1093,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         });
       }
 
-      const summary =
+      const summary: ImportSummary =
         checks.importable.length > 0 || attachOnly.length > 0
           ? await withProgress(
               { total: checks.importable.length, verb: "created" },
