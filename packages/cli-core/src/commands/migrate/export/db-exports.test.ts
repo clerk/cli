@@ -11,7 +11,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CliError } from "../../../lib/errors.ts";
 import type { DbClient } from "../lib/db.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
