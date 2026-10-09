@@ -345,8 +345,8 @@ alongside imports.
   only from a support request. Add a `passwordHash` field to each user before
   importing, or migrate without passwords.
 
-Both say so on every run. The coverage row counts users who _have_ a password,
-so the size of the gap is visible up front.
+Both say so on every run. `clerk`'s coverage also counts users who _have_ a
+password, so the size of the gap is visible up front.
 
 #### `supabase` reads the database
 
