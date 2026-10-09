@@ -570,7 +570,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         if (!canPrompt(options)) {
           if (options.json) preview({ consent: "required" });
           throwUsageError(
-            `\`clerk migrate import\` will create ${toCreate}${skips} and needs consent. Pass --yes to confirm.`,
+            `\`clerk migrate import\` will create ${toCreate}${skips}. Pass --yes to confirm.`,
             undefined,
             undefined,
             [
