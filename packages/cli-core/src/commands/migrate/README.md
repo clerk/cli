@@ -664,8 +664,18 @@ an undo or another continue, exits 2 too, with nothing written.
 
 A continued run also finishes what the last one left open:
 
-- A user still `creating` is looked up by `external_id`. One Clerk holds is
-  adopted as `created`, and not created again; one it doesn't is created.
+- A user still `creating` is looked up by `external_id`. One Clerk holds
+  that carries this run's marker is adopted as `created`, and not created
+  again; one it doesn't hold is created. A match without the marker is
+  someone else's user: the checks reject that record as already in the
+  instance.
+
+Every create sends the run's ID in the user's private metadata, as
+`clerkMigrateRun`, merged with any private metadata the source carries. It
+is how a cut-off create is told apart from a user an app or another tool
+made with the same `external_id`, and it stays on the user. A run recorded
+before the marker existed adopts nothing.
+
 - A user whose `created` line has `pending` identifiers gets just those
   attaches.
 
@@ -849,10 +859,10 @@ recorded beside it.
 
 The one search is for a source ID whose latest line is `creating`: the run
 stopped with that user's `POST /v1/users` sent and unanswered, so Clerk may
-hold the user without its ID on record. Those are looked up by `external_id`.
-The import's checks refused any source ID the instance already held, but a
-later import of the same source IDs could have created one since. So a user
-that another import run in the runs folder records as created is left out.
+hold the user without its ID on record. Those are looked up by `external_id`,
+and only a user carrying the import run's `clerkMigrateRun` marker is deleted:
+an app or another tool can make a user with the same source ID, and one
+without the marker is left alone.
 
 ```sh
 clerk migrate undo 20260929-141502-a1b2 --dry-run   # preview, delete nothing

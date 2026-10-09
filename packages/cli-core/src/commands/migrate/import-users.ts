@@ -24,6 +24,7 @@ import type { ResolvedLimits } from "./lib/instance.ts";
 import type { ProgressUpdate } from "./lib/progress.ts";
 import { RateLimitExceededError, retryOn429 } from "./lib/retry.ts";
 import type { PendingIdentifier, UserLine } from "./lib/run-store.ts";
+import { RUN_MARKER_KEY } from "./lib/user-lookup.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
 import type { ImportSummary, User } from "./types.ts";
 
@@ -213,6 +214,8 @@ type CreateContext = {
   schedule: ApiScheduler;
   /** Unverified identifiers go on the create as reserved, not attached after. */
   reserveUnverified: boolean;
+  /** The run sending these creates; each carries it as its marker. */
+  runId?: string;
   /** Set by the first `user_quota_exceeded`: every later create would be refused too. */
   quotaReached: boolean;
 };
@@ -374,6 +377,15 @@ async function createUser(
     skipPasswordRequirement,
     ctx.reserveUnverified,
   );
+  // The run's marker, with whatever private metadata the source brought:
+  // without it a create cut off mid-flight could never be told from a user
+  // someone else made with the same external_id.
+  if (ctx.runId) {
+    body.private_metadata = {
+      ...(body.private_metadata as Record<string, unknown> | undefined),
+      [RUN_MARKER_KEY]: ctx.runId,
+    };
+  }
   const notes: string[] = [];
   let phoneRefusal: string | undefined;
   let response;
@@ -429,6 +441,8 @@ export type ImportUsersOptions = {
    * latest `created` line, with `pending`. Only the attaches are sent.
    */
   attachOnly?: UserLine[];
+  /** The run these creates belong to, sent on each as its marker. */
+  runId?: string;
   /**
    * Source ID → Clerk ID for users whose create a stopped run sent with no
    * answer, and which a continued run then found in the instance. They are
@@ -465,6 +479,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     limits,
     record,
     attachOnly = [],
+    runId,
     adopted = new Map<string, string>(),
     adoptedReserved = new Set<string>(),
     skipPasswordRequirement = true,
@@ -486,6 +501,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     schedule: createApiScheduler(limits.concurrencyLimit, limits.rateLimit),
     reserveUnverified,
     quotaReached: false,
+    ...(runId ? { runId } : {}),
   };
 
   const progress = () => report?.({ done: processed, ok: successful, failed });
