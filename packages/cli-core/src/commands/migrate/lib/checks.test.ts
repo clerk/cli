@@ -1061,6 +1061,9 @@ describe("hashShapeProblem", () => {
     ["hash$salt$signer$sep$eight$14", "scrypt_firebase"],
     ["hash$salt", "scrypt_firebase"],
     ["hash$$signer$sep$8$14", "scrypt_firebase"],
+    // Clerk decodes every segment as base64.
+    ["not base64!$salt$signer$sep$8$14", "scrypt_firebase"],
+    ["hash$sa=lt$signer$sep$8$14", "scrypt_firebase"],
     ["argon2id$...", "argon2id"],
     ["scrypt:16384:16:1$salt$not-hex!", "scrypt_werkzeug"],
   ])("rejects %s as %s", (password, hasher) => {
