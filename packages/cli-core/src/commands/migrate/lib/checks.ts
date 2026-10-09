@@ -625,12 +625,14 @@ async function findInstanceDuplicates(
   ).flat();
 
   const reasons = new Map<string, string>();
-  const claim = (sourceId: string | undefined, reason: string) => {
-    if (sourceId && !reasons.has(sourceId)) reasons.set(sourceId, reason);
-  };
 
   for (const existing of found) {
-    if (input.adoptedClerkIds?.has(existing.id)) continue;
+    // An adopted user is its own record's create, so it clashes with nothing
+    // in that record; its identifiers still clash with every other user's.
+    const own = input.adoptedClerkIds?.has(existing.id) ? existing.external_id : undefined;
+    const claim = (sourceId: string | undefined, reason: string) => {
+      if (sourceId && sourceId !== own && !reasons.has(sourceId)) reasons.set(sourceId, reason);
+    };
     if (existing.external_id) {
       claim(byExternalId.get(existing.external_id), "already in the instance, with this source ID");
     }
