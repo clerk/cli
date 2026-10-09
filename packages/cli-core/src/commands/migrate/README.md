@@ -367,7 +367,7 @@ profile in that order.
 The export run has one line per exported user, so `clerk migrate runs` lists it
 alongside imports.
 
-#### Three platforms export no passwords
+#### Four platforms export no passwords
 
 - **Clerk** never returns password digests, TOTP secrets or backup codes over
   the API — only the `*_enabled` booleans. Migrated users must reset their
@@ -380,8 +380,11 @@ alongside imports.
 - **WorkOS** returns neither password hashes nor TOTP secrets over the API:
   hashes go in on import and never come back, and `totp.secret` is returned on
   enrol only. WorkOS documents no other way to get them out.
+- **Auth.js** core stores no passwords. An app that also uses the Credentials
+  provider keeps them in its own tables, which the export does not read:
+  migrate those separately, or have those users reset their password.
 
-All three print a warning whenever they export anyone. `clerk`'s and `workos`'s
+All four print a warning whenever they export anyone. `clerk`'s and `workos`'s
 coverage also counts users who _have_ a password, so the size of the gap is
 visible up front — `workos` prints that row at zero unconditionally, because
 zero is the only value it can take.
