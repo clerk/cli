@@ -1651,6 +1651,8 @@ describe("run", () => {
         expect((created[0]?.body as { external_id: string } | undefined)?.external_id).toBe(
           externalId,
         );
+        // Each export's verified email is the one the create sends.
+        expect(created[0]?.body).toMatchObject({ email_address: ["a@x.dev"] });
       },
     );
 
