@@ -605,6 +605,55 @@ describe("rejects", () => {
       expect(await reasonFor(username)).toContain(reason);
     });
 
+    // With numeric usernames on, Clerk refuses any phone not in E.164 form.
+    describe("phones, with numeric usernames on", () => {
+      const numeric = (on: boolean) =>
+        ({
+          attributes: {
+            email_address: { enabled: true },
+            phone_number: { enabled: true },
+            username: { enabled: true },
+          },
+          social: {},
+          enterprise_sso: { enabled: true },
+          username_settings: { min_length: 4, max_length: 64, allow_numeric_usernames: on },
+        }) as unknown as UserSettingsJSON;
+
+      test("one not in E.164 form is dropped, and the user kept on their email", async () => {
+        const checks = await checkImport(
+          input({ settings: numeric(true), users: [user("a", { phone: "(415) 555-0100" })] }),
+        );
+        expect(checks.rejects).toEqual([]);
+        expect(checks.importable).toEqual([user("a")]);
+        expect(checks.warnings).toContain(
+          "1 user has a phone not in E.164 form, which is dropped: with numeric usernames on, Clerk requires E.164",
+        );
+      });
+
+      test("a user with only such phones is rejected", async () => {
+        expect(
+          await reasonsOf({
+            settings: numeric(true),
+            users: [user("a", { email: undefined, phone: "415 555 0100" })],
+          }),
+        ).toEqual({
+          a: "only has phones not in E.164 form, which this instance refuses (numeric usernames are on)",
+        });
+      });
+
+      // The fix is withheld for these phones, so the reject says why.
+      test("a numeric username's reject names the phones turning it on would cost", async () => {
+        expect(
+          await reasonsOf({
+            settings: numeric(false),
+            users: [user("a", { username: "12345" }), user("b", { phone: "(415) 555-0100" })],
+          }),
+        ).toEqual({
+          a: "username has no letters; turn on numeric usernames to allow it, though Clerk would then refuse the file's 1 phone not in E.164 form",
+        });
+      });
+    });
+
     // Clerk checks a username with usernames off too, but nothing signs in
     // with it there, so it costs the user nothing to lose it.
     test("with usernames off, one Clerk would refuse is dropped, not rejected", async () => {
