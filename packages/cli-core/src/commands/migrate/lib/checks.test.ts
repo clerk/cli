@@ -278,7 +278,7 @@ describe("rejects", () => {
         ],
       }),
     ).toEqual({
-      bad: "password is not a bcrypt hash Clerk accepts ($2a$/$2b$/$2y$, cost up to 15, 60 characters)",
+      bad: "password is not a bcrypt hash Clerk can verify ($2a$/$2b$/$2y$, cost 4 to 15, 60 characters)",
     });
   });
 
@@ -894,6 +894,8 @@ describe("hashShapeProblem", () => {
 
   test.each([
     ["$2a$10$short", "bcrypt"],
+    // Stored by Clerk, but Go's bcrypt refuses it at sign-in.
+    ["$2a$03$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy", "bcrypt"],
     ["hash$salt$signer$sep$eight$14", "scrypt_firebase"],
     ["hash$salt", "scrypt_firebase"],
     ["argon2id$...", "argon2id"],
