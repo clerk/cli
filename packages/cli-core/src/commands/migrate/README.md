@@ -130,7 +130,7 @@ Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 A user's status is `creating`, `created`, `failed` or `skipped`. The last line
 for each `sourceId` wins. A `429` retry, an extra email or phone that did not
 attach, a first phone Clerk refused (which the summary also counts), and a
-validation failure all land in `error`.
+validation failure all land in the line's `error` field.
 
 `creating` is written as a user's `POST /v1/users` goes out. It stays the
 latest line when no answer says whether the create landed: an abort, a
