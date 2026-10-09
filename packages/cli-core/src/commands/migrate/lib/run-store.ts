@@ -483,6 +483,25 @@ export function continueRun(
       );
     }
   }
+  // Checked again under the lock, before the record says running: an undo
+  // can start, and stop part-way, after the caller's own check, leaving the
+  // import's status and lines as they were.
+  const undoRun =
+    record.kind === "import"
+      ? listRuns(runsDir).find(
+          (candidate) =>
+            candidate.kind === "undo" &&
+            candidate.undoes === record.id &&
+            runState(runsDir, candidate) !== "complete",
+        )
+      : undefined;
+  if (undoRun) {
+    fs.rmSync(lockFile(runsDir, record.id), { force: true });
+    throwUsageError(
+      `Run ${record.id} has an undo that did not finish (run ${undoRun.id}). ` +
+        `Finish it with \`clerk migrate undo ${record.id}\`, or pass --new-run to import into a new run.`,
+    );
+  }
   // A crash mid-write leaves a torn last line; end it so the next append
   // starts a line of its own instead of fusing with it.
   const usersFile = path.join(runDir(runsDir, record.id), USERS_FILE);
