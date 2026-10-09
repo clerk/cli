@@ -987,6 +987,8 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
           schedule,
           adoptedClerkIds: new Set(adopted.values()),
           adoptedSourceIds: new Set(adopted.keys()),
+          // Their `creating` line says how the create ran, not this run's flag.
+          reservedSourceIds: new Set([...adopted.keys()].filter((id) => inFlightReserved.has(id))),
           spinner,
         }),
       );

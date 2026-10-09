@@ -1169,6 +1169,45 @@ describe("run", () => {
       });
     });
 
+    // Created reserved by the run that stopped: its unverified email exists
+    // reserved, and meets the requirement, though this run has no flag.
+    test("an adopted user created reserved meets a required email without the flag", async () => {
+      const settings = {
+        attributes: { email_address: { enabled: true, required: true } },
+        enterprise_sso: { enabled: true },
+      };
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", unverified_email_addresses: "c@x.dev" },
+        ]),
+      );
+      stubClerk({ settings, failing: new Set(["u2"]) });
+      await run({ ...baseOptions, reserveUnverified: true });
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating", reserved: true })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({
+        settings,
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
+      await run(baseOptions);
+
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+      });
+    });
+
     // A reject would stop a create; an adopted user needs none. Rejected, it
     // stayed `creating` and the run could never finish.
     test("an adopted user a check would reject still finishes the run", async () => {
