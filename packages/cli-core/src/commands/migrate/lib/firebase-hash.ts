@@ -6,6 +6,7 @@
  * reads the config off {@link TransformContext}.
  */
 
+import { createHash } from "node:crypto";
 import { throwUsageError } from "../../../lib/errors.ts";
 import type { FirebaseHashConfig } from "../types.ts";
 
@@ -111,4 +112,16 @@ export function firebaseHashConfigProblem(config: FirebaseHashConfig): string | 
     }
   }
   return undefined;
+}
+
+/**
+ * A fingerprint of the hash parameters, for a run record: two runs built
+ * their digests alike exactly when these match. A hash, so the signer key is
+ * not written to disk.
+ */
+export function fingerprintFirebaseHashConfig(config: FirebaseHashConfig): string {
+  const { base64_signer_key, base64_salt_separator, rounds, mem_cost } = config;
+  return createHash("sha256")
+    .update(JSON.stringify([base64_signer_key, base64_salt_separator, rounds, mem_cost]))
+    .digest("hex");
 }
