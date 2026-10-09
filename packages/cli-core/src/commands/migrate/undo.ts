@@ -346,7 +346,6 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   const users = [
     ...recorded.users,
     ...(await findInFlight({
-      runsDir,
       runId: record.id,
       sourceIds: recorded.unconfirmed,
       secretKey,

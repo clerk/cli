@@ -77,7 +77,7 @@ type Stub = {
     id: string;
     external_id?: string;
     username?: string;
-    created_at?: number;
+    private_metadata?: Record<string, unknown>;
     email_addresses?: { email_address: string }[];
   }[];
   /** `GET /v1/users/count`. */
@@ -854,7 +854,11 @@ describe("run", () => {
 
       requests = [];
       process.exitCode = 0;
-      stubClerk({ existing: [{ id: "user_found", external_id: "u2", created_at: Date.now() }] });
+      stubClerk({
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
       await run(baseOptions);
 
       expect(created()).toEqual([]);
@@ -866,9 +870,9 @@ describe("run", () => {
       expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
     });
 
-    // Same source ID, but Clerk created it before the run began: an app or
-    // another tool's user, not this run's, so it is never adopted.
-    test("an interrupted run does not adopt a match Clerk created outside the run", async () => {
+    // Same source ID, but no marker from this run: an app or another tool's
+    // user, so it is never adopted.
+    test("an interrupted run does not adopt a match without its marker", async () => {
       stubClerk({ failing: new Set(["u2"]) });
       await run(baseOptions);
       const [first] = listRuns(runsDir());
@@ -881,7 +885,7 @@ describe("run", () => {
       requests = [];
       process.exitCode = 0;
       stubClerk({
-        existing: [{ id: "user_theirs", external_id: "u2", created_at: Date.parse("2020-01-01") }],
+        existing: [{ id: "user_theirs", external_id: "u2", private_metadata: {} }],
       });
       await run({ ...baseOptions, allowPartial: true });
 

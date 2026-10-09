@@ -604,7 +604,6 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const adopted = new Map<string, string>();
       if (continued) {
         const found = await findInFlight({
-          runsDir,
           runId: continued.id,
           sourceIds: inFlight,
           secretKey,
@@ -828,6 +827,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
                   secretKey,
                   limits,
                   record: run.append,
+                  runId: run.record.id,
                   attachOnly,
                   adopted,
                   skipPasswordRequirement: !options.requirePassword,
