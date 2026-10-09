@@ -703,11 +703,11 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
 }
 
 /** Each field Clerk stores with its setting off, and what it does once turned on. */
-const STORED_FIELDS: Record<string, { noun: string; then: string }> = {
-  password: { noun: "password", then: "works" },
-  username: { noun: "username", then: "works" },
-  first_name: { noun: "first name", then: "shows" },
-  last_name: { noun: "last name", then: "shows" },
+const STORED_FIELDS: Record<string, { noun: string; verb: string }> = {
+  password: { noun: "password", verb: "works" },
+  username: { noun: "username", verb: "works" },
+  first_name: { noun: "first name", verb: "shows" },
+  last_name: { noun: "last name", verb: "shows" },
 };
 
 /**
@@ -715,8 +715,8 @@ const STORED_FIELDS: Record<string, { noun: string; then: string }> = {
  * working, or showing, once the setting is turned on.
  */
 function storedWarning(key: string, count: number): string {
-  const { noun, then } = STORED_FIELDS[key] ?? { noun: key, then: "works" };
-  return `${plural(count, "user")} ${count === 1 ? "has" : "have"} a ${noun}, which this instance does not use: it is stored, and ${then} only once ${noun}s are turned on`;
+  const { noun, verb } = STORED_FIELDS[key] ?? { noun: key, verb: "works" };
+  return `${plural(count, "user")} ${count === 1 ? "has" : "have"} a ${noun}, which this instance does not use: it is stored, and ${verb} only once ${noun}s are turned on`;
 }
 
 /** Shell-quotes a JSON payload for a single-quoted argument. */
