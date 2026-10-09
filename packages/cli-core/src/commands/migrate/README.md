@@ -257,7 +257,7 @@ the flag to pass.
 | `-y, --yes`                | all                                | Do not prompt: fail on a rejected credential              |
 | `--json`                   | all                                | Print the result as JSON; never prompts                   |
 | `--runs-dir <path>`        | all                                | Where runs are kept (see [the run store](#the-run-store)) |
-| `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Postgres, MySQL, libsql/Turso or SQLite connection string |
+| `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Connection string (Postgres only for `supabase`)          |
 | `--service-account <path>` | `firebase`                         | Path to a service account key JSON file                   |
 | `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com`              |
 | `--client-id <id>`         | `auth0`                            | Machine-to-machine application client ID                  |
@@ -362,7 +362,8 @@ clerk migrate export betterauth --db-url "./db.sqlite"
 clerk migrate export betterauth --db-url "libsql://app-org.turso.io?authToken=..."   # or set TURSO_AUTH_TOKEN
 ```
 
-Postgres and MySQL go through `Bun.sql`; SQLite through `bun:sqlite`;
+`export supabase` takes Postgres only, and refuses any other URL before
+connecting. Postgres and MySQL go through `Bun.sql`; SQLite through `bun:sqlite`;
 `libsql://` (Turso) over the server's HTTP pipeline endpoint, since `bun:sqlite`
 only opens local files and `@libsql/client` ships native optional dependencies.
 Nothing native ships in the binary — that is the whole reason the `engines.bun`
