@@ -268,7 +268,9 @@ export async function fetchAllAuth0Users(options: {
     all.push(...users);
     options.spinner?.update(`Fetching users from Auth0: ${all.length} so far...`);
 
-    if (users.length < PAGE_SIZE) break;
+    // An empty page ends it whatever `total` says, so an overstated total
+    // cannot page forever.
+    if (users.length === 0) break;
 
     if (all.length >= AUTH0_PAGINATION_CEILING) {
       // Auth0 reports a larger tenant's total as 1000 too, so reaching the
@@ -282,6 +284,10 @@ export async function fetchAllAuth0Users(options: {
       );
       return { users: all, truncated: true };
     }
+
+    // Auth0 can send a short page before the last one, so `total` decides
+    // when it is known; a short page ends it only when Auth0 sent no total.
+    if (total > 0 ? all.length >= total : users.length < PAGE_SIZE) break;
   }
 
   return { users: all, truncated: false };
