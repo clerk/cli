@@ -284,7 +284,9 @@ const USERNAME_EXTENDED = /^[a-zA-Z0-9!#$'+.^_`~-]+$/;
 const USERNAME_OPTIONS = [
   {
     rule: "allow_numeric_usernames",
-    label: "Allow numeric usernames",
+    // Clerk ties strict E.164 phones to this setting (create_service.go).
+    label:
+      "Allow numeric usernames (Clerk then requires phone numbers in E.164 form, on import and at sign-up)",
     needs: (username: string) => !/[a-zA-Z]/.test(username),
   },
   {
@@ -779,8 +781,17 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
   const usernames = isEnabled(settings, "username")
     ? users.flatMap((user) => (typeof user.username === "string" ? [user.username] : []))
     : [];
+  // Numeric usernames make Clerk refuse any phone not in E.164 form, so the
+  // fix is not offered to a file whose phones would then be refused.
+  const looseFormat = users.some((user) => {
+    const { primaryPhone, additionalPhones, unverifiedPhones } = splitIdentifiers(user);
+    return [primaryPhone, ...additionalPhones, ...unverifiedPhones].some(
+      (phone) => phone !== undefined && !/^\+[1-9]\d{1,14}$/.test(phone),
+    );
+  });
   const username = USERNAME_OPTIONS.filter(
-    ({ rule, needs }) => !rules[rule] && usernames.some(needs),
+    ({ rule, needs }) =>
+      !rules[rule] && usernames.some(needs) && !(rule === "allow_numeric_usernames" && looseFormat),
   ).map(({ rule, label }) => ({ label, writes: [{ path: ["auth_username", rule], value: true }] }));
 
   return [...buildSettingChanges(flagged), ...mfa, ...username].map((change) =>

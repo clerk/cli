@@ -815,7 +815,11 @@ describe("fixes", () => {
 
   // The rejects name the option; the fix gives the command for it.
   test.each([
-    ["12345", "allow_numeric_usernames", "Allow numeric usernames"],
+    [
+      "12345",
+      "allow_numeric_usernames",
+      "Allow numeric usernames (Clerk then requires phone numbers in E.164 form, on import and at sign-up)",
+    ],
     [
       "ada.l",
       "allow_extended_special_characters",
@@ -834,6 +838,18 @@ describe("fixes", () => {
         command: `clerk config patch --app APP_ID --instance ins_1 --json '{"auth_username":{"${rule}":true}}'`,
       },
     ]);
+  });
+
+  // With numeric usernames on, Clerk refuses a phone not in E.164 form, so
+  // the fix would cost those users their phone.
+  test("offer no numeric-username fix to a file with a phone not in E.164 form", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings({ email_address: { enabled: true }, username: { enabled: true } }),
+        users: [user("a", { username: "12345" }), user("b", { phone: "(415) 555-0100" })],
+      }),
+    );
+    expect(checks.fixes.map((fix) => fix.label).join("\n")).not.toContain("numeric usernames");
   });
 
   test("offer nothing when the settings could not be read", async () => {
