@@ -1478,7 +1478,7 @@ describe("run", () => {
 
       const [record] = listRuns(runsDir());
       // The run folder is the only record of who was created.
-      expect(captured.err).toContain(`Run ${record?.id} records who was created:`);
+      expect(captured.err).toContain(`Run ${record?.id}: `);
       expect(record?.finishedAt).toBeUndefined();
       expect(fs.existsSync(path.join(runsDir(), record?.id ?? "", "lock"))).toBe(false);
       expect(created()).toHaveLength(1);

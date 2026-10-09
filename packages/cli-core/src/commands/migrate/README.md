@@ -143,11 +143,11 @@ and phones not yet attached.
 A run is `partial` when any user failed, was skipped, is still `creating` or
 was never sent (`counts.notSent`), and `complete` otherwise. A run whose process
 died, or that never recorded a finish time, lists as `interrupted`. A Ctrl-C
-leaves a run that way, and prints its run ID and folder on the way out. A lock
-held by another live process refuses a second writer with exit 2, and names the
-lock file to delete if that process is not a migrate run. A lock holding this
-process's own PID is stale: in a container the CLI often gets the same PID every
-run.
+leaves a run that way. Its run ID and folder are printed as the run starts, so
+they are on screen however it ends. A lock held by another live process refuses
+a second writer with exit 2, and names the lock file to delete if that process
+is not a migrate run. A lock holding this process's own PID is stale: in a
+container the CLI often gets the same PID every run.
 
 Run folders are created owner-only (`0700`), and export files `0600`: they hold
 password hashes and user data.
