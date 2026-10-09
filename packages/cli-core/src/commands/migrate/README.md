@@ -139,9 +139,10 @@ and phones not yet attached.
 
 A run is `partial` when any user failed, was skipped, is still `creating` or
 was never sent (`counts.notSent`), and `complete` otherwise. A run interrupted
-with Ctrl-C stays `running`, with no `finishedAt`, and prints its run ID and
-folder on the way out. A lock holding this process's own PID is stale: in a
-container the CLI often gets the same PID every run.
+with Ctrl-C stays `running`, with no `finishedAt`. Its run ID and folder are
+printed as the run starts, so they are on screen however it ends. A lock
+holding this process's own PID is stale: in a container the CLI often gets the
+same PID every run.
 
 Run folders are created owner-only (`0700`), because they hold user data.
 
