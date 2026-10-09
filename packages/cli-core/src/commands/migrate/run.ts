@@ -386,6 +386,33 @@ function applyEnvelope(
 
 // --- Continuing an earlier run ---------------------------------------------
 
+/**
+ * Refuses while another process is importing this file, with this source key,
+ * into this instance. Checked before any resume matching, and under
+ * --new-run too: an edited custom source (another `sourceHash`) or a new run
+ * would otherwise send the same external IDs alongside it.
+ */
+function assertNoActiveImport(
+  runsDir: string,
+  match: { sha256: string; source: string; instanceId: string; keyInstanceId?: string },
+): void {
+  const active = listRuns(runsDir).find(
+    (record) =>
+      record.kind === "import" &&
+      record.file?.sha256 === match.sha256 &&
+      record.source === match.source &&
+      (record.target.instanceId === match.instanceId ||
+        record.target.instanceId === match.keyInstanceId) &&
+      runState(runsDir, record) === "running",
+  );
+  if (active) {
+    throwUsageError(
+      `Run ${active.id} is importing this file right now in another process (PID ${liveLockPid(runsDir, active.id)}). ` +
+        `Wait for it to finish. If that process is not a migrate run, delete ${lockFile(runsDir, active.id)}.`,
+    );
+  }
+}
+
 /** How this import relates to earlier runs of the same file, source and instance. */
 export type ResumeCase =
   | { kind: "new" }
@@ -718,6 +745,12 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       if (expectedSha256 !== undefined && sha256 !== expectedSha256) throwChanged(filePath);
       const runsDir = await resolveRunsDir(options.runsDir);
 
+      assertNoActiveImport(runsDir, {
+        sha256,
+        source,
+        instanceId: target.instanceId,
+        keyInstanceId: keyInstanceId(secretKey),
+      });
       const resume: ResumeCase = options.newRun
         ? { kind: "new" }
         : findResume(runsDir, {
