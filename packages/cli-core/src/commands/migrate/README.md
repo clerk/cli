@@ -1004,7 +1004,9 @@ TypeScript is fine — Bun's transpiler is part of the runtime, so `interface`,
 Plain `.js` works too.
 
 An import run records a custom source's key and a hash of the file, so an
-edited source counts as a different source.
+edited source counts as a different source. The hash covers that file only:
+a local helper it imports is not part of it, so after editing one, pass
+`--new-run` rather than continue a run made with the old helper.
 
 #### Validation
 
