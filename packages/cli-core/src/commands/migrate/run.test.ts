@@ -1469,13 +1469,16 @@ describe("run", () => {
         return response;
       }) as typeof fetch;
       try {
-        await run(baseOptions);
+        // Thrown, so the gutter closes as paused rather than done.
+        await expect(run(baseOptions)).rejects.toThrow();
       } finally {
         _resetInterruptState();
         delete process.env.CLERK_MIGRATE_CONCURRENCY_LIMIT;
       }
 
       const [record] = listRuns(runsDir());
+      // The run folder is the only record of who was created.
+      expect(captured.err).toContain(`Run ${record?.id} records who was created:`);
       expect(record?.finishedAt).toBeUndefined();
       expect(fs.existsSync(path.join(runsDir(), record?.id ?? "", "lock"))).toBe(false);
       expect(created()).toHaveLength(1);

@@ -1122,10 +1122,13 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
               errorBreakdown: new Map(),
             };
       // A Ctrl-C returns the import early, and the users it never sent have
-      // no line to count. Left unfinished, the run reads as interrupted.
+      // no line to count. Left unfinished, the run reads as interrupted. The
+      // signal handler prints nothing of ours, so the run line goes out here,
+      // and the throw closes the gutter as paused.
       if (interruptedExitCode() !== null) {
         run.release();
-        return;
+        log.info(`Stopped. Run ${run.record.id} records who was created: ${run.dir}`);
+        throwUserAbort();
       }
       const record = run.finish({ notSent: summary.notSent });
       if (summary.failed > 0) process.exitCode = 1;
