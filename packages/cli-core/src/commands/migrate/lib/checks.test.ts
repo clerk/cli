@@ -235,6 +235,34 @@ describe("rejects", () => {
     );
   });
 
+  // --reserve-unverified puts unverified identifiers on the create, so they
+  // clash there as a primary would; without it they are attached after.
+  test.each([
+    [
+      true,
+      {
+        b: "email is also used by an earlier user in the file, which is kept",
+        c: "email is already used by a user in the instance",
+      },
+    ],
+    [false, {}],
+  ])(
+    "with reserveUnverified %p, unverified emails that clash are duplicates",
+    async (reserveUnverified, expected) => {
+      existing = [{ id: "user_1", email_addresses: [{ email_address: "taken@x.dev" }] }];
+      expect(
+        await reasonsOf({
+          reserveUnverified,
+          users: [
+            user("a", { unverifiedEmailAddresses: ["shared@x.dev"] }),
+            user("b", { unverifiedEmailAddresses: ["shared@x.dev"] }),
+            user("c", { unverifiedEmailAddresses: ["taken@x.dev"] }),
+          ],
+        }),
+      ).toEqual(expected);
+    },
+  );
+
   // The source's order decides which duplicate survives, so the dry run says.
   test("a duplicate names the earlier user kept in its place", async () => {
     const checks = await checkImport(
