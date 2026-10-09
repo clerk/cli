@@ -61,14 +61,17 @@ export async function lookupUsers(options: {
         params.append(options.filter, options.filter === "external_id" ? `+${value}` : value);
       }
 
-      const response = await retryOn429(async () =>
-        options.schedule(async () =>
-          bapiRequest({
-            method: "GET",
-            path: `/v1/users?${params.toString()}`,
-            secretKey: options.secretKey,
-          }),
-        ),
+      // A 429 pauses every lookup still queued, as on import.
+      const response = await retryOn429(
+        async () =>
+          options.schedule(async () =>
+            bapiRequest({
+              method: "GET",
+              path: `/v1/users?${params.toString()}`,
+              secretKey: options.secretKey,
+            }),
+          ),
+        { onRetry: ({ delaySeconds }) => options.schedule.pause(delaySeconds * 1000) },
       );
       done++;
       options.spinner?.update(`${options.label ?? "Looking up users"}: ${done}/${batches.length}`);
