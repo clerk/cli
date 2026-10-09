@@ -116,13 +116,23 @@ test("a call that skips its wait runs at once and takes no paced turn", async ()
   const schedule = createApiScheduler(1, 2); // 500ms apart
   const started = performance.now();
   await schedule(async () => undefined);
+  const stop = AbortSignal.abort();
   const skipped = await Promise.all(
-    [1, 2, 3].map(async () =>
-      schedule(async () => performance.now() - started, { skipWait: () => true }),
-    ),
+    [1, 2, 3].map(async () => schedule(async () => performance.now() - started, { stop })),
   );
   for (const at of skipped) expect(at).toBeLessThan(250);
   // Skipped calls took no turn, so the next paced call is the second one.
   const next = await schedule(async () => performance.now() - started);
   expect(next).toBeLessThan(750);
+});
+
+// A Ctrl-C or the quota landing mid-wait should not wait out the turn.
+test("a stop cuts short a wait already under way", async () => {
+  const schedule = createApiScheduler(1, 1); // 1000ms apart
+  const started = performance.now();
+  await schedule(async () => undefined);
+  const stop = new AbortController();
+  const waiting = schedule(async () => performance.now() - started, { stop: stop.signal });
+  setTimeout(() => stop.abort(), 50);
+  expect(await waiting).toBeLessThan(500);
 });

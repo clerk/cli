@@ -47,9 +47,10 @@ export type ImportSummary = {
   successful: number;
   failed: number;
   /**
-   * Users not created because a Ctrl-C or the instance's user quota stopped
-   * the run first. Most have no line in the run; one whose first create got a
-   * 429 keeps its `creating` line. A re-run picks up both.
+   * Users never sent because a Ctrl-C or the instance's user quota stopped
+   * the run first, so they have no line in the run. One whose first create
+   * went out (a 429, a refused phone) is not among them: its `creating` line
+   * marks it unfinished. A re-run picks up both.
    */
   notSent: number;
   /**
