@@ -93,7 +93,7 @@ function toJson(entry: SourceEntry, custom?: string) {
 function printList(width: number): void {
   for (const line of wrapText(
     "A source maps one platform's export onto the fields Clerk imports. A file from " +
-      "`clerk migrate export` names its own; anything else takes `--source <key>`.",
+      "`clerk migrate export` names its own; anything else takes `--source <key|path>`.",
     width,
   )) {
     log.info(line);
