@@ -16,6 +16,7 @@ import {
   readRun,
   sha256File,
   startRun,
+  importLockFile,
 } from "./lib/run-store.ts";
 import { __resetCustomSourcesForTesting } from "./sources/registry.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
@@ -938,6 +939,37 @@ describe("run", () => {
       expect(await exitCodeOf(run(baseOptions))).toBe(EXIT_CODE.USAGE);
       // A new run would send the same external IDs alongside it.
       expect(await exitCodeOf(run({ ...baseOptions, newRun: true }))).toBe(EXIT_CODE.USAGE);
+    });
+
+    // The scan of runs alone has a gap: a second process can pass it before
+    // either has written a run. The import's own lock closes it.
+    test("refuses while another process holds this import's lock, with no run yet", async () => {
+      const lock = importLockFile(runsDir(), {
+        sha256: sha256File(path.join(workDir, "export.json")),
+        source: "clerk",
+        instanceId: "ins_1",
+      });
+      // PID 1 is always alive, and never this test.
+      fs.writeFileSync(lock, "1");
+      try {
+        await expect(run(baseOptions)).rejects.toThrow(
+          /importing this file into this instance right now/,
+        );
+      } finally {
+        fs.rmSync(lock, { force: true });
+      }
+      expect(created()).toHaveLength(0);
+      expect(listRuns(runsDir())).toHaveLength(0);
+    });
+
+    test("lets go of the import's lock when the run ends", async () => {
+      await run(baseOptions);
+      const lock = importLockFile(runsDir(), {
+        sha256: sha256File(path.join(workDir, "export.json")),
+        source: "clerk",
+        instanceId: "ins_1",
+      });
+      expect(fs.existsSync(lock)).toBe(false);
     });
 
     // An edited file is a different job.
