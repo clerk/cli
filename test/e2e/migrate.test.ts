@@ -180,8 +180,14 @@ test("a Supabase export dry-runs, imports, and its passwords verify", async () =
   expect(undo.exitCode).toBe(0);
   for (const { record } of users) {
     const line = lines.find((candidate) => candidate.sourceId === record.id);
+    expect(typeof line?.clerkId).toBe("string");
+    // Clerk's own answer, not just any failure: a wrong path or an auth error
+    // would exit non-zero too. `clerk api` prints the error body to stdout.
     const gone = await cli(["api", `/users/${line?.clerkId as string}`]);
     expect(gone.exitCode).not.toBe(0);
+    expect(JSON.parse(gone.stdout.toString())).toMatchObject({
+      errors: [{ code: "resource_not_found" }],
+    });
   }
 }, 60_000);
 
