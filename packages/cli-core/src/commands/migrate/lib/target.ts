@@ -14,7 +14,7 @@ import { dim } from "../../../lib/color.ts";
 import { resolveBapiSecretKey } from "../../../lib/bapi-command.ts";
 import { INSTANCE_ALIASES, resolveAppContext } from "../../../lib/config.ts";
 import { throwUsageError } from "../../../lib/errors.ts";
-import { resolveKeylessTarget } from "../../../lib/keyless-target.ts";
+import { resolveKeylessTarget, SDK_KEYLESS_SOURCE } from "../../../lib/keyless-target.ts";
 import { log } from "../../../lib/log.ts";
 import { isHuman } from "../../../mode.ts";
 import { detectInstanceType } from "./instance.ts";
@@ -59,7 +59,7 @@ async function describeKeySource(
   // may belong to any app, an account's included.
   const keyless = await resolveKeylessTarget({ instance: options.instance });
   if (keyless) {
-    return keyless.source === ".clerk/.tmp/keyless.json"
+    return keyless.source === SDK_KEYLESS_SOURCE
       ? { keySource: `accountless app (${keyless.source})`, appLabel: "accountless app" }
       : { keySource: keyless.source };
   }
