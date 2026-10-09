@@ -1495,6 +1495,46 @@ describe("run", () => {
       });
     });
 
+    // The users a run created carry its parameters; the rest must match them.
+    test("a firebase run continues only with the hash parameters it started with", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify({
+          users: ["fb1", "fb2"].map((localId) => ({
+            localId,
+            email: `${localId}@x.dev`,
+            emailVerified: true,
+            passwordHash: "SGFzaA==",
+            salt: "U2FsdA==",
+          })),
+        }),
+      );
+      const flags = {
+        ...baseOptions,
+        source: "firebase",
+        firebaseSignerKey: "SIGNER",
+        firebaseSaltSeparator: "Bw==",
+        firebaseRounds: 8,
+        firebaseMemCost: 14,
+      };
+      stubClerk({ failing: new Set(["fb2"]) });
+      await run(flags);
+      expect(readRun(runsDir(), listRuns(runsDir())[0]!.id)?.firebaseHash).toMatch(
+        /^[0-9a-f]{64}$/,
+      );
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+      await expect(run({ ...flags, firebaseRounds: 9 })).rejects.toThrow(
+        /different Firebase hash parameters/,
+      );
+      expect(created()).toEqual([]);
+
+      await run(flags);
+      expect(created()).toEqual(["fb2"]);
+    });
+
     test("the printed command keeps the --firebase-* flags, as placeholders", async () => {
       fs.writeFileSync(
         path.join(workDir, "export.json"),

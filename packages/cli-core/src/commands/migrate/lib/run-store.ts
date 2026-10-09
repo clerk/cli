@@ -75,6 +75,12 @@ export type RunRecord = {
   file?: RunFile;
   /** The export run an import read its file from. */
   fromExport?: string;
+  /**
+   * A Firebase import's hash parameters, as SHA-256 of the four (never the
+   * parameters themselves): every digest it builds carries them, so a continue
+   * with others is refused.
+   */
+  firebaseHash?: string;
   /** The import run an undo reverses. */
   undoes?: string;
   /** The undo run that reversed this one. */
