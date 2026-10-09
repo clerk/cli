@@ -102,10 +102,11 @@ the key now in use still addresses the same instance.
 
 ## The run store
 
-Every import, export and undo that gets as far as writing is a **run**, and the
-run store is the one place `clerk migrate` keeps state. A dry run, a refusal, a
-run that needs consent and an import with nobody to import write none
-(`run: null`).
+Every import, export and undo that gets as far as writing is a **run**, and the run store is
+the one place `clerk migrate` keeps state. A dry run, a refusal, a run that
+needs consent and an empty file write none (`run: null`). An import whose
+users `--require-password` all leaves out still writes one, recording them
+as skipped.
 
 ### Where runs are kept
 
