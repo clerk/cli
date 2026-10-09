@@ -762,8 +762,15 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       // Held from before the checks to the end of the run: the scan below
       // alone leaves a gap a second process can pass through before either
       // one writes a run.
+      // Keyed by the secret key's stand-in ID, not `target.instanceId`: that is
+      // a `key_…` ID too when `GET /v1/instance` fails, so two processes on one
+      // instance would otherwise take different locks.
       if (!options.dryRun) {
-        lock.release = lockImport(runsDir, { sha256, source, instanceId: target.instanceId });
+        lock.release = lockImport(runsDir, {
+          sha256,
+          source,
+          instanceId: keyInstanceId(secretKey),
+        });
       }
       assertNoActiveImport(runsDir, {
         sha256,

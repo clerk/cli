@@ -18,6 +18,7 @@ import {
   startRun,
   importLockFile,
 } from "./lib/run-store.ts";
+import { keyInstanceId } from "./lib/target.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
 import { __resetCustomSourcesForTesting } from "./sources/registry.ts";
 // After run.ts: imported first, signals.ts loads version.ts ahead of its Bun
@@ -1269,10 +1270,11 @@ describe("run", () => {
     // The scan of runs alone has a gap: a second process can pass it before
     // either has written a run. The import's own lock closes it.
     test("refuses while another process holds this import's lock, with no run yet", async () => {
+      // Keyed by the key, so it holds whether or not `GET /v1/instance` answers.
       const lock = importLockFile(runsDir(), {
         sha256: sha256File(path.join(workDir, "export.json")),
         source: "clerk",
-        instanceId: "ins_1",
+        instanceId: keyInstanceId(baseOptions.secretKey),
       });
       // PID 1 is always alive, and never this test.
       fs.writeFileSync(lock, "1");
@@ -1289,10 +1291,11 @@ describe("run", () => {
 
     test("lets go of the import's lock when the run ends", async () => {
       await run(baseOptions);
+      // Keyed by the key, so it holds whether or not `GET /v1/instance` answers.
       const lock = importLockFile(runsDir(), {
         sha256: sha256File(path.join(workDir, "export.json")),
         source: "clerk",
-        instanceId: "ins_1",
+        instanceId: keyInstanceId(baseOptions.secretKey),
       });
       expect(fs.existsSync(lock)).toBe(false);
     });
