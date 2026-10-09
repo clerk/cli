@@ -258,6 +258,9 @@ after them. They sort the users three ways:
     receive mail (`.local`, `.invalid`, `.test`, `.example`, `.arpa`,
     `.internal`, `.lan`, `.corp` and the like). Such an email is dropped from
     any other user, with a warning
+  - its only phones are not in E.164 form, and the instance has numeric
+    usernames on, which makes Clerk require E.164. Such a phone is dropped from
+    any other user, with a warning
   - it lacks an identifier the instance requires. An email or phone counts
     only when it is verified, because an unverified one is attached after the
     user exists
@@ -277,7 +280,9 @@ after them. They sort the users three ways:
     without it (`skip_legal_checks`), with a warning
   - its username breaks the instance's username rules (length, letters,
     the allowed special characters). The checks offer the setting that allows
-    it. With usernames off, such a username is dropped instead, with a warning
+    it. With usernames off, such a username is dropped instead, with a warning.
+    Numeric usernames are not offered when the file has phones not in E.164
+    form, which the setting would make Clerk refuse; the reject counts them
   - its password is not the shape its hasher says (`bcrypt`, with a cost up to
     15, `scrypt_firebase`, `argon2i`/`argon2id` and `scrypt_werkzeug` are
     checked; other hashers are not, and Clerk refuses a bad one at create)
