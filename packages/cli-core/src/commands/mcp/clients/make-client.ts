@@ -5,15 +5,17 @@
  * file with a top-level map whose keys are server names and whose values are
  * per-client server descriptors. The differences are the serialization format
  * (JSON for most clients, TOML for Codex, YAML for Hermes), the top-level key name (`mcpServers`
- * vs `servers` vs `mcp_servers`) and the descriptor encoding (the standard
- * `{ command, args }` vs VS Code's `type: "stdio"`-tagged variant vs
- * opencode's single argv array). This factory captures those as a
- * codec + `topKey` + `encode` + `extractUrl` and reuses the rest.
+ * vs `servers` vs `mcp_servers`) and the URL descriptor encoding (Cursor's
+ * bare `{ url }` vs VS Code's `{ type: "http", url }` vs Gemini's `httpUrl`
+ * vs Windsurf's `serverUrl` vs opencode's `{ type: "remote", url }`). This
+ * factory captures those as a codec + `topKey` + `encode` + `extractUrl` and
+ * reuses the rest.
  */
 
+import { getMcpUrl } from "../../../lib/environment.ts";
 import { log } from "../../../lib/log.ts";
 import { isRecord } from "../../../lib/objects.ts";
-import { isClerkRunEntry } from "./clerk-run.ts";
+import { isLegacyBridgeEntry } from "./legacy-bridge.ts";
 import {
   getServerMap,
   readJsonConfig,
@@ -37,20 +39,14 @@ interface FileClientSpec {
   id: ClientId;
   displayName: string;
   scope: Scope;
-  activation: string;
+  /** Post-install steps for entry `name` — see {@link McpClient.activation}. */
+  activation: (name: string) => string;
   /** Key (or non-empty key path, for clients that nest their server map) under which entries live. */
   topKey: string | readonly [string, ...string[]];
   /** Encode the per-client server descriptor for this URL. */
   encode: (url: string) => Record<string, unknown>;
   /** Extract a URL back out of a server descriptor (for `list`). Returns undefined when the shape doesn't match. */
   extractUrl: (descriptor: unknown) => string | undefined;
-  /**
-   * Recognize a `clerk mcp run` bridge descriptor in this client's dialect.
-   * Only needed by clients whose encoding diverges from the standard
-   * `{ command, args }` shape (opencode's single argv array, fx's direct-URL
-   * entries); the default is {@link isClerkRunEntry}.
-   */
-  isOurs?: (descriptor: unknown) => boolean;
   /**
    * Normalize a freshly-read config before the server map is walked. Lets a
    * client fold a legacy or alias form into its canonical shape (fx accepts
@@ -112,19 +108,32 @@ function isClerkHost(hostname: string): boolean {
   return hostname === "mcp.clerk.com" || hostname.endsWith(".clerk.com");
 }
 
-function isClerkUrl(url: string): boolean {
+function canonicalUrl(url: string): string | undefined {
   try {
-    return isClerkHost(new URL(url).hostname);
+    return new URL(url).href;
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+/**
+ * Is this URL ours: a clerk.com host, or the currently resolved MCP URL —
+ * the latter keeps a `--name` install against a `CLERK_MCP_URL` override
+ * (local worker dev) visible to `list`/`doctor`/uninstall while the override
+ * is active. Install stores `resolveUrl()`'s normalized `URL.href` but
+ * `getMcpUrl()` returns the raw env/profile value, so both sides are
+ * canonicalized before comparing.
+ */
+function isClerkUrl(url: string): boolean {
+  const canonical = canonicalUrl(url);
+  if (canonical === undefined) return false;
+  return isClerkHost(new URL(canonical).hostname) || canonical === canonicalUrl(getMcpUrl());
 }
 
 function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
   const topKeyPath: readonly [string, ...string[]] =
     typeof spec.topKey === "string" ? [spec.topKey] : spec.topKey;
 
-  const isOurs = spec.isOurs ?? isClerkRunEntry;
   const normalize = spec.normalizeConfig ?? ((config: ConfigRecord) => config);
 
   /** Walk the key path, validating each level is an object (or absent → `{}`). */
@@ -150,9 +159,9 @@ function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
       const servers = serversIn(config, configPath);
 
       // Install always converges: whatever descriptor sits under this name
-      // (a legacy shape, a stale URL, a user's own entry) is overwritten with
-      // the current bridge shape — the same semantics the CLI-backed clients
-      // get from their remove-then-add.
+      // (a legacy `clerk mcp run` bridge, a stale URL, a user's own entry) is
+      // overwritten with the URL entry — the same semantics the CLI-backed
+      // clients get from their remove-then-add.
       const next = withServerMap(config, topKeyPath, {
         ...servers,
         [entry.name]: spec.encode(entry.url),
@@ -189,18 +198,33 @@ function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
       const servers = serversIn(config, configPath);
       const entries: ListEntry[] = [];
       for (const [name, descriptor] of Object.entries(servers)) {
+        // A legacy `clerk mcp run` bridge is ours no matter what it's named,
+        // so it stays listable and removable. It stores no URL; report the
+        // one it would have resolved to.
+        if (isLegacyBridgeEntry(descriptor)) {
+          entries.push({ client: spec.id, configPath, name, url: getMcpUrl(), legacy: true });
+          continue;
+        }
         const url = spec.extractUrl(descriptor);
         if (!url) continue;
-        // Descriptor shape first: a `clerk mcp run` bridge is ours no matter
-        // what the entry is named or what URL it currently resolves to (e.g.
-        // `--name foo` with `CLERK_MCP_URL` pointing at localhost) — otherwise
-        // such an entry would fall out of list/doctor and couldn't be removed.
-        if (isOurs(descriptor) || name === "clerk" || isClerkUrl(url)) {
-          entries.push({ client: spec.id, configPath, name, url });
+        if (name === "clerk" || isClerkUrl(url)) {
+          entries.push({ client: spec.id, configPath, name, url, legacy: false });
         }
       }
       return entries;
     },
+  };
+}
+
+/**
+ * `extractUrl` for clients whose descriptor stores the URL under a single
+ * string key (`url` for most, `httpUrl` for Gemini, `serverUrl` for Windsurf).
+ */
+export function urlField(key: string): (descriptor: unknown) => string | undefined {
+  return (descriptor) => {
+    if (!isRecord(descriptor)) return undefined;
+    const value = (descriptor as Record<string, unknown>)[key];
+    return typeof value === "string" ? value : undefined;
   };
 }
 

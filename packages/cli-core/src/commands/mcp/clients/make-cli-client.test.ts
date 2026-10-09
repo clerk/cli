@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import * as realOs from "node:os";
 import { join } from "node:path";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
+import type { McpServerEntry } from "./types.ts";
 
 // Redirect homedir so the synthetic base client writes into a tmpdir.
 let mockHome = realOs.tmpdir();
@@ -41,9 +42,9 @@ function makeBase() {
     id: "claude",
     displayName: "Fake Client",
     scope: "user",
-    activation: "Restart Fake Client.",
+    activation: () => "Restart Fake Client.",
     topKey: "mcpServers",
-    encode: () => ({ command: "clerk", args: ["mcp", "run"] }),
+    encode: (url) => ({ url }),
     extractUrl: (d) =>
       typeof d === "object" && d !== null && "url" in d ? String(d.url) : CLERK_URL,
     configPath: () => join(mockHome, ".fake", "config.json"),
@@ -62,7 +63,7 @@ function makeClient(
     base: makeBase(),
     binary: "fakecli",
     installHint: "Install it from https://example.com/fakecli.",
-    addArgs: (name: string) => ["mcp", "add", name],
+    addArgs: ({ name }: McpServerEntry) => ["mcp", "add", name],
     ...(overrides.addStdin !== undefined ? { addStdin: overrides.addStdin } : {}),
     ...(overrides.verifyAdd !== undefined ? { verifyAdd: overrides.verifyAdd } : {}),
   };
@@ -79,10 +80,7 @@ async function writeBaseConfig(entryName = "clerk"): Promise<string> {
   const dir = join(mockHome, ".fake");
   await mkdir(dir, { recursive: true });
   const path = join(dir, "config.json");
-  await writeFile(
-    path,
-    JSON.stringify({ mcpServers: { [entryName]: { command: "clerk", args: ["mcp", "run"] } } }),
-  );
+  await writeFile(path, JSON.stringify({ mcpServers: { [entryName]: { url: CLERK_URL } } }));
   return path;
 }
 
@@ -205,6 +203,22 @@ describe("makeCliClient", () => {
       const result = await client.upsert({ name: "clerk", url: CLERK_URL }, "/ignored");
       expect(result.status).toBe("installed");
       expect(mockRun).toHaveBeenCalledWith([BIN_PATH, "mcp", "add", "clerk"]);
+    });
+
+    test("addEntry replaces the CLI add but keeps the CLI pre-clean", async () => {
+      await writeBaseConfig();
+      const addEntry = mock((_entry: McpServerEntry, _cwd: string) => Promise.resolve());
+      const client = makeCliClient({
+        base: makeBase(),
+        binary: "fakecli",
+        installHint: "Install it from https://example.com/fakecli.",
+        addEntry,
+        removeArgs: (name: string) => ["mcp", "remove", name],
+      });
+      const result = await client.upsert({ name: "clerk", url: CLERK_URL }, "/cwd");
+      expect(result.status).toBe("installed");
+      expect(addEntry).toHaveBeenCalledWith({ name: "clerk", url: CLERK_URL }, "/cwd");
+      expect(mockRun.mock.calls.map((c) => c[0])).toEqual([[BIN_PATH, "mcp", "remove", "clerk"]]);
     });
 
     test("pipes addStdin to the CLI add (for CLIs whose add ends in a prompt)", async () => {

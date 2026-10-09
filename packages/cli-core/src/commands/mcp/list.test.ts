@@ -99,6 +99,33 @@ describe("mcp list", () => {
     expect(uiCapture.out).toContain("No Clerk MCP entries");
   });
 
+  test("reports a legacy bridge entry with legacy: true", async () => {
+    const cursorDir = join(cwd, ".cursor");
+    await mkdir(cursorDir, { recursive: true });
+    await writeFile(
+      join(cursorDir, "mcp.json"),
+      JSON.stringify({ mcpServers: { clerk: { command: "clerk", args: ["mcp", "run"] } } }),
+    );
+    await mcpList({});
+    const payload = JSON.parse(captured.out) as { entries: { name: string; legacy: boolean }[] };
+    expect(payload.entries).toEqual([
+      expect.objectContaining({ client: "cursor", name: "clerk", url: URL, legacy: true }),
+    ]);
+  });
+
+  test("human-mode marks legacy entries and points at `clerk mcp install`", async () => {
+    mockIsAgent.mockReturnValue(false);
+    const cursorDir = join(cwd, ".cursor");
+    await mkdir(cursorDir, { recursive: true });
+    await writeFile(
+      join(cursorDir, "mcp.json"),
+      JSON.stringify({ mcpServers: { clerk: { command: "clerk", args: ["mcp", "run"] } } }),
+    );
+    await mcpList({});
+    expect(uiCapture.out).toContain("clerk mcp run (legacy)");
+    expect(uiCapture.out).toContain("clerk mcp install");
+  });
+
   test("human-mode renders the table and next steps after an install", async () => {
     mockIsAgent.mockReturnValue(true);
     await mcpInstall({ client: ["cursor"], url: URL });

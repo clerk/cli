@@ -11,7 +11,8 @@
  * - `detect` = "is the client's binary on PATH" (`Bun.which`), not "does the
  *   config dir exist" — the picker only offers clients we can actually drive.
  * - No fallback: a missing binary or failing CLI is that client's failure,
- *   surfaced with the CLI's own stderr. We never write these configs ourselves.
+ *   surfaced with the CLI's own stderr. We never write these configs ourselves,
+ *   except Codex's add (`addEntry`), whose CLI add can't run headless.
  * - Install always converges: an existing entry is removed (via the client's
  *   own remove command, best-effort) before adding, so re-install works no
  *   matter how the CLI treats duplicate names.
@@ -23,15 +24,30 @@ import { findClientBinary, runClientCli } from "./cli-exec.ts";
 import { MCP_DOCS_URL } from "./types.ts";
 import type { McpClient, McpServerEntry, RemoveResult, UpsertResult } from "./types.ts";
 
-interface CliClientSpec {
+/**
+ * How the entry gets added: through the client's CLI (`addArgs`), or — when
+ * that CLI's add has side effects we can't run headless (Codex's starts a
+ * blocking browser OAuth login) — by a direct write (`addEntry`).
+ */
+type AddSpec =
+  | {
+      /** CLI argv (after the binary) that registers the entry. */
+      addArgs: (entry: McpServerEntry) => string[];
+      addEntry?: undefined;
+    }
+  | {
+      addArgs?: undefined;
+      /** Write the entry directly instead of running the CLI's add. */
+      addEntry: (entry: McpServerEntry, cwd: string) => Promise<void>;
+    };
+
+type CliClientSpec = AddSpec & {
   /** File-backed client used for `configPath`/`list` (and `remove` when the CLI has no remove command). */
   base: McpClient;
   /** Binary name resolved on PATH (`claude`, `gemini`, `codex`, `code`, `openclaw`, `hermes`). */
   binary: string;
   /** Appended to the not-found error: how to get the binary onto PATH. */
   installHint: string;
-  /** CLI argv (after the binary) that registers the entry. */
-  addArgs: (name: string) => string[];
   /** CLI argv (after the binary) that removes the entry. Omit when the CLI can only add (VS Code). */
   removeArgs?: (name: string) => string[];
   /**
@@ -46,7 +62,7 @@ interface CliClientSpec {
    * trusted. Skipped when the config is unreadable (the CLI keeps final say).
    */
   verifyAdd?: boolean;
-}
+};
 
 // No display-name prefix in thrown messages: settleClients prefixes the
 // client name when warning, so embedding it here would print it twice.
@@ -118,11 +134,11 @@ export function makeCliClient(spec: CliClientSpec): McpClient {
       } else if (presence === "present") {
         await base.remove(entry.name, cwd);
       }
-      await runOrThrow(
-        [bin, ...spec.addArgs(entry.name)],
-        "register the MCP server",
-        spec.addStdin,
-      );
+      if (spec.addEntry) {
+        await spec.addEntry(entry, cwd);
+      } else {
+        await runOrThrow([bin, ...spec.addArgs(entry)], "register the MCP server", spec.addStdin);
+      }
       if (spec.verifyAdd && (await presenceOf(base, entry.name, cwd)) === "absent") {
         throw new CliError(
           `the \`${binary}\` CLI reported success but did not save the entry — it may have prompted for input it didn't get. Register manually instead.`,

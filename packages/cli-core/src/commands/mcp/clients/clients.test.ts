@@ -39,9 +39,9 @@ useCaptureLog();
 
 const DEFAULT_URL = "https://mcp.clerk.com/mcp";
 
-// The stdio bridge every client registers: it launches `clerk mcp run` (no URL
-// in args — the URL is resolved at runtime).
-const RUN_SHAPE = { command: "clerk", args: ["mcp", "run"] };
+// The clerk 3.x stdio bridge entry. Nothing writes it anymore; it is seeded
+// here as the stale entry that list/uninstall must still find.
+const LEGACY_SHAPE = { command: "clerk", args: ["mcp", "run"] };
 
 // Config paths are part of the public contract: `list`/`doctor` read them, and
 // for the file-backed clients they're also where installs land.
@@ -98,27 +98,24 @@ const pathCases = [
 
 // File-backed clients: we write the entry ourselves (opencode's `mcp add` is
 // an interactive wizard, Warp has none, and fx's is skipped for version
-// coverage — see the README's fx note).
+// coverage — see the README's fx note). Each is its documented remote-server
+// dialect.
 const fileCases = [
-  { name: "cursor", client: cursorClient, topKey: "mcpServers", shape: RUN_SHAPE },
-  { name: "windsurf", client: windsurfClient, topKey: "mcpServers", shape: RUN_SHAPE },
-  { name: "warp", client: warpClient, topKey: "mcpServers", shape: RUN_SHAPE },
+  { name: "cursor", client: cursorClient, topKey: "mcpServers", shape: { url: DEFAULT_URL } },
+  {
+    name: "windsurf",
+    client: windsurfClient,
+    topKey: "mcpServers",
+    shape: { serverUrl: DEFAULT_URL },
+  },
+  { name: "warp", client: warpClient, topKey: "mcpServers", shape: { url: DEFAULT_URL } },
   {
     name: "opencode",
     client: opencodeClient,
     topKey: "mcp",
-    // opencode's stdio dialect: `type: "local"` and a single command array.
-    shape: { type: "local", command: ["clerk", "mcp", "run"] },
+    shape: { type: "remote", url: DEFAULT_URL },
   },
-  {
-    name: "fx",
-    client: fxClient,
-    topKey: "mcp",
-    // fx registers in the user-global `~/.fx/mcp.json` profile and connects
-    // over Streamable HTTP directly — no stdio bridge, so the URL is embedded
-    // at install time.
-    shape: { type: "http", url: DEFAULT_URL },
-  },
+  { name: "fx", client: fxClient, topKey: "mcp", shape: { type: "http", url: DEFAULT_URL } },
 ];
 
 // CLI-backed clients: registration is delegated to the client's own CLI. The
@@ -133,67 +130,38 @@ type CliCase = {
   removeArgv: string[];
   addOptions?: { stdin: string };
 };
-const cliCases: CliCase[] = [
+const cliAddCases: CliCase[] = [
   {
     name: "claude",
     client: claudeClient,
     binary: "claude",
-    addArgv: [
-      "mcp",
-      "add",
-      "--scope",
-      "user",
-      "--transport",
-      "stdio",
-      "clerk",
-      "--",
-      "clerk",
-      "mcp",
-      "run",
-    ],
+    addArgv: ["mcp", "add", "--scope", "user", "--transport", "http", "clerk", DEFAULT_URL],
     removeArgv: ["mcp", "remove", "--scope", "user", "clerk"],
   },
   {
     name: "gemini",
     client: geminiClient,
     binary: "gemini",
-    addArgv: [
-      "mcp",
-      "add",
-      "--scope",
-      "user",
-      "--transport",
-      "stdio",
-      "clerk",
-      "clerk",
-      "mcp",
-      "run",
-    ],
+    addArgv: ["mcp", "add", "--scope", "user", "--transport", "http", "clerk", DEFAULT_URL],
     removeArgv: ["mcp", "remove", "--scope", "user", "clerk"],
-  },
-  {
-    name: "codex",
-    client: codexClient,
-    binary: "codex",
-    addArgv: ["mcp", "add", "clerk", "--", "clerk", "mcp", "run"],
-    removeArgv: ["mcp", "remove", "clerk"],
   },
   {
     name: "openclaw",
     client: openclawClient,
     binary: "openclaw",
     // `--no-probe`: skip OpenClaw's test-connect on add — the hosted server
-    // needs OAuth, so probing would fail an otherwise valid registration.
+    // needs OAuth the user hasn't completed yet, so probing would fail an
+    // otherwise valid registration.
     addArgv: [
       "mcp",
       "add",
       "clerk",
-      "--command",
-      "clerk",
-      "--arg",
-      "mcp",
-      "--arg",
-      "run",
+      "--url",
+      DEFAULT_URL,
+      "--transport",
+      "streamable-http",
+      "--auth",
+      "oauth",
       "--no-probe",
     ],
     removeArgv: ["mcp", "unset", "clerk"],
@@ -202,8 +170,7 @@ const cliCases: CliCase[] = [
     name: "hermes",
     client: hermesClient,
     binary: "hermes",
-    // `--args` must be last: it swallows the rest of the argv.
-    addArgv: ["mcp", "add", "clerk", "--command", "clerk", "--args", "mcp", "run"],
+    addArgv: ["mcp", "add", "clerk", "--url", DEFAULT_URL, "--auth", "oauth"],
     // Hermes' add ends in a confirm prompt and cancels (exit 0!) on EOF, so
     // the answer is piped in.
     addOptions: { stdin: "y\n" },
@@ -211,7 +178,20 @@ const cliCases: CliCase[] = [
   },
 ];
 
-const VSCODE_ADD_JSON = JSON.stringify({ name: "clerk", type: "stdio", ...RUN_SHAPE });
+// Codex removes through its CLI but adds by appending to config.toml: its
+// `mcp add --url` starts a blocking browser login (see codex.ts).
+const cliRemoveCases: CliCase[] = [
+  ...cliAddCases,
+  {
+    name: "codex",
+    client: codexClient,
+    binary: "codex",
+    addArgv: [],
+    removeArgv: ["mcp", "remove", "clerk"],
+  },
+];
+
+const VSCODE_ADD_JSON = JSON.stringify({ name: "clerk", type: "http", url: DEFAULT_URL });
 
 describe("client contracts (homedir redirected)", () => {
   let origXdgConfigHome: string | undefined;
@@ -263,7 +243,7 @@ describe("client contracts (homedir redirected)", () => {
     },
   );
 
-  test.each(cliCases)(
+  test.each(cliAddCases)(
     "$name registers through its own CLI",
     async ({ client, binary, addArgv, addOptions }) => {
       // Seed the entry so post-add verification (hermes) sees it saved; the
@@ -279,7 +259,7 @@ describe("client contracts (homedir redirected)", () => {
     },
   );
 
-  test.each(cliCases)(
+  test.each(cliRemoveCases)(
     "$name removes through its own CLI",
     async ({ client, binary, removeArgv }) => {
       // Pre-write the entry (as the client's CLI would have) so presence checks pass.
@@ -297,7 +277,7 @@ describe("client contracts (homedir redirected)", () => {
     },
   );
 
-  test.each(cliCases)(
+  test.each(cliRemoveCases)(
     "$name detects via its binary on PATH, not the config dir",
     async ({ client, binary }) => {
       expect(await client.detect("/ignored")).toBe(true);
@@ -306,6 +286,44 @@ describe("client contracts (homedir redirected)", () => {
       expect(await client.detect("/ignored")).toBe(false);
     },
   );
+
+  test("codex appends its table to config.toml, keeping the user's comments", async () => {
+    const configPath = codexClient.configPath("/ignored");
+    await mkdir(join(configPath, ".."), { recursive: true });
+    const original = '# my settings\nmodel = "o3" # inline note\n';
+    await writeFile(configPath, original);
+    const result = await codexClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored");
+    expect(result.status).toBe("installed");
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(await readFile(configPath, "utf8")).toBe(
+      `${original}\n[mcp_servers.clerk]\nurl = "${DEFAULT_URL}"\n`,
+    );
+  });
+
+  test("codex replaces an existing entry via `codex mcp remove` before appending", async () => {
+    const configPath = codexClient.configPath("/ignored");
+    await writeClientEntry(configPath);
+    // Simulate the CLI dropping its own entry.
+    mockRun.mockImplementation(async () => {
+      await writeFile(configPath, "");
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    await codexClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored");
+    expect(mockRun).toHaveBeenCalledWith(["/fake/bin/codex", "mcp", "remove", "clerk"]);
+    expect(await readFile(configPath, "utf8")).toBe(
+      `[mcp_servers.clerk]\nurl = "${DEFAULT_URL}"\n`,
+    );
+  });
+
+  test("codex refuses to append a duplicate table when the pre-clean left the entry", async () => {
+    const configPath = codexClient.configPath("/ignored");
+    await writeClientEntry(configPath);
+    const before = await readFile(configPath, "utf8");
+    await expect(
+      codexClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored"),
+    ).rejects.toMatchObject({ code: "mcp_client_config_invalid" });
+    expect(await readFile(configPath, "utf8")).toBe(before);
+  });
 
   test("vscode registers through `code --add-mcp` with the entry JSON", async () => {
     const result = await vscodeClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored");
@@ -318,7 +336,7 @@ describe("client contracts (homedir redirected)", () => {
     await mkdir(join(vscodeUserDir()), { recursive: true });
     await writeFile(
       configPath,
-      JSON.stringify({ servers: { clerk: { type: "stdio", ...RUN_SHAPE } } }),
+      JSON.stringify({ servers: { clerk: { type: "http", url: DEFAULT_URL } } }),
     );
     const result = await vscodeClient.remove("clerk", "/ignored");
     expect(result.removed).toBe(true);
@@ -327,7 +345,27 @@ describe("client contracts (homedir redirected)", () => {
     expect(parsed.servers).toBeUndefined();
   });
 
-  test("opencode lists both its local (bridge) and remote (clerk-hosted) dialects", async () => {
+  test.each([
+    { name: "cursor", client: cursorClient },
+    { name: "windsurf", client: windsurfClient },
+    { name: "warp", client: warpClient },
+  ])(
+    "$name lists a legacy bridge entry under any name and install replaces it",
+    async ({ client }) => {
+      const configPath = client.configPath("/ignored");
+      await mkdir(join(configPath, ".."), { recursive: true });
+      await writeFile(configPath, JSON.stringify({ mcpServers: { custom: LEGACY_SHAPE } }));
+      expect(await client.list("/ignored")).toEqual([
+        { client: client.id, configPath, name: "custom", url: DEFAULT_URL, legacy: true },
+      ]);
+      await client.upsert({ name: "custom", url: DEFAULT_URL }, "/ignored");
+      expect(await client.list("/ignored")).toEqual([
+        expect.objectContaining({ name: "custom", legacy: false }),
+      ]);
+    },
+  );
+
+  test("opencode lists its remote dialect and flags a legacy local bridge", async () => {
     const configPath = opencodeClient.configPath("/ignored");
     await mkdir(join(configPath, ".."), { recursive: true });
     await writeFile(
@@ -341,7 +379,10 @@ describe("client contracts (homedir redirected)", () => {
       }),
     );
     const entries = await opencodeClient.list("/ignored");
-    expect(entries.map((e) => e.name).sort()).toEqual(["clerk", "hosted"]);
+    expect(entries.map((e) => [e.name, e.legacy])).toEqual([
+      ["clerk", true],
+      ["hosted", false],
+    ]);
     expect(entries.every((e) => e.url === DEFAULT_URL)).toBe(true);
   });
 
@@ -413,8 +454,8 @@ describe("client contracts (homedir redirected)", () => {
     expect(parsed.mcp).toEqual({ clerk: { type: "http", url: DEFAULT_URL } });
   });
 
-  // Direct-URL entries carry no bridge argv, so provenance rides on the URL:
-  // a custom-name entry pointing at the active `CLERK_MCP_URL` override must
+  // URL entries carry no other marker, so provenance rides on the URL: a
+  // custom-name entry pointing at the active `CLERK_MCP_URL` override must
   // stay visible to list/doctor/uninstall while that override is set.
   test("fx lists a custom-name entry matching the resolved URL override", async () => {
     const configPath = fxClient.configPath("/ignored");
@@ -496,23 +537,34 @@ describe("client contracts (homedir redirected)", () => {
   });
 });
 
+// Seeds a clerk entry the way the client's CLI would store it.
 async function writeClientEntry(configPath: string): Promise<void> {
   const dir = join(configPath, "..");
   await mkdir(dir, { recursive: true });
   if (configPath.endsWith(".toml")) {
-    await writeFile(configPath, '[mcp_servers.clerk]\ncommand = "clerk"\nargs = ["mcp", "run"]\n');
+    await writeFile(configPath, `[mcp_servers.clerk]\nurl = "${DEFAULT_URL}"\n`);
     return;
   }
   if (configPath.endsWith("config.yaml")) {
     await writeFile(
       configPath,
-      "mcp_servers:\n  clerk:\n    command: clerk\n    args: [mcp, run]\n",
+      `mcp_servers:\n  clerk:\n    url: ${DEFAULT_URL}\n    auth: oauth\n`,
     );
     return;
   }
   if (configPath.endsWith("openclaw.json")) {
-    await writeFile(configPath, JSON.stringify({ mcp: { servers: { clerk: RUN_SHAPE } } }));
+    await writeFile(
+      configPath,
+      JSON.stringify({ mcp: { servers: { clerk: { url: DEFAULT_URL } } } }),
+    );
     return;
   }
-  await writeFile(configPath, JSON.stringify({ mcpServers: { clerk: RUN_SHAPE } }));
+  if (configPath.endsWith("settings.json")) {
+    await writeFile(
+      configPath,
+      JSON.stringify({ mcpServers: { clerk: { httpUrl: DEFAULT_URL } } }),
+    );
+    return;
+  }
+  await writeFile(configPath, JSON.stringify({ mcpServers: { clerk: { url: DEFAULT_URL } } }));
 }

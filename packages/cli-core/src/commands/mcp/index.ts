@@ -27,10 +27,6 @@ export function registerMcp(program: Program): void {
       },
       { command: "clerk mcp list", description: "Show registered Clerk entries" },
       { command: "clerk mcp uninstall", description: "Remove the Clerk entry from all clients" },
-      {
-        command: "clerk mcp run",
-        description: "stdio bridge an editor launches (not run by hand)",
-      },
     ]);
 
   mcpCmd
@@ -65,18 +61,12 @@ export function registerMcp(program: Program): void {
     .setExamples([{ command: "clerk mcp list", description: "List Clerk entries everywhere" }])
     .action(async (options) => mcp.list(options));
 
+  // Removed in 4.0 — hidden, and kept only so editors still launching the
+  // 3.x bridge get an error pointing at `clerk mcp install`.
   mcpCmd
-    .command("run")
-    .description(
-      "stdio bridge to the remote MCP server (clients spawn this; not meant to be run by hand)",
-    )
-    .setExamples([
-      {
-        command: "clerk mcp run",
-        description: "Forward stdio JSON-RPC to the remote server",
-      },
-    ])
-    .action(async (options) => mcp.run(options));
+    .command("run", { hidden: true })
+    .description("Removed — re-run `clerk mcp install` to switch to the HTTP-based server")
+    .action(async () => mcp.run());
 
   mcpCmd
     .command("uninstall")
