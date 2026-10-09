@@ -587,6 +587,15 @@ function formatSummary(
   if (skipped > 0) lines.push(`${yellow("Skipped:")} ${skipped}`);
   // The user quota stopped the run: these go out on a re-run.
   if (summary.notSent > 0) lines.push(`${yellow("Not sent:")} ${summary.notSent}`);
+  // Printed here, after the progress bar, which would redraw over it mid-run.
+  if (summary.stopReason) {
+    lines.push(
+      "",
+      yellow(
+        `${summary.stopReason} No more users were sent: running the import again picks up the rest once the limit is raised.`,
+      ),
+    );
+  }
 
   if (summary.errorBreakdown.size > 0) {
     lines.push("", bold("Error breakdown:"));
@@ -1134,6 +1143,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                 created: summary.successful,
                 failed: summary.failed,
                 notSent: summary.notSent,
+                ...(summary.stopReason ? { stopReason: summary.stopReason } : {}),
                 skipped: checks.rejects.length + withoutPassword.length,
                 errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
                 warnings: [...summary.droppedPhones].map(([reason, count]) => ({
