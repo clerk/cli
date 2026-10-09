@@ -567,8 +567,8 @@ clerk migrate import users.json --source clerk --json --yes
 clerk migrate import users.json --source clerk --require-password --yes
 clerk migrate import users.json --source clerk --skip-legal-checks --yes
 clerk migrate import users.json --source workos --reserve-unverified --yes
-clerk migrate import users.json --source firebase --firebase-signer-key <key> \
-  --firebase-salt-separator <sep> --firebase-rounds 8 --firebase-mem-cost 14 --yes
+clerk migrate import users.json --source firebase --firebase-signer-key SIGNER_KEY \
+  --firebase-salt-separator SALT_SEPARATOR --firebase-rounds 8 --firebase-mem-cost 14 --yes
 clerk migrate import users.json --source clerk --runs-dir ./runs --yes
 clerk migrate import users.json --source clerk --app app_123 --instance prod --yes
 clerk migrate import users.json --source clerk --secret-key sk_test_... -y
@@ -616,7 +616,9 @@ what to pass.
 `Import N users?`, and declining writes nothing. `--yes` skips the question.
 Without either — an agent, a non-TTY run, `--json` — the run prints the checks
 and exits 2 with the exact command to run. Printed commands shell-quote their
-paths, keep `--json`, and put `<key>` in place of a secret key.
+paths, keep `--json`, and put `<key>` in place of a secret key and
+`SIGNER_KEY`, `SALT_SEPARATOR`, `ROUNDS` and `MEM_COST` in place of the
+Firebase parameters.
 
 **Every run prints its target first**, then which [case](#re-running) applies,
 then the checks.
@@ -1073,11 +1075,12 @@ run uses whichever the flag or answer says that time.
 
 Firebase uses a modified scrypt, so Clerk needs the project's four parameters
 alongside each digest. Find them in the Firebase console under
-**Authentication → Users → (⋮) → Password hash parameters**.
+**Authentication → Users → (⋮) → Password hash parameters**, and put them in
+place of `SIGNER_KEY`, `SALT_SEPARATOR` and the two numbers:
 
 ```sh
 clerk migrate import users.json --source firebase -y \
-  --firebase-signer-key <key> --firebase-salt-separator <sep> \
+  --firebase-signer-key SIGNER_KEY --firebase-salt-separator SALT_SEPARATOR \
   --firebase-rounds 8 --firebase-mem-cost 14
 ```
 
