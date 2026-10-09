@@ -40,7 +40,7 @@ const supabaseSource = {
   key: "supabase",
   label: "Supabase",
   description:
-    "Works with a Supabase `auth.users` export. Users whose only social provider is not enabled in Clerk are rejected by the import's checks, unless they can sign in by email or phone code.",
+    "Works with a Supabase `auth.users` export. Users whose only social provider is not enabled in Clerk are rejected by the import's checks, unless they can sign in by email code, email link or phone code.",
   carries: {
     passwords: {
       level: "yes",
