@@ -597,6 +597,10 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         source,
         file: { path: filePath, sha256 },
       });
+      // Printed now, not on the way out: on a Ctrl-C the signal handler exits
+      // before the import returns, and the folder is the only record of who
+      // was created.
+      log.info(`Run ${run.record.id}: ${run.dir}`);
       recordRejects(run, checks);
       for (const user of withoutPassword) {
         run.append({
@@ -630,12 +634,11 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
               errorBreakdown: new Map(),
             };
       // A Ctrl-C returns the import early, and the users it never sent have
-      // no line to count. Left unfinished, the run reads as interrupted. The
-      // signal handler prints nothing of ours, so the run line goes out here,
-      // and the throw closes the gutter as paused.
+      // no line to count. Left unfinished, the run reads as interrupted, and
+      // the throw closes the gutter as paused, when the signal handler has not
+      // already exited.
       if (interruptedExitCode() !== null) {
         run.release();
-        log.info(`Stopped. Run ${run.record.id} records who was created: ${run.dir}`);
         throwUserAbort();
       }
       const record = run.finish({ notSent: summary.notSent });
