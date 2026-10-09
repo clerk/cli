@@ -673,16 +673,18 @@ function findDisabledProviderRejects(input: CheckInput): Map<string, string> {
 
   const { excludedIds } = findUsersWithOnlyDisabledProviders(input.supabaseRows, disabled);
   // A disabled provider only strands a user with no other way in: a verified
-  // email or phone the instance signs in with by code or link still works.
+  // or reserved email or phone the instance signs in with by code or link
+  // still works.
   const strategies = firstFactorStrategies(input.settings);
   const usersById = new Map(input.users.map((user) => [user.userId, user]));
+  const reserves = reservesFor(input);
   const canSignInOtherwise = (id: string) => {
     const user = usersById.get(id);
     if (!user) return false;
-    const { primaryEmail, primaryPhone } = splitIdentifiers(user);
+    const { emails, phones } = sentIdentifiers(user, reserves(user));
     return (
-      (Boolean(primaryEmail) && (strategies.has("email_code") || strategies.has("email_link"))) ||
-      (Boolean(primaryPhone) && strategies.has("phone_code"))
+      (emails.length > 0 && (strategies.has("email_code") || strategies.has("email_link"))) ||
+      (phones.length > 0 && strategies.has("phone_code"))
     );
   };
   // Each reject names only that user's own providers.

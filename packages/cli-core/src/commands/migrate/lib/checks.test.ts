@@ -475,6 +475,24 @@ describe("rejects", () => {
     ).toEqual({ u: "only signs in with Discord, which is not enabled in Clerk" });
   });
 
+  // A reserved identifier signs in by code, and is verified the first time.
+  test("a reserved email is a way in for a supabase user on a disabled provider", async () => {
+    expect(
+      await reasonsOf({
+        settings: settings({
+          email_address: {
+            enabled: true,
+            used_for_first_factor: true,
+            first_factors: ["email_link"],
+          },
+        }),
+        reserveUnverified: true,
+        supabaseRows: [{ id: "u", raw_app_meta_data: { providers: ["discord"] } }],
+        users: [user("u", { email: undefined, unverifiedEmailAddresses: ["u@x.dev"] })],
+      }),
+    ).toEqual({});
+  });
+
   // Clerk can't turn on a provider it doesn't offer, so none is suggested.
   test("a provider Clerk doesn't offer is named as such, with no fix", async () => {
     const rows = [
