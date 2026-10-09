@@ -217,6 +217,17 @@ type CreateContext = {
   quotaReached: boolean;
 };
 
+/**
+ * True when Clerk refused the create for a phone. The country error names no
+ * parameter, only its own code.
+ */
+function isPhoneRefusal(error: unknown): error is BapiError {
+  return (
+    error instanceof BapiError &&
+    (error.code === "unsupported_country_code" || error.meta?.param_name === "phone_number")
+  );
+}
+
 /** A create a Ctrl-C stopped before it went out: neither a failure nor unknown. */
 class NotSentError extends Error {}
 
@@ -371,19 +382,31 @@ async function createUser(
   } catch (error) {
     // A phone Clerk refuses (a country it does not support, a number that is
     // not E.164) should not cost a user who has an email to be created under.
-    // The country error names no parameter, only its own code.
-    const phoneRefused =
-      error instanceof BapiError &&
-      (error.code === "unsupported_country_code" || error.meta?.param_name === "phone_number");
-    if (!phoneRefused || !body.email_address) throw error;
+    if (!isPhoneRefusal(error)) throw error;
     const {
-      phone_number: dropped,
-      phone_number_identification_status: _statuses,
+      phone_number: sent,
+      phone_number_identification_status: statuses,
       ...withoutPhone
     } = body;
-    response = await create(withoutPhone);
-    phoneRefusal = error.longMessage ?? error.message;
-    notes.push(`Failed to add phone ${(dropped as string[]).join(", ")}: ${phoneRefusal}`);
+    let refusal = error;
+    let dropped = sent as string[];
+    // With reserved phones on the create, any one of them may be the refused
+    // one: the verified phone alone goes first, so it is not lost with them.
+    if (statuses && identifiers.primaryPhone) {
+      try {
+        response = await create({ ...withoutPhone, phone_number: [identifiers.primaryPhone] });
+        dropped = dropped.filter((phone) => phone !== identifiers.primaryPhone);
+      } catch (retryError) {
+        if (!isPhoneRefusal(retryError)) throw retryError;
+        refusal = retryError;
+      }
+    }
+    if (!response) {
+      if (!body.email_address) throw refusal;
+      response = await create(withoutPhone);
+    }
+    phoneRefusal = refusal.longMessage ?? refusal.message;
+    notes.push(`Failed to add phone ${dropped.join(", ")}: ${phoneRefusal}`);
   }
 
   // Untracked, the user could never be undone. Thrown, the outcome is unknown,
