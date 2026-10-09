@@ -332,9 +332,21 @@ describe("betterauth", () => {
 
   test.each([
     [`${SALT}:${KEY}`, `scrypt:16384:16:1$${SALT}$${KEY}`, "scrypt_werkzeug"],
-    ["$2a$10$hash", "$2a$10$hash", "bcrypt"],
-    ["$2b$10$hash", "$2b$10$hash", "bcrypt"],
-    ["$2y$10$hash", "$2y$10$hash", "bcrypt"],
+    [
+      "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      "bcrypt",
+    ],
+    [
+      "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      "bcrypt",
+    ],
+    [
+      "$2y$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      "$2y$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      "bcrypt",
+    ],
     [
       "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA",
       "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA",
@@ -390,6 +402,23 @@ describe("betterauth", () => {
     [undefined, undefined],
   ])("banned=%p is carried through as %p", (banned, expected) => {
     expect(one("betterauth", { ...base, banned })?.banned).toBe(expected as boolean | undefined);
+  });
+
+  // The prefix alone said bcrypt, so the user was rejected instead of dropped.
+  test("drops a malformed bcrypt hash, and imports the user", async () => {
+    const { users } = await load("betterauth", [{ ...base, password_hash: "$2a$10$hash" }]);
+    expect(users[0]?.password).toBeUndefined();
+    expect(users[0]?.passwordDropped).toBe(true);
+  });
+
+  // Clerk's ban has no end: the checks warn using the one Better Auth set.
+  test("a ban with an expiry keeps its end date; one without is permanent", () => {
+    expect(
+      one("betterauth", { ...base, banned: true, banExpires: "2999-01-01T00:00:00.000Z" }),
+    ).toMatchObject({ banned: true, banEndsAt: "2999-01-01T00:00:00.000Z" });
+    const permanent = one("betterauth", { ...base, banned: true, banExpires: null });
+    expect(permanent?.banned).toBe(true);
+    expect(permanent).not.toHaveProperty("banEndsAt");
   });
 
   // Better Auth lifts an expired ban only at the next sign-in, so the column
