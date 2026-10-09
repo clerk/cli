@@ -18,7 +18,6 @@
 
 import { bapiRequest } from "../../lib/bapi.ts";
 import { BapiError } from "../../lib/errors.ts";
-import { log } from "../../lib/log.ts";
 import { interruptSignal } from "../../lib/signals.ts";
 import type { ResolvedLimits } from "./lib/instance.ts";
 import type { ProgressUpdate } from "./lib/progress.ts";
