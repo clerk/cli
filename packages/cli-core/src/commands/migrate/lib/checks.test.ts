@@ -724,6 +724,22 @@ describe("warnings", () => {
     );
   });
 
+  // Clerk's ban has no end, so a source's temporary ban would outlast itself.
+  test("a ban that was due to end", async () => {
+    const checks = await checkImport(
+      input({
+        users: [
+          user("a", { banned: true, banEndsAt: "2026-11-01T00:00:00.000Z" }),
+          user("b", { banned: true, banEndsAt: "2026-12-01T00:00:00.000Z" }),
+          user("c", { banned: true }),
+        ],
+      }),
+    );
+    expect(checks.warnings).toContain(
+      "2 users have bans that end by 2026-12-01; Clerk's ban has no end, so they stay banned until unbanned in Clerk",
+    );
+  });
+
   test("fields Clerk has no place for", async () => {
     const checks = await checkImport(
       input({ users: [user("a")], unknownFields: { department: 3, role: 1 } }),
