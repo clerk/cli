@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -66,6 +66,28 @@ describe("finishExport", () => {
     const { outputPath } = finishExport({ run, options: { output }, users, coverage });
 
     expect(fs.statSync(outputPath).mode & 0o777).toBe(0o600);
+  });
+
+  // Tightened before a byte lands: a chmod after the write leaves the data
+  // readable at the old mode in between, or for good if the write fails.
+  test("an existing --output is owner-only before the export is written to it", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "supabase" });
+    const output = path.join(runsDir, "existing-before.json");
+    fs.writeFileSync(output, "old", { mode: 0o644 });
+    const modesAtWrite: number[] = [];
+    const write = fs.writeSync;
+    const spy = spyOn(fs, "writeSync").mockImplementation(((fd: number, ...rest: unknown[]) => {
+      modesAtWrite.push(fs.fstatSync(fd).mode & 0o777);
+      return (write as (...args: unknown[]) => number)(fd, ...rest);
+    }) as typeof fs.writeSync);
+    try {
+      finishExport({ run, options: { output }, users, coverage });
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(modesAtWrite).toEqual([0o600]);
+    expect(fs.readFileSync(output, "utf-8")).not.toContain("old");
   });
 
   test("--output writes somewhere else, and the run still records where", async () => {
