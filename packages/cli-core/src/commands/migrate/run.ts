@@ -318,6 +318,14 @@ async function resolveInput(
   return { file, fromExport: record.id, exportSha256: sha256 };
 }
 
+/** A file the import read changed before it finished reading it. */
+function throwChangedFile(file: string): never {
+  throwUsageError(
+    `${quoteArg(file)} changed while it was being imported. Nothing was imported. ` +
+      "Run the import again once nothing else is writing to it.",
+  );
+}
+
 function throwChangedExport(runId: string, file: string): never {
   throwUsageError(
     `The file run ${runId} wrote, ${quoteArg(file)}, has changed since it was exported. Nothing was imported. ` +
@@ -621,9 +629,19 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
   const input = await resolveInput(options);
   options = { ...options, file: input.file };
+  // Hashed before the envelope is read: the envelope and the users are read
+  // separately, so each later read is checked against this revision.
+  const readSha256 = fileExists(input.file)
+    ? sha256File(resolveImportFilePath(input.file))
+    : undefined;
   const envelope = fileExists(input.file)
     ? readEnvelope(resolveImportFilePath(input.file))
     : undefined;
+  // The revision the import must read throughout: the one an export run
+  // recorded, or the one the envelope came from.
+  const expectedSha256 = input.exportSha256 ?? readSha256;
+  const throwChanged = (filePath: string): never =>
+    input.fromExport ? throwChangedExport(input.fromExport, filePath) : throwChangedFile(filePath);
   options = applyEnvelope(options, envelope);
 
   // Asked only when the file does not say where it came from.
@@ -642,9 +660,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       const filePath = resolveImportFilePath(file);
       const sha256 = sha256File(filePath);
-      if (input.fromExport && sha256 !== input.exportSha256) {
-        throwChangedExport(input.fromExport, filePath);
-      }
+      if (expectedSha256 !== undefined && sha256 !== expectedSha256) throwChanged(filePath);
       const runsDir = await resolveRunsDir(options.runsDir);
 
       const resume: ResumeCase = options.newRun
@@ -746,10 +762,10 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       }
 
       // Checked again after the last read of the file, before anything is
-      // created: the users and the provider rows came from the file the export
-      // run recorded, not one written since.
-      if (input.fromExport && sha256File(filePath) !== input.exportSha256) {
-        throwChangedExport(input.fromExport, filePath);
+      // created: the envelope, the users and the provider rows all came from
+      // one revision, the one an export run recorded if there is one.
+      if (expectedSha256 !== undefined && sha256File(filePath) !== expectedSha256) {
+        throwChanged(filePath);
       }
 
       const [settings, existingUsers] = await withSpinner("Checking the instance...", async () =>
