@@ -592,7 +592,7 @@ function formatSummary(
     lines.push(
       "",
       yellow(
-        "No more users were sent. Once the limit is raised, run the import again with `--allow-partial --yes` to send them.",
+        "No more users were sent. Once the limit is raised, run the import again to send them.",
       ),
     );
   }
