@@ -1431,6 +1431,28 @@ describe("run", () => {
       expect(created()).toHaveLength(0);
     });
 
+    // The loader caches by URL: an edit at the same path must still load the
+    // edited mappings, the ones the run's hash names.
+    test("an edited source at the same path maps with its edited code", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      fs.writeFileSync(
+        path.join(workDir, customFile),
+        CUSTOM.replace('given: "firstName"', 'given: "lastName"'),
+      );
+      requests = [];
+      await run({
+        input: "export.json",
+        source: customFile,
+        yes: true,
+        secretKey: "sk_test_x",
+        newRun: true,
+      });
+
+      const bodies = created().map((r) => r.body as Record<string, unknown>);
+      expect(bodies[0]).toMatchObject({ last_name: "Ada" });
+      expect("first_name" in (bodies[0] ?? {})).toBe(false);
+    });
+
     // An edited source is a different source, so the run records which one.
     test("records the custom source's content hash on the run", async () => {
       await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });

@@ -57,6 +57,9 @@ export const ACCOUNT_LINKING_NOTE =
 const customSources: SourceEntry[] = [];
 
 export function registerCustomSource(entry: SourceEntry): void {
+  // The latest load of a key wins: an edited source replaces its old self.
+  const earlier = customSources.findIndex((source) => source.key === entry.key);
+  if (earlier >= 0) customSources.splice(earlier, 1);
   customSources.push(entry);
 }
 
@@ -107,10 +110,14 @@ export type ResolvedSource = { key: string; entry: SourceEntry; path?: string; h
  */
 export async function resolveSource(value: string): Promise<ResolvedSource> {
   if (isSourcePath(value)) {
-    const entry = await loadCustomSource(value, sourceKeys());
-    registerCustomSource(entry);
     const resolved = path.resolve(process.cwd(), value);
-    const hash = createHash("sha256").update(fs.readFileSync(resolved)).digest("hex");
+    // Hashed first, and loaded by that hash: the record names the very code
+    // that maps the users, even if the file was edited since a last load.
+    const hash = fs.existsSync(resolved)
+      ? createHash("sha256").update(fs.readFileSync(resolved)).digest("hex")
+      : undefined;
+    const entry = await loadCustomSource(value, sourceKeys(), hash);
+    registerCustomSource(entry);
     return { key: entry.key, entry, path: resolved, hash };
   }
 

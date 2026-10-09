@@ -144,6 +144,12 @@ export function validateSource(
 export async function loadCustomSource(
   file: string,
   reservedKeys: readonly string[] = [],
+  /**
+   * The file's content hash. The module loader caches by URL, so an edited
+   * file at the same path would load the old module; the hash in the URL
+   * loads the version that was hashed.
+   */
+  version?: string,
 ): Promise<SourceEntry> {
   const resolved = path.resolve(process.cwd(), file);
 
@@ -161,7 +167,15 @@ export async function loadCustomSource(
   try {
     // A file URL rather than a bare path: an absolute POSIX path happens to
     // work, but a Windows path (`C:\...`) is not a valid import specifier.
-    module = (await import(Bun.pathToFileURL(resolved).href)) as Record<string, unknown>;
+    // Bun keys its module cache by specifier and keeps a `file://` URL's
+    // module whatever its query, but a plain path's query loads afresh.
+    // ponytail: Windows keeps the URL form, so an edit loaded twice in one
+    // process reuses the first; each CLI run is a process of its own.
+    const specifier =
+      version && process.platform !== "win32"
+        ? `${resolved}?v=${version}`
+        : Bun.pathToFileURL(resolved).href;
+    module = (await import(specifier)) as Record<string, unknown>;
   } catch (error) {
     throwUsageError(
       `Could not load ${file}: ${(error as Error).message}\n` +
