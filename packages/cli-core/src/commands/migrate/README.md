@@ -347,9 +347,10 @@ alongside imports.
   provider keeps them in its own tables, which the export does not read:
   migrate those separately, or have those users reset their password.
 
-All four say so on every run. The coverage row counts users who _have_ a
-password, so the size of the gap is visible up front — `workos` prints that row
-at zero unconditionally, because zero is the only value it can take.
+All four say so on every run. `clerk`'s and `workos`'s coverage also counts
+users who _have_ a password, so the size of the gap is visible up front —
+`workos` prints that row at zero unconditionally, because zero is the only value
+it can take.
 
 #### Database-backed exports (`supabase`, `authjs`, `betterauth`)
 
