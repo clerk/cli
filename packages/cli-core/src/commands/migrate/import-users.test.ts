@@ -400,14 +400,18 @@ describe("importUsers", () => {
     });
 
     expect(summary).toMatchObject({ successful: 1, failed: 0 });
-    // On record once created, then with its attach pending, then with what
-    // the attach added. A refused attach is not retried, so nothing is pending.
-    expect(lines).toHaveLength(3);
-    expect(lines[0]).toEqual({ sourceId: "u1", clerkId: "user_created", status: "created" });
-    expect(lines[1]?.pending).toEqual([{ kind: "email", value: "b@x.dev", verified: true }]);
-    expect(lines[2]).toMatchObject({ status: "created", clerkId: "user_created" });
-    expect(lines[2]?.error).toContain("Failed to add additional email b@x.dev");
-    expect(lines[2]).not.toHaveProperty("pending");
+    // On record once created with its attach pending, in one line, then with
+    // what the attach added. A refused attach is not retried, so nothing is pending.
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toEqual({
+      sourceId: "u1",
+      clerkId: "user_created",
+      status: "created",
+      pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+    });
+    expect(lines[1]).toMatchObject({ status: "created", clerkId: "user_created" });
+    expect(lines[1]?.error).toContain("Failed to add additional email b@x.dev");
+    expect(lines[1]).not.toHaveProperty("pending");
   });
 
   // A Ctrl-C mid-backoff should not wait out the pause, nor send the attach.
