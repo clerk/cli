@@ -391,6 +391,23 @@ describe("run", () => {
       expect(imported).toMatchObject({ source: "clerk", fromExport: record.id });
     });
 
+    // Started by path, continued by run ID: the run still names its export.
+    test("a continue by export run ID links the run to the export", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      stubClerk({ failing: new Set(["u2"]) });
+      await run({ ...noSource, input: file });
+      expect(listRuns(runsDir()).find((c) => c.kind === "import")?.fromExport).toBeUndefined();
+
+      stubClerk();
+      process.exitCode = 0;
+      await run({ ...noSource, input: record.id });
+
+      const imported = listRuns(runsDir()).filter((c) => c.kind === "import");
+      expect(imported).toHaveLength(1);
+      expect(imported[0]).toMatchObject({ fromExport: record.id });
+      expect(captured.err).toContain(`The export in run ${record.id} holds your users' data`);
+    });
+
     test("imports an envelope file with no source named", async () => {
       const { file } = exportRun("clerk", export2);
 
