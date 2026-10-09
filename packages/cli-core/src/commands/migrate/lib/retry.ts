@@ -6,7 +6,9 @@
  * makes "deletion retries the same as import" true by construction.
  */
 
+import { setTimeout as delay } from "node:timers/promises";
 import { BapiError } from "../../../lib/errors.ts";
+import { interruptSignal } from "../../../lib/signals.ts";
 import { MAX_RETRIES, RETRY_DELAY_MS, getRetryDelay } from "./instance.ts";
 
 /** Seconds to wait per a 429's `Retry-After` header or error meta, if given. */
@@ -34,6 +36,11 @@ export type RetryOptions = {
   maxRetries?: number;
   /** Backoff when the response carries no `Retry-After`. */
   defaultDelayMs?: number;
+  /**
+   * Cuts a backoff short: the retry then goes at once, for `fn` to find the
+   * stop. A Ctrl-C by default.
+   */
+  signal?: AbortSignal;
 };
 
 /**
@@ -60,7 +67,10 @@ export async function retryOn429<T>(fn: () => Promise<T>, options: RetryOptions 
         delaySeconds,
         message: `Rate limit hit (429), retrying in ${delaySeconds}s (attempt ${attempt + 1}/${maxRetries})`,
       });
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      // Rejects only when the signal aborts, which ends the wait.
+      await delay(delayMs, undefined, { signal: options.signal ?? interruptSignal() }).catch(
+        () => {},
+      );
     }
   }
 }

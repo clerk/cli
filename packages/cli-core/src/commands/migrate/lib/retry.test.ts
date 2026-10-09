@@ -84,6 +84,26 @@ describe("retryOn429", () => {
     expect(performance.now() - started).toBeGreaterThanOrEqual(900);
   });
 
+  // A Ctrl-C or the quota landing mid-backoff should not wait out the server's wait.
+  test("an abort cuts a backoff short, and the retry goes at once", async () => {
+    let attempts = 0;
+    const stop = new AbortController();
+    const started = performance.now();
+    setTimeout(() => stop.abort(), 50);
+
+    await retryOn429(
+      async () => {
+        attempts++;
+        if (attempts === 1) throw rateLimited({ "retry-after": "5" });
+        return "ok";
+      },
+      { signal: stop.signal },
+    );
+
+    expect(attempts).toBe(2);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
   test("falls back to the default delay when no Retry-After is given", async () => {
     let attempts = 0;
     await retryOn429(
