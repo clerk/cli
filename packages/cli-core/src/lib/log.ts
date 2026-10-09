@@ -1,3 +1,4 @@
+import { isHuman } from "../mode.ts";
 import { dim, green, red, yellow } from "./color.ts";
 
 // ── Log level ────────────────────────────────────────────────────────────
@@ -138,13 +139,19 @@ export function setActiveCapture(captured: CapturedLogs | null): void {
   activeCapture = captured;
 }
 
+/** Agents read output as text; color.ts, highlight() and the gutter style it for a terminal. */
+function plain(msg: string): string {
+  return isHuman() ? msg : Bun.stripANSI(msg);
+}
+
 function writeln(stream: NodeJS.WriteStream, channel: "stdout" | "stderr", msg: string) {
+  const text = plain(msg);
   if (activeCapture) {
-    activeCapture[channel].push(msg);
+    activeCapture[channel].push(text);
     return;
   }
-  if (!shouldWrite(channel, msg)) return;
-  stream.write(msg + "\n");
+  if (!shouldWrite(channel, text)) return;
+  stream.write(text + "\n");
 }
 
 // ── Tagged child logger ──────────────────────────────────────────────────
@@ -198,7 +205,7 @@ function createLogger(tag?: string): Logger {
     },
     /** Blank line to stderr. Preserves pipe prefix inside intro/outro flow. */
     blank() {
-      const prefix = applyPrefix("");
+      const prefix = plain(applyPrefix(""));
       if (activeCapture) {
         activeCapture.stderr.push(prefix);
       } else {

@@ -1,5 +1,7 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { log, setLogLevel, getLogLevel, pushPrefix, popPrefix, type LogLevel } from "./log.ts";
+import { dim } from "./color.ts";
+import { _resetMode, setMode } from "../mode.ts";
 import { useCaptureLog } from "../test/lib/stubs.ts";
 
 let savedLevel: LogLevel;
@@ -10,6 +12,7 @@ beforeEach(() => {
 
 afterEach(() => {
   setLogLevel(savedLevel);
+  _resetMode();
 });
 
 describe("log levels", () => {
@@ -88,6 +91,7 @@ describe("withTag", () => {
   });
 
   test("preserves outer color after dim tag", () => {
+    setMode("human");
     const tagged = log.withTag("api");
     tagged.error("broken");
     expect(captured.stderr).toHaveLength(1);
@@ -101,6 +105,11 @@ describe("withTag", () => {
 
 describe("inline highlighting", () => {
   const captured = useCaptureLog();
+
+  // Styling only happens for humans; pinned so the runner's TTY doesn't decide.
+  beforeEach(() => {
+    setMode("human");
+  });
 
   test("backtick spans are highlighted in cyan", () => {
     log.info("Run `clerk link` to continue");
@@ -144,5 +153,32 @@ describe("raw", () => {
     log.raw(payload);
     expect(captured.stderr.length).toBe(3);
     expect(captured.stderr.every((line) => line === payload)).toBe(true);
+  });
+});
+
+describe("agent mode", () => {
+  const captured = useCaptureLog();
+
+  function styledCalls() {
+    log.info(dim("x"));
+    log.info("use `clerk`");
+    log.warn("w");
+    log.withTag("api").info("tagged");
+    pushPrefix();
+    log.info("in gutter");
+    log.blank();
+    popPrefix();
+  }
+
+  test("writes no escape codes", () => {
+    setMode("agent");
+    styledCalls();
+    expect(captured.stderr).toEqual(["x", "use `clerk`", "w", "[api] tagged", "│  in gutter", "│"]);
+  });
+
+  test("humans still get styled output", () => {
+    setMode("human");
+    styledCalls();
+    expect(captured.stderr.every((line) => line.includes("\x1b["))).toBe(true);
   });
 });
