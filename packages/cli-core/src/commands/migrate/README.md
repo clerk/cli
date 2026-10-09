@@ -344,8 +344,9 @@ alongside imports.
   support-request escape hatch: hashes go in on import and never come back, and
   `totp.secret` is returned on enrol only. There is nothing to add to the file.
 - **Auth.js** core stores no passwords. An app that also uses the Credentials
-  provider keeps them in its own tables, which the export does not read:
-  migrate those separately, or have those users reset their password.
+  provider stores them wherever it chose to, which the export does not read,
+  even a password column on the user table: migrate those separately, or have
+  those users reset their password.
 
 All four say so on every run. `clerk`'s and `workos`'s coverage also counts
 users who _have_ a password, so the size of the gap is visible up front —
@@ -401,9 +402,9 @@ the difference as significant once quoted. The run reports which one it found.
 The verified column is read as `emailVerified`, or `email_verified` on a legacy
 NextAuth table. Auth.js core stores no passwords, so its users arrive without
 credentials. That is all an OAuth or email-link app has. An app that also uses
-the Credentials provider keeps passwords in its own tables, which the export
-does not read: migrate those separately, or have those users reset their
-password.
+the Credentials provider stores passwords wherever it chose to, which the export
+does not read, even a password column on the user table: migrate those
+separately, or have those users reset their password.
 
 **`betterauth` reads its schema before it queries.** It finds the tables
 (`user` and `account`, or `users` and `accounts` under `usePlural: true`), how
