@@ -91,10 +91,10 @@ test("keeps calls paced when a pause ends", async () => {
 
   await first;
   const startedAt = (await Promise.all(held)).sort((a, b) => a - b);
-  // Half the 100ms interval: a loaded runner's timers drift, and released
-  // together the gaps would be about 0.
+  // 80 of the 100ms: a loaded runner's timers drift (89.97ms seen in CI),
+  // while a doubled rate would space them 50ms apart and a burst about 0.
   for (let i = 1; i < startedAt.length; i++) {
-    expect(startedAt[i]! - startedAt[i - 1]!).toBeGreaterThanOrEqual(50);
+    expect(startedAt[i]! - startedAt[i - 1]!).toBeGreaterThanOrEqual(80);
   }
 });
 
