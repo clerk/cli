@@ -662,7 +662,8 @@ describe("importUsers", () => {
       expect(summary).toMatchObject({ successful: 1, failed: 0 });
     });
 
-    test("drops every phone only when the verified one is refused too", async () => {
+    // The first refusal may have been the verified phone's alone.
+    test("drops the verified phone refused alone, and attaches the reserved ones after", async () => {
       refusePhone(2);
       await importUsers({
         users: [withPhones()],
@@ -672,9 +673,34 @@ describe("importUsers", () => {
         reserveUnverified: true,
       });
 
-      expect(requests).toHaveLength(3);
       expect(requests[2]?.body).not.toHaveProperty("phone_number");
-      expect(lines.at(-1)?.error).toContain("Failed to add phone +15555550100, +31612345678:");
+      expect(lines.at(-1)?.error).toContain("Failed to add phone +15555550100:");
+      expect(requests[3]).toMatchObject({
+        url: expect.stringContaining("/v1/phone_numbers"),
+        body: { phone_number: "+31612345678", verified: false },
+      });
+    });
+
+    // Any one of them may be the refused one, so none is lost with it.
+    test("attaches each reserved phone on its own when it can't tell which was refused", async () => {
+      refusePhone(1);
+      await importUsers({
+        users: [withPhones({ unverifiedPhoneNumbers: ["+31612345678", "+31612345679"] })],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      expect(requests[1]?.body).toMatchObject({ phone_number: ["+15555550100"] });
+      const attached = requests
+        .filter((request) => request.url.includes("/v1/phone_numbers"))
+        .map((request) => request.body);
+      expect(attached).toEqual([
+        expect.objectContaining({ phone_number: "+31612345678", verified: false }),
+        expect.objectContaining({ phone_number: "+31612345679", verified: false }),
+      ]);
+      expect(lines.at(-1)?.error ?? "").not.toContain("Failed to add phone");
     });
   });
 
