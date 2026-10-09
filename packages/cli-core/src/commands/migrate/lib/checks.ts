@@ -542,6 +542,8 @@ const hasAnyIdentifier = (user: User) =>
     hasValue(user[field as keyof User]),
   );
 
+const DUPLICATE_SOURCE_ID = "duplicate source ID in the file";
+
 /**
  * First user in the file to claim each email, phone and source ID.
  *
@@ -570,7 +572,7 @@ function findFileDuplicates(
 
   for (const user of users) {
     if (seenIds.has(user.userId)) {
-      reasons.set(user, "duplicate source ID in the file");
+      reasons.set(user, DUPLICATE_SOURCE_ID);
       continue;
     }
     seenIds.add(user.userId);
@@ -1089,7 +1091,14 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const { reasons: fileDuplicates, keptBy } = findFileDuplicates(passed, reservesFor(input));
   let candidates: User[] = [];
   for (const user of passed) {
-    const reason = input.adoptedSourceIds?.has(user.userId) ? undefined : fileDuplicates.get(user);
+    // An adopted user is in Clerk already, so an earlier record sharing its
+    // email costs it nothing. A second record with its source ID would be
+    // created as the same user, so that one is still rejected.
+    const duplicate = fileDuplicates.get(user);
+    const reason =
+      input.adoptedSourceIds?.has(user.userId) && duplicate !== DUPLICATE_SOURCE_ID
+        ? undefined
+        : duplicate;
     const kept = keptBy.get(user);
     if (reason)
       rejects.push({ sourceId: user.userId, reason, ...(kept ? { keptSourceId: kept } : {}) });

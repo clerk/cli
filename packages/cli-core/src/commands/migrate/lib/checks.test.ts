@@ -584,6 +584,18 @@ describe("rejects", () => {
     expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["b"]);
   });
 
+  // Both would go to importUsers as the one adopted user.
+  test("a second record with an adopted user's source ID is still rejected", async () => {
+    const checks = await checkImport(
+      input({
+        adoptedSourceIds: new Set(["a"]),
+        users: [user("a"), user("a", { email: "z@x.dev" })],
+      }),
+    );
+    expect(checks.importable).toHaveLength(1);
+    expect(checks.rejects).toEqual([{ sourceId: "a", reason: "duplicate source ID in the file" }]);
+  });
+
   test("warns that an unreadable user count was checked as empty", async () => {
     const checks = await checkImport(
       input({ instanceType: "dev", existingUsers: null, users: [user("a")] }),
