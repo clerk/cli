@@ -342,6 +342,35 @@ describe("deleting", () => {
     expect(deletes().map((request) => request.url.split("/").pop())).toEqual(["user_a"]);
   });
 
+  // The instance is over its limit for every delete, not just the one that hit it.
+  test("holds every other delete through a 429's wait", async () => {
+    const record = importRun();
+    const stub = globalThis.fetch;
+    const started = performance.now();
+    const deletedAt: number[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method !== "DELETE") return stub(input, init);
+      deletedAt.push(performance.now() - started);
+      if (deletedAt.length === 1) {
+        requests.push({ method: "DELETE", url: input.toString() });
+        return new Response(JSON.stringify({ errors: [{ code: "x", message: "slow down" }] }), {
+          status: 429,
+          headers: { "retry-after": "1" },
+        });
+      }
+      return stub(input, init);
+    }) as typeof fetch;
+    process.env.CLERK_MIGRATE_CONCURRENCY_LIMIT = "1";
+    try {
+      await undo(record.id, withDir({ yes: true }));
+    } finally {
+      delete process.env.CLERK_MIGRATE_CONCURRENCY_LIMIT;
+    }
+
+    expect(deletedAt).toHaveLength(3);
+    for (const at of deletedAt.slice(1)) expect(at - deletedAt[0]!).toBeGreaterThanOrEqual(900);
+  });
+
   test("deletes what the import created, records an undo run, and marks the import undone", async () => {
     const record = importRun();
 
