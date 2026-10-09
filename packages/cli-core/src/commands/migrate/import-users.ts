@@ -446,12 +446,11 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   };
 
   /**
-   * Attaches a created user's extra identifiers. The user goes on record with
-   * them `pending` first, so a run stopped before they attach can finish them.
+   * Attaches a created user's extra identifiers. The user is already on record
+   * with them `pending`, so a run stopped before they attach can finish them.
    */
   const finishUser = async (line: UserLine, toAttach: PendingIdentifier[], notes: string[]) => {
     const { error: _error, pending: _pending, ...base } = line;
-    if (toAttach.length > 0) record({ ...base, pending: toAttach });
     const attached = await attachAll(ctx, base.clerkId ?? "", toAttach);
     const error = [...notes, ...attached.notes].join("; ");
     // A second line, which wins as the latest, adds what happened on the way.
@@ -523,12 +522,15 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       status: "created",
       ...(user.passwordDropped ? { passwordDropped: true } : {}),
     };
-    record(line);
+    // One line, pending and all: a run stopped between a `created` line and a
+    // later `pending` one would read the user as settled, its extras unsent.
+    const toAttach = pendingIdentifiers(identifiers);
+    record(toAttach.length > 0 ? { ...line, pending: toAttach } : line);
     if (created.phoneRefusal) {
       const reason = normalizeErrorMessage(created.phoneRefusal);
       droppedPhones.set(reason, (droppedPhones.get(reason) ?? 0) + 1);
     }
-    await finishUser(line, pendingIdentifiers(identifiers), [...created.notes, ...retries]);
+    await finishUser(line, toAttach, [...created.notes, ...retries]);
     successful++;
     processed++;
     progress();
