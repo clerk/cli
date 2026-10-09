@@ -215,8 +215,10 @@ type CreateContext = {
   reserveUnverified: boolean;
   /** The run sending these creates; each carries it as its marker. */
   runId?: string;
-  /** Set by the first `user_quota_exceeded`: every later create would be refused too. */
-  quotaReached: boolean;
+  /** Aborted by the first `user_quota_exceeded`: every later create would be refused too. */
+  quota: AbortController;
+  /** Aborted by a Ctrl-C or the quota. No create goes out after it. */
+  stop: AbortSignal;
 };
 
 /**
@@ -366,11 +368,10 @@ async function createUser(
 ): Promise<CreatedUser> {
   // A Ctrl-C or a full instance hands the slot on to queued creates; none
   // of them is sent, and none waits for a paced turn to find that out.
-  const stopped = () => interruptSignal().aborted || ctx.quotaReached;
   const create = async (body: Record<string, unknown>) =>
     ctx.schedule(
       async () => {
-        if (stopped()) throw new NotSentError();
+        if (ctx.stop.aborted) throw new NotSentError();
         sending();
         return bapiRequest({
           method: "POST",
@@ -379,7 +380,7 @@ async function createUser(
           body: JSON.stringify(body),
         });
       },
-      { skipWait: stopped },
+      { stop: ctx.stop },
     );
 
   const body = buildCreateUserBody(
@@ -524,11 +525,13 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   let stopReason: string | undefined;
   const droppedPhones = new Map<string, number>();
 
+  const quota = new AbortController();
   const ctx: CreateContext = {
     secretKey,
     schedule: createApiScheduler(limits.concurrencyLimit, limits.rateLimit),
     reserveUnverified,
-    quotaReached: false,
+    quota,
+    stop: AbortSignal.any([interruptSignal(), quota.signal]),
     ...(runId ? { runId } : {}),
   };
 
@@ -583,19 +586,22 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       ? adoptedReserved.has(user.userId)
       : reserveUnverified &&
         (identifiers.unverifiedEmails.length > 0 || identifiers.unverifiedPhones.length > 0);
+    let sent = false;
     try {
       created = adoptedId
         ? { clerkUserId: adoptedId, notes: [] }
         : await retryOn429(
             async () =>
-              createUser(ctx, user, identifiers, skipPasswordRequirement, () =>
+              createUser(ctx, user, identifiers, skipPasswordRequirement, () => {
+                sent = true;
                 record({
                   sourceId: user.userId,
                   status: "creating",
                   ...(reserved ? { reserved: true } : {}),
-                }),
-              ),
+                });
+              }),
             {
+              signal: ctx.stop,
               onRetry: ({ message, delaySeconds }) => {
                 retries.push(message);
                 ctx.schedule.pause(delaySeconds * 1000);
@@ -603,9 +609,11 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
             },
           );
     } catch (error) {
-      // Unrecorded, so a re-run picks the user up like any other.
+      // Unrecorded, so a re-run picks the user up like any other. A user whose
+      // first create went out (a 429, a refused phone) has its `creating` line
+      // to mark it unfinished, so it is not counted here as well.
       if (error instanceof NotSentError) {
-        notSent++;
+        if (!sent) notSent++;
         return;
       }
       if (error instanceof RateLimitExceededError) {
@@ -613,8 +621,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         return;
       }
       const apiError = error as BapiError;
-      if (apiError.code === "user_quota_exceeded" && !ctx.quotaReached) {
-        ctx.quotaReached = true;
+      if (apiError.code === "user_quota_exceeded" && !ctx.quota.signal.aborted) {
+        ctx.quota.abort();
         // Returned, not logged: a progress bar would redraw over a warning.
         stopReason = apiError.longMessage ?? apiError.message;
       }

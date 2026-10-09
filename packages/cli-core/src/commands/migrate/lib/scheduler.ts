@@ -8,6 +8,8 @@
  * with ten extra email addresses cannot burst past the instance's rate limit.
  */
 
+import { setTimeout as delay } from "node:timers/promises";
+
 /**
  * Runs `fn` once a slot is free and the pacing interval has elapsed.
  *
@@ -18,11 +20,12 @@
 export type ScheduleOptions = {
   first?: boolean;
   /**
-   * Checked once the call has a slot: when it returns true, `fn` runs at once
-   * and takes no paced turn. For a call that will only find the run stopped,
-   * so a Ctrl-C or a full instance drains the queue instead of pacing it.
+   * Once aborted, `fn` runs at once and takes no paced turn, and a wait
+   * already under way is cut short. For a call that will only find the run
+   * stopped, so a Ctrl-C or a full instance drains the queue instead of
+   * pacing it.
    */
-  skipWait?: () => boolean;
+  stop?: AbortSignal;
 };
 
 export type ApiScheduler = (<T>(fn: () => Promise<T>, options?: ScheduleOptions) => Promise<T>) & {
@@ -65,15 +68,16 @@ export function createApiScheduler(concurrencyLimit: number, rateLimit: number):
   const schedule = async <T>(fn: () => Promise<T>, options?: ScheduleOptions) => {
     await acquire(options?.first ?? false);
     try {
-      if (options?.skipWait?.()) return await fn();
+      const stop = options?.stop;
       // A pause that starts during the wait takes a fresh paced slot after it,
       // so calls held through a pause resume an interval apart, not together.
-      for (;;) {
+      while (!stop?.aborted) {
         const pauseSeen = pausedUntil;
         const now = Date.now();
         const startAt = Math.max(now, nextRequestAt, pausedUntil);
         nextRequestAt = startAt + intervalMs;
-        if (startAt > now) await new Promise((resolve) => setTimeout(resolve, startAt - now));
+        // Rejects only when `stop` aborts, which ends the wait.
+        if (startAt > now) await delay(startAt - now, undefined, { signal: stop }).catch(() => {});
         if (pausedUntil === pauseSeen) break;
       }
       return await fn();

@@ -299,6 +299,30 @@ describe("importUsers", () => {
     }
   });
 
+  // Its `creating` line already marks it unfinished; `notSent` is for users
+  // with no line at all.
+  test("does not count a user whose first create went out as not sent", async () => {
+    stub(() => {
+      abortInFlight();
+      return clerkError(429, "slow down", { "retry-after": "5" });
+    });
+    try {
+      const summary = await importUsers({
+        users: [user({ userId: "u1" })],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+      });
+
+      expect(summary).toMatchObject({ successful: 0, failed: 0, notSent: 0 });
+      expect(requests).toHaveLength(1);
+      expect(lines).toHaveLength(0);
+      expect(allLines.at(-1)).toMatchObject({ sourceId: "u1", status: "creating" });
+    } finally {
+      _resetInterruptState();
+    }
+  });
+
   test("attaches additional and unverified identifiers after the user exists", async () => {
     stub(() => ok("user_created"));
 
