@@ -236,7 +236,13 @@ async function deleteUsers(options: {
           schedule(async () =>
             bapiRequest({ method: "DELETE", path: `/v1/users/${user.clerkId}`, secretKey }),
           ),
-        { onRetry: ({ message }) => retries.push(message) },
+        {
+          // A 429 pauses every delete still queued, as on import.
+          onRetry: ({ message, delaySeconds }) => {
+            retries.push(message);
+            schedule.pause(delaySeconds * 1000);
+          },
+        },
       );
       deleted++;
       run.append({
