@@ -182,6 +182,27 @@ describe("locks", () => {
   });
 
   // In case a folder's mode is ever looser than the run store sets it.
+  // Users never sent have no line to count, so the caller says how many.
+  test("a finish with users never sent is partial", () => {
+    const sent = startRun(runsDir, init);
+    sent.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    expect(sent.finish().status).toBe("complete");
+
+    const stopped = startRun(runsDir, init);
+    stopped.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    const record = stopped.finish({ notSent: 2 });
+    expect(record.status).toBe("partial");
+    // Saved, so a later reader can tell how many were never sent.
+    expect(readRun(runsDir, record.id)?.counts).toEqual({ total: 1, created: 1, notSent: 2 });
+  });
+
+  test("release leaves the run unfinished and unlocked", () => {
+    const run = startRun(runsDir, init);
+    run.release();
+    expect(readRun(runsDir, run.record.id)?.finishedAt).toBeUndefined();
+    expect(fs.existsSync(path.join(run.dir, "lock"))).toBe(false);
+  });
+
   test.skipIf(process.platform === "win32")("run files are owner-only", () => {
     const run = startRun(runsDir, init);
     run.append({ sourceId: "u1", status: "creating" });

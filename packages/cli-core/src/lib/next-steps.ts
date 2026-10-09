@@ -75,6 +75,10 @@ export const NEXT_STEPS = {
     "Run `clerk apps list` to see your other applications",
     "Run `clerk config pull` to inspect the live configuration of this instance",
   ],
+  MIGRATE_DONE: (runFolder: string) => [`See each user's outcome in ${runFolder}/users.ndjson`],
+  MIGRATE_DONE_WITH_ERRORS: (runFolder: string) => [
+    `See every user that failed, and why, in ${runFolder}/users.ndjson`,
+  ],
 } as const;
 
 /**
@@ -82,7 +86,30 @@ export const NEXT_STEPS = {
  * Only shown in human/interactive mode — agents get AGENT_PROMPT instead.
  */
 export function printNextSteps(steps: readonly string[]): void {
-  if (!isHuman() || steps.length === 0) return;
+  if (!isHuman()) return;
+  renderNextSteps(steps);
+}
+
+/**
+ * The same suggestions, on the paths a human never takes: agent mode and a
+ * non-TTY, where `printNextSteps` and `withGutter`'s outro both print nothing.
+ *
+ * A no-op for a human, who gets them from the outro — so a caller pairs this
+ * with `setNextSteps` rather than choosing between the two.
+ *
+ * Opt-in rather than folded into `printNextSteps`, because most steps are a
+ * nudge towards a command someone might like to run next. The migrate ones are
+ * not: they name the file holding the per-user record of what landed. An agent
+ * that imported 10,000 users and lost 300 of them needs it, and has no gutter
+ * to read it from.
+ */
+export function printAgentNextSteps(steps: readonly string[]): void {
+  if (isHuman()) return;
+  renderNextSteps(steps);
+}
+
+function renderNextSteps(steps: readonly string[]): void {
+  if (steps.length === 0) return;
   for (const step of steps) {
     log.info(`   ${cyan("\u2192")} ${step}`);
   }
