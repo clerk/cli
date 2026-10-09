@@ -91,3 +91,18 @@ test("refuses an export overwritten between the user load and the provider read"
   ).rejects.toThrow(/has changed since it was exported/);
   expect(creates).toEqual([]);
 });
+
+// A path import reads the envelope and the users separately, so a file
+// rewritten between them would mix two revisions.
+test("refuses a path import whose file is rewritten mid-import", async () => {
+  exportFile = path.join(workDir, "supabase-users.json");
+  fs.writeFileSync(
+    exportFile,
+    JSON.stringify([{ id: "s2", email: "b@x.dev", email_confirmed_at: "2024-01-01" }]),
+  );
+
+  await expect(
+    run({ input: exportFile, source: "supabase", yes: true, secretKey: "sk_test_x" }),
+  ).rejects.toThrow(/changed while it was being imported/);
+  expect(creates).toEqual([]);
+});
