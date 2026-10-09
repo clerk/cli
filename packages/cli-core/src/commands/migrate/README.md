@@ -996,8 +996,9 @@ clerk migrate import users.json --source ./my-platform.ts
 ```
 
 The file lives in **your** project, not in the CLI, and is imported at runtime.
-It exports the same shape the built-ins use — plain data, no imports, since
-there is nothing in a compiled binary for your file to import from:
+It exports the same shape the built-ins use, as plain data. It can't import
+from the CLI, since there is nothing in a compiled binary to import from, but
+it can import your project's own files:
 
 ```ts
 export default {
