@@ -915,7 +915,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       // Stripping the identifiers the instance has off can leave nothing to
       // sign in with; Clerk would still create the user.
       (!hasAnyIdentifier(sent)
-        ? "has no identifier this instance accepts (its email, phone or username is turned off)"
+        ? "has no identifier this instance accepts (its email or phone is turned off, or its username is one Clerk refuses)"
         : undefined) ??
       missingRequiredName(user, input.settings) ??
       mfaProblem(user, input.settings) ??
