@@ -242,7 +242,22 @@ function acquireLockFile(
   file: string,
   refuse: (holder: number | undefined, file: string) => never,
 ): void {
-  const take = () => fs.writeFileSync(file, String(process.pid), { flag: "wx", mode: 0o600 });
+  // Written whole, then linked into place: the link fails on an existing lock
+  // as `wx` does, but the lock never exists without its PID, which a second
+  // process would read as stale and remove.
+  const take = () => {
+    const whole = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(whole, String(process.pid), { mode: 0o600 });
+    try {
+      fs.linkSync(whole, file);
+    } catch (error) {
+      if (isExists(error)) throw error;
+      // A filesystem without hard links.
+      fs.writeFileSync(file, String(process.pid), { flag: "wx", mode: 0o600 });
+    } finally {
+      fs.rmSync(whole, { force: true });
+    }
+  };
 
   try {
     take();
@@ -250,6 +265,10 @@ function acquireLockFile(
   } catch (error) {
     if (!isExists(error)) throw error;
   }
+  // ponytail: two processes that both read the same stale lock can both
+  // remove it, and the second can remove the first's new one. Clerk still
+  // refuses the second create of any email, phone or username, so the cost
+  // is failed lines, not duplicate users. A lock on the reclaim would close it.
   const holder = livePidIn(file);
   if (holder !== undefined) refuse(holder, file);
   fs.rmSync(file, { force: true });
