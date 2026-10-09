@@ -713,8 +713,8 @@ after them. They sort the users three ways:
     user exists, or with `--reserve-unverified`, which creates it reserved
   - it has no identifier left once the emails and phones Clerk would refuse
     are stripped: those of an instance that neither has them on nor signs in
-    or does MFA with them. A username is kept: Clerk stores it with usernames
-    off
+    or does MFA with them. A username is kept, as Clerk stores it with
+    usernames off, unless it is one Clerk refuses
   - it lacks a first or last name the instance requires
   - it has an authenticator app secret or backup codes, and the instance has
     that turned off. Importing it without them would take away its second
@@ -730,8 +730,8 @@ after them. They sort the users three ways:
     it. With usernames off, such a username is dropped instead, with a warning.
     Numeric usernames are not offered when the file has phones not in E.164
     form, which the setting would make Clerk refuse; the reject counts them
-  - its password is not the shape its hasher says (`bcrypt`, with a cost up to
-    15, `scrypt_firebase`, `argon2i`/`argon2id` and `scrypt_werkzeug` are
+  - its password is not the shape its hasher says (`bcrypt`, with a cost of 4
+    to 15, `scrypt_firebase`, `argon2i`/`argon2id` and `scrypt_werkzeug` are
     checked; other hashers are not, and Clerk refuses a bad one at create)
   - Supabase: its only providers are ones Clerk has off, or doesn't offer at all
     (Figma, Kakao, Keycloak, WorkOS, Zoom, Fly), and it has no verified email or
