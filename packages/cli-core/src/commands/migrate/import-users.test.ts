@@ -410,6 +410,30 @@ describe("importUsers", () => {
     expect(lines[2]).not.toHaveProperty("pending");
   });
 
+  // A Ctrl-C mid-backoff should not wait out the pause, nor send the attach.
+  test("leaves an attach pending when a Ctrl-C lands during its backoff", async () => {
+    stub((url) => {
+      if (!url.endsWith("/v1/email_addresses")) return ok("user_created");
+      abortInFlight();
+      return clerkError(429, "slow down", { "retry-after": "5" });
+    });
+    const started = performance.now();
+    try {
+      await importUsers({
+        users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+      });
+    } finally {
+      _resetInterruptState();
+    }
+
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(requests.filter((r) => r.url.endsWith("/v1/email_addresses"))).toHaveLength(1);
+    expect(lines.at(-1)?.pending).toEqual([{ kind: "email", value: "b@x.dev", verified: true }]);
+  });
+
   test("retries an attach that hits a 429", async () => {
     stub((url, attempt) =>
       url.endsWith("/v1/email_addresses") && attempt === 1
