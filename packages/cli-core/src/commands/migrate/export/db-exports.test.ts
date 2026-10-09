@@ -24,7 +24,7 @@ import {
   exportBetterAuth,
   PLUGIN_COLUMNS,
 } from "./betterauth.ts";
-import { buildSupabaseExport, fetchSupabaseUsers } from "./supabase.ts";
+import { buildSupabaseExport, exportSupabase, fetchSupabaseUsers } from "./supabase.ts";
 import {
   looksLikeConnectionString,
   normalizeConnectionString,
