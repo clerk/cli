@@ -80,6 +80,14 @@ describe("doctor", () => {
     expect(humanNames).toEqual(agentNames.slice(1));
   });
 
+  test("an agent without --json gets the report with no escape codes", async () => {
+    setMode("agent");
+    outcomes.envVars = "fail";
+    await runDoctor();
+    expect(captured.err).toContain(`${CHECK_NAME.envVars}: fail`);
+    expect(captured.err).not.toContain("\x1b");
+  });
+
   test("a run where every check answered and passed succeeds", async () => {
     expect(await runDoctor()).toBeUndefined();
   });
