@@ -112,6 +112,11 @@ export type CheckInput = {
    */
   reservedSourceIds?: Set<string>;
   /**
+   * Source IDs of every adopted user: their create already ran, in the mode
+   * its `creating` line records, so this run's flag does not apply to them.
+   */
+  adoptedSourceIds?: Set<string>;
+  /**
    * Clerk IDs a continued run found behind its own in-flight creates: finding
    * them in the instance is expected.
    */
@@ -488,7 +493,7 @@ const hasAnyIdentifier = (user: User) =>
  */
 function findFileDuplicates(
   users: User[],
-  reserveUnverified = false,
+  reserves: (user: User) => boolean = () => false,
 ): {
   reasons: Map<User, string>;
   keptBy: Map<User, string>;
@@ -507,7 +512,7 @@ function findFileDuplicates(
     }
     seenIds.add(user.userId);
 
-    const { emails: ownEmails, phones: ownPhones } = sentIdentifiers(user, reserveUnverified);
+    const { emails: ownEmails, phones: ownPhones } = sentIdentifiers(user, reserves(user));
 
     const emailOwner = ownEmails.map((email) => emails.get(email.toLowerCase())).find(Boolean);
     const phoneOwner = ownPhones.map((phone) => phones.get(phoneKey(phone))).find(Boolean);
@@ -536,6 +541,18 @@ function findFileDuplicates(
     if (username) usernames.set(username, user.userId);
   }
   return { reasons, keptBy };
+}
+
+/**
+ * Whether a user's unverified identifiers are (or will be) created reserved:
+ * an adopted user's by what its create recorded, everyone else's by this
+ * run's flag.
+ */
+function reservesFor(input: CheckInput): (user: User) => boolean {
+  return (user) =>
+    input.adoptedSourceIds?.has(user.userId)
+      ? Boolean(input.reservedSourceIds?.has(user.userId))
+      : Boolean(input.reserveUnverified);
 }
 
 /**
@@ -574,7 +591,7 @@ async function findInstanceDuplicates(
   const byUsername = new Map<string, string>();
 
   for (const user of users) {
-    const sent = sentIdentifiers(user, input.reserveUnverified ?? false);
+    const sent = sentIdentifiers(user, reservesFor(input)(user));
     byExternalId.set(user.userId, user.userId);
     for (const email of sent.emails) byEmail.set(email.toLowerCase(), user.userId);
     for (const phone of sent.phones) byPhone.set(phoneKey(phone), user.userId);
@@ -960,11 +977,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       (refused.length > 0 && !hasAnyIdentifier(user)
         ? "only has emails Clerk refuses (malformed, or a domain that can't receive mail)"
         : undefined) ??
-      missingRequiredIdentifier(
-        user,
-        input.settings,
-        input.reserveUnverified || input.reservedSourceIds?.has(user.userId),
-      ) ??
+      missingRequiredIdentifier(user, input.settings, reservesFor(input)(user)) ??
       // Stripping the identifiers the instance has off can leave nothing to
       // sign in with; Clerk would still create the user.
       (!hasAnyIdentifier(sent)
@@ -992,7 +1005,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     }
   }
 
-  const { reasons: fileDuplicates, keptBy } = findFileDuplicates(passed, input.reserveUnverified);
+  const { reasons: fileDuplicates, keptBy } = findFileDuplicates(passed, reservesFor(input));
   let candidates: User[] = [];
   for (const user of passed) {
     const reason = fileDuplicates.get(user);

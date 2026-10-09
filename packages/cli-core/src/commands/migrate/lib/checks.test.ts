@@ -263,6 +263,21 @@ describe("rejects", () => {
     },
   );
 
+  // An adopted user's create already ran without reserving, so its unverified
+  // email is attached later, whatever this run's flag says: no clash.
+  test("an adopted user's unverified email counts by its own create's mode", async () => {
+    expect(
+      await reasonsOf({
+        reserveUnverified: true,
+        adoptedSourceIds: new Set(["b"]),
+        users: [
+          user("a", { unverifiedEmailAddresses: ["shared@x.dev"] }),
+          user("b", { unverifiedEmailAddresses: ["shared@x.dev"] }),
+        ],
+      }),
+    ).toEqual({});
+  });
+
   // The source's order decides which duplicate survives, so the dry run says.
   test("a duplicate names the earlier user kept in its place", async () => {
     const checks = await checkImport(
