@@ -20,6 +20,9 @@ function stripDiscriminator(value: unknown): string | undefined {
   return value.replace(DISCORD_DISCRIMINATOR, "").trim() || undefined;
 }
 
+/** How far out a Supabase ban may end and still be a temporary one. */
+const TEMPORARY_BAN_MS = 10 * 365 * 24 * 60 * 60_000;
+
 /** The nullable `auth.users` columns, by the field each maps to. */
 const NULLABLE_FIELDS = [
   "email",
@@ -100,9 +103,18 @@ const supabaseSource = {
 
     // Supabase bans until a time; a "permanent" ban is just a far-future one.
     // Clerk's ban has no end, so only a ban still in force carries, and it then
-    // stays until someone lifts it in Clerk.
+    // stays until someone lifts it in Clerk; a temporary one keeps its end
+    // date, so the checks can say so.
     const bannedUntil = Date.parse(String(toIsoDate(user.bannedUntil)));
-    if (bannedUntil > Date.now()) user.banned = true;
+    if (bannedUntil > Date.now()) {
+      user.banned = true;
+      // ponytail: Supabase writes "permanent" as about 100 years out, so a ban
+      // ending within 10 years reads as temporary; an odd 20-year ban reads
+      // as permanent.
+      if (bannedUntil - Date.now() < TEMPORARY_BAN_MS) {
+        user.banEndsAt = new Date(bannedUntil).toISOString();
+      }
+    }
     delete user.bannedUntil;
     routeByVerification(user, "email", "emailConfirmedAt", "timestamp");
     routeByVerification(user, "phone", "phoneConfirmedAt", "timestamp");

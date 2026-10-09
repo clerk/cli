@@ -197,6 +197,19 @@ describe("supabase", () => {
     expect("bannedUntil" in (user ?? {})).toBe(false);
   });
 
+  // Clerk's ban has no end: a temporary one keeps its end date for the checks
+  // to warn about, and a far-future "permanent" one does not.
+  test("a temporary ban keeps its end date; a permanent one does not", () => {
+    const soon = new Date(Date.now() + 2 * 24 * 60 * 60_000).toISOString();
+    expect(one("supabase", { ...base, banned_until: soon })).toMatchObject({
+      banned: true,
+      banEndsAt: soon,
+    });
+    const permanent = one("supabase", { ...base, banned_until: "2999-01-01 00:00:00+00" });
+    expect(permanent?.banned).toBe(true);
+    expect(permanent).not.toHaveProperty("banEndsAt");
+  });
+
   // The hasher comes from each digest, so a user without one gets none. Loaded
   // from a file, because that is where source defaults are applied.
   test("gives a passwordless user no password hasher", async () => {
