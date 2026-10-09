@@ -137,8 +137,10 @@ latest line when no answer says whether the create landed: an abort, a
 network error, or a 5xx. A `created` line with `pending` lists the extra emails
 and phones not yet attached.
 
-A run is `partial` when any user failed, was skipped or is still `creating`,
-and `complete` otherwise. A lock holding this process's own PID is stale: in a
+A run is `partial` when any user failed, was skipped, is still `creating` or
+was never sent (`counts.notSent`), and `complete` otherwise. A run interrupted
+with Ctrl-C stays `running`, with no `finishedAt`, and prints its run ID and
+folder on the way out. A lock holding this process's own PID is stale: in a
 container the CLI often gets the same PID every run.
 
 Run folders are created owner-only (`0700`), because they hold user data.
@@ -385,7 +387,10 @@ the raised limit; `--allow-partial` imports up to the headroom.
 
 Users that do exceed the limit come back in the error breakdown as
 `You have reached your limit of N users`, annotated with what a development
-instance can do about it.
+instance can do about it. The first refusal stops the import: the users it
+never sent are counted under "Not sent" (`result.notSent` in `--json`, and
+`counts.notSent` in `run.json`). Once the limit is raised,
+[run the import again](#re-running) with `--allow-partial --yes` to send them.
 
 ### `clerk migrate help`
 
