@@ -573,7 +573,10 @@ const DUPLICATE_SOURCE_ID = "duplicate source ID in the file";
  *
  * @returns Each duplicate's reason, and the earlier user kept in its place.
  */
-function findFileDuplicates(users: User[]): {
+function findFileDuplicates(
+  users: User[],
+  reserveUnverified = false,
+): {
   reasons: Map<User, string>;
   keptBy: Map<User, string>;
 } {
@@ -593,9 +596,7 @@ function findFileDuplicates(users: User[]): {
     }
     seenIds.add(user.userId);
 
-    const { primaryEmail, primaryPhone } = splitIdentifiers(user);
-    const ownEmails = primaryEmail ? [primaryEmail] : [];
-    const ownPhones = primaryPhone ? [primaryPhone] : [];
+    const { emails: ownEmails, phones: ownPhones } = sentIdentifiers(user, reserveUnverified);
 
     const emailOwner = ownEmails.map((email) => emails.get(email.toLowerCase())).find(Boolean);
     const phoneOwner = ownPhones.map((phone) => phones.get(phoneKey(phone))).find(Boolean);
@@ -627,8 +628,26 @@ function findFileDuplicates(users: User[]): {
 }
 
 /**
- * Users the instance already holds, found by source ID, primary email,
- * primary phone or username.
+ * The emails and phones `POST /v1/users` sends for a user: the verified
+ * primary, plus the unverified ones when they are created reserved.
+ */
+function sentIdentifiers(user: User, reserveUnverified: boolean) {
+  const { primaryEmail, primaryPhone, unverifiedEmails, unverifiedPhones } = splitIdentifiers(user);
+  return {
+    emails: [
+      ...(primaryEmail ? [primaryEmail] : []),
+      ...(reserveUnverified ? unverifiedEmails : []),
+    ],
+    phones: [
+      ...(primaryPhone ? [primaryPhone] : []),
+      ...(reserveUnverified ? unverifiedPhones : []),
+    ],
+  };
+}
+
+/**
+ * Users the instance already holds, found by source ID, the emails and phones
+ * the create sends, or username.
  *
  * Only what `POST /v1/users` itself carries is looked up: an extra email that
  * collides is attached after the user exists, fails on its own, and is noted
@@ -644,10 +663,10 @@ async function findInstanceDuplicates(
   const byUsername = new Map<string, string>();
 
   for (const user of users) {
-    const identifiers = splitIdentifiers(user);
+    const sent = sentIdentifiers(user, input.reserveUnverified ?? false);
     byExternalId.set(user.userId, user.userId);
-    if (identifiers.primaryEmail) byEmail.set(identifiers.primaryEmail.toLowerCase(), user.userId);
-    if (identifiers.primaryPhone) byPhone.set(phoneKey(identifiers.primaryPhone), user.userId);
+    for (const email of sent.emails) byEmail.set(email.toLowerCase(), user.userId);
+    for (const phone of sent.phones) byPhone.set(phoneKey(phone), user.userId);
     if (typeof user.username === "string" && user.username) {
       byUsername.set(user.username.toLowerCase(), user.userId);
     }
@@ -1123,10 +1142,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   // An adopted user already holds its email, phone and username in Clerk, so
   // it claims them first, wherever it sits in the file: a fresh record sharing
   // one is the create Clerk would refuse, and is not kept in its place.
-  const { reasons: fileDuplicates, keptBy } = findFileDuplicates([
-    ...passed.filter(adopted),
-    ...passed.filter((user) => !adopted(user)),
-  ]);
+  const { reasons: fileDuplicates, keptBy } = findFileDuplicates(
+    [...passed.filter(adopted), ...passed.filter((user) => !adopted(user))],
+    input.reserveUnverified,
+  );
   let candidates: User[] = [];
   for (const user of passed) {
     const kept = keptBy.get(user);
