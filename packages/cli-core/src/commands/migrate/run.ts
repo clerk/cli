@@ -43,6 +43,7 @@ import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
 import {
   firebaseHashConfigProblem,
+  fingerprintFirebaseHashConfig,
   resolveFirebaseHashConfig,
   type FirebaseHashFlags,
 } from "./lib/firebase-hash.ts";
@@ -710,6 +711,23 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             keyInstanceId: keyInstanceId(secretKey),
           });
 
+      // The users this run created carry digests built from its parameters, so
+      // the rest must be built from the same ones. A run from before this was
+      // recorded has none to compare, and continues as it did.
+      const firebaseHash = firebaseHashConfig
+        ? fingerprintFirebaseHashConfig(firebaseHashConfig)
+        : undefined;
+      if (
+        resume.kind === "continue" &&
+        resume.record.firebaseHash &&
+        resume.record.firebaseHash !== firebaseHash
+      ) {
+        throwUsageError(
+          `Run ${resume.record.id} imported this file with different Firebase hash parameters, and the users it created carry digests built from them. Nothing was imported.\n` +
+            "Pass the same --firebase-* flags to continue it, or --new-run to start a new run.",
+        );
+      }
+
       if (resume.kind === "complete") {
         if (options.json) {
           log.data(JSON.stringify({ target, run: resume.record, alreadyImported: true }, null, 2));
@@ -954,6 +972,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             source,
             file: { path: filePath, sha256 },
             ...(input.fromExport ? { fromExport: input.fromExport } : {}),
+            ...(firebaseHash ? { firebaseHash } : {}),
           });
       // Printed now, not on the way out: on a Ctrl-C the signal handler exits
       // before the import returns, and the folder is the only record of who
