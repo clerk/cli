@@ -716,6 +716,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           secretKey,
           schedule,
           adoptedClerkIds: new Set(adopted.values()),
+          adoptedSourceIds: new Set(adopted.keys()),
           spinner,
         }),
       );
