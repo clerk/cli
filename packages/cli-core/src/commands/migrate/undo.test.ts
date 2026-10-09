@@ -28,6 +28,8 @@ let instanceUsers: Map<string, number | null>;
 let failing: Set<string>;
 /** external_id → Clerk ID, for users whose create was in flight. */
 let inFlight: Map<string, string>;
+/** When Clerk says it created each in-flight user: by default, during the run. */
+let inFlightCreatedAt: number;
 
 const IMPORT_STARTED = "2026-09-01T00:00:00.000Z";
 const AFTER_IMPORT = Date.parse("2026-09-02T00:00:00.000Z");
@@ -45,6 +47,7 @@ beforeEach(() => {
   requests = [];
   failing = new Set();
   inFlight = new Map();
+  inFlightCreatedAt = Date.now();
   instanceUsers = new Map([
     ["user_a", null],
     ["user_b", AFTER_IMPORT],
@@ -64,7 +67,11 @@ beforeEach(() => {
           .getAll("external_id")
           .map((externalId) => externalId.replace(/^\+/, ""))
           .filter((externalId) => inFlight.has(externalId))
-          .map((externalId) => ({ id: inFlight.get(externalId), external_id: externalId })),
+          .map((externalId) => ({
+            id: inFlight.get(externalId),
+            external_id: externalId,
+            created_at: inFlightCreatedAt,
+          })),
       );
     }
     if (method === "GET" && url.pathname === "/v1/users") {
@@ -288,6 +295,25 @@ describe("deleting", () => {
       expect.arrayContaining(["user_a", "user_d"]),
     );
     expect(deletes()).toHaveLength(2);
+  });
+
+  // Same source ID, but Clerk created it before the run began: not the run's.
+  test("leaves an in-flight match that Clerk created outside the run's time", async () => {
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: { instanceId: "ins_1", env: "development" },
+      source: "clerk",
+    });
+    run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    run.append({ sourceId: "d", status: "creating" });
+    const record = run.finish();
+    inFlight.set("d", "user_d");
+    inFlightCreatedAt = Date.parse(record.startedAt) - 24 * 60 * 60_000;
+    instanceUsers.set("user_d", null);
+
+    await undo(record.id, withDir({ yes: true }));
+
+    expect(deletes().map((request) => request.url.split("/").pop())).toEqual(["user_a"]);
   });
 
   // Run A stopped with d's create in flight; a later run B then created d.
