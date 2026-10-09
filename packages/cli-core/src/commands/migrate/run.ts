@@ -692,6 +692,16 @@ function continuesWithoutNewRun(
 }
 
 /**
+ * A continued run, linked to the export run it now reads from: one started
+ * by path and continued by export run ID would otherwise lack the link, and
+ * the cleanup would not name the export holding the users' data.
+ */
+function continueWithExport(run: Run, fromExport: string | undefined): Run {
+  if (fromExport && run.record.fromExport !== fromExport) run.update({ fromExport });
+  return run;
+}
+
+/**
  * Records the checks' rejects as skipped users, so the run says who they were.
  * The checks never reject an adopted user: it is created already.
  */
@@ -1068,7 +1078,10 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       await resolveRunsDir(options.runsDir, { write: true });
       const flags = pickImportFlags(options);
       const run = continued
-        ? continueRun(runsDir, withAttempt(continued, target, flags), plannedLines, carry)
+        ? continueWithExport(
+            continueRun(runsDir, withAttempt(continued, target, flags), plannedLines, carry),
+            input.fromExport,
+          )
         : startRun(runsDir, {
             kind: "import",
             target,
