@@ -610,6 +610,16 @@ function commandFor(options: MigrateRunOptions, fromExport: string | undefined, 
 }
 
 /**
+ * A continued run, linked to the export run it now reads from: one started
+ * by path and continued by export run ID would otherwise lack the link, and
+ * the cleanup would not name the export holding the users' data.
+ */
+function continueWithExport(run: Run, fromExport: string | undefined): Run {
+  if (fromExport && run.record.fromExport !== fromExport) run.update({ fromExport });
+  return run;
+}
+
+/**
  * Records the checks' rejects as skipped users, so the run says who they were.
  * The checks never reject an adopted user: it is created already.
  */
@@ -909,7 +919,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       // Gitignored only now, once there is consent to write a run.
       await resolveRunsDir(options.runsDir, { write: true });
       const run = continued
-        ? continueRun(runsDir, continued, plannedLines)
+        ? continueWithExport(continueRun(runsDir, continued, plannedLines), input.fromExport)
         : startRun(runsDir, {
             kind: "import",
             target,
