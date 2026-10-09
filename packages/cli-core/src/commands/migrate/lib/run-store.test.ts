@@ -301,6 +301,25 @@ describe("continueRun against a plan", () => {
   });
 });
 
+describe("continueRun and an unfinished undo", () => {
+  // The caller checked before taking the lock; an undo can start, and stop
+  // part-way, after that.
+  test("refuses an import with an undo that did not finish, and leaves its record", () => {
+    const run = startRun(runsDir, init);
+    run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    const record = run.finish();
+    const undo = startRun(runsDir, { ...init, kind: "undo", undoes: record.id });
+    undo.release();
+
+    expect(() => continueRun(runsDir, record)).toThrow(/has an undo that did not finish/);
+    expect(readRun(runsDir, record.id)).toMatchObject({
+      status: record.status,
+      finishedAt: record.finishedAt,
+    });
+    expect(fs.existsSync(lockFile(runsDir, record.id))).toBe(false);
+  });
+});
+
 describe("listRuns", () => {
   test("lists newest first and ignores folders that are not runs", () => {
     const first = startRun(runsDir, init);
