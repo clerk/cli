@@ -180,7 +180,7 @@ type CreateContext = {
   stop: AbortSignal;
 };
 
-/** A create a Ctrl-C stopped before it went out: neither a failure nor unknown. */
+/** A request a stop kept from going out: neither a failure nor unknown. */
 class NotSentError extends Error {}
 
 /**
@@ -237,24 +237,29 @@ async function attachIdentifier(
       ? { user_id: clerkUserId, email_address: value, primary: false, verified }
       : { user_id: clerkUserId, phone_number: value, primary: false, verified };
 
+  // A Ctrl-C ends the wait for a slot or a backoff, and the attach is left
+  // pending for a re-run. The quota does not: the user exists already.
+  const stop = interruptSignal();
   try {
     await retryOn429(
       async () =>
         ctx.schedule(
-          async () =>
-            bapiRequest({
+          async () => {
+            if (stop.aborted) throw new NotSentError();
+            return bapiRequest({
               method: "POST",
               path,
               secretKey: ctx.secretKey,
               body: JSON.stringify(body),
-            }),
-          { first: true },
+            });
+          },
+          { first: true, stop },
         ),
-      { onRetry: ({ delaySeconds }) => ctx.schedule.pause(delaySeconds * 1000) },
+      { signal: stop, onRetry: ({ delaySeconds }) => ctx.schedule.pause(delaySeconds * 1000) },
     );
     return {};
   } catch (error) {
-    if (outcomeUnknown(error)) return { pending: true };
+    if (error instanceof NotSentError || outcomeUnknown(error)) return { pending: true };
     const label = `${verified ? "additional" : "unverified"} ${kind} ${value}`;
     return { note: `Failed to add ${label}: ${(error as Error).message}` };
   }
