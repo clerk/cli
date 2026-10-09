@@ -136,7 +136,7 @@ describe("rejects", () => {
       });
       expect(reasons).toEqual({
         "phone-only":
-          "has no identifier this instance accepts (its email, phone or username is turned off)",
+          "has no identifier this instance accepts (its email or phone is turned off, or its username is one Clerk refuses)",
       });
     });
 
