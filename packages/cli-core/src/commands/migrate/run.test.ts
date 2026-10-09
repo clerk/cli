@@ -699,7 +699,7 @@ describe("run", () => {
       const err = Bun.stripANSI(captured.err);
       expect(err).toContain("Not sent: 1");
       expect(err).toContain(
-        "You have reached your limit of 100 users. No more users were sent: running the import again picks up the rest once the limit is raised.",
+        "No more users were sent. Once the limit is raised, run the import again with `--allow-partial --yes` to send them.",
       );
     });
   });
