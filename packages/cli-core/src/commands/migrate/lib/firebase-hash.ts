@@ -76,7 +76,7 @@ const STRICT_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]
  * `pkg/hash/scrypt.go`), then decodes strictly. So `Bw` passes and `A` or
  * `AAAA=` do not.
  */
-function decodesLikeClerk(value: string): boolean {
+export function decodesLikeClerk(value: string): boolean {
   let normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   const rem = normalized.length % 4;
   if (rem !== 0) normalized += "=".repeat(4 - rem);
