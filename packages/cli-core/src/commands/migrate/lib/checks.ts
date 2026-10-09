@@ -112,15 +112,18 @@ export type CheckInput = {
    */
   reservedSourceIds?: Set<string>;
   /**
-   * Source IDs of every adopted user: their create already ran, in the mode
-   * its `creating` line records, so this run's flag does not apply to them.
-   */
-  adoptedSourceIds?: Set<string>;
-  /**
    * Clerk IDs a continued run found behind its own in-flight creates: finding
    * them in the instance is expected.
    */
   adoptedClerkIds?: Set<string>;
+  /**
+   * Source IDs of those adopted users. Each already exists in Clerk, so none
+   * is rejected: the checks stop creates, and these need none. They count
+   * toward no quota either; the instance's live count has them already. Their
+   * create ran in the mode its `creating` line records, so this run's flag
+   * does not decide what they reserved.
+   */
+  adoptedSourceIds?: Set<string>;
   spinner?: SpinnerControls;
 };
 
@@ -974,30 +977,32 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     if (usernamed.dropped) refusedUsernames.add(original.userId);
     const { user, refused } = dropRefusedEmails(usernamed.user);
     const sent = dropDisabledIdentifiers(user, input.settings);
-    const reason =
-      original.skipReason ??
-      (refused.length > 0 && !hasAnyIdentifier(user)
-        ? "only has emails Clerk refuses (malformed, or a domain that can't receive mail)"
-        : undefined) ??
-      missingRequiredIdentifier(user, input.settings, reservesFor(input)(user)) ??
-      // Stripping the identifiers the instance has off can leave nothing to
-      // sign in with; Clerk would still create the user.
-      (!hasAnyIdentifier(sent)
-        ? "has no identifier this instance accepts (its email, phone or username is turned off)"
-        : undefined) ??
-      missingRequiredName(user, input.settings) ??
-      mfaProblem(user, input.settings) ??
-      (!user.password && input.settings && passwordIsOnlySignIn(input.settings)
-        ? "no password, and password is this instance's only way to sign in"
-        : undefined) ??
-      (!input.skipLegalChecks && lacksLegalAcceptance(user, input.settings)
-        ? "no legal acceptance on record, which this instance requires (--skip-legal-checks imports them without it)"
-        : undefined) ??
-      usernameProblem(user, input.settings) ??
-      (user.password && user.passwordHasher
-        ? hashShapeProblem(user.password, user.passwordHasher)
-        : undefined) ??
-      disabledProviders.get(user.userId);
+    const adopted = input.adoptedSourceIds?.has(original.userId) ?? false;
+    const reason = adopted
+      ? undefined
+      : (original.skipReason ??
+        (refused.length > 0 && !hasAnyIdentifier(user)
+          ? "only has emails Clerk refuses (malformed, or a domain that can't receive mail)"
+          : undefined) ??
+        missingRequiredIdentifier(user, input.settings, reservesFor(input)(user)) ??
+        // Stripping the identifiers the instance has off can leave nothing to
+        // sign in with; Clerk would still create the user.
+        (!hasAnyIdentifier(sent)
+          ? "has no identifier this instance accepts (its email, phone or username is turned off)"
+          : undefined) ??
+        missingRequiredName(user, input.settings) ??
+        mfaProblem(user, input.settings) ??
+        (!user.password && input.settings && passwordIsOnlySignIn(input.settings)
+          ? "no password, and password is this instance's only way to sign in"
+          : undefined) ??
+        (!input.skipLegalChecks && lacksLegalAcceptance(user, input.settings)
+          ? "no legal acceptance on record, which this instance requires (--skip-legal-checks imports them without it)"
+          : undefined) ??
+        usernameProblem(user, input.settings) ??
+        (user.password && user.passwordHasher
+          ? hashShapeProblem(user.password, user.passwordHasher)
+          : undefined) ??
+        disabledProviders.get(user.userId));
     if (reason) {
       rejects.push({ sourceId: user.userId, reason });
     } else {
@@ -1010,7 +1015,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const { reasons: fileDuplicates, keptBy } = findFileDuplicates(passed, reservesFor(input));
   let candidates: User[] = [];
   for (const user of passed) {
-    const reason = fileDuplicates.get(user);
+    const reason = input.adoptedSourceIds?.has(user.userId) ? undefined : fileDuplicates.get(user);
     const kept = keptBy.get(user);
     if (reason)
       rejects.push({ sourceId: user.userId, reason, ...(kept ? { keptSourceId: kept } : {}) });
@@ -1023,7 +1028,9 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       : new Map<string, string>();
   const unique: User[] = [];
   for (const user of candidates) {
-    const reason = instanceDuplicates.get(user.userId);
+    const reason = input.adoptedSourceIds?.has(user.userId)
+      ? undefined
+      : instanceDuplicates.get(user.userId);
     if (reason) rejects.push({ sourceId: user.userId, reason });
     else unique.push(user);
   }
@@ -1035,20 +1042,22 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   let quota: Quota | undefined;
   if (input.instanceType === "dev") {
     const limit = resolveDevUserLimit();
-    // An adopted user is in the instance's count already and among the
-    // candidates too, though it is never created: counted once, not twice.
-    const occupied = Math.max(0, (input.existingUsers ?? 0) - (input.adoptedClerkIds?.size ?? 0));
-    const headroom = Math.max(0, limit - occupied);
-    const over = Math.max(0, candidates.length - headroom);
+    // An adopted user is in the instance's count already, and is never
+    // created: only the new users take headroom, in file order.
+    const headroom = Math.max(0, limit - (input.existingUsers ?? 0));
+    const isNew = (user: User) => !input.adoptedSourceIds?.has(user.userId);
+    const fresh = candidates.filter(isNew);
+    const over = Math.max(0, fresh.length - headroom);
     quota = { existing: input.existingUsers ?? null, limit, headroom, over };
     if (over > 0) {
-      for (const user of candidates.slice(headroom)) {
+      const past = new Set(fresh.slice(headroom));
+      for (const user of past) {
         rejects.push({
           sourceId: user.userId,
           reason: `over the development instance's ${limit}-user limit (raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT)`,
         });
       }
-      candidates = candidates.slice(0, headroom);
+      candidates = candidates.filter((user) => !past.has(user));
     }
   }
 

@@ -782,6 +782,40 @@ describe("run", () => {
       });
     });
 
+    // A reject would stop a create; an adopted user needs none. Rejected, it
+    // stayed `creating` and the run could never finish.
+    test("an adopted user a check would reject still finishes the run", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating" })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({
+        // Legal consent turned on since: u2 has no acceptance on record.
+        settings: {
+          attributes: { email_address: { enabled: true } },
+          sign_up: { legal_consent_enabled: true },
+          enterprise_sso: { enabled: true },
+        },
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
+      await run(baseOptions);
+
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+      });
+      expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
+    });
+
     // Same source ID, but no marker from this run: an app or another tool's
     // user, so it is never adopted.
     test("an interrupted run does not adopt a match without its marker", async () => {

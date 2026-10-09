@@ -532,18 +532,38 @@ describe("rejects", () => {
     expect(checks.quota).toEqual({ existing: 98, limit: 100, headroom: 2, over: 1 });
   });
 
-  // A continued run's adopted users exist already and are never created again.
-  test("an adopted user does not take headroom twice", async () => {
+  // A continued run's adopted users exist already and are never created
+  // again: the live count has them, and only new users take headroom.
+  test("an adopted user takes no headroom, wherever it sits in the file", async () => {
     const checks = await checkImport(
       input({
         instanceType: "dev",
-        existingUsers: 98,
+        existingUsers: 99,
         adoptedClerkIds: new Set(["user_c"]),
+        adoptedSourceIds: new Set(["c"]),
         users: [user("a"), user("b"), user("c")],
       }),
     );
-    expect(checks.importable.map((entry) => entry.userId)).toEqual(["a", "b", "c"]);
-    expect(checks.quota).toEqual({ existing: 98, limit: 100, headroom: 3, over: 0 });
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["a", "c"]);
+    expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["b"]);
+    expect(checks.quota).toEqual({ existing: 99, limit: 100, headroom: 1, over: 1 });
+  });
+
+  // The checks stop creates; an adopted user needs none, so a reject would
+  // only leave it `creating` for good.
+  test("an adopted user is never rejected", async () => {
+    const checks = await checkImport(
+      input({
+        settings: {
+          ...settings({ email_address: { enabled: true } }),
+          sign_up: { legal_consent_enabled: true },
+        } as never,
+        adoptedSourceIds: new Set(["a"]),
+        users: [user("a"), user("b")],
+      }),
+    );
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["a"]);
+    expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["b"]);
   });
 
   test("warns that an unreadable user count was checked as empty", async () => {
