@@ -1333,6 +1333,11 @@ describe("run", () => {
         await run({ ...baseOptions, source: key });
 
         expect(created()).toEqual([externalId]);
+        // Each export's verified email is the one the create sends.
+        const create = requests.find(
+          (request) => request.method === "POST" && new URL(request.url).pathname === "/v1/users",
+        );
+        expect(create?.body).toMatchObject({ email_address: ["a@x.dev"] });
       },
     );
 
