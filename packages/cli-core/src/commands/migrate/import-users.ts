@@ -294,19 +294,23 @@ async function createUser(
   skipPasswordRequirement: boolean,
   sending: () => void,
 ): Promise<{ clerkUserId: string; notes: string[]; phoneRefusal?: string }> {
+  // A Ctrl-C or a full instance hands the slot on to queued creates; none
+  // of them is sent, and none waits for a paced turn to find that out.
+  const stopped = () => interruptSignal().aborted || ctx.quotaReached;
   const create = async (body: Record<string, unknown>) =>
-    ctx.schedule(async () => {
-      // A Ctrl-C or a full instance hands the slot on to queued creates; none
-      // of them was sent.
-      if (interruptSignal().aborted || ctx.quotaReached) throw new NotSentError();
-      sending();
-      return bapiRequest({
-        method: "POST",
-        path: "/v1/users",
-        secretKey: ctx.secretKey,
-        body: JSON.stringify(body),
-      });
-    });
+    ctx.schedule(
+      async () => {
+        if (stopped()) throw new NotSentError();
+        sending();
+        return bapiRequest({
+          method: "POST",
+          path: "/v1/users",
+          secretKey: ctx.secretKey,
+          body: JSON.stringify(body),
+        });
+      },
+      { skipWait: stopped },
+    );
 
   const body = buildCreateUserBody(user, identifiers, skipPasswordRequirement);
   const notes: string[] = [];
