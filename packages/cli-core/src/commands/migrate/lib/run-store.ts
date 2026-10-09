@@ -60,7 +60,8 @@ export type RunTarget = {
 
 export type RunFile = { path: string; sha256: string };
 
-export type RunCounts = Partial<Record<UserStatus, number>> & { total: number };
+/** `notSent`: users a stopped import never sent, so they have no line. */
+export type RunCounts = Partial<Record<UserStatus, number>> & { total: number; notSent?: number };
 
 export type RunRecord = {
   id: string;
@@ -345,6 +346,7 @@ function openRun(runsDir: string, record: RunRecord): Run {
     finish(options) {
       const lines = [...latestUserLines(runsDir, run.record.id).values()];
       const counts = countLines(lines);
+      if (options?.notSent) counts.notSent = options.notSent;
       // A created user whose extra identifiers never attached is left for a continue.
       const pendingAttaches = lines.filter(
         (line) => line.status === "created" && (line.pending?.length ?? 0) > 0,
@@ -353,7 +355,7 @@ function openRun(runsDir: string, record: RunRecord): Run {
         (counts.failed ?? 0) +
         (counts.skipped ?? 0) +
         (counts.creating ?? 0) +
-        (options?.notSent ?? 0) +
+        (counts.notSent ?? 0) +
         pendingAttaches;
       run.update({
         counts,
