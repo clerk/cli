@@ -60,9 +60,17 @@ export function exportPath(run: Run, output: string | undefined): string {
 export function writeExportFile(file: string, envelope: ExportEnvelope): string {
   // Password hashes, PII and a Firebase signer key: owner-only.
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, JSON.stringify(envelope, null, 2), { mode: 0o600 });
-  // `mode` only applies on create; an existing `--output` keeps its own.
-  fs.chmodSync(file, 0o600);
+  // Made owner-only before a byte is written: `mode` applies only on create,
+  // so an existing `--output` would otherwise hold the data at its own mode
+  // until a later chmod, or keep it if the write failed first.
+  const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT, 0o600);
+  try {
+    fs.fchmodSync(fd, 0o600);
+    fs.ftruncateSync(fd, 0);
+    fs.writeSync(fd, JSON.stringify(envelope, null, 2));
+  } finally {
+    fs.closeSync(fd);
+  }
   return file;
 }
 
