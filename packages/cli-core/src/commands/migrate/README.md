@@ -257,7 +257,7 @@ the flag to pass.
 | `-y, --yes`           | all        | Do not prompt: fail on a bad credential                   |
 | `--json`              | all        | Print the result as JSON; never prompts                   |
 | `--runs-dir <path>`   | all        | Where runs are kept (see [the run store](#the-run-store)) |
-| `--db-url <url>`      | `supabase` | Postgres, MySQL, libsql/Turso or SQLite connection string |
+| `--db-url <url>`      | `supabase` | Postgres connection string                                |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
 so it resolves a key the same way `clerk migrate import` does, with one extra
@@ -338,11 +338,9 @@ counts users who _have_ a password, so the size of the gap is visible up front.
 clerk migrate export supabase --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
 ```
 
-Postgres and MySQL go through `Bun.sql`; SQLite through `bun:sqlite`;
-`libsql://` (Turso) over the server's HTTP pipeline endpoint, since `bun:sqlite`
-only opens local files and `@libsql/client` ships native optional dependencies.
-Nothing native ships in the binary — that is the whole reason the `engines.bun`
-floor exists. Resolution is `--db-url`, then `SUPABASE_DB_URL`, then a masked
+Supabase's database is Postgres, read through `Bun.sql`: any URL but
+`postgres://` or `postgresql://` is refused before connecting. Nothing native
+ships in the binary — that is the whole reason the `engines.bun` floor exists. Resolution is `--db-url`, then `SUPABASE_DB_URL`, then a masked
 prompt, since a connection string carries the password inline. A password
 pasted unencoded (`#`, `@`, `/` and the like) is percent-encoded for you.
 
