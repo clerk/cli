@@ -875,6 +875,8 @@ describe("run", () => {
       fs.writeFileSync(path.join(runsDir(), first!.id, "lock"), "1");
 
       expect(await exitCodeOf(run(baseOptions))).toBe(EXIT_CODE.USAGE);
+      // A new run would send the same external IDs alongside it.
+      expect(await exitCodeOf(run({ ...baseOptions, newRun: true }))).toBe(EXIT_CODE.USAGE);
     });
 
     // An edited file is a different job.
@@ -1242,6 +1244,26 @@ describe("run", () => {
       expect(bodies[0]).toMatchObject({ first_name: "Ada", password_hasher: "bcrypt" });
       // postTransform dropped the empty given name rather than sending "".
       expect("first_name" in (bodies[1] ?? {})).toBe(false);
+    });
+
+    // An edited source misses the live run's `sourceHash`, but both would send
+    // the same external IDs.
+    test("refuses while a run of this file with an earlier version of the source is live", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      const [first] = listRuns(runsDir());
+      const record = readRun(runsDir(), first!.id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(path.join(runsDir(), first!.id, "run.json"), JSON.stringify(record));
+      // PID 1 is always alive, and never this test.
+      fs.writeFileSync(path.join(runsDir(), first!.id, "lock"), "1");
+
+      const edited = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, edited), `${CUSTOM}\n// edited`);
+      requests = [];
+      await expect(
+        run({ input: "export.json", source: edited, yes: true, secretKey: "sk_test_x" }),
+      ).rejects.toThrow(/importing this file right now in another process/);
+      expect(created()).toHaveLength(0);
     });
 
     // An edited source is a different source, so the run records which one.
