@@ -122,9 +122,14 @@ const betterAuthSource = {
           ? Number(rawExpiry)
           : undefined;
     const expiry = epoch !== undefined && epoch < 1e11 ? epoch * 1000 : (epoch ?? rawExpiry);
-    const expired = Date.parse(String(toIsoDate(expiry, true))) <= Date.now();
-    if (isVerified(user.banned, "boolean") && !expired) user.banned = true;
-    else delete user.banned;
+    const endsAt = Date.parse(String(toIsoDate(expiry, true)));
+    const expired = endsAt <= Date.now();
+    if (isVerified(user.banned, "boolean") && !expired) {
+      user.banned = true;
+      // Clerk's ban has no end, so this one's is kept for the checks to warn
+      // about. No expiry is Better Auth's permanent ban.
+      if (Number.isFinite(endsAt)) user.banEndsAt = new Date(endsAt).toISOString();
+    } else delete user.banned;
     delete user.banExpires;
     delete user.ban_expires;
 
