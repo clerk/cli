@@ -1319,6 +1319,27 @@ describe("run", () => {
     });
   });
 
+  // The two `--json` outcomes that stop before a run exists: each says why,
+  // with `run: null`.
+  describe("--json, stopped before any run", () => {
+    test("a refused import reports refused, and exits 2", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([...export2, { id: "u3" }]),
+      );
+      expect(await exitCodeOf(run({ ...baseOptions, json: true }))).toBe(EXIT_CODE.USAGE);
+      expect(JSON.parse(captured.out)).toMatchObject({ run: null, refused: true });
+      expect(created()).toHaveLength(0);
+    });
+
+    test("a file with nobody to import reports nothingToImport", async () => {
+      fs.writeFileSync(path.join(workDir, "export.json"), "[]");
+      await run({ ...baseOptions, json: true });
+      expect(JSON.parse(captured.out)).toMatchObject({ run: null, nothingToImport: true });
+      expect(created()).toHaveLength(0);
+    });
+  });
+
   describe("stopped part-way", () => {
     // `importUsers` returns normally on a Ctrl-C; the run must not read as done.
     test("a Ctrl-C after the first create leaves the run unfinished, as interrupted", async () => {
