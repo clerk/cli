@@ -55,8 +55,8 @@ const ALL_CLIENT_IDS = [
   "fx",
 ];
 
-// The entry shape the bridge registers — no URL in args.
-const CURRENT_SHAPE = { command: "clerk", args: ["mcp", "run"] };
+// The clerk 3.x `clerk mcp run` bridge entry, removed in 4.0.
+const LEGACY_SHAPE = { command: "clerk", args: ["mcp", "run"] };
 
 describe("user-scope MCP clients (homedir redirected)", () => {
   beforeEach(async () => {
@@ -72,43 +72,49 @@ describe("user-scope MCP clients (homedir redirected)", () => {
   });
 
   describe("gemini (reads configs written by the gemini CLI)", () => {
-    test("round-trips a current-shape entry on list, resolving URL from getMcpUrl()", async () => {
+    test("reads the Streamable HTTP entry from `httpUrl`", async () => {
       const dir = join(mockHome, ".gemini");
       await mkdir(dir, { recursive: true });
       await Bun.write(
         join(dir, "settings.json"),
-        JSON.stringify({ mcpServers: { clerk: CURRENT_SHAPE } }),
+        JSON.stringify({ mcpServers: { clerk: { httpUrl: DEFAULT_URL } } }),
       );
       const entries = await geminiClient.list("/ignored");
       expect(entries).toEqual([
-        expect.objectContaining({ client: "gemini", name: "clerk", url: DEFAULT_URL }),
+        {
+          client: "gemini",
+          configPath: expect.any(String),
+          name: "clerk",
+          url: DEFAULT_URL,
+          legacy: false,
+        },
       ]);
     });
 
-    test("ignores foreign stdio entries that are not the clerk bridge", async () => {
+    test("ignores foreign entries and flags a legacy bridge", async () => {
       const dir = join(mockHome, ".gemini");
       await mkdir(dir, { recursive: true });
       await Bun.write(
         join(dir, "settings.json"),
         JSON.stringify({
           mcpServers: {
-            clerk: CURRENT_SHAPE,
+            clerk: LEGACY_SHAPE,
             "other-tool": { command: "npx", args: ["serve", "--port", "3000"] },
           },
         }),
       );
       const entries = await geminiClient.list("/ignored");
-      expect(entries.map((e) => e.name)).toEqual(["clerk"]);
+      expect(entries.map((e) => [e.name, e.legacy])).toEqual([["clerk", true]]);
     });
   });
 
   describe("windsurf (file-backed — we write the config ourselves)", () => {
-    test("encodes the clerk-run shape and round-trips it on list", async () => {
+    test("encodes `serverUrl` and round-trips it on list", async () => {
       await windsurfClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored");
       const parsed = (await Bun.file(windsurfClient.configPath("/ignored")).json()) as {
-        mcpServers: { clerk: { command: string; args: string[] } };
+        mcpServers: { clerk: unknown };
       };
-      expect(parsed.mcpServers.clerk).toEqual(CURRENT_SHAPE);
+      expect(parsed.mcpServers.clerk).toEqual({ serverUrl: DEFAULT_URL });
 
       const entries = await windsurfClient.list("/ignored");
       expect(entries).toEqual([
@@ -117,29 +123,31 @@ describe("user-scope MCP clients (homedir redirected)", () => {
     });
   });
 
-  describe("codex (reads the TOML config written by the codex CLI)", () => {
-    test("round-trips a [mcp_servers.<name>] entry on list, resolving URL from getMcpUrl()", async () => {
-      const dir = join(mockHome, ".codex");
-      await mkdir(dir, { recursive: true });
-      await Bun.write(
-        join(dir, "config.toml"),
-        '[mcp_servers.clerk]\ncommand = "clerk"\nargs = ["mcp", "run"]\n',
-      );
+  describe("codex (reads the TOML config)", () => {
+    test("round-trips a [mcp_servers.<name>] url entry on list", async () => {
+      await codexClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored");
       const entries = await codexClient.list("/ignored");
       expect(entries).toEqual([
-        expect.objectContaining({ client: "codex", name: "clerk", url: DEFAULT_URL }),
+        expect.objectContaining({
+          client: "codex",
+          name: "clerk",
+          url: DEFAULT_URL,
+          legacy: false,
+        }),
       ]);
     });
 
-    test("ignores a direct-URL entry the CLI never wrote, even under the clerk name", async () => {
+    test("flags a legacy bridge table", async () => {
       const dir = join(mockHome, ".codex");
       await mkdir(dir, { recursive: true });
       await Bun.write(
         join(dir, "config.toml"),
-        'model = "o3"\n\n[mcp_servers.clerk]\nurl = "https://mcp.clerk.com/mcp"\n',
+        'model = "o3"\n\n[mcp_servers.clerk]\ncommand = "clerk"\nargs = ["mcp", "run"]\n',
       );
       const entries = await codexClient.list("/ignored");
-      expect(entries).toEqual([]);
+      expect(entries).toEqual([
+        expect.objectContaining({ client: "codex", name: "clerk", url: DEFAULT_URL, legacy: true }),
+      ]);
     });
   });
 });
@@ -203,7 +211,7 @@ describe("install/uninstall across all clients (homedir + cwd redirected)", () =
     // written.
     await Bun.write(
       join(mockHome, ".hermes", "config.yaml"),
-      "mcp_servers:\n  clerk:\n    command: clerk\n    args: [mcp, run]\n",
+      `mcp_servers:\n  clerk:\n    url: ${DEFAULT_URL}\n    auth: oauth\n`,
     );
 
     await mcpInstall({ all: true });
@@ -231,7 +239,7 @@ describe("install/uninstall across all clients (homedir + cwd redirected)", () =
     const parsed = JSON.parse(await Bun.file(join(mockHome, ".cursor", "mcp.json")).text()) as {
       mcpServers: { clerk: unknown };
     };
-    expect(parsed.mcpServers.clerk).toEqual(CURRENT_SHAPE);
+    expect(parsed.mcpServers.clerk).toEqual({ url: DEFAULT_URL });
   });
 
   test("uninstall with no --client removes from every client", async () => {
@@ -240,7 +248,7 @@ describe("install/uninstall across all clients (homedir + cwd redirected)", () =
     await mkdir(join(mockHome, ".gemini"), { recursive: true });
     await Bun.write(
       join(mockHome, ".gemini", "settings.json"),
-      JSON.stringify({ mcpServers: { clerk: CURRENT_SHAPE } }),
+      JSON.stringify({ mcpServers: { clerk: { httpUrl: DEFAULT_URL } } }),
     );
     // Simulate the gemini CLI mutating its own config — the factory re-reads
     // it after a successful remove and refuses to report a phantom removal.
@@ -349,6 +357,25 @@ describe("clerk doctor — checkMcp (homedir + cwd redirected)", () => {
 
     const result = await checkMcp();
     expect(result.status).toBe("warn");
+  });
+
+  test("warns about a legacy bridge entry without probing it", async () => {
+    await mkdir(join(mockHome, ".cursor"), { recursive: true });
+    await Bun.write(
+      join(mockHome, ".cursor", "mcp.json"),
+      JSON.stringify({ mcpServers: { clerk: LEGACY_SHAPE } }),
+    );
+    let probed = false;
+    globalThis.fetch = (async () => {
+      probed = true;
+      return new Response("", { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const result = await checkMcp();
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain("cursor");
+    expect(result.remedy).toContain("clerk mcp install");
+    expect(probed).toBe(false);
   });
 
   test("names the unreachable URL in the warning", async () => {
