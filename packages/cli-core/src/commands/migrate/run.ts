@@ -656,11 +656,12 @@ function commandFor(
   if (!fromExport && options.source) parts.push("--source", quoteArg(options.source));
   if (options.newRun) parts.push("--new-run");
   parts.push(...importFlags(options));
-  if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "<key>");
+  // Names, not `<…>`: pasted as is, a shell reads `<key>` as a redirect.
+  if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "SIGNER_KEY");
   if (options.firebaseSaltSeparator !== undefined)
-    parts.push("--firebase-salt-separator", "<separator>");
-  if (options.firebaseRounds) parts.push("--firebase-rounds", "<n>");
-  if (options.firebaseMemCost) parts.push("--firebase-mem-cost", "<n>");
+    parts.push("--firebase-salt-separator", "SALT_SEPARATOR");
+  if (options.firebaseRounds) parts.push("--firebase-rounds", "ROUNDS");
+  if (options.firebaseMemCost) parts.push("--firebase-mem-cost", "MEM_COST");
   parts.push(...carry);
   if (options.json) parts.push("--json");
   return [...parts, ...extra].join(" ");
