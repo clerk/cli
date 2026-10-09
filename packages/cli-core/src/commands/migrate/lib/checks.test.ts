@@ -362,6 +362,27 @@ describe("rejects", () => {
 
   // A repeated record (an export that paged past a sign-up) must not take the
   // kept copy down with it.
+  // Adopted means created by this run, but only for its own record: another
+  // user that shares its email would still clash at create.
+  test("an adopted user's identifiers still clash with other users", async () => {
+    existing = [
+      {
+        id: "user_mine",
+        external_id: "mine",
+        email_addresses: [{ email_address: "mine@x.dev" }, { email_address: "shared@x.dev" }],
+      },
+    ];
+    expect(
+      await reasonsOf({
+        users: [
+          user("mine", { emailAddresses: ["shared@x.dev"] }),
+          user("other", { email: "shared@x.dev" }),
+        ],
+        adoptedClerkIds: new Set(["user_mine"]),
+      }),
+    ).toEqual({ other: "email is already used by a user in the instance" });
+  });
+
   test("a repeated source ID rejects only the later copy", async () => {
     const checks = await checkImport(input({ users: [user("a"), user("a")] }));
     expect(checks.importable.map((u) => u.userId)).toEqual(["a"]);
