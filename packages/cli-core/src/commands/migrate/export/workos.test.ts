@@ -1,0 +1,529 @@
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+// Colour is on or off depending on the runner, so rows are compared bare.
+import { stripVTControlCharacters as stripAnsi } from "node:util";
+import type { UserLine } from "../lib/run-store.ts";
+import { CliError, EXIT_CODE } from "../../../lib/errors.ts";
+import { useCaptureLog } from "../../../test/lib/stubs.ts";
+import { setAssumeYes } from "../lib/assume-yes.ts";
+import {
+  buildIdentityReport,
+  buildWorkOsExport,
+  exportWorkOs,
+  fetchAllWorkOsIdentities,
+  fetchAllWorkOsUsers,
+  fetchWorkOsIdentities,
+  fetchWorkOsPage,
+  mapWorkOsUserToExport,
+  resolveWithIdentities,
+  resolveWorkOsApiKey,
+  type WorkOsIdentity,
+} from "./workos.ts";
+
+const captured = useCaptureLog();
+
+const API_KEY = "sk_test";
+
+let workDir: string;
+let originalCwd: string;
+let originalFetch: typeof globalThis.fetch;
+let requests: string[];
+
+let originalMode: string | undefined;
+
+beforeAll(() => {
+  originalMode = process.env.CLERK_MODE;
+  originalCwd = process.cwd();
+  originalFetch = globalThis.fetch;
+  workDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-expworkos-")));
+  process.chdir(workDir);
+});
+
+afterAll(() => {
+  if (originalMode === undefined) delete process.env.CLERK_MODE;
+  else process.env.CLERK_MODE = originalMode;
+  globalThis.fetch = originalFetch;
+  process.chdir(originalCwd);
+  fs.rmSync(workDir, { recursive: true, force: true });
+});
+
+beforeEach(() => {
+  // Tests that need a prompt set human mode themselves; without this a leaked
+  // "human" from an earlier test stops a later one on the destination prompt.
+  process.env.CLERK_MODE = "agent";
+  requests = [];
+  fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
+  fs.rmSync(path.join(workDir, "exports"), { recursive: true, force: true });
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+const workosUser = (i: number, overrides: Record<string, unknown> = {}) => ({
+  id: `user_0${i}`,
+  email: `a${i}@x.dev`,
+  email_verified: true,
+  first_name: `Given${i}`,
+  last_name: `Family${i}`,
+  ...overrides,
+});
+
+/**
+ * Stubs one users page per entry in `pages`, chaining the cursor, plus an
+ * identities response per user id in `identities`.
+ */
+function stubWorkOs(
+  pages: Record<string, unknown>[][],
+  identities: Record<string, WorkOsIdentity[] | "fail"> = {},
+) {
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = input.toString();
+    requests.push(url);
+
+    const identityMatch = /\/users\/([^/]+)\/identities/.exec(url);
+    if (identityMatch) {
+      const entry = identities[identityMatch[1] as string];
+      if (entry === "fail") return new Response("nope", { status: 500 });
+      return Response.json(entry ?? []);
+    }
+
+    const after = new URL(url).searchParams.get("after");
+    const index = after ? Number(after.replace("cursor", "")) : 0;
+    const isLast = index >= pages.length - 1;
+    return Response.json({
+      data: pages[index] ?? [],
+      list_metadata: { after: isLast ? null : `cursor${index + 1}` },
+    });
+  }) as unknown as typeof fetch;
+}
+
+describe("resolveWorkOsApiKey", () => {
+  test("prefers the flag", async () => {
+    expect(await resolveWorkOsApiKey({ apiKey: "sk_flag" }, {})).toBe("sk_flag");
+  });
+
+  test("falls back to the environment", async () => {
+    expect(await resolveWorkOsApiKey({}, { WORKOS_API_KEY: "sk_env" })).toBe("sk_env");
+  });
+
+  // Tests run non-TTY, the same signal an agent gives.
+  test("names the flag and the variable when neither supplied one", async () => {
+    await expect(resolveWorkOsApiKey({}, {})).rejects.toThrow(
+      /Missing: --api-key \(or WORKOS_API_KEY\)\./,
+    );
+  });
+
+  test("does not prompt under --json, even with a human at the TTY", async () => {
+    process.env.CLERK_MODE = "human";
+    await expect(resolveWorkOsApiKey({ json: true }, {})).rejects.toThrow(/cannot prompt here/);
+  });
+
+  // `-y` is "do not prompt", at a terminal too, as for every other export.
+  test("does not prompt for a missing key under -y", async () => {
+    process.env.CLERK_MODE = "human";
+    setAssumeYes(true);
+    try {
+      await expect(resolveWorkOsApiKey({}, {})).rejects.toThrow(/cannot prompt here/);
+    } finally {
+      setAssumeYes(false);
+    }
+  });
+});
+
+describe("fetchWorkOsPage", () => {
+  test("asks for the documented page size", async () => {
+    stubWorkOs([[]]);
+    await fetchWorkOsPage(API_KEY);
+    expect(requests[0]).toContain("limit=100");
+  });
+
+  test("explains a rejection instead of surfacing a raw status", async () => {
+    globalThis.fetch = (async () =>
+      Response.json({ message: "Unauthorized" }, { status: 401 })) as unknown as typeof fetch;
+
+    await expect(fetchWorkOsPage(API_KEY)).rejects.toThrow(
+      /WorkOS returned 401 listing users: Unauthorized/,
+    );
+  });
+
+  // The usual cause is a publishable key, or a key from the other environment.
+  test("points at the key itself", async () => {
+    globalThis.fetch = (async () => new Response("{}", { status: 401 })) as unknown as typeof fetch;
+    await expect(fetchWorkOsPage(API_KEY)).rejects.toThrow(/secret key/);
+  });
+});
+
+describe("fetchAllWorkOsUsers", () => {
+  test("follows the cursor until it comes back null", async () => {
+    stubWorkOs([
+      Array.from({ length: 100 }, (_, i) => workosUser(i)),
+      Array.from({ length: 4 }, (_, i) => workosUser(100 + i)),
+    ]);
+
+    const all = await fetchAllWorkOsUsers({ apiKey: API_KEY });
+
+    expect(all).toHaveLength(104);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toContain("after=cursor1");
+  });
+
+  // Cursor pagination has no record ceiling, so a full page that happens to be
+  // the last one must not read as "there is more".
+  test("stops on a full final page", async () => {
+    stubWorkOs([Array.from({ length: 100 }, (_, i) => workosUser(i))]);
+    expect(await fetchAllWorkOsUsers({ apiKey: API_KEY })).toHaveLength(100);
+    expect(requests).toHaveLength(1);
+  });
+
+  test("stops when WorkOS hands back the cursor it was given", async () => {
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      requests.push(input.toString());
+      return Response.json({ data: [workosUser(0)], list_metadata: { after: "stuck" } });
+    }) as unknown as typeof fetch;
+
+    await expect(fetchAllWorkOsUsers({ apiKey: API_KEY })).rejects.toThrow(
+      /same pagination cursor twice \(stuck\)/,
+    );
+    expect(requests).toHaveLength(2);
+  });
+
+  test("reuses a page already fetched rather than asking twice", async () => {
+    stubWorkOs([[workosUser(0)]]);
+    const firstPage = await fetchWorkOsPage(API_KEY);
+    requests = [];
+
+    expect(await fetchAllWorkOsUsers({ apiKey: API_KEY, firstPage })).toHaveLength(1);
+    expect(requests).toHaveLength(0);
+  });
+});
+
+describe("resolveWithIdentities", () => {
+  test("is on when the flag asked for it", async () => {
+    expect(await resolveWithIdentities({ withIdentities: true }, 10)).toBe(true);
+  });
+
+  // The fan-out is one request per user and nothing it returns can be
+  // imported, so it is never the default.
+  test("is off without the flag when there is nobody to ask", async () => {
+    expect(await resolveWithIdentities({}, 10)).toBe(false);
+  });
+
+  test("is off when `--no-with-identities` said so, even under -y", async () => {
+    setAssumeYes(true);
+    try {
+      expect(await resolveWithIdentities({ withIdentities: false }, 10)).toBe(false);
+    } finally {
+      setAssumeYes(false);
+    }
+  });
+
+  // `-y` is "answer the prompts yes", and the prompt is "also fetch providers?".
+  test("is on under -y, which answers the question rather than asking it", async () => {
+    process.env.CLERK_MODE = "human";
+    setAssumeYes(true);
+    try {
+      expect(await resolveWithIdentities({}, 10)).toBe(true);
+    } finally {
+      setAssumeYes(false);
+    }
+  });
+
+  test("is off under --json, even with a human at the TTY", async () => {
+    process.env.CLERK_MODE = "human";
+    expect(await resolveWithIdentities({ json: true }, 10)).toBe(false);
+  });
+
+  test("does not ask when there are no users to ask about", async () => {
+    process.env.CLERK_MODE = "human";
+    expect(await resolveWithIdentities({}, 0)).toBe(false);
+  });
+});
+
+describe("fetchAllWorkOsIdentities", () => {
+  test("collects each user's providers", async () => {
+    stubWorkOs([[]], {
+      user_00: [{ provider: "GoogleOAuth", idp_id: "g1", type: "OAuth" }],
+      user_01: [],
+    });
+
+    const { identities, failed } = await fetchAllWorkOsIdentities({
+      apiKey: API_KEY,
+      users: [workosUser(0), workosUser(1)],
+    });
+
+    expect(identities.get("user_00")).toEqual([
+      { provider: "GoogleOAuth", idp_id: "g1", type: "OAuth" },
+    ]);
+    expect(identities.get("user_01")).toEqual([]);
+    expect(failed).toBe(0);
+  });
+
+  // "Lookup failed" and "has no providers" are different facts, and flattening
+  // the first into the second would put a wrong number in the report.
+  test("leaves a failed lookup absent rather than empty, and counts it", async () => {
+    stubWorkOs([[]], { user_00: "fail", user_01: [] });
+
+    const { identities, failed } = await fetchAllWorkOsIdentities({
+      apiKey: API_KEY,
+      users: [workosUser(0), workosUser(1)],
+    });
+
+    expect(identities.has("user_00")).toBe(false);
+    expect(identities.get("user_01")).toEqual([]);
+    expect(failed).toBe(1);
+  });
+});
+
+test("fetchWorkOsIdentities keeps the user ID inside its path segment", async () => {
+  stubWorkOs([[]]);
+  await fetchWorkOsIdentities(API_KEY, "user_01/../x?y#z");
+  expect(requests[0]).toBe(
+    "https://api.workos.com/user_management/users/user_01%2F..%2Fx%3Fy%23z/identities",
+  );
+});
+
+// A key revoked partway would otherwise mark every later user unreadable and
+// let the export finish as if it had worked.
+test("fetchAllWorkOsIdentities stops on a rejected key rather than counting it", async () => {
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    requests.push(input.toString());
+    return Response.json({ message: "Unauthorized" }, { status: 401 });
+  }) as unknown as typeof fetch;
+  const users = Array.from({ length: 50 }, (_, i) => workosUser(i));
+
+  const error = (await fetchAllWorkOsIdentities({ apiKey: API_KEY, users }).catch(
+    (e: unknown) => e,
+  )) as CliError;
+
+  expect(error).toBeInstanceOf(CliError);
+  expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+  expect(requests.length).toBeLessThan(users.length);
+});
+
+describe("buildIdentityReport", () => {
+  const rowsOf = (section: { rows: string[] }) =>
+    section.rows.map((row) => stripAnsi(row).trimEnd());
+
+  test("ranks providers by use, and counts users with none", () => {
+    const section = buildIdentityReport(
+      [workosUser(0), workosUser(1), workosUser(2), workosUser(3)],
+      new Map([
+        ["user_00", [{ provider: "GoogleOAuth" }]],
+        ["user_01", [{ provider: "GoogleOAuth" }, { provider: "MicrosoftOAuth" }]],
+        ["user_02", []],
+        ["user_03", []],
+      ]),
+      0,
+    );
+
+    expect(section.title).toBe("OAuth providers");
+    expect(rowsOf(section)).toEqual([
+      "  GoogleOAuth        2 users",
+      "  MicrosoftOAuth     1 user",
+      "  no OAuth provider  2 users",
+    ]);
+  });
+
+  // Counting a failed lookup as "no provider" would understate social sign-in.
+  test("reports unreadable lookups on their own row, with the caveat", () => {
+    const section = buildIdentityReport(
+      [workosUser(0), workosUser(1)],
+      new Map([["user_01", []]]),
+      1,
+    );
+
+    const rows = rowsOf(section);
+    expect(rows).toContain("  not readable       1 user");
+    expect(rows).toContain("  no OAuth provider  1 user");
+    expect(rows.at(-1)).toContain("no `identities` field in the export, rather than an empty one");
+  });
+
+  test("says nothing about unreadable lookups when there were none", () => {
+    const section = buildIdentityReport([workosUser(0)], new Map([["user_00", []]]), 0);
+    expect(rowsOf(section)).toEqual(["  no OAuth provider  1 user"]);
+  });
+});
+
+describe("mapWorkOsUserToExport", () => {
+  test("keeps the fields the workos transformer maps from", () => {
+    expect(mapWorkOsUserToExport(workosUser(0, { created_at: "2025-01-01" }))).toEqual({
+      id: "user_00",
+      email: "a0@x.dev",
+      first_name: "Given0",
+      last_name: "Family0",
+      created_at: "2025-01-01",
+      email_verified: true,
+    });
+  });
+
+  // Dropping a false flag would import an unconfirmed address as verified.
+  test("keeps email_verified when it is false", () => {
+    expect(mapWorkOsUserToExport(workosUser(0, { email_verified: false })).email_verified).toBe(
+      false,
+    );
+  });
+
+  test("drops tenant fields the import has no use for", () => {
+    const mapped = mapWorkOsUserToExport(
+      workosUser(0, {
+        locale: "en-GB",
+        profile_picture_url: "https://x.dev/a.png",
+        last_sign_in_at: "2026-01-01",
+        updated_at: "2026-01-01",
+      }),
+    );
+    for (const noise of ["locale", "profile_picture_url", "last_sign_in_at", "updated_at"]) {
+      expect(noise in mapped).toBe(false);
+    }
+  });
+
+  test("keeps the tenant's own external_id", () => {
+    expect(mapWorkOsUserToExport(workosUser(0, { external_id: "cust_1" })).external_id).toBe(
+      "cust_1",
+    );
+  });
+
+  test("omits empty metadata", () => {
+    expect("metadata" in mapWorkOsUserToExport(workosUser(0, { metadata: {} }))).toBe(false);
+    expect(mapWorkOsUserToExport(workosUser(0, { metadata: { plan: "pro" } })).metadata).toEqual({
+      plan: "pro",
+    });
+  });
+
+  test("carries identities only when they were fetched", () => {
+    expect("identities" in mapWorkOsUserToExport(workosUser(0))).toBe(false);
+    expect(mapWorkOsUserToExport(workosUser(0), [{ provider: "GoogleOAuth" }]).identities).toEqual([
+      { provider: "GoogleOAuth" },
+    ]);
+  });
+});
+
+describe("buildWorkOsExport", () => {
+  test("counts coverage and records each user", () => {
+    const lines: UserLine[] = [];
+    const { users, coverage } = buildWorkOsExport(
+      [workosUser(0), workosUser(1, { first_name: undefined })],
+      (line) => lines.push(line),
+    );
+
+    expect(users).toHaveLength(2);
+    const byLabel = Object.fromEntries(coverage.map((c) => [c.label, c.count]));
+    expect(byLabel["have an email address"]).toBe(2);
+    expect(byLabel["have a first name"]).toBe(1);
+
+    expect(lines.map((line) => line.status)).toEqual(["exported", "exported"]);
+  });
+
+  // Always shown, always zero: seeing it before the import is the point.
+  test("reports the password row even though it can only ever be zero", () => {
+    const { coverage } = buildWorkOsExport([workosUser(0)]);
+    expect(coverage.at(-1)).toEqual({
+      label: "have a password (WorkOS returns none)",
+      count: 0,
+    });
+  });
+
+  // Providers get their own block: a coverage row means "N of M users have
+  // this field", and a provider count can exceed M.
+  test("keeps providers out of the coverage table", () => {
+    const { coverage } = buildWorkOsExport(
+      [workosUser(0)],
+      undefined,
+      new Map([["user_00", [{ provider: "GoogleOAuth" }]]]),
+    );
+    expect(coverage.some((row) => row.label.toLowerCase().includes("oauth"))).toBe(false);
+  });
+});
+
+/** The envelope the one export run in this project wrote. */
+function onlyExportFile(): string {
+  const dir = path.join(workDir, ".clerk", "migrate");
+  const entries = fs.readdirSync(dir);
+  expect(entries).toHaveLength(1);
+  return path.join(dir, entries[0] as string, "export.json");
+}
+
+/** The users inside that envelope. */
+function exportedUsers(): Record<string, unknown>[] {
+  return (
+    JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8")) as { users: Record<string, unknown>[] }
+  ).users;
+}
+
+describe("exportWorkOs", () => {
+  test("writes the default path and reports coverage", async () => {
+    stubWorkOs([[workosUser(0)]]);
+
+    await exportWorkOs({ apiKey: API_KEY });
+    expect(JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8"))).toMatchObject({
+      source: "workos",
+    });
+    const written = exportedUsers();
+    expect(written[0]?.id).toBe("user_00");
+    expect(captured.err).toContain("Field coverage");
+  });
+
+  test("names the command that consumes the file", async () => {
+    stubWorkOs([[workosUser(0)]]);
+    // The suggestion rides the gutter's Next steps block, which only renders
+    // in human mode.
+    process.env.CLERK_MODE = "human";
+    // --output answers the destination prompt, and --with-identities answers
+    // the providers question, so human mode stops on neither.
+    await exportWorkOs({ apiKey: API_KEY, output: "exports/mine.json", withIdentities: true });
+    expect(captured.err).toMatch(/clerk migrate import \d{8}-\d{6}-[0-9a-f]{4}/);
+  });
+
+  test("--output controls the destination", async () => {
+    stubWorkOs([[workosUser(0)]]);
+
+    await exportWorkOs({ apiKey: API_KEY, output: "tenant.json" });
+
+    expect(fs.existsSync(path.join(workDir, "tenant.json"))).toBe(true);
+  });
+
+  test("skips the per-user identity fan-out unless asked", async () => {
+    stubWorkOs([[workosUser(0), workosUser(1)]]);
+
+    await exportWorkOs({ apiKey: API_KEY, output: "plain.json" });
+
+    expect(requests.filter((url) => url.includes("/identities"))).toHaveLength(0);
+  });
+
+  test("--with-identities records each user's providers in the file", async () => {
+    stubWorkOs([[workosUser(0)]], { user_00: [{ provider: "GoogleOAuth", idp_id: "g1" }] });
+
+    await exportWorkOs({ apiKey: API_KEY, output: "rich.json", withIdentities: true });
+
+    const written = (
+      JSON.parse(fs.readFileSync(path.join(workDir, "rich.json"), "utf-8")) as {
+        users: Record<string, unknown>[];
+      }
+    ).users;
+    expect(written[0]?.identities).toEqual([{ provider: "GoogleOAuth", idp_id: "g1" }]);
+  });
+
+  // Finding this out after the import means nobody can sign in.
+  test("says plainly that no credentials are in the file", async () => {
+    stubWorkOs([[workosUser(0)]]);
+    await exportWorkOs({ apiKey: API_KEY, output: "warned.json" });
+    expect(captured.err).toContain("does not return password hashes or TOTP secrets");
+  });
+});
+
+describe("fetchWorkOsIdentities", () => {
+  test("accepts the bare array the endpoint returns", async () => {
+    stubWorkOs([[]], { user_00: [{ provider: "GoogleOAuth" }] });
+    expect(await fetchWorkOsIdentities(API_KEY, "user_00")).toEqual([{ provider: "GoogleOAuth" }]);
+  });
+
+  // A move to WorkOS's usual envelope must not read as "no providers".
+  test("accepts a { data } envelope too", async () => {
+    globalThis.fetch = (async () =>
+      Response.json({ data: [{ provider: "AppleOAuth" }] })) as unknown as typeof fetch;
+    expect(await fetchWorkOsIdentities(API_KEY, "user_00")).toEqual([{ provider: "AppleOAuth" }]);
+  });
+});

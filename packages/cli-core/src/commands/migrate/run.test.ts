@@ -1322,6 +1322,7 @@ describe("run", () => {
         ],
         "sb1",
       ],
+      ["workos", [{ id: "user_01ABC", email: "a@x.dev", email_verified: true }], "user_01ABC"],
     ];
 
     test.each(PLATFORMS)(
@@ -1332,6 +1333,11 @@ describe("run", () => {
         await run({ ...baseOptions, source: key });
 
         expect(created()).toEqual([externalId]);
+        // Each export's verified email is the one the create sends.
+        const create = requests.find(
+          (request) => request.method === "POST" && new URL(request.url).pathname === "/v1/users",
+        );
+        expect(create?.body).toMatchObject({ email_address: ["a@x.dev"] });
       },
     );
 
@@ -1445,7 +1451,7 @@ describe("run", () => {
       )) as CliError;
       expect(error.exitCode).toBe(EXIT_CODE.USAGE);
       expect(error.message).toContain(
-        'Unknown source "nope". Valid sources: clerk, auth0, firebase, supabase.',
+        'Unknown source "nope". Valid sources: clerk, auth0, firebase, supabase, workos.',
       );
       expect(requests).toHaveLength(0);
     });

@@ -6,6 +6,7 @@ import { exportAuth0 } from "./auth0.ts";
 import { exportClerk } from "./clerk.ts";
 import { exportFirebase } from "./firebase.ts";
 import { exportSupabase } from "./supabase.ts";
+import { exportWorkOs } from "./workos.ts";
 import type { DbExportOptions } from "./db-options.ts";
 import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "../lib/run-store.ts";
 import { exportPlatformKeys, exportPlatforms, getExportPlatform } from "./registry.ts";
@@ -53,6 +54,7 @@ const handlers = {
   auth0: exportAuth0,
   supabase: exportSupabase,
   firebase: exportFirebase,
+  workos: exportWorkOs,
 };
 
 /** The platforms that read a database, which share `--db-url`. */
@@ -153,6 +155,36 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     ])
     .action(async (_opts, cmd) =>
       handlers.firebase(cmd.optsWithGlobals() as Parameters<typeof handlers.firebase>[0]),
+    );
+
+  exportCommand
+    .command("workos")
+    .description("Export users from a WorkOS tenant")
+    .option("--api-key <key>", "WorkOS secret API key, the one starting `sk_`")
+    .option(
+      "--with-identities",
+      "Also record each user's OAuth providers — one extra request per user",
+    )
+    .option("--no-with-identities", "Skip the OAuth provider fan-out without being asked")
+    .option("-o, --output <path>", "Write the export here instead of the run folder")
+    .option(
+      "-y, --yes",
+      "Do not prompt: fail on a rejected credential, and assume --with-identities",
+    )
+    .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
+    .option("--json", "Print the result as JSON; never prompts")
+    .setExamples([
+      {
+        command: "clerk migrate export workos --api-key sk_…",
+        description: "Export with an explicit API key",
+      },
+      {
+        command: "clerk migrate export workos",
+        description: "Read WORKOS_API_KEY, or prompt",
+      },
+    ])
+    .action(async (_opts, cmd) =>
+      handlers.workos(cmd.optsWithGlobals() as Parameters<typeof handlers.workos>[0]),
     );
 
   // Each takes exactly one connection string, so they are registered from a
