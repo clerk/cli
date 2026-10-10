@@ -1055,8 +1055,28 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   // No setting would let a duplicate in, so none earns a fix.
   const duplicates = new Set<User>();
   const { reasons: fileDuplicates, keptBy } = findFileDuplicates(passed);
+  // An adopted user already holds its email, phone and username in Clerk, so
+  // an earlier record that claimed one first is the one whose create would
+  // fail. Keyed by that record's source ID, naming the adopted user.
+  const heldByAdopted = new Map<string, string>();
+  for (const user of passed) {
+    const kept = keptBy.get(user);
+    if (kept && input.adoptedSourceIds?.has(user.userId) && !input.adoptedSourceIds.has(kept)) {
+      heldByAdopted.set(kept, user.userId);
+    }
+  }
   let candidates: User[] = [];
   for (const user of passed) {
+    const holder = heldByAdopted.get(user.userId);
+    if (holder) {
+      rejects.push({
+        sourceId: user.userId,
+        reason: "shares an email, phone or username with a user an earlier attempt already created",
+        keptSourceId: holder,
+      });
+      duplicates.add(originals.get(user) ?? user);
+      continue;
+    }
     // An adopted user is in Clerk already, so an earlier record sharing its
     // email costs it nothing. A second record with its source ID would be
     // created as the same user, so that one is still rejected.
