@@ -51,7 +51,7 @@ export class RelayClient implements IRelayClient {
   }
 
   /** Dial and resolve once the first connection is open and handshaken. */
-  start(): Promise<void> {
+  async start(): Promise<void> {
     const FIRST_CONNECT_TIMEOUT_MS = this.options.firstConnectTimeoutMs ?? 30_000;
     const { promise: opened, resolve, reject } = Promise.withResolvers<void>();
     this.rejectFirstOpen = reject;

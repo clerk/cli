@@ -8,6 +8,13 @@ import { log } from "../../lib/log.ts";
 import { CliError, ERROR_CODE, errorMessage } from "../../lib/errors.ts";
 import type { DoctorContext, KeylessInstanceInfo, ResolvedProfile } from "./types.ts";
 
+// Every getter below hands back a memoized promise *by identity*, so that N
+// checks calling `ctx.getToken()` share one credential read. Marking them
+// `async` would wrap the cached promise in a fresh one per call — the cache
+// would still work, but `getToken() === getToken()` would stop holding, which
+// is the property `context.test.ts` pins.
+// oxlint-disable typescript/promise-function-async
+
 export function createDoctorContext(): DoctorContext {
   let tokenPromise: Promise<string | null> | undefined;
   let validTokenPromise: Promise<string | null> | undefined;
@@ -96,7 +103,7 @@ export function createDoctorContext(): DoctorContext {
           } catch (error) {
             // Naming the instance is a nice-to-have here — the checks that
             // actually need the target already have it via getKeylessTarget().
-            log.debug(`doctor: could not fetch keyless instance info (${errorMessage(error)})`);
+            log.debug(`doctor: could not fetch accountless instance info (${errorMessage(error)})`);
             return null;
           }
         })();

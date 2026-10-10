@@ -49,7 +49,7 @@ export function assertPayloadWritable(
  * has no document, so `scope` selects which resources to read — passing the
  * pending payload keeps the read to the groups being diffed.
  */
-export function readInstanceConfig(
+export async function readInstanceConfig(
   target: InstanceTarget,
   scope: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {

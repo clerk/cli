@@ -20,7 +20,7 @@ export const CREDENTIALS_FILE = join(clerkConfigDir ?? paths.data, "credentials"
 // ── Auth server ─────────────────────────────────────────────────────────────
 
 export const CALLBACK_PATH = "/callback";
-export const AUTH_TIMEOUT_MS = Number(process.env.CLERK_AUTH_TIMEOUT_MS) || 2 * 60 * 1000;
+export const AUTH_TIMEOUT_MS = Number(process.env.CLERK_AUTH_TIMEOUT_MS) || 15 * 60 * 1000;
 
 // ── OAuth client identification ─────────────────────────────────────────────
 
@@ -49,3 +49,9 @@ export const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 export const UPDATE_PACKAGE_NAME = "clerk";
 export const UPDATE_CACHE_FILE = join(CLERK_CACHE_DIR, "update-check.json");
 export const NPM_REGISTRY_URL = "https://registry.npmjs.org/";
+
+// ── Telemetry ─────────────────────────────────────────────────────────────
+
+/** Event ingestion endpoint (telemetry-service worker → BigQuery). */
+export const DEFAULT_TELEMETRY_ENDPOINT = "https://clerk-telemetry.com/v1/event";
+export const TELEMETRY_TIMEOUT_MS = 1000;

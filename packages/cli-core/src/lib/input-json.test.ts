@@ -317,8 +317,8 @@ describe("expandInputJson", () => {
         stderr: "pipe",
       });
 
-      proc.stdin.write(stdinData);
-      proc.stdin.end();
+      await proc.stdin.write(stdinData);
+      await proc.stdin.end();
 
       const stdout = await new Response(proc.stdout).text();
       await proc.exited;

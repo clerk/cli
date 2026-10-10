@@ -1,7 +1,8 @@
 import { listApplications, type Application } from "../../lib/plapi.ts";
-import { UserAbortError, isPromptExitError, withApiContext } from "../../lib/errors.ts";
+import { withApiContext } from "../../lib/errors.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
+import { closeStatusForError } from "../../lib/signals.ts";
 import { ui } from "../../lib/ui.ts";
 import { stripSecrets, displayName, printJson, type AppsOptions } from "./shared.ts";
 import { isAgent } from "../../mode.ts";
@@ -31,7 +32,7 @@ export async function list(options: AppsOptions = {}): Promise<void> {
   let closeStatus: "success" | "failed" | "paused" | undefined;
 
   try {
-    const fetchApps = () => withApiContext(listApplications(), "Failed to list applications");
+    const fetchApps = async () => withApiContext(listApplications(), "Failed to list applications");
     const result = shouldWrap
       ? await withSpinner("Fetching applications...", fetchApps)
       : await fetchApps();
@@ -52,16 +53,16 @@ export async function list(options: AppsOptions = {}): Promise<void> {
     ui.message(`${count} application${count === 1 ? "" : "s"}`);
     closeStatus = "success";
   } catch (error) {
-    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    closeStatus = closeStatusForError(error);
     throw error;
   } finally {
     if (shouldWrap) {
       if (closeStatus === "paused") {
         pausedOutro();
       } else if (closeStatus === "failed") {
-        outro("Failed");
+        await outro("Failed");
       } else if (closeStatus === "success") {
-        outro();
+        await outro();
       }
     }
   }

@@ -89,7 +89,7 @@ const colorDisabled = () => "NO_COLOR" in process.env && !forceColor();
 
 const supportsTruecolor = () => /truecolor|24bit/i.test(process.env.COLORTERM ?? "");
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const sleep = async (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 let cursorHidden = false;
 let exitGuardRegistered = false;

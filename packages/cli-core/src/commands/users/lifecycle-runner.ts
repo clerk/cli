@@ -59,7 +59,7 @@ export async function runUserLifecycleCommand(
   }
 
   try {
-    const response = await withSpinner(command.spinnerMessage, () =>
+    const response = await withSpinner(command.spinnerMessage, async () =>
       bapiRequest({
         method: command.method,
         path: command.path,

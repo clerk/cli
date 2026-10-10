@@ -54,7 +54,9 @@ export function registerUsers(program: Program): void {
         description: "Create a user from an inline BAPI request body",
       },
     ])
-    .action((_opts, cmd) => users.menu(cmd.optsWithGlobals() as Parameters<typeof users.menu>[0]));
+    .action(async (_opts, cmd) =>
+      users.menu(cmd.optsWithGlobals() as Parameters<typeof users.menu>[0]),
+    );
 
   usersCommand
     .command("list")
@@ -118,7 +120,9 @@ export function registerUsers(program: Program): void {
         description: "Filter by common identifiers and sort by recent sign-in",
       },
     ])
-    .action((_opts, cmd) => users.list(cmd.optsWithGlobals() as Parameters<typeof users.list>[0]));
+    .action(async (_opts, cmd) =>
+      users.list(cmd.optsWithGlobals() as Parameters<typeof users.list>[0]),
+    );
 
   usersCommand
     .command("create")
@@ -149,7 +153,7 @@ export function registerUsers(program: Program): void {
         description: "Preview a request from a file without executing",
       },
     ])
-    .action((_opts, cmd) =>
+    .action(async (_opts, cmd) =>
       users.create(cmd.optsWithGlobals() as Parameters<typeof users.create>[0]),
     );
 
@@ -176,7 +180,7 @@ export function registerUsers(program: Program): void {
         description: "Print the dashboard URL instead of opening",
       },
     ])
-    .action((userId, _opts, cmd) =>
+    .action(async (userId, _opts, cmd) =>
       users.open({
         ...(cmd.optsWithGlobals() as Parameters<typeof users.open>[0]),
         userId,

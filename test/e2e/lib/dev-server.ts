@@ -142,9 +142,10 @@ async function tryStart(opts: {
   const hasPortConflict = () =>
     PORT_CONFLICT.test(stderrLines.join("")) || PORT_CONFLICT.test(stdoutLines.join(""));
 
+  // Reuse the tree kill: a half-started dev server can already have spawned
+  // children that would otherwise survive and hold the project's dev lockfile.
   const killAndAwait = async () => {
-    proc.kill("SIGKILL");
-    await proc.exited.catch(() => {});
+    await killDevServer(proc).catch(() => {});
   };
 
   const deadline = Date.now() + READINESS_TIMEOUT_MS;
@@ -161,8 +162,12 @@ async function tryStart(opts: {
     if (proc.exitCode !== null) {
       if (hasPortConflict()) {
         log(`dev server exited (port ${port} in use)`);
+        await killAndAwait();
         return { kind: "port_conflict" };
       }
+      // The wrapper exiting doesn't mean the tree is gone — reap it before
+      // surfacing the failure so nothing is left holding the dev lockfile.
+      await killAndAwait();
       throw new Error(
         `Dev server exited (code ${proc.exitCode}) before becoming ready on port ${port}.\n` +
           `stdout:\n${stdoutLines.join("")}\nstderr:\n${stderrLines.join("")}`,
@@ -220,19 +225,131 @@ export async function startDevServer(opts: {
   throw new Error("unreachable");
 }
 
-/** Kill a dev server process, falling back to SIGKILL after 5 seconds. */
+const GRACEFUL_KILL_MS = 10_000;
+const SIGKILL_SETTLE_MS = 5_000;
+const KILL_POLL_MS = 250;
+
+interface ProcessEntry {
+  ppid: number;
+  command: string;
+}
+
+type TreeMember = { pid: number } & ProcessEntry;
+
+/** Snapshot the process table as pid -> { ppid, command }. */
+async function readProcessTable(): Promise<Map<number, ProcessEntry>> {
+  const table = new Map<number, ProcessEntry>();
+  const ps = await Bun.$`ps -eo pid=,ppid=,command=`.quiet().nothrow();
+  if (ps.exitCode !== 0) return table;
+
+  for (const line of ps.stdout.toString().split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    if (!match) continue;
+    table.set(Number(match[1]), { ppid: Number(match[2]), command: match[3]!.trim() });
+  }
+  return table;
+}
+
+/**
+ * Snapshot `rootPid` and every transitive descendant, recording each one's
+ * command line.
+ *
+ * This has to happen *before* we signal anything: `npx` execs the real dev
+ * server as a child, and once the wrapper exits its children are reparented to
+ * init, at which point they're no longer reachable from `proc.pid`.
+ *
+ * The command line is kept so a later signal can verify the pid still refers to
+ * the same process — pids are recycled, and this code sends SIGKILL.
+ */
+async function collectProcessTree(rootPid: number): Promise<TreeMember[]> {
+  const table = await readProcessTable();
+  const childrenOf = new Map<number, number[]>();
+  for (const [pid, { ppid }] of table) {
+    childrenOf.set(ppid, [...(childrenOf.get(ppid) ?? []), pid]);
+  }
+
+  const tree: TreeMember[] = [];
+  const seen = new Set<number>();
+  const queue = [rootPid];
+  while (queue.length > 0) {
+    const pid = queue.shift()!;
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    const entry = table.get(pid);
+    if (entry) tree.push({ pid, ...entry });
+    queue.push(...(childrenOf.get(pid) ?? []));
+  }
+  return tree;
+}
+
+/**
+ * Tree members whose pid is still running the command we snapshotted.
+ *
+ * The command comparison guards against pid reuse: a recycled pid would
+ * otherwise be a SIGKILL target.
+ */
+async function livingMembers(tree: TreeMember[]): Promise<TreeMember[]> {
+  const table = await readProcessTable();
+  return tree.filter((member) => table.get(member.pid)?.command === member.command);
+}
+
+/** Signal every still-living tree member. Returns the members that were signalled. */
+async function signalTree(
+  tree: TreeMember[],
+  signal: "SIGTERM" | "SIGKILL",
+): Promise<TreeMember[]> {
+  const alive = await livingMembers(tree);
+  for (const { pid } of alive) {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // Exited between the liveness check and the signal.
+    }
+  }
+  return alive;
+}
+
+/** Poll until no tree member is alive, or `timeoutMs` elapses. */
+async function waitForTreeExit(tree: TreeMember[], timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if ((await livingMembers(tree)).length === 0) return true;
+    await Bun.sleep(KILL_POLL_MS);
+  }
+  return (await livingMembers(tree)).length === 0;
+}
+
+/**
+ * Kill a dev server process tree, escalating to SIGKILL after a grace period.
+ *
+ * Killing only the spawned `npx` wrapper is not enough. npm forwards SIGTERM
+ * and then exits, so the wrapper dies while the real dev server is still
+ * shutting down — or never terminates at all, if it ignores SIGTERM. The
+ * survivor is reparented to init, keeps its port, and keeps its dev lockfile,
+ * so the next attempt in the same project dir fails immediately with "Another
+ * dev server is already running" (Astro) / "Another next dev server is already
+ * running" (Next.js). Under `--retry 1` that turns any first-attempt flake into
+ * a guaranteed hard failure.
+ *
+ * Tree liveness, not `proc.exited`, is the stopping condition: the wrapper's
+ * exit says nothing about its descendants, and awaiting it can hang outright
+ * when an orphaned descendant holds the inherited stdio pipes open.
+ */
 export async function killDevServer(proc: Subprocess): Promise<void> {
   log("killing dev server");
-  proc.kill("SIGTERM");
+  // Snapshot before signalling — once the wrapper exits, its children are
+  // reparented to init and can no longer be found from `proc.pid`.
+  const tree = await collectProcessTree(proc.pid);
+  await signalTree(tree, "SIGTERM");
 
-  const timeout = setTimeout(() => {
-    proc.kill("SIGKILL");
-  }, 5_000);
-
-  try {
-    await proc.exited;
-  } finally {
-    clearTimeout(timeout);
+  if (!(await waitForTreeExit(tree, GRACEFUL_KILL_MS))) {
+    const survivors = await signalTree(tree, "SIGKILL");
+    if (survivors.length > 0) {
+      log(`dev server ignored SIGTERM, sent SIGKILL to ${survivors.map((s) => s.pid).join(", ")}`);
+    }
+    if (!(await waitForTreeExit(tree, SIGKILL_SETTLE_MS))) {
+      log("warning: dev server process tree outlived SIGKILL");
+    }
   }
 
   log("dev server stopped");

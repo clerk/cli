@@ -16,7 +16,7 @@ import {
   isValidEnv,
   setCurrentEnv,
 } from "../../lib/environment.ts";
-import { CliError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { isHuman } from "../../mode.ts";
 import { select } from "../../lib/listage.ts";
@@ -44,16 +44,17 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
     } else if (isHuman() && available.length > 1 && !process.stdin.isTTY) {
       throw new CliError(
         "No interactive terminal available — pass an environment name explicitly: `clerk switch-env <name>`",
+        { code: ERROR_CODE.NO_INTERACTIVE_TERMINAL },
       );
     } else if (available.length <= 1) {
       log.info(`Current environment: ${current}`);
       log.info("Only one environment configured — nothing to switch to.");
-      outro();
+      await outro();
       return;
     } else {
       log.info(`Current environment: ${current}`);
       log.info(`Available environments: ${available.join(", ")}`);
-      outro();
+      await outro();
       return;
     }
   }
@@ -61,6 +62,7 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
   if (!isValidEnv(target)) {
     throw new CliError(
       `Unknown environment "${target}". Available environments: ${available.join(", ")}`,
+      { code: ERROR_CODE.INVALID_ENVIRONMENT },
     );
   }
 
@@ -68,7 +70,7 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
 
   if (previousEnv === target) {
     log.data(`Already on ${target} environment.`);
-    outro();
+    await outro();
     return;
   }
 
@@ -81,10 +83,10 @@ export async function switchEnv(environmentArg: string | undefined): Promise<voi
   const token = await getToken();
   if (!token) {
     log.data(`No credentials found for ${target}.`);
-    outro(NEXT_STEPS.SWITCH_ENV_NO_TOKEN);
+    await outro(NEXT_STEPS.SWITCH_ENV_NO_TOKEN);
     return;
   }
-  outro(NEXT_STEPS.SWITCH_ENV);
+  await outro(NEXT_STEPS.SWITCH_ENV);
 }
 
 export function registerSwitchEnv(program: Program): void {

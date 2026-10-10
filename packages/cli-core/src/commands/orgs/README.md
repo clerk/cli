@@ -5,13 +5,13 @@ top-level `clerk enable orgs` and `clerk disable orgs` commands; the source
 lives here so future org-related commands (settings, CRUD) can co-locate.
 
 Works without an account. When the directory isn't linked and no `--app` is
-passed, both commands target the unclaimed keyless application whose secret key
+passed, both commands target the unclaimed accountless application whose secret key
 the project holds locally, writing through `PATCH /v1/instance/organization_settings`
 instead of the account-level config document. The payload field names are
 identical on both paths, so nothing is translated. See
-[keyless mode](../config/README.md#keyless-mode).
+[accountless mode](../config/README.md#accountless-mode).
 
-One difference in keyless mode: `clerk disable orgs` can't run its
+One difference in accountless mode: `clerk disable orgs` can't run its
 organization-billing pre-flight check, because billing is not readable without
 an account.
 

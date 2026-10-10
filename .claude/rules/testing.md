@@ -3,6 +3,7 @@ description: Unit test conventions using bun:test
 paths:
   - "**/*.test.ts"
   - "**/*.test.tsx"
+  - "test/e2e/lib/**"
 alwaysApply: false
 ---
 
@@ -57,5 +58,18 @@ Exceptions where a loop in the test body is fine:
 
 - The iteration itself is the behavior under test (asserting an event fires N times, accumulating state across steps).
 - The data being iterated is collected at runtime inside the test and cannot be expressed as a static array at module-load time (e.g. `http.requests` after the action runs, files map captured from a callback).
+
+Telemetry must never be sent from a test. Set `CLERK_TELEMETRY_DISABLED` on every subprocess that runs the CLI:
+
+```ts
+Bun.$`bun ${CLI_PATH} link --app ${appId}`.env({
+  CLERK_CONFIG_DIR: configDir,
+  CLERK_TELEMETRY_DISABLED: "1",
+});
+```
+
+`Bun.$.env()` replaces the environment rather than extending it, so a call site that builds its own object drops any ambient opt-out — including the workflow-level one in `.github/workflows/ci.yml`. Spreading `...process.env` inherits it instead, but only do that where the test tolerates ambient credentials: fixture setup does not, since an inherited `CLERK_SECRET_KEY` would satisfy a run whose whole purpose is resolving its own (see `rules/e2e.md`).
+
+A source checkout sends nothing today because the dev-build guard in `telemetryEnabled()` short-circuits it, but that is a property of how the CLI was built, not of the test — a test that runs a compiled binary gets no such protection. Tests that exercise telemetry directly must delete `CLERK_TELEMETRY_DISABLED`, `DO_NOT_TRACK`, and `CLERK_TELEMETRY_URL` from `process.env` in both `beforeEach` and `afterEach` — clearing before, not only after, is what stops a pre-set shell variable from deciding the first test's outcome. `CLERK_TELEMETRY_URL` is the one to not forget: it lifts the dev-build guard, so an ambient value turns telemetry on rather than off. `packages/cli-core/src/lib/telemetry.test.ts` has the shape.
 
 `mock.module()` is acceptable only when registered at file top, before any consumer of the mocked module is loaded (the integration harness at `packages/cli-core/src/test/integration/lib/harness.ts` and `packages/cli-core/src/lib/credential-store.test.ts` both follow this pattern). In Bun 1.x, `mock.module()` registrations are process-lifetime and will pollute the module registry for any later test file that imports the same module via a non-mocked path, so do not call `mock.module()` from inside `beforeEach`/`describe`/`test`, and do not introduce it in test files that will run alongside files importing the real module.

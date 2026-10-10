@@ -170,7 +170,7 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
       );
     }
 
-    outro();
+    await outro();
     return;
   }
 
@@ -229,7 +229,7 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     );
   }
 
-  outro();
+  await outro();
 }
 
 registerUsersAction({

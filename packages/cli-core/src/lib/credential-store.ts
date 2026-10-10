@@ -19,8 +19,13 @@ import {
   withKeychainAccess,
 } from "./host-execution.ts";
 import { log } from "./log.ts";
-import { refreshAccessToken, type TokenResponse } from "./token-exchange.ts";
-import { resolveCliVersion } from "./version.ts";
+import {
+  refreshAccessToken,
+  revokeToken,
+  type RevocationResult,
+  type TokenResponse,
+} from "./token-exchange.ts";
+import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
 
 export const KEYCHAIN_SERVICE = "clerk-cli";
 export const LOCAL_DEV_KEYCHAIN_SERVICE = "clerk-cli-dev";
@@ -36,6 +41,13 @@ export interface OAuthSession {
   expiresAt: number;
   tokenType: string;
 }
+
+/**
+ * Result of tearing down the stored session. Distinguishes "there was nothing
+ * redeemable to revoke" from "we tried and could not", because only the second
+ * one should warn the user.
+ */
+export type RevocationOutcome = RevocationResult | "nothing_to_revoke";
 
 function keychainAccount(): string {
   const envName = getCurrentEnvName();
@@ -82,8 +94,7 @@ async function resolveKeychainService(): Promise<string> {
   if (keychainServicePromise) return keychainServicePromise;
 
   keychainServicePromise = (async () => {
-    const cliVersion = resolveCliVersion();
-    if (!cliVersion) {
+    if (IS_DEV_BUILD) {
       log.debug(
         `credentials: using local macOS keychain namespace (service=${LOCAL_DEV_KEYCHAIN_SERVICE}, reason=unversioned-cli)`,
       );
@@ -95,7 +106,7 @@ async function resolveKeychainService(): Promise<string> {
     });
     const codesignOutput = `${proc.stdout.toString()}${proc.stderr.toString()}`;
 
-    if (proc.exitCode === 0 && isReleaseSignedMacosBinary(cliVersion, codesignOutput)) {
+    if (proc.exitCode === 0 && isReleaseSignedMacosBinary(CURRENT_VERSION, codesignOutput)) {
       return KEYCHAIN_SERVICE;
     }
 
@@ -490,4 +501,55 @@ export async function getValidToken(): Promise<string | null> {
 export async function deleteToken(): Promise<void> {
   await keyringDelete();
   await fileDelete();
+}
+
+/**
+ * Revoke the stored OAuth grant server-side, then delete it locally.
+ *
+ * Use this for deliberate session teardown — `clerk auth logout` — where
+ * leaving the refresh token redeemable would make the local delete a false
+ * reassurance. The local delete always happens; the return value reports
+ * whether the server-side half succeeded so the caller can say so.
+ *
+ * `"nothing_to_revoke"` means there was no redeemable refresh token in the
+ * first place, which is a success, not a failure.
+ *
+ * Not used by the refresh path: a session that failed with `invalid_grant` has
+ * a spent token, so revoking it would be a no-op round trip.
+ */
+export async function revokeAndDeleteToken(): Promise<RevocationOutcome> {
+  let session: OAuthSession | null = null;
+  let readFailed = false;
+
+  try {
+    session = await getStoredSession();
+  } catch (error) {
+    // "Nothing is stored" and "the store could not be read" lead to opposite
+    // security conclusions, so they must not collapse into the same branch.
+    readFailed = true;
+    log.debug(`credentials: could not read stored session — ${errorMessage(error)}`);
+  }
+
+  try {
+    if (session) {
+      log.debug("credentials: revoking stored OAuth session");
+      return await revokeToken(session.refreshToken, "refresh_token");
+    }
+
+    if (readFailed) return "failed";
+
+    // A pre-JSON raw token, or a corrupt blob, parses to null. There are
+    // credentials here and they may still be redeemable, but we have no
+    // refresh token to present, so this is a failure to revoke — not an
+    // absence of anything to revoke.
+    if (await hasStoredCredentials()) {
+      log.debug("credentials: stored credentials are not a revocable OAuth session");
+      return "failed";
+    }
+
+    return "nothing_to_revoke";
+  } finally {
+    // Deleting locally is what the user asked for and must not be skippable.
+    await deleteToken();
+  }
 }

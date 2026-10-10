@@ -56,14 +56,14 @@ export function registerMcp(program: Program): void {
         description: "Install into specific clients",
       },
     ])
-    .action((options) => mcp.install(options));
+    .action(async (options) => mcp.install(options));
 
   mcpCmd
     .command("list")
     .description("List Clerk MCP entries registered across detected clients")
     .option("--json", "Output as JSON")
     .setExamples([{ command: "clerk mcp list", description: "List Clerk entries everywhere" }])
-    .action((options) => mcp.list(options));
+    .action(async (options) => mcp.list(options));
 
   mcpCmd
     .command("run")
@@ -76,7 +76,7 @@ export function registerMcp(program: Program): void {
         description: "Forward stdio JSON-RPC to the remote server",
       },
     ])
-    .action((options) => mcp.run(options));
+    .action(async (options) => mcp.run(options));
 
   mcpCmd
     .command("uninstall")
@@ -104,5 +104,5 @@ export function registerMcp(program: Program): void {
         description: "Remove from Claude Code only",
       },
     ])
-    .action((options) => mcp.uninstall(options));
+    .action(async (options) => mcp.uninstall(options));
 }

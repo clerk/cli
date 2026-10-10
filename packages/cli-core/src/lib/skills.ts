@@ -115,7 +115,7 @@ export async function resolveSkillsRunner(
   const preferred = preferredRunner(packageManager, available);
 
   if (interactive && available.length > 1) {
-    return await select<Runner>({
+    return select<Runner>({
       message: "Which package runner should install the skills?",
       choices: available.map((r) => ({
         name: r.id === preferred.id ? `${r.display} ${dim("(detected)")}` : r.display,

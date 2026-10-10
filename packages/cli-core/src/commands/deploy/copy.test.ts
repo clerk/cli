@@ -6,6 +6,7 @@ import {
   dnsRecords,
   nextStepsBlock,
   pendingDnsRecords,
+  productionSummary,
 } from "./copy.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
 
@@ -160,5 +161,13 @@ describe("dnsRecords", () => {
 
     expect(output).toContain("Email (Clerk handles SPF/DKIM automatically)");
     expect(output).not.toContain("\n  CNAME\n    Type:");
+  });
+});
+
+describe("productionSummary", () => {
+  test("lists providers still missing credentials", () => {
+    const lines = productionSummary("example.com", ["Google"], "verified", ["GitHub"]).join("\n");
+    expect(lines).toContain("OAuth       Google");
+    expect(lines).toContain("Pending     GitHub");
   });
 });

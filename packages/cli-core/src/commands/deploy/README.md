@@ -4,41 +4,59 @@
 
 Guides a user through deploying their Clerk application to production.
 
-When the CLI reaches the DNS configuration step, it displays the required CNAME records and then prompts the user to export those records as a BIND zone file (`./clerk-<domain>.zone`). The prompt defaults to "no" and the file is overwritten silently on subsequent runs. On new deploys, this handoff happens before OAuth setup so DNS propagation can start while the user configures providers.
+When the CLI reaches the DNS configuration step, it displays the required CNAME records and then prompts the user to export those records as a BIND zone file (`./clerk-<domain>.zone`). The prompt defaults to "no" and the file is overwritten silently on subsequent runs; `--zone-file <path>` writes the file without prompting. On new deploys, this handoff happens before OAuth setup so DNS propagation can start while the user configures providers.
 
-After all OAuth providers are configured, DNS verification checks DNS, SSL, and email DNS from the same domain status response. The wizard uses one shared exponential-backoff loop instead of waiting for each component separately. If polling times out, the retry handoff lists only DNS records tied to still-pending DNS-backed checks. For example, when DNS and email DNS are verified but SSL is still pending, the CLI shows green checks for the verified components and does not reprint already verified records.
+After the OAuth step (providers can be skipped and stay pending), DNS verification checks DNS, SSL, and email DNS from the same domain status response. The wizard uses one shared exponential-backoff loop instead of waiting for each component separately. If polling times out, the retry handoff lists only DNS records tied to still-pending DNS-backed checks. For example, when DNS and email DNS are verified but SSL is still pending, the CLI shows green checks for the verified components and does not reprint already verified records.
 
 ## Usage
 
 ```sh
-clerk deploy              # Interactive, idempotent wizard (human mode)
-clerk deploy --verbose    # With debug output
-clerk deploy --mode agent # Emit a read-only handoff for agents
-clerk deploy status        # Verify deploy completion without prompts
-clerk deploy status --mode agent --wait # Agent verification with retrying wait
+clerk deploy                                    # Interactive, idempotent wizard (human mode)
+clerk deploy --domain example.com --yes         # Skip the domain prompt and the confirmations
+clerk deploy --domain example.com --no-clone    # Blank production instance, nothing copied from development
+clerk deploy --zone-file ./clerk.zone           # Write the DNS records as a BIND zone file, no prompt
+clerk deploy --verbose                          # With debug output
+clerk deploy --mode agent                       # Read-only JSON report for agents
+clerk deploy --domain example.com --mode agent  # Agent mode: create or resume, then print the JSON report
+clerk deploy status                             # Verify deploy completion without prompts
+clerk deploy status --mode agent --wait         # Agent verification with retrying wait
 ```
 
-## Global Options
+## Options
 
-| Flag        | Purpose                                      |
-| ----------- | -------------------------------------------- |
-| `--verbose` | Show detailed deploy and PLAPI debug output. |
+| Flag                 | Purpose                                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| `--domain <domain>`  | Production domain you own. Skips the prompt in human mode; required to create in agent mode.              |
+| `--no-clone`         | Create a blank production instance instead of cloning development settings (skips the plan's clone gate). |
+| `--zone-file <path>` | Write the required DNS records to `<path>` as a BIND zone file without prompting.                         |
+| `--yes`              | Skip the proceed, create, and zone-file confirmations (human mode; agent mode never prompts).             |
+| `--verbose`          | Show detailed deploy and PLAPI debug output.                                                              |
 
 ## Agent Mode
 
-When running `clerk deploy` in agent mode (`--mode agent`, `CLERK_MODE=agent`, or non-TTY context), the command emits a structured JSON handoff via `log.data` on stdout. The handoff is read-only: it resolves the linked app, production instance, domain, domain status snapshot, and OAuth completeness, but it does not prompt, mutate config, trigger a DNS check, or poll.
+In agent mode (`--mode agent`, `CLERK_MODE=agent`, or a non-TTY context) `clerk deploy` never prompts and emits one JSON report via `log.data` on stdout.
+
+- **Without `--domain`** the run is read-only: it resolves the linked app, production instance, domain, domain status snapshot, and OAuth completeness, but does not mutate config, trigger a DNS check, or poll.
+- **With `--domain <domain>`** the run creates the production instance (cloning development unless `--no-clone` is set), persists `instances.production` in the profile, and then emits the same report. If a production instance already exists nothing is created, and a differing `--domain` or an unused `--no-clone` is reported under `warnings`. Hosting-provider domains such as `*.vercel.app` are rejected with a usage error before any API call. `--no-clone` without `--domain` is a usage error.
+- **`--zone-file <path>`** writes the DNS records as a BIND zone file when the domain has records; otherwise it is ignored with an entry in `warnings`.
+
+The report is the `clerk deploy status` report plus:
+
+- `created`: `true` when this run created the production instance.
+- `zoneFile`: absolute path of the written zone file, when `--zone-file` was set.
+- `warnings`: ignored inputs (`--domain` mismatch, `--zone-file` without records) or a resumed instance that already existed.
 
 The handoff state is one of:
 
-| State                 | Meaning                                                                                         |
-| --------------------- | ----------------------------------------------------------------------------------------------- |
-| `not_started`         | No production instance exists. Ask the human to run `clerk deploy`, then verify afterward.      |
-| `domain_provisioning` | A production instance exists, but PLAPI has not returned a production domain yet.               |
-| `domain_pending`      | A production domain exists, but DNS, SSL, email DNS, or final server-side readiness is pending. |
-| `oauth_pending`       | The domain is verified, but supported OAuth providers still need production credentials.        |
-| `complete`            | Production is deployed and verified.                                                            |
+| State                 | Meaning                                                                                                                                                               |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `not_started`         | No production instance exists. `nextAction` asks the agent to get a domain the user owns and run `clerk deploy --domain <domain>`.                                    |
+| `domain_provisioning` | A production instance exists, but PLAPI has not returned a production domain yet. Re-run `clerk deploy status`.                                                       |
+| `domain_pending`      | A production domain exists, but DNS, SSL, email DNS, or final server-side readiness is pending. `nextAction` says whether records still need adding.                  |
+| `oauth_pending`       | The domain is verified, but supported OAuth providers still need production credentials. `oauth.setup[]` carries the exact `clerk config patch` command per provider. |
+| `complete`            | Production is deployed and verified. `nextAction` points at `clerk env pull --instance prod --print` for the hosting provider's environment variables.                |
 
-Agent-mode `clerk deploy` exits successfully for linked projects because it is informational. The pass/fail gate is `clerk deploy status`.
+Agent-mode `clerk deploy` exits `0` whenever its own action succeeded, even while DNS or OAuth is still pending. The pass/fail gate is `clerk deploy status`.
 
 ### `clerk deploy status`
 
@@ -47,11 +65,37 @@ Agent-mode `clerk deploy` exits successfully for linked projects because it is i
 In agent mode, `clerk deploy status` emits JSON on stdout with:
 
 - `complete`: `true` only when the domain is verified and all supported OAuth providers enabled in development have production credentials.
-- `state`: `complete`, `domain_pending`, `oauth_pending`, `domain_provisioning`, or `not_started`.
+- `state`: `complete`, `domain_pending`, `oauth_pending`, `domain_provisioning`, `not_started`, or `interrupted`.
 - `domainStatus`: per-component DNS, SSL, and email DNS status when a domain exists.
-- `pendingDnsRecords`: CNAME records still tied to pending DNS-backed checks.
-- `oauth`: configured, pending, and unsupported provider slugs.
-- `nextAction`: the next step an agent should present to the user, including the Clerk Dashboard domains URL when a production instance exists. Agents should ask whether to open that URL for the user.
+- `pendingDnsRecords`: CNAME records still tied to pending DNS-backed checks, each with `type`, `host`, `value`, and `required`.
+- `oauth`: `configured`, `pending`, and `unsupported` provider slugs, plus `setup`: one entry per pending provider with `configKey`, `fields` (`key`, `label`, `secret`, optional `options` and `fileContents`), `redirectUri`, `authorizedOrigins`, `docsUrl`, `note`, `payload` (the `clerk config patch` document with `<field>` placeholders), and `command` (`clerk config patch --instance prod --file <path-to-json> --yes`). Agents write `payload` with real values to a temporary file and pass it with `--file`, so secrets and Apple's multi-line `.p8` key never land on a command line.
+- `nextAction`: the command or user request that moves the deploy forward. The Clerk Dashboard domains URL appears only as a trailing fallback sentence.
+
+A `setup` entry looks like:
+
+```json
+{
+  "provider": "github",
+  "label": "GitHub",
+  "configKey": "connection_oauth_github",
+  "fields": [
+    { "key": "client_id", "label": "Client ID", "secret": false },
+    { "key": "client_secret", "label": "Client Secret", "secret": true }
+  ],
+  "redirectUri": "https://clerk.example.com/v1/oauth_callback",
+  "authorizedOrigins": ["https://example.com", "https://www.example.com"],
+  "docsUrl": "https://clerk.com/docs/guides/configure/auth-strategies/social-connections/github",
+  "note": null,
+  "payload": {
+    "connection_oauth_github": {
+      "enabled": true,
+      "client_id": "<client_id>",
+      "client_secret": "<client_secret>"
+    }
+  },
+  "command": "clerk config patch --instance prod --file <path-to-json> --yes"
+}
+```
 
 Exit codes:
 
@@ -73,19 +117,21 @@ The human-mode wizard still starts only in human mode.
 
 Human mode reads and writes deploy state through the Platform API on every run. The CLI does not persist deploy progress locally; the only profile write is the ordinary `instances.production` value once the production instance has been created.
 
-| Step                       | Endpoint                                                                    | Behavior                                                                                                                                                                                                                                                                                                                     |
-| -------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Create production instance | `POST /v1/platform/applications/{appID}/instances`                          | Returns `id`, `environment_type`, `active_domain`, `publishable_key`, `secret_key` (once), and timestamps. DNS records are read from `active_domain.cname_targets[]`.                                                                                                                                                        |
-|                            |                                                                             | Performs clone feature compatibility validation before creating production resources. 402 `unsupported_subscription_plan_features` → `ERROR_CODE.PLAN_INSUFFICIENT` listing missing features. 409 `production_instance_exists` → CLI re-derives state via `fetchApplication` and falls through to `reconcileExistingDeploy`. |
-| Trigger domain DNS check   | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/dns_check` | Starts a server-side DNS check. `clerk deploy status` triggers this before resolving the live state. Agent-mode `clerk deploy status` returns after the post-trigger status snapshot by default; `--wait` polls active production domains with the shared retry loop. A 409 conflict means a check is already running.       |
-| Poll domain status         | `GET /v1/platform/applications/{appID}/domains/{domainIDOrName}/status`     | Returns aggregate `status` plus nested DNS, SSL, email DNS, and proxy component status. The CLI drives one shared DNS verification loop over the full status response. The aggregate `status` guards proxy and other server-side readiness gates. It performs one immediate status read, then polls every 3s.                |
-| Save OAuth credentials     | `PATCH /v1/platform/applications/{appID}/instances/{instanceID}/config`     | Returns the updated config snapshot. Used to persist production `connection_oauth_*` credentials.                                                                                                                                                                                                                            |
+| Step                       | Endpoint                                                                    | Behavior                                                                                                                                                                                                                                                                                                                                                                                                |
+| -------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Create production instance | `POST /v1/platform/applications/{appID}/instances`                          | Returns `id`, `environment_type`, `active_domain`, `publishable_key`, `secret_key` (once), and timestamps. DNS records are read from `active_domain.cname_targets[]`. `--no-clone` omits `clone_instance_id`, which also skips the clone feature check.                                                                                                                                                 |
+|                            |                                                                             | Performs clone feature compatibility validation before creating production resources. 402 `unsupported_subscription_plan_features` → `ERROR_CODE.PLAN_INSUFFICIENT` listing missing features, with a `clerk deploy --domain <domain> --no-clone` retry example attached. 409 `production_instance_exists` → CLI re-derives state via `fetchApplication` and falls through to `reconcileExistingDeploy`. |
+| Trigger domain DNS check   | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/dns_check` | Starts a server-side DNS check. `clerk deploy status` triggers this before resolving the live state. Agent-mode `clerk deploy status` returns after the post-trigger status snapshot by default; `--wait` polls active production domains with the shared retry loop. A 409 conflict means a check is already running.                                                                                  |
+| Poll domain status         | `GET /v1/platform/applications/{appID}/domains/{domainIDOrName}/status`     | Returns aggregate `status` plus nested DNS, SSL, email DNS, and proxy component status. The CLI drives one shared DNS verification loop over the full status response. The aggregate `status` guards proxy and other server-side readiness gates. It performs one immediate status read, then polls every 3s.                                                                                           |
+| Save OAuth credentials     | `PATCH /v1/platform/applications/{appID}/instances/{instanceID}/config`     | Returns the updated config snapshot. Used to persist production `connection_oauth_*` credentials.                                                                                                                                                                                                                                                                                                       |
 
-After displaying the DNS records block, when CNAME records are present the CLI prompts "Export DNS records as a BIND zone file? (y/N)". On yes, it writes `./clerk-<domain>.zone` in the current working directory. The file is a standard BIND fragment containing `$ORIGIN`, `$TTL 300`, and one fully-qualified CNAME per record. The default is "no" and the file is overwritten silently on subsequent runs. Most major DNS providers (Cloudflare, Route 53, Google Cloud DNS, and others) support importing BIND zone fragments. The same prompt appears on both new deploys and resumed deploys.
+After displaying the DNS records block, when CNAME records are present the CLI prompts "Export DNS records as a BIND zone file? (y/N)". On yes, it writes `./clerk-<domain>.zone` in the current working directory. The file is a standard BIND fragment containing `$ORIGIN`, `$TTL 300`, and one fully-qualified CNAME per record. The default is "no" and the file is overwritten silently on subsequent runs. Most major DNS providers (Cloudflare, Route 53, Google Cloud DNS, and others) support importing BIND zone fragments. The same prompt appears on both new deploys and resumed deploys. `--zone-file <path>` writes the file to `<path>` without prompting (in agent mode too, reported as `zoneFile`), and `--yes` keeps the prompt's default answer of no.
 
 PLAPI errors are translated to typed `CliError`s by `commands/deploy/errors.ts`. The CLI does not auto-retry SSL issuance or email DNS verification beyond the shared DNS verification loop. When domain status polling times out with SSL or email DNS still incomplete, the CLI surfaces the component status and instructs the user to rerun `clerk deploy` once DNS propagates.
 
-If the user presses Ctrl-C after the production instance has been created, the wizard tells them to run `clerk deploy` again and exits with SIGINT code 130. The next run derives the current DNS or OAuth step from API state and resumes without starting another production instance.
+If the user presses Ctrl-C after the production instance has been created — at a prompt or during the DNS wait — the wizard tells them to run `clerk deploy` again and exits with SIGINT code 130. The deploy is unfinished either way, so `clerk deploy && ./cutover.sh` stops rather than proceeding against a half-configured instance. The next run derives the current DNS or OAuth step from API state and resumes without starting another production instance.
+
+`clerk deploy status` also exits 130 on Ctrl-C, and always emits a report on the way out. Interrupted mid-wait, it reports what the last completed poll established. Interrupted before the live state resolves — during the preflight DNS check or the state read — it reports `state: "interrupted"`, which asserts nothing about the deploy. See [`.claude/rules/interrupts.md`](../../../../../.claude/rules/interrupts.md).
 
 ## Sequence Diagram
 
@@ -171,6 +217,8 @@ PATCH /v1/platform/applications/{appID}/instances/production/config
 `clerk deploy` discovers enabled built-in OAuth providers from development config keys named `connection_oauth_{provider}`. For public built-in providers supported by the deploy flow, the command reads `GET /config/schema` and derives credential prompts from the provider schema.
 
 Most providers ask for `client_id` and `client_secret`. Provider-specific schema fields are prompted when they are safe for deploy setup, such as Linear `actor`.
+
+Skipping a provider ("Skip for now") does not pause the deploy: the wizard continues to DNS verification and the final summary lists the provider under `Pending`. Credentials can be added later by rerunning `clerk deploy` or with `clerk config patch --instance prod --file <credentials.json> --yes` (a `{"connection_oauth_<provider>":{"enabled":true,…}}` document; use `--file`, not `--json`, so secrets stay out of shell history); `clerk deploy status` keeps reporting `oauth_pending` until then. Interrupting a prompt with Ctrl-C still pauses.
 
 The CLI keeps small local overrides for provider setup details that schema does not fully describe:
 

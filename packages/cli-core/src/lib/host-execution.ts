@@ -19,6 +19,8 @@ export interface HostCapabilityDetails {
   operation?: HostOperation;
   target?: string;
   label?: string;
+  /** Optional call (e.g. telemetry): its failure never surfaces capability warnings. */
+  bestEffort?: boolean;
 }
 
 export interface HostStateProbeFailure {
@@ -165,7 +167,9 @@ export async function withHostCapability<T>(
   try {
     return await fn();
   } catch (error) {
-    observeHostCapabilityFailure(capability, error, details);
+    if (!details.bestEffort) {
+      observeHostCapabilityFailure(capability, error, details);
+    }
     throw error;
   }
 }
@@ -214,7 +218,7 @@ export function observeHostCapabilityFailure(
 export async function probeHostStateAccess(): Promise<HostStateProbeResult> {
   const failures = (
     await Promise.all(
-      getProbeTargets().map((target) => probeDirectoryWrite(target.label, target.dir)),
+      getProbeTargets().map(async (target) => probeDirectoryWrite(target.label, target.dir)),
     )
   ).filter((failure): failure is HostStateProbeFailure => failure !== null);
 

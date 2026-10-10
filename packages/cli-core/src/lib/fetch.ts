@@ -9,12 +9,49 @@
  */
 
 import { log } from "./log.ts";
+import { interruptSignal } from "./signals.ts";
 import { withNetworkAccess } from "./host-execution.ts";
 import { buildUserAgent } from "./user-agent.ts";
+import { optOutEnvVar } from "./env-signals.ts";
+import { getTelemetryDisabled, getTelemetryNoticeShown } from "./config.ts";
 
-const USER_AGENT = buildUserAgent();
+let userAgentPromise: Promise<string> | undefined;
 
-export type LoggedFetchInit = RequestInit & { tag: string };
+/** Test-only: recompute the User-Agent on the next request. */
+export function _resetUserAgentCache(): void {
+  userAgentPromise = undefined;
+}
+
+// Not `async`: the body hands back a memoized promise, and wrapping it per call
+// would allocate a fresh one on every request for no gain.
+// oxlint-disable-next-line typescript/promise-function-async
+function resolveUserAgent(): Promise<string> {
+  // The AIAgent segment exists purely for analytics classification, so it
+  // honors the telemetry opt-outs (env vars and `clerk telemetry disable`)
+  // and, like the events, stays absent until the disclosure notice has been
+  // shown — CI exempt, matching maybeShowTelemetryNotice.
+  userAgentPromise ??= (async () => {
+    const beforeDisclosure =
+      !process.env.CI && !(await getTelemetryNoticeShown().catch(() => false));
+    const omitAgentSegment =
+      optOutEnvVar(process.env) !== null ||
+      beforeDisclosure ||
+      (await getTelemetryDisabled().catch(() => true));
+    return buildUserAgent(process.env, { agentToken: !omitAgentSegment });
+  })();
+  return userAgentPromise;
+}
+
+export type LoggedFetchInit = RequestInit & {
+  tag: string;
+  bestEffort?: boolean;
+  /**
+   * Survives Ctrl-C. Only for the shutdown telemetry flush, which runs *after*
+   * the interrupt has aborted everything and exists to report that very
+   * interrupt — without this it would cancel itself before it could send.
+   */
+  ignoreInterrupt?: boolean;
+};
 
 /**
  * Normalized response shape returned by the higher-level API request wrappers
@@ -28,16 +65,26 @@ export interface ApiResponse {
   rawBody: string;
 }
 
+/** Ctrl-C aborts the request, without discarding a caller's own timeout signal. */
+function interruptSignalFor(
+  own: RequestInit["signal"],
+  ignoreInterrupt: boolean | undefined,
+): RequestInit["signal"] {
+  if (ignoreInterrupt) return own;
+  return own ? AbortSignal.any([own, interruptSignal()]) : interruptSignal();
+}
+
 export async function loggedFetch(url: URL | string, options: LoggedFetchInit): Promise<Response> {
-  const { tag, ...init } = options;
+  const { tag, bestEffort, ignoreInterrupt, ...init } = options;
   const method = init.method ?? "GET";
   const urlStr = url.toString();
   const headers = new Headers(init.headers);
-  if (!headers.has("user-agent")) headers.set("User-Agent", USER_AGENT);
+  if (!headers.has("user-agent")) headers.set("User-Agent", await resolveUserAgent());
   log.debug(`${tag}: ${method} ${urlStr}`);
+  const signal = interruptSignalFor(init.signal, ignoreInterrupt);
   const response = await withNetworkAccess(
-    { operation: "connect", target: urlStr, label: tag },
-    async () => fetch(url, { ...init, headers }),
+    { operation: "connect", target: urlStr, label: tag, bestEffort },
+    async () => fetch(url, { ...init, headers, signal }),
   );
   if (!response.ok) {
     // Clone so the caller can still consume the body for error construction.

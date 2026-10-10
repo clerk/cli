@@ -8,9 +8,10 @@ import {
   UPDATE_PACKAGE_NAME,
   UPDATE_CACHE_FILE,
 } from "./constants.ts";
+import { CliError, ERROR_CODE, throwUsageError } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
-import { DEV_CLI_VERSION } from "./version.ts";
+import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -32,17 +33,7 @@ export function inferChannelFromVersion(version: string): string {
 
 export function getUpdateChannel(): string {
   if (process.env.CLERK_UPDATE_CHANNEL) return process.env.CLERK_UPDATE_CHANNEL;
-  return inferChannelFromVersion(getCurrentVersion());
-}
-
-// ── Version helpers ───────────────────────────────────────────────────────────
-
-export function getCurrentVersion(): string {
-  return typeof CLI_VERSION !== "undefined" ? CLI_VERSION : DEV_CLI_VERSION;
-}
-
-export function isDevVersion(version: string): boolean {
-  return version === DEV_CLI_VERSION;
+  return inferChannelFromVersion(CURRENT_VERSION);
 }
 
 export function compareSemver(a: string, b: string): number {
@@ -51,9 +42,9 @@ export function compareSemver(a: string, b: string): number {
 
 // ── Guards ────────────────────────────────────────────────────────────────────
 
-export function shouldCheckForUpdates(version: string): boolean {
+export function shouldCheckForUpdates(isDevBuild: boolean): boolean {
   if (isAgent()) return false;
-  if (isDevVersion(version)) return false;
+  if (isDevBuild) return false;
   if (process.env.CI) return false;
   if (process.env.NO_UPDATE_NOTIFIER) return false;
   if (process.env.CLERK_NO_UPDATE_CHECK) return false;
@@ -116,11 +107,26 @@ export async function fetchLatestVersion(distTag: string, timeoutMs = 1500): Pro
       signal: controller.signal,
       headers: { Accept: "application/vnd.npm.install-v1+json" },
     });
-    if (!res.ok) throw new Error(`registry HTTP ${res.status}`);
+    if (!res.ok) {
+      throw new CliError(`Registry returned HTTP ${res.status}.`, {
+        code: ERROR_CODE.UPDATE_FAILED,
+      });
+    }
     const data: unknown = await res.json();
-    if (!isNpmDistTagsResponse(data)) throw new Error("unexpected registry response shape");
-    const version = data["dist-tags"][distTag];
-    if (!version) throw new Error(`dist-tag "${distTag}" not found`);
+    if (!isNpmDistTagsResponse(data)) {
+      throw new CliError("Unexpected response shape from the npm registry.", {
+        code: ERROR_CODE.UPDATE_FAILED,
+      });
+    }
+    const version: unknown = data["dist-tags"][distTag];
+    if (version === undefined) {
+      throwUsageError(`Release channel "${distTag}" does not exist.`);
+    }
+    if (typeof version !== "string" || version.length === 0) {
+      throw new CliError("Unexpected response shape from the npm registry.", {
+        code: ERROR_CODE.UPDATE_FAILED,
+      });
+    }
     return version;
   } finally {
     clearTimeout(timer);
@@ -149,7 +155,7 @@ function notifyIfNewer(currentVersion: string, latestVersion: string, distTag: s
 }
 
 export async function maybeNotifyUpdate(currentVersion: string): Promise<void> {
-  if (!shouldCheckForUpdates(currentVersion)) return;
+  if (!shouldCheckForUpdates(IS_DEV_BUILD)) return;
 
   const distTag = getUpdateChannel();
   const cache = await readUpdateCache();

@@ -1,19 +1,31 @@
 import { generateCodeVerifier, generateCodeChallenge, generateState } from "../../lib/pkce.ts";
 import { startAuthServer } from "../../lib/auth-server.ts";
-import { exchangeCodeForToken, fetchUserInfo, type UserInfo } from "../../lib/token-exchange.ts";
+import {
+  exchangeCodeForToken,
+  fetchUserInfo,
+  revokeToken,
+  type UserInfo,
+} from "../../lib/token-exchange.ts";
 import { getOAuthConfig } from "../../lib/environment.ts";
-import { createOAuthSession, getValidToken, storeToken } from "../../lib/credential-store.ts";
+import {
+  createOAuthSession,
+  getStoredSession,
+  getValidToken,
+  storeToken,
+  type OAuthSession,
+} from "../../lib/credential-store.ts";
 import { getAuth, setAuth, resolveProfile } from "../../lib/config.ts";
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH, CLERK_CLIENT_CLI } from "../../lib/constants.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
-import { throwUserAbort } from "../../lib/errors.ts";
+import { errorMessage, throwUserAbort } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { attemptAutoclaim, type AutoclaimResult } from "../../lib/autoclaim.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { cyan, dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
+import { currentTelemetryStage, setTelemetryStage } from "../../lib/telemetry.ts";
 import { ensureFirstApplication } from "../../lib/first-application.ts";
 
 interface LoginOptions {
@@ -34,9 +46,18 @@ async function getExistingSession(): Promise<UserInfo | null> {
   }
 }
 
-async function performOAuthFlow(): Promise<UserInfo> {
+interface OAuthFlowResult {
+  userInfo: UserInfo;
+  /**
+   * The session that was current immediately before the token exchange
+   * replaced it, or null if there was none. The caller revokes it.
+   */
+  previousSession: OAuthSession | null;
+}
+
+async function performOAuthFlow(): Promise<OAuthFlowResult> {
   const codeVerifier = generateCodeVerifier();
-  const codeChallenge = await generateCodeChallenge(codeVerifier);
+  const codeChallenge = generateCodeChallenge(codeVerifier);
   const state = generateState();
 
   const authServer = startAuthServer(state);
@@ -54,27 +75,48 @@ async function performOAuthFlow(): Promise<UserInfo> {
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
   authorizeUrl.searchParams.set("clerk_client", CLERK_CLIENT_CLI);
 
-  // Critical fallback: the OAuth callback can't complete unless the user
-  // reaches the authorize URL somehow.
+  // Printed unconditionally: a launcher can exit 0 without anything visibly
+  // opening (WSL, headless shells), and the flow can't complete unless the
+  // user reaches this URL. Safe to display — the token exchange also requires
+  // the PKCE code verifier, which never leaves this process.
   const urlString = authorizeUrl.toString();
+  log.info(
+    `Opening your browser to sign in. If it doesn't open, use this URL:\n  ${cyan(urlString)}`,
+  );
   const result = await openBrowser(urlString);
   if (!result.ok) {
     log.warn(
-      `\nCould not open your browser automatically. Open this URL to continue:\n  ${cyan(urlString)}\n${dim("(Reason: " + result.reason + ")")}\n`,
+      `Could not open your browser automatically ${dim(`(${result.reason})`)}. Open the URL above to continue.`,
     );
   }
 
   const timeoutMinutes = Math.round(AUTH_TIMEOUT_MS / 60_000);
   log.info(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
 
-  const { code } = await withSpinner("Waiting for authentication...", () =>
+  setTelemetryStage("awaiting_callback");
+  const { code } = await withSpinner("Waiting for authentication...", async () =>
     authServer.waitForCallback().catch((error: unknown) => {
       authServer.stop();
       throw error;
     }),
   );
 
-  const tokenResponse = await withSpinner("Completing authentication...", () =>
+  // Snapshotted here: the authorization code has arrived, so the store still
+  // holds the outgoing session and is about to be overwritten. Reading any
+  // earlier widens the window for another process to rotate the refresh token
+  // out from under the revocation; reading any later returns the session we
+  // just created and would revoke the grant we are in the middle of minting.
+  let previousSession: OAuthSession | null = null;
+  try {
+    previousSession = await getStoredSession();
+  } catch (error) {
+    // An unreadable store must not fail an otherwise successful login; we just
+    // lose the ability to revoke whatever was there.
+    log.debug(`credentials: could not read outgoing session — ${errorMessage(error)}`);
+  }
+
+  setTelemetryStage("token_exchange");
+  const tokenResponse = await withSpinner("Completing authentication...", async () =>
     exchangeCodeForToken({
       code,
       codeVerifier,
@@ -82,26 +124,43 @@ async function performOAuthFlow(): Promise<UserInfo> {
     }),
   );
 
+  setTelemetryStage("store");
   await storeToken(createOAuthSession(tokenResponse));
 
   const userInfo = await fetchUserInfo(tokenResponse.access_token);
   await setAuth({ userId: userInfo.userId });
 
-  return userInfo;
+  return { userInfo, previousSession };
 }
 
 export async function login(options: LoginOptions = {}): Promise<UserInfo> {
+  // `init` and `link` call this mid-flow and share the one process-global
+  // telemetry stage. Login's own markers are worth having while it runs, but
+  // on a clean return the caller's stage comes back so the rest of *their*
+  // work isn't reported as `done`. On a throw the login stage stands: that is
+  // genuinely where the run stopped.
+  const callerStage = currentTelemetryStage();
+  const userInfo = await runLogin(options);
+  if (callerStage) setTelemetryStage(callerStage);
+  return userInfo;
+}
+
+async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   const { showNextSteps = true, yes } = options;
   intro("Signing in");
-  const existingSession = await withSpinner("Checking session...", () => getExistingSession());
+  setTelemetryStage("session_check");
+  const existingSession = await withSpinner("Checking session...", async () =>
+    getExistingSession(),
+  );
 
   if (existingSession && !isHuman()) {
+    setTelemetryStage("done");
     log.success(`Logged in as ${existingSession.email}`);
     const claimResult = await handleAutoclaim(process.cwd());
     if (showNextSteps) {
       await outro(await loginNextSteps(claimResult));
     } else {
-      outro("Done");
+      await outro("Done");
     }
     return existingSession;
   }
@@ -112,18 +171,38 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
       default: false,
     });
     if (!reauthenticate) {
-      outro();
+      await outro();
       throwUserAbort();
     }
   }
 
-  const userInfo = await performOAuthFlow();
+  // `previousSession` comes from the credential store, not from
+  // `existingSession`: the latter is the result of a network round trip whose
+  // errors are all swallowed, so a transient failure there would silently
+  // orphan a live grant instead of revoking it. The store is the authority on
+  // whether there is anything to revoke.
+  const { userInfo, previousSession } = await performOAuthFlow();
+
+  // Revoked only after the replacement is safely stored: doing it up front
+  // would leave the user with no session at all if the flow were abandoned.
+  if (previousSession) {
+    const outcome = await withSpinner("Revoking previous session...", async () =>
+      revokeToken(previousSession.refreshToken, "refresh_token"),
+    );
+    if (outcome === "failed") {
+      log.warn(
+        "Signed in, but the previous session could not be revoked with Clerk. Revoke it from the dashboard if it may have been exposed.",
+      );
+    }
+  }
 
   // Best-effort: ensure the user has at least one application so downstream
   // commands (clerk link, clerk init) have something to operate on.
-  await withSpinner("Setting up your default application...", () => ensureFirstApplication());
+  setTelemetryStage("first_application");
+  await withSpinner("Setting up your default application...", async () => ensureFirstApplication());
 
   bar();
+  setTelemetryStage("done");
   log.success(`Logged in as ${userInfo.email}`);
 
   const claimResult = await handleAutoclaim(process.cwd());
@@ -131,7 +210,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   if (showNextSteps) {
     await outro(await loginNextSteps(claimResult));
   } else {
-    outro("Done");
+    await outro("Done");
   }
 
   return userInfo;

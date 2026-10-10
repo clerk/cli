@@ -42,6 +42,8 @@ export const ERROR_CODE = {
   INVALID_WEBHOOK_SIGNATURE: "invalid_webhook_signature",
   /** Input is not valid JSON or not an object. */
   INVALID_JSON: "invalid_json",
+  /** A `clerk api -d` body arrived visibly mangled by shell quoting — stripped or wrapped. */
+  INVALID_JSON_SHELL_QUOTING: "invalid_json_shell_quoting",
   /** Failed to fetch or parse the OpenAPI catalog. */
   CATALOG_ERROR: "catalog_error",
   /** Doctor checks found issues. */
@@ -78,6 +80,43 @@ export const ERROR_CODE = {
   MCP_CLIENT_CLI_NOT_FOUND: "mcp_client_cli_not_found",
   /** The target client's own CLI exited non-zero or timed out while registering/removing the entry. */
   MCP_CLIENT_CLI_FAILED: "mcp_client_cli_failed",
+  /** No supported framework could be detected in the target directory. */
+  FRAMEWORK_UNDETECTED: "framework_undetected",
+  /** The detected framework has no `clerk init` bootstrap generator. */
+  BOOTSTRAP_UNSUPPORTED: "bootstrap_unsupported",
+  /** A third-party generator (create-next-app et al) failed or produced nothing. */
+  GENERATOR_FAILED: "generator_failed",
+  /** The target project directory is already taken. */
+  PROJECT_DIR_EXISTS: "project_dir_exists",
+  /** Self-update failed for a reason the installer didn't attribute. */
+  UPDATE_FAILED: "update_failed",
+  /** Self-update needs elevated permissions. */
+  UPDATE_PERMISSION_DENIED: "update_permission_denied",
+  /** The installer that owns this binary isn't on PATH. */
+  INSTALLER_NOT_FOUND: "installer_not_found",
+  /** The npm registry was unreachable. */
+  REGISTRY_UNREACHABLE: "registry_unreachable",
+  /** Production instance was created but came back without a domain. */
+  DEPLOY_DOMAIN_MISSING: "deploy_domain_missing",
+  /** Local publishable key and secret key address different applications. */
+  KEY_PAIR_MISMATCH: "key_pair_mismatch",
+  /** BAPI returned a response the CLI could not use. */
+  BAPI_UNEXPECTED_RESPONSE: "bapi_unexpected_response",
+  /** The command needs a TTY that isn't available. */
+  NO_INTERACTIVE_TERMINAL: "no_interactive_terminal",
+  /** Named environment isn't configured. */
+  INVALID_ENVIRONMENT: "invalid_environment",
+
+  /** The browser sign-in wait expired before a callback arrived. */
+  AUTH_TIMEOUT: "auth_timeout",
+  /** The authorization server redirected back with an `error` parameter. */
+  OAUTH_PROVIDER_ERROR: "oauth_provider_error",
+  /** Callback `state` did not match what this process generated. */
+  OAUTH_STATE_MISMATCH: "oauth_state_mismatch",
+  /** Callback arrived without an authorization code. */
+  OAUTH_NO_CODE: "oauth_no_code",
+  /** The loopback callback server could not bind a local port. */
+  CALLBACK_BIND_FAILED: "callback_bind_failed",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];
@@ -304,14 +343,6 @@ function parseApiBody(status: number, body: string): ParsedApiBody {
   };
 }
 
-export function isPromptExitError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    error.name === "ExitPromptError" &&
-    error.message.includes("User force closed the prompt")
-  );
-}
-
 /**
  * Base class for HTTP API errors.
  *
@@ -506,7 +537,7 @@ export function throwUserAbort(): never {
  * );
  * ```
  */
-export function withApiContext<T>(promise: Promise<T>, context: string): Promise<T> {
+export async function withApiContext<T>(promise: Promise<T>, context: string): Promise<T> {
   return promise.catch((error) => {
     if (error instanceof ApiError) {
       error.context = context;

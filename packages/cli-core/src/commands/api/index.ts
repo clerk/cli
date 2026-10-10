@@ -6,17 +6,12 @@ import { type ApiResponse } from "../../lib/fetch.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import { fapiRequest } from "../../lib/fapi.ts";
 import { resolveFapiHost } from "./fapi.ts";
-import {
-  ApiError,
-  ERROR_CODE,
-  UserAbortError,
-  isPromptExitError,
-  throwUsageError,
-  throwUserAbort,
-} from "../../lib/errors.ts";
+import { ApiError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
+import { validateJsonBody } from "../../lib/json-body.ts";
 import { isHuman } from "../../mode.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { withSpinner, intro, outro, pausedOutro } from "../../lib/spinner.ts";
+import { closeStatusForError } from "../../lib/signals.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 
 export interface ApiOptions {
@@ -54,18 +49,18 @@ async function resolveApiTarget(
   if (options.fapi) {
     const fapiHost = await resolveFapiHost(options);
     const baseUrl = `https://${fapiHost}`;
-    return { baseUrl, runRequest: (req) => fapiRequest({ ...req, fapiHost }) };
+    return { baseUrl, runRequest: async (req) => fapiRequest({ ...req, fapiHost }) };
   }
 
   if (options.platform) {
     const secretKey = await getAuthToken();
     const baseUrl = getPlapiBaseUrl();
-    return { baseUrl, runRequest: (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
+    return { baseUrl, runRequest: async (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
   }
 
   const secretKey = await resolveBapiSecretKey(options);
   const baseUrl = getBapiBaseUrl();
-  return { baseUrl, runRequest: (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
+  return { baseUrl, runRequest: async (req) => bapiRequest({ ...req, secretKey, baseUrl }) };
 }
 
 export async function api(
@@ -93,7 +88,7 @@ export async function api(
     }
 
     // 1. Resolve the request body
-    const body = await resolveBody(options);
+    const body = await resolveBody(options, endpoint);
 
     // 2. Determine HTTP method
     const method = (options.method ?? (body ? "POST" : "GET")).toUpperCase();
@@ -133,7 +128,7 @@ export async function api(
 
     // 6. Execute request
     try {
-      const response = await withSpinner("Executing request...", () =>
+      const response = await withSpinner("Executing request...", async () =>
         runRequest({ method, path: endpoint, body: body ?? undefined }),
       );
 
@@ -150,6 +145,15 @@ export async function api(
           printHeaders(error.status, error.headers);
         }
         prettyPrint(error.body);
+        // A 404 can mean either "no such endpoint" or "endpoint exists, resource
+        // doesn't", so the wording stays conditional. A parsed Clerk error code is
+        // evidence the request reached the API and was rejected semantically, so we
+        // skip the hint there to keep it off the common resource-not-found path —
+        // a heuristic, not a guarantee. FAPI has no endpoint catalog to search.
+        if (error.status === 404 && error.code === null && !options.fapi) {
+          const scope = options.platform ? " --platform" : "";
+          log.info(`If the endpoint path was a guess, search with: clerk api ls <keyword>${scope}`);
+        }
         process.exitCode = 1;
         closeStatus = "failed";
         return;
@@ -157,40 +161,62 @@ export async function api(
       throw error;
     }
   } catch (error) {
-    closeStatus = error instanceof UserAbortError || isPromptExitError(error) ? "paused" : "failed";
+    closeStatus = closeStatusForError(error);
     throw error;
   } finally {
     if (!nested) {
       if (closeStatus === "paused") {
         pausedOutro();
       } else if (closeStatus === "failed") {
-        outro("Failed");
+        await outro("Failed");
       } else {
-        outro();
+        await outro();
       }
     }
   }
 }
 
-async function resolveBody(options: { data?: string; file?: string }): Promise<string | null> {
-  if (options.data) return options.data;
+/**
+ * Resolve the request body from `-d`, `--file`, or piped stdin, and parse-check
+ * it before it can reach the API. The request's targeting flags ride along only
+ * so the error's suggested command hits the same endpoint; the secret key is
+ * deliberately not among them, since the suggestion is printed.
+ */
+async function resolveBody(options: ApiOptions, endpoint: string): Promise<string | null> {
+  const request = {
+    endpoint,
+    method: options.method,
+    fapi: options.fapi,
+    platform: options.platform,
+    app: options.app,
+    instance: options.instance,
+  };
+
+  // Presence, not truthiness: an explicit `-d ""` is an empty body to reject,
+  // not a request with no body.
+  if (options.data !== undefined) {
+    return validateJsonBody(options.data, { kind: "data" }, request);
+  }
 
   if (options.file) {
     const file = Bun.file(options.file);
     if (!(await file.exists())) {
       throwUsageError(`File not found: ${options.file}`, undefined, ERROR_CODE.FILE_NOT_FOUND);
     }
-    return file.text();
+    return validateJsonBody(await file.text(), { kind: "file", path: options.file }, request);
   }
 
-  // Read from stdin if piped
+  // Read from stdin if piped. A non-TTY stdin is not proof of a pipe — CI
+  // jobs, cron, and `< /dev/null` look the same and yield nothing — so nothing
+  // (or only whitespace) on stdin means no body rather than an empty one. What
+  // does arrive is forwarded untrimmed, like a --file body.
   if (!process.stdin.isTTY) {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) {
       chunks.push(Buffer.from(chunk));
     }
-    const text = Buffer.concat(chunks).toString("utf-8").trim();
-    if (text) return text;
+    const text = Buffer.concat(chunks).toString("utf-8");
+    if (text.trim()) return validateJsonBody(text, { kind: "stdin" }, request);
   }
 
   return null;
@@ -233,7 +259,13 @@ function prettyPrintToStderr(text: string): void {
 export function registerApi(program: Program): void {
   program
     .command("api")
-    .description("Make authenticated requests to the Clerk API")
+    .summary("Call any Clerk API endpoint (200+; `clerk api ls` to browse)")
+    .description(
+      "Call any endpoint in the Clerk API directly.\n\n" +
+        "The other commands cover common operations. This one reaches everything " +
+        "else — invitations and waitlist entries, billing subscriptions and credits, " +
+        "organization roles and permissions, enterprise SSO connections.",
+    )
     .argument(
       "[endpoint]",
       "API endpoint path, 'ls' to list endpoints, or omit for interactive mode",
@@ -246,7 +278,10 @@ export function registerApi(program: Program): void {
     .option("--app <id>", "Application ID to target when resolving keys")
     .option("--secret-key <key>", "Override the secret key")
     .option("--instance <id>", "Instance to target (dev, prod, or instance ID)")
-    .option("--platform", "Use Platform API instead of Backend API")
+    .option(
+      "--platform",
+      "Use the Platform API (applications and instances) instead of the Backend API; has its own endpoint list",
+    )
     .option(
       "--fapi",
       "Use the instance's public Frontend API (unauthenticated endpoints only; host derived from the publishable key)",
@@ -254,12 +289,21 @@ export function registerApi(program: Program): void {
     .option("--dry-run", "Show the request without executing it")
     .option("--yes", "Skip confirmation for mutating requests")
     .setExamples([
-      { command: "clerk api ls", description: "List all available endpoints" },
-      { command: "clerk api ls users", description: 'List endpoints matching "users"' },
+      { command: "clerk api ls", description: "List Backend API endpoints" },
+      { command: "clerk api ls users", description: 'List Backend API endpoints matching "users"' },
+      {
+        command: "clerk api ls --platform",
+        description: "List Platform API endpoints (applications, instances)",
+      },
       { command: "clerk api /users", description: "GET /v1/users" },
       {
         command: 'clerk api /users -d \'{"first_name":"Alice"}\'',
         description: "POST with a JSON body",
+      },
+      {
+        command: "clerk api /users --file body.json",
+        description:
+          "POST a body from a file — no shell quoting, so it works the same in PowerShell and cmd.exe",
       },
       {
         command: "clerk api --fapi /environment --app <id> --instance dev",

@@ -57,6 +57,7 @@ interface ClerkConfig {
   relay?: Record<string, RelayEntry>;
   machineUuid?: string;
   telemetryNoticeShown?: boolean;
+  telemetryDisabled?: boolean;
 }
 
 function defaultConfig(): ClerkConfig {
@@ -75,6 +76,7 @@ function migrateRawConfig(raw: Record<string, unknown>): ClerkConfig {
 
   if (typeof raw.machineUuid === "string") config.machineUuid = raw.machineUuid;
   if (raw.telemetryNoticeShown === true) config.telemetryNoticeShown = true;
+  if (raw.telemetryDisabled === true) config.telemetryDisabled = true;
 
   if (raw.relay && typeof raw.relay === "object" && !Array.isArray(raw.relay)) {
     const relay: Record<string, RelayEntry> = {};
@@ -212,15 +214,19 @@ export async function setRelayEntry(key: string, entry: RelayEntry): Promise<voi
   await writeConfig(config);
 }
 
-type ResolvedVia = "remote" | "git-common-dir" | "directory";
-
-/** Persistent anonymous machine id for telemetry. Generated on first use. */
+/** Persistent random machine id for telemetry. Generated on first use. */
 export async function ensureMachineUuid(): Promise<string> {
   const config = await readConfig();
   if (config.machineUuid) return config.machineUuid;
   config.machineUuid = crypto.randomUUID();
   await writeConfig(config);
   return config.machineUuid;
+}
+
+/** Read-only peek at the notice flag (the User-Agent gating needs it). */
+export async function getTelemetryNoticeShown(): Promise<boolean> {
+  const config = await readConfig();
+  return config.telemetryNoticeShown === true;
 }
 
 /** Flip the one-time telemetry notice flag. Returns true only on the transition. */
@@ -231,6 +237,27 @@ export async function markTelemetryNoticeShown(): Promise<boolean> {
   await writeConfig(config);
   return true;
 }
+
+/** Persisted telemetry opt-out, set via `clerk telemetry disable`. */
+export async function getTelemetryDisabled(): Promise<boolean> {
+  const config = await readConfig();
+  return config.telemetryDisabled === true;
+}
+
+export async function setTelemetryDisabled(disabled: boolean): Promise<void> {
+  const config = await readConfig();
+  if (disabled) {
+    config.telemetryDisabled = true;
+    // Opting out is an identity boundary: shed the machine id so a later
+    // opt-in starts unlinkable from prior events.
+    delete config.machineUuid;
+  } else {
+    delete config.telemetryDisabled;
+  }
+  await writeConfig(config);
+}
+
+type ResolvedVia = "remote" | "git-common-dir" | "directory";
 
 export async function resolveProfile(cwd: string): Promise<
   | {

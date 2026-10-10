@@ -1,6 +1,14 @@
-import { test, expect, describe } from "bun:test";
-import { createProgram, formatApiBody, outputJsonError } from "./cli-program.ts";
-import { ApiError } from "./lib/errors.ts";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { createProgram, formatApiBody, outputJsonError, reportError } from "./cli-program.ts";
+import {
+  ApiError,
+  CliError,
+  ERROR_CODE,
+  EXIT_CODE,
+  PlapiError,
+  UserAbortError,
+} from "./lib/errors.ts";
+import { telemetryResultForError } from "./lib/telemetry.ts";
 import { useCaptureLog } from "./test/lib/stubs.ts";
 
 test("registers users as a top-level command", () => {
@@ -48,12 +56,12 @@ test("users list exposes common filters and pagination options", () => {
   );
 });
 
-test("deploy relies on global options", () => {
+test("deploy exposes its create-time options", () => {
   const program = createProgram();
   const deploy = program.commands.find((command) => command.name() === "deploy")!;
   const optionNames = deploy.options.map((option) => option.long);
 
-  expect(optionNames).toEqual([]);
+  expect(optionNames).toEqual(["--domain", "--no-clone", "--zone-file", "--yes"]);
 });
 
 test("deploy status exposes wait option", () => {
@@ -136,6 +144,35 @@ test("users parent command exposes targeting flags inherited by subcommands", ()
   const optionNames = users.options.map((option) => option.long);
 
   expect(optionNames).toEqual(expect.arrayContaining(["--secret-key", "--app", "--instance"]));
+});
+
+describe("help output ordering", () => {
+  type AnyCommand = ReturnType<typeof createProgram>["commands"][number];
+
+  function collectCommands(cmd: AnyCommand, path: string): { path: string; cmd: AnyCommand }[] {
+    return [
+      { path, cmd },
+      ...cmd.commands.flatMap((sub) => collectCommands(sub, `${path} ${sub.name()}`)),
+    ];
+  }
+
+  const allCommands = collectCommands(createProgram() as AnyCommand, "clerk");
+
+  // Commander's option sort key: short flag if present, else long flag.
+  const optionSortKey = (option: { short?: string; long?: string }): string =>
+    option.short ? option.short.replace(/^-/, "") : (option.long ?? "").replace(/^--/, "");
+
+  test.each(allCommands)("$path lists subcommands alphabetically in help", ({ cmd }) => {
+    const helper = cmd.createHelp();
+    const names = helper.visibleCommands(cmd).map((sub) => sub.name());
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+  });
+
+  test.each(allCommands)("$path lists options alphabetically in help", ({ cmd }) => {
+    const helper = cmd.createHelp();
+    const keys = helper.visibleOptions(cmd).map(optionSortKey);
+    expect(keys).toEqual([...keys].sort((a, b) => a.localeCompare(b)));
+  });
 });
 
 test("users create documents -d and --file for raw BAPI request bodies", () => {
@@ -365,5 +402,196 @@ describe("outputJsonError", () => {
   test("omits the examples key when there are none", () => {
     outputJsonError("usage_error", "boom");
     expect(parse().error).not.toHaveProperty("examples");
+  });
+});
+
+// `reportError` is the whole error-dispatch cascade of `runProgram`'s catch,
+// minus the `process.exit` call. Exercising it directly is the only way to
+// cover every branch — going through `runProgram` needs a `process.exit` spy
+// and can only reach one branch per invocation.
+describe("reportError", () => {
+  const captured = useCaptureLog();
+
+  // `getMode()` falls back to TTY detection, which reports agent mode under the
+  // test runner. Drive the env var rather than `setMode()` so the override is
+  // restorable — `mode.ts` exposes no way to clear a forced mode.
+  const originalMode = process.env.CLERK_MODE;
+  const asHuman = () => {
+    process.env.CLERK_MODE = "human";
+  };
+  const asAgent = () => {
+    process.env.CLERK_MODE = "agent";
+  };
+
+  beforeEach(asHuman);
+  afterEach(() => {
+    if (originalMode === undefined) {
+      delete process.env.CLERK_MODE;
+    } else {
+      process.env.CLERK_MODE = originalMode;
+    }
+  });
+
+  const json = () => JSON.parse(captured.err.trim()) as { error: Record<string, any> };
+
+  describe("aborts", () => {
+    test("UserAbortError exits clean and prints nothing", () => {
+      expect(reportError(new UserAbortError(), false)).toBe(EXIT_CODE.SUCCESS);
+      expect(captured.err).toBe("");
+      expect(captured.out).toBe("");
+    });
+
+    test("an unrelated error is not treated as an abort", () => {
+      expect(reportError(new Error("something else"), false)).toBe(EXIT_CODE.GENERAL);
+      expect(captured.err).toContain("something else");
+    });
+  });
+
+  describe("CliError", () => {
+    test("returns the error's own exit code", () => {
+      const error = new CliError("bad flag", {
+        code: ERROR_CODE.USAGE_ERROR,
+        exitCode: EXIT_CODE.USAGE,
+      });
+      expect(reportError(error, false)).toBe(EXIT_CODE.USAGE);
+    });
+
+    test("human mode prints message, examples, and docs link", () => {
+      const error = new CliError("Not linked", {
+        code: ERROR_CODE.NOT_LINKED,
+        docsUrl: "https://example.com/docs/link",
+        examples: [{ command: "clerk link", description: "Link this directory" }],
+      });
+      reportError(error, false);
+      expect(captured.err).toContain("Not linked");
+      expect(captured.err).toContain("clerk link");
+      expect(captured.err).toContain("For more information, see: https://example.com/docs/link");
+    });
+
+    test("agent mode emits a JSON payload carrying code, docs URL, and examples", () => {
+      asAgent();
+      const error = new CliError("Not linked", {
+        code: ERROR_CODE.NOT_LINKED,
+        docsUrl: "https://example.com/docs/link",
+        examples: [{ command: "clerk link", description: "Link this directory" }],
+      });
+      expect(reportError(error, false)).toBe(EXIT_CODE.GENERAL);
+      expect(json().error).toMatchObject({
+        code: ERROR_CODE.NOT_LINKED,
+        message: "Not linked",
+        docsUrl: "https://example.com/docs/link",
+        examples: [{ command: "clerk link", description: "Link this directory" }],
+      });
+    });
+
+    test("agent mode falls back to human rendering when the error has no code", () => {
+      asAgent();
+      reportError(new CliError("uncoded failure"), false);
+      expect(captured.err).toContain("uncoded failure");
+      expect(() => json()).toThrow();
+    });
+  });
+
+  describe("ApiError", () => {
+    const body = JSON.stringify({
+      errors: [
+        { code: "form_param_missing", message: "Missing param", meta: { param_name: "email" } },
+      ],
+      clerk_trace_id: "trace_123",
+    });
+
+    // Only the prefix + status wiring is asserted here; the detail string is
+    // `formatStructuredError`'s job and is covered by the `formatApiBody` block.
+    test("human mode prefixes with the status", () => {
+      reportError(new ApiError(400, body), false);
+      expect(captured.err).toContain("Request failed (400): Missing param");
+    });
+
+    test("human mode prefers the error's context over the default prefix", () => {
+      const error = new ApiError(400, body);
+      error.context = "Platform API request failed";
+      reportError(error, false);
+      expect(captured.err).toContain("Platform API request failed (400):");
+      expect(captured.err).not.toContain("Request failed (400):");
+    });
+
+    test("verbose adds the request URL and trace id", () => {
+      reportError(new PlapiError(400, body, "https://api.clerk.com/v1/apps"), true);
+      expect(captured.err).toContain("URL: https://api.clerk.com/v1/apps");
+      expect(captured.err).toContain("Trace: trace_123");
+    });
+
+    test("agent mode emits the code and a structured errors array", () => {
+      asAgent();
+      reportError(new ApiError(400, body), false);
+      expect(json().error).toMatchObject({
+        code: "form_param_missing",
+        message: "Request failed (400): Missing param\n  Parameter: email",
+        errors: [
+          { code: "form_param_missing", message: "Missing param", meta: { param_name: "email" } },
+        ],
+      });
+    });
+
+    test("agent mode falls back to api_error and omits errors when there is no code or meta", () => {
+      asAgent();
+      reportError(new ApiError(502, "upstream exploded"), false);
+      expect(json().error.code).toBe("api_error");
+      expect(json().error).not.toHaveProperty("errors");
+    });
+  });
+
+  describe("unexpected failures", () => {
+    test("a plain Error prints its message in human mode", () => {
+      expect(reportError(new Error("socket hang up"), false)).toBe(EXIT_CODE.GENERAL);
+      expect(captured.err).toContain("socket hang up");
+    });
+
+    test("a plain Error becomes unexpected_error in agent mode", () => {
+      asAgent();
+      reportError(new Error("socket hang up"), false);
+      expect(json().error).toMatchObject({
+        code: "unexpected_error",
+        message: "socket hang up",
+      });
+    });
+
+    test("a non-Error throw gets a generic message in human mode", () => {
+      expect(reportError("just a string", false)).toBe(EXIT_CODE.GENERAL);
+      expect(captured.err).toContain("An unexpected error occurred");
+    });
+
+    test("a non-Error throw gets a generic message in agent mode", () => {
+      asAgent();
+      expect(reportError({ nope: true }, false)).toBe(EXIT_CODE.GENERAL);
+      expect(json().error).toMatchObject({
+        code: "unexpected_error",
+        message: "An unexpected error occurred",
+      });
+    });
+  });
+
+  // `telemetryResultForError` runs the same instanceof cascade to decide what
+  // exit code the event reports. If the two drift, telemetry records a code the
+  // user never saw, and nothing else in the suite would notice.
+  describe("agrees with telemetryResultForError on the exit code", () => {
+    const fixtures: [string, unknown][] = [
+      ["UserAbortError", new UserAbortError()],
+      ["CliError (default code)", new CliError("boom")],
+      [
+        "CliError (usage code)",
+        new CliError("bad flag", { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE }),
+      ],
+      ["ApiError", new ApiError(404, "{}")],
+      ["PlapiError", new PlapiError(500, "{}", "https://api.clerk.com/v1/apps")],
+      ["plain Error", new Error("socket hang up")],
+      ["non-Error throw", "just a string"],
+    ];
+
+    for (const [name, error] of fixtures) {
+      test(name, () => {
+        expect(reportError(error, false)).toBe(telemetryResultForError(error).exitCode);
+      });
+    }
   });
 });

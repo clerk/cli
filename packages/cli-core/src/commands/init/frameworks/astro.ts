@@ -84,7 +84,7 @@ function addClerkIntegration(content: string, enableSsr = false): string {
   return result;
 }
 
-function scaffoldConfig(ctx: ProjectContext): Promise<FileAction> {
+async function scaffoldConfig(ctx: ProjectContext): Promise<FileAction> {
   return scaffoldConfigFile(ctx.cwd, {
     candidates: ["astro.config.mjs", "astro.config.ts", "astro.config.js"],
     existsCheck: "@clerk/astro",

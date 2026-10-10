@@ -22,7 +22,7 @@ export function generateCodeVerifier(): string {
   return verifier.join("");
 }
 
-export async function generateCodeChallenge(verifier: string): Promise<string> {
+export function generateCodeChallenge(verifier: string): string {
   const hasher = new Bun.CryptoHasher("sha256");
   hasher.update(verifier);
   const digest = hasher.digest();

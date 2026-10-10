@@ -75,6 +75,11 @@ mock.module(
         expiresAt: Date.now() + tokenResponse.expires_in * 1000,
         tokenType: tokenResponse.token_type,
       }),
+      revokeAndDeleteToken: async () => {
+        const had = mockState.storedToken !== null;
+        mockState.storedToken = null;
+        return had ? ("revoked" as const) : ("nothing_to_revoke" as const);
+      },
       _setTokenOverride: () => {},
       KEYCHAIN_SERVICE: "clerk-cli",
       LOCAL_DEV_KEYCHAIN_SERVICE: "clerk-cli-dev",
@@ -221,6 +226,7 @@ mock.module(
         expires_in: 3600,
         refresh_token: "mock_refresh_token",
       }),
+      revokeToken: async () => "revoked" as const,
       fetchUserInfo: async (token: string) => {
         if (!token || token === "expired_token") throw new Error("Unauthorized");
         return { userId: "user_123", email: "test@example.com" };
@@ -245,7 +251,7 @@ mock.module(
   () =>
     ({
       generateCodeVerifier: () => "mock_verifier",
-      generateCodeChallenge: async () => "mock_challenge",
+      generateCodeChallenge: () => "mock_challenge",
       generateState: () => "mock_state",
     }) satisfies typeof import("../../../lib/pkce.ts"),
 );
@@ -442,6 +448,7 @@ export interface CLIResult {
 
 async function execCLI(...args: string[]): Promise<CLIResult> {
   const { createProgram, runProgram } = await import("../../../cli-program.ts");
+  const { _resetInterruptState } = await import("../../../lib/signals.ts");
   const program = createProgram();
   program.exitOverride();
 
@@ -454,6 +461,10 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
   currentHarness.exitSpy.mockClear();
   currentHarness.captured.stdout.length = 0;
   currentHarness.captured.stderr.length = 0;
+  // Signals state is module-level and this harness runs many commands in one
+  // process. A latched interrupt would make every later `runProgram` return
+  // early before telemetry, and the failure would read as a signals bug.
+  _resetInterruptState();
 
   let exitCode = 0;
 

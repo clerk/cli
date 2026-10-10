@@ -22,7 +22,13 @@ mock.module("../../lib/sleep.ts", () => ({
 
 const { _setConfigDir, setProfile } = await import("../../lib/config.ts");
 const { setMode } = await import("../../mode.ts");
+const { beginInterrupt, _resetInterruptState } = await import("../../lib/signals.ts");
 const { deployStatus } = await import("./status-command.ts");
+
+/** What an in-flight request rejects with once Ctrl-C aborts the shared signal. */
+function abortError(): Error {
+  return new DOMException("The operation was aborted.", "AbortError");
+}
 
 function stripAnsi(value: string): string {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
@@ -131,6 +137,7 @@ describe("deploy status", () => {
   });
 
   afterEach(async () => {
+    _resetInterruptState();
     _setConfigDir(undefined);
     if (tempDir) await rm(tempDir, { recursive: true, force: true });
     process.exitCode = exitCodeBefore ?? EXIT_CODE.SUCCESS;
@@ -215,6 +222,7 @@ describe("deploy status", () => {
       type: "CNAME",
       host: "clerk.example.com",
       value: "frontend-api.clerk.services",
+      required: true,
     });
   });
 
@@ -246,6 +254,92 @@ describe("deploy status", () => {
     expect(mockSleep).toHaveBeenCalledWith(2000);
   });
 
+  test("agent mode Ctrl-C while resolving the linked application emits an interrupted report", async () => {
+    // The first PLAPI read of the command, inside `resolveDeployContext`.
+    mockFetchApplication.mockImplementation(() => {
+      beginInterrupt();
+      throw abortError();
+    });
+
+    await expect(deployStatus()).rejects.toThrow();
+
+    expect(JSON.parse(captured.out).state).toBe("interrupted");
+  });
+
+  test("agent mode Ctrl-C during the preflight emits an interrupted report", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockImplementation(() => {
+      beginInterrupt();
+      throw abortError();
+    });
+
+    await expect(deployStatus()).rejects.toThrow();
+
+    const payload = JSON.parse(captured.out);
+    expect(payload).toMatchObject({ complete: false, state: "interrupted", domain: null });
+    expect(payload.nextAction).toContain("Run `clerk deploy status` again");
+    // The state read never happened, so the command must not claim there is no
+    // production instance.
+    expect(payload.state).not.toBe("not_started");
+  });
+
+  test("agent mode Ctrl-C during the state read emits an interrupted report", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+    mockGetApplicationDomainStatus.mockImplementation(() => {
+      beginInterrupt();
+      throw abortError();
+    });
+
+    await expect(deployStatus()).rejects.toThrow();
+
+    expect(JSON.parse(captured.out).state).toBe("interrupted");
+  });
+
+  test("agent mode Ctrl-C mid-wait reports what the last completed poll established", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+    let polls = 0;
+    mockGetApplicationDomainStatus.mockImplementation(() => {
+      polls++;
+      if (polls === 1) return pendingDnsDomainStatus();
+      if (polls === 2) return pendingSslDomainStatus();
+      beginInterrupt();
+      throw abortError();
+    });
+
+    await expect(deployStatus({ wait: true })).rejects.toThrow();
+
+    const payload = JSON.parse(captured.out);
+    expect(payload.state).toBe("domain_pending");
+    // From the second poll, not the pre-wait snapshot — which still had DNS pending.
+    expect(payload.domainStatus).toEqual({ dns: "complete", ssl: "pending", mail: "complete" });
+  });
+
+  test("human mode Ctrl-C during the preflight prints only the next action", async () => {
+    setMode("human");
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockImplementation(() => {
+      beginInterrupt();
+      throw abortError();
+    });
+
+    await expect(deployStatus()).rejects.toThrow();
+
+    const output = stripAnsi(captured.err);
+    expect(output).toContain("Interrupted before the deploy status could be read");
+    expect(output).not.toContain("OAuth");
+    expect(captured.out).toBe("");
+  });
+
   test("human mode shows dashboard monitoring guidance without agent handoff copy", async () => {
     setMode("human");
     mockFetchApplication.mockResolvedValue(appWith(true));
@@ -258,7 +352,7 @@ describe("deploy status", () => {
 
     const output = stripAnsi(captured.err);
     expect(output).toContain(
-      "SSL still provisioning for example.com. Re-run `clerk deploy status` in a few minutes, DNS propagation can take time. Visit the Clerk Dashboard domains page to monitor its status there: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+      "SSL still provisioning for example.com. Nothing to add at the DNS provider; re-run `clerk deploy status --wait` in a few minutes. Watch DNS and SSL in the Clerk Dashboard: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
     );
     expect(output).not.toContain("Ask the user to visit");
     expect(output).not.toContain("offer to open it");

@@ -81,7 +81,7 @@ const PROVIDER_OVERRIDES = {
     redirectLabel: "Authorized Redirect URI",
     setupCopy:
       "Production Google sign-in requires custom OAuth credentials from Google Cloud Console.",
-    gotcha: `${yellow("IMPORTANT")}  Set the OAuth consent screen's publishing status to "In production". Apps left in "Testing" are limited to 100 test users and may break for end users.`,
+    gotcha: `Set the OAuth consent screen's publishing status to "In production". Apps left in "Testing" are limited to 100 test users and may break for end users.`,
     credentialSources: ["manual", "google-json"],
   },
   apple: {
@@ -89,7 +89,7 @@ const PROVIDER_OVERRIDES = {
     redirectLabel: "Return URL",
     setupCopy:
       "Production Apple sign-in requires an Apple Services ID, Team ID, Key ID, and private key file.",
-    gotcha: `${yellow("IMPORTANT")}  Apple OAuth needs four artifacts: Apple Services ID, Apple Team ID, Apple Key ID, and Apple Private Key (.p8 file). The .p8 file cannot be re-downloaded - save it before leaving Apple's developer portal.`,
+    gotcha: `Apple OAuth needs four artifacts: Apple Services ID, Apple Team ID, Apple Key ID, and Apple Private Key (.p8 file). The .p8 file cannot be re-downloaded - save it before leaving Apple's developer portal.`,
     fieldOrder: ["client_id", "team_id", "key_id", "client_secret"],
     fieldLabels: {
       client_id: "Apple Services ID",
@@ -434,7 +434,8 @@ export function providerSetupIntro(provider: OAuthProvider | OAuthProviderDescri
   return [bold(`Configure ${label} OAuth for production`), setupCopy, dim(`Reference: ${docsUrl}`)];
 }
 
-function oauthWalkthroughUrls(
+/** The values a provider's OAuth app needs for Clerk's production sign-in on `domain`. */
+export function oauthWalkthroughUrls(
   domain: string,
   frontendApiUrl?: string,
 ): { authorizedOrigins: string[]; redirectUri: string } {
@@ -470,7 +471,7 @@ export async function showOAuthWalkthrough(
   const gotcha = descriptor?.gotcha ?? providerGotcha(slug);
   if (gotcha) {
     log.blank();
-    log.info(gotcha);
+    log.info(`${yellow("IMPORTANT")}  ${gotcha}`);
   }
   log.blank();
   log.info(dim(`Provider guide: ${docsUrl}`));

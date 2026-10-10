@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { statSync } from "node:fs";
 import { confirm, text } from "../../lib/prompts.ts";
 import { search, filterChoices } from "../../lib/listage.ts";
-import { throwUserAbort, throwUsageError, CliError } from "../../lib/errors.js";
+import { throwUserAbort, throwUsageError, CliError, ERROR_CODE } from "../../lib/errors.js";
 import { log } from "../../lib/log.js";
 import type { FrameworkInfo } from "../../lib/framework.js";
 import { dirExists, hasPackageJson } from "./context.js";
@@ -49,6 +49,7 @@ async function pickFramework(frameworkOverride?: FrameworkInfo): Promise<Bootstr
   const supported = BOOTSTRAP_REGISTRY.map((e) => e.label).join(", ");
   throw new CliError(
     `Bootstrap is not supported for ${frameworkOverride.name}. Supported: ${supported}`,
+    { code: ERROR_CODE.BOOTSTRAP_UNSUPPORTED },
   );
 }
 
@@ -109,7 +110,9 @@ export async function findAvailableProjectName(cwd: string, base: string): Promi
     const candidate = `${base}-${i}`;
     if (!(await dirExists(join(cwd, candidate)))) return candidate;
   }
-  throw new CliError(`Could not find an available project name based on '${base}'.`);
+  throw new CliError(`Could not find an available project name based on '${base}'.`, {
+    code: ERROR_CODE.PROJECT_DIR_EXISTS,
+  });
 }
 
 async function askProjectName(entry: BootstrapEntry, cwd: string): Promise<string> {
@@ -137,7 +140,9 @@ async function generateProject(label: string, command: string[], cwd: string): P
 
   const exitCode = await spawnInherited(command, cwd);
   if (exitCode !== 0) {
-    throw new CliError(`Project generation failed (exit code ${exitCode}).`);
+    throw new CliError(`Project generation failed (exit code ${exitCode}).`, {
+      code: ERROR_CODE.GENERATOR_FAILED,
+    });
   }
 }
 
@@ -231,13 +236,16 @@ export async function promptAndBootstrap(
   if (await dirExists(projectDir)) {
     throw new CliError(
       `Directory '${projectName}' already exists. Pick a different name or remove it first.`,
+      { code: ERROR_CODE.PROJECT_DIR_EXISTS },
     );
   }
 
   await generateProject(entry.label, entry.buildCommand(pm, projectName), cwd);
 
   if (!(await hasPackageJson(projectDir))) {
-    throw new CliError("Generator did not create a package.json.");
+    throw new CliError("Generator did not create a package.json.", {
+      code: ERROR_CODE.GENERATOR_FAILED,
+    });
   }
 
   await installDependencies(pm, projectDir);

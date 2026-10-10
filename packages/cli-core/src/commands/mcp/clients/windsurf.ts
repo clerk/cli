@@ -17,5 +17,5 @@ export const windsurfClient = makeJsonClient({
   encode: clerkRunDescriptor,
   extractUrl: clerkRunUrl,
   configPath: () => userPath(".codeium", "windsurf", "mcp_config.json"),
-  detect: () => pathExists(userPath(".codeium", "windsurf")),
+  detect: async () => pathExists(userPath(".codeium", "windsurf")),
 });

@@ -221,13 +221,25 @@ export function productionSummary(
   domain: string,
   completedOAuthProviderLabels: readonly string[],
   domainStatus: "verified" | "pending" = "verified",
+  pendingOAuthProviderLabels: readonly string[] = [],
 ): string[] {
-  return [
+  const oauth = completedOAuthProviderLabels.length
+    ? completedOAuthProviderLabels.join(", ")
+    : pendingOAuthProviderLabels.length
+      ? "None configured yet"
+      : "Not applicable";
+  const lines = [
     `Production ready at ${cyan(`https://${domain}`)}`,
     "",
     `  Domain      ${domainStatus === "verified" ? "Verified" : "DNS pending"}`,
-    `  OAuth       ${completedOAuthProviderLabels.length ? completedOAuthProviderLabels.join(", ") : "Not applicable"}`,
+    `  OAuth       ${oauth}`,
   ];
+  if (pendingOAuthProviderLabels.length > 0) {
+    lines.push(
+      `  Pending     ${pendingOAuthProviderLabels.join(", ")} (no production credentials yet; sign-in with these providers fails until they are added)`,
+    );
+  }
+  return lines;
 }
 
 export function nextStepsBlock(appId: string, productionInstanceId: string): string {

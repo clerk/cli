@@ -22,5 +22,5 @@ export const fastify: FrameworkScaffold = {
 
   matches: (ctx) => ctx.framework.dep === "fastify",
 
-  scaffold: (ctx) => scaffoldServerFramework(ctx, FASTIFY_CONFIG),
+  scaffold: async (ctx) => scaffoldServerFramework(ctx, FASTIFY_CONFIG),
 };
