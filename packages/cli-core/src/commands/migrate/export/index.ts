@@ -3,6 +3,7 @@ import { throwUsageError } from "../../../lib/errors.ts";
 import { select } from "../../../lib/listage.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import { exportAuth0 } from "./auth0.ts";
+import { exportBetterAuth } from "./betterauth.ts";
 import { exportClerk } from "./clerk.ts";
 import { exportFirebase } from "./firebase.ts";
 import { exportSupabase } from "./supabase.ts";
@@ -53,6 +54,7 @@ const handlers = {
   clerk: exportClerk,
   auth0: exportAuth0,
   supabase: exportSupabase,
+  betterauth: exportBetterAuth,
   firebase: exportFirebase,
   workos: exportWorkOs,
 };
@@ -64,6 +66,12 @@ const DB_PLATFORMS = [
     summary: "Export users from a Supabase Postgres database",
     envVar: "SUPABASE_DB_URL",
     example: "postgres://postgres:password@db.xxx.supabase.co:5432/postgres",
+  },
+  {
+    key: "betterauth",
+    summary: "Export users from a Better Auth database",
+    envVar: "BETTERAUTH_DB_URL",
+    example: "./db.sqlite",
   },
 ] as const;
 

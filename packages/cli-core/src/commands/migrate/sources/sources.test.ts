@@ -46,7 +46,14 @@ const one = (key: string, record: Record<string, unknown>, context = {}) =>
 
 describe("registry", () => {
   test("registers the built-in platforms", () => {
-    expect(sourceKeys()).toEqual(["clerk", "auth0", "firebase", "supabase", "workos"]);
+    expect(sourceKeys()).toEqual([
+      "clerk",
+      "auth0",
+      "betterauth",
+      "firebase",
+      "supabase",
+      "workos",
+    ]);
   });
 
   test.each([...sources])("$key maps a source field to userId", (source) => {
@@ -250,6 +257,143 @@ describe("workos", () => {
     ]);
     expect(users[0]?.userId).toBe("user_01ABC");
     expect("identities" in (users[0] ?? {})).toBe(false);
+  });
+});
+
+describe("betterauth", () => {
+  const base = { user_id: "ba1", email: "a@x.dev", email_verified: true };
+
+  test.each([
+    [1, "anonymous Better Auth user"],
+    [true, "anonymous Better Auth user"],
+    [0, undefined],
+    [undefined, undefined],
+  ])("isAnonymous=%p sets skipReason %p", (isAnonymous, expected) => {
+    const user = one("betterauth", { ...base, isAnonymous });
+    expect(user?.skipReason).toBe(expected);
+    expect("isAnonymous" in (user ?? {})).toBe(false);
+  });
+
+  // Better Auth's own scrypt: a 16-byte hex salt, a colon, a 64-byte hex key.
+  const SALT = "a".repeat(32);
+  const KEY = "b".repeat(128);
+
+  test.each([
+    [`${SALT}:${KEY}`, `scrypt:16384:16:1$${SALT}$${KEY}`, "scrypt_werkzeug"],
+    [
+      "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      "bcrypt",
+    ],
+    [
+      "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      "bcrypt",
+    ],
+    [
+      "$2y$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      "$2y$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      "bcrypt",
+    ],
+    [
+      "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA",
+      "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA",
+      "argon2id",
+    ],
+    [
+      "$argon2i$v=19$m=4096,t=3,p=1$c2FsdA$aGFzaA",
+      "$argon2i$v=19$m=4096,t=3,p=1$c2FsdA$aGFzaA",
+      "argon2i",
+    ],
+  ])("detects the hasher per user: %s", async (stored, password, passwordHasher) => {
+    const { users } = await load("betterauth", [{ ...base, password_hash: stored }]);
+    expect(users[0]).toMatchObject({ password, passwordHasher });
+    expect(users[0]?.passwordDropped).toBeUndefined();
+  });
+
+  // Imported without the password rather than rejected: the user can still
+  // sign in another way, or reset it.
+  test.each([["plaintext"], ["$pbkdf2$abc"], [`${SALT}:short`]])(
+    "drops a password it cannot verify (%s) and imports the user",
+    async (stored) => {
+      const { users, validationFailed } = await load("betterauth", [
+        { ...base, password_hash: stored },
+      ]);
+      expect(validationFailed).toBe(0);
+      expect(users[0]?.password).toBeUndefined();
+      expect(users[0]?.passwordHasher).toBeUndefined();
+      expect(users[0]?.passwordDropped).toBe(true);
+    },
+  );
+
+  test("names no hasher for a user without a password", async () => {
+    const { users } = await load("betterauth", [base]);
+    expect(users[0]?.passwordHasher).toBeUndefined();
+    expect(users[0]?.passwordDropped).toBeUndefined();
+  });
+
+  test("routes an unverified phone", () => {
+    const user = one("betterauth", {
+      ...base,
+      phone_number: "+15555550100",
+      phone_number_verified: false,
+    });
+    expect(user?.unverifiedPhoneNumbers).toBe("+15555550100");
+  });
+
+  test.each([
+    [true, true],
+    [1, true],
+    ["true", true],
+    [false, undefined],
+    [0, undefined],
+    [undefined, undefined],
+  ])("banned=%p is carried through as %p", (banned, expected) => {
+    expect(one("betterauth", { ...base, banned })?.banned).toBe(expected as boolean | undefined);
+  });
+
+  // The prefix alone said bcrypt, so the user was rejected instead of dropped.
+  test("drops a malformed bcrypt hash, and imports the user", async () => {
+    const { users } = await load("betterauth", [{ ...base, password_hash: "$2a$10$hash" }]);
+    expect(users[0]?.password).toBeUndefined();
+    expect(users[0]?.passwordDropped).toBe(true);
+  });
+
+  // Clerk's ban has no end: the checks warn using the one Better Auth set.
+  test("a ban with an expiry keeps its end date; one without is permanent", () => {
+    expect(
+      one("betterauth", { ...base, banned: true, banExpires: "2999-01-01T00:00:00.000Z" }),
+    ).toMatchObject({ banned: true, banEndsAt: "2999-01-01T00:00:00.000Z" });
+    const permanent = one("betterauth", { ...base, banned: true, banExpires: null });
+    expect(permanent?.banned).toBe(true);
+    expect(permanent).not.toHaveProperty("banEndsAt");
+  });
+
+  // Better Auth lifts an expired ban only at the next sign-in, so the column
+  // can still say banned long after the ban ended.
+  test.each([
+    ["an expiry in the past", "2020-01-01T00:00:00.000Z", undefined],
+    ["an expiry in the future", "2999-01-01T00:00:00.000Z", true],
+    ["epoch seconds in the past", 1_577_836_800, undefined],
+    ["epoch milliseconds in the future", 32_472_144_000_000, true],
+    // A CSV of a Drizzle SQLite `integer({ mode: "timestamp" })` column.
+    ["epoch seconds in the future, as a string", "32472144000", true],
+    ["epoch seconds in the past, as a string", "1577836800", undefined],
+    ["epoch milliseconds in the future, as a string", "32472144000000", true],
+    ["an unreadable expiry", "soon", true],
+  ])("a ban with %s -> banned %p", (_label, banExpires, expected) => {
+    const user = one("betterauth", { ...base, banned: true, banExpires });
+    expect(user?.banned).toBe(expected as boolean | undefined);
+  });
+
+  test("drops plugin-only columns during validation", async () => {
+    const { users } = await load("betterauth", [
+      { ...base, role: "admin", display_username: "ADA", two_factor_enabled: true },
+    ]);
+    const user = users[0] as Record<string, unknown>;
+    expect("role" in user).toBe(false);
+    expect("display_username" in user).toBe(false);
+    expect("two_factor_enabled" in user).toBe(false);
   });
 });
 
@@ -653,6 +797,10 @@ describe("fields the CLI's own export adds", () => {
         raw_app_meta_data: { providers: ["email"] },
       },
     ],
+    [
+      "betterauth",
+      { user_id: "b1", email: "a@x.dev", email_verified: true, updated_at: "2024-01-01" },
+    ],
   ])("%s reports no unknown fields", async (key, record) => {
     const { unknownFields } = await load(key, [record]);
     expect(unknownFields).toEqual({});
@@ -662,6 +810,7 @@ describe("fields the CLI's own export adds", () => {
 describe("invalid records", () => {
   const INVALID: [string, Record<string, unknown>][] = [
     ["auth0", { user_id: "a1" }],
+    ["betterauth", { user_id: "a3" }],
     ["firebase", { localId: "a4" }],
     ["supabase", { id: "a5" }],
   ];
@@ -685,6 +834,7 @@ describe("invalid records", () => {
 /** The per-platform source field that becomes a Clerk identifier. */
 function identifierFor(key: string, email = "ok@x.dev"): Record<string, unknown> {
   if (key === "auth0") return { email, email_verified: true };
+  if (key === "betterauth") return { email, email_verified: true };
   if (key === "firebase") return { email, emailVerified: true };
   return { email, email_confirmed_at: "2024-01-01 00:00:00+00" };
 }
