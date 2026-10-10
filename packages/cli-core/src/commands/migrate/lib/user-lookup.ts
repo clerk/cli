@@ -20,6 +20,7 @@ export type LookedUpUser = {
   id: string;
   external_id?: string | null;
   username?: string | null;
+  private_metadata?: Record<string, unknown> | null;
   last_sign_in_at?: number | null;
   email_addresses?: { email_address?: string }[];
   phone_numbers?: { phone_number?: string }[];
@@ -81,4 +82,43 @@ export async function lookupUsers(options: {
   );
 
   return pages.flat().filter((user) => typeof user.id === "string");
+}
+
+/**
+ * The `private_metadata` key every import create carries: the ID of the run
+ * that sent it. It is how a continue or an undo knows a user found by
+ * `external_id` is that run's own create, and not one an app or another tool
+ * made with the same source ID.
+ */
+export const RUN_MARKER_KEY = "clerkMigrateRun";
+
+/**
+ * The users behind creates that were in flight when run `runId` stopped:
+ * found by `external_id`, and counted only when they carry the run's marker.
+ * One without it stays unresolved: a continue's checks find it in the
+ * instance, and `undo` leaves it alone. That includes a create from a run
+ * recorded before the marker existed.
+ */
+export async function findInFlight(options: {
+  runId: string;
+  sourceIds: string[];
+  secretKey: string;
+  schedule: ApiScheduler;
+}): Promise<{ sourceId: string; clerkId: string }[]> {
+  if (options.sourceIds.length === 0) return [];
+  const found = await lookupUsers({
+    filter: "external_id",
+    values: options.sourceIds,
+    secretKey: options.secretKey,
+    schedule: options.schedule,
+  });
+  const wanted = new Set(options.sourceIds);
+  return found
+    .filter(
+      (user) =>
+        user.external_id &&
+        wanted.has(user.external_id) &&
+        user.private_metadata?.[RUN_MARKER_KEY] === options.runId,
+    )
+    .map((user) => ({ sourceId: user.external_id as string, clerkId: user.id }));
 }

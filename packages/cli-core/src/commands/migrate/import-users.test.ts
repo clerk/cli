@@ -210,6 +210,42 @@ describe("importUsers", () => {
       headers,
     });
 
+  // How a continue or an undo tells its own cut-off create from a user
+  // someone else made with the same external_id.
+  test("marks each create with its run, keeping the source's private metadata", async () => {
+    stub(() => ok("user_created"));
+
+    await importUsers({
+      users: [user({ userId: "u1", privateMetadata: { plan: "pro" } })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      runId: "20260101-000000-abcd",
+    });
+
+    expect(requests.find((r) => r.url.endsWith("/v1/users"))?.body).toMatchObject({
+      private_metadata: { plan: "pro", clerkMigrateRun: "20260101-000000-abcd" },
+    });
+  });
+
+  // A Clerk export of users an earlier migration imported carries that run's
+  // marker; this run's must win, or a cut-off create could never be adopted.
+  test("replaces a marker the source's private metadata already carries", async () => {
+    stub(() => ok("user_created"));
+
+    await importUsers({
+      users: [user({ userId: "u1", privateMetadata: { clerkMigrateRun: "20250101-000000-0000" } })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      runId: "20260101-000000-abcd",
+    });
+
+    expect(requests.find((r) => r.url.endsWith("/v1/users"))?.body).toMatchObject({
+      private_metadata: { clerkMigrateRun: "20260101-000000-abcd" },
+    });
+  });
+
   test("creates each user and reports them as successful", async () => {
     stub(() => ok("user_created"));
 
@@ -323,14 +359,18 @@ describe("importUsers", () => {
     });
 
     expect(summary).toMatchObject({ successful: 1, failed: 0 });
-    // On record once created, then with its attach pending, then with what
-    // the attach added. A refused attach is not retried, so nothing is pending.
-    expect(lines).toHaveLength(3);
-    expect(lines[0]).toEqual({ sourceId: "u1", clerkId: "user_created", status: "created" });
-    expect(lines[1]?.pending).toEqual([{ kind: "email", value: "b@x.dev", verified: true }]);
-    expect(lines[2]).toMatchObject({ status: "created", clerkId: "user_created" });
-    expect(lines[2]?.error).toContain("Failed to add additional email b@x.dev");
-    expect(lines[2]).not.toHaveProperty("pending");
+    // On record once created with its attach pending, in one line, then with
+    // what the attach added. A refused attach is not retried, so nothing is pending.
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toEqual({
+      sourceId: "u1",
+      clerkId: "user_created",
+      status: "created",
+      pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+    });
+    expect(lines[1]).toMatchObject({ status: "created", clerkId: "user_created" });
+    expect(lines[1]?.error).toContain("Failed to add additional email b@x.dev");
+    expect(lines[1]).not.toHaveProperty("pending");
   });
 
   // A Ctrl-C mid-backoff should not wait out the pause, nor send the attach.
@@ -376,7 +416,7 @@ describe("importUsers", () => {
     expect(lines.at(-1)).not.toHaveProperty("pending");
   });
 
-  test("keeps an attach with no answer pending", async () => {
+  test("keeps an attach with no answer pending, for a continued run", async () => {
     stub((url) =>
       url.endsWith("/v1/email_addresses") ? clerkError(503, "unavailable") : ok("user_created"),
     );
@@ -415,6 +455,49 @@ describe("importUsers", () => {
       "/v1/users",
       "/v1/email_addresses",
     ]);
+  });
+
+  test("attachOnly sends just the pending attaches, and clears them", async () => {
+    stub(() => ok("idn_1"));
+
+    await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          clerkId: "user_1",
+          status: "created",
+          pending: [{ kind: "phone", value: "+15555550100", verified: false }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(requests.map((r) => [new URL(r.url).pathname, r.body])).toEqual([
+      [
+        "/v1/phone_numbers",
+        { user_id: "user_1", phone_number: "+15555550100", primary: false, verified: false },
+      ],
+    ]);
+    expect(lines.at(-1)).toEqual({ sourceId: "u1", clerkId: "user_1", status: "created" });
+  });
+
+  test("an adopted user is not created again; only its extras attach", async () => {
+    stub(() => ok("idn_1"));
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+      adopted: new Map([["u1", "user_found"]]),
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(requests.map((r) => new URL(r.url).pathname)).toEqual(["/v1/email_addresses"]);
+    expect(summary.successful).toBe(1);
+    expect(lines.at(-1)).toMatchObject({ clerkId: "user_found", status: "created" });
   });
 
   // Shapes from clerk_go's apierror: the country error carries its own code

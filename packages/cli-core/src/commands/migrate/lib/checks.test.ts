@@ -307,6 +307,27 @@ describe("rejects", () => {
 
   // A repeated record (an export that paged past a sign-up) must not take the
   // kept copy down with it.
+  // Adopted means created by this run, but only for its own record: another
+  // user that shares its email would still clash at create.
+  test("an adopted user's identifiers still clash with other users", async () => {
+    existing = [
+      {
+        id: "user_mine",
+        external_id: "mine",
+        email_addresses: [{ email_address: "mine@x.dev" }, { email_address: "shared@x.dev" }],
+      },
+    ];
+    expect(
+      await reasonsOf({
+        users: [
+          user("mine", { emailAddresses: ["shared@x.dev"] }),
+          user("other", { email: "shared@x.dev" }),
+        ],
+        adoptedClerkIds: new Set(["user_mine"]),
+      }),
+    ).toEqual({ other: "email is already used by a user in the instance" });
+  });
+
   test("a repeated source ID rejects only the later copy", async () => {
     const checks = await checkImport(input({ users: [user("a"), user("a")] }));
     expect(checks.importable.map((u) => u.userId)).toEqual(["a"]);
@@ -323,6 +344,15 @@ describe("rejects", () => {
       }),
     );
     expect(checks.importable.map((u) => u.userId)).toEqual(["kept"]);
+  });
+
+  // A continued run found this user behind its own in-flight create.
+  test("not a user the continued run adopted", async () => {
+    existing = [{ id: "user_1", external_id: "mine" }];
+
+    expect(
+      await reasonsOf({ users: [user("mine")], adoptedClerkIds: new Set(["user_1"]) }),
+    ).toEqual({});
   });
 
   test("a supabase user whose only provider is disabled", async () => {
@@ -445,6 +475,71 @@ describe("rejects", () => {
       },
     ]);
     expect(checks.quota).toEqual({ existing: 98, limit: 100, headroom: 2, over: 1 });
+  });
+
+  // A continued run's adopted users exist already and are never created
+  // again: the live count has them, and only new users take headroom.
+  test("an adopted user takes no headroom, wherever it sits in the file", async () => {
+    const checks = await checkImport(
+      input({
+        instanceType: "dev",
+        existingUsers: 99,
+        adoptedClerkIds: new Set(["user_c"]),
+        adoptedSourceIds: new Set(["c"]),
+        users: [user("a"), user("b"), user("c")],
+      }),
+    );
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["a", "c"]);
+    expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["b"]);
+    expect(checks.quota).toEqual({ existing: 99, limit: 100, headroom: 1, over: 1 });
+  });
+
+  // The checks stop creates; an adopted user needs none, so a reject would
+  // only leave it `creating` for good.
+  test("an adopted user is never rejected", async () => {
+    const checks = await checkImport(
+      input({
+        settings: {
+          ...settings({ email_address: { enabled: true } }),
+          sign_up: { legal_consent_enabled: true },
+        } as never,
+        adoptedSourceIds: new Set(["a"]),
+        users: [user("a"), user("b")],
+      }),
+    );
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["a"]);
+    expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["b"]);
+  });
+
+  // Both would go to importUsers as the one adopted user.
+  // The adopted user is in Clerk with that email, so the earlier record's
+  // create would be the one Clerk refuses.
+  test("rejects an earlier record that shares an adopted user's email", async () => {
+    const checks = await checkImport(
+      input({
+        adoptedSourceIds: new Set(["late"]),
+        users: [user("early", { email: "same@x.dev" }), user("late", { email: "same@x.dev" })],
+      }),
+    );
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["late"]);
+    expect(checks.rejects).toEqual([
+      {
+        sourceId: "early",
+        reason: "shares an email, phone or username with a user an earlier attempt already created",
+        keptSourceId: "late",
+      },
+    ]);
+  });
+
+  test("a second record with an adopted user's source ID is still rejected", async () => {
+    const checks = await checkImport(
+      input({
+        adoptedSourceIds: new Set(["a"]),
+        users: [user("a"), user("a", { email: "z@x.dev" })],
+      }),
+    );
+    expect(checks.importable).toHaveLength(1);
+    expect(checks.rejects).toEqual([{ sourceId: "a", reason: "duplicate source ID in the file" }]);
   });
 
   test("warns that an unreadable user count was checked as empty", async () => {

@@ -23,6 +23,7 @@ import type { ResolvedLimits } from "./lib/instance.ts";
 import type { ProgressUpdate } from "./lib/progress.ts";
 import { RateLimitExceededError, retryOn429 } from "./lib/retry.ts";
 import type { PendingIdentifier, UserLine } from "./lib/run-store.ts";
+import { RUN_MARKER_KEY } from "./lib/user-lookup.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
 import type { ImportSummary, User } from "./types.ts";
 
@@ -174,6 +175,8 @@ export function buildCreateUserBody(
 type CreateContext = {
   secretKey: string;
   schedule: ApiScheduler;
+  /** The run sending these creates; each carries it as its marker. */
+  runId?: string;
   /** Aborted by the first `user_quota_exceeded`: every later create would be refused too. */
   quota: AbortController;
   /** Aborted by a Ctrl-C or the quota. No create goes out after it. */
@@ -318,6 +321,16 @@ async function createUser(
     );
 
   const body = buildCreateUserBody(user, identifiers, skipPasswordRequirement);
+  // The run's marker, with whatever private metadata the source brought:
+  // without it a create cut off mid-flight could never be told from a user
+  // someone else made with the same external_id. It replaces a marker the
+  // source carries, from a run that imported the user there.
+  if (ctx.runId) {
+    body.private_metadata = {
+      ...(body.private_metadata as Record<string, unknown> | undefined),
+      [RUN_MARKER_KEY]: ctx.runId,
+    };
+  }
   const notes: string[] = [];
   let phoneRefusal: string | undefined;
   let response;
@@ -352,6 +365,19 @@ export type ImportUsersOptions = {
   limits: ResolvedLimits;
   /** Receives each user's lines as they happen. */
   record: (line: UserLine) => void;
+  /**
+   * Users a continued run created whose extra identifiers never attached: their
+   * latest `created` line, with `pending`. Only the attaches are sent.
+   */
+  attachOnly?: UserLine[];
+  /** The run these creates belong to, sent on each as its marker. */
+  runId?: string;
+  /**
+   * Source ID → Clerk ID for users whose create a stopped run sent with no
+   * answer, and which a continued run then found in the instance. They are
+   * not created again; only their extra identifiers are sent.
+   */
+  adopted?: Map<string, string>;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
   /** Carried into the summary so the report covers the whole file. */
@@ -365,8 +391,7 @@ export type ImportUsersOptions = {
  *
  * A failed user is recorded and the run continues; a 429 backs off (honouring
  * `Retry-After`) and retries up to {@link MAX_RETRIES} times. A create with no
- * answer keeps its `creating` line: Clerk may hold the user, and a re-run's
- * checks look it up before creating it again.
+ * answer keeps its `creating` line, for a continued run or `undo` to resolve.
  */
 export async function importUsers(options: ImportUsersOptions): Promise<ImportSummary> {
   const {
@@ -374,6 +399,9 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     secretKey,
     limits,
     record,
+    attachOnly = [],
+    runId,
+    adopted = new Map<string, string>(),
     skipPasswordRequirement = true,
     validationFailed = 0,
     progress: report,
@@ -394,6 +422,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     schedule: createApiScheduler(limits.concurrencyLimit, limits.rateLimit),
     quota,
     stop: AbortSignal.any([interruptSignal(), quota.signal]),
+    ...(runId ? { runId } : {}),
   };
 
   const progress = () => report?.({ done: processed, ok: successful, failed });
@@ -418,13 +447,11 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   };
 
   /**
-   * Attaches a created user's extra identifiers. The user goes on record with
-   * them `pending` first, so a run stopped before they attach records which
-   * never did.
+   * Attaches a created user's extra identifiers. The user is already on record
+   * with them `pending`, so a run stopped before they attach can finish them.
    */
   const finishUser = async (line: UserLine, toAttach: PendingIdentifier[], notes: string[]) => {
     const { error: _error, pending: _pending, ...base } = line;
-    if (toAttach.length > 0) record({ ...base, pending: toAttach });
     const attached = await attachAll(ctx, base.clerkId ?? "", toAttach);
     const error = [...notes, ...attached.notes].join("; ");
     // A second line, which wins as the latest, adds what happened on the way.
@@ -441,22 +468,25 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     const retries: string[] = [];
     const identifiers = splitIdentifiers(user);
     let created: { clerkUserId: string; notes: string[]; phoneRefusal?: string };
+    const adoptedId = adopted.get(user.userId);
     let sent = false;
     try {
-      created = await retryOn429(
-        async () =>
-          createUser(ctx, user, identifiers, skipPasswordRequirement, () => {
-            sent = true;
-            record({ sourceId: user.userId, status: "creating" });
-          }),
-        {
-          signal: ctx.stop,
-          onRetry: ({ message, delaySeconds }) => {
-            retries.push(message);
-            ctx.schedule.pause(delaySeconds * 1000);
-          },
-        },
-      );
+      created = adoptedId
+        ? { clerkUserId: adoptedId, notes: [] }
+        : await retryOn429(
+            async () =>
+              createUser(ctx, user, identifiers, skipPasswordRequirement, () => {
+                sent = true;
+                record({ sourceId: user.userId, status: "creating" });
+              }),
+            {
+              signal: ctx.stop,
+              onRetry: ({ message, delaySeconds }) => {
+                retries.push(message);
+                ctx.schedule.pause(delaySeconds * 1000);
+              },
+            },
+          );
     } catch (error) {
       // Unrecorded, so a re-run picks the user up like any other. A user whose
       // first create went out (a 429, a refused phone) has its `creating` line
@@ -493,19 +523,25 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       status: "created",
       ...(user.passwordDropped ? { passwordDropped: true } : {}),
     };
-    record(line);
+    // One line, pending and all: a run stopped between a `created` line and a
+    // later `pending` one would read the user as settled, its extras unsent.
+    const toAttach = pendingIdentifiers(identifiers);
+    record(toAttach.length > 0 ? { ...line, pending: toAttach } : line);
     if (created.phoneRefusal) {
       const reason = normalizeErrorMessage(created.phoneRefusal);
       droppedPhones.set(reason, (droppedPhones.get(reason) ?? 0) + 1);
     }
-    await finishUser(line, pendingIdentifiers(identifiers), [...created.notes, ...retries]);
+    await finishUser(line, toAttach, [...created.notes, ...retries]);
     successful++;
     processed++;
     progress();
   };
 
   progress();
-  await Promise.all(users.map(async (user) => processUser(user)));
+  await Promise.all([
+    ...users.map(async (user) => processUser(user)),
+    ...attachOnly.map(async (line) => finishUser(line, line.pending ?? [], [])),
+  ]);
 
   return {
     totalProcessed: total,

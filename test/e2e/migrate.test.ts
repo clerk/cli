@@ -4,8 +4,8 @@
  *
  * - A Supabase export round-trips: the dry run counts it without writing, an
  *   import without `--yes` writes nothing, the import creates every user and
- *   records the run, and each bcrypt hash verifies against the password it
- *   was made from.
+ *   records the run, each bcrypt hash verifies against the password it was
+ *   made from, and `undo` deletes them again.
  * - A user whose only email is unverified, imported into an instance that
  *   requires an email, is refused by Clerk. The import's checks reject that
  *   user up front on the strength of this test, so it checks both halves.
@@ -174,6 +174,20 @@ test("a Supabase export dry-runs, imports, and its passwords verify", async () =
       JSON.stringify({ password }),
     ]);
     expect(JSON.parse(verify.stdout.toString())).toMatchObject({ verified: true });
+  }
+
+  const undo = await cli(["migrate", "undo", result.run.id, "--yes", "--json"]);
+  expect(undo.exitCode).toBe(0);
+  for (const { record } of users) {
+    const line = lines.find((candidate) => candidate.sourceId === record.id);
+    expect(typeof line?.clerkId).toBe("string");
+    // Clerk's own answer, not just any failure: a wrong path or an auth error
+    // would exit non-zero too. `clerk api` prints the error body to stdout.
+    const gone = await cli(["api", `/users/${line?.clerkId as string}`]);
+    expect(gone.exitCode).not.toBe(0);
+    expect(JSON.parse(gone.stdout.toString())).toMatchObject({
+      errors: [{ code: "resource_not_found" }],
+    });
   }
 }, 60_000);
 

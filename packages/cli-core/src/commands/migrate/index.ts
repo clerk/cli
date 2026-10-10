@@ -4,6 +4,8 @@ import { setMode } from "../../mode.ts";
 import { setAssumeYes } from "./lib/assume-yes.ts";
 import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "./lib/run-store.ts";
 import { run } from "./run.ts";
+import { runs } from "./runs.ts";
+import { undo } from "./undo.ts";
 
 export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = process.env): void {
   if (!isExperimentEnabled("migrate", env)) {
@@ -36,7 +38,12 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
       },
       {
         command: "clerk migrate import users.json --source supabase --yes",
-        description: "Import it",
+        description: "Import it. Run it again to continue after a failure",
+      },
+      { command: "clerk migrate runs", description: "List every migration run" },
+      {
+        command: "clerk migrate undo 20260929-141502-a1b2",
+        description: "Delete the users an import created",
       },
     ]);
 
@@ -65,6 +72,7 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
     .option("--source <key>", "Where the file came from")
     .option("--dry-run", "Check the file against the instance, report, and write nothing")
     .option("--allow-partial", "Import the users that pass the checks, and skip the rest")
+    .option("--new-run", "Start a new run instead of continuing an earlier one of this file")
     .option("--require-password", "Import only users that have a password")
     .option(
       "--skip-legal-checks",
@@ -91,5 +99,50 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
         ...(cmd.optsWithGlobals() as Parameters<typeof run>[0]),
         ...(input ? { input } : {}),
       }),
+    );
+
+  // Flat, not under a noun group: this is the one command in the tree that
+  // destroys data in Clerk, and it is worth keeping short and prominent.
+  migrateCommand
+    .command("undo")
+    .description("Delete the users an import run created")
+    .argument("<run-id>", "The import run to undo (see `clerk migrate runs`)")
+    .option("--dry-run", "Show what would be deleted, and delete nothing")
+    .option("-y, --yes", "Delete without prompting")
+    .option("--json", "Output as JSON; never prompts, so pair it with --yes to delete")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
+    .setExamples([
+      {
+        command: "clerk migrate undo 20260929-141502-a1b2 --dry-run",
+        description: "Preview what would be deleted",
+      },
+      {
+        command: "clerk migrate undo 20260929-141502-a1b2 --yes",
+        description: "Delete without prompting",
+      },
+    ])
+    .action(async (runId, _opts, cmd) =>
+      undo(runId, cmd.optsWithGlobals() as Parameters<typeof undo>[1]),
+    );
+
+  migrateCommand
+    .command("runs")
+    .description("List migration runs, or show one")
+    .argument("[run-id]", "A run to show in full")
+    .option("--json", "Output as JSON")
+    .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
+    .setExamples([
+      { command: "clerk migrate runs", description: "List every run, newest first" },
+      {
+        command: "clerk migrate runs 20260929-141502-a1b2",
+        description: "Show one run: counts, errors and the users that did not make it",
+      },
+      { command: "clerk migrate runs --json", description: "Machine-readable listing" },
+    ])
+    .action(async (runId, _opts, cmd) =>
+      runs(runId, cmd.optsWithGlobals() as Parameters<typeof runs>[1]),
     );
 }
