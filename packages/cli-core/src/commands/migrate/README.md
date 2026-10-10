@@ -1099,7 +1099,8 @@ unconfirmed address there would silently promote it.
 A Clerk export keeps an unverified primary email or phone unverified.
 
 **Unverified or reserved.** By default an unverified identifier is attached
-after the user exists (`POST /v1/email_addresses`, `verified: false`). The user
+after the user exists (`POST /v1/email_addresses` or `POST /v1/phone_numbers`,
+`verified: false`). The user
 cannot sign in with it, and another user can claim it by verifying it first.
 `--reserve-unverified`, or a yes at the prompt a human gets when the file has
 any, creates them **reserved** instead, on `POST /v1/users` through
@@ -1109,7 +1110,9 @@ user, and becomes verified the first time the user signs in with it. That is
 how most source platforms treat an unconfirmed address, but it lets the user
 sign in with one nobody proved they own, so it is opt-in. `-y`, `--json` and
 agent mode never ask, and keep them unverified without the flag. A continued
-run uses whichever the flag or answer says that time.
+run uses whichever the flag or answer says that time for the users it creates;
+a user it adopts keeps the mode its first create recorded (`reserved` on its
+`creating` line).
 
 ### Firebase hash parameters
 
