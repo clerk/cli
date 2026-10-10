@@ -962,7 +962,7 @@ brings across. Adding a platform is one file in `sources/` plus one line in
 | Key          | Reads                         | Passwords | MFA     | Metadata |
 | ------------ | ----------------------------- | --------- | ------- | -------- |
 | `clerk`      | Clerk Dashboard export        | partial   | partial | partial  |
-| `auth0`      | Auth0 Export Users API        | partial   | no      | yes      |
+| `auth0`      | Auth0 Management API          | partial   | no      | yes      |
 | `authjs`     | Auth.js / NextAuth user table | no        | no      | no       |
 | `betterauth` | Better Auth export            | yes       | no      | no       |
 | `firebase`   | `firebase auth:export`        | yes       | no      | no       |
