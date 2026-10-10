@@ -512,6 +512,25 @@ describe("rejects", () => {
   });
 
   // Both would go to importUsers as the one adopted user.
+  // The adopted user is in Clerk with that email, so the earlier record's
+  // create would be the one Clerk refuses.
+  test("rejects an earlier record that shares an adopted user's email", async () => {
+    const checks = await checkImport(
+      input({
+        adoptedSourceIds: new Set(["late"]),
+        users: [user("early", { email: "same@x.dev" }), user("late", { email: "same@x.dev" })],
+      }),
+    );
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["late"]);
+    expect(checks.rejects).toEqual([
+      {
+        sourceId: "early",
+        reason: "shares an email, phone or username with a user an earlier attempt already created",
+        keptSourceId: "late",
+      },
+    ]);
+  });
+
   test("a second record with an adopted user's source ID is still rejected", async () => {
     const checks = await checkImport(
       input({
