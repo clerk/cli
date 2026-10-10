@@ -683,9 +683,10 @@ A continued run also finishes what the last one left open:
 
 Every create sends the run's ID in the user's private metadata, as
 `clerkMigrateRun`, merged with any private metadata the source carries. It
-is how a cut-off create is told apart from a user an app or another tool
-made with the same `external_id`, and it stays on the user. A run recorded
-before the marker existed adopts nothing.
+replaces a `clerkMigrateRun` the source already has, from a run that imported
+the user into the source instance. It is how a cut-off create is told apart
+from a user an app or another tool made with the same `external_id`, and it
+stays on the user. A run recorded before the marker existed adopts nothing.
 
 - A user whose `created` line has `pending` identifiers gets just those
   attaches.

@@ -396,7 +396,8 @@ async function createUser(
   );
   // The run's marker, with whatever private metadata the source brought:
   // without it a create cut off mid-flight could never be told from a user
-  // someone else made with the same external_id.
+  // someone else made with the same external_id. It replaces a marker the
+  // source carries, from a run that imported the user there.
   if (ctx.runId) {
     body.private_metadata = {
       ...(body.private_metadata as Record<string, unknown> | undefined),
