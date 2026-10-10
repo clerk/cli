@@ -41,9 +41,9 @@ const { setAssumeYes } = await import("./assume-yes.ts");
 const captured = useCaptureLog();
 
 const CONFIG = {
-  platform: "supabase",
-  envVar: "SUPABASE_DB_URL",
-  prompt: "Supabase Postgres connection string",
+  platform: "authjs",
+  envVar: "AUTHJS_DB_URL",
+  prompt: "Auth.js database connection string",
 } as const;
 
 const FIRST = "libsql://typo.turso.io?authToken=t";

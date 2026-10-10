@@ -323,7 +323,7 @@ export async function createDbClient(
   }
 }
 
-export type DbPlatform = "supabase" | "betterauth";
+export type DbPlatform = "supabase" | "betterauth" | "authjs";
 
 /**
  * Turns a driver error into something a user can act on.
@@ -372,7 +372,18 @@ export function describeDbError(error: unknown, platform?: DbPlatform): string {
 
   // Before the table check: Postgres words a missing column "does not exist" too.
   if (/no such column|column .* does not exist|unknown column/i.test(message)) {
-    return "The user table is missing a column the export reads. Check the schema matches the platform's default.";
+    const needs: Partial<Record<DbPlatform, string>> = {
+      authjs:
+        "The Auth.js export reads `id`, `name`, `email` and `emailVerified` (or `email_verified`). " +
+        'For a schema that renames another column (Prisma `@map("full_name")` on `name`, for one), ' +
+        "export the users with your own query that aliases it back, " +
+        '`SELECT id, full_name AS name, email, "emailVerified" AS email_verified FROM "User"` on Postgres ' +
+        "(MySQL quotes with backticks), and import that file with the authjs source.",
+    };
+    return (
+      needs[platform as DbPlatform] ??
+      "The user table is missing a column the export reads. Check the schema matches the platform's default."
+    );
   }
 
   // MySQL says "doesn't exist" and "Unknown table" where Postgres says "does not exist".

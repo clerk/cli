@@ -1,7 +1,8 @@
 /**
  * The database-backed exports, driven against a real SQLite database:
  * resolving the connection string, the Supabase export's row mapping, the
- * Better Auth export's schema detection, and connection failures.
+ * Auth.js export's table detection, the Better Auth export's schema
+ * detection, and connection failures.
  *
  * SQLite because it is the one engine that needs no container, and it
  * exercises the same client, the same query building and the same plugin
@@ -17,6 +18,7 @@ import path from "node:path";
 import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { createDbClient, type DbClient } from "../lib/db.ts";
+import { buildAuthJsExport, buildAuthJsQuery, exportAuthJs, fetchAuthJsUsers } from "./authjs.ts";
 import {
   buildBetterAuthExport,
   buildBetterAuthQuery,
@@ -139,17 +141,17 @@ describe("normalizeConnectionString", () => {
 });
 
 describe("resolveDbUrl", () => {
-  const config = { platform: "supabase" as const, envVar: "SUPABASE_DB_URL", prompt: "url" };
+  const config = { platform: "authjs" as const, envVar: "AUTHJS_DB_URL", prompt: "url" };
 
   test("prefers the flag", async () => {
     const url = await resolveDbUrl({ dbUrl: "postgres://u:p@h/db" }, config, {
-      SUPABASE_DB_URL: "mysql://u:p@h/db",
+      AUTHJS_DB_URL: "mysql://u:p@h/db",
     });
     expect(url).toBe("postgres://u:p@h/db");
   });
 
   test("falls back to the environment variable", async () => {
-    expect(await resolveDbUrl({}, config, { SUPABASE_DB_URL: "mysql://u:p@h/db" })).toBe(
+    expect(await resolveDbUrl({}, config, { AUTHJS_DB_URL: "mysql://u:p@h/db" })).toBe(
       "mysql://u:p@h/db",
     );
   });
@@ -165,14 +167,124 @@ describe("resolveDbUrl", () => {
 
   test("warns and moves on when the environment variable is unusable", async () => {
     // Tests run non-TTY, so it then hits the agent-mode branch.
-    await expect(resolveDbUrl({}, config, { SUPABASE_DB_URL: "garbage" })).rejects.toThrow(
+    await expect(resolveDbUrl({}, config, { AUTHJS_DB_URL: "garbage" })).rejects.toThrow(
       /cannot prompt here/,
     );
-    expect(captured.err).toContain("SUPABASE_DB_URL is not a valid connection string");
+    expect(captured.err).toContain("AUTHJS_DB_URL is not a valid connection string");
   });
 
   test("names both the flag and the variable when it cannot prompt", async () => {
-    await expect(resolveDbUrl({}, config, {})).rejects.toThrow(/--db-url.*SUPABASE_DB_URL/s);
+    await expect(resolveDbUrl({}, config, {})).rejects.toThrow(/--db-url.*AUTHJS_DB_URL/s);
+  });
+});
+
+describe("authjs export", () => {
+  const authJsDb = (table: string) =>
+    makeDb((db) => {
+      db.run(
+        `CREATE TABLE "${table}" (id TEXT PRIMARY KEY, name TEXT, email TEXT, "emailVerified" TEXT)`,
+      );
+      db.run(`INSERT INTO "${table}" VALUES (?,?,?,?)`, [
+        "aj1",
+        "Jane Doe",
+        "jane@x.dev",
+        "2024-01-15",
+      ]);
+      db.run(`INSERT INTO "${table}" VALUES (?,?,?,?)`, ["aj2", "John Smith", "john@x.dev", null]);
+    });
+
+  test("quotes identifiers for the dialect", async () => {
+    await withClient(authJsDb("User"), async (client) => {
+      expect(buildAuthJsQuery(client, "User")).toContain('"User" u');
+      expect(buildAuthJsQuery(client, "User")).toContain('u."emailVerified" AS "email_verified"');
+    });
+  });
+
+  // Prisma capitalizes the table, Drizzle does not, and Auth.js has no single
+  // schema — so the export tries rather than making the user guess.
+  test.each([["User"], ["user"], ["users"]])("finds the %s table", async (table) => {
+    const { rows } = await withClient(authJsDb(table), fetchAuthJsUsers);
+    expect(rows).toHaveLength(2);
+  });
+
+  // SQLite reads an unqualified "emailVerified" that matches no column as the
+  // string "emailVerified", which would mark every email verified.
+  test("reads a legacy NextAuth table's email_verified, and keeps null unverified", async () => {
+    const file = makeDb((db) => {
+      db.run(
+        `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, email_verified TEXT)`,
+      );
+      db.run(`INSERT INTO users VALUES (?,?,?,?)`, ["n1", "Nv", "nv@x.dev", null]);
+      db.run(`INSERT INTO users VALUES (?,?,?,?)`, ["n2", "V", "v@x.dev", "2024-01-15"]);
+    });
+
+    const { rows, table } = await withClient(file, fetchAuthJsUsers);
+
+    expect(table).toBe("users");
+    expect(rows.map((row) => row.email_verified)).toEqual([null, "2024-01-15"]);
+  });
+
+  // Postgres keeps a quoted "User" apart from "user"; SQLite does not, so the
+  // plural table stands in for the later candidate here.
+  test("passes over a candidate table without the columns for a later one", async () => {
+    const file = makeDb((db) => {
+      db.run(`CREATE TABLE "User" (id TEXT PRIMARY KEY, handle TEXT)`);
+      db.run(
+        `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, "emailVerified" TEXT)`,
+      );
+      db.run(`INSERT INTO users VALUES (?,?,?,?)`, ["u1", "U", "u@x.dev", null]);
+    });
+
+    const { rows, table } = await withClient(file, fetchAuthJsUsers);
+
+    expect(table).toBe("users");
+    expect(rows).toHaveLength(1);
+  });
+
+  test("a missing column is an error, not a literal", async () => {
+    const file = makeDb((db) => {
+      db.run(`CREATE TABLE "User" (id TEXT PRIMARY KEY, email TEXT, "emailVerified" TEXT)`);
+      db.run(`INSERT INTO "User" VALUES (?,?,?)`, ["a", "a@x.dev", null]);
+    });
+
+    await expect(withClient(file, fetchAuthJsUsers)).rejects.toThrow(/no such column/);
+  });
+
+  test("fails clearly when no candidate table exists", async () => {
+    const file = makeDb((db) => db.run(`CREATE TABLE unrelated (id TEXT)`));
+    await expect(withClient(file, fetchAuthJsUsers)).rejects.toThrow(
+      /No Auth.js user table found. Tried User, user, users/,
+    );
+  });
+
+  test("treats email_verified as a nullable timestamp, not a boolean", () => {
+    const { users } = buildAuthJsExport([
+      { id: "a", email: "a@x.dev", email_verified: "2024-01-15" },
+      { id: "b", email: "b@x.dev", email_verified: null },
+    ]);
+    expect(users[0]?.email_verified).toBe("2024-01-15");
+    expect("email_verified" in (users[1] ?? {})).toBe(false);
+  });
+
+  test("counts coverage", () => {
+    const { coverage } = buildAuthJsExport([
+      { id: "a", email: "a@x.dev", name: "A", email_verified: "2024-01-01" },
+      { id: "b" },
+    ]);
+    const byLabel = Object.fromEntries(coverage.map((c) => [c.label, c.count]));
+    expect(byLabel["have an email address"]).toBe(1);
+    expect(byLabel["have a verified email"]).toBe(1);
+  });
+
+  test("exports end to end and says which table it read", async () => {
+    await exportAuthJs({ dbUrl: authJsDb("User"), output: "authjs.json" });
+
+    const written = JSON.parse(fs.readFileSync(path.join(workDir, "authjs.json"), "utf-8"));
+    expect(written).toMatchObject({ clerkMigrate: 1, source: "authjs" });
+    expect(written.users).toHaveLength(2);
+    expect(captured.err).toContain("Read 2 rows from");
+    expect(captured.err).toContain("stores no passwords");
+    expect(captured.err).toContain("Credentials provider");
   });
 });
 

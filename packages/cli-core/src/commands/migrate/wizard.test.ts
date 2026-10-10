@@ -62,6 +62,7 @@ describe("promptForSource", () => {
     expect(selectCall(0)?.choices.map((choice) => choice.value)).toEqual([
       "clerk",
       "auth0",
+      "authjs",
       "betterauth",
       "firebase",
       "supabase",

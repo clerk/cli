@@ -11,6 +11,7 @@
  */
 
 import { exportAuth0 } from "./auth0.ts";
+import { exportAuthJs } from "./authjs.ts";
 import { exportBetterAuth } from "./betterauth.ts";
 import { exportClerk } from "./clerk.ts";
 import { exportFirebase } from "./firebase.ts";
@@ -47,6 +48,13 @@ export const exportPlatforms: ExportRegistryEntry[] = [
     description: "A Supabase Postgres database — includes password hashes",
     sourceKey: "supabase",
     run: async (options) => exportSupabase(options),
+  },
+  {
+    key: "authjs",
+    label: "Auth.js (NextAuth)",
+    description: "An Auth.js database — Postgres, MySQL or SQLite",
+    sourceKey: "authjs",
+    run: async (options) => exportAuthJs(options),
   },
   {
     key: "firebase",
