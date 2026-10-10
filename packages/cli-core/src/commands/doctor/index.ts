@@ -19,38 +19,82 @@ import {
 } from "./checks.ts";
 import { checkMcp } from "./check-mcp.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
-import type { CheckFn, CheckResult, DoctorContext, DoctorOptions } from "./types.ts";
+import {
+  CHECK_NAME,
+  type CheckFn,
+  type CheckKey,
+  type CheckResult,
+  type DoctorContext,
+  type DoctorOptions,
+} from "./types.ts";
 
-const BASE_CHECKS: CheckFn[] = [
-  checkCliVersion,
-  checkLoggedIn,
-  checkTokenValid,
-  checkProjectLinked,
-  checkLinkedAppExists,
-  checkInstances,
-  checkEnvVars,
-  checkConfigFile,
-  checkShellCompletion,
-  checkMcp,
-];
+/**
+ * Every check, keyed by its entry in {@link CHECK_NAME} so the compiler rejects
+ * a missing one — before this, a check that was exported but never listed
+ * simply did not run, and nothing said so. Listed in the order they run; that
+ * order is read from here, not from `CHECK_NAME`. `hostExecution` leads
+ * because it runs first under an agent and not at all for a human.
+ */
+const CHECKS = {
+  hostExecution: checkHostExecution,
+  cliVersion: checkCliVersion,
+  loggedIn: checkLoggedIn,
+  tokenValid: checkTokenValid,
+  projectLinked: checkProjectLinked,
+  linkedAppExists: checkLinkedAppExists,
+  instances: checkInstances,
+  envVars: checkEnvVars,
+  configFile: checkConfigFile,
+  shellCompletion: checkShellCompletion,
+  mcp: checkMcp,
+} satisfies Record<CheckKey, CheckFn>;
 
-function getChecks(): CheckFn[] {
-  return isAgent() ? [checkHostExecution, ...BASE_CHECKS] : BASE_CHECKS;
+/**
+ * Each check paired with the name to report it under if it throws. A check
+ * names its own results from the same `CHECK_NAME` entry, so the two agree.
+ */
+function getChecks(): { name: string; run: CheckFn }[] {
+  return (Object.keys(CHECKS) as CheckKey[])
+    .filter((key) => key !== "hostExecution" || isAgent())
+    .map((key) => ({ name: CHECK_NAME[key], run: CHECKS[key] }));
 }
 
+/**
+ * A crash is a bug in the CLI, not a finding about the user's project, so it
+ * says which check broke instead of reporting an anonymous failure the person
+ * cannot act on. It still counts as a failing result: the check was asked a
+ * question and has no answer, and treating that as a pass would hide the one
+ * case where doctor itself is broken.
+ */
 async function runChecks(ctx: DoctorContext): Promise<CheckResult[]> {
   return Promise.all(
-    getChecks().map(async (check) => {
+    getChecks().map(async ({ name, run }) => {
       try {
-        return await check(ctx);
+        return await run(ctx);
       } catch (error) {
         return {
-          name: "Unknown check",
+          name,
           status: "fail" as const,
-          message: `Check crashed: ${errorMessage(error)}`,
+          message: `${name} check crashed: ${errorMessage(error)}`,
+          crashed: true as const,
         };
       }
     }),
+  );
+}
+
+/**
+ * The error for a set of results that includes a failure. A crashed check is a
+ * CLI bug, not a problem with the user's project, so both the message and the
+ * code say so. After `--fix` this is decided from the verify pass alone.
+ */
+function failureFor(results: CheckResult[], findingsMessage: string): CliError {
+  const crashed = results.some((r) => r.crashed);
+  return new CliError(
+    crashed
+      ? "A doctor check crashed. This is a bug in the Clerk CLI, not your project; see the check marked as crashed above."
+      : findingsMessage,
+    { code: crashed ? ERROR_CODE.DOCTOR_CHECK_CRASHED : ERROR_CODE.DOCTOR_FAILED },
   );
 }
 
@@ -126,9 +170,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
 
       const hasVerifyFailure = verifyResults.some((r) => r.status === "fail");
       if (hasVerifyFailure) {
-        throw new CliError("Some checks still failing after auto-fix", {
-          code: ERROR_CODE.DOCTOR_FAILED,
-        });
+        throw failureFor(verifyResults, "Some checks still failing after auto-fix");
       }
       await outro("All checks passing");
       return;
@@ -137,9 +179,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<void> {
 
   const hasFailure = allResults.some((r) => r.status === "fail");
   if (hasFailure) {
-    throw new CliError("Doctor found issues with your Clerk integration", {
-      code: ERROR_CODE.DOCTOR_FAILED,
-    });
+    throw failureFor(allResults, "Doctor found issues with your Clerk integration");
   }
   await outro("All checks passing");
 }

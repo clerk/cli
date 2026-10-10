@@ -25,12 +25,17 @@ export interface EnvProfileConfig {
 /** Clerk's hosted remote MCP server — the default for every environment. */
 const DEFAULT_MCP_URL = "https://mcp.clerk.com/mcp";
 
-const DEFAULT_PROFILES: Record<string, EnvProfileConfig> = {
+/**
+ * Fallback for builds without CLI_ENV_PROFILES or a .env-profiles.json (e.g. a
+ * local `bun run build:compile`). Mirrors the production profile that release
+ * builds inject; the OAuth client ID is public and ships in every release binary.
+ */
+export const DEFAULT_PROFILES: Record<string, EnvProfileConfig> = {
   production: {
-    oauthClientId: "ins_1lyWDZiobr600AKUeQDoSlrEmoM",
+    oauthClientId: "x7Fzlnxuu5I6UUa4",
     oauthBaseUrl: "https://clerk.clerk.com",
     platformApiUrl: "https://api.clerk.com",
-    backendApiUrl: "https://api.clerk.dev",
+    backendApiUrl: "https://api.clerk.com",
     dashboardUrl: "https://dashboard.clerk.com",
     mcpUrl: DEFAULT_MCP_URL,
   },
@@ -150,6 +155,19 @@ export function getDashboardUrl(): string {
   return (
     process.env.CLERK_DASHBOARD_URL ?? getCurrentEnv().dashboardUrl ?? "https://dashboard.clerk.com"
   );
+}
+
+/**
+ * Dashboard deep link for one instance of an app, optionally to a page under
+ * it (`domains`, `users`, ...). Lives here rather than in the `open` command
+ * so copy modules can build links without importing a command's module graph.
+ */
+export function buildDashboardUrl(appId: string, instanceId: string, subpath?: string): string {
+  const host = getDashboardUrl().replace(/\/$/, "");
+  const base = `${host}/apps/${appId}/instances/${instanceId}`;
+  if (!subpath) return base;
+  const cleaned = subpath.replace(/^\//, "").replace(/\/$/, "");
+  return cleaned ? `${base}/${cleaned}` : base;
 }
 
 /**

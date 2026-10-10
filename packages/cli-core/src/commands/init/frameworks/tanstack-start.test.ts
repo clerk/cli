@@ -21,7 +21,7 @@ function makeCtx(overrides?: Partial<ProjectContext>): ProjectContext {
     srcDir: true,
     packageManager: "npm",
     existingClerk: false,
-    deps: { "@tanstack/react-start": "1.0.0" },
+    deps: { "@tanstack/react-start": "^1.168.10" },
     envFile: ".env",
     ...overrides,
   };
@@ -64,7 +64,515 @@ test("creates src/start.ts with clerkMiddleware when no start file exists", asyn
     expect(serverAction.content).toContain("clerkMiddleware");
     expect(serverAction.content).toContain("@clerk/tanstack-react-start/server");
     expect(serverAction.content).toContain("requestMiddleware");
+    expect(serverAction.content).toContain("createCsrfMiddleware");
+    expect(serverAction.content).toContain('ctx.handlerType === "serverFn"');
+    expect(serverAction.content).toContain(`createStart(() => {
+  return {
+    requestMiddleware: [csrfMiddleware, clerkMiddleware()],
+  };
+});`);
   }
+});
+
+test("asks for an upgrade instead of creating start.ts for an older Start app", async () => {
+  const plan = await tanstackStart.scaffold(
+    makeCtx({ deps: { "@tanstack/react-start": "^1.168.0" } }),
+  );
+
+  const serverAction = plan.actions.find((action) => action.path === "src/start.ts");
+  expect(serverAction?.type).toBe("skip");
+  expect(plan.postInstructions).toContain(
+    "Upgrade @tanstack/react-start to ^1.168.10 and @tanstack/react-router to ^1.170.7 before adding CSRF middleware",
+  );
+  expect(plan.postInstructions.some((msg) => msg.includes("create src/start.ts"))).toBe(true);
+});
+
+test.each(["latest", "catalog:", "workspace:*", "*"])(
+  "asks to confirm the Start version instead of creating start.ts for %s",
+  async (specifier) => {
+    const plan = await tanstackStart.scaffold(
+      makeCtx({ deps: { "@tanstack/react-start": specifier } }),
+    );
+
+    expect(plan.actions.find((action) => action.path === "src/start.ts")?.type).toBe("skip");
+    expect(
+      plan.postInstructions.some((msg) =>
+        msg.startsWith(`Could not confirm @tanstack/react-start (${specifier})`),
+      ),
+    ).toBe(true);
+  },
+);
+
+test("uses the installed Start version over the declared specifier", async () => {
+  await mkdir(join(tempDir, "node_modules/@tanstack/react-start"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "node_modules/@tanstack/react-start/package.json"),
+    JSON.stringify({ name: "@tanstack/react-start", version: "1.170.0" }),
+  );
+
+  const plan = await tanstackStart.scaffold(
+    makeCtx({ deps: { "@tanstack/react-start": "catalog:" } }),
+  );
+
+  expect(plan.actions.find((action) => action.path === "src/start.ts")?.type).toBe("create");
+});
+
+test("adds Clerk after existing CSRF middleware in an expression-body start callback", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart, createCsrfMiddleware } from "@tanstack/react-start";
+import { ClerkProvider } from "@clerk/tanstack-react-start";
+
+const csrfMiddleware = createCsrfMiddleware({ filter: (ctx) => ctx.handlerType === "serverFn" });
+export const startInstance = createStart(() => ({
+  requestMiddleware: [csrfMiddleware],
+}));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain("requestMiddleware: [csrfMiddleware, clerkMiddleware()]");
+  expect(action.content.match(/requestMiddleware:/g)).toHaveLength(1);
+  expect(action.content).toContain(
+    'import { clerkMiddleware } from "@clerk/tanstack-react-start/server"',
+  );
+});
+
+test("does not duplicate Clerk middleware held in a variable", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+import { createCsrfMiddleware, createStart } from "@tanstack/react-start";
+
+const csrfMiddleware = createCsrfMiddleware({ filter: (ctx) => ctx.handlerType === "serverFn" });
+const clerk = clerkMiddleware();
+export const startInstance = createStart(() => ({ requestMiddleware: [csrfMiddleware, clerk] }));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("skip");
+  if (action?.type !== "skip") throw new Error("Expected skip action");
+  expect(action.skipReason).toBe("Already has Clerk middleware");
+});
+
+test("adds CSRF before a callback-local Clerk middleware variable", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+import { createStart } from "@tanstack/react-start";
+
+export const startInstance = createStart(() => {
+  const clerk = clerkMiddleware();
+  return { requestMiddleware: [clerk] };
+});
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain("requestMiddleware: [csrfMiddleware, clerk]");
+  expect(action.content.match(/clerkMiddleware\(\)/g)).toHaveLength(1);
+});
+
+const CSRF_SETUP = `import { createCsrfMiddleware, createStart } from "@tanstack/react-start";
+const csrfMiddleware = createCsrfMiddleware({ filter: (ctx) => ctx.handlerType === "serverFn" });
+`;
+
+test.each([
+  [
+    "an aliased import",
+    `import { clerkMiddleware as clerk } from "@clerk/tanstack-react-start/server";
+${CSRF_SETUP}export const startInstance = createStart(() => ({ requestMiddleware: [csrfMiddleware, clerk()] }));
+`,
+  ],
+  [
+    "a variable from an aliased import",
+    `import { clerkMiddleware as clerk } from "@clerk/tanstack-react-start/server";
+${CSRF_SETUP}const auth = clerk();
+export const startInstance = createStart(() => ({ requestMiddleware: [csrfMiddleware, auth] }));
+`,
+  ],
+  [
+    "a let binding",
+    `import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+${CSRF_SETUP}let auth = clerkMiddleware();
+export const startInstance = createStart(() => ({ requestMiddleware: [csrfMiddleware, auth] }));
+`,
+  ],
+  [
+    "an exported binding",
+    `import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+${CSRF_SETUP}export const auth = clerkMiddleware();
+export const startInstance = createStart(() => ({ requestMiddleware: [csrfMiddleware, auth] }));
+`,
+  ],
+])("does not duplicate Clerk middleware registered through %s", async (_, source) => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(join(tempDir, "src/start.ts"), source);
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("skip");
+  if (action?.type !== "skip") throw new Error("Expected skip action");
+  expect(action.skipReason).toBe("Already has Clerk middleware");
+});
+
+test("registers Clerk under its aliased import name", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { clerkMiddleware as clerk } from "@clerk/tanstack-react-start/server";
+${CSRF_SETUP}export const startInstance = createStart(() => ({ requestMiddleware: [csrfMiddleware] }));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain("requestMiddleware: [csrfMiddleware, clerk()]");
+  expect(action.content).not.toContain("clerkMiddleware()");
+  expect(action.content.match(/@clerk\/tanstack-react-start\/server/g)).toHaveLength(1);
+});
+
+test("resolves a middleware variable to its nearest declaration", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+${CSRF_SETUP}const auth = clerkMiddleware();
+export const startInstance = createStart(() => {
+  let auth = customMiddleware;
+  return { requestMiddleware: [csrfMiddleware, auth] };
+});
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain("requestMiddleware: [csrfMiddleware, auth, clerkMiddleware()]");
+});
+
+test("preserves an existing requestMiddleware array in a block-body callback", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart, createCsrfMiddleware } from "@tanstack/react-start";
+const csrfMiddleware = createCsrfMiddleware({ filter: (ctx) => ctx.handlerType === "serverFn" });
+export const startInstance = createStart(() => {
+  return { requestMiddleware: [csrfMiddleware, customMiddleware] };
+});
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain(
+    "requestMiddleware: [csrfMiddleware, customMiddleware, clerkMiddleware()]",
+  );
+  expect(action.content.match(/requestMiddleware:/g)).toHaveLength(1);
+});
+
+test("adds a requestMiddleware property when the existing config has none", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart } from "@tanstack/react-start";
+export const startInstance = createStart(() => ({ defaultSsr: false }));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain("requestMiddleware: [csrfMiddleware, clerkMiddleware()]");
+  expect(action.content).toContain("createCsrfMiddleware");
+  expect(action.content).toContain("defaultSsr: false");
+});
+
+test("reports unsupported start config without writing an unused import", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart } from "@tanstack/react-start";
+export const startInstance = createStart(getConfig);
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("skip");
+  if (action?.type !== "skip") throw new Error("Expected skip action");
+  expect(action.skipReason).toContain("add clerkMiddleware() manually");
+  expect(plan.postInstructions).toContain(
+    "Add clerkMiddleware() from @clerk/tanstack-react-start/server to requestMiddleware in src/start.ts, after any CSRF middleware",
+  );
+});
+
+test("does not replace a requestMiddleware value it cannot safely extend", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart } from "@tanstack/react-start";
+export const startInstance = createStart(() => ({ requestMiddleware: customMiddleware }));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("skip");
+  if (action?.type !== "skip") throw new Error("Expected skip action");
+  expect(action.skipReason).toContain("add clerkMiddleware() manually");
+});
+
+test("asks for manual setup when an existing config has duplicate requestMiddleware keys", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+import { createStart } from "@tanstack/react-start";
+export const startInstance = createStart(() => {
+  return {
+    requestMiddleware: [clerkMiddleware()],
+    requestMiddleware: [csrfMiddleware],
+  };
+});
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("skip");
+  expect(plan.postInstructions.some((msg) => msg.includes("clerkMiddleware()"))).toBe(true);
+});
+
+test("adds CSRF before Clerk in an old Clerk-only start config", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+import { createStart } from "@tanstack/react-start";
+
+export const startInstance = createStart(() => {
+  return {
+    requestMiddleware: [clerkMiddleware()],
+  };
+});
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain("requestMiddleware: [csrfMiddleware, clerkMiddleware()]");
+  expect(action.content).toMatch(
+    /import \{[^}]*createCsrfMiddleware[^}]*\} from "@tanstack\/react-start"/,
+  );
+  expect(action.content).toContain('ctx.handlerType === "serverFn"');
+  expect(action.content.match(/clerkMiddleware\(\)/g)).toHaveLength(1);
+  expect(plan.postInstructions.some((msg) => msg.includes("CSRF"))).toBe(false);
+
+  await Bun.write(join(tempDir, "src/start.ts"), action.content);
+  const rerun = await tanstackStart.scaffold(makeCtx());
+  expect(rerun.actions.find((item) => item.path === "src/start.ts")?.type).toBe("skip");
+  expect(rerun.postInstructions.some((msg) => msg.includes("CSRF"))).toBe(false);
+});
+
+test("asks for an upgrade before adding CSRF to an older Start app", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  const original = `import { createStart } from "@tanstack/react-start";
+import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+export const startInstance = createStart(() => ({ requestMiddleware: [clerkMiddleware()] }));
+`;
+  await Bun.write(join(tempDir, "src/start.ts"), original);
+
+  const plan = await tanstackStart.scaffold(
+    makeCtx({ deps: { "@tanstack/react-start": "^1.167.17" } }),
+  );
+  expect(plan.actions.find((item) => item.path === "src/start.ts")?.type).toBe("skip");
+  expect(plan.postInstructions.some((msg) => msg.includes("Upgrade @tanstack/react-start"))).toBe(
+    true,
+  );
+  expect(plan.postInstructions.some((msg) => msg.includes("createCsrfMiddleware"))).toBe(true);
+  expect(await Bun.file(join(tempDir, "src/start.ts")).text()).toBe(original);
+});
+
+test("keeps registered Clerk middleware when the Start version can't be confirmed", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  const original = `import { createStart } from "@tanstack/react-start";
+import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+export const startInstance = createStart(() => ({ requestMiddleware: [clerkMiddleware()] }));
+`;
+  await Bun.write(join(tempDir, "src/start.ts"), original);
+
+  const plan = await tanstackStart.scaffold(
+    makeCtx({ deps: { "@tanstack/react-start": "workspace:*" } }),
+  );
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("skip");
+  if (action?.type !== "skip") throw new Error("Expected skip action");
+  expect(action.skipReason).toBe("Could not safely add CSRF middleware automatically");
+  expect(plan.postInstructions.some((msg) => msg.startsWith("Add clerkMiddleware()"))).toBe(false);
+  expect(plan.postInstructions.some((msg) => msg.startsWith("Could not confirm"))).toBe(true);
+});
+
+test("matches the existing file's quotes and semicolons when adding CSRF", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart } from '@tanstack/react-start'
+import { clerkMiddleware } from '@clerk/tanstack-react-start/server'
+
+export const startInstance = createStart(() => {
+  return {
+    requestMiddleware: [clerkMiddleware()],
+  }
+})
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content)
+    .toBe(`import { createCsrfMiddleware, createStart } from '@tanstack/react-start'
+import { clerkMiddleware } from '@clerk/tanstack-react-start/server'
+
+const csrfMiddleware = createCsrfMiddleware({
+  filter: (ctx) => ctx.handlerType === 'serverFn',
+})
+
+export const startInstance = createStart(() => {
+  return {
+    requestMiddleware: [csrfMiddleware, clerkMiddleware()],
+  }
+})
+`);
+});
+
+test("adds Clerk on its own line in a multi-line middleware array", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createCsrfMiddleware, createStart } from '@tanstack/react-start'
+import { authkitMiddleware } from '@workos/authkit-tanstack-react-start'
+
+const csrfMiddleware = createCsrfMiddleware({
+  filter: (ctx) => ctx.handlerType === 'serverFn',
+})
+
+export const startInstance = createStart(() => ({
+  requestMiddleware: [
+    csrfMiddleware,
+    authkitMiddleware(),
+  ],
+}))
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain(`  requestMiddleware: [
+    csrfMiddleware,
+    authkitMiddleware(),
+    clerkMiddleware(),
+  ],`);
+  expect(action.content).toContain(
+    "import { clerkMiddleware } from '@clerk/tanstack-react-start/server'\n",
+  );
+});
+
+test("only merges the CSRF import into an import from @tanstack/react-start itself", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { getRequest } from "@tanstack/react-start/server";
+import { createStart } from "@tanstack/react-start";
+import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+
+export const startInstance = createStart(() => ({ requestMiddleware: [clerkMiddleware()] }));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  const action = plan.actions.find((item) => item.path === "src/start.ts");
+  expect(action?.type).toBe("modify");
+  if (action?.type !== "modify") throw new Error("Expected modify action");
+  expect(action.content).toContain('import { getRequest } from "@tanstack/react-start/server";');
+  expect(action.content).toContain(
+    'import { createCsrfMiddleware, createStart } from "@tanstack/react-start";',
+  );
+});
+
+test("asks for manual CSRF setup when existing middleware is not Clerk-only", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart } from "@tanstack/react-start";
+import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+export const startInstance = createStart(() => ({
+  requestMiddleware: [customMiddleware, clerkMiddleware()],
+}));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  expect(plan.actions.find((item) => item.path === "src/start.ts")?.type).toBe("skip");
+  expect(plan.postInstructions.some((msg) => msg.includes("createCsrfMiddleware"))).toBe(true);
+});
+
+test("leaves custom middleware without known CSRF for manual setup", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart } from "@tanstack/react-start";
+export const startInstance = createStart(() => ({
+  requestMiddleware: [customMiddleware],
+}));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  expect(plan.actions.find((item) => item.path === "src/start.ts")?.type).toBe("skip");
+  expect(plan.postInstructions.some((msg) => msg.includes("Add clerkMiddleware()"))).toBe(true);
+  expect(plan.postInstructions.some((msg) => msg.includes("createCsrfMiddleware"))).toBe(true);
+});
+
+test("leaves an existing registered CSRF middleware in place", async () => {
+  await mkdir(join(tempDir, "src"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/start.ts"),
+    `import { createStart, createCsrfMiddleware } from "@tanstack/react-start";
+import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
+const csrfMiddleware = createCsrfMiddleware({ filter: (ctx) => ctx.handlerType === "serverFn" });
+export const startInstance = createStart(() => ({
+  requestMiddleware: [csrfMiddleware, clerkMiddleware()],
+}));
+`,
+  );
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+  expect(plan.actions.find((item) => item.path === "src/start.ts")?.type).toBe("skip");
+  expect(plan.postInstructions.some((msg) => msg.includes("CSRF"))).toBe(false);
 });
 
 test("creates app/start.ts when no start file exists and app base dir is detected", async () => {

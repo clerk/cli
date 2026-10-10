@@ -2,7 +2,12 @@ import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { useCaptureLog, listageStubs, stubFetch } from "../../test/lib/stubs.ts";
+import {
+  captureTelemetryPayload,
+  useCaptureLog,
+  listageStubs,
+  stubFetch,
+} from "../../test/lib/stubs.ts";
 
 let _mode = "human";
 mock.module("../../mode.ts", () => ({
@@ -15,6 +20,7 @@ mock.module("../../mode.ts", () => ({
 }));
 
 const { parseSpec, _setCacheDir } = (await import("./catalog.ts")) as any;
+const { _setConfigDir } = await import("../../lib/config.ts");
 const { setMode } = (await import("../../mode.ts")) as any;
 
 const MINIMAL_SPEC = `
@@ -81,6 +87,7 @@ describe("apiInteractive", () => {
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-interactive-test-"));
     _setCacheDir(tempDir);
+    _setConfigDir(tempDir);
 
     // Pre-populate fresh cache
     const cached = parseSpec(MINIMAL_SPEC);
@@ -115,6 +122,7 @@ describe("apiInteractive", () => {
 
   afterEach(async () => {
     _setCacheDir(undefined);
+    _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
     Object.defineProperty(process.stdin, "isTTY", {
@@ -162,6 +170,28 @@ describe("apiInteractive", () => {
     expect(fetchCalls.length).toBe(1);
     expect(fetchCalls[0]!.url).toContain("/v1/users");
     expect(fetchCalls[0]!.method).toBe("GET");
+  });
+
+  // The builder hands the catalog's path to the real handler; what telemetry
+  // records for a bare 404 on it is the seam this pins, end to end.
+  test("a bare 404 on a catalog endpoint is recorded as the CLI's failure", async () => {
+    setMode("human");
+    selectResponses.push("Users");
+    selectResponses.push({
+      method: "GET",
+      path: "/users",
+      summary: "List all users",
+      tag: "Users",
+      operationId: "GetUserList",
+      pathParams: [],
+      hasRequestBody: false,
+    });
+    confirmResponses.push(true);
+    stubFetch(async () => new Response("404 page not found", { status: 404 }));
+    const { payload } = await captureTelemetryPayload("api", () => runApiInteractive({}));
+    expect(payload.outcome).toBe("error");
+    expect(payload.exit_code).toBe(1);
+    expect(payload.error_code).toBe("cli_endpoint_not_found");
   });
 
   test("prompts for path parameters", async () => {

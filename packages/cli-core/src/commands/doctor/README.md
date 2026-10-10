@@ -98,8 +98,8 @@ clerk doctor --json --spotlight  # JSON with only warnings/errors
 
 Each result includes `name`, `status` (`pass` / `warn` / `fail`),
 `message`, and optionally `detail` (extra diagnostic info), `remedy`
-(a human-readable fix instruction), and `fix` (a label describing
-the auto-fix action).
+(a human-readable fix instruction), `fix` (a label describing
+the auto-fix action), and `crashed` (see below).
 
 Agents cannot use `--fix` directly because the fix actions are interactive.
 Instead, agents should read the `remedy` field from the JSON output and
@@ -107,6 +107,20 @@ orchestrate fixes themselves (e.g., ask the user to run `clerk auth login`,
 or call `clerk link --app <id>` with a known app ID).
 
 Exit code 1 signals one or more checks failed.
+
+## A check that crashed is not a finding
+
+A check that throws learned nothing about what it was meant to verify, so it is
+reported as the CLI's own failure rather than as a problem with the user's
+project: the result carries `crashed: true` and names the check that broke, and
+the command exits with the error code `doctor_check_crashed` instead of
+`doctor_failed`. It still counts as a failing check — a question was asked and
+has no answer — so the exit code is unchanged.
+
+The name comes from the check registry in `index.ts`, because a check that
+threw never returned a result to read one from. Both it and the name the check
+gives its own results come from `CHECK_NAME` in `checks.ts`, so they cannot
+drift apart.
 
 ## Exit Codes
 

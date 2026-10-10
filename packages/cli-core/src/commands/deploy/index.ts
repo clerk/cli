@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import type { Program } from "../../cli-program.ts";
 import { deployStatus } from "./status-command.ts";
 import { isAgent } from "../../mode.ts";
@@ -6,7 +5,13 @@ import { applyPrefix, isInsideGutter, log } from "../../lib/log.ts";
 import { bold, dim } from "../../lib/color.ts";
 import { animateHeader } from "../../lib/gradient.ts";
 import { bar, intro, outro, pausedOutro, withSpinner } from "../../lib/spinner.ts";
-import { CliError, ERROR_CODE, UserAbortError, throwUsageError } from "../../lib/errors.ts";
+import {
+  CliError,
+  ERROR_CODE,
+  UserAbortError,
+  throwUsageError,
+  withApiContext,
+} from "../../lib/errors.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { setProfile } from "../../lib/config.ts";
 import {
@@ -16,8 +21,11 @@ import {
   type ProductionInstanceResponse,
 } from "../../lib/plapi.ts";
 import {
+  DEPLOY_COMMAND_DESCRIPTION,
+  DEPLOY_COMMAND_SUMMARY,
   INTRO_PREAMBLE,
   OAUTH_SECTION_INTRO,
+  type DeployComponentStatus,
   type DeployPlanStep,
   deployComponentLabels,
   deployComponentStatus,
@@ -25,10 +33,13 @@ import {
   domainAssociationSummary,
   bindZoneFile,
   dnsDashboardHandoff,
+  dnsHandoffNothingToAdd,
   dnsIntro,
   dnsRecords,
+  domainsDashboardUrl,
+  instanceDashboardUrl,
   nextStepsBody,
-  pendingDnsRecords,
+  pendingCnameTargets,
   pausedOperationNotice,
   printPlan,
   productionSummary,
@@ -54,7 +65,7 @@ import {
 } from "./prompts.ts";
 import {
   DeployPausedError,
-  deployPausedError,
+  throwDeployPaused,
   type DeployContext,
   type DeployOperationState,
 } from "./state.ts";
@@ -66,31 +77,36 @@ import {
   resolveLiveApplicationContext,
   resolveLiveDeploySnapshot,
   waitForDeployStatus,
+  type DeployProgressHandlers,
   type DeployStatusOutcome,
-  type DeployStatusReport,
   type DiscoveredOAuthProviders,
   type LiveDeploySnapshot,
 } from "./status.ts";
+import { setTelemetryStage } from "../../lib/telemetry.ts";
+import { resolveActiveReportState, type OAuthSetupFacts } from "./report-state.ts";
+import {
+  recordDeployObservation,
+  recordDeployPoll,
+  recordDeployStage,
+  recordOAuthObservation,
+} from "./telemetry.ts";
 
 type DeployOptions = {
-  /** Production domain; skips the prompt and, in agent mode, authorizes creation. */
+  /** Skips the domain prompt. In agent mode, it is what allows creating the instance. */
   domain?: string;
-  /** Commander sets `clone: false` for `--no-clone`; absent means clone development. */
-  clone?: boolean;
-  zoneFile?: string;
   yes?: boolean;
 };
 
 export async function deploy(options: DeployOptions = {}) {
-  // Validate whenever the flag was passed: `--domain ""` must fail, not fall
-  // back to the prompt (human) or a read-only report (agent).
-  const resolved =
-    options.domain !== undefined
-      ? { ...options, domain: assertValidDomain(options.domain) }
-      : options;
+  // Before anything is read, so `--domain ""` fails instead of falling back to
+  // the prompt or the read-only report.
+  const resolved: DeployOptions =
+    options.domain === undefined
+      ? options
+      : { ...options, domain: assertValidDomain(options.domain) };
 
   if (isAgent()) {
-    await runAgentDeploy(resolved);
+    await runAgentDeploy(resolved.domain);
     return;
   }
 
@@ -125,20 +141,13 @@ export async function deploy(options: DeployOptions = {}) {
   }
 }
 
-type DeployRunReport = DeployStatusReport & {
-  /** True when this run created the production instance. */
-  created: boolean;
-  zoneFile?: string;
-  warnings?: string[];
-};
-
 /**
- * Agent-mode deploy. `--domain` creates (or resumes) the production instance
- * without prompts; without it the run is a read-only report. The exit code
- * stays 0 whenever the command's own action succeeded, `clerk deploy status`
- * is the pass/fail gate.
+ * Agent mode never prompts. With `--domain` it creates the production
+ * instance, or resumes the one already there; without it nothing is written.
+ * Either way it prints the `clerk deploy status` report and exits 0 once its
+ * own work succeeded: `clerk deploy status` is the pass/fail gate.
  */
-async function runAgentDeploy(options: DeployOptions): Promise<void> {
+async function runAgentDeploy(domain: string | undefined): Promise<void> {
   const ctx = await resolveDeployContext();
   if (!ctx.appId || !ctx.developmentInstanceId) {
     throw new CliError(
@@ -146,57 +155,70 @@ async function runAgentDeploy(options: DeployOptions): Promise<void> {
       { code: ERROR_CODE.NOT_LINKED },
     );
   }
-  if (options.clone === false && !options.domain) {
-    throwUsageError("--no-clone requires --domain.");
+
+  if (!domain) {
+    const state = await resolveDeployState(ctx);
+    recordDeployObservation(state);
+    log.data(JSON.stringify(buildDeployStatusReport(state, null), null, 2));
+    return;
   }
 
-  const warnings: string[] = [];
-  let created = false;
-  const domain = options.domain;
+  // From here a production instance exists, created by this run or found by
+  // it, so a read that fails or comes back empty must not look like nothing
+  // happened: the caller would create again, or give up on a live instance.
+  await ensureProductionInstance(ctx, domain);
+  const state = await withApiContext(
+    resolveDeployState(ctx),
+    "The production instance exists, but its status could not be read; run `clerk deploy status` to retry",
+  );
+  if (state.kind === "not_started") {
+    throw new CliError(
+      "The production instance exists, but Clerk did not return it yet. Run `clerk deploy status` to check it.",
+      { code: ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED },
+    );
+  }
+  recordDeployObservation(state);
+  if (state.kind === "active") assertRequestedDomain(domain, state.snapshot.domain);
+  log.data(JSON.stringify(buildDeployStatusReport(state, null), null, 2));
+}
 
-  if (domain && !ctx.productionInstanceId) {
-    const result = await createProductionInstance(ctx, domain, {
-      clone: options.clone !== false,
-    });
-    if (result === "exists") {
+/**
+ * Create the production instance unless the application already has one, and
+ * save its id to the profile so `--instance prod` resolves for the commands the
+ * report points to next.
+ */
+async function ensureProductionInstance(ctx: DeployContext, domain: string): Promise<void> {
+  if (!ctx.productionInstanceId) {
+    recordDeployStage("not_started");
+    const production = await createProductionInstance(ctx, domain);
+    if (production === "exists") {
+      // Same as the wizard: `not_started` is now false and nothing has been
+      // read yet, so the run sends no stage unless the read that follows does.
+      setTelemetryStage(null);
       const refreshed = await resolveLiveApplicationContext(ctx.profile);
       ctx.productionInstanceId = refreshed.productionInstanceId;
-      warnings.push("A production instance already existed; resumed it.");
     } else {
-      created = true;
-      await persistProductionInstance(ctx, result.id);
+      recordDeployStage(production.active_domain ? "domain_pending" : "domain_provisioning");
+      ctx.productionInstanceId = production.id;
     }
   }
   if (ctx.productionInstanceId && ctx.profile.instances.production !== ctx.productionInstanceId) {
     await persistProductionInstance(ctx, ctx.productionInstanceId);
   }
+}
 
-  const state = await resolveDeployState(ctx);
-  if (domain && !created && ctx.productionInstanceId) {
-    const liveDomain = state.kind === "active" ? state.snapshot.domain : undefined;
-    if (liveDomain !== domain) warnings.push(domainIgnoredWarning(liveDomain, domain));
-    if (options.clone === false) {
-      warnings.push("A production instance already exists; --no-clone was ignored.");
-    }
-  }
-
-  let zoneFile: string | undefined;
-  if (options.zoneFile) {
-    const targets = state.kind === "active" ? (state.snapshot.cnameTargets ?? []) : [];
-    if (state.kind === "active" && targets.length > 0) {
-      zoneFile = await writeZoneFile(options.zoneFile, state.snapshot.domain, targets);
-    } else {
-      warnings.push(ZONE_FILE_NO_RECORDS);
-    }
-  }
-
-  const report: DeployRunReport = {
-    ...buildDeployStatusReport(state, null),
-    created,
-    ...(zoneFile && { zoneFile }),
-    ...(warnings.length > 0 && { warnings }),
-  };
-  log.data(JSON.stringify(report, null, 2));
+/**
+ * `--domain` only applies when the instance is created. Reporting an existing
+ * deploy on another domain as if the request had been honored would send the
+ * caller off to add DNS records for a domain they did not ask for.
+ */
+function assertRequestedDomain(requested: string, existing: string): void {
+  if (existing.toLowerCase() === requested) return;
+  throw new CliError(
+    `This application already has a production instance on ${existing}, so --domain ${requested} was not applied. ` +
+      `Run \`clerk deploy\` without --domain to continue with ${existing}, or change the domain in the Clerk Dashboard.`,
+    { code: ERROR_CODE.PRODUCTION_INSTANCE_EXISTS },
+  );
 }
 
 async function runDeploy(ctx: DeployContext, options: DeployOptions): Promise<void> {
@@ -216,14 +238,18 @@ async function runDeploy(ctx: DeployContext, options: DeployOptions): Promise<vo
 }
 
 async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promise<void> {
+  // What `clerk deploy status` reports on exactly this condition. Set before
+  // anything is read, so a run that ends at the plan, the domain prompt or the
+  // create confirmation says where the deploy stood rather than nothing.
+  recordDeployStage("not_started");
+
   const { descriptors: oauthProviders, unsupported }: DiscoveredOAuthProviders =
     await loadDevelopmentOAuthProviders(ctx);
 
   log.blank();
   log.info(INTRO_PREAMBLE);
   log.blank();
-  const clone = options.clone !== false;
-  for (const line of printPlan(ctx.appLabel, buildNewDeployPlan(oauthProviders, clone))) {
+  for (const line of printPlan(ctx.appLabel, buildNewDeployPlan(oauthProviders))) {
     log.info(line);
   }
   log.blank();
@@ -244,8 +270,11 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
   );
   if (!shouldCreateProductionInstance) return;
 
-  const productionOrExists = await createProductionInstance(ctx, domain, { clone });
+  const productionOrExists = await createProductionInstance(ctx, domain);
   if (productionOrExists === "exists") {
+    // `not_started` is now false and the resume has not read anything yet, so
+    // the run sends no stage unless the resume below observes one.
+    setTelemetryStage(null);
     log.blank();
     log.info(
       "A production instance already exists for this application. Resuming the existing deploy.",
@@ -262,7 +291,20 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
     return;
   }
   const production = productionOrExists;
+  // From the create response, before anything local happens: the instance
+  // exists, and the response says whether it has a domain. `deploy status`
+  // reads both from the API, so it agrees from this instant on, and a failure
+  // persisting the id below records the deploy's state rather than filing a
+  // local disk write under provisioning. Without this, every run that ends
+  // before the first DNS poll — which comes after OAuth setup — would report
+  // no stage, and that is where the wizard loses people.
+  recordDeployStage(production.active_domain ? "domain_pending" : "domain_provisioning");
   await persistProductionInstance(ctx, production.id);
+  // "Clerk production instance", not just "production instance": the user
+  // also has a deployment on their host, and this is the one Clerk manages.
+  // URL on its own line: with it, the sentence is wider than the frame.
+  log.success("Clerk production instance created. Manage it in the Dashboard:");
+  log.info(`  ${instanceDashboardUrl(ctx.appId, production.id)}`);
 
   if (!production.active_domain) {
     throw new CliError(
@@ -290,7 +332,18 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
     cnameTargets,
   };
 
-  await runDnsRecordHandoff({ ...operationState, pending: { type: "dns" } }, cnameTargets, options);
+  // OAuth setup only runs when there are providers; with none, the DNS check
+  // is what comes next.
+  await runDnsRecordHandoff(
+    { ...operationState, pending: { type: "dns" } },
+    {
+      display: cnameTargets,
+      exportTargets: cnameTargets,
+      // Nothing has been checked yet on a fresh run.
+      status: { dns: false, ssl: false, mail: false },
+      oauthNext: oauthProviders.length > 0,
+    },
+  );
 
   bar();
   completedOAuthProviders = await runOAuthSetup(ctx, operationState, oauthProviders);
@@ -305,8 +358,7 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
   await finishDeploy(
     ctx,
     productionDomain,
-    completedOAuthProviders,
-    pendingOAuthProviders(operationState.oauthProviders, completedOAuthProviders),
+    { oauthProviders: operationState.oauthProviders, completedOAuthProviders },
     dnsStatus,
   );
 }
@@ -318,16 +370,21 @@ async function reconcileExistingDeploy(ctx: DeployContext, options: DeployOption
 
   const snapshot = await resolveLiveDeploySnapshot(ctx);
   if (!snapshot) {
+    // No snapshot also means no production instance id, which only happens when
+    // a create said one exists and the refresh could not find it. The run knows
+    // nothing then, so it records nothing.
+    if (ctx.productionInstanceId) recordDeployStage("domain_provisioning");
     log.blank();
     log.info("A production instance exists, but Clerk did not return a production domain yet.");
     log.info("Run `clerk deploy` again after the domain is available from the API.");
     await outro("No deploy actions available");
     return;
   }
-
-  if (options.domain && options.domain !== snapshot.domain) {
-    log.warn(domainIgnoredWarning(snapshot.domain, options.domain));
-  }
+  // Records no stage or domain components when the domain read was
+  // substituted; a later poll that succeeds will. OAuth is recorded either
+  // way, since the configuration read succeeded.
+  recordDeployObservation({ kind: "active", snapshot });
+  if (options.domain) assertRequestedDomain(options.domain, snapshot.domain);
 
   log.blank();
   for (const line of printPlan(ctx.appLabel, buildLiveDeployPlan(snapshot))) {
@@ -337,15 +394,9 @@ async function reconcileExistingDeploy(ctx: DeployContext, options: DeployOption
 
   warnUnsupportedOAuthProviders(snapshot.unsupportedOAuthProviderCount);
 
-  // A verified domain skips the DNS handoff, so honor --zone-file here.
-  if (snapshot.domainComplete && options.zoneFile) {
-    await exportZoneFile(options.zoneFile, snapshot.domain, snapshot.cnameTargets ?? []);
-    log.blank();
-  }
-
   if (!snapshot.pending) {
     log.info("No deploy actions remain.");
-    await finishDeploy(ctx, snapshot.domain, snapshot.completedOAuthProviders, [], "verified");
+    await finishDeploy(ctx, snapshot.domain, snapshot, "verified");
     return;
   }
 
@@ -379,17 +430,11 @@ async function reconcileExistingDeploy(ctx: DeployContext, options: DeployOption
     dnsStatus = await runExistingDomainDnsVerification(
       ctx,
       { ...snapshot, pending: { type: "dns" } },
-      options,
+      snapshot.componentStatus,
     );
   }
 
-  await finishDeploy(
-    ctx,
-    snapshot.domain,
-    snapshot.completedOAuthProviders,
-    pendingOAuthProviders(snapshot.oauthProviders, snapshot.completedOAuthProviders),
-    dnsStatus,
-  );
+  await finishDeploy(ctx, snapshot.domain, snapshot, dnsStatus);
 }
 
 type DnsVerificationResult = "verified" | "pending";
@@ -408,17 +453,9 @@ function warnUnsupportedOAuthProviders(count: number): void {
   log.blank();
 }
 
-function buildNewDeployPlan(
-  oauthProviders: readonly OAuthProviderDescriptor[],
-  clone: boolean,
-): DeployPlanStep[] {
+function buildNewDeployPlan(oauthProviders: readonly OAuthProviderDescriptor[]): DeployPlanStep[] {
   return [
-    {
-      label: clone
-        ? "Create production instance"
-        : "Create a blank production instance (development settings are not copied)",
-      status: "pending",
-    },
+    { label: "Create production instance", status: "pending" },
     { label: "Choose a production domain you own", status: "pending" },
     ...oauthProviders.map((descriptor) => ({
       label: `Configure ${descriptor.label} OAuth credentials`,
@@ -450,57 +487,26 @@ function buildLiveDeployPlan(snapshot: LiveDeploySnapshot): DeployPlanStep[] {
 async function createProductionInstance(
   ctx: DeployContext,
   domain: string,
-  options: { clone: boolean },
 ): Promise<ProductionInstanceResponse | "exists"> {
   return withSpinner("Creating production instance...", async () => {
-    try {
-      return await mapDeployError<ProductionInstanceResponse | "exists">(
-        apiCreateProductionInstance(ctx.appId, {
-          domain,
-          environment_type: "production",
-          ...(options.clone && { clone_instance_id: ctx.developmentInstanceId }),
-        }),
-        { onProductionInstanceExists: async () => "exists" },
-      );
-    } catch (error) {
-      if (
-        error instanceof CliError &&
-        error.code === ERROR_CODE.PLAN_INSUFFICIENT &&
-        options.clone
-      ) {
-        throw attachNoCloneExamples(error, domain);
-      }
-      throw error;
-    }
+    return mapDeployError<ProductionInstanceResponse | "exists">(
+      apiCreateProductionInstance(ctx.appId, {
+        domain,
+        environment_type: "production",
+        clone_instance_id: ctx.developmentInstanceId,
+      }),
+      { onProductionInstanceExists: async () => "exists" },
+    );
   });
 }
 
-/**
- * The plan's clone feature gate only fires when development settings are
- * copied, so retrying without cloning is the one fix the CLI itself can offer.
- */
-function attachNoCloneExamples(error: CliError, domain: string): CliError {
-  error.examples = [
-    {
-      command: `clerk deploy --domain ${domain} --no-clone`,
-      description: "Create a blank production instance without copying development settings",
-    },
-    {
-      command: "clerk config pull --instance dev",
-      description:
-        "See which development settings enable the listed features, disable them with `clerk config patch --instance dev`, then retry",
-    },
-  ];
-  return error;
-}
-
-async function confirmProductionInstanceCreation(
-  domain: string,
-  skipConfirm = false,
-): Promise<boolean> {
+async function confirmProductionInstanceCreation(domain: string, yes = false): Promise<boolean> {
+  // Separate this screen from the domain the user just typed; without it the
+  // echoed answer runs straight into the lead sentence.
+  log.blank();
   for (const line of domainAssociationSummary(domain)) log.info(line);
   log.blank();
-  const confirmed = skipConfirm || (await confirmCreateProductionInstance());
+  const confirmed = yes || (await confirmCreateProductionInstance());
   if (confirmed) {
     log.blank();
     return true;
@@ -512,26 +518,54 @@ async function confirmProductionInstanceCreation(
   return false;
 }
 
+/**
+ * `display` is what the screen lists as records to add; `exportTargets` is
+ * what the BIND zone file gets. They differ on resume: the screen shows only
+ * the records still outstanding, but a zone file with some of the domain's
+ * records is not a zone file anyone should import.
+ */
 async function runDnsRecordHandoff(
   state: DeployOperationState,
-  cnameTargets: readonly CnameTarget[],
-  options: Pick<DeployOptions, "zoneFile" | "yes">,
+  options: {
+    /** Records printed on screen: only the ones still to add. */
+    display: readonly CnameTarget[];
+    /** Records offered for the zone-file export: every record for the domain. */
+    exportTargets: readonly CnameTarget[];
+    status: DeployComponentStatus;
+    afterCheck?: boolean;
+    oauthNext: boolean;
+  },
 ): Promise<void> {
-  for (const line of dnsIntro(state.domain)) log.info(line);
-  log.blank();
-  if (cnameTargets.length > 0) {
-    for (const line of dnsRecords(cnameTargets)) log.info(line);
-    log.blank();
-  }
+  const { display, exportTargets, status } = options;
+  const handoffInstanceId = state.productionInstanceId;
+  const domainsUrl = handoffInstanceId
+    ? domainsDashboardUrl(state.appId, handoffInstanceId)
+    : undefined;
 
-  for (const line of dnsDashboardHandoff(state.domain)) log.info(line);
+  // With no records to add, a "Configure DNS" page is the wrong page: say
+  // what is actually outstanding instead (certificate, Clerk finalizing, or
+  // a record list Clerk didn't return).
+  const lines =
+    display.length > 0
+      ? [
+          ...dnsIntro(state.domain),
+          "",
+          ...dnsRecords(display, { afterCheck: options.afterCheck }),
+          "",
+          ...dnsDashboardHandoff(state.domain, domainsUrl, { oauthNext: options.oauthNext }),
+        ]
+      : dnsHandoffNothingToAdd(state.domain, status, domainsUrl, { oauthNext: options.oauthNext });
+  for (const line of lines) {
+    if (line === "") log.blank();
+    else log.info(line);
+  }
   log.blank();
   try {
-    await offerBindZoneExport(state.domain, cnameTargets, options);
+    await offerBindZoneExport(state.domain, exportTargets);
     log.blank();
   } catch (error) {
     if (error instanceof UserAbortError) {
-      throw deployPausedError(state, { interrupted: true });
+      throwDeployPaused(state, "cancelled");
     }
     throw error;
   }
@@ -540,9 +574,19 @@ async function runDnsRecordHandoff(
 async function runExistingDomainDnsVerification(
   ctx: DeployContext,
   state: DeployOperationState,
-  options: Pick<DeployOptions, "zoneFile" | "yes">,
+  componentStatus: DeployComponentStatus,
 ): Promise<DnsVerificationResult> {
-  await runDnsRecordHandoff(state, state.cnameTargets ?? [], options);
+  // On resume some records may already be verified; only the outstanding ones
+  // are records to add, and the user may have added those already.
+  const allTargets = state.cnameTargets ?? [];
+  // OAuth ran before this on the resume path, so the check is next.
+  await runDnsRecordHandoff(state, {
+    display: pendingCnameTargets(allTargets, componentStatus),
+    exportTargets: allTargets,
+    status: componentStatus,
+    afterCheck: true,
+    oauthNext: false,
+  });
   return runDnsVerificationPrompt(ctx, state);
 }
 
@@ -560,7 +604,7 @@ async function runDnsVerificationPrompt(
     return await runDnsVerification(ctx, state);
   } catch (error) {
     if (error instanceof UserAbortError) {
-      throw deployPausedError(state, { interrupted: true });
+      throwDeployPaused(state, "cancelled");
     }
     throw error;
   }
@@ -573,7 +617,11 @@ async function runDnsVerification(
   const domainIdOrName = state.productionDomainId ?? state.domain;
 
   while (true) {
-    const outcome = await pollDeployStatus(ctx.appId, domainIdOrName, state.domain);
+    // Per poll, not once the wait returns: a Ctrl-C mid-wait is reported by
+    // the signal handler with the stage as it stands at that moment.
+    const outcome = await pollDeployStatus(ctx.appId, domainIdOrName, state.domain, (polled) =>
+      recordDeployPoll(state, polled),
+    );
 
     if (outcome.verified) {
       log.blank();
@@ -584,22 +632,30 @@ async function runDnsVerification(
     log.blank();
     log.info(deployComponentStatus(outcome.status));
     log.blank();
-    for (const line of deployStatusPendingFooter(state.domain, outcome.status)) {
-      log.warn(line);
+    const productionInstanceId =
+      state.productionInstanceId ?? ctx.productionInstanceId ?? ctx.profile.instances.production;
+    // Computed before the footer so the footer can tell the user when there is
+    // no record list to print, instead of saying "add them" over nothing.
+    const pendingTargets = pendingCnameTargets(state.cnameTargets ?? [], outcome.status);
+    for (const line of deployStatusPendingFooter(
+      state.domain,
+      outcome.status,
+      productionInstanceId ? domainsDashboardUrl(ctx.appId, productionInstanceId) : undefined,
+      pendingTargets.length > 0,
+    )) {
+      if (line === "") log.blank();
+      else log.warn(line);
     }
 
     // When all DNS components are verified but the server has not yet marked the
     // deployment complete, the user cannot influence the remaining wait.
     if (outcome.status.dns && outcome.status.ssl && outcome.status.mail) {
-      throw deployPausedError(state);
+      throwDeployPaused(state, "finalizing");
     }
 
-    const pendingRecords = state.cnameTargets
-      ? pendingDnsRecords(state.cnameTargets, outcome.status)
-      : [];
-    if (pendingRecords.length > 0) {
+    if (pendingTargets.length > 0) {
       log.blank();
-      for (const line of pendingRecords) log.info(line);
+      for (const line of dnsRecords(pendingTargets, { afterCheck: true })) log.info(line);
     }
     log.blank();
     let action: Awaited<ReturnType<typeof chooseDnsVerificationRetryAction>>;
@@ -607,7 +663,7 @@ async function runDnsVerification(
       action = await chooseDnsVerificationRetryAction();
     } catch (error) {
       if (error instanceof UserAbortError) {
-        throw deployPausedError(state, { interrupted: true });
+        throwDeployPaused(state, "cancelled");
       }
       throw error;
     }
@@ -623,59 +679,33 @@ async function pollDeployStatus(
   appId: string,
   domainIdOrName: string,
   domain: string,
+  onStatus: DeployProgressHandlers["onStatus"],
 ): Promise<DeployStatusOutcome> {
   return waitForDeployStatus(appId, domainIdOrName, domain, {
     runVerification: async (progressLabel, work) => withSpinner(progressLabel, work),
     onVerified: () => log.success(deployComponentLabels("dns", domain).done),
+    onStatus,
   });
 }
 
 async function offerBindZoneExport(
   domain: string,
   cnameTargets: readonly CnameTarget[] | undefined,
-  options: Pick<DeployOptions, "zoneFile" | "yes">,
 ): Promise<void> {
-  const targets = cnameTargets ?? [];
-  if (options.zoneFile) {
-    await exportZoneFile(options.zoneFile, domain, targets);
-    return;
-  }
-  // The prompt's default answer is "no", so --yes keeps that answer.
-  if (targets.length === 0 || options.yes) return;
+  if (!cnameTargets || cnameTargets.length === 0) return;
   const accepted = await confirmExportBindZone();
   if (!accepted) return;
-  log.success(`Wrote ${await writeZoneFile(`clerk-${domain}.zone`, domain, targets)}`);
-}
-
-/** Human-mode `--zone-file`: write when there are records, say so when there are none. */
-async function exportZoneFile(
-  filePath: string,
-  domain: string,
-  targets: readonly CnameTarget[],
-): Promise<void> {
-  if (targets.length === 0) {
-    log.warn(ZONE_FILE_NO_RECORDS);
-    return;
-  }
-  log.success(`Wrote ${await writeZoneFile(filePath, domain, targets)}`);
-}
-
-/** Writes the BIND zone fragment for `targets` and returns the absolute path. */
-async function writeZoneFile(
-  filePath: string,
-  domain: string,
-  targets: readonly CnameTarget[],
-): Promise<string> {
-  const absolute = resolve(process.cwd(), filePath);
-  await Bun.write(absolute, bindZoneFile(domain, targets, new Date()));
-  return absolute;
+  const contents = bindZoneFile(domain, cnameTargets, new Date());
+  const filePath = `${process.cwd()}/clerk-${domain}.zone`;
+  await Bun.write(filePath, contents);
+  log.success(`Wrote ${filePath}`);
 }
 
 /**
- * Configures every provider in `descriptors` and returns the completed set.
- * Skipping a provider leaves it pending: the deploy carries on to DNS
- * verification and reports it. Only an interrupted prompt pauses the deploy by
- * throwing `DeployPausedError`.
+ * Configures every provider in `descriptors`, returning the full set of
+ * completed providers. If the user skips a provider or interrupts the prompt,
+ * this pauses by throwing `DeployPausedError` rather than returning a partial
+ * list, so a successful return always means OAuth is fully complete.
  */
 async function runOAuthSetup(
   ctx: DeployContext,
@@ -683,13 +713,14 @@ async function runOAuthSetup(
   descriptors: readonly OAuthProviderDescriptor[],
 ): Promise<OAuthProvider[]> {
   const completed = new Set(state.completedOAuthProviders as OAuthProvider[]);
+  const oauthProviders = descriptors.map((descriptor) => descriptor.provider);
 
   if (descriptors.length > 0) {
     log.info(OAUTH_SECTION_INTRO);
     log.blank();
   }
 
-  for (const [index, descriptor] of descriptors.entries()) {
+  for (const descriptor of descriptors) {
     if (completed.has(descriptor.provider)) continue;
     try {
       const productionInstanceId =
@@ -697,6 +728,8 @@ async function runOAuthSetup(
       if (!productionInstanceId) {
         throwUsageError(
           "Cannot save OAuth credentials because the production instance could not be resolved. Run `clerk deploy` after confirming the production instance in the Clerk Dashboard.",
+          undefined,
+          ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED,
         );
       }
 
@@ -707,43 +740,44 @@ async function runOAuthSetup(
         productionInstanceId,
         state.frontendApiUrl,
       );
-      if (saved) {
-        completed.add(descriptor.provider);
-      } else {
-        log.info(
-          `Skipped ${descriptor.label}. Add credentials later with \`clerk deploy\` or \`clerk config patch --instance prod\`.`,
-        );
-      }
-    } catch (error) {
-      if (error instanceof UserAbortError) {
-        throw deployPausedError(
+      if (!saved) {
+        throwDeployPaused(
           {
             ...state,
             pending: { type: "oauth", provider: descriptor.provider },
             completedOAuthProviders: [...completed],
           },
-          { interrupted: true },
+          "paused",
+        );
+      }
+    } catch (error) {
+      if (error instanceof UserAbortError) {
+        throwDeployPaused(
+          {
+            ...state,
+            pending: { type: "oauth", provider: descriptor.provider },
+            completedOAuthProviders: [...completed],
+          },
+          "cancelled",
         );
       }
       throw error;
     }
-    if (descriptors.slice(index + 1).some((next) => !completed.has(next.provider))) {
+    completed.add(descriptor.provider);
+    if (descriptors.some((nextDescriptor) => !completed.has(nextDescriptor.provider))) {
       log.blank();
     }
   }
 
+  // Every required credential is saved — including when none is required —
+  // so OAuth is complete, which is what `deploy status` reports for it too.
+  // Not recorded any earlier: a fresh instance is assumed to have no
+  // production credentials, which is why this prompts for each provider, but
+  // nothing has read that, and a save proves only the provider it saved. A run
+  // that pauses in the loop leaves `oauth` as the last read observed — null
+  // on a fresh deploy.
+  recordOAuthObservation({ oauthProviders, completedOAuthProviders: [...completed] });
   return [...completed];
-}
-
-function pendingOAuthProviders(all: readonly string[], completed: readonly string[]): string[] {
-  return all.filter((provider) => !completed.includes(provider));
-}
-
-const ZONE_FILE_NO_RECORDS = "No DNS records to export yet; --zone-file was ignored.";
-
-function domainIgnoredWarning(existing: string | undefined, requested: string): string {
-  const where = existing ? ` for ${existing}` : "";
-  return `A production instance already exists${where}; --domain ${requested} was ignored.`;
 }
 
 async function collectAndSaveOAuthCredentials(
@@ -802,16 +836,22 @@ async function persistProductionInstance(ctx: DeployContext, productionInstanceI
 async function finishDeploy(
   ctx: DeployContext,
   domain: string,
-  completedOAuthProviders: readonly string[],
-  pendingProviders: readonly string[],
+  oauth: OAuthSetupFacts,
   dnsStatus: DnsVerificationResult,
 ): Promise<void> {
+  // A verified domain is an observation — a poll's, or a live resume read's —
+  // so the resolver decides between `complete` and `oauth_pending` from the
+  // facts rather than this function assuming OAuth finished. (Today it always
+  // has: `runOAuthSetup` pauses rather than return a partial set.) A pending
+  // domain adds nothing: the last set point already recorded it, or, after a
+  // substituted resume read, deliberately left it unrecorded.
+  if (dnsStatus === "verified") recordDeployStage(resolveActiveReportState(oauth, true));
+
   log.blank();
   for (const line of productionSummary(
     domain,
-    completedOAuthProviders.map((provider) => providerLabel(provider)),
+    oauth.completedOAuthProviders.map((provider) => providerLabel(provider)),
     dnsStatus,
-    pendingProviders.map((provider) => providerLabel(provider)),
   )) {
     log.info(line);
   }
@@ -820,48 +860,44 @@ async function finishDeploy(
   if (!productionInstanceId) {
     throwUsageError(
       "Cannot print deploy next steps because the production instance could not be resolved. Run `clerk deploy` after confirming the production instance in the Clerk Dashboard.",
+      undefined,
+      ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED,
     );
   }
   await animateHeader({
     prefix: isInsideGutter() ? `${dim("│")}  ` : "",
     label: "Next steps",
     fallback: bold,
-    body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId))}\n`,
+    body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId, domain, dnsStatus))}\n`,
   });
-  await outro("Success");
+  // The closing word summarizes how the run ended. After a skipped DNS check
+  // the status row four lines up says "DNS pending", and "Success" beneath it
+  // contradicted that; the same value that drives the headline drives this.
+  await outro(dnsStatus === "verified" ? "Success" : "Not verified");
 }
 
 export function registerDeploy(program: Program): void {
+  // `summary` is what the root `clerk --help` table shows; `description` is
+  // the prose on `clerk deploy --help`, where the hidden default subcommand
+  // would otherwise leave no trace of what the bare command does.
   const deployCmd = program
     .command("deploy")
-    .description("Deploy a Clerk application to production")
+    .summary(DEPLOY_COMMAND_SUMMARY)
+    .description(DEPLOY_COMMAND_DESCRIPTION)
     .option(
       "--domain <domain>",
-      "Production domain you own (skips the domain prompt; required to create in agent mode)",
+      "Production domain you own (skips the prompt; in agent mode, creates the production instance)",
     )
-    .option(
-      "--no-clone",
-      "Create a blank production instance instead of cloning development settings",
-    )
-    .option("--zone-file <path>", "Write the required DNS records to <path> as a BIND zone file")
-    .option("--yes", "Skip confirmation prompts")
+    .option("--yes", "Skip the confirmations before the production instance is created")
     .setExamples([
-      { command: "clerk deploy", description: "Interactive production deploy wizard" },
+      { command: "clerk deploy", description: "Interactive production setup" },
       {
-        command: "clerk deploy --domain example.com --yes",
-        description: "Skip the domain prompt and the proceed/create confirmations",
-      },
-      {
-        command: "clerk deploy --domain example.com --mode agent",
-        description: "Agent mode: create or resume and print the JSON deploy report",
-      },
-      {
-        command: "clerk deploy --domain example.com --no-clone",
-        description: "Create a blank production instance when your plan blocks cloning",
+        command: "clerk deploy --domain example.com",
+        description: "Use this domain without prompting",
       },
       {
         command: "clerk deploy status --wait",
-        description: "Verify DNS, SSL, email DNS, and OAuth readiness",
+        description: "Verify DNS, SSL, email DNS, and OAuth",
       },
     ]);
   deployCmd
@@ -872,13 +908,11 @@ export function registerDeploy(program: Program): void {
     .description("Show production deploy status (read-only)")
     .option("--wait", "Wait for DNS, SSL, and email DNS verification with retries")
     .action(async (options, cmd) => {
-      // Commander also accepts the parent's flags after `status`; refuse them
-      // instead of silently dropping them.
-      const { domain, zoneFile, yes, clone } = cmd.optsWithGlobals() as DeployOptions;
-      if (domain !== undefined || zoneFile !== undefined || yes || clone === false) {
-        throwUsageError(
-          "--domain, --no-clone, --zone-file, and --yes apply to `clerk deploy`, not `clerk deploy status`.",
-        );
+      // Commander hands the parent's flags to `deploy` wherever they appear, so
+      // `deploy status --domain x` would otherwise report as if it had been used.
+      const { domain, yes } = cmd.optsWithGlobals() as DeployOptions;
+      if (domain !== undefined || yes) {
+        throwUsageError("--domain and --yes apply to `clerk deploy`, not `clerk deploy status`.");
       }
       await deployStatus(options);
     });

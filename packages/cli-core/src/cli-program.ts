@@ -51,6 +51,7 @@ import {
   finalizeAndSendTelemetry,
   startCommandTelemetry,
   telemetryResultForError,
+  telemetryResultForSoftExit,
 } from "./lib/telemetry.ts";
 
 /**
@@ -104,7 +105,7 @@ export function createProgram(): Program {
     )
     .option(
       "--mode <mode>",
-      "Force interaction mode (human or agent). Defaults to auto-detect based on TTY.",
+      "Force interaction mode (human or agent). Also settable via the CLERK_MODE environment variable. Defaults to agent when run by a known AI agent or without a TTY.",
     )
     .option("--verbose", "Show detailed output (enables debug messages)") as Program;
 
@@ -162,23 +163,40 @@ export function createProgram(): Program {
   return program;
 }
 
-export function formatApiBody(error: ApiError, verbose: boolean): string {
+export function formatApiBody(body: string, verbose: boolean): string {
   if (verbose) {
     try {
-      return "\n" + JSON.stringify(JSON.parse(error.body), null, 2);
+      return "\n" + JSON.stringify(JSON.parse(body), null, 2);
     } catch {
-      return "\n" + error.body;
+      return "\n" + body;
     }
   }
-  return formatStructuredError(error);
+
+  try {
+    const parsed = JSON.parse(body);
+    if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+      return parsed.errors.map(formatSingleError).join("\n");
+    }
+    if (parsed.error) return parsed.error;
+    if (parsed.message) return parsed.message;
+  } catch {
+    // not JSON
+  }
+
+  if (body.length > 200) return body.slice(0, 200) + "...";
+  return body;
 }
 
-function formatStructuredError(error: ApiError): string {
-  let msg = error.message;
-  const { meta, code } = error;
+function formatSingleError(err: {
+  message?: string;
+  code?: string;
+  meta?: Record<string, unknown>;
+}): string {
+  let msg = err.message ?? "Unknown error";
+  const meta = err.meta;
   if (!meta) return msg;
 
-  switch (code) {
+  switch (err.code) {
     case "unsupported_subscription_plan_features": {
       const features = meta.unsupported_features;
       if (Array.isArray(features) && features.length > 0) {
@@ -246,12 +264,11 @@ export async function runProgram(
     // the exit for that case; racing it here would report the wrong outcome.
     if (interruptedExitCode() !== null) return;
     // Some commands report failure via process.exitCode instead of throwing —
-    // read it back so telemetry doesn't record them as successes.
+    // read it back so telemetry doesn't record them as successes. What a
+    // nonzero code there *meant* is the command's to say, via
+    // `declareSoftExitOutcome`; absent a declaration this is still an error.
     const softExitCode = Number(process.exitCode ?? EXIT_CODE.SUCCESS);
-    await finalizeAndSendTelemetry({
-      outcome: softExitCode === EXIT_CODE.SUCCESS ? "success" : "error",
-      exitCode: softExitCode,
-    });
+    await finalizeAndSendTelemetry(telemetryResultForSoftExit(softExitCode));
   } catch (error) {
     if (interruptedExitCode() !== null) return;
     // Started before rendering so the message is printed before we block on the
@@ -303,7 +320,7 @@ export function reportError(error: unknown, verbose: boolean): number {
   }
 
   if (error instanceof ApiError) {
-    const detail = formatApiBody(error, verbose);
+    const detail = formatApiBody(error.body, verbose);
     const prefix = error.context ?? "Request failed";
     if (isAgent()) {
       const apiErrors: ApiErrorEntry[] | undefined =

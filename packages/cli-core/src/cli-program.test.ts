@@ -56,12 +56,74 @@ test("users list exposes common filters and pagination options", () => {
   );
 });
 
-test("deploy exposes its create-time options", () => {
+test("deploy exposes the domain and confirmation options", () => {
   const program = createProgram();
   const deploy = program.commands.find((command) => command.name() === "deploy")!;
   const optionNames = deploy.options.map((option) => option.long);
 
-  expect(optionNames).toEqual(["--domain", "--no-clone", "--zone-file", "--yes"]);
+  expect(optionNames).toEqual(["--domain", "--yes"]);
+});
+
+test("deploy --help describes the bare command, not only the status subcommand", () => {
+  // The wizard is a hidden default subcommand, so without the long
+  // description the help lists only `status` and reads as if the CLI can only
+  // watch a deploy. Both headless test agents concluded exactly that.
+  const program = createProgram();
+  program.configureOutput({ getOutHelpWidth: () => 80 });
+  const deploy = program.commands.find((command) => command.name() === "deploy")!;
+  deploy.configureOutput({ getOutHelpWidth: () => 80 });
+  const help = deploy.helpInformation().replace(new RegExp(String.raw`\x1b\[[0-9;]*m`, "g"), "");
+
+  expect(help).toBe(
+    [
+      "Usage: clerk deploy [options] [command]",
+      "",
+      "Deploy a Clerk application to production.",
+      "",
+      "Running `clerk deploy` with no subcommand starts an interactive setup that",
+      "creates the production instance, prints the DNS records you must add, collects",
+      "production OAuth credentials, and verifies the domain. It needs a terminal;",
+      "re-run it at any time to resume where you left off.",
+      "",
+      "When run by an agent (or without a TTY), it never prompts. It prints a JSON",
+      "status report with the current state and a `nextAction` field saying what to",
+      "do next, and creates the production instance only when `--domain` is passed.",
+      "`clerk deploy status` prints the same report; add `--wait` to keep checking",
+      "until DNS, SSL, and email DNS are verified.",
+      "",
+      "Options:",
+      "  --domain <domain>  Production domain you own (skips the prompt; in agent mode,",
+      "                     creates the production instance)",
+      "  -h, --help         Display help for command",
+      "  --yes              Skip the confirmations before the production instance is",
+      "                     created",
+      "",
+      "Commands:",
+      "  help    [command]  Display help for command",
+      "  status  [options]  Show production deploy status (read-only)",
+      "",
+      "Examples:",
+      "  $ clerk deploy                       Interactive production setup",
+      "  $ clerk deploy --domain example.com  Use this domain without prompting",
+      "  $ clerk deploy status --wait         Verify DNS, SSL, email DNS, and OAuth",
+      "",
+    ].join("\n"),
+  );
+  // The root `clerk --help` table keeps the one-line summary.
+  expect(deploy.summary()).toBe("Deploy a Clerk application to production");
+});
+
+test("deploy passes its options through to the command", async () => {
+  // Rejected by the command's own validation, before anything is read.
+  await expect(
+    createProgram().parseAsync(["deploy", "--domain", "https://example.com"], { from: "user" }),
+  ).rejects.toThrow('Invalid --domain "https://example.com"');
+});
+
+test("deploy status refuses the flags that only create", async () => {
+  await expect(
+    createProgram().parseAsync(["deploy", "status", "--domain", "example.com"], { from: "user" }),
+  ).rejects.toThrow("apply to `clerk deploy`, not `clerk deploy status`");
 });
 
 test("deploy status exposes wait option", () => {
@@ -198,7 +260,7 @@ describe("formatApiBody", () => {
         },
       ],
     });
-    const result = formatApiBody(new ApiError(400, body), false);
+    const result = formatApiBody(body, false);
     expect(result).toContain("Your plan does not support these features");
     expect(result).toContain("Unsupported features: saml, custom_roles");
   });
@@ -213,7 +275,7 @@ describe("formatApiBody", () => {
         },
       ],
     });
-    const result = formatApiBody(new ApiError(400, body), false);
+    const result = formatApiBody(body, false);
     expect(result).toContain("Unknown config key: sesion");
     expect(result).toContain("Did you mean: session");
     expect(result).toContain("Parameter: sesion");
@@ -229,7 +291,7 @@ describe("formatApiBody", () => {
         },
       ],
     });
-    const result = formatApiBody(new ApiError(400, body), false);
+    const result = formatApiBody(body, false);
     expect(result).toContain("This feature is not enabled on this instance");
     expect(result).toContain("Feature: organizations");
   });
@@ -244,7 +306,7 @@ describe("formatApiBody", () => {
         },
       ],
     });
-    const result = formatApiBody(new ApiError(400, body), false);
+    const result = formatApiBody(body, false);
     expect(result).toContain("Invalid value for session.lifetime");
     expect(result).toContain("Parameter: session.lifetime");
   });
@@ -259,7 +321,7 @@ describe("formatApiBody", () => {
         },
       ],
     });
-    const result = formatApiBody(new ApiError(400, body), false);
+    const result = formatApiBody(body, false);
     expect(result).toContain("Cannot clear this key");
     expect(result).toContain("Parameter: sign_up.mode");
   });
@@ -274,15 +336,14 @@ describe("formatApiBody", () => {
         },
       ],
     });
-    const result = formatApiBody(new ApiError(400, body), false);
+    const result = formatApiBody(body, false);
     expect(result).toContain("Value is not in the allowed set");
     expect(result).toContain("Parameter: branding.logo_url");
   });
 
   // --- Multiple errors ---
-  // The structured path reads from the first parsed error only.
 
-  test("formats multiple errors: surfaces first error with its meta", () => {
+  test("formats multiple errors joined by newlines", () => {
     const body = JSON.stringify({
       errors: [
         {
@@ -297,9 +358,13 @@ describe("formatApiBody", () => {
         },
       ],
     });
-    const result = formatApiBody(new ApiError(400, body), false);
+    const result = formatApiBody(body, false);
     expect(result).toContain("Invalid session lifetime");
-    expect(result).toContain("Parameter: session.lifetime");
+    expect(result).toContain("Unknown key: bogus");
+    expect(result).toContain("Did you mean: session");
+    // Two errors separated by newline
+    const lines = result.split("\n");
+    expect(lines.length).toBeGreaterThanOrEqual(2);
   });
 
   // --- Error without meta ---
@@ -308,34 +373,32 @@ describe("formatApiBody", () => {
     const body = JSON.stringify({
       errors: [{ code: "resource_not_found", message: "Instance not found" }],
     });
-    const result = formatApiBody(new ApiError(400, body), false);
+    const result = formatApiBody(body, false);
     expect(result).toBe("Instance not found");
   });
 
-  // --- Bodies without a Clerk errors array ---
-  // parseApiBody falls back to truncateBody(body) as the message when there
-  // is no errors[0], so formatStructuredError returns the truncated body string.
+  // --- Fallback paths ---
 
-  test("returns truncated body when no errors array (error field only)", () => {
+  test("falls back to parsed.error when no errors array", () => {
     const body = JSON.stringify({ error: "Something went wrong" });
-    const result = formatApiBody(new ApiError(400, body), false);
-    expect(result).toBe(body);
+    const result = formatApiBody(body, false);
+    expect(result).toBe("Something went wrong");
   });
 
-  test("returns truncated body when no errors array (message field only)", () => {
+  test("falls back to parsed.message when no errors array or error field", () => {
     const body = JSON.stringify({ message: "Bad request" });
-    const result = formatApiBody(new ApiError(400, body), false);
-    expect(result).toBe(body);
+    const result = formatApiBody(body, false);
+    expect(result).toBe("Bad request");
   });
 
   test("truncates non-JSON body over 200 chars", () => {
     const body = "x".repeat(300);
-    const result = formatApiBody(new ApiError(400, body), false);
+    const result = formatApiBody(body, false);
     expect(result).toBe("x".repeat(200) + "...");
   });
 
   test("returns short non-JSON body as-is", () => {
-    const result = formatApiBody(new ApiError(400, "Bad Request"), false);
+    const result = formatApiBody("Bad Request", false);
     expect(result).toBe("Bad Request");
   });
 
@@ -344,29 +407,28 @@ describe("formatApiBody", () => {
   test("verbose mode returns full pretty-printed JSON", () => {
     const obj = { errors: [{ code: "test", message: "test msg" }] };
     const body = JSON.stringify(obj);
-    const result = formatApiBody(new ApiError(400, body), true);
+    const result = formatApiBody(body, true);
     expect(result).toBe("\n" + JSON.stringify(obj, null, 2));
   });
 
   test("verbose mode returns raw body for non-JSON", () => {
-    const result = formatApiBody(new ApiError(400, "not json"), true);
+    const result = formatApiBody("not json", true);
     expect(result).toBe("\nnot json");
   });
 
   // --- Edge cases ---
 
-  test("handles empty errors array by returning truncated body", () => {
+  test("handles empty errors array by falling through to message", () => {
     const body = JSON.stringify({ errors: [], message: "fallback" });
-    const result = formatApiBody(new ApiError(400, body), false);
-    // No errors[0] so parseApiBody falls back to truncateBody(body)
-    expect(result).toBe(body);
+    const result = formatApiBody(body, false);
+    expect(result).toBe("fallback");
   });
 
   test("handles error with empty meta", () => {
     const body = JSON.stringify({
       errors: [{ code: "config_validation_error", message: "Bad value", meta: {} }],
     });
-    const result = formatApiBody(new ApiError(400, body), false);
+    const result = formatApiBody(body, false);
     expect(result).toBe("Bad value");
   });
 
@@ -380,7 +442,7 @@ describe("formatApiBody", () => {
         },
       ],
     });
-    const result = formatApiBody(new ApiError(400, body), false);
+    const result = formatApiBody(body, false);
     expect(result).toBe("Plan limitation");
   });
 });
@@ -501,7 +563,7 @@ describe("reportError", () => {
     });
 
     // Only the prefix + status wiring is asserted here; the detail string is
-    // `formatStructuredError`'s job and is covered by the `formatApiBody` block.
+    // `formatSingleError`'s job and is covered by the `formatApiBody` block.
     test("human mode prefixes with the status", () => {
       reportError(new ApiError(400, body), false);
       expect(captured.err).toContain("Request failed (400): Missing param");

@@ -19,6 +19,19 @@ const MOCK_APP = {
   ],
 };
 
+const MANAGED_WORKSPACE_LONG_MESSAGE =
+  "This workspace is managed by Vercel. Switch to a workspace you own and claim the application there.";
+
+const MANAGED_WORKSPACE_BODY = JSON.stringify({
+  errors: [
+    {
+      code: "accountless_application_managed_workspace",
+      message: "Cannot claim into a managed workspace",
+      long_message: MANAGED_WORKSPACE_LONG_MESSAGE,
+    },
+  ],
+});
+
 describe("attemptAutoclaim", () => {
   const originalFetch = globalThis.fetch;
   let tempDir: string;
@@ -122,6 +135,35 @@ describe("attemptAutoclaim", () => {
 
     expect(result.status).toBe("no_organization");
     expect(clearBreadcrumbSpy).toHaveBeenCalled();
+  });
+
+  test("returns no_organization and clears breadcrumb on 403 with an unrelated error code", async () => {
+    withBreadcrumb("forbidden_token");
+    const body = JSON.stringify({
+      errors: [{ code: "authorization_invalid", message: "Request not allowed" }],
+    });
+    stubFetch(async () => new Response(body, { status: 403 }));
+
+    const result = await run();
+
+    expect(result.status).toBe("no_organization");
+    expect(clearBreadcrumbSpy).toHaveBeenCalled();
+  });
+
+  test("returns managed_workspace with the API long_message and preserves breadcrumb on 403 accountless_application_managed_workspace", async () => {
+    withBreadcrumb("managed_token");
+    stubFetch(async () => new Response(MANAGED_WORKSPACE_BODY, { status: 403 }));
+
+    const result = await run();
+
+    expect(result.status).toBe("managed_workspace");
+    if (result.status === "managed_workspace") {
+      expect(result.longMessage).toBe(MANAGED_WORKSPACE_LONG_MESSAGE);
+    }
+    // The claim token must survive: the user switches workspace, then runs
+    // `clerk auth login` again to claim the same application.
+    expect(clearBreadcrumbSpy).not.toHaveBeenCalled();
+    expect(linkAppSpy).not.toHaveBeenCalled();
   });
 
   test("returns failed (preserves breadcrumb) on 400 — could be recoverable (e.g. 401 re-login)", async () => {

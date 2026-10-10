@@ -2,7 +2,7 @@
 
 Make authenticated HTTP requests to Clerk APIs directly from the command line.
 
-By default, targets the Clerk Backend API (`https://api.clerk.dev/v1/`) using
+By default, targets the Clerk Backend API (`https://api.clerk.com/v1/`) using
 the instance secret key. Use `--platform` to target the Platform API instead.
 
 Works with no login and no linked project on an **unclaimed accountless
@@ -153,7 +153,7 @@ cannot be combined. Paths are `/v1`-normalized like the other modes, so both
 
 ### Backend API (default)
 
-Base URL: `https://api.clerk.dev` (overridable via `CLERK_BACKEND_API_URL`)
+Base URL: `https://api.clerk.com` (overridable via `CLERK_BACKEND_API_URL`)
 
 | Method | Endpoint     | Description                                                                          |
 | ------ | ------------ | ------------------------------------------------------------------------------------ |
@@ -188,7 +188,7 @@ When run with no arguments in a TTY, launches an interactive request builder:
 4. Optionally provide a request body (opens `$EDITOR`)
 5. Preview and confirm before executing
 
-Requires human mode (TTY). In agent mode, prints usage help instead.
+Requires human mode (a TTY outside a recognized agent run). In agent mode, prints usage help instead.
 
 ## Safety
 

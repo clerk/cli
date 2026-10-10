@@ -4,19 +4,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from "./config.ts";
 import {
+  declareSoftExitError,
+  declareSoftExitOutcome,
   finalizeAndSendTelemetry,
   getTelemetryStatus,
+  setTelemetryPauseStep,
+  setTelemetryDomainComponents,
+  setTelemetryOAuthComplete,
   setTelemetryStage,
   startCommandTelemetry,
   telemetryEnabled,
   telemetryResultForError,
+  telemetryResultForSoftExit,
   type TelemetryCommand,
   type TelemetryResult,
 } from "./telemetry.ts";
-import { ApiError, CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "./errors.ts";
+import { ApiError, BapiError, CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "./errors.ts";
 import { abortInFlight, beginInterrupt, _resetInterruptState } from "./signals.ts";
 import { setLogLevel } from "./log.ts";
-import { useCaptureLog } from "../test/lib/stubs.ts";
+import { captureTelemetryPayload, fakeTelemetryCommand, useCaptureLog } from "../test/lib/stubs.ts";
 
 // Isolate config I/O (machine uuid, notice flag) from the real user config dir.
 let configDir: string;
@@ -136,6 +142,20 @@ describe("telemetryResultForError", () => {
     expect(telemetryResultForError(new CliError("nope")).errorCode).toBe("cli_error");
   });
 
+  // A cancelled deploy prompt is Ctrl-C, the same keypress the interrupt path
+  // records as an abort; the code still says which prompt.
+  test("maps a CliError that exits 130 to abort, keeping its code", () => {
+    const error = new CliError("paused", {
+      code: ERROR_CODE.DEPLOY_CANCELLED,
+      exitCode: EXIT_CODE.SIGINT,
+    });
+    expect(telemetryResultForError(error)).toEqual({
+      outcome: "abort",
+      exitCode: EXIT_CODE.SIGINT,
+      errorCode: "deploy_cancelled",
+    });
+  });
+
   test("maps ApiError (code is null for a non-JSON body → api_error fallback)", () => {
     const error = new ApiError(500, "boom");
     expect(telemetryResultForError(error)).toEqual({
@@ -173,7 +193,15 @@ describe("finalizeAndSendTelemetry", () => {
   });
 
   function fakeCommand(): TelemetryCommand {
-    return { name: () => "list", options: [], getOptionValueSource: () => undefined, parent: null };
+    return fakeTelemetryCommand("list");
+  }
+
+  /** Captures the payload of the single event a finalize call sends. */
+  async function sendAndCapturePayload(
+    run: () => void | Promise<void>,
+    result: TelemetryResult | (() => TelemetryResult),
+  ): Promise<Record<string, unknown>> {
+    return (await captureTelemetryPayload("list", run, { result })).payload;
   }
 
   test("no-op when telemetry is disabled (no fetch, no throw)", async () => {
@@ -461,30 +489,6 @@ describe("finalizeAndSendTelemetry", () => {
   });
 
   describe("stage", () => {
-    /** Captures the payload of the single event a finalize call sends. */
-    async function sendAndCapturePayload(
-      run: () => void | Promise<void>,
-      result: TelemetryResult,
-    ): Promise<Record<string, unknown>> {
-      await markTelemetryNoticeShown(); // past the grace run — reach the send path
-      process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
-      let sent: string | undefined;
-      globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
-        sent = init.body;
-        return new Response("{}");
-      }) as unknown as typeof fetch;
-
-      startCommandTelemetry(fakeCommand());
-      await run();
-      await finalizeAndSendTelemetry(result);
-
-      expect(sent).toBeDefined();
-      const parsed = JSON.parse(sent as string) as {
-        events: { payload: Record<string, unknown> }[];
-      };
-      return parsed.events[0]!.payload;
-    }
-
     test("reports the furthest stage reached on success", async () => {
       const payload = await sendAndCapturePayload(
         () => {
@@ -527,6 +531,309 @@ describe("finalizeAndSendTelemetry", () => {
 
     test("setting a stage with no active context is a no-op", () => {
       expect(() => setTelemetryStage("flags")).not.toThrow();
+    });
+  });
+
+  // Four booleans from two reads. Each setter owns its group and must not
+  // touch the other: a domain poll that re-sent OAuth would either blank a
+  // good observation or repeat a stale one.
+  describe("components", () => {
+    const success = { outcome: "success" as const, exitCode: 0 };
+
+    test("null until observed", async () => {
+      const payload = await sendAndCapturePayload(() => {}, success);
+      expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+    });
+
+    test("the domain setter leaves oauth alone", async () => {
+      const payload = await sendAndCapturePayload(
+        () => setTelemetryDomainComponents({ dns: true, ssl: false, mail: true }),
+        success,
+      );
+      expect(payload.components).toEqual({ dns: true, ssl: false, mail: true, oauth: null });
+    });
+
+    test("the oauth setter leaves the domain group alone", async () => {
+      const payload = await sendAndCapturePayload(() => setTelemetryOAuthComplete(false), success);
+      expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: false });
+    });
+
+    test("within a group the last write wins, across groups each keeps its own", async () => {
+      const payload = await sendAndCapturePayload(() => {
+        setTelemetryOAuthComplete(true);
+        setTelemetryDomainComponents({ dns: false, ssl: false, mail: false });
+        setTelemetryDomainComponents({ dns: true, ssl: false, mail: true });
+      }, success);
+      expect(payload.components).toEqual({ dns: true, ssl: false, mail: true, oauth: true });
+    });
+
+    test("does not leak into the next run", async () => {
+      await sendAndCapturePayload(() => {
+        setTelemetryOAuthComplete(true);
+        setTelemetryDomainComponents({ dns: true, ssl: true, mail: true });
+      }, success);
+
+      const payload = await sendAndCapturePayload(() => {}, success);
+      expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+    });
+
+    test("setting with no active context is a no-op", () => {
+      expect(() =>
+        setTelemetryDomainComponents({ dns: true, ssl: true, mail: true }),
+      ).not.toThrow();
+      expect(() => setTelemetryOAuthComplete(true)).not.toThrow();
+    });
+  });
+
+  // A deploy read still in flight when the command failed can resolve while
+  // the send is awaiting its config reads. The event is built from a copy
+  // taken when finalization began, so that late write changes nothing.
+  test("a component written after finalization begins does not reach the event", async () => {
+    await markTelemetryNoticeShown();
+    process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+    const posted: string[] = [];
+    globalThis.fetch = (async (_url: unknown, init?: { body?: string }) => {
+      posted.push(init?.body ?? "");
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    startCommandTelemetry(fakeCommand());
+
+    const sending = finalizeAndSendTelemetry({ outcome: "error", exitCode: 1 });
+    setTelemetryDomainComponents({ dns: true, ssl: true, mail: true });
+    await sending;
+
+    expect(posted).toHaveLength(1);
+    const payload = JSON.parse(posted[0]!).events[0].payload;
+    expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+  });
+
+  // A command that reports failure through `process.exitCode` never reaches
+  // `telemetryResultForError`, so without a declaration the only thing the
+  // soft-exit branch can say is "nonzero, therefore error".
+  describe("soft-exit declarations", () => {
+    test("a declared outcome is recorded when the exit code is nonzero", async () => {
+      const payload = await sendAndCapturePayload(
+        () => declareSoftExitOutcome("incomplete"),
+        () => telemetryResultForSoftExit(EXIT_CODE.GENERAL),
+      );
+      expect(payload.outcome).toBe("incomplete");
+      expect(payload.exit_code).toBe(EXIT_CODE.GENERAL);
+      expect(payload.error_code).toBeNull();
+    });
+
+    // The declaration says what a *failure* meant. A run that ended at 0 did
+    // not fail, and honoring a stale declaration would invent one.
+    test("a declared outcome is ignored when the run exits 0", async () => {
+      const payload = await sendAndCapturePayload(
+        () => declareSoftExitOutcome("incomplete"),
+        () => telemetryResultForSoftExit(EXIT_CODE.SUCCESS),
+      );
+      expect(payload.outcome).toBe("success");
+    });
+
+    test("an undeclared nonzero soft exit is still an error", async () => {
+      const payload = await sendAndCapturePayload(
+        () => {},
+        () => telemetryResultForSoftExit(EXIT_CODE.GENERAL),
+      );
+      expect(payload.outcome).toBe("error");
+      expect(payload.error_code).toBeNull();
+    });
+
+    // The shape the status-based split below extends: `clerk api` holds a code
+    // its own catch swallowed.
+    test("a declaration can carry an error code", () => {
+      startCommandTelemetry(fakeCommand());
+      declareSoftExitOutcome("error", "api_not_found");
+      expect(telemetryResultForSoftExit(EXIT_CODE.GENERAL)).toEqual({
+        outcome: "error",
+        exitCode: EXIT_CODE.GENERAL,
+        errorCode: "api_not_found",
+      });
+    });
+
+    // What the send does with a result it is handed while a declaration is
+    // live: it uses the result. Resolved through the callback so the two call
+    // sites read alike, and so this keeps holding if `telemetryResultForError`
+    // ever starts reading context — it is pure today, so the ordering itself
+    // makes no difference.
+    test("a thrown error keeps its own code regardless of a declaration", async () => {
+      const payload = await sendAndCapturePayload(
+        () => declareSoftExitOutcome("incomplete"),
+        () => telemetryResultForError(new CliError("boom", { code: ERROR_CODE.NOT_LINKED })),
+      );
+      expect(payload.outcome).toBe("error");
+      expect(payload.error_code).toBe("not_linked");
+    });
+
+    // Tests share the module, and so would two runs in one process: a stale
+    // declaration would relabel the next command's failure.
+    test("a declaration does not leak into the next run", () => {
+      startCommandTelemetry(fakeCommand());
+      declareSoftExitOutcome("incomplete");
+      startCommandTelemetry(fakeCommand());
+      expect(telemetryResultForSoftExit(EXIT_CODE.GENERAL)).toEqual({
+        outcome: "error",
+        exitCode: EXIT_CODE.GENERAL,
+      });
+    });
+
+    test("declaring with no active context is a no-op", () => {
+      expect(() => declareSoftExitOutcome("incomplete")).not.toThrow();
+    });
+
+    // The three commands that catch their own failure hand the error over
+    // here. Everything but an uncoded `ApiError` classifies exactly as a throw
+    // would, so `--json` and human mode of the same command record one code.
+    describe("a caught error carries the code a throw would", () => {
+      function codeFor(error: unknown): string | undefined {
+        startCommandTelemetry(fakeCommand());
+        declareSoftExitError(error, { userSuppliedPath: false });
+        return telemetryResultForSoftExit(EXIT_CODE.GENERAL).errorCode;
+      }
+
+      const clerkBody = (code: string) => JSON.stringify({ errors: [{ code, message: "" }] });
+
+      test("a Clerk error code in the body is recorded as-is, whatever the status", () => {
+        expect(codeFor(new ApiError(404, clerkBody("resource_not_found")))).toBe(
+          "resource_not_found",
+        );
+        expect(codeFor(new ApiError(429, clerkBody("too_many_requests")))).toBe(
+          "too_many_requests",
+        );
+        expect(codeFor(new BapiError(422, clerkBody("form_param_missing"), new Headers()))).toBe(
+          "form_param_missing",
+        );
+      });
+
+      // No code in the body: the status is all that was observed, and each
+      // bucket claims exactly that. `too_many_requests` is deliberately not
+      // reused for the 429 — that code means Clerk itself said so. A 404 with
+      // nobody vouching for the path is the CLI's own route, so the default
+      // is the CLI's failure, not the person's.
+      test.each([
+        [429, "api_rate_limited"],
+        [404, "cli_endpoint_not_found"],
+        [400, "api_client_error"],
+        [401, "api_client_error"],
+        [403, "api_client_error"],
+        [422, "api_client_error"],
+        [500, "api_error"],
+        [502, "api_error"],
+        [503, "api_error"],
+      ])("an uncoded %i records %s", (status, expected) => {
+        expect(codeFor(new ApiError(status, "not json"))).toBe(expected);
+        expect(codeFor(new ApiError(status, ""))).toBe(expected);
+        expect(codeFor(new ApiError(status, '{"error":"bad"}'))).toBe(expected);
+      });
+
+      // Only a path the person typed can be the person's mistake.
+      test("an uncoded 404 on a path the person supplied is api_not_found", () => {
+        startCommandTelemetry(fakeCommand());
+        declareSoftExitError(new ApiError(404, "404 page not found"), { userSuppliedPath: true });
+        expect(telemetryResultForSoftExit(EXIT_CODE.GENERAL).errorCode).toBe("api_not_found");
+
+        startCommandTelemetry(fakeCommand());
+        declareSoftExitError(new ApiError(404, clerkBody("resource_not_found")), {
+          userSuppliedPath: true,
+        });
+        expect(telemetryResultForSoftExit(EXIT_CODE.GENERAL).errorCode).toBe("resource_not_found");
+      });
+
+      test("a CliError keeps its named code", () => {
+        expect(codeFor(new CliError("boom", { code: ERROR_CODE.MCP_CLIENT_CONFIG_INVALID }))).toBe(
+          "mcp_client_config_invalid",
+        );
+        expect(codeFor(new CliError("boom"))).toBe("cli_error");
+      });
+
+      test("anything else is unexpected_error", () => {
+        expect(codeFor(new Error("EACCES"))).toBe("unexpected_error");
+        expect(codeFor("just a string")).toBe("unexpected_error");
+      });
+
+      test("the outcome is error, and only on a nonzero exit", async () => {
+        const failed = await sendAndCapturePayload(
+          () => declareSoftExitError(new ApiError(404, ""), { userSuppliedPath: false }),
+          () => telemetryResultForSoftExit(EXIT_CODE.GENERAL),
+        );
+        expect(failed.outcome).toBe("error");
+        expect(failed.error_code).toBe("cli_endpoint_not_found");
+
+        const recovered = await sendAndCapturePayload(
+          () => declareSoftExitError(new ApiError(404, ""), { userSuppliedPath: false }),
+          () => telemetryResultForSoftExit(EXIT_CODE.SUCCESS),
+        );
+        expect(recovered.outcome).toBe("success");
+        expect(recovered.error_code).toBeNull();
+      });
+    });
+  });
+
+  // The warehouse parses this payload by key. A rename splits a column in two
+  // without failing anything here, so the key set itself is the contract.
+  describe("payload shape", () => {
+    test("carries exactly the agreed keys", async () => {
+      const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
+      expect(payload.command).toBe("list");
+      expect(Object.keys(payload).sort()).toEqual(
+        [
+          "ai_agent",
+          "app_id",
+          "arch",
+          "ci",
+          "command",
+          "components",
+          "duration_ms",
+          "env",
+          "error_code",
+          "exit_code",
+          "flags",
+          "in_screen",
+          "in_tmux",
+          "install_method",
+          "machine_uuid",
+          "mode",
+          "os",
+          "outcome",
+          "pause_step",
+          "stage",
+          "terminal_program",
+          "workspace_id",
+        ].sort(),
+      );
+    });
+
+    // The deploy fields are on every event; a command that never observes them
+    // sends null. Null means never observed, and the warehouse reads it that
+    // way — it must not arrive as `false` or as an absent key.
+    test("pause_step and components are present and null on a command that never sets them", async () => {
+      const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
+      expect(payload.pause_step).toBeNull();
+      expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+    });
+  });
+
+  describe("pause step", () => {
+    test("the step a run stopped on reaches the payload", async () => {
+      const payload = await sendAndCapturePayload(() => setTelemetryPauseStep("oauth"), {
+        outcome: "error",
+        exitCode: EXIT_CODE.GENERAL,
+      });
+      expect(payload.pause_step).toBe("oauth");
+    });
+
+    // A resume enters OAuth setup after the DNS handoff, so both steps can be
+    // reached in one run; the one the run actually stopped on is the last set.
+    test("the last step set is the one sent", async () => {
+      const payload = await sendAndCapturePayload(
+        () => {
+          setTelemetryPauseStep("dns");
+          setTelemetryPauseStep("oauth");
+        },
+        { outcome: "error", exitCode: EXIT_CODE.GENERAL },
+      );
+      expect(payload.pause_step).toBe("oauth");
     });
   });
 });

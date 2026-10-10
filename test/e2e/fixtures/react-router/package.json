@@ -11,20 +11,20 @@
   "dependencies": {
     "@react-router/node": "7.18.2",
     "@react-router/serve": "7.18.2",
-    "isbot": "5.2.1",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
+    "isbot": "5.2.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "react-router": "7.18.2",
     "@clerk/react-router": "latest"
   },
   "devDependencies": {
     "@react-router/dev": "7.18.2",
     "@tailwindcss/vite": "4.3.3",
-    "@types/node": "22.20.1",
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.5",
+    "@types/node": "22.20.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
-    "vite": "8.2.2"
+    "vite": "8.3.1"
   }
 }

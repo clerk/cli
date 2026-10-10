@@ -45,11 +45,14 @@ export function validateDomain(value: string | undefined): true | string {
   return true;
 }
 
-/** Validates a `--domain` flag value with the same rules as the prompt, as a usage error. */
+/**
+ * `--domain` goes through the prompt's rules. Lowercased because the Platform
+ * API stores it that way, and the value is compared with what it returns.
+ */
 export function assertValidDomain(value: string): string {
   const verdict = validateDomain(value);
   if (verdict !== true) throwUsageError(`Invalid --domain "${value}": ${verdict}`);
-  return value.trim();
+  return value.trim().toLowerCase();
 }
 
 export async function confirmCreateProductionInstance(): Promise<boolean> {
@@ -103,7 +106,7 @@ export async function chooseOAuthCredentialAction(
     });
   }
   choices.push({
-    name: "Skip for now (add credentials later)",
+    name: "Skip for now and run `clerk deploy` again later",
     value: "skip",
   });
 

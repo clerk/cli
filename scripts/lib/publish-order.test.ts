@@ -56,4 +56,62 @@ describe("publishDependenciesBeforePackage", () => {
       "clerk:publish",
     ]);
   });
+
+  test("lets every dependency finish and skips the dependent when one fails", async () => {
+    const events: string[] = [];
+    let releaseDarwin!: () => void;
+
+    const publish = publishDependenciesBeforePackage(
+      [
+        {
+          publish: async () => {
+            throw new Error("linux failed");
+          },
+          waitUntilAvailable: undefined,
+        },
+        {
+          publish: async () => {
+            await new Promise<void>((resolve) => (releaseDarwin = resolve));
+            events.push("darwin:publish");
+          },
+          waitUntilAvailable: undefined,
+        },
+      ],
+      {
+        publish: async () => {
+          events.push("clerk:publish");
+        },
+        waitUntilAvailable: undefined,
+      },
+    );
+
+    let settled = false;
+    const outcome = publish.then(
+      () => "resolved",
+      (error: Error) => error.message,
+    );
+    void outcome.then(() => (settled = true));
+    await Bun.sleep(0);
+    expect(settled).toBe(false);
+
+    releaseDarwin();
+    expect(await outcome).toBe("linux failed");
+    expect(events).toEqual(["darwin:publish"]);
+  });
+
+  test("reports every failed dependency", async () => {
+    const failing = (message: string) => ({
+      publish: async () => {
+        throw new Error(message);
+      },
+      waitUntilAvailable: undefined,
+    });
+
+    await expect(
+      publishDependenciesBeforePackage([failing("linux failed"), failing("darwin failed")], {
+        publish: async () => {},
+        waitUntilAvailable: undefined,
+      }),
+    ).rejects.toThrow("2 dependency publishes failed:\n  - linux failed\n  - darwin failed");
+  });
 });

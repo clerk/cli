@@ -9,7 +9,7 @@
 import { collectEntries } from "../mcp/collect.ts";
 import { probeMcp, type McpProbeResult } from "../mcp/probe.ts";
 import type { ListEntry } from "../mcp/clients/types.ts";
-import type { CheckResult } from "./types.ts";
+import { CHECK_NAME, type CheckResult } from "./types.ts";
 
 type UrlProbe = { url: string; result: McpProbeResult };
 
@@ -60,7 +60,7 @@ export async function checkMcp(): Promise<CheckResult> {
   if (failures.length > 0) {
     const clients = failures.map((f) => f.displayName).join(", ");
     return {
-      name: "MCP server",
+      name: CHECK_NAME.mcp,
       status: "warn",
       message: `Could not read the MCP config for ${clients}`,
       detail: [
@@ -73,7 +73,7 @@ export async function checkMcp(): Promise<CheckResult> {
 
   if (entries.length === 0) {
     return {
-      name: "MCP server",
+      name: CHECK_NAME.mcp,
       status: "pass",
       message: "Skipped (no Clerk MCP entry installed)",
     };
@@ -81,14 +81,14 @@ export async function checkMcp(): Promise<CheckResult> {
 
   if (unreachable.length === 0) {
     return {
-      name: "MCP server",
+      name: CHECK_NAME.mcp,
       status: "pass",
       message: `Reachable — ${describeReachable(probes)}`,
     };
   }
 
   return {
-    name: "MCP server",
+    name: CHECK_NAME.mcp,
     status: "warn",
     message: describeUnreachable(unreachable, probes.length),
     detail: unreachable.map((p) => `${p.url}: ${describeFailure(p.result)}`).join("; "),

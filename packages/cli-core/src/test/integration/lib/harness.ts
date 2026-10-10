@@ -108,6 +108,10 @@ mock.module(
       setMode: (m: "human" | "agent") => {
         _mode = m;
       },
+      _resetMode: () => {
+        _mode = "human";
+      },
+      resolveMode: () => _mode,
       isHuman: () => _mode === "human",
       isAgent: () => _mode === "agent",
     }) satisfies typeof import("../../../mode.ts"),

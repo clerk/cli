@@ -120,7 +120,7 @@ function planInsufficientMessage(error: PlapiError): string {
 
 function readFeatures(meta: Record<string, unknown> | null): string[] {
   if (!meta) return [];
-  const features = meta.features;
+  const features = meta.unsupported_features;
   if (!Array.isArray(features)) return [];
   return features.filter((f): f is string => typeof f === "string");
 }

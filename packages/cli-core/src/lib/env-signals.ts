@@ -5,6 +5,10 @@
  *
  * All functions take an injected env so tests never depend on the ambient
  * environment (the dev machine may itself run inside an AI agent or tmux).
+ *
+ * One exception to "telemetry only": `CODEX_ENV_VARS` also switches the CLI
+ * into agent mode (via `isCodexEnv` in `mode.ts`), so that list carries a
+ * stricter rule than the other detectors. See the comment on the constant.
  */
 
 export type EnvLike = Record<string, string | undefined>;
@@ -31,6 +35,29 @@ export function optOutEnvVar(env: EnvLike): OptOutEnvVar | null {
   return null;
 }
 
+// Only variables Codex sets on commands it runs. Never add one users export
+// in their own shell (e.g. CODEX_HOME, which relocates Codex's config folder):
+// this list also switches the CLI to agent mode, which skips confirmation
+// prompts, so a shell-wide variable would drop "Proceed?" for a person.
+export const CODEX_ENV_VARS = [
+  "CODEX_SANDBOX",
+  "CODEX_THREAD_ID",
+  "CODEX_SANDBOX_NETWORK_DISABLED",
+  "CODEX_CI",
+] as const;
+
+/**
+ * Whether Codex is running this command. Unlike the other agents below, this
+ * also feeds the interaction mode (see `mode.ts`): Codex attaches a
+ * pseudo-terminal to every command, so the TTY check alone reads it as a
+ * human and `clerk init` waits on a browser login nobody can complete.
+ * Checked on its own rather than via `detectAiAgent` because that returns
+ * only the first match, which hides Codex when it runs inside Claude Code.
+ */
+export function isCodexEnv(env: EnvLike): boolean {
+  return CODEX_ENV_VARS.some((envVar) => Boolean(env[envVar]));
+}
+
 // Truthiness (not equality) is deliberate: harnesses use different marker
 // values — gemini/opencode set "1", cline sets "true", openclaw sets a mode
 // string like "tui-local".
@@ -38,14 +65,7 @@ export function detectAiAgent(env: EnvLike): string {
   if (env.ANTIGRAVITY_CLI_ALIAS) return "antigravity";
   if (env.CLAUDECODE) return "claude_code";
   if (env.CLINE_ACTIVE) return "cline";
-  if (
-    env.CODEX_SANDBOX ||
-    env.CODEX_THREAD_ID ||
-    env.CODEX_SANDBOX_NETWORK_DISABLED ||
-    env.CODEX_CI
-  ) {
-    return "codex_cli";
-  }
+  if (isCodexEnv(env)) return "codex_cli";
   if (env.CURSOR_AGENT) return "cursor";
   if (env.GEMINI_CLI) return "gemini_cli";
   if (env.OPENCODE) return "open_code";
