@@ -228,6 +228,24 @@ describe("importUsers", () => {
     });
   });
 
+  // A Clerk export of users an earlier migration imported carries that run's
+  // marker; this run's must win, or a cut-off create could never be adopted.
+  test("replaces a marker the source's private metadata already carries", async () => {
+    stub(() => ok("user_created"));
+
+    await importUsers({
+      users: [user({ userId: "u1", privateMetadata: { clerkMigrateRun: "20250101-000000-0000" } })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      runId: "20260101-000000-abcd",
+    });
+
+    expect(requests.find((r) => r.url.endsWith("/v1/users"))?.body).toMatchObject({
+      private_metadata: { clerkMigrateRun: "20260101-000000-abcd" },
+    });
+  });
+
   test("creates each user and reports them as successful", async () => {
     stub(() => ok("user_created"));
 
