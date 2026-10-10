@@ -96,7 +96,7 @@ describe("finishExport", () => {
   });
 
   test("--output writes somewhere else, and the run still records where", async () => {
-    const run = await startExportRun({ runsDir }, { platform: "supabase" });
+    const run = await startExportRun({ runsDir }, { platform: "auth0" });
 
     const { record, outputPath } = finishExport({
       run,

@@ -10,6 +10,7 @@
  * and M2M credentials) has nothing in common with what a database export needs.
  */
 
+import { exportAuth0 } from "./auth0.ts";
 import { exportClerk } from "./clerk.ts";
 import { exportFirebase } from "./firebase.ts";
 import { exportSupabase } from "./supabase.ts";
@@ -30,6 +31,13 @@ export const exportPlatforms: ExportRegistryEntry[] = [
     description: "Another Clerk instance, e.g. development → production",
     sourceKey: "clerk",
     run: async (options) => exportClerk(options),
+  },
+  {
+    key: "auth0",
+    label: "Auth0",
+    description: "An Auth0 tenant, via the Management API",
+    sourceKey: "auth0",
+    run: async (options) => exportAuth0(options),
   },
   {
     key: "supabase",

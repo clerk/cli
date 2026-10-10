@@ -420,8 +420,8 @@ describe("run", () => {
     test("refuses a source that contradicts the envelope", async () => {
       const { record } = exportRun("clerk", export2);
 
-      await expect(run({ ...noSource, source: "supabase", input: record.id })).rejects.toThrow(
-        /exported from clerk, but --source names supabase/,
+      await expect(run({ ...noSource, source: "auth0", input: record.id })).rejects.toThrow(
+        /exported from clerk, but --source names auth0/,
       );
       expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
     });
@@ -1295,23 +1295,45 @@ describe("run", () => {
   });
 
   describe("per-platform imports", () => {
-    test("supabase transforms, validates and imports its export", async () => {
-      fs.writeFileSync(
-        path.join(workDir, "export.json"),
-        JSON.stringify([
+    /** One realistic record per platform, in that platform's export shape. */
+    const PLATFORMS: [string, unknown, string][] = [
+      [
+        "auth0",
+        [
+          {
+            user_id: "auth0|1",
+            email: "a@x.dev",
+            email_verified: true,
+            given_name: "Ada",
+            family_name: "L",
+          },
+        ],
+        "auth0|1",
+      ],
+      [
+        "supabase",
+        [
           {
             id: "sb1",
             email: "a@x.dev",
             email_confirmed_at: "2024-06-29 20:25:06+00",
             encrypted_password: BCRYPT,
           },
-        ]),
-      );
+        ],
+        "sb1",
+      ],
+    ];
 
-      await run({ ...baseOptions, source: "supabase" });
+    test.each(PLATFORMS)(
+      "%s transforms, validates and imports its export",
+      async (key, records, externalId) => {
+        fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(records));
 
-      expect(created()).toEqual(["sb1"]);
-    });
+        await run({ ...baseOptions, source: key });
+
+        expect(created()).toEqual([externalId]);
+      },
+    );
 
     test("firebase imports its wrapped export and builds the scrypt digest", async () => {
       fs.writeFileSync(
@@ -1423,7 +1445,7 @@ describe("run", () => {
       )) as CliError;
       expect(error.exitCode).toBe(EXIT_CODE.USAGE);
       expect(error.message).toContain(
-        'Unknown source "nope". Valid sources: clerk, firebase, supabase.',
+        'Unknown source "nope". Valid sources: clerk, auth0, firebase, supabase.',
       );
       expect(requests).toHaveLength(0);
     });

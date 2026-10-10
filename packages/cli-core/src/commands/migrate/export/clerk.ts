@@ -256,8 +256,8 @@ export function buildClerkExport(
 }
 
 export async function exportClerk(options: ExportClerkOptions): Promise<void> {
-  // Resolved before the gutter opens, the way `export supabase` resolves its
-  // connection string: confirming the source is a question about whether to run at
+  // Resolved before the gutter opens, the way `export auth0` resolves its
+  // credentials: confirming the source is a question about whether to run at
   // all, not a step of the run.
   const source = await resolveClerkSource({
     secretKey: options.secretKey,

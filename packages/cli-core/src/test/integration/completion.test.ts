@@ -230,7 +230,7 @@ describe("generateCompletions", () => {
           "--source",
           "",
         ]).completions.map((c) => c.name);
-        expect(names).toEqual(["clerk", "firebase", "supabase"]);
+        expect(names).toEqual(["clerk", "auth0", "firebase", "supabase"]);
       } finally {
         if (saved === undefined) delete process.env.CLERK_EXPERIMENTAL;
         else process.env.CLERK_EXPERIMENTAL = saved;
