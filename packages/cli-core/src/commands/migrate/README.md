@@ -840,7 +840,7 @@ brings across. Adding a platform is one file in `sources/` plus one line in
 | Key        | Reads                        | Passwords | MFA     | Metadata |
 | ---------- | ---------------------------- | --------- | ------- | -------- |
 | `clerk`    | Clerk Dashboard export       | partial   | partial | partial  |
-| `auth0`    | Auth0 Export Users API       | partial   | no      | yes      |
+| `auth0`    | Auth0 Management API         | partial   | no      | yes      |
 | `firebase` | `firebase auth:export`       | yes       | no      | no       |
 | `supabase` | Supabase `auth.users` export | yes       | no      | partial  |
 
