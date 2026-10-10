@@ -115,7 +115,7 @@ export function keyInstanceId(secretKey: string): string {
  * writes and deletes in bulk, so `--instance dev` next to an exported
  * `sk_live_` key must not reach production.
  */
-function assertInstanceFlagMatches(
+export function assertInstanceFlagMatches(
   options: TargetOptions,
   keySource: string,
   identity: { instanceId: string; env: string },

@@ -9,7 +9,14 @@ import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 // Every test below names its own `--secret-key`, which short-circuits the
 // signed-in check — except the one that asserts what happens without it.
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
-import { latestUserLines, listRuns, readRun, startRun } from "./lib/run-store.ts";
+import {
+  latestUserLines,
+  listRuns,
+  patchRun,
+  readRun,
+  sha256File,
+  startRun,
+} from "./lib/run-store.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
 // After run.ts: imported first, signals.ts loads version.ts ahead of its Bun
 // macro here, and the file fails to load.
@@ -287,6 +294,154 @@ describe("run", () => {
     expect(captured.err).toContain(`rm -rf '${path.join(spaced, record!.id)}'`);
   });
 
+  describe("export envelopes", () => {
+    /** An export run whose envelope holds `users`, as `clerk migrate export` writes it. */
+    function exportRun(source: string, rows: unknown[]) {
+      const run = startRun(runsDir(), { kind: "export", target: { platform: source }, source });
+      const file = path.join(run.dir, "export.json");
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          clerkMigrate: 1,
+          source,
+          exportedAt: "2026-09-01T00:00:00.000Z",
+          runId: run.record.id,
+          users: rows,
+        }),
+      );
+      run.update({ file: { path: file, sha256: sha256File(file) } });
+      return { record: run.finish(), file };
+    }
+
+    const { source: _source, input: _input, ...noSource } = baseOptions;
+
+    // The run ID stands for the file that run wrote: a later export or an edit
+    // at the same path must not import under the old run's name.
+    test("refuses an export file that changed since its run wrote it", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const envelope = JSON.parse(fs.readFileSync(file, "utf-8"));
+      fs.writeFileSync(file, JSON.stringify({ ...envelope, users: [envelope.users[0]] }));
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /has changed since it was exported/,
+      );
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
+    // A shared --output path can be overwritten after the run-ID check, while
+    // the import is still naming its target.
+    test("refuses an export file overwritten after the run ID was checked", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const served = globalThis.fetch;
+      let overwritten = false;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        if (!overwritten && new URL(input.toString()).pathname === "/v1/instance") {
+          overwritten = true;
+          const envelope = JSON.parse(fs.readFileSync(file, "utf-8"));
+          fs.writeFileSync(file, JSON.stringify({ ...envelope, users: [envelope.users[0]] }));
+        }
+        return served(input, init);
+      }) as typeof fetch;
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /has changed since it was exported/,
+      );
+      expect(overwritten).toBe(true);
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
+    test("refuses an export file another run's export overwrote", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const envelope = JSON.parse(fs.readFileSync(file, "utf-8"));
+      fs.writeFileSync(file, JSON.stringify({ ...envelope, runId: "20260101-000000-abcd" }));
+      patchRun(runsDir(), record.id, { file: { path: file, sha256: sha256File(file) } });
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /has changed since it was exported/,
+      );
+    });
+
+    test("refuses an export run whose file is gone", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      fs.rmSync(file);
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(/is gone/);
+    });
+
+    test("names an --output export file outside the run folder for deletion too", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const outside = path.join(workDir, `users-${record.id}.json`);
+      fs.renameSync(file, outside);
+      patchRun(runsDir(), record.id, { file: { path: outside, sha256: sha256File(outside) } });
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).toContain(`rm ${outside}`);
+    });
+
+    test("imports by export run ID, with the source the envelope names", async () => {
+      const { record } = exportRun("clerk", export2);
+
+      await run({ ...noSource, input: record.id });
+
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+      const imported = listRuns(runsDir()).find((candidate) => candidate.kind === "import");
+      expect(imported).toMatchObject({ source: "clerk", fromExport: record.id });
+      // The export holds password hashes and PII, so the cleanup names it too.
+      expect(captured.err).toContain(`The export in run ${record.id} holds your users' data`);
+    });
+
+    // Started by path, continued by run ID: the run still names its export.
+    test("a continue by export run ID links the run to the export", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      stubClerk({ failing: new Set(["u2"]) });
+      await run({ ...noSource, input: file });
+      expect(listRuns(runsDir()).find((c) => c.kind === "import")?.fromExport).toBeUndefined();
+
+      stubClerk();
+      process.exitCode = 0;
+      await run({ ...noSource, input: record.id });
+
+      const imported = listRuns(runsDir()).filter((c) => c.kind === "import");
+      expect(imported).toHaveLength(1);
+      expect(imported[0]).toMatchObject({ fromExport: record.id });
+      expect(captured.err).toContain(`The export in run ${record.id} holds your users' data`);
+    });
+
+    test("imports an envelope file with no source named", async () => {
+      const { file } = exportRun("clerk", export2);
+
+      await run({ ...noSource, input: file });
+
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+    });
+
+    test("refuses a source that contradicts the envelope", async () => {
+      const { record } = exportRun("clerk", export2);
+
+      await expect(run({ ...noSource, source: "supabase", input: record.id })).rejects.toThrow(
+        /exported from clerk, but --source names supabase/,
+      );
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
+    test("refuses a run ID that is not an export", async () => {
+      await run(baseOptions);
+      const [imported] = listRuns(runsDir());
+
+      await expect(run({ ...noSource, input: imported!.id })).rejects.toThrow(
+        /is an import run, which has no file to import/,
+      );
+    });
+
+    test("refuses a run ID with no run behind it", async () => {
+      await expect(run({ ...noSource, input: "20260101-000000-abcd" })).rejects.toThrow(
+        /No run `20260101-000000-abcd`/,
+      );
+      expect(requests).toHaveLength(0);
+    });
+  });
+
   test("gitignores the project's .clerk folder before writing a run", async () => {
     await run(baseOptions);
     expect(fs.readFileSync(path.join(workDir, ".gitignore"), "utf-8")).toContain(".clerk/");
@@ -363,7 +518,7 @@ describe("run", () => {
   describe("without a file or a source", () => {
     test("names what to pass rather than prompting for the file", async () => {
       await expect(run({ source: "clerk", yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
-        /needs the file to import, and cannot prompt here/,
+        /needs the file to import, or the export run that wrote it, and cannot prompt here/,
       );
       expect(requests).toHaveLength(0);
     });

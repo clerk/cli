@@ -2,6 +2,7 @@ import type { Program } from "../../cli-program.ts";
 import { isExperimentEnabled, requireExperiment } from "../../lib/experimental.ts";
 import { setMode } from "../../mode.ts";
 import { setAssumeYes } from "./lib/assume-yes.ts";
+import { registerMigrateExport } from "./export/index.ts";
 import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "./lib/run-store.ts";
 import { run } from "./run.ts";
 import { runs } from "./runs.ts";
@@ -33,11 +34,15 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
     .description("Migrate users into Clerk from another auth provider or another Clerk instance")
     .setExamples([
       {
-        command: "clerk migrate import users.json --source supabase --dry-run",
-        description: "Check a Supabase export against the instance, and write nothing",
+        command: "clerk migrate export supabase",
+        description: "Export users from Supabase into a new run",
       },
       {
-        command: "clerk migrate import users.json --source supabase --yes",
+        command: "clerk migrate import 20260929-141502-a1b2 --dry-run",
+        description: "Check an export against the instance, and write nothing",
+      },
+      {
+        command: "clerk migrate import 20260929-141502-a1b2 --yes",
         description: "Import it. Run it again to continue after a failure",
       },
       { command: "clerk migrate runs", description: "List every migration run" },
@@ -47,20 +52,25 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
       },
     ]);
 
-  // `-y` is resolved once here, for code below a command's options to read
-  // rather than having it passed down. Hooks are inherited, so this fires for
-  // every subcommand under `migrate`; one that declares no `-y` resolves to false.
+  // `-y` is read several layers down — by the credential-retry loop and the
+  // import — so it is resolved once here rather than threaded through every
+  // call. Hooks are inherited, so this fires for every
+  // subcommand under `migrate`; one that declares no `-y` resolves to false.
   //
   // `--json` means nobody is reading a prompt, so it runs the command in agent
   // mode: every prompt in this tree already stands down for an agent, with the
   // usage error naming what to pass instead.
   migrateCommand.hook("preAction", (_thisCommand, actionCommand) => {
+    // With globals: `export supabase --json` lands on the export group's own
+    // --json, which the subcommand's opts() never sees.
     const opts = actionCommand.optsWithGlobals();
     setAssumeYes(Boolean(opts.yes));
     if (opts.json) setMode("agent");
   });
 
-  // Named, not `isDefault`: bare `clerk migrate` prints help.
+  // Named, not `isDefault`. `import` and `export` are the two directions this
+  // group moves users in, and neither is implied by the bare group name.
+  // Bare `clerk migrate` prints help.
   //
   // The flags stay here rather than on `migrate`, matching how `config` keeps
   // its own on `pull`/`patch`/`put` — a group's help is a list of subcommands
@@ -68,8 +78,11 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
   migrateCommand
     .command("import")
     .description("Import users from an exported JSON or CSV file")
-    .argument("[file]", "A JSON or CSV export")
-    .option("--source <key>", "Where the file came from")
+    .argument("[file|export-run-id]", "The export file, or the ID of the export run that wrote it")
+    .option(
+      "--source <key>",
+      "Where the file came from. Not needed for a file from `clerk migrate export`",
+    )
     .option("--dry-run", "Check the file against the instance, report, and write nothing")
     .option("--allow-partial", "Import the users that pass the checks, and skip the rest")
     .option("--new-run", "Start a new run instead of continuing an earlier one of this file")
@@ -86,8 +99,12 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
     .setExamples([
       {
-        command: "clerk migrate import users.json --source supabase --dry-run",
-        description: "Check the file against the instance, and write nothing",
+        command: "clerk migrate import 20260929-141502-a1b2 --dry-run",
+        description: "Check what an export run wrote, and write nothing",
+      },
+      {
+        command: "clerk migrate import users.json --source supabase --yes",
+        description: "Import a file. Run it again to continue after a failure",
       },
       {
         command: "clerk migrate import users.json --source clerk --allow-partial --yes",
@@ -100,6 +117,8 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
         ...(input ? { input } : {}),
       }),
     );
+
+  registerMigrateExport(migrateCommand);
 
   // Flat, not under a noun group: this is the one command in the tree that
   // destroys data in Clerk, and it is worth keeping short and prominent.

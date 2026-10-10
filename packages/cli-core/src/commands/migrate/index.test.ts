@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { getMode, setMode } from "../../mode.ts";
 import { createProgram } from "../../cli-program.ts";
+import { exportPlatformKeys } from "./export/registry.ts";
 import { isAssumeYes, setAssumeYes } from "./lib/assume-yes.ts";
 
 let saved: string | undefined;
@@ -31,9 +32,10 @@ describe("registerMigrate", () => {
     expect(migrate?.description()).toContain("Migrate users");
   });
 
-  test("registers import, undo and runs", () => {
+  test("registers import, export, undo and runs", () => {
     expect(findCommand(["migrate"])?.commands.map((cmd) => cmd.name())).toEqual([
       "import",
+      "export",
       "undo",
       "runs",
     ]);
@@ -60,6 +62,50 @@ describe("registerMigrate", () => {
       "--runs-dir",
     ]);
   });
+
+  test("registers an export subcommand per registered platform", () => {
+    expect(findCommand(["migrate", "export"])?.commands.map((cmd) => cmd.name())).toEqual(
+      exportPlatformKeys(),
+    );
+  });
+
+  // Bare `migrate export` runs the picker rather than defaulting to a
+  // platform, so nobody exports from the wrong place by pressing enter.
+  test("leaves export with no default subcommand", () => {
+    const group = findCommand(["migrate", "export"]) as unknown as {
+      _defaultCommandName?: string;
+    };
+    expect(group._defaultCommandName).toBeFalsy();
+  });
+
+  test("migrate export takes exactly its flags", () => {
+    expect(findCommand(["migrate", "export"])?.options.map((option) => option.long)).toEqual([
+      "--runs-dir",
+      "--json",
+    ]);
+  });
+
+  test("migrate export clerk takes exactly its flags", () => {
+    expect(
+      findCommand(["migrate", "export", "clerk"])?.options.map((option) => option.long),
+    ).toEqual(["--output", "--yes", "--runs-dir", "--json", "--secret-key", "--app", "--instance"]);
+  });
+
+  test("migrate export supabase takes exactly its flags", () => {
+    expect(
+      findCommand(["migrate", "export", "supabase"])?.options.map((option) => option.long),
+    ).toEqual(["--db-url", "--output", "--yes", "--runs-dir", "--json"]);
+  });
+
+  test.each(exportPlatformKeys())(
+    "migrate export %s names the run folder as the default output",
+    (platform) => {
+      const output = findCommand(["migrate", "export", platform])?.options.find(
+        (option) => option.long === "--output",
+      );
+      expect(output?.description).toContain("instead of the run folder");
+    },
+  );
 
   test("registers runs with an optional run ID", () => {
     const runsCommand = findCommand(["migrate", "runs"]);
@@ -88,9 +134,9 @@ describe("registerMigrate", () => {
     expect(option?.argChoices).toBeUndefined();
   });
 
-  test("takes the file as an optional argument", () => {
+  test("takes the file, or the export run that wrote it, as an optional argument", () => {
     const [argument] = findCommand(["migrate", "import"])?.registeredArguments ?? [];
-    expect(argument?.name()).toBe("file");
+    expect(argument?.name()).toBe("file|export-run-id");
     expect(argument?.required).toBe(false);
   });
 
@@ -109,8 +155,11 @@ describe("registerMigrate", () => {
  */
 describe("the migrate group's -y hook", () => {
   let missing: string;
+  let missingDb: string;
   beforeAll(() => {
-    missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-hook-")), "none.json");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-hook-"));
+    missing = path.join(dir, "none.json");
+    missingDb = path.join(dir, "none.sqlite");
   });
 
   async function parse(argv: string[]) {
@@ -132,6 +181,10 @@ describe("the migrate group's -y hook", () => {
     );
   });
 
+  test("records -y on an export", async () => {
+    expect(await parse(["migrate", "export", "supabase", "-y", "--db-url", missingDb])).toBe(true);
+  });
+
   // `--json` means nobody reads a prompt, and agent mode is how every prompt in
   // this tree already knows to stand down.
   test("--json runs the command in agent mode", async () => {
@@ -139,6 +192,19 @@ describe("the migrate group's -y hook", () => {
     try {
       setMode("human");
       await parse(["migrate", "import", missing, "--json", "--secret-key", "sk_test_x"]);
+      expect(getMode()).toBe("agent");
+    } finally {
+      setMode(original);
+    }
+  });
+
+  // The export group declares --json too, and takes the flag; the hook has to
+  // read the group's options as well as the subcommand's.
+  test("--json on an export subcommand runs it in agent mode", async () => {
+    const original = getMode();
+    try {
+      setMode("human");
+      await parse(["migrate", "export", "supabase", "--json", "--db-url", missingDb]);
       expect(getMode()).toBe("agent");
     } finally {
       setMode(original);
