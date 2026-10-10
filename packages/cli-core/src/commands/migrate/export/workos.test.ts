@@ -120,6 +120,17 @@ describe("resolveWorkOsApiKey", () => {
     process.env.CLERK_MODE = "human";
     await expect(resolveWorkOsApiKey({ json: true }, {})).rejects.toThrow(/cannot prompt here/);
   });
+
+  // `-y` is "do not prompt", at a terminal too, as for every other export.
+  test("does not prompt for a missing key under -y", async () => {
+    process.env.CLERK_MODE = "human";
+    setAssumeYes(true);
+    try {
+      await expect(resolveWorkOsApiKey({}, {})).rejects.toThrow(/cannot prompt here/);
+    } finally {
+      setAssumeYes(false);
+    }
+  });
 });
 
 describe("fetchWorkOsPage", () => {
