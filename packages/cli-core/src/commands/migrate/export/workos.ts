@@ -92,7 +92,7 @@ export async function resolveWorkOsApiKey(
 
   if (resolved) return resolved.trim();
 
-  if (options.json || isAgent() || !isHuman()) {
+  if (options.json || isAssumeYes() || isAgent() || !isHuman()) {
     throwUsageError(
       "`clerk migrate export workos` needs a WorkOS API key and cannot prompt here.\n" +
         "Missing: --api-key (or WORKOS_API_KEY).",
