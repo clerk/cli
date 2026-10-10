@@ -104,6 +104,13 @@ export type CheckInput = {
    * sending `skip_legal_checks`. Without it they are rejected.
    */
   skipLegalChecks?: boolean;
+  /** Unverified identifiers are created reserved, so they meet a requirement. */
+  reserveUnverified?: boolean;
+  /**
+   * Source IDs of adopted users whose create reserved their unverified
+   * identifiers: those exist reserved, whatever this run's flag says.
+   */
+  reservedSourceIds?: Set<string>;
   /**
    * Clerk IDs a continued run found behind its own in-flight creates: finding
    * them in the instance is expected.
@@ -112,7 +119,9 @@ export type CheckInput = {
   /**
    * Source IDs of those adopted users. Each already exists in Clerk, so none
    * is rejected: the checks stop creates, and these need none. They count
-   * toward no quota either; the instance's live count has them already.
+   * toward no quota either; the instance's live count has them already. Their
+   * create ran in the mode its `creating` line records, so this run's flag
+   * does not decide what they reserved.
    */
   adoptedSourceIds?: Set<string>;
   spinner?: SpinnerControls;
@@ -170,21 +179,32 @@ export function hashShapeProblem(password: string, hasher: string): string | und
  *
  * An email or phone counts only when it is verified: an unverified one is
  * attached after the user exists, so it cannot satisfy a sign-up requirement.
+ * With `reserveUnverified` it goes on the create as reserved, which does.
  */
 function missingRequiredIdentifier(
   user: User,
   settings: UserSettingsJSON | null,
+  reserveUnverified = false,
 ): string | undefined {
   if (!settings) return undefined;
   const required = (attribute: AttributeName) => isRequired(settings, attribute);
   const identifiers = splitIdentifiers(user);
+  const reserved = (unverified: string[]) => reserveUnverified && unverified.length > 0;
 
-  if (required("email_address") && !identifiers.primaryEmail) {
+  if (
+    required("email_address") &&
+    !identifiers.primaryEmail &&
+    !reserved(identifiers.unverifiedEmails)
+  ) {
     return identifiers.unverifiedEmails.length > 0
       ? "only has an unverified email, and this instance requires an email"
       : "no email, which this instance requires";
   }
-  if (required("phone_number") && !identifiers.primaryPhone) {
+  if (
+    required("phone_number") &&
+    !identifiers.primaryPhone &&
+    !reserved(identifiers.unverifiedPhones)
+  ) {
     return identifiers.unverifiedPhones.length > 0
       ? "only has an unverified phone number, and this instance requires one"
       : "no phone number, which this instance requires";
@@ -536,7 +556,10 @@ const DUPLICATE_SOURCE_ID = "duplicate source ID in the file";
  *
  * @returns Each duplicate's reason, and the earlier user kept in its place.
  */
-function findFileDuplicates(users: User[]): {
+function findFileDuplicates(
+  users: User[],
+  reserves: (user: User) => boolean = () => false,
+): {
   reasons: Map<User, string>;
   keptBy: Map<User, string>;
 } {
@@ -554,9 +577,7 @@ function findFileDuplicates(users: User[]): {
     }
     seenIds.add(user.userId);
 
-    const { primaryEmail, primaryPhone } = splitIdentifiers(user);
-    const ownEmails = primaryEmail ? [primaryEmail] : [];
-    const ownPhones = primaryPhone ? [primaryPhone] : [];
+    const { emails: ownEmails, phones: ownPhones } = sentIdentifiers(user, reserves(user));
 
     const emailOwner = ownEmails.map((email) => emails.get(email.toLowerCase())).find(Boolean);
     const phoneOwner = ownPhones.map((phone) => phones.get(phoneKey(phone))).find(Boolean);
@@ -588,8 +609,38 @@ function findFileDuplicates(users: User[]): {
 }
 
 /**
- * Users the instance already holds, found by source ID, primary email,
- * primary phone or username.
+ * Whether a user's unverified identifiers are (or will be) created reserved:
+ * an adopted user's by what its create recorded, everyone else's by this
+ * run's flag.
+ */
+function reservesFor(input: CheckInput): (user: User) => boolean {
+  return (user) =>
+    input.adoptedSourceIds?.has(user.userId)
+      ? Boolean(input.reservedSourceIds?.has(user.userId))
+      : Boolean(input.reserveUnverified);
+}
+
+/**
+ * The emails and phones `POST /v1/users` sends for a user: the verified
+ * primary, plus the unverified ones when they are created reserved.
+ */
+function sentIdentifiers(user: User, reserveUnverified: boolean) {
+  const { primaryEmail, primaryPhone, unverifiedEmails, unverifiedPhones } = splitIdentifiers(user);
+  return {
+    emails: [
+      ...(primaryEmail ? [primaryEmail] : []),
+      ...(reserveUnverified ? unverifiedEmails : []),
+    ],
+    phones: [
+      ...(primaryPhone ? [primaryPhone] : []),
+      ...(reserveUnverified ? unverifiedPhones : []),
+    ],
+  };
+}
+
+/**
+ * Users the instance already holds, found by source ID, the emails and phones
+ * the create sends, or username.
  *
  * Only what `POST /v1/users` itself carries is looked up: an extra email that
  * collides is attached after the user exists, fails on its own, and is noted
@@ -605,10 +656,10 @@ async function findInstanceDuplicates(
   const byUsername = new Map<string, string>();
 
   for (const user of users) {
-    const identifiers = splitIdentifiers(user);
+    const sent = sentIdentifiers(user, reservesFor(input)(user));
     byExternalId.set(user.userId, user.userId);
-    if (identifiers.primaryEmail) byEmail.set(identifiers.primaryEmail.toLowerCase(), user.userId);
-    if (identifiers.primaryPhone) byPhone.set(phoneKey(identifiers.primaryPhone), user.userId);
+    for (const email of sent.emails) byEmail.set(email.toLowerCase(), user.userId);
+    for (const phone of sent.phones) byPhone.set(phoneKey(phone), user.userId);
     if (typeof user.username === "string" && user.username) {
       byUsername.set(user.username.toLowerCase(), user.userId);
     }
@@ -681,16 +732,18 @@ function findDisabledProviderRejects(input: CheckInput): Map<string, string> {
 
   const { excludedIds } = findUsersWithOnlyDisabledProviders(input.supabaseRows, disabled);
   // A disabled provider only strands a user with no other way in: a verified
-  // email or phone the instance signs in with by code or link still works.
+  // or reserved email or phone the instance signs in with by code or link
+  // still works.
   const strategies = firstFactorStrategies(input.settings);
   const usersById = new Map(input.users.map((user) => [user.userId, user]));
+  const reserves = reservesFor(input);
   const canSignInOtherwise = (id: string) => {
     const user = usersById.get(id);
     if (!user) return false;
-    const { primaryEmail, primaryPhone } = splitIdentifiers(user);
+    const { emails, phones } = sentIdentifiers(user, reserves(user));
     return (
-      (Boolean(primaryEmail) && (strategies.has("email_code") || strategies.has("email_link"))) ||
-      (Boolean(primaryPhone) && strategies.has("phone_code"))
+      (emails.length > 0 && (strategies.has("email_code") || strategies.has("email_link"))) ||
+      (phones.length > 0 && strategies.has("phone_code"))
     );
   };
   // Each reject names only that user's own providers.
@@ -821,10 +874,13 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
 
   // An unverified email does not satisfy a required one, so a file of only
   // unverified addresses flags the requirement even when every user has one.
-  const unverifiedOnly = users.some((user) => {
-    const identifiers = splitIdentifiers(user);
-    return !identifiers.primaryEmail && identifiers.unverifiedEmails.length > 0;
-  });
+  // Created reserved, it does, and making email optional fixes nothing.
+  const unverifiedOnly =
+    !input.reserveUnverified &&
+    users.some((user) => {
+      const identifiers = splitIdentifiers(user);
+      return !identifiers.primaryEmail && identifiers.unverifiedEmails.length > 0;
+    });
   const flagged = report.blocking.slice();
   if (
     unverifiedOnly &&
@@ -1004,7 +1060,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         (phoned.dropped && !hasAnyIdentifier(user)
           ? "only has phones not in E.164 form, which this instance refuses (numeric usernames are on)"
           : undefined) ??
-        missingRequiredIdentifier(user, input.settings) ??
+        missingRequiredIdentifier(user, input.settings, reservesFor(input)(user)) ??
         // Stripping the identifiers the instance has off can leave nothing to
         // sign in with; Clerk would still create the user.
         (!hasAnyIdentifier(sent)
@@ -1032,7 +1088,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     }
   }
 
-  const { reasons: fileDuplicates, keptBy } = findFileDuplicates(passed);
+  const { reasons: fileDuplicates, keptBy } = findFileDuplicates(passed, reservesFor(input));
   // An adopted user already holds its email, phone and username in Clerk, so
   // an earlier record that claimed one first is the one whose create would
   // fail. Keyed by that record's source ID, naming the adopted user.

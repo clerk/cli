@@ -1,22 +1,11 @@
 # `clerk migrate`
 
-> **Experimental.** `clerk migrate` is hidden from help and completion, and
-> refuses to run (exit 2, `experiment_disabled`), unless `CLERK_EXPERIMENTAL`
-> includes `migrate`:
->
-> ```sh
-> CLERK_EXPERIMENTAL=migrate clerk migrate import --help
-> ```
->
-> `CLERK_EXPERIMENTAL` is a comma-separated list. Names are trimmed and
-> case-insensitive, and unknown names are ignored.
-
 Migrate users into a Clerk instance from another auth provider, or from another
 Clerk instance.
 
 ```
-clerk migrate export <source> [-o <path>] [--json]
-clerk migrate import <file|export-run-id> [--source <source>] [--dry-run] [--allow-partial] [--new-run] [--yes] [--json]
+clerk migrate export [platform] [-o <path>] [--json]
+clerk migrate import [file|export-run-id] [--source <source>] [--dry-run] [--allow-partial] [--new-run] [--yes] [--json]
 clerk migrate runs [run-id] [--json]
 clerk migrate undo <run-id> [--dry-run] [--yes] [--json]
 clerk migrate sources [source] [--json]
@@ -32,8 +21,8 @@ clerk migrate import 20260929-141502-a1b2 --yes       # 3. import it
 ```
 
 `clerk migrate undo <run-id>` takes an import back out, and `clerk migrate runs`
-shows what every run did. Every subcommand takes `--runs-dir <path>` (or
-`CLERK_MIGRATE_DIR`) to keep its runs somewhere else.
+shows what every run did. Every subcommand but `sources` takes `--runs-dir <path>`
+(or `CLERK_MIGRATE_DIR`) to keep its runs somewhere else.
 `clerk migrate` on its own is a group name, not a command: it prints its help.
 
 ## The rules
@@ -268,7 +257,7 @@ the flag to pass.
 | Flag                       | Platforms                          | Description                                               |
 | -------------------------- | ---------------------------------- | --------------------------------------------------------- |
 | `-o, --output <path>`      | all                                | Write the export here instead of the run folder           |
-| `-y, --yes`                | all                                | Do not prompt: fail on a bad credential                   |
+| `-y, --yes`                | all                                | Do not prompt: fail on a rejected credential              |
 | `--json`                   | all                                | Print the result as JSON; never prompts                   |
 | `--runs-dir <path>`        | all                                | Where runs are kept (see [the run store](#the-run-store)) |
 | `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Connection string (Postgres only for `supabase`)          |
@@ -385,7 +374,9 @@ only opens local files and `@libsql/client` ships native optional dependencies.
 Nothing native ships in the binary — that is the whole reason the `engines.bun`
 floor exists. Resolution is `--db-url`, then `SUPABASE_DB_URL` / `AUTHJS_DB_URL`
 / `BETTERAUTH_DB_URL`, then a masked prompt, since a connection string carries the password inline. A password
-pasted unencoded (`#`, `@`, `/` and the like) is percent-encoded for you.
+pasted unencoded (`#`, `@`, `/` and the like) is percent-encoded for you. A libsql
+token comes from `?authToken=` on the URL, or from `TURSO_AUTH_TOKEN` /
+`LIBSQL_AUTH_TOKEN`, and is redacted like a password.
 
 **Connection strings are redacted everywhere.** Errors show
 `postgres://***@host/db`, including when the password itself contains an
@@ -587,6 +578,7 @@ clerk migrate import users.json --source clerk --new-run --yes
 clerk migrate import users.json --source clerk --json --yes
 clerk migrate import users.json --source clerk --require-password --yes
 clerk migrate import users.json --source clerk --skip-legal-checks --yes
+clerk migrate import users.json --source workos --reserve-unverified --yes
 clerk migrate import users.json --source firebase --firebase-signer-key SIGNER_KEY \
   --firebase-salt-separator SALT_SEPARATOR --firebase-rounds 8 --firebase-mem-cost 14 --yes
 clerk migrate import users.json --source clerk --runs-dir ./runs --yes
@@ -595,22 +587,23 @@ clerk migrate import users.json --source clerk --secret-key sk_test_... -y
 clerk migrate import                                          # a human is asked
 ```
 
-| Flag                                    | Description                                                         |
-| --------------------------------------- | ------------------------------------------------------------------- |
-| `[file\|export-run-id]`                 | The export file, or the ID of the export run that wrote it          |
-| `--source <key\|path>`                  | Where the file came from: a [source](#sources), or one you wrote    |
-| `--dry-run`                             | Run the [checks](#checks) against the instance, and write nothing   |
-| `--allow-partial`                       | Import the users that pass, and record the rest as skipped          |
-| `--new-run`                             | Start a new run instead of [continuing](#re-running) an earlier one |
-| `--require-password`                    | Import only users that carry a password digest                      |
-| `--skip-legal-checks`                   | Import users with no legal acceptance into an instance requiring it |
-| `--firebase-signer-key <key>`           | Firebase base64 signer key (overrides the export file)              |
-| `--firebase-salt-separator <separator>` | Firebase base64 salt separator                                      |
-| `--firebase-rounds <n>`                 | Firebase scrypt rounds                                              |
-| `--firebase-mem-cost <n>`               | Firebase scrypt memory cost                                         |
-| `-y, --yes`                             | Import without prompting                                            |
-| `--json`                                | Output as JSON. Never prompts, so importing needs `--yes`           |
-| `--runs-dir <path>`                     | Where runs are kept (see [the run store](#the-run-store))           |
+| Flag                                    | Description                                                                                   |
+| --------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `[file\|export-run-id]`                 | The export file, or the ID of the export run that wrote it                                    |
+| `--source <key\|path>`                  | Where the file came from: a [source](#sources), or one you wrote                              |
+| `--dry-run`                             | Run the [checks](#checks) against the instance, and write nothing                             |
+| `--allow-partial`                       | Import the users that pass, and record the rest as skipped                                    |
+| `--new-run`                             | Start a new run instead of [continuing](#re-running) an earlier one                           |
+| `--require-password`                    | Import only users that carry a password digest                                                |
+| `--skip-legal-checks`                   | Import users with no legal acceptance into an instance requiring it                           |
+| `--reserve-unverified`                  | Create [unverified identifiers](#verified-vs-unverified-identifiers) reserved, not unverified |
+| `--firebase-signer-key <key>`           | Firebase base64 signer key (overrides the export file)                                        |
+| `--firebase-salt-separator <separator>` | Firebase base64 salt separator                                                                |
+| `--firebase-rounds <n>`                 | Firebase scrypt rounds                                                                        |
+| `--firebase-mem-cost <n>`               | Firebase scrypt memory cost                                                                   |
+| `-y, --yes`                             | Import without prompting                                                                      |
+| `--json`                                | Output as JSON. Never prompts, so importing needs `--yes`                                     |
+| `--runs-dir <path>`                     | Where runs are kept (see [the run store](#the-run-store))                                     |
 
 Plus the targeting flags from the table above: `--secret-key`, `--app` and
 `--instance`.
@@ -721,7 +714,7 @@ after them. They sort the users three ways:
     any other user, with a warning
   - it lacks an identifier the instance requires. An email or phone counts
     only when it is verified, because an unverified one is attached after the
-    user exists
+    user exists, or with `--reserve-unverified`, which creates it reserved
   - it has no identifier left once the emails and phones Clerk would refuse
     are stripped: those of an instance that neither has them on nor signs in
     or does MFA with them. A username is kept, as Clerk stores it with
@@ -827,6 +820,12 @@ instance does not support, or a number that is not E.164 — and the user has an
 email: the create is retried without the phone. The user counts as imported,
 and the summary lists them under "Imported without their phone", by Clerk's
 reason (`result.warnings` in `--json`).
+
+With [reserved](#verified-vs-unverified-identifiers) phones on the create, the
+refused one may be any of them, so the verified phone is retried alone first.
+Reserved phones the refusal kept off, when Clerk's answer can't say which was
+refused, are attached one by one once the user exists, unverified: only the
+refused one is lost.
 
 #### Throughput
 
@@ -1098,6 +1097,22 @@ unconfirmed address there would silently promote it.
   means verified; `""`, `null` and `\N` do not.
 
 A Clerk export keeps an unverified primary email or phone unverified.
+
+**Unverified or reserved.** By default an unverified identifier is attached
+after the user exists (`POST /v1/email_addresses` or `POST /v1/phone_numbers`,
+`verified: false`). The user
+cannot sign in with it, and another user can claim it by verifying it first.
+`--reserve-unverified`, or a yes at the prompt a human gets when the file has
+any, creates them **reserved** instead, on `POST /v1/users` through
+`email_address_identification_status` / `phone_number_identification_status`.
+A reserved identifier is unverified, but usable for sign-in and locked to the
+user, and becomes verified the first time the user signs in with it. That is
+how most source platforms treat an unconfirmed address, but it lets the user
+sign in with one nobody proved they own, so it is opt-in. `-y`, `--json` and
+agent mode never ask, and keep them unverified without the flag. A continued
+run uses whichever the flag or answer says that time for the users it creates;
+a user it adopts keeps the mode its first create recorded (`reserved` on its
+`creating` line).
 
 ### Firebase hash parameters
 

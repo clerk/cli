@@ -104,8 +104,6 @@ export const ERROR_CODE = {
   INSTALLER_NOT_FOUND: "installer_not_found",
   /** The npm registry was unreachable. */
   REGISTRY_UNREACHABLE: "registry_unreachable",
-  /** The command is experimental and its `CLERK_EXPERIMENTAL` name isn't set. */
-  EXPERIMENT_DISABLED: "experiment_disabled",
   /** Production instance was created but came back without a domain. */
   DEPLOY_DOMAIN_MISSING: "deploy_domain_missing",
   /**

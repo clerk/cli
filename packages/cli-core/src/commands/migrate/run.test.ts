@@ -705,6 +705,30 @@ describe("run", () => {
       );
     });
 
+    // Reserved meets the requirement, so neither the reject nor the fix applies.
+    test("with --reserve-unverified, an unverified-only user is neither rejected nor a fix", async () => {
+      stubClerk({
+        settings: {
+          attributes: { email_address: { enabled: true, required: true } },
+          // A way in besides a password, so users without one import.
+          enterprise_sso: { enabled: true },
+        },
+      });
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", unverified_email_addresses: "b@x.dev" },
+        ]),
+      );
+
+      await run({ ...baseOptions, dryRun: true, reserveUnverified: true });
+
+      expect(captured.err).not.toContain("only has an unverified email");
+      expect(captured.err).not.toContain("required_for_sign_up");
+      expect(process.exitCode).toBe(0);
+    });
+
     test("legal consent: refused without --skip-legal-checks, sent with skip_legal_checks with it", async () => {
       stubClerk({
         settings: {
@@ -1107,6 +1131,81 @@ describe("run", () => {
         clerkId: "user_found",
       });
       expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
+    });
+
+    // The `creating` line records what the create did; a continued run reads it
+    // back rather than guessing from this run's flags.
+    test("an adopted user whose create reserved its unverified email gets no attach for it", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", primary_email_address: "b@x.dev", unverified_email_addresses: "c@x.dev" },
+        ]),
+      );
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating", reserved: true })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
+      await run(baseOptions);
+
+      expect(created()).toEqual([]);
+      expect(requests.filter((r) => r.url.endsWith("/v1/email_addresses"))).toEqual([]);
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+      });
+    });
+
+    // Created reserved by the run that stopped: its unverified email exists
+    // reserved, and meets the requirement, though this run has no flag.
+    test("an adopted user created reserved meets a required email without the flag", async () => {
+      const settings = {
+        attributes: { email_address: { enabled: true, required: true } },
+        enterprise_sso: { enabled: true },
+      };
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", unverified_email_addresses: "c@x.dev" },
+        ]),
+      );
+      stubClerk({ settings, failing: new Set(["u2"]) });
+      await run({ ...baseOptions, reserveUnverified: true });
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating", reserved: true })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({
+        settings,
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
+      await run(baseOptions);
+
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+      });
     });
 
     // A reject would stop a create; an adopted user needs none. Rejected, it

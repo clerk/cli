@@ -37,7 +37,7 @@ import { confirm } from "../../lib/prompts.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../mode.ts";
-import { importUsers } from "./import-users.ts";
+import { importUsers, splitIdentifiers } from "./import-users.ts";
 import { checkImport, type ImportChecks } from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
@@ -101,6 +101,12 @@ export type MigrateRunOptions = {
    * Without it, a prompt asks; where nobody can be asked, they are rejected.
    */
   skipLegalChecks?: boolean;
+  /**
+   * Create the emails and phones the source never verified as reserved, not
+   * unverified. Without it, a prompt asks; where nobody can be asked, they
+   * stay unverified.
+   */
+  reserveUnverified?: boolean;
   /** Check against the instance, report, and write nothing. */
   dryRun?: boolean;
   /** Import the users that pass, and record the rest as skipped. */
@@ -651,6 +657,7 @@ function commandFor(options: MigrateRunOptions, fromExport: string | undefined, 
   if (options.newRun) parts.push("--new-run");
   if (options.requirePassword) parts.push("--require-password");
   if (options.skipLegalChecks) parts.push("--skip-legal-checks");
+  if (options.reserveUnverified) parts.push("--reserve-unverified");
   // Names, not `<…>`: pasted as is, a shell reads `<key>` as a redirect.
   if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "SIGNER_KEY");
   if (options.firebaseSaltSeparator !== undefined)
@@ -835,9 +842,11 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       const done = new Map<string, string>();
       const attachOnly: UserLine[] = [];
       const inFlight: string[] = [];
+      const inFlightReserved = new Set<string>();
       if (continued) {
         for (const line of latestUserLines(runsDir, continued.id).values()) {
           if (line.status === "creating") inFlight.push(line.sourceId);
+          if (line.status === "creating" && line.reserved) inFlightReserved.add(line.sourceId);
           if (line.status !== "created" || !line.clerkId) continue;
           done.set(line.sourceId, line.clerkId);
           if (line.pending?.length) attachOnly.push(line);
@@ -938,10 +947,35 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         });
       }
 
+      // Unverified stays the default: reserved makes an address the source never
+      // confirmed usable for sign-in, which is the operator's call to make.
+      let reserveUnverified = options.reserveUnverified ?? false;
+      const withUnverified = users.filter((user) => {
+        const { unverifiedEmails, unverifiedPhones } = splitIdentifiers(user);
+        return unverifiedEmails.length > 0 || unverifiedPhones.length > 0;
+      }).length;
+      // `-y` is consent to write, not a yes to this, so it does not ask.
+      if (
+        !reserveUnverified &&
+        withUnverified > 0 &&
+        !options.dryRun &&
+        !options.yes &&
+        canPrompt(options)
+      ) {
+        reserveUnverified = await confirm({
+          message: `${plural(withUnverified, "user")} ${withUnverified === 1 ? "has" : "have"} an email or phone the source never verified. Create them reserved (usable for sign-in, locked to the user) instead of unverified?`,
+          default: false,
+        });
+      }
+      // The answers carry into every command printed from here on, so a
+      // suggested re-run does not quietly drop what the operator chose.
+      options = { ...options, skipLegalChecks, reserveUnverified };
+
       const checks = await withSpinner("Checking users against the instance...", async (spinner) =>
         checkImport({
           users,
           skipLegalChecks,
+          reserveUnverified,
           failures,
           unknownFields: loaded.unknownFields,
           ...(supabaseRows ? { supabaseRows } : {}),
@@ -953,6 +987,8 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
           schedule,
           adoptedClerkIds: new Set(adopted.values()),
           adoptedSourceIds: new Set(adopted.keys()),
+          // Their `creating` line says how the create ran, not this run's flag.
+          reservedSourceIds: new Set([...adopted.keys()].filter((id) => inFlightReserved.has(id))),
           spinner,
         }),
       );
@@ -1087,7 +1123,9 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                   runId: run.record.id,
                   attachOnly,
                   adopted,
+                  adoptedReserved: inFlightReserved,
                   skipPasswordRequirement: !options.requirePassword,
+                  reserveUnverified,
                   progress,
                 }),
             )

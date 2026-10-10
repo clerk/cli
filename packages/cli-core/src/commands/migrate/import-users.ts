@@ -122,22 +122,58 @@ export function splitIdentifiers(user: User): Identifiers {
 }
 
 /**
+ * The values and parallel statuses for one identifier kind on `POST /v1/users`.
+ *
+ * A reserved identifier is unverified, but usable for sign-in and locked to
+ * this user. Only the create can make one, so with `reserve` the unverified
+ * identifiers go here instead of being attached afterwards.
+ */
+function createIdentifiers(
+  verified: string | undefined,
+  unverified: string[],
+  reserve: boolean,
+): { values: string[]; statuses?: string[] } {
+  const values = [...(verified ? [verified] : []), ...(reserve ? unverified : [])];
+  if (!reserve || unverified.length === 0) return { values };
+  return {
+    values,
+    statuses: values.map((_, index) => (verified && index === 0 ? "verified" : "reserved")),
+  };
+}
+
+/**
  * Builds the `POST /v1/users` request body.
  *
  * Optional fields are omitted rather than sent as null so Clerk applies its own
  * defaults for anything the source platform did not record.
+ *
+ * @param reserveUnverified - Create the identifiers the source never verified
+ *   as reserved, in this request, rather than attaching them unverified.
  */
 export function buildCreateUserBody(
   user: User,
   identifiers: Identifiers,
   skipPasswordRequirement: boolean,
+  reserveUnverified = false,
 ): Record<string, unknown> {
   // The instance's allowlist, blocklist, disposable-email and subaddress rules
   // police sign-ups. These users already signed up, on the source platform.
   const body: Record<string, unknown> = { external_id: user.userId, skip_restriction_checks: true };
 
-  if (identifiers.primaryEmail) body.email_address = [identifiers.primaryEmail];
-  if (identifiers.primaryPhone) body.phone_number = [identifiers.primaryPhone];
+  const emails = createIdentifiers(
+    identifiers.primaryEmail,
+    identifiers.unverifiedEmails,
+    reserveUnverified,
+  );
+  if (emails.values.length > 0) body.email_address = emails.values;
+  if (emails.statuses) body.email_address_identification_status = emails.statuses;
+  const phones = createIdentifiers(
+    identifiers.primaryPhone,
+    identifiers.unverifiedPhones,
+    reserveUnverified,
+  );
+  if (phones.values.length > 0) body.phone_number = phones.values;
+  if (phones.statuses) body.phone_number_identification_status = phones.statuses;
   if (user.firstName) body.first_name = user.firstName;
   if (user.lastName) body.last_name = user.lastName;
   if (user.username) body.username = user.username;
@@ -181,7 +217,20 @@ type CreateContext = {
   quota: AbortController;
   /** Aborted by a Ctrl-C or the quota. No create goes out after it. */
   stop: AbortSignal;
+  /** Unverified identifiers go on the create as reserved, not attached after. */
+  reserveUnverified: boolean;
 };
+
+/**
+ * True when Clerk refused the create for a phone. The country error names no
+ * parameter, only its own code.
+ */
+function isPhoneRefusal(error: unknown): error is BapiError {
+  return (
+    error instanceof BapiError &&
+    (error.code === "unsupported_country_code" || error.meta?.param_name === "phone_number")
+  );
+}
 
 /** A request a stop kept from going out: neither a failure nor unknown. */
 class NotSentError extends Error {}
@@ -197,8 +246,19 @@ export function outcomeUnknown(error: unknown): boolean {
   return true;
 }
 
-/** The extra identifiers a user carries, in the order they are attached. */
-export function pendingIdentifiers(identifiers: Identifiers): PendingIdentifier[] {
+/**
+ * The extra identifiers a user carries, in the order they are attached.
+ *
+ * @param reserveUnverified - The unverified ones went on the create as
+ *   reserved, so there is nothing to attach for them.
+ */
+export function pendingIdentifiers(
+  identifiers: Identifiers,
+  reserveUnverified = false,
+): PendingIdentifier[] {
+  if (reserveUnverified) {
+    identifiers = { ...identifiers, unverifiedEmails: [], unverifiedPhones: [] };
+  }
   return [
     ...identifiers.additionalEmails.map((value) => ({
       kind: "email" as const,
@@ -288,13 +348,21 @@ async function attachAll(
   };
 }
 
+type CreatedUser = {
+  clerkUserId: string;
+  notes: string[];
+  /** Reserved phones a refusal kept off the create, to attach one by one. */
+  attachLater?: string[];
+  phoneRefusal?: string;
+};
+
 /**
  * Creates one user, retrying without a phone Clerk refuses.
  *
  * @param sending - Called as each `POST /v1/users` goes out, so the run
  *   records the user only once a create may actually land.
- * @returns The Clerk ID, a note when the phone was dropped, and Clerk's
- *   reason for refusing it.
+ * @returns The Clerk ID, a note when the phone was dropped, Clerk's reason
+ *   for refusing it, and the reserved phones still to attach.
  */
 async function createUser(
   ctx: CreateContext,
@@ -302,7 +370,7 @@ async function createUser(
   identifiers: Identifiers,
   skipPasswordRequirement: boolean,
   sending: () => void,
-): Promise<{ clerkUserId: string; notes: string[]; phoneRefusal?: string }> {
+): Promise<CreatedUser> {
   // A Ctrl-C or a full instance hands the slot on to queued creates; none
   // of them is sent, and none waits for a paced turn to find that out.
   const create = async (body: Record<string, unknown>) =>
@@ -320,7 +388,12 @@ async function createUser(
       { stop: ctx.stop },
     );
 
-  const body = buildCreateUserBody(user, identifiers, skipPasswordRequirement);
+  const body = buildCreateUserBody(
+    user,
+    identifiers,
+    skipPasswordRequirement,
+    ctx.reserveUnverified,
+  );
   // The run's marker, with whatever private metadata the source brought:
   // without it a create cut off mid-flight could never be told from a user
   // someone else made with the same external_id. It replaces a marker the
@@ -333,21 +406,48 @@ async function createUser(
   }
   const notes: string[] = [];
   let phoneRefusal: string | undefined;
+  let attachLater: string[] = [];
   let response;
   try {
     response = await create(body);
   } catch (error) {
     // A phone Clerk refuses (a country it does not support, a number that is
     // not E.164) should not cost a user who has an email to be created under.
-    // The country error names no parameter, only its own code.
-    const phoneRefused =
-      error instanceof BapiError &&
-      (error.code === "unsupported_country_code" || error.meta?.param_name === "phone_number");
-    if (!phoneRefused || !identifiers.primaryEmail) throw error;
-    const { phone_number: _dropped, ...withoutPhone } = body;
-    response = await create(withoutPhone);
-    phoneRefusal = error.longMessage ?? error.message;
-    notes.push(`Failed to add phone ${identifiers.primaryPhone}: ${phoneRefusal}`);
+    if (!isPhoneRefusal(error)) throw error;
+    const {
+      phone_number: sent,
+      phone_number_identification_status: statuses,
+      ...withoutPhone
+    } = body;
+    let refusal = error;
+    let dropped = sent as string[];
+    // With reserved phones on the create, any one of them may be the refused
+    // one: the verified phone alone goes first, so it is not lost with them.
+    if (statuses && identifiers.primaryPhone) {
+      try {
+        response = await create({ ...withoutPhone, phone_number: [identifiers.primaryPhone] });
+        dropped = dropped.filter((phone) => phone !== identifiers.primaryPhone);
+      } catch (retryError) {
+        if (!isPhoneRefusal(retryError)) throw retryError;
+        refusal = retryError;
+      }
+    }
+    if (!response) {
+      if (!body.email_address) throw refusal;
+      response = await create(withoutPhone);
+    }
+    // Which reserved phone was refused is unknown when there are several, or
+    // when the verified one was refused alone: each is attached on its own once
+    // the user exists, unverified, so only a refused one is lost.
+    const reservedDropped = dropped.filter((phone) => phone !== identifiers.primaryPhone);
+    if (statuses && (refusal !== error || reservedDropped.length > 1)) {
+      attachLater = reservedDropped;
+      dropped = dropped.filter((phone) => !attachLater.includes(phone));
+    }
+    if (dropped.length > 0) {
+      phoneRefusal = refusal.longMessage ?? refusal.message;
+      notes.push(`Failed to add phone ${dropped.join(", ")}: ${phoneRefusal}`);
+    }
   }
 
   // Untracked, the user could never be undone. Thrown, the outcome is unknown,
@@ -356,7 +456,12 @@ async function createUser(
   if (typeof clerkUserId !== "string" || !clerkUserId) {
     throw new Error("Clerk answered POST /v1/users without a user ID");
   }
-  return { clerkUserId, notes, ...(phoneRefusal ? { phoneRefusal } : {}) };
+  return {
+    clerkUserId,
+    notes,
+    attachLater,
+    ...(phoneRefusal ? { phoneRefusal } : {}),
+  };
 }
 
 export type ImportUsersOptions = {
@@ -378,8 +483,16 @@ export type ImportUsersOptions = {
    * not created again; only their extra identifiers are sent.
    */
   adopted?: Map<string, string>;
+  /**
+   * The adopted users whose create reserved their unverified identifiers, from
+   * its `creating` line. The rest had them attached unverified, whatever this
+   * run's `reserveUnverified` says.
+   */
+  adoptedReserved?: Set<string>;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
+  /** Create the identifiers the source never verified as reserved. */
+  reserveUnverified?: boolean;
   /** Carried into the summary so the report covers the whole file. */
   validationFailed?: number;
   /** Receives the counts as each user finishes. */
@@ -402,7 +515,9 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     attachOnly = [],
     runId,
     adopted = new Map<string, string>(),
+    adoptedReserved = new Set<string>(),
     skipPasswordRequirement = true,
+    reserveUnverified = false,
     validationFailed = 0,
     progress: report,
   } = options;
@@ -422,6 +537,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     schedule: createApiScheduler(limits.concurrencyLimit, limits.rateLimit),
     quota,
     stop: AbortSignal.any([interruptSignal(), quota.signal]),
+    reserveUnverified,
     ...(runId ? { runId } : {}),
   };
 
@@ -467,8 +583,14 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   const processUser = async (user: User): Promise<void> => {
     const retries: string[] = [];
     const identifiers = splitIdentifiers(user);
-    let created: { clerkUserId: string; notes: string[]; phoneRefusal?: string };
+    let created: CreatedUser;
     const adoptedId = adopted.get(user.userId);
+    // What the create did with the unverified identifiers decides what is left
+    // to attach: an adopted user's create may have run in the other mode.
+    const reserved = adoptedId
+      ? adoptedReserved.has(user.userId)
+      : reserveUnverified &&
+        (identifiers.unverifiedEmails.length > 0 || identifiers.unverifiedPhones.length > 0);
     let sent = false;
     try {
       created = adoptedId
@@ -477,7 +599,11 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
             async () =>
               createUser(ctx, user, identifiers, skipPasswordRequirement, () => {
                 sent = true;
-                record({ sourceId: user.userId, status: "creating" });
+                record({
+                  sourceId: user.userId,
+                  status: "creating",
+                  ...(reserved ? { reserved: true } : {}),
+                });
               }),
             {
               signal: ctx.stop,
@@ -525,7 +651,12 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     };
     // One line, pending and all: a run stopped between a `created` line and a
     // later `pending` one would read the user as settled, its extras unsent.
-    const toAttach = pendingIdentifiers(identifiers);
+    const retried = (created.attachLater ?? []).map((value) => ({
+      kind: "phone" as const,
+      value,
+      verified: false,
+    }));
+    const toAttach = [...pendingIdentifiers(identifiers, reserved), ...retried];
     record(toAttach.length > 0 ? { ...line, pending: toAttach } : line);
     if (created.phoneRefusal) {
       const reason = normalizeErrorMessage(created.phoneRefusal);
