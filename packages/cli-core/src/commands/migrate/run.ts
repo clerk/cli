@@ -41,6 +41,12 @@ import { importUsers } from "./import-users.ts";
 import { checkImport, type ImportChecks } from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
+import {
+  firebaseHashConfigProblem,
+  fingerprintFirebaseHashConfig,
+  resolveFirebaseHashConfig,
+  type FirebaseHashFlags,
+} from "./lib/firebase-hash.ts";
 import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
 import {
   continueRun,
@@ -73,7 +79,7 @@ import {
 } from "./lib/transform.ts";
 import { resolveSource, sourceKeys } from "./sources/registry.ts";
 import type { ImportSummary, User } from "./types.ts";
-import { promptForFile, promptForSource } from "./wizard.ts";
+import { promptForFile, promptForFirebaseHashConfig, promptForSource } from "./wizard.ts";
 import { login } from "../auth/login.ts";
 import { link } from "../link/index.ts";
 
@@ -103,7 +109,7 @@ export type MigrateRunOptions = {
   instance?: string;
   /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
   runsDir?: string;
-};
+} & FirebaseHashFlags;
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
@@ -601,6 +607,12 @@ function commandFor(options: MigrateRunOptions, fromExport: string | undefined, 
   if (options.newRun) parts.push("--new-run");
   if (options.requirePassword) parts.push("--require-password");
   if (options.skipLegalChecks) parts.push("--skip-legal-checks");
+  // Names, not `<…>`: pasted as is, a shell reads `<key>` as a redirect.
+  if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "SIGNER_KEY");
+  if (options.firebaseSaltSeparator !== undefined)
+    parts.push("--firebase-salt-separator", "SALT_SEPARATOR");
+  if (options.firebaseRounds) parts.push("--firebase-rounds", "ROUNDS");
+  if (options.firebaseMemCost) parts.push("--firebase-mem-cost", "MEM_COST");
   if (options.secretKey) parts.push("--secret-key", "<key>");
   if (options.app) parts.push("--app", quoteArg(options.app));
   if (options.instance) parts.push("--instance", quoteArg(options.instance));
@@ -660,6 +672,23 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   }
 
   const { source, file } = validateRunOptions(options);
+  // The flags win, so a rotated key can be passed without re-exporting.
+  const fromFlags = resolveFirebaseHashConfig(options, source);
+  let firebaseHashConfig = fromFlags ?? (source === "firebase" ? envelope?.firebase : undefined);
+  let configFrom = fromFlags ? "the --firebase-* flags" : "the export file";
+  if (source === "firebase" && !firebaseHashConfig && canPrompt(options)) {
+    firebaseHashConfig = await promptForFirebaseHashConfig();
+    configFrom = "the parameters entered";
+  }
+  // Wherever they came from, each goes into every password digest.
+  const problem = firebaseHashConfig && firebaseHashConfigProblem(firebaseHashConfig);
+  if (problem) {
+    throwUsageError(
+      `The Firebase hash parameters from ${configFrom} won't work: ${problem}. Nothing was imported.\n` +
+        "Find all four in the Firebase console under Authentication → Users → (⋮) → Password hash parameters.",
+      "https://clerk.com/docs/guides/development/migrating/firebase",
+    );
+  }
 
   await withGutter(
     "Migrating users to Clerk",
@@ -681,6 +710,23 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             instanceId: target.instanceId,
             keyInstanceId: keyInstanceId(secretKey),
           });
+
+      // The users this run created carry digests built from its parameters, so
+      // the rest must be built from the same ones. A run from before this was
+      // recorded has none to compare, and continues as it did.
+      const firebaseHash = firebaseHashConfig
+        ? fingerprintFirebaseHashConfig(firebaseHashConfig)
+        : undefined;
+      if (
+        resume.kind === "continue" &&
+        resume.record.firebaseHash &&
+        resume.record.firebaseHash !== firebaseHash
+      ) {
+        throwUsageError(
+          `Run ${resume.record.id} imported this file with different Firebase hash parameters, and the users it created carry digests built from them. Nothing was imported.\n` +
+            "Pass the same --firebase-* flags to continue it, or --new-run to start a new run.",
+        );
+      }
 
       if (resume.kind === "complete") {
         if (options.json) {
@@ -741,7 +787,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       }
 
       const loaded = await withSpinner(`Loading users from ${file}...`, async () =>
-        loadUsersFromFile(file, source),
+        loadUsersFromFile(file, source, { context: { firebaseHashConfig } }),
       );
       let users = loaded.users.filter((user) => !done.has(user.userId));
       const failures = loaded.failures.filter((failure) => !done.has(failure.userId));
@@ -926,6 +972,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             source,
             file: { path: filePath, sha256 },
             ...(input.fromExport ? { fromExport: input.fromExport } : {}),
+            ...(firebaseHash ? { firebaseHash } : {}),
           });
       // Printed now, not on the way out: on a Ctrl-C the signal handler exits
       // before the import returns, and the folder is the only record of who

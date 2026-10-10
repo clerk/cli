@@ -10,9 +10,10 @@
 import { throwUsageError } from "../../../lib/errors.ts";
 import type { SourceEntry } from "../types.ts";
 import clerkSource from "./clerk.ts";
+import firebaseSource from "./firebase.ts";
 import supabaseSource from "./supabase.ts";
 
-export const sources: SourceEntry[] = [clerkSource, supabaseSource];
+export const sources: SourceEntry[] = [clerkSource, firebaseSource, supabaseSource];
 
 export const ACCOUNT_LINKING_URL =
   "https://clerk.com/docs/guides/configure/auth-strategies/social-connections/account-linking";

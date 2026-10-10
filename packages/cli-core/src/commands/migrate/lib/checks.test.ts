@@ -1044,6 +1044,8 @@ describe("hashShapeProblem", () => {
   test.each([
     [BCRYPT, "bcrypt"],
     ["hash$salt$signer$sep$8$14", "scrypt_firebase"],
+    // A project with no salt separator.
+    ["hash$salt$signer$$8$14", "scrypt_firebase"],
     ["$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA", "argon2id"],
     [`scrypt:16384:16:1$${"a".repeat(32)}$${"b".repeat(128)}`, "scrypt_werkzeug"],
     // Not checked: a bad digest there fails only at sign-in.
@@ -1058,6 +1060,10 @@ describe("hashShapeProblem", () => {
     ["$2a$03$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy", "bcrypt"],
     ["hash$salt$signer$sep$eight$14", "scrypt_firebase"],
     ["hash$salt", "scrypt_firebase"],
+    ["hash$$signer$sep$8$14", "scrypt_firebase"],
+    // Clerk decodes every segment as base64.
+    ["not base64!$salt$signer$sep$8$14", "scrypt_firebase"],
+    ["hash$sa=lt$signer$sep$8$14", "scrypt_firebase"],
     ["argon2id$...", "argon2id"],
     ["scrypt:16384:16:1$salt$not-hex!", "scrypt_werkzeug"],
   ])("rejects %s as %s", (password, hasher) => {

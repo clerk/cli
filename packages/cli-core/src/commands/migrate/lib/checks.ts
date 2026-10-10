@@ -23,6 +23,7 @@ import { isEnabled, isRequired, type AttributeName } from "../../users/interacti
 import { splitIdentifiers } from "../import-users.ts";
 import type { User } from "../types.ts";
 import { analyzeFields, hasValue } from "./analysis.ts";
+import { decodesLikeClerk } from "./firebase-hash.ts";
 import {
   clerkOffersProvider,
   enabledSocialProviders,
@@ -140,7 +141,10 @@ export function hashShapeProblem(password: string, hasher: string): string | und
       const parts = password.split("$");
       const numeric = (value: string | undefined) => /^\d+$/.test(value ?? "");
       return parts.length === 6 &&
-        parts.slice(0, 4).every(Boolean) &&
+        // The salt separator (parts[3]) may be empty.
+        parts.slice(0, 3).every(Boolean) &&
+        // Clerk decodes all four as base64 (`Validate` in pkg/hash/scrypt.go).
+        parts.slice(0, 4).every(decodesLikeClerk) &&
         numeric(parts[4]) &&
         numeric(parts[5])
         ? undefined
