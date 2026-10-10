@@ -19,6 +19,7 @@ import {
   latestUserLines,
   listRuns,
   lockFile,
+  lockImport,
   newRunId,
   patchRun,
   readRun,
@@ -191,6 +192,21 @@ describe("locks and interruptions", () => {
     const run = startRun(runsDir, init);
     expect(runState(runsDir, run.record)).toBe("interrupted");
     expect(() => continueRun(runsDir, run.record)).not.toThrow();
+  });
+
+  // A lock created empty and written after reads as stale to a second
+  // process in between, which would remove it and import beside the first.
+  test("a lock is linked into place with its PID already written", () => {
+    const identity = { sha256: "a".repeat(64), source: "supabase", instanceId: "ins_lock" };
+    const write = spyOn(fs, "writeFileSync");
+    try {
+      const release = lockImport(runsDir, identity);
+      const lockPaths = write.mock.calls.map(([target]) => String(target));
+      expect(lockPaths.every((target) => target.endsWith(".tmp"))).toBe(true);
+      release();
+    } finally {
+      write.mockRestore();
+    }
   });
 
   test("reads as running while another live process holds the lock", () => {

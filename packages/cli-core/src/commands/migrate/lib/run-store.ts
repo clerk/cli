@@ -20,6 +20,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { resolveProfile } from "../../../lib/config.ts";
 import { throwUsageError } from "../../../lib/errors.ts";
@@ -199,9 +200,14 @@ function isPidAlive(pid: number): boolean {
  * the same PID every run, so a killed run's lock would otherwise read as live.
  */
 export function liveLockPid(runsDir: string, id: string): number | undefined {
+  return livePidIn(lockFile(runsDir, id));
+}
+
+/** The live PID a lock file holds, by the same rules as {@link liveLockPid}. */
+function livePidIn(file: string): number | undefined {
   let raw: string;
   try {
-    raw = fs.readFileSync(lockFile(runsDir, id), "utf-8");
+    raw = fs.readFileSync(file, "utf-8");
   } catch {
     return undefined;
   }
@@ -223,13 +229,35 @@ const isExists = (error: unknown) => (error as NodeJS.ErrnoException).code === "
  * both read "free" and both write; a stale lock is removed and taken once.
  */
 function acquireLock(runsDir: string, id: string): void {
-  const file = lockFile(runsDir, id);
-  const refuse = (holder: number | undefined): never =>
+  acquireLockFile(lockFile(runsDir, id), (holder, file) =>
     throwUsageError(
       `Run ${id} is in use by another process${holder ? ` (PID ${holder})` : ""}. Wait for it to finish, then try again. ` +
         `If that process is not a migrate run, delete ${file}.`,
-    );
-  const take = () => fs.writeFileSync(file, String(process.pid), { flag: "wx", mode: 0o600 });
+    ),
+  );
+}
+
+/** Takes the lock at `file`, or calls `refuse` with its live holder. */
+function acquireLockFile(
+  file: string,
+  refuse: (holder: number | undefined, file: string) => never,
+): void {
+  // Written whole, then linked into place: the link fails on an existing lock
+  // as `wx` does, but the lock never exists without its PID, which a second
+  // process would read as stale and remove.
+  const take = () => {
+    const whole = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(whole, String(process.pid), { mode: 0o600 });
+    try {
+      fs.linkSync(whole, file);
+    } catch (error) {
+      if (isExists(error)) throw error;
+      // A filesystem without hard links.
+      fs.writeFileSync(file, String(process.pid), { flag: "wx", mode: 0o600 });
+    } finally {
+      fs.rmSync(whole, { force: true });
+    }
+  };
 
   try {
     take();
@@ -237,16 +265,64 @@ function acquireLock(runsDir: string, id: string): void {
   } catch (error) {
     if (!isExists(error)) throw error;
   }
-  const holder = liveLockPid(runsDir, id);
-  if (holder !== undefined) refuse(holder);
+  // ponytail: two processes that both read the same stale lock can both
+  // remove it, and the second can remove the first's new one. Clerk still
+  // refuses the second create of any email, phone or username, so the cost
+  // is failed lines, not duplicate users. A lock on the reclaim would close it.
+  const holder = livePidIn(file);
+  if (holder !== undefined) refuse(holder, file);
   fs.rmSync(file, { force: true });
   try {
     take();
   } catch (error) {
     // Another process took the stale lock between the remove and the write.
-    if (isExists(error)) refuse(liveLockPid(runsDir, id));
+    if (isExists(error)) refuse(livePidIn(file), file);
     throw error;
   }
+}
+
+/**
+ * What makes two imports the same job: the file, the source and the instance,
+ * by its ID or its key's stand-in ID.
+ */
+export type ImportIdentity = { sha256: string; source: string; instanceId: string };
+
+/**
+ * The lock one import of a file, by a source, into an instance holds. In the
+ * temp directory, keyed by the runs folder too: it is taken before consent,
+ * when nothing may be written to the runs folder yet.
+ */
+export function importLockFile(runsDir: string, identity: ImportIdentity): string {
+  const key = createHash("sha256")
+    .update(
+      JSON.stringify([
+        path.resolve(runsDir),
+        identity.sha256,
+        identity.source,
+        identity.instanceId,
+      ]),
+    )
+    .digest("hex")
+    .slice(0, 32);
+  return path.join(os.tmpdir(), `clerk-migrate-import-${key}.lock`);
+}
+
+/**
+ * Takes the lock for one import of this file, source and instance, before
+ * its checks, so no second process can pass them and start a run beside it.
+ *
+ * @returns Releases the lock.
+ * @throws UsageError when a live process holds it.
+ */
+export function lockImport(runsDir: string, identity: ImportIdentity): () => void {
+  const file = importLockFile(runsDir, identity);
+  acquireLockFile(file, (holder) =>
+    throwUsageError(
+      `Another process${holder ? ` (PID ${holder})` : ""} is importing this file into this instance right now. ` +
+        `Wait for it to finish. If that process is not a migrate run, delete ${file}.`,
+    ),
+  );
+  return () => fs.rmSync(file, { force: true });
 }
 
 // --- Reading ---------------------------------------------------------------

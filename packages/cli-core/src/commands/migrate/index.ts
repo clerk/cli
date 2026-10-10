@@ -8,6 +8,7 @@ import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "./lib/run-store.ts";
 import { run } from "./run.ts";
 import { runs } from "./runs.ts";
 import { undo } from "./undo.ts";
+import { list as sources } from "./sources/list.ts";
 
 export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = process.env): void {
   if (!isExperimentEnabled("migrate", env)) {
@@ -51,6 +52,7 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
         command: "clerk migrate undo 20260929-141502-a1b2",
         description: "Delete the users an import created",
       },
+      { command: "clerk migrate sources", description: "What each source brings across" },
     ]);
 
   // `-y` is read several layers down — by the credential-retry loop and the
@@ -81,8 +83,8 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
     .description("Import users from an exported JSON or CSV file")
     .argument("[file|export-run-id]", "The export file, or the ID of the export run that wrote it")
     .option(
-      "--source <key>",
-      "Where the file came from. Not needed for a file from `clerk migrate export`",
+      "--source <key|path>",
+      "Where the file came from: a built-in source, or a source you wrote. Not needed for a file from `clerk migrate export`",
     )
     .option("--dry-run", "Check the file against the instance, report, and write nothing")
     .option("--allow-partial", "Import the users that pass the checks, and skip the rest")
@@ -118,6 +120,10 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
       {
         command: "clerk migrate import users.json --source clerk --allow-partial --yes",
         description: "Import a Clerk Dashboard export, skipping users that would be rejected",
+      },
+      {
+        command: "clerk migrate import users.json --source ./my-source.ts --yes",
+        description: "Import with a source you wrote",
       },
     ])
     .action(async (input, _opts, cmd) =>
@@ -172,5 +178,24 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
     ])
     .action(async (runId, _opts, cmd) =>
       runs(runId, cmd.optsWithGlobals() as Parameters<typeof runs>[1]),
+    );
+
+  // A compiled binary has no source tree to grep, so the available mappings
+  // need a command rather than only appearing in the interactive picker.
+  migrateCommand
+    .command("sources")
+    .description("List the sources an import can read, or show one in full")
+    .argument("[source]", "A built-in source, or the path to a source you wrote")
+    .option("--json", "Output as JSON")
+    .setExamples([
+      { command: "clerk migrate sources", description: "What each source brings across" },
+      {
+        command: "clerk migrate sources betterauth",
+        description: "Where each field lands, how to export, and caveats",
+      },
+      { command: "clerk migrate sources ./my-source.ts", description: "Check a source you wrote" },
+    ])
+    .action(async (source, _opts, cmd) =>
+      sources(source, cmd.optsWithGlobals() as Parameters<typeof sources>[1]),
     );
 }

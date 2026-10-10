@@ -54,6 +54,7 @@ import {
   listRuns,
   liveLockPid,
   lockFile,
+  lockImport,
   readRun,
   readUserLines,
   resolveRunsDir,
@@ -86,8 +87,12 @@ import { link } from "../link/index.ts";
 export type MigrateRunOptions = {
   /** An export file, or the ID of the export run that wrote one. */
   input?: string;
-  /** A built-in source key. */
+  /** A built-in source key, or the path to a source you wrote. */
   source?: string;
+  /** Content hash of a custom `--source`, set once it is loaded. */
+  sourceHash?: string;
+  /** `--source` as typed, for printed commands: a custom source's path. Not a flag. */
+  sourceArg?: string;
   /** The file to read, once `input` is resolved. Not a flag. */
   file?: string;
   requirePassword?: boolean;
@@ -122,7 +127,7 @@ function canPrompt(options: MigrateRunOptions): boolean {
  * Validates what a run needs before anything is read or sent.
  *
  * `--source` has already been resolved to a registered key by the time this
- * runs.
+ * runs, custom sources included.
  *
  * @returns The source key and file path, both guaranteed present.
  */
@@ -132,7 +137,7 @@ export function validateRunOptions(options: MigrateRunOptions): {
 } {
   if (!options.source) {
     throwUsageError(
-      `Missing --source. Valid values: ${sourceKeys().join(", ")}.`,
+      `Missing --source. Valid values: ${sourceKeys().join(", ")}, or the path to a source you wrote.`,
       undefined,
       ERROR_CODE.USAGE_ERROR,
       [
@@ -340,14 +345,23 @@ function throwChangedExport(runId: string, file: string): never {
 }
 
 /**
- * Resolves `--source` to a registered key.
+ * Resolves `--source` to a registered key, loading a custom source from its
+ * path so the rest of the run treats it exactly like a built-in.
  *
  * @throws UsageError for an unknown key.
  */
 async function applySource(options: MigrateRunOptions): Promise<MigrateRunOptions> {
   if (!options.source) return options;
   const resolved = await resolveSource(options.source);
-  return { ...options, source: resolved.key };
+  if (resolved.path && !options.json) {
+    log.info(`Loaded the \`${resolved.key}\` source from ${options.source}.`);
+  }
+  return {
+    ...options,
+    source: resolved.key,
+    sourceArg: options.source,
+    ...(resolved.hash ? { sourceHash: resolved.hash } : {}),
+  };
 }
 
 /**
@@ -373,6 +387,33 @@ function applyEnvelope(
 
 // --- Continuing an earlier run ---------------------------------------------
 
+/**
+ * Refuses while another process is importing this file, with this source key,
+ * into this instance. Checked before any resume matching, and under
+ * --new-run too: an edited custom source (another `sourceHash`) or a new run
+ * would otherwise send the same external IDs alongside it.
+ */
+function assertNoActiveImport(
+  runsDir: string,
+  match: { sha256: string; source: string; instanceId: string; keyInstanceId?: string },
+): void {
+  const active = listRuns(runsDir).find(
+    (record) =>
+      record.kind === "import" &&
+      record.file?.sha256 === match.sha256 &&
+      record.source === match.source &&
+      (record.target.instanceId === match.instanceId ||
+        record.target.instanceId === match.keyInstanceId) &&
+      runState(runsDir, record) === "running",
+  );
+  if (active) {
+    throwUsageError(
+      `Run ${active.id} is importing this file right now in another process (PID ${liveLockPid(runsDir, active.id)}). ` +
+        `Wait for it to finish. If that process is not a migrate run, delete ${lockFile(runsDir, active.id)}.`,
+    );
+  }
+}
+
 /** How this import relates to earlier runs of the same file, source and instance. */
 export type ResumeCase =
   | { kind: "new" }
@@ -380,8 +421,8 @@ export type ResumeCase =
   | { kind: "complete"; record: RunRecord };
 
 /**
- * Finds the latest import run of this file (by sha256), this source and this
- * instance, and decides what a re-run does:
+ * Finds the latest import run of this file (by sha256), this source (and a
+ * custom source's hash) and this instance, and decides what a re-run does:
  *
  * - none, or undone: a new run
  * - interrupted: continue it, skipping the users it created
@@ -397,6 +438,7 @@ export function findResume(
   match: {
     sha256: string;
     source: string;
+    sourceHash?: string;
     instanceId: string;
     /** The key's stand-in ID, for a run recorded while Clerk could not name the instance. */
     keyInstanceId?: string;
@@ -407,6 +449,7 @@ export function findResume(
       record.kind === "import" &&
       record.file?.sha256 === match.sha256 &&
       record.source === match.source &&
+      record.sourceHash === match.sourceHash &&
       (record.target.instanceId === match.instanceId ||
         record.target.instanceId === match.keyInstanceId),
   );
@@ -602,7 +645,8 @@ function cleanupLines(runsDir: string, record: RunRecord): string[] {
 function commandFor(options: MigrateRunOptions, fromExport: string | undefined, extra: string[]) {
   const input = fromExport ?? options.input ?? options.file ?? "<file>";
   const parts = ["clerk migrate import", quoteArg(input)];
-  if (!fromExport && options.source) parts.push("--source", quoteArg(options.source));
+  const source = options.sourceArg ?? options.source;
+  if (!fromExport && source) parts.push("--source", quoteArg(source));
   if (options.allowPartial) parts.push("--allow-partial");
   if (options.newRun) parts.push("--new-run");
   if (options.requirePassword) parts.push("--require-password");
@@ -646,6 +690,19 @@ function recordRejects(run: Run, checks: ImportChecks): void {
 }
 
 export async function run(rawOptions: MigrateRunOptions): Promise<void> {
+  // Released however the import ends: a return, a refusal or a Ctrl-C.
+  const lock: ImportLock = {};
+  try {
+    await runImport(rawOptions, lock);
+  } finally {
+    lock.release?.();
+  }
+}
+
+/** The import's identity lock, taken part-way through and released by {@link run}. */
+type ImportLock = { release?: () => void };
+
+async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promise<void> {
   await ensureImportTarget(rawOptions);
   let options = await applySource(rawOptions);
 
@@ -702,11 +759,40 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       if (expectedSha256 !== undefined && sha256 !== expectedSha256) throwChanged(filePath);
       const runsDir = await resolveRunsDir(options.runsDir);
 
+      // Held from before the checks to the end of the run: the scan below
+      // alone leaves a gap a second process can pass through before either
+      // one writes a run.
+      // Two locks: the key's stand-in ID, which the same key takes when
+      // `GET /v1/instance` fails, and the instance's ID when Clerk named it,
+      // which a second key for the instance takes.
+      // ponytail: a second key whose lookup failed takes neither; the run scan
+      // below is all that stops it. A lock on the key's instance needs Clerk.
+      if (!options.dryRun) {
+        const releases: (() => void)[] = [];
+        try {
+          for (const instanceId of new Set([keyInstanceId(secretKey), target.instanceId])) {
+            releases.push(lockImport(runsDir, { sha256, source, instanceId }));
+          }
+        } catch (error) {
+          for (const release of releases) release();
+          throw error;
+        }
+        lock.release = () => {
+          for (const release of releases) release();
+        };
+      }
+      assertNoActiveImport(runsDir, {
+        sha256,
+        source,
+        instanceId: target.instanceId,
+        keyInstanceId: keyInstanceId(secretKey),
+      });
       const resume: ResumeCase = options.newRun
         ? { kind: "new" }
         : findResume(runsDir, {
             sha256,
             source,
+            ...(options.sourceHash ? { sourceHash: options.sourceHash } : {}),
             instanceId: target.instanceId,
             keyInstanceId: keyInstanceId(secretKey),
           });
@@ -970,6 +1056,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             kind: "import",
             target,
             source,
+            ...(options.sourceHash ? { sourceHash: options.sourceHash } : {}),
             file: { path: filePath, sha256 },
             ...(input.fromExport ? { fromExport: input.fromExport } : {}),
             ...(firebaseHash ? { firebaseHash } : {}),

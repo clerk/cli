@@ -16,8 +16,11 @@ import {
   readRun,
   sha256File,
   startRun,
+  importLockFile,
 } from "./lib/run-store.ts";
+import { keyInstanceId } from "./lib/target.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
+import { __resetCustomSourcesForTesting } from "./sources/registry.ts";
 // After run.ts: imported first, signals.ts loads version.ts ahead of its Bun
 // macro here, and the file fails to load.
 import { _resetInterruptState, abortInFlight, beginInterrupt } from "../../lib/signals.ts";
@@ -1260,6 +1263,67 @@ describe("run", () => {
       fs.writeFileSync(path.join(runsDir(), first!.id, "lock"), "1");
 
       expect(await exitCodeOf(run(baseOptions))).toBe(EXIT_CODE.USAGE);
+      // A new run would send the same external IDs alongside it.
+      expect(await exitCodeOf(run({ ...baseOptions, newRun: true }))).toBe(EXIT_CODE.USAGE);
+    });
+
+    // The scan of runs alone has a gap: a second process can pass it before
+    // either has written a run. The import's own lock closes it.
+    test("refuses while another process holds this import's lock, with no run yet", async () => {
+      // Keyed by the key, so it holds whether or not `GET /v1/instance` answers.
+      const lock = importLockFile(runsDir(), {
+        sha256: sha256File(path.join(workDir, "export.json")),
+        source: "clerk",
+        instanceId: keyInstanceId(baseOptions.secretKey),
+      });
+      // PID 1 is always alive, and never this test.
+      fs.writeFileSync(lock, "1");
+      try {
+        await expect(run(baseOptions)).rejects.toThrow(
+          /importing this file into this instance right now/,
+        );
+      } finally {
+        fs.rmSync(lock, { force: true });
+      }
+      expect(created()).toHaveLength(0);
+      expect(listRuns(runsDir())).toHaveLength(0);
+    });
+
+    // A second key for the same instance has its own stand-in ID.
+    test("refuses while another key's process holds this instance's lock", async () => {
+      const lock = importLockFile(runsDir(), {
+        sha256: sha256File(path.join(workDir, "export.json")),
+        source: "clerk",
+        instanceId: "ins_1",
+      });
+      fs.writeFileSync(lock, "1");
+      try {
+        await expect(run(baseOptions)).rejects.toThrow(
+          /importing this file into this instance right now/,
+        );
+      } finally {
+        fs.rmSync(lock, { force: true });
+      }
+      expect(created()).toHaveLength(0);
+      // The key's own lock, taken first, is let go when the second is refused.
+      const own = importLockFile(runsDir(), {
+        sha256: sha256File(path.join(workDir, "export.json")),
+        source: "clerk",
+        instanceId: keyInstanceId(baseOptions.secretKey),
+      });
+      expect(fs.existsSync(own)).toBe(false);
+    });
+
+    test("lets go of the import's locks when the run ends", async () => {
+      await run(baseOptions);
+      const lockFor = (instanceId: string) =>
+        importLockFile(runsDir(), {
+          sha256: sha256File(path.join(workDir, "export.json")),
+          source: "clerk",
+          instanceId,
+        });
+      expect(fs.existsSync(lockFor(keyInstanceId(baseOptions.secretKey)))).toBe(false);
+      expect(fs.existsSync(lockFor("ins_1"))).toBe(false);
     });
 
     // An edited file is a different job.
@@ -1291,6 +1355,183 @@ describe("run", () => {
       await run(baseOptions);
 
       expect(listRuns(runsDir())).toHaveLength(2);
+    });
+  });
+
+  describe("--source <path>", () => {
+    const CUSTOM = `export default {
+      key: "myplatform",
+      label: "My Platform",
+      description: "Exports from My Platform.",
+      transformer: { account_ref: "userId", contact_email: "email", given: "firstName", pw: "password" },
+      carries: {
+        passwords: { level: "yes", note: "bcrypt." },
+        mfa: { level: "no", note: "None." },
+        metadata: { level: "no", note: "None." },
+      },
+      defaults: { passwordHasher: "bcrypt" },
+      postTransform: (user) => { if (!user.firstName) delete user.firstName; },
+    };`;
+
+    let customFile: string;
+    let customCounter = 0;
+
+    beforeEach(() => {
+      // A fresh filename each time: dynamic import() caches by URL, so reusing
+      // one would silently return a previous test's module.
+      customFile = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, customFile), CUSTOM);
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { account_ref: "mp_1", contact_email: "a@x.dev", given: "Ada", pw: BCRYPT },
+          { account_ref: "mp_2", contact_email: "b@x.dev", given: "", pw: BCRYPT },
+        ]),
+      );
+    });
+
+    afterEach(() => {
+      __resetCustomSourcesForTesting();
+    });
+
+    const created = () => requests.filter((r) => r.url.endsWith("/v1/users"));
+
+    // The registered key isn't something --source accepts; the path is.
+    test("the printed command names the source's path, not its key", async () => {
+      const error = (await run({
+        input: "export.json",
+        source: customFile,
+        secretKey: "sk_test_x",
+        json: true,
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.examples?.[0]?.command).toBe(
+        `clerk migrate import export.json --source ${customFile} --secret-key <key> --json --yes`,
+      );
+    });
+
+    test("imports through a user-authored source", async () => {
+      await run({
+        input: "export.json",
+        source: customFile,
+        yes: true,
+        secretKey: "sk_test_x",
+      });
+
+      expect(created().map((r) => (r.body as { external_id: string }).external_id)).toEqual([
+        "mp_1",
+        "mp_2",
+      ]);
+      expect(captured.err).toContain("myplatform");
+      expect(captured.err).toContain("source from");
+    });
+
+    test("applies the custom source's defaults and postTransform", async () => {
+      await run({
+        input: "export.json",
+        source: customFile,
+        yes: true,
+        secretKey: "sk_test_x",
+      });
+
+      const bodies = created().map((r) => r.body as Record<string, unknown>);
+      expect(bodies[0]).toMatchObject({ first_name: "Ada", password_hasher: "bcrypt" });
+      // postTransform dropped the empty given name rather than sending "".
+      expect("first_name" in (bodies[1] ?? {})).toBe(false);
+    });
+
+    // An edited source misses the live run's `sourceHash`, but both would send
+    // the same external IDs.
+    test("refuses while a run of this file with an earlier version of the source is live", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      const [first] = listRuns(runsDir());
+      const record = readRun(runsDir(), first!.id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(path.join(runsDir(), first!.id, "run.json"), JSON.stringify(record));
+      // PID 1 is always alive, and never this test.
+      fs.writeFileSync(path.join(runsDir(), first!.id, "lock"), "1");
+
+      const edited = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, edited), `${CUSTOM}\n// edited`);
+      requests = [];
+      await expect(
+        run({ input: "export.json", source: edited, yes: true, secretKey: "sk_test_x" }),
+      ).rejects.toThrow(/importing this file right now in another process/);
+      expect(created()).toHaveLength(0);
+    });
+
+    // The loader caches by URL: an edit at the same path must still load the
+    // edited mappings, the ones the run's hash names.
+    test("an edited source at the same path maps with its edited code", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      fs.writeFileSync(
+        path.join(workDir, customFile),
+        CUSTOM.replace('given: "firstName"', 'given: "lastName"'),
+      );
+      requests = [];
+      await run({
+        input: "export.json",
+        source: customFile,
+        yes: true,
+        secretKey: "sk_test_x",
+        newRun: true,
+      });
+
+      const bodies = created().map((r) => r.body as Record<string, unknown>);
+      expect(bodies[0]).toMatchObject({ last_name: "Ada" });
+      expect("first_name" in (bodies[0] ?? {})).toBe(false);
+    });
+
+    // An edited source is a different source, so the run records which one.
+    test("records the custom source's content hash on the run", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+
+      const [record] = listRuns(runsDir());
+      expect(record?.source).toBe("myplatform");
+      expect(record?.sourceHash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    test("an unknown built-in key is a usage error listing the valid ones", async () => {
+      await expect(
+        run({ input: "export.json", source: "okta", yes: true, secretKey: "sk_test_x" }),
+      ).rejects.toThrow(/Unknown source "okta". Valid sources: clerk, auth0/);
+      expect(created()).toHaveLength(0);
+    });
+
+    test("fails before any request when the file is not there", async () => {
+      await expect(
+        run({
+          input: "export.json",
+          source: "./nope.ts",
+          yes: true,
+          secretKey: "sk_test_x",
+        }),
+      ).rejects.toThrow(/No source file at/);
+      expect(requests).toHaveLength(0);
+    });
+
+    test("fails before any request when the file is malformed", async () => {
+      const bad = `./bad-${customCounter++}.ts`;
+      fs.writeFileSync(
+        path.join(workDir, bad),
+        `export default { key: "x", label: "X", transformer: {} };`,
+      );
+
+      const error = (await run({
+        input: "export.json",
+        source: bad,
+        yes: true,
+        secretKey: "sk_test_x",
+      }).catch((caught: unknown) => caught)) as CliError;
+      expect(error.message).toMatch(/no source field maps to `userId`/);
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(requests).toHaveLength(0);
+    });
+
+    test("still requires a file", async () => {
+      await expect(run({ source: customFile, yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
+        /needs the file to import/,
+      );
     });
   });
 
