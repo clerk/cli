@@ -69,13 +69,18 @@ export async function getAuthToken(): Promise<string> {
  * throws PlapiError on non-ok responses. Debug logging is centralized in
  * `loggedFetch`; don't add inline `log.debug` calls here or in callers.
  */
-async function plapiFetch(method: string, url: URL, init?: { body?: string }): Promise<Response> {
+async function plapiFetch(
+  method: string,
+  url: URL,
+  init?: { body?: string; idempotencyKey?: string },
+): Promise<Response> {
   const token = await getAuthToken();
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     Accept: "application/json",
   };
   if (init?.body) headers["Content-Type"] = "application/json";
+  if (init?.idempotencyKey) headers["Idempotency-Key"] = init.idempotencyKey;
   const response = await loggedFetch(url, {
     tag: "plapi",
     method,
@@ -229,9 +234,12 @@ export type TriggerDNSCheckResponse = DomainStatusResponse & {
   last_run_at: number | null;
 };
 
-export async function fetchApplication(applicationId: string): Promise<Application> {
+export async function fetchApplication(
+  applicationId: string,
+  options?: { includeSecretKeys?: boolean },
+): Promise<Application> {
   const url = new URL(`/v1/platform/applications/${applicationId}`, getPlapiBaseUrl());
-  url.searchParams.set("include_secret_keys", "true");
+  url.searchParams.set("include_secret_keys", String(options?.includeSecretKeys ?? true));
   const response = await plapiFetch("GET", url);
   return response.json() as Promise<Application>;
 }
@@ -330,4 +338,99 @@ export async function listApplications(): Promise<Application[]> {
   const url = new URL("/v1/platform/applications", getPlapiBaseUrl());
   const response = await plapiFetch("GET", url);
   return response.json() as Promise<Application[]>;
+}
+
+export type NativeSettings = { object: "native_settings"; api_enabled: boolean };
+export type AndroidApplication = {
+  object: "android_application";
+  id: string;
+  namespace: string;
+  package_name: string;
+  fingerprints: string[];
+};
+
+function nativeUrl(appId: string, instanceId: string, path: string): URL {
+  return new URL(
+    `/v1/platform/applications/${encodeURIComponent(appId)}/instances/${encodeURIComponent(instanceId)}/${path}`,
+    getPlapiBaseUrl(),
+  );
+}
+
+async function readNativeSettings(response: Response): Promise<NativeSettings> {
+  const value = (await response.json()) as Partial<NativeSettings> | null;
+  if (!value || value.object !== "native_settings" || typeof value.api_enabled !== "boolean") {
+    throw new CliError(
+      "Unexpected Native API settings response. No further setup changes were made.",
+    );
+  }
+  return { object: "native_settings", api_enabled: value.api_enabled };
+}
+
+function readAndroidApplication(value: unknown): AndroidApplication {
+  const app = value as Partial<AndroidApplication> | null;
+  if (
+    !app ||
+    app.object !== "android_application" ||
+    typeof app.id !== "string" ||
+    !app.id ||
+    typeof app.namespace !== "string" ||
+    typeof app.package_name !== "string" ||
+    !Array.isArray(app.fingerprints) ||
+    !app.fingerprints.every((v) => typeof v === "string")
+  ) {
+    throw new CliError(
+      "Unexpected Android registration response. No further setup changes were made.",
+    );
+  }
+  return {
+    object: "android_application",
+    id: app.id,
+    namespace: app.namespace,
+    package_name: app.package_name,
+    fingerprints: app.fingerprints,
+  };
+}
+
+export async function getNativeSettings(
+  appId: string,
+  instanceId: string,
+): Promise<NativeSettings> {
+  return readNativeSettings(
+    await plapiFetch("GET", nativeUrl(appId, instanceId, "native_settings")),
+  );
+}
+
+export async function enableNativeApi(appId: string, instanceId: string): Promise<NativeSettings> {
+  return readNativeSettings(
+    await plapiFetch("PATCH", nativeUrl(appId, instanceId, "native_settings"), {
+      body: JSON.stringify({ api_enabled: true }),
+    }),
+  );
+}
+
+export async function listAndroidApplications(
+  appId: string,
+  instanceId: string,
+): Promise<AndroidApplication[]> {
+  const response = await plapiFetch(
+    "GET",
+    nativeUrl(appId, instanceId, "native_applications/android"),
+  );
+  const apps: unknown = await response.json();
+  if (!Array.isArray(apps)) throw new CliError("Unexpected Android registrations response.");
+  return apps.map(readAndroidApplication);
+}
+
+export async function createAndroidApplication(
+  appId: string,
+  instanceId: string,
+  params: { namespace: "android_app"; package_name: string; fingerprints: string[] },
+  idempotencyKey: string,
+): Promise<AndroidApplication> {
+  const response = await plapiFetch(
+    "POST",
+    nativeUrl(appId, instanceId, "native_applications/android"),
+    { body: JSON.stringify(params), idempotencyKey },
+  );
+  return readAndroidApplication(await response.json());
 }
