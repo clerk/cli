@@ -964,15 +964,41 @@ describe("run", () => {
       expect(listRuns(runsDir())).toHaveLength(0);
     });
 
-    test("lets go of the import's lock when the run ends", async () => {
-      await run(baseOptions);
-      // Keyed by the key, so it holds whether or not `GET /v1/instance` answers.
+    // A second key for the same instance has its own stand-in ID.
+    test("refuses while another key's process holds this instance's lock", async () => {
       const lock = importLockFile(runsDir(), {
+        sha256: sha256File(path.join(workDir, "export.json")),
+        source: "clerk",
+        instanceId: "ins_1",
+      });
+      fs.writeFileSync(lock, "1");
+      try {
+        await expect(run(baseOptions)).rejects.toThrow(
+          /importing this file into this instance right now/,
+        );
+      } finally {
+        fs.rmSync(lock, { force: true });
+      }
+      expect(created()).toHaveLength(0);
+      // The key's own lock, taken first, is let go when the second is refused.
+      const own = importLockFile(runsDir(), {
         sha256: sha256File(path.join(workDir, "export.json")),
         source: "clerk",
         instanceId: keyInstanceId(baseOptions.secretKey),
       });
-      expect(fs.existsSync(lock)).toBe(false);
+      expect(fs.existsSync(own)).toBe(false);
+    });
+
+    test("lets go of the import's locks when the run ends", async () => {
+      await run(baseOptions);
+      const lockFor = (instanceId: string) =>
+        importLockFile(runsDir(), {
+          sha256: sha256File(path.join(workDir, "export.json")),
+          source: "clerk",
+          instanceId,
+        });
+      expect(fs.existsSync(lockFor(keyInstanceId(baseOptions.secretKey)))).toBe(false);
+      expect(fs.existsSync(lockFor("ins_1"))).toBe(false);
     });
 
     // An edited file is a different job.

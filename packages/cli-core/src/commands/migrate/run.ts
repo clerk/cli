@@ -769,15 +769,24 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       // Held from before the checks to the end of the run: the scan below
       // alone leaves a gap a second process can pass through before either
       // one writes a run.
-      // Keyed by the secret key's stand-in ID, not `target.instanceId`: that is
-      // a `key_…` ID too when `GET /v1/instance` fails, so two processes on one
-      // instance would otherwise take different locks.
+      // Two locks: the key's stand-in ID, which the same key takes when
+      // `GET /v1/instance` fails, and the instance's ID when Clerk named it,
+      // which a second key for the instance takes.
+      // ponytail: a second key whose lookup failed takes neither; the run scan
+      // below is all that stops it. A lock on the key's instance needs Clerk.
       if (!options.dryRun) {
-        lock.release = lockImport(runsDir, {
-          sha256,
-          source,
-          instanceId: keyInstanceId(secretKey),
-        });
+        const releases: (() => void)[] = [];
+        try {
+          for (const instanceId of new Set([keyInstanceId(secretKey), target.instanceId])) {
+            releases.push(lockImport(runsDir, { sha256, source, instanceId }));
+          }
+        } catch (error) {
+          for (const release of releases) release();
+          throw error;
+        }
+        lock.release = () => {
+          for (const release of releases) release();
+        };
       }
       assertNoActiveImport(runsDir, {
         sha256,
