@@ -80,10 +80,14 @@ function enabledOAuthProviders(config: InstanceConfig): string[] {
 }
 
 function passwordlessEnabled(config: InstanceConfig): boolean {
-  const emailCode = list(config, "auth_email.sign_in_strategies").some((s) =>
-    ["email_code", "email_link"].includes(s),
-  );
-  const phoneCode = list(config, "auth_phone.sign_in_strategies").includes("phone_code");
+  const emailCode =
+    flag(config, "auth_email.used_for_sign_in") &&
+    list(config, "auth_email.sign_in_strategies").some((s) =>
+      ["email_code", "email_link"].includes(s),
+    );
+  const phoneCode =
+    flag(config, "auth_phone.used_for_sign_in") &&
+    list(config, "auth_phone.sign_in_strategies").includes("phone_code");
   return (
     emailCode ||
     phoneCode ||

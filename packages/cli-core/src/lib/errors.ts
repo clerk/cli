@@ -204,6 +204,13 @@ interface BillingErrorOptions extends CliErrorOptions {
   reason: BillingErrorReason;
 }
 
+/** In agent mode a Clerk docs link points at its raw markdown (`.md`) variant. */
+export function agentDocsUrl(url: string): string {
+  return isAgent() && url.startsWith("https://clerk.com/docs/") && !url.endsWith(".md")
+    ? `${url}.md`
+    : url;
+}
+
 /**
  * General-purpose CLI error for user-facing messages.
  *
@@ -223,13 +230,6 @@ interface BillingErrorOptions extends CliErrorOptions {
  * });
  * ```
  */
-/** In agent mode a Clerk docs link points at its raw markdown (`.md`) variant. */
-export function agentDocsUrl(url: string): string {
-  return isAgent() && url.startsWith("https://clerk.com/docs/") && !url.endsWith(".md")
-    ? `${url}.md`
-    : url;
-}
-
 export class CliError extends Error {
   public code?: ErrorCode;
   public exitCode: ExitCode;
