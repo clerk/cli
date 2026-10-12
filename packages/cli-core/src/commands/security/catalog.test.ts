@@ -216,6 +216,14 @@ describe("passwordless detection", () => {
   test.each([
     ["email code", "auth_email", { sign_in_strategies: ["email_code"] }],
     ["phone code", "auth_phone", { sign_in_strategies: ["phone_code"] }],
+  ] as const)("%s strategy without used_for_sign_in is not passwordless", (_name, key, patch) => {
+    const config = withSection(INSECURE_CONFIG, key, { used_for_sign_in: false, ...patch });
+    expect(findCheck("passwordless-auth")!.evaluate(production(config)).met).toBe(false);
+  });
+
+  test.each([
+    ["email code", "auth_email", { used_for_sign_in: true, sign_in_strategies: ["email_code"] }],
+    ["phone code", "auth_phone", { used_for_sign_in: true, sign_in_strategies: ["phone_code"] }],
     ["passkey", "auth_passkey", { used_for_sign_in: true }],
     ["web3", "auth_web3", { used_for_sign_in: true }],
     ["social connection", "connection_oauth_github", { enabled: true, authenticatable: true }],
@@ -255,7 +263,9 @@ describe("decision remedies", () => {
     const required = evaluate(production(INSECURE_CONFIG), REF).find(
       (f) => f.id === "mfa-required",
     )!;
-    expect(required.remedy).toContain("clerk security fix mfa mfa-required --app app_1");
+    expect(required.remedy).toContain(
+      "clerk security fix mfa mfa-required --factors authenticator,backup-code --app app_1",
+    );
   });
 });
 

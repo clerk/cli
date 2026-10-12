@@ -63,8 +63,11 @@ function remedyFor(
   blockedByTitle?: string,
 ): string {
   if (status === "met") return "Nothing to do.";
-  if (status === "blocked")
-    return `Make "${blockedByTitle}" available first (\`${check.blockedBy}\`), or fix both together: \`${fixCommand([check.blockedBy!, check.id], ref)}\`.`;
+  if (status === "blocked") {
+    const prerequisite = CHECKS.find((c) => c.id === check.blockedBy)?.decision;
+    const decisions = prerequisite ? { [check.blockedBy!]: prerequisite.defaults(input) } : {};
+    return `Make "${blockedByTitle}" available first (\`${check.blockedBy}\`), or fix both together: \`${fixCommand([check.blockedBy!, check.id], ref, decisions)}\`.`;
+  }
   if (check.patch) return `Run \`${fixCommand([check.id], ref)}\`.`;
   if (check.decision) {
     const values = check.decision.defaults(input);

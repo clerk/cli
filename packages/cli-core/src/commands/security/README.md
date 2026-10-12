@@ -33,7 +33,7 @@ recommended value, so the id `fix` takes is right there:
 
 ```
 Critical
-✗ Two-factor authentication   mfa            Not available → Available  (manual)
+✗ Two-factor authentication   mfa            Not available → Available  (asks --factors)
 ✓ Bot sign-up protection      bot-protection
 Recommended
 ! Require two-factor auth     mfa-required   blocked: make "Two-factor authentication" available first (`mfa`)
@@ -97,7 +97,7 @@ that emit whole arrays (`verification_strategies`) compose.
 
 After the write, `fix` re-evaluates every check against the document the
 server returned (the projection, under `--dry-run`) and prints the grade
-change, e.g. `Grade F → C · 16 of 20 recommendations met`. With `--json` or in
+change, e.g. `Grade F → C · 16 of 19 recommendations met`. With `--json` or in
 agent mode it prints a summary:
 
 ```json
@@ -241,7 +241,7 @@ The report:
     "environmentType": "development",
     "label": "My App (development)"
   },
-  "score": { "grade": "C", "percent": 71, "met": 14, "total": 20, "hasCriticalGap": true },
+  "score": { "grade": "C", "percent": 71, "met": 14, "total": 19, "hasCriticalGap": true },
   "fixCommand": "clerk security fix user-lockout device-trust --app app_… --instance ins_… --yes",
   "findings": [
     {
