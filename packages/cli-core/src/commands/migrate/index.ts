@@ -129,6 +129,7 @@ export function registerMigrate(program: Program): void {
     .argument("<run-id>", "The import run to undo (see `clerk migrate runs`)")
     .option("--dry-run", "Show what would be deleted, and delete nothing")
     .option("-y, --yes", "Delete without prompting")
+    .option("--include-signed-in", "With --yes, also delete users who signed in since the import")
     .option("--json", "Output as JSON; never prompts, so pair it with --yes to delete")
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")

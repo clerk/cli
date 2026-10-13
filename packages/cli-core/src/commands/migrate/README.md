@@ -901,13 +901,14 @@ clerk migrate undo 20260929-141502-a1b2 --yes       # no prompt
 clerk migrate undo 20260929-141502-a1b2 --json --yes
 ```
 
-| Flag                | Description                                              |
-| ------------------- | -------------------------------------------------------- |
-| `<run-id>`          | The import run to undo                                   |
-| `--dry-run`         | Show the preview and delete nothing                      |
-| `-y, --yes`         | Delete without prompting                                 |
-| `--json`            | Output as JSON. Never prompts, so deleting needs `--yes` |
-| `--runs-dir <path>` | Read runs from somewhere else                            |
+| Flag                  | Description                                                    |
+| --------------------- | -------------------------------------------------------------- |
+| `<run-id>`            | The import run to undo                                         |
+| `--dry-run`           | Show the preview and delete nothing                            |
+| `-y, --yes`           | Delete without prompting                                       |
+| `--include-signed-in` | With `--yes`, also delete users who signed in since the import |
+| `--json`              | Output as JSON. Never prompts, so deleting needs `--yes`       |
+| `--runs-dir <path>`   | Read runs from somewhere else                                  |
 
 Plus the targeting flags: `--secret-key`, `--app` and `--instance`.
 
@@ -917,6 +918,12 @@ how many of them have signed in since the import (from each user's
 deleted without consent: a yes at the prompt, or `--yes`. Without either — an
 agent, a non-TTY run, or `--json` — it prints the preview and exits 2 with the
 command to run. When none remain, undo completes without prompting.
+
+`--yes` is consent to undo the import, not to delete accounts people have used
+since: when any user has signed in after the import, `--yes` alone exits 2 and
+deletes nothing, naming the command with `--include-signed-in` that deletes
+them too. A yes at the prompt follows the preview's warning, so it needs no
+flag.
 
 It refuses with exit 2, and deletes nothing, when:
 
