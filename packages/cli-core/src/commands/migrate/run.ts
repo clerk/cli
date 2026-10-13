@@ -397,6 +397,20 @@ function commandFor(options: MigrateRunOptions, extra: string[]) {
   return [...parts, ...extra].join(" ");
 }
 
+/**
+ * Why the checks refused, in the error itself: an agent may read only that,
+ * not the report above it.
+ */
+function rejectSummary(checks: ImportChecks, json = false): string {
+  const [top, ...rest] = checks.rejectReasons.toSorted((a, b) => b.count - a.count);
+  if (!top) return "";
+  const why =
+    rest.length === 0
+      ? `Reason: ${top.reason}.`
+      : `Most common reason (${top.count}): ${top.reason}; and ${plural(rest.length, "other reason")}.`;
+  return ` ${why}${json ? " See `checks.rejects` for each user." : ""}`;
+}
+
 /** Records the checks' rejects as skipped users, so the run says who they were. */
 function recordRejects(run: Run, checks: ImportChecks): void {
   for (const { sourceId, reason, keptSourceId } of checks.rejects) {
@@ -537,7 +551,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       if (refused) {
         if (options.json) preview({ refused: true });
         throwUsageError(
-          `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported. ` +
+          `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported.` +
+            `${rejectSummary(checks, options.json)} ` +
             "Fix them, or pass --allow-partial to import the rest and record them as skipped.",
           undefined,
           undefined,
