@@ -312,8 +312,8 @@ export type Run = {
   /**
    * Counts the outcomes, settles the status and releases the lock.
    *
-   * `partial` when any user failed, was skipped or may not have been created,
-   * `complete` otherwise.
+   * `partial` when any user failed, was skipped, may not have been created or
+   * has identifiers still pending, `complete` otherwise.
    */
   finish(): RunRecord;
 };
@@ -337,8 +337,14 @@ function openRun(runsDir: string, record: RunRecord): Run {
       writeRecord(runsDir, run.record);
     },
     finish() {
-      const counts = countLines(latestUserLines(runsDir, run.record.id).values());
-      const unfinished = (counts.failed ?? 0) + (counts.skipped ?? 0) + (counts.creating ?? 0);
+      const lines = [...latestUserLines(runsDir, run.record.id).values()];
+      const counts = countLines(lines);
+      // A created user whose extra identifiers never attached is left for a continue.
+      const pendingAttaches = lines.filter(
+        (line) => line.status === "created" && (line.pending?.length ?? 0) > 0,
+      ).length;
+      const unfinished =
+        (counts.failed ?? 0) + (counts.skipped ?? 0) + (counts.creating ?? 0) + pendingAttaches;
       run.update({
         counts,
         status: unfinished > 0 ? "partial" : "complete",
