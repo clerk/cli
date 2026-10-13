@@ -113,6 +113,17 @@ describe("a run's life", () => {
     },
   );
 
+  test("finishes partial when a created user has identifiers still pending", () => {
+    const run = startRun(runsDir, init);
+    run.append({
+      sourceId: "a",
+      status: "created",
+      clerkId: "user_a",
+      pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+    });
+    expect(run.finish().status).toBe("partial");
+  });
+
   test("counts each source ID by its last line", () => {
     const run = startRun(runsDir, init);
     run.append({ sourceId: "a", status: "failed", error: "boom" });
