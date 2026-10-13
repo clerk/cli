@@ -65,8 +65,9 @@ Options:
   -h, --help           Display help for command
   --input-json <json>  Pass command options as a JSON string, @file.json, or -
                        for stdin
-  --mode <mode>        Force interaction mode (human or agent). Defaults to
-                       auto-detect based on TTY.
+  --mode <mode>        Force interaction mode (human or agent). Also settable
+                       via the CLERK_MODE environment variable. Defaults to
+                       agent when run by a known AI agent or without a TTY.
   -v, --version        Output the version number
   --verbose            Show detailed output (enables debug messages)
 
