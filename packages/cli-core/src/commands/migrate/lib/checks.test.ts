@@ -607,11 +607,11 @@ describe("rejects", () => {
 
     // With numeric usernames on, Clerk refuses any phone not in E.164 form.
     describe("phones, with numeric usernames on", () => {
-      const numeric = (on: boolean) =>
+      const numeric = (on: boolean, phones = true) =>
         ({
           attributes: {
             email_address: { enabled: true },
-            phone_number: { enabled: true },
+            phone_number: { enabled: phones },
             username: { enabled: true },
           },
           social: {},
@@ -660,6 +660,39 @@ describe("rejects", () => {
           }),
         ).toEqual({
           a: "username has no letters; turn on numeric usernames to allow it, though Clerk would then refuse the file's 1 phone not in E.164 form",
+        });
+      });
+
+      // Phones off are stripped before the create, so Clerk never sees them.
+      describe("with phones off", () => {
+        test("a numeric username's reject offers the fix, with no word on phones", async () => {
+          const checks = await checkImport(
+            input({
+              settings: numeric(false, false),
+              users: [user("a", { username: "12345" }), user("b", { phone: "(415) 555-0100" })],
+            }),
+          );
+          expect(checks.rejects).toEqual([
+            {
+              sourceId: "a",
+              reason: "username has no letters; turn on numeric usernames to allow it",
+            },
+          ]);
+          expect(checks.fixes.map((fix) => fix.label)).toContain(
+            "Allow numeric usernames (Clerk then requires phone numbers in E.164 form, on import and at sign-up)",
+          );
+        });
+
+        test("a phone not in E.164 form is stripped, not blamed on E.164", async () => {
+          const checks = await checkImport(
+            input({
+              settings: numeric(true, false),
+              users: [user("a", { username: "12345", phone: "(415) 555-0100" })],
+            }),
+          );
+          expect(checks.rejects).toEqual([]);
+          expect(checks.importable).toEqual([user("a", { username: "12345" })]);
+          expect(checks.warnings.join("\n")).not.toContain("E.164");
         });
       });
     });
@@ -904,7 +937,11 @@ describe("fixes", () => {
   test("offer no numeric-username fix to a file with a phone not in E.164 form", async () => {
     const checks = await checkImport(
       input({
-        settings: settings({ email_address: { enabled: true }, username: { enabled: true } }),
+        settings: settings({
+          email_address: { enabled: true },
+          phone_number: { enabled: true },
+          username: { enabled: true },
+        }),
         users: [user("a", { username: "12345" }), user("b", { phone: "(415) 555-0100" })],
       }),
     );
