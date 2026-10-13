@@ -1046,6 +1046,18 @@ describe("warnings", () => {
 });
 
 describe("fixes", () => {
+  // A check that strips a value hands the duplicate checks a copy of the record.
+  test("leave out a user already in the instance whose record a check changed", async () => {
+    existing = [{ id: "user_1", external_id: "a" }];
+    const checks = await checkImport(
+      input({
+        settings: settings({ email_address: { enabled: true }, first_name: { enabled: false } }),
+        users: [user("a", { firstName: "Ada", lastName: "<b>Lovelace</b>" }), user("b")],
+      }),
+    );
+    expect(checks.fixes).toEqual([]);
+  });
+
   // A re-run: the users already imported would gain nothing from the change.
   test("leave out a user already in the instance", async () => {
     existing = [{ id: "user_1", external_id: "a" }];
