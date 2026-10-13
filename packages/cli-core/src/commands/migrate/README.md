@@ -711,10 +711,13 @@ after them. They sort the users three ways:
     any other user, with a warning
   - its only phones are not in E.164 form, and the instance has numeric
     usernames on, which makes Clerk require E.164. Such a phone is dropped from
-    any other user, with a warning
+    any other user, with a warning. Spaces around a phone don't count, as Clerk
+    trims them. Phones the instance has off are stripped anyway, so they are
+    not checked
   - it lacks an identifier the instance requires. An email or phone counts
     only when it is verified, because an unverified one is attached after the
-    user exists, or with `--reserve-unverified`, which creates it reserved
+    user exists, or with `--reserve-unverified`, which creates it reserved. A
+    required phone dropped for not being in E.164 form is named as such
   - it has no identifier left once the emails and phones Clerk would refuse
     are stripped: those of an instance that neither has them on nor signs in
     or does MFA with them. A username is kept, as Clerk stores it with
@@ -733,7 +736,8 @@ after them. They sort the users three ways:
     the allowed special characters). The checks offer the setting that allows
     it. With usernames off, such a username is dropped instead, with a warning.
     Numeric usernames are not offered when the file has phones not in E.164
-    form, which the setting would make Clerk refuse; the reject counts them
+    form and the instance has phones on, since the setting would make Clerk
+    refuse them; the reject counts them
   - its password is not the shape its hasher says (`bcrypt`, with a cost of 4
     to 15, `scrypt_firebase`, `argon2i`/`argon2id` and `scrypt_werkzeug` are
     checked; other hashers are not, and Clerk refuses a bad one at create)
