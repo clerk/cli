@@ -931,6 +931,8 @@ It refuses with exit 2, and deletes nothing, when:
   (the error names both)
 - the run is not an import run
 - the run has already been undone
+- the run, or an undo of it, changed while the preview waited for consent (a
+  re-import, or another undo): the preview is out of date, so run it again
 
 Deletes go through the same scheduler and `429` backoff as the import. A user
 already gone from the instance counts as deleted. The undo is a run of its own,
