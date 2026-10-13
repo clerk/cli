@@ -1058,16 +1058,26 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     const user = phoned.user;
     const sent = dropDisabledIdentifiers(user, input.settings);
     const adopted = input.adoptedSourceIds?.has(original.userId) ?? false;
+    const reserve = reservesFor(input)(user);
     const reason = adopted
       ? undefined
       : (original.skipReason ??
+        (refused.length > 0 && phoned.dropped && !hasAnyIdentifier(user)
+          ? "only has emails Clerk refuses and phones not in E.164 form (numeric usernames are on)"
+          : undefined) ??
         (refused.length > 0 && !hasAnyIdentifier(user)
           ? "only has emails Clerk refuses (malformed, or a domain that can't receive mail)"
           : undefined) ??
         (phoned.dropped && !hasAnyIdentifier(user)
           ? "only has phones not in E.164 form, which this instance refuses (numeric usernames are on)"
           : undefined) ??
-        missingRequiredIdentifier(user, input.settings, reservesFor(input)(user)) ??
+        // A required phone the file has, but only in a form Clerk refuses here.
+        (phoned.dropped &&
+        missingRequiredIdentifier(user, input.settings, reserve) &&
+        !missingRequiredIdentifier(emailed, input.settings, reserve)
+          ? "only has phones not in E.164 form, and this instance requires a phone number (numeric usernames are on)"
+          : undefined) ??
+        missingRequiredIdentifier(user, input.settings, reserve) ??
         // Stripping the identifiers the instance has off can leave nothing to
         // sign in with; Clerk would still create the user.
         (!hasAnyIdentifier(sent)

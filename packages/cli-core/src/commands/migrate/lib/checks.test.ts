@@ -819,6 +819,34 @@ describe("rejects", () => {
         });
       });
 
+      test("a user with only a refused email and such phones is rejected for both", async () => {
+        expect(
+          await reasonsOf({
+            settings: numeric(true),
+            users: [user("a", { email: "15551234@phone.local", phone: "415 555 0100" })],
+          }),
+        ).toEqual({
+          a: "only has emails Clerk refuses and phones not in E.164 form (numeric usernames are on)",
+        });
+      });
+
+      // The file has a phone; dropping it is what leaves the requirement unmet.
+      test("a required phone that is dropped is blamed on E.164, not a missing phone", async () => {
+        const required = {
+          ...numeric(true),
+          attributes: {
+            email_address: { enabled: true },
+            phone_number: { enabled: true, required: true },
+            username: { enabled: true },
+          },
+        } as unknown as UserSettingsJSON;
+        expect(
+          await reasonsOf({ settings: required, users: [user("a", { phone: "415 555 0100" })] }),
+        ).toEqual({
+          a: "only has phones not in E.164 form, and this instance requires a phone number (numeric usernames are on)",
+        });
+      });
+
       // The fix is withheld for these phones, so the reject says why.
       test("a numeric username's reject names the phones turning it on would cost", async () => {
         expect(
