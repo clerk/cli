@@ -326,10 +326,12 @@ async function createUser(
   } catch (error) {
     // A phone Clerk refuses (a country it does not support, a number that is
     // not E.164) should not cost a user who has an email to be created under.
-    // The country error names no parameter, only its own code.
+    // The country error names no parameter, only its own code. A phone another
+    // user holds also names `phone_number`, and fails the user.
     const phoneRefused =
       error instanceof BapiError &&
-      (error.code === "unsupported_country_code" || error.meta?.param_name === "phone_number");
+      (error.code === "unsupported_country_code" ||
+        (error.code === "form_param_format_invalid" && error.meta?.param_name === "phone_number"));
     if (!phoneRefused || !identifiers.primaryEmail) throw error;
     const { phone_number: _dropped, ...withoutPhone } = body;
     response = await create(withoutPhone);
