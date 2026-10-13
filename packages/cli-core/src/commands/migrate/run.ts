@@ -673,6 +673,20 @@ function commandFor(options: MigrateRunOptions, fromExport: string | undefined, 
 }
 
 /**
+ * Why the checks refused, in the error itself: an agent may read only that,
+ * not the report above it.
+ */
+function rejectSummary(checks: ImportChecks, json = false): string {
+  const [top, ...rest] = checks.rejectReasons.toSorted((a, b) => b.count - a.count);
+  if (!top) return "";
+  const why =
+    rest.length === 0
+      ? `Reason: ${top.reason}.`
+      : `Most common reason (${top.count}): ${top.reason}; and ${plural(rest.length, "other reason")}.`;
+  return ` ${why}${json ? " See `checks.rejects` for each user." : ""}`;
+}
+
+/**
  * A continued run, linked to the export run it now reads from: one started
  * by path and continued by export run ID would otherwise lack the link, and
  * the cleanup would not name the export holding the users' data.
@@ -1029,7 +1043,8 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       if (refused) {
         if (options.json) preview({ refused: true });
         throwUsageError(
-          `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported. ` +
+          `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported.` +
+            `${rejectSummary(checks, options.json)} ` +
             "Fix them, or pass --allow-partial to import the rest and record them as skipped.",
           undefined,
           undefined,

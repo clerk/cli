@@ -1044,9 +1044,36 @@ describe("run", () => {
 
       expect(error.exitCode).toBe(EXIT_CODE.USAGE);
       expect(error.message).toContain("1 user would be rejected, so nothing was imported");
+      // An agent reading only the error learns why.
+      expect(error.message).toMatch(/nothing was imported\. Reason: .+\. Fix them/);
       expect(error.examples?.[0]?.command).toContain("--allow-partial --yes");
       expect(created()).toHaveLength(0);
       expect(listRuns(runsDir())).toHaveLength(0);
+    });
+
+    test("with several reasons, names the most common and points --json at the rest", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          ...export2,
+          { id: "u3" },
+          { id: "u4" },
+          {
+            id: "u5",
+            primary_email_address: "e@x.dev",
+            password_digest: "d",
+            password_hasher: "rot13",
+          },
+        ]),
+      );
+
+      const error = (await run({ ...baseOptions, json: true }).catch(
+        (caught: unknown) => caught,
+      )) as CliError;
+
+      expect(error.message).toContain("3 users would be rejected, so nothing was imported");
+      expect(error.message).toMatch(/Most common reason \(2\): .+; and 1 other reason\./);
+      expect(error.message).toContain("See `checks.rejects` for each user.");
     });
 
     // "will create 0 users" hides that the run records the rest as skipped.
