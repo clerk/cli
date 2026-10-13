@@ -606,6 +606,28 @@ describe("rejects", () => {
     ]);
   });
 
+  // A, rejected for B's email, no longer holds its phone against C.
+  test("a record rejected for an adopted user's email leaves its phone to a later one", async () => {
+    const checks = await checkImport(
+      input({
+        adoptedSourceIds: new Set(["b"]),
+        users: [
+          user("a", { email: "x@x.dev", phone: "+15555550100" }),
+          user("b", { email: "x@x.dev" }),
+          user("c", { email: "c@x.dev", phone: "+15555550100" }),
+        ],
+      }),
+    );
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["b", "c"]);
+    expect(checks.rejects).toEqual([
+      {
+        sourceId: "a",
+        reason: "shares an email, phone or username with a user an earlier attempt already created",
+        keptSourceId: "b",
+      },
+    ]);
+  });
+
   test("a second record with an adopted user's source ID is still rejected", async () => {
     const checks = await checkImport(
       input({
