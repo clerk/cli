@@ -1816,6 +1816,14 @@ describe("run", () => {
       expect(requests).toHaveLength(0);
     });
 
+    test("an unknown source fails before signing in", async () => {
+      const { secretKey: _key, ...signedOut } = baseOptions;
+      const error = (await run({ ...signedOut, source: "nope" }).catch(
+        (caught: unknown) => caught,
+      )) as CliError;
+      expect(error.message).toContain('Unknown source "nope"');
+    });
+
     test("an unknown source fails listing the valid keys", async () => {
       await expect(run({ ...baseOptions, source: "okta" })).rejects.toThrow(
         /Unknown source "okta".*clerk.*supabase/s,

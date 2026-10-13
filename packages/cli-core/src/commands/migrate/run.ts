@@ -724,8 +724,9 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 type ImportLock = { release?: () => void };
 
 async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promise<void> {
-  await ensureImportTarget(rawOptions);
+  // A mistyped --source fails before any sign-in or link.
   let options = await applySource(rawOptions);
+  await ensureImportTarget(options);
 
   const input = await resolveInput(options);
   options = { ...options, file: input.file };
