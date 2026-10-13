@@ -1054,20 +1054,18 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
 
   // No setting would let a duplicate in, so none earns a fix.
   const duplicates = new Set<User>();
-  const { reasons: fileDuplicates, keptBy } = findFileDuplicates(passed);
   // An adopted user already holds its email, phone and username in Clerk, so
-  // an earlier record that claimed one first is the one whose create would
-  // fail. Keyed by that record's source ID, naming the adopted user.
-  const heldByAdopted = new Map<string, string>();
-  for (const user of passed) {
-    const kept = keptBy.get(user);
-    if (kept && input.adoptedSourceIds?.has(user.userId) && !input.adoptedSourceIds.has(kept)) {
-      heldByAdopted.set(kept, user.userId);
-    }
-  }
+  // it claims them first, wherever it sits in the file: a fresh record sharing
+  // one is the create Clerk would refuse, and is not kept in its place.
+  const adopted = (user: User) => input.adoptedSourceIds?.has(user.userId) ?? false;
+  const { reasons: fileDuplicates, keptBy } = findFileDuplicates([
+    ...passed.filter(adopted),
+    ...passed.filter((user) => !adopted(user)),
+  ]);
   let candidates: User[] = [];
   for (const user of passed) {
-    const holder = heldByAdopted.get(user.userId);
+    const kept = keptBy.get(user);
+    const holder = kept && !adopted(user) && input.adoptedSourceIds?.has(kept) ? kept : undefined;
     if (holder) {
       rejects.push({
         sourceId: user.userId,
@@ -1085,7 +1083,6 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       input.adoptedSourceIds?.has(user.userId) && duplicate !== DUPLICATE_SOURCE_ID
         ? undefined
         : duplicate;
-    const kept = keptBy.get(user);
     if (reason) {
       rejects.push({ sourceId: user.userId, reason, ...(kept ? { keptSourceId: kept } : {}) });
       duplicates.add(originals.get(user) ?? user);
