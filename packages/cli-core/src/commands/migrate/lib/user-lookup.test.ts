@@ -58,3 +58,31 @@ test("lookups sharing a count report one total that only climbs", async () => {
 
   expect(updates).toEqual(["Checking: 1/3", "Checking: 2/3", "Checking: 3/3"]);
 });
+
+// External IDs are not unique: a batch can match more users than one page holds.
+test("reads every page of a batch that matches more than one page", async () => {
+  const urls: URL[] = [];
+  const page = (from: number, count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      id: `user_${from + index}`,
+      external_id: "-dup",
+    }));
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    urls.push(new URL(input.toString()));
+    return Response.json(urls.length === 1 ? page(0, LOOKUP_BATCH) : page(LOOKUP_BATCH, 5));
+  }) as unknown as typeof fetch;
+
+  const users = await lookupUsers({
+    filter: "external_id",
+    values: ["-dup"],
+    secretKey: "sk_test_x",
+    schedule: createApiScheduler(1, 10_000),
+  });
+
+  expect(users).toHaveLength(LOOKUP_BATCH + 5);
+  expect(urls).toHaveLength(2);
+  expect(urls[0]?.searchParams.has("starting_after")).toBe(false);
+  expect(urls[1]?.searchParams.get("starting_after")).toBe(`user_${LOOKUP_BATCH - 1}`);
+  // The `+` keeps a leading `-` from reading as "exclude".
+  expect(urls[0]?.searchParams.getAll("external_id")).toEqual(["+-dup"]);
+});
