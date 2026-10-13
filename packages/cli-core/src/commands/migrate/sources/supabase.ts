@@ -67,6 +67,7 @@ const supabaseSource = {
     raw_user_meta_data: "unsafeMetadata",
     banned_until: "bannedUntil",
     deleted_at: "deletedAt",
+    is_anonymous: "isAnonymous",
     created_at: "createdAt",
   },
   postTransform: (user) => {
@@ -98,6 +99,12 @@ const supabaseSource = {
     // A soft-deleted user is gone from the app; Supabase scrambles its email.
     if (user.deletedAt) user.skipReason = "deleted in Supabase";
     delete user.deletedAt;
+    // Anonymous sign-in leaves a user with no email or phone to sign in with.
+    // A CSV writes the flag as text.
+    if (user.isAnonymous === true || user.isAnonymous === "true") {
+      user.skipReason ??= "anonymous in Supabase, with no email or phone";
+    }
+    delete user.isAnonymous;
 
     // Supabase stores E.164 without the leading + (14165550123); Clerk needs it.
     if (typeof user.phone === "string" && /^\d+$/.test(user.phone)) user.phone = `+${user.phone}`;

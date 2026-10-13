@@ -57,8 +57,10 @@ export const userSchema = z
     passwordHasher: passwordHasherEnum.optional(),
     /** Set by a source that found a password Clerk cannot verify, and left it out. */
     passwordDropped: z.boolean().optional(),
-    // Set by a source for a user that should not be created at all; the checks
-    // reject it with this reason. Never sent to Clerk.
+    // Set by a source for a user that should not be created at all. Validation
+    // passes the row through so the run records it as skipped; `checkImport`
+    // is what rejects it, so anything that creates users must run the checks.
+    // Never sent to Clerk.
     skipReason: z.string().optional(),
     // 2FA
     totpSecret: z.string().optional(),
@@ -94,7 +96,9 @@ export const userSchema = z
         if (Array.isArray(field)) return field.length > 0;
         return false;
       };
+      // A row a source skips needs none: it is recorded as skipped, not failed.
       return (
+        data.skipReason !== undefined ||
         hasValue(data.email) ||
         hasValue(data.emailAddresses) ||
         hasValue(data.unverifiedEmailAddresses) ||
