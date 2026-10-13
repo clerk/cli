@@ -1007,6 +1007,46 @@ describe("importUsers", () => {
     expect(performance.now() - started).toBeLessThan(1000);
   });
 
+  test("rejects with a line it could not write, never sending that create", async () => {
+    stub(() => ok("user_created"));
+    const full = new Error("ENOSPC: no space left on device");
+
+    const run = importUsers({
+      users: [user()],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record: (line) => {
+        if (line.status === "creating") throw full;
+        record(line);
+      },
+    });
+
+    // Not a failure with an unknown outcome: the request never went out.
+    await expect(run).rejects.toBe(full);
+    expect(requests).toHaveLength(0);
+    expect(allLines).toHaveLength(0);
+  });
+
+  test("after a line it could not write, sends nothing more before rejecting", async () => {
+    stub(() => ok("user_created"));
+    const full = new Error("ENOSPC: no space left on device");
+
+    const run = importUsers({
+      users: ["u1", "u2", "u3"].map((userId) => user({ userId, email: `${userId}@x.dev` })),
+      secretKey: "sk_test_x",
+      // u2 waits a paced turn, which the halt ends.
+      limits: { ...LIMITS, concurrencyLimit: 1, rateLimit: 2 },
+      record: (line) => {
+        if (line.status === "created") throw full;
+        record(line);
+      },
+    });
+
+    await expect(run).rejects.toBe(full);
+    await Bun.sleep(700);
+    expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(1);
+  });
+
   test("records a failed user and keeps going", async () => {
     stub((_url, attempt) =>
       attempt === 1 ? clerkError(422, "that email is taken") : ok("user_ok"),
