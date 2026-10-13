@@ -119,7 +119,7 @@ mock.module(
 
 // ── Prompt queue (drives lib/prompts.ts and lib/listage.ts mocks) ────────────
 
-type PromptType = "select" | "search" | "input" | "confirm" | "password" | "editor";
+type PromptType = "select" | "search" | "input" | "confirm" | "password" | "editor" | "multiselect";
 
 const promptQueues: Record<PromptType, unknown[]> = {
   select: [],
@@ -128,6 +128,7 @@ const promptQueues: Record<PromptType, unknown[]> = {
   confirm: [],
   password: [],
   editor: [],
+  multiselect: [],
 };
 
 function dequeuePrompt(name: PromptType) {
@@ -168,6 +169,7 @@ export const mockPrompts = {
   input: (...responses: string[]) => promptQueues.input.push(...responses),
   password: (...responses: string[]) => promptQueues.password.push(...responses),
   editor: (...responses: string[]) => promptQueues.editor.push(...responses),
+  multiselect: (...responses: unknown[][]) => promptQueues.multiselect.push(...responses),
 };
 
 function resetPromptQueues() {
@@ -212,6 +214,7 @@ mock.module("../../../lib/prompts.ts", () => ({
   text: dequeuePrompt("input"),
   password: dequeuePrompt("password"),
   editor: dequeuePrompt("editor"),
+  multiselect: dequeuePrompt("multiselect"),
 }));
 
 mock.module(
