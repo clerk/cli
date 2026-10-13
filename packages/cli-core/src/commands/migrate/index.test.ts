@@ -120,6 +120,26 @@ describe("the migrate group's -y hook", () => {
     }
   });
 
+  test("an explicit --mode wins over --json", async () => {
+    const original = getMode();
+    try {
+      setMode("agent");
+      await parse([
+        "--mode",
+        "human",
+        "migrate",
+        "import",
+        missing,
+        "--json",
+        "--secret-key",
+        "sk_test_x",
+      ]);
+      expect(getMode()).toBe("human");
+    } finally {
+      setMode(original);
+    }
+  });
+
   test("records its absence, so a previous run cannot leak into this one", async () => {
     setAssumeYes(true);
     expect(await parse(["migrate", "import", missing, "--secret-key", "sk_test_x"])).toBe(false);
