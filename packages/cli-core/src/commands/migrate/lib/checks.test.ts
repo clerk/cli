@@ -310,7 +310,9 @@ describe("rejects", () => {
   test("a repeated source ID rejects only the later copy", async () => {
     const checks = await checkImport(input({ users: [user("a"), user("a")] }));
     expect(checks.importable.map((u) => u.userId)).toEqual(["a"]);
-    expect(checks.rejects).toEqual([{ sourceId: "a", reason: "duplicate source ID in the file" }]);
+    expect(checks.rejects).toEqual([
+      { sourceId: "a", reason: "duplicate source ID in the file", keptSourceId: "a" },
+    ]);
   });
 
   test("a rejected user does not claim its email from a later one", async () => {

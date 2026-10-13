@@ -540,6 +540,8 @@ function findFileDuplicates(users: User[]): {
   for (const user of users) {
     if (seenIds.has(user.userId)) {
       reasons.set(user, "duplicate source ID in the file");
+      // The earlier record under the same ID is the one kept.
+      keptBy.set(user, user.userId);
       continue;
     }
     seenIds.add(user.userId);
