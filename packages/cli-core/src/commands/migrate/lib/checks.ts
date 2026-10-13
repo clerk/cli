@@ -672,6 +672,8 @@ async function findInstanceDuplicates(
     }
   }
 
+  // The four lookups run at once, so they share one count.
+  const progress = { done: 0, total: 0 };
   const lookup = async (
     filter: "external_id" | "email_address" | "phone_number" | "username",
     values: Iterable<string>,
@@ -683,6 +685,7 @@ async function findInstanceDuplicates(
       schedule: input.schedule,
       spinner: input.spinner,
       label: "Checking for users already in the instance",
+      progress,
     });
 
   const found: LookedUpUser[] = (

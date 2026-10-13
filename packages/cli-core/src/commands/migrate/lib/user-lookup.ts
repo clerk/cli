@@ -48,9 +48,15 @@ export async function lookupUsers(options: {
   schedule: ApiScheduler;
   spinner?: SpinnerControls;
   label?: string;
+  /**
+   * A count shared by lookups run at once, so the spinner only climbs. Each
+   * adds its batches to `total` before its first request goes out.
+   */
+  progress?: { done: number; total: number };
 }): Promise<LookedUpUser[]> {
   const batches = batch([...new Set(options.values)], LOOKUP_BATCH);
-  let done = 0;
+  const progress = options.progress ?? { done: 0, total: 0 };
+  progress.total += batches.length;
 
   const pages = await Promise.all(
     batches.map(async (values) => {
@@ -74,8 +80,10 @@ export async function lookupUsers(options: {
           ),
         { onRetry: ({ delaySeconds }) => options.schedule.pause(delaySeconds * 1000) },
       );
-      done++;
-      options.spinner?.update(`${options.label ?? "Looking up users"}: ${done}/${batches.length}`);
+      progress.done++;
+      options.spinner?.update(
+        `${options.label ?? "Looking up users"}: ${progress.done}/${progress.total}`,
+      );
       const users = response.body;
       return Array.isArray(users) ? (users as LookedUpUser[]) : [];
     }),
