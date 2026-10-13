@@ -3,6 +3,8 @@
  *
  * BAPI filters on up to 100 values per call and leaves out any it does not
  * find, so the work is proportional to the list rather than to the instance.
+ * External IDs are not unique, so a batch can match more than a page: a full
+ * page is followed by the next, from `starting_after`.
  * Every call goes through the run's scheduler and backs off on a 429, exactly
  * as the writes do.
  */
@@ -68,24 +70,31 @@ export async function lookupUsers(options: {
         params.append(options.filter, options.filter === "external_id" ? `+${value}` : value);
       }
 
-      // A 429 pauses every lookup still queued, as on import.
-      const response = await retryOn429(
-        async () =>
-          options.schedule(async () =>
-            bapiRequest({
-              method: "GET",
-              path: `/v1/users?${params.toString()}`,
-              secretKey: options.secretKey,
-            }),
-          ),
-        { onRetry: ({ delaySeconds }) => options.schedule.pause(delaySeconds * 1000) },
-      );
+      const found: LookedUpUser[] = [];
+      for (;;) {
+        // A 429 pauses every lookup still queued, as on import.
+        const response = await retryOn429(
+          async () =>
+            options.schedule(async () =>
+              bapiRequest({
+                method: "GET",
+                path: `/v1/users?${params.toString()}`,
+                secretKey: options.secretKey,
+              }),
+            ),
+          { onRetry: ({ delaySeconds }) => options.schedule.pause(delaySeconds * 1000) },
+        );
+        const page = Array.isArray(response.body) ? (response.body as LookedUpUser[]) : [];
+        found.push(...page);
+        const last = page.at(-1)?.id;
+        if (page.length < LOOKUP_BATCH || typeof last !== "string") break;
+        params.set("starting_after", last);
+      }
       progress.done++;
       options.spinner?.update(
         `${options.label ?? "Looking up users"}: ${progress.done}/${progress.total}`,
       );
-      const users = response.body;
-      return Array.isArray(users) ? (users as LookedUpUser[]) : [];
+      return found;
     }),
   );
 
