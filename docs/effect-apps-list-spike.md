@@ -1,6 +1,6 @@
 # Effect application-listing spike
 
-Status: independent review accepted; production E2E acceptance remains blocked. Ticket 01 remains a draft until the remaining gate passes or the human explicitly waives it. This does not authorize ticket 02 or further migration.
+Status: ticket 01 accepted. Independent review and all required gates, including production E2E, have passed. This does not authorize ticket 02 or further migration.
 
 ## Scope
 
@@ -58,3 +58,11 @@ Final follow-up gates: format, format check, lint, typecheck, compiled build, an
 After the human enabled 1Password desktop integration, the clean integration checkout at `8c176f840962f184183273359e6cc9339605374f` retried `bun run test:e2e:op`. It exited 1 before starting the test suite: 1Password CLI 2.39.0 reported that it could not connect to the 1Password desktop app. A retry after granting the runner access to the desktop IPC socket directory produced the same connection error. Zero E2E tests or production API assertions ran; secrets were neither printed nor written to disk. No direct-secret fallback or already-passing test suite was rerun.
 
 Independent review is accepted, but this remaining environment gate is not waived or complete. The original draft ticket and later migration tickets remain unchanged. No code changes or later migration work were performed during this retry.
+
+## Accepted E2E gate — 2026-10-13
+
+Running `bun run test:e2e:op` outside the sandbox successfully connected to 1Password. The first host run passed 32 tests and failed 11 because the required Playwright Chromium build was absent and the host global Git ignore hid `.env` from native fixture assertions. Chromium was installed with `bunx playwright install chromium`. Personal Git settings were preserved.
+
+The final command was `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.excludesfile GIT_CONFIG_VALUE_0=/dev/null bun run test:e2e:op`, executed outside the sandbox. Result: 43 pass, zero failures, 30 assertions across 14 files in 36.59 seconds. This uses the dedicated production test application with 1Password credentials injected in memory. No application code changed; independently reviewed implementation remains `8c176f840962f184183273359e6cc9339605374f`. Earlier blocked-gate notes above are historical and superseded by this passing run.
+
+Ticket 01 is complete. Ticket 02 and later migrations remain unauthorized and unchanged. The integration checkout is retained for user review; no push or main merge occurred.
