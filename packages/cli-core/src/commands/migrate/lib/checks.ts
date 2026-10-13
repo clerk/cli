@@ -324,8 +324,12 @@ const PHONE_FIELDS = ["phone", "phoneNumbers", "unverifiedPhoneNumbers"] as cons
  */
 const isE164 = (phone: string) => /^\+[1-9]\d{1,14}$/.test(phone.trim());
 
-/** The file's phones Clerk would refuse once numeric usernames are on. */
-function loosePhoneCount(users: User[]): number {
+/**
+ * The file's phones Clerk would refuse once numeric usernames are on. None
+ * where the instance has phones off: they are stripped before the create.
+ */
+function loosePhoneCount(users: User[], settings: UserSettingsJSON | null): number {
+  if (settings && !acceptsIdentifier(settings, "phone_number")) return 0;
   return users.reduce((count, user) => {
     const { primaryPhone, additionalPhones, unverifiedPhones } = splitIdentifiers(user);
     const phones = [primaryPhone, ...additionalPhones, ...unverifiedPhones];
@@ -466,7 +470,9 @@ function dropLoosePhones(
   settings: UserSettingsJSON | null,
 ): { user: User; dropped: boolean } {
   const rules = (settings as { username_settings?: UsernameSettings } | null)?.username_settings;
-  if (!rules?.allow_numeric_usernames) return { user, dropped: false };
+  // Phones the instance has off are stripped anyway, whatever their form.
+  if (!rules?.allow_numeric_usernames || (settings && !acceptsIdentifier(settings, "phone_number")))
+    return { user, dropped: false };
   let kept: User | undefined;
   for (const field of PHONE_FIELDS) {
     const value = user[field];
@@ -917,7 +923,7 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
     : [];
   // Numeric usernames make Clerk refuse any phone not in E.164 form, so the
   // fix is not offered to a file whose phones would then be refused.
-  const looseFormat = loosePhoneCount(users) > 0;
+  const looseFormat = loosePhoneCount(users, settings) > 0;
   const username = USERNAME_OPTIONS.filter(
     ({ rule, needs }) =>
       !rules[rule] && usernames.some(needs) && !(rule === "allow_numeric_usernames" && looseFormat),
@@ -1040,7 +1046,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const refusedNames = new Set<string>();
   const refusedUsernames = new Set<string>();
   const loosePhoneUsers = new Set<string>();
-  const loosePhones = loosePhoneCount(input.users);
+  const loosePhones = loosePhoneCount(input.users, input.settings);
   for (const original of input.users) {
     const named = dropRefusedNames(original);
     if (named.dropped) refusedNames.add(original.userId);
