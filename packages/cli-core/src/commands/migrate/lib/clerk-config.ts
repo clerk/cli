@@ -157,9 +157,11 @@ export async function fetchInstanceSettings(secretKey: string): Promise<UserSett
 
 /** The enabled social strategies (`oauth_google`, …) in a settings payload. */
 export function enabledSocialProviders(settings: UserSettingsJSON): string[] {
-  return Object.entries(settings.social ?? {})
+  const enabled = Object.entries(settings.social ?? {})
     .filter(([, value]) => value?.enabled)
     .map(([strategy]) => strategy);
+  // The legacy Twitter strategy signs a Twitter user in as well as X does.
+  return enabled.includes("oauth_twitter") ? [...enabled, "oauth_x"] : enabled;
 }
 
 /**

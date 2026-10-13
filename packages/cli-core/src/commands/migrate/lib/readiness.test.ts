@@ -215,6 +215,19 @@ describe("present in the file but disabled in Clerk", () => {
     expect(item(report, "Microsoft (Azure)")?.blocking).toBe(false);
   });
 
+  // Supabase's Twitter users sign in to either of Clerk's strategies for X.
+  test("counts the legacy Twitter strategy as enabling X", () => {
+    const report = buildReadinessReport({
+      analysis: analysis({ totalUsers: 1, identifiers: { verifiedEmails: 1 } as never }),
+      settings: settings({
+        attributes: { email_address: { enabled: true } },
+        social: { oauth_twitter: { enabled: true } },
+      }),
+      providerCounts: { twitter: 1 },
+    });
+    expect(item(report, "Twitter (X)")?.blocking).toBe(false);
+  });
+
   test("ignores a provider no user actually signed up with", () => {
     const report = buildReadinessReport({
       analysis: analysis({ totalUsers: 1, identifiers: { verifiedEmails: 1 } as never }),
