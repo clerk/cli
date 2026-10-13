@@ -86,3 +86,23 @@ test("reads every page of a batch that matches more than one page", async () => 
   // The `+` keeps a leading `-` from reading as "exclude".
   expect(urls[0]?.searchParams.getAll("external_id")).toEqual(["+-dup"]);
 });
+
+test("stops paging when the cursor does not move", async () => {
+  let requests = 0;
+  // A server that ignores `starting_after` serves the same full page again.
+  globalThis.fetch = (async () => {
+    requests++;
+    return Response.json(
+      Array.from({ length: LOOKUP_BATCH }, (_, index) => ({ id: `user_${index}` })),
+    );
+  }) as unknown as typeof fetch;
+
+  await lookupUsers({
+    filter: "external_id",
+    values: ["a"],
+    secretKey: "sk_test_x",
+    schedule: createApiScheduler(1, 10_000),
+  });
+
+  expect(requests).toBe(2);
+});
