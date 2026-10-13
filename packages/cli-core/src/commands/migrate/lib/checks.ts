@@ -971,6 +971,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   // what is sent; `unstripped` keeps what the warnings describe.
   const passed: User[] = [];
   const unstripped = new Map<User, User>();
+  // The file's own record for each, which the fixes are built from.
+  const originals = new Map<User, User>();
   const placeholderEmails = new Set<string>();
   const refusedNames = new Set<string>();
   const refusedUsernames = new Set<string>();
@@ -1027,6 +1029,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     } else {
       passed.push(sent);
       unstripped.set(sent, user);
+      originals.set(sent, original);
       if (refused.length > 0) placeholderEmails.add(user.userId);
     }
   }
@@ -1040,7 +1043,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     const kept = keptBy.get(user);
     if (reason) {
       rejects.push({ sourceId: user.userId, reason, ...(kept ? { keptSourceId: kept } : {}) });
-      duplicates.add(unstripped.get(user) ?? user);
+      duplicates.add(originals.get(user) ?? user);
     } else candidates.push(user);
   }
 
@@ -1053,7 +1056,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     const reason = instanceDuplicates.get(user.userId);
     if (reason) {
       rejects.push({ sourceId: user.userId, reason });
-      duplicates.add(unstripped.get(user) ?? user);
+      duplicates.add(originals.get(user) ?? user);
     } else unique.push(user);
   }
   candidates = unique;
