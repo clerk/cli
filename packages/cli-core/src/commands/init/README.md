@@ -50,7 +50,7 @@ clerk init --no-skills
 
 ## Agent Mode
 
-When running in agent mode (`--mode agent` or non-TTY), the command runs the full init flow non-interactively:
+When running in agent mode (`--mode agent`, `CLERK_MODE=agent`, a recognized agent run, or non-TTY), the command runs the full init flow non-interactively:
 
 - All confirmation prompts are auto-skipped (as if `--yes` was passed)
 - For **existing projects**: framework and package manager are auto-detected, no flags required
@@ -179,12 +179,14 @@ Nuxt's module system auto-configures middleware and auto-imports components.
 
 ### TanStack Start
 
-| Action | File                       | Description                                 |
-| ------ | -------------------------- | ------------------------------------------- |
-| MODIFY | `src/start.ts`             | Add `clerkMiddleware` to request middleware |
-| MODIFY | `src/routes/__root.tsx`    | Add `ClerkProvider` and wrap body contents  |
-| CREATE | `src/routes/sign-in.$.tsx` | Sign-in route with `<SignIn />` component   |
-| CREATE | `src/routes/sign-up.$.tsx` | Sign-up route with `<SignUp />` component   |
+| Action        | File                       | Description                                     |
+| ------------- | -------------------------- | ----------------------------------------------- |
+| CREATE/MODIFY | `src/start.ts`             | Register CSRF middleware, then Clerk middleware |
+| MODIFY        | `src/routes/__root.tsx`    | Add `ClerkProvider` and wrap body contents      |
+| CREATE        | `src/routes/sign-in.$.tsx` | Sign-in route with `<SignIn />` component       |
+| CREATE        | `src/routes/sign-up.$.tsx` | Sign-up route with `<SignUp />` component       |
+
+CSRF middleware needs `@tanstack/react-start` 1.168.10 or later, with `@tanstack/react-router` 1.170.7 or later. When the version is older or can't be confirmed, or an existing `start.ts` can't be edited safely, `clerk init` leaves the file unchanged and prints the manual steps.
 
 ### Astro
 
