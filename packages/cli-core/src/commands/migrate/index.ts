@@ -43,13 +43,13 @@ export function registerMigrate(program: Program): void {
   //
   // `--json` means nobody is reading a prompt, so it runs the command in agent
   // mode: every prompt in this tree already stands down for an agent, with the
-  // usage error naming what to pass instead.
+  // usage error naming what to pass instead. An explicit `--mode` still wins.
   migrateCommand.hook("preAction", (_thisCommand, actionCommand) => {
     // With globals: `export auth0 --json` lands on the export group's own
     // --json, which the subcommand's opts() never sees.
     const opts = actionCommand.optsWithGlobals();
     setAssumeYes(Boolean(opts.yes));
-    if (opts.json) setMode("agent");
+    if (opts.json && !opts.mode) setMode("agent");
   });
 
   // Named, not `isDefault`. `import` and `export` are the two directions this

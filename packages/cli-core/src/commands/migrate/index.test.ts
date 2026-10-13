@@ -264,6 +264,19 @@ describe("the migrate group's -y hook", () => {
     }
   });
 
+  test("an explicit --mode wins over --json", async () => {
+    const original = getMode();
+    const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-json-"));
+    try {
+      setMode("agent");
+      await parse(["--mode", "human", "migrate", "runs", "--json", "--runs-dir", runsDir]);
+      expect(getMode()).toBe("human");
+    } finally {
+      setMode(original);
+      fs.rmSync(runsDir, { recursive: true, force: true });
+    }
+  });
+
   test("records its absence, so a previous run cannot leak into this one", async () => {
     setAssumeYes(true);
     expect(await parse(["migrate", "export", "supabase", "--db-url", "./none.sqlite"])).toBe(false);
