@@ -317,9 +317,9 @@ describe("importUsers", () => {
     }
   });
 
-  // Its `creating` line already marks it unfinished; `notSent` is for users
-  // with no line at all.
-  test("does not count a user whose first create went out as not sent", async () => {
+  // `notSent` is for users with no line at all. A create Clerk refused leaves
+  // no user, so a re-run need not look it up.
+  test("fails a user stopped after its first create was refused, not as not sent", async () => {
     stub(() => {
       abortInFlight();
       return clerkError(429, "slow down", { "retry-after": "5" });
@@ -332,10 +332,14 @@ describe("importUsers", () => {
         record,
       });
 
-      expect(summary).toMatchObject({ successful: 0, failed: 0, notSent: 0 });
+      expect(summary).toMatchObject({ successful: 0, failed: 1, notSent: 0 });
       expect(requests).toHaveLength(1);
-      expect(lines).toHaveLength(0);
-      expect(allLines.at(-1)).toMatchObject({ sourceId: "u1", status: "creating" });
+      expect(allLines.at(-1)).toMatchObject({
+        sourceId: "u1",
+        status: "failed",
+        code: "stopped",
+        error: expect.stringContaining("Stopped before the user was created"),
+      });
     } finally {
       _resetInterruptState();
     }
