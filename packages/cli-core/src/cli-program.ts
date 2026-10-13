@@ -1,6 +1,6 @@
 import { Command } from "@commander-js/extra-typings";
 import { expandInputJson } from "./lib/input-json.ts";
-import { setLogLevel } from "./lib/log.ts";
+import { getLogLevel, setLogLevel } from "./lib/log.ts";
 import { interruptedExitCode } from "./lib/signals.ts";
 import { setMode, type Mode } from "./mode.ts";
 import { registerInit } from "./commands/init/index.ts";
@@ -87,6 +87,43 @@ const registrants: CommandRegistrant[] = [
   registerExtras,
 ];
 
+export function initializeGlobalMode(opts: { mode?: string; verbose?: boolean }): void {
+  // Reset log level at the start of each command invocation so a previous
+  // --verbose doesn't leak into subsequent runs.
+  setLogLevel("info");
+  if (opts.verbose) {
+    setLogLevel("debug");
+  }
+  if (opts.mode) {
+    if (opts.mode !== "human" && opts.mode !== "agent") {
+      throwUsageError(`Invalid mode "${opts.mode}". Must be "human" or "agent".`);
+    }
+    setMode(opts.mode as Mode);
+  }
+}
+
+export function initializeEnvironment(envName: string | undefined): void {
+  // Initialize the active environment from persisted config
+  if (envName && isValidEnv(envName)) {
+    setCurrentEnv(envName); // logs env + platformApiUrl
+  } else {
+    if (envName) {
+      log.warn(
+        `Saved environment "${envName}" is not available in this binary. Falling back to production.`,
+      );
+      log.warn(`Available environments: ${getAvailableEnvs().join(", ")}`);
+    }
+    log.debug(`env: active environment is "production" (platformApiUrl=${getPlapiBaseUrl()})`);
+  }
+
+  // Print environment banner to stderr when not on production,
+  // so it doesn't pollute stdout for piped commands.
+  const activeEnv = getCurrentEnvName();
+  if (activeEnv !== "production") {
+    process.stderr.write(`[${activeEnv.toUpperCase()}]\n`);
+  }
+}
+
 export function createProgram(): Program {
   const program = new Command()
     .name("clerk")
@@ -112,40 +149,8 @@ export function createProgram(): Program {
   program.hook("preAction", async (_thisCommand, actionCommand) => {
     // First so hook-time failures (e.g. invalid --mode) still produce an event.
     startCommandTelemetry(actionCommand);
-    // Reset log level at the start of each command invocation so a previous
-    // --verbose doesn't leak into subsequent runs.
-    setLogLevel("info");
-    const opts = program.opts();
-    if (opts.verbose) {
-      setLogLevel("debug");
-    }
-    if (opts.mode) {
-      if (opts.mode !== "human" && opts.mode !== "agent") {
-        throwUsageError(`Invalid mode "${opts.mode}". Must be "human" or "agent".`);
-      }
-      setMode(opts.mode as Mode);
-    }
-
-    // Initialize the active environment from persisted config
-    const envName = await getEnvironment();
-    if (envName && isValidEnv(envName)) {
-      setCurrentEnv(envName); // logs env + platformApiUrl
-    } else {
-      if (envName) {
-        log.warn(
-          `Saved environment "${envName}" is not available in this binary. Falling back to production.`,
-        );
-        log.warn(`Available environments: ${getAvailableEnvs().join(", ")}`);
-      }
-      log.debug(`env: active environment is "production" (platformApiUrl=${getPlapiBaseUrl()})`);
-    }
-
-    // Print environment banner to stderr when not on production,
-    // so it doesn't pollute stdout for piped commands.
-    const activeEnv = getCurrentEnvName();
-    if (activeEnv !== "production") {
-      process.stderr.write(`[${activeEnv.toUpperCase()}]\n`);
-    }
+    initializeGlobalMode(program.opts());
+    initializeEnvironment(await getEnvironment());
   });
 
   // Show update notification after each command, except for commands that
@@ -258,7 +263,14 @@ export async function runProgram(
 ): Promise<void> {
   try {
     const { argv, from } = await resolveArgv(args, options?.from);
-    await program.parseAsync(argv, { from });
+    const userArgs = from === "node" ? argv.slice(2) : argv;
+    const { appsListRoute } = await import("./commands/apps/effect-route.ts");
+    if (appsListRoute(userArgs)) {
+      const { runAppsList } = await import("./commands/apps/effect-cli.ts");
+      await runAppsList(userArgs);
+    } else {
+      await program.parseAsync(argv, { from });
+    }
     // Ctrl-C aborts in-flight work, so a command can finish or fail *because* it
     // was interrupted. The SIGINT handler already owns rendering, telemetry, and
     // the exit for that case; racing it here would report the wrong outcome.
@@ -277,7 +289,7 @@ export async function runProgram(
     // `reportError` is synchronous, so the send makes no progress until the
     // await; the ordering is the point, not overlap.
     const pendingTelemetry = finalizeAndSendTelemetry(telemetryResultForError(error));
-    const exitCode = reportError(error, program.opts().verbose ?? false);
+    const exitCode = reportError(error, program.opts().verbose ?? getLogLevel() === "debug");
     await pendingTelemetry;
     process.exit(exitCode);
   }

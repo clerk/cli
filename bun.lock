@@ -35,8 +35,10 @@
         "@clack/prompts": "^1.7.0",
         "@clerk/cli-extras": "workspace:*",
         "@commander-js/extra-typings": "^15.0.0",
+        "@effect/platform-bun": "4.0.4",
         "@napi-rs/keyring": "^1.3.0",
         "commander": "^15.0.0",
+        "effect": "4.0.4",
         "env-paths": "^4.0.0",
         "external-editor": "^3.1.0",
         "magicast": "^0.5.5",
@@ -124,6 +126,10 @@
     "@clerk/testing": ["@clerk/testing@2.2.42", "", { "dependencies": { "@clerk/backend": "^3.22.0", "@clerk/shared": "^4.38.0", "dotenv": "17.2.2" }, "peerDependencies": { "@playwright/test": "^1", "cypress": "^13 || ^14 || ^15" }, "optionalPeers": ["@playwright/test", "cypress"] }, "sha512-TlbtOk+WBNbOVXI1Mfyyk3qg2NQTqMfG6d3uWEVzIA5AQX3gbGStify4wLo8J2MMgjYrZTN2AsHAyDDcvax55g=="],
 
     "@commander-js/extra-typings": ["@commander-js/extra-typings@15.0.0", "", { "peerDependencies": { "commander": "~15.0.0" } }, "sha512-yeJlba62xqmkgELUsn7356MEnzLLu/fw2x4lofFqGnXh6YysRdEs2BaLeLtg1+KU0AXvMeqQvTTp+3hBEBK+EA=="],
+
+    "@effect/platform-bun": ["@effect/platform-bun@4.0.4", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.4" }, "peerDependencies": { "effect": "^4.0.4" } }, "sha512-L5xA9sF2RET7rqi18Q8yUcWq301o+jBMm9GWJixmJWGwzeipzMqjjPk+10vE8vUiHPbtdtJaBSIgs0AJ2jEF1g=="],
+
+    "@effect/platform-node-shared": ["@effect/platform-node-shared@4.0.4", "", { "dependencies": { "@types/ws": "^8.18.2", "ws": "^8.22.0" }, "peerDependencies": { "effect": "^4.0.4" } }, "sha512-gh2KRmqGWrJ0FVL8GqnI1GpB+fCfCUI7sGiUZkxxBHyHj1t94rm6VDJffCfuVZWe6GpvYXtizifVczUrgOce8A=="],
 
     "@hono/node-server": ["@hono/node-server@2.1.1", "", { "peerDependencies": { "hono": "^4" } }, "sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg=="],
 
@@ -265,6 +271,8 @@
 
     "@types/semver": ["@types/semver@7.8.0", "", {}, "sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ=="],
 
+    "@types/ws": ["@types/ws@8.18.2", "", { "dependencies": { "@types/node": "*" } }, "sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w=="],
+
     "@typescript/typescript-aix-ppc64": ["@typescript/typescript-aix-ppc64@7.0.2", "", { "os": "aix", "cpu": "ppc64" }, "sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ=="],
 
     "@typescript/typescript-darwin-arm64": ["@typescript/typescript-darwin-arm64@7.0.2", "", { "os": "darwin", "cpu": "arm64" }, "sha512-gowzar9MwS/aRWp6f3a4KUqzRjAZjOsmGNCM6LcTgXum+dBfgsBVMN+AgvOCCbguXyick6LJhpBszxMebJ8syA=="],
@@ -366,6 +374,8 @@
     "dunder-proto": ["dunder-proto@1.0.1", "", { "dependencies": { "call-bind-apply-helpers": "^1.0.1", "es-errors": "^1.3.0", "gopd": "^1.2.0" } }, "sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A=="],
 
     "ee-first": ["ee-first@1.1.1", "", {}, "sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow=="],
+
+    "effect": ["effect@4.0.4", "", {}, "sha512-Sr50OeVSC3M5UkoUYUhFf3EULryhGaZZUf6OzDHTvaznOw7HRlxOKdF3/4nvQXHL22StOyMG3Cvo8Bt7xUp+Ng=="],
 
     "encodeurl": ["encodeurl@2.0.0", "", {}, "sha512-Q0n9HRi4m6JuGIV1eFlmvJB7ZEVxu93IrMyiMsGC0lrMJMWzRgx6WGquyfQgZVb31vhGgXnfmPNNXmxnOkRBrg=="],
 
@@ -664,6 +674,8 @@
     "which": ["which@2.0.2", "", { "dependencies": { "isexe": "^2.0.0" }, "bin": { "node-which": "./bin/node-which" } }, "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA=="],
 
     "wrappy": ["wrappy@1.0.2", "", {}, "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ=="],
+
+    "ws": ["ws@8.22.0", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg=="],
 
     "yaml": ["yaml@2.9.1", "", { "bin": { "yaml": "bin.mjs" } }, "sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw=="],
 

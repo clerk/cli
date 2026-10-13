@@ -9,7 +9,7 @@ import { isAgent } from "../../mode.ts";
 
 const COLUMN_PADDING = 2;
 
-function formatAppsTable(apps: Application[]): void {
+export function formatAppsTable(apps: Application[]): void {
   const nameWidth =
     Math.max("NAME".length, ...apps.map((a) => displayName(a).length)) + COLUMN_PADDING;
   const idWidth =
