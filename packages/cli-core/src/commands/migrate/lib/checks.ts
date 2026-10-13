@@ -1110,6 +1110,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     }
   }
 
+  // No setting would let a duplicate in, so none earns a fix.
+  const duplicates = new Set<User>();
   const { reasons: fileDuplicates, keptBy } = findFileDuplicates(passed, reservesFor(input));
   // An adopted user already holds its email, phone and username in Clerk, so
   // an earlier record that claimed one first is the one whose create would
@@ -1130,6 +1132,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         reason: "shares an email, phone or username with a user an earlier attempt already created",
         keptSourceId: holder,
       });
+      duplicates.add(unstripped.get(user) ?? user);
       continue;
     }
     // An adopted user is in Clerk already, so an earlier record sharing its
@@ -1141,9 +1144,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         ? undefined
         : duplicate;
     const kept = keptBy.get(user);
-    if (reason)
+    if (reason) {
       rejects.push({ sourceId: user.userId, reason, ...(kept ? { keptSourceId: kept } : {}) });
-    else candidates.push(user);
+      duplicates.add(unstripped.get(user) ?? user);
+    } else candidates.push(user);
   }
 
   const instanceDuplicates =
@@ -1155,8 +1159,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     const reason = input.adoptedSourceIds?.has(user.userId)
       ? undefined
       : instanceDuplicates.get(user.userId);
-    if (reason) rejects.push({ sourceId: user.userId, reason });
-    else unique.push(user);
+    if (reason) {
+      rejects.push({ sourceId: user.userId, reason });
+      duplicates.add(unstripped.get(user) ?? user);
+    } else unique.push(user);
   }
   candidates = unique;
 
@@ -1214,7 +1220,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
           ]
         : []),
     ],
-    fixes: buildFixes(input, input.users),
+    fixes: buildFixes(
+      input,
+      input.users.filter((user) => !duplicates.has(user)),
+    ),
     ...(quota ? { quota } : {}),
     settingsUnavailable: input.settings === null,
   };
