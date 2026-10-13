@@ -883,11 +883,14 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       }
 
       if (!options.json) {
+        // A dry run writes nothing, so it only says what the import would do.
         log.info(
           resume.kind === "continue"
-            ? `Continuing run ${resume.record.id}, which ${resume.because === "interrupted" ? "was interrupted" : "finished partial"}: ` +
+            ? `${options.dryRun ? "Would continue" : "Continuing"} run ${resume.record.id}, which ${resume.because === "interrupted" ? "was interrupted" : "finished partial"}: ` +
                 `${plural(done.size, "user")} already imported ${done.size === 1 ? "is" : "are"} left alone.`
-            : "Starting a new run.",
+            : options.dryRun
+              ? "Would start a new run."
+              : "Starting a new run.",
         );
         if (adopted.size > 0) {
           log.info(
