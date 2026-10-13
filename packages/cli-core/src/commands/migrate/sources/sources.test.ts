@@ -180,6 +180,17 @@ describe("supabase", () => {
     expect("deletedAt" in (user ?? {})).toBe(false);
   });
 
+  // Supabase's anonymous sign-in leaves no email or phone; without the skip,
+  // each would fail validation as missing an identifier.
+  test.each([[true], ["true"]])("skips an anonymous user (is_anonymous %p)", (is_anonymous) => {
+    const result = transformUsers([{ id: "anon", is_anonymous }], "supabase");
+    expect(result.validationFailed).toBe(0);
+    expect(result.transformedData[0]?.skipReason).toBe(
+      "anonymous in Supabase, with no email or phone",
+    );
+    expect("isAnonymous" in (result.transformedData[0] ?? {})).toBe(false);
+  });
+
   test.each([
     ["14165550123", "+14165550123"],
     ["+14165550123", "+14165550123"],
