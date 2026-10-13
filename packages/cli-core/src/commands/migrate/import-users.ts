@@ -480,11 +480,21 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     } catch (error) {
       // Not an API outcome: the request never went out.
       if (storeFailure && error === storeFailure.error) throw error;
-      // Unrecorded, so a re-run picks the user up like any other. A user whose
-      // first create went out (a 429, a refused phone) has its `creating` line
-      // to mark it unfinished, so it is not counted here as well.
+      // Unrecorded, so a re-run picks the user up like any other.
+      if (error instanceof NotSentError && !sent) {
+        notSent++;
+        return;
+      }
+      // Only a definite refusal (a 429, a refused phone) is retried, so a stop
+      // after a create went out leaves a user Clerk does not hold.
       if (error instanceof NotSentError) {
-        if (!sent) notSent++;
+        recordFailure(
+          user.userId,
+          "Stopped before the user was created",
+          "stopped",
+          retries,
+          false,
+        );
         return;
       }
       if (error instanceof RateLimitExceededError) {
