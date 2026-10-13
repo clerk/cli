@@ -265,3 +265,69 @@ test.each(
     await server.stop(true);
   }
 });
+
+test.each(
+  [
+    ["--no-json"],
+    ["--no-verbose"],
+    ["--json", "false"],
+    ["--json", "true"],
+    ["--verbose", "false"],
+    ["--verbose", "0"],
+  ].map((flags) => ({ flags })),
+)("compiled strict boolean syntax rejects before API execution %j", async ({ flags }) => {
+  let requests = 0;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => {
+      requests++;
+      return Response.json([]);
+    },
+  });
+  try {
+    const result = await invoke(["apps", "list", ...flags], server.url.toString());
+    expect(result.code).toBe(1);
+    expect(result.err).toContain(
+      flags[0]?.startsWith("--no-") ? "unknown option" : "too many arguments",
+    );
+    expect(result.err).not.toContain("Not authenticated");
+    expect(requests).toBe(0);
+  } finally {
+    await server.stop(true);
+  }
+});
+
+test.each(
+  [
+    ["--help", "--version"],
+    ["--version", "--help"],
+    ["-h", "-v"],
+    ["-vh"],
+    ["--no-json", "--version"],
+  ].map((flags) => ({ flags })),
+)(
+  "compiled version retains precedence over help and invalid boolean options %j",
+  async ({ flags }) => {
+    const rootVersion = await invoke(["--version"]);
+    const result = await invoke(["apps", "list", ...flags]);
+    expect(result.code).toBe(0);
+    expect(result.out).toBe(rootVersion.out);
+    expect(result.err).toBe("");
+  },
+);
+
+test("compiled builtin handling keeps unsupported clusters and scalar values distinct", async () => {
+  const cluster = await invoke(["apps", "list", "-hv"]);
+  expect(cluster.code).toBe(1);
+  expect(cluster.err).toContain("unknown option '-hv'");
+  const value = await invoke(["apps", "list", "--mode", "--version"]);
+  expect(value.code).toBe(2);
+  expect(JSON.parse(value.err).error).toMatchObject({
+    code: "usage_error",
+    message: 'Invalid mode "--version". Must be "human" or "agent".',
+  });
+  const operand = await invoke(["apps", "list", "--", "--version"]);
+  expect(operand.code).toBe(1);
+  expect(operand.err).toContain("too many arguments");
+});

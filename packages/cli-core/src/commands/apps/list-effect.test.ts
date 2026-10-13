@@ -1,3 +1,4 @@
+import { CURRENT_VERSION } from "../../lib/version.ts";
 import { expect, test } from "bun:test";
 import { Effect, Layer } from "effect";
 import { Applications, AppsOutput, listEffect } from "./list-effect.ts";
@@ -257,4 +258,96 @@ test("a leading operand delimiter keeps later flags literal before command execu
     ),
   ).rejects.toThrow("too many arguments for 'list'");
   expect(requests).toBe(0);
+});
+
+function observedLayers() {
+  const calls = { configuration: 0, credentials: 0, api: 0 };
+  const credentials = Effect.sync(() => {
+    calls.credentials++;
+    return "unused";
+  });
+  return {
+    calls,
+    layer: Layer.mergeAll(
+      Layer.succeed(AppsConfiguration, {
+        environment: Effect.sync(() => {
+          calls.configuration++;
+          return undefined;
+        }),
+        baseUrl: Effect.succeed("https://api.clerk.com"),
+      }),
+      Layer.succeed(Applications, {
+        list: Effect.gen(function* () {
+          yield* credentials;
+          calls.api++;
+          return [];
+        }),
+      }),
+      outputLayer,
+    ),
+  };
+}
+
+test.each([
+  { args: ["apps", "list", "--no-json"] },
+  { args: ["apps", "list", "-hv"] },
+  { args: ["apps", "list", "--verbose", "0"] },
+  { args: ["apps", "list", "--no-verbose"] },
+  { args: ["apps", "list", "--no-help"] },
+  { args: ["apps", "list", "--no-version"] },
+  { args: ["apps", "list", "--json", "true"] },
+  { args: ["apps", "list", "--json", "false"] },
+  { args: ["apps", "list", "--verbose", "true"] },
+  { args: ["apps", "list", "--verbose", "false"] },
+  { args: ["apps", "list", "--", "--version"] },
+])("unsupported switch syntax is rejected before any command services %j", async ({ args }) => {
+  const observed = observedLayers();
+  await expect(runAppsList(args, observed.layer)).rejects.toBeInstanceOf(Error);
+  expect(observed.calls).toEqual({ configuration: 0, credentials: 0, api: 0 });
+});
+
+test.each([
+  { args: ["apps", "list", "--help", "--version"] },
+  { args: ["apps", "list", "--version", "--help"] },
+  { args: ["apps", "list", "--no-json", "--version", "--help"] },
+  { args: ["apps", "list", "--json=false", "--help", "--version"] },
+])("version wins built-in precedence without invoking services %j", async ({ args }) => {
+  const observed = observedLayers();
+  await runAppsList(args, observed.layer);
+  expect(captured.out.trim()).toBe(CURRENT_VERSION);
+  expect(observed.calls).toEqual({ configuration: 0, credentials: 0, api: 0 });
+});
+
+test.each([
+  { args: ["apps", "list", "-vh"] },
+  { args: ["apps", "list", "-vx"] },
+  { args: ["apps", "list", "-v=false"] },
+  { args: ["apps", "list", "--json=false", "-vh"] },
+])("short built-in clusters retain version precedence %j", async ({ args }) => {
+  const observed = observedLayers();
+  await runAppsList(args, observed.layer);
+  expect(captured.out.trim()).toBe(CURRENT_VERSION);
+  expect(observed.calls).toEqual({ configuration: 0, credentials: 0, api: 0 });
+});
+
+test.each([
+  { args: ["apps", "list", "--mode", "--version"] },
+  { args: ["apps", "list", "--mode", "--no-json"] },
+  { args: ["apps", "list", "--mode", "--help"] },
+])("a scalar flag value never becomes a boolean or built-in action %j", async ({ args }) => {
+  const observed = observedLayers();
+  await expect(runAppsList(args, observed.layer)).rejects.toThrow("Invalid mode");
+  expect(observed.calls).toEqual({ configuration: 0, credentials: 0, api: 0 });
+});
+
+test.each([
+  { args: ["apps", "list", "--no-json", "--help", "false"] },
+  { args: ["apps", "list", "--json=false", "--help"] },
+  { args: ["apps", "list", "--verbose", "0", "--help"] },
+])("actual help action wins invalid ordinary arguments without services %j", async ({ args }) => {
+  const observed = observedLayers();
+  await runAppsList(args, observed.layer);
+  expect(captured.out).toContain("List your Clerk applications");
+  expect(captured.out).not.toBe(CURRENT_VERSION);
+  expect(observed.calls).toEqual({ configuration: 0, credentials: 0, api: 0 });
 });

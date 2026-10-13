@@ -17,15 +17,31 @@ import { CURRENT_VERSION } from "../../lib/version.ts";
 import { AppsFailure, isAppsFailure, listEffect } from "./list-effect.ts";
 import { AppsConfiguration, appsListLayer } from "./list-services.ts";
 
+// Reserve Effect's automatic negated spellings so its parser rejects them.
+// Clerk's existing switches expose only their positive spelling.
+const unsupportedSwitch = (name: string) =>
+  Flag.Boolean(name).pipe(
+    Flag.mapEffect(() =>
+      Effect.fail(new EffectCliError.UnrecognizedOption({ option: `--${name}`, suggestions: [] })),
+    ),
+    Flag.optional,
+    Flag.withHidden,
+  );
 const root = Command.make("clerk").pipe(
   Command.withSharedFlags({
     mode: Flag.String("mode").pipe(Flag.optional),
     verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
+    noVerbose: unsupportedSwitch("no-verbose"),
+    noHelp: unsupportedSwitch("no-help"),
+    noVersion: unsupportedSwitch("no-version"),
   }),
 );
 const listCommand = Command.make(
   "list",
-  { json: Flag.Boolean("json").pipe(Flag.withDefault(false)) },
+  {
+    json: Flag.Boolean("json").pipe(Flag.withDefault(false)),
+    noJson: unsupportedSwitch("no-json"),
+  },
   Effect.fn("apps.list.command")(function* (options) {
     const globals = yield* root;
     const mode = Option.getOrUndefined(globals.mode);
@@ -80,6 +96,25 @@ export const appsListCommand = root.pipe(
 /** The runner is the sole foreign boundary back to the legacy executable lifecycle. */
 export async function runAppsList(args: readonly string[], layer = appsListLayer): Promise<void> {
   const argv = [...args];
+  // Commander exits for version/help before validating ordinary arguments.
+  // A required scalar value or a literal operand must not become an action.
+  let version = false;
+  let help = false;
+  let firstCommand: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "--") break;
+    if (arg === "--mode" || arg === "--input-json") {
+      i++;
+      continue;
+    }
+    if (arg === "--version" || (arg.startsWith("-v") && !arg.startsWith("--"))) version = true;
+    if (arg === "--help" || arg === "-h") help = true;
+    if (!arg.startsWith("-") && firstCommand === undefined) firstCommand = arg;
+  }
+  if (firstCommand === "help") help = true;
+  if (version || help)
+    argv.splice(0, argv.length, "apps", "list", version ? "--version" : "--help");
   // Commander assigns repeated scalar options their last value. Effect CLI
   // retains the first; normalize this established input contract before parsing.
   let lastMode = -1;
@@ -88,7 +123,13 @@ export async function runAppsList(args: readonly string[], layer = appsListLayer
     if (/^(--json|--verbose|--help|--version|-h|-v)=/.test(argv[i]!)) {
       throw new CliError(`unknown option '${argv[i]}'`, { exitCode: EXIT_CODE.GENERAL });
     }
+    if (argv[i]!.startsWith("-") && !argv[i]!.startsWith("--") && argv[i]!.length > 2) {
+      throw new CliError(`unknown option '${argv[i]}'`, { exitCode: EXIT_CODE.GENERAL });
+    }
     if (argv[i] === "--mode" || argv[i]!.startsWith("--mode=")) {
+      if (argv[i] === "--mode" && argv[i + 1] !== undefined) {
+        argv.splice(i, 2, `--mode=${argv[i + 1]}`);
+      }
       if (lastMode >= 0) {
         const count = argv[lastMode] === "--mode" ? 2 : 1;
         argv.splice(lastMode, count);
@@ -96,6 +137,10 @@ export async function runAppsList(args: readonly string[], layer = appsListLayer
       }
       lastMode = i;
       if (argv[i] === "--mode") i++;
+    } else if (argv[i] === "--json" || argv[i] === "--verbose") {
+      // Pin the implicit true value so Effect leaves a following literal as
+      // an operand, which its parser rejects before the handler can run.
+      argv[i] = `${argv[i]}=true`;
     }
   }
   let firstWord = -1;
@@ -131,7 +176,7 @@ export async function runAppsList(args: readonly string[], layer = appsListLayer
   })(argv).pipe(
     Effect.provide(Layer.mergeAll(BunServices.layer, layer)),
     Effect.provideService(Console.Console, cliConsole),
-    Effect.provide(CliConfig.layer({ builtIns: [GlobalFlag.Help, GlobalFlag.Version] })),
+    Effect.provide(CliConfig.layer({ builtIns: [GlobalFlag.Version, GlobalFlag.Help] })),
     Effect.provide(
       CliOutput.layer({ ...CliOutput.defaultFormatter(), formatVersion: () => CURRENT_VERSION }),
     ),
