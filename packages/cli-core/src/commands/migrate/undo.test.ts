@@ -116,7 +116,8 @@ function importRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return { ...record, ...overrides };
 }
 
-const options = { secretKey: "sk_test_x", runsDir: "" };
+// `user_b` has signed in since the import; the guard on that has its own tests.
+const options = { secretKey: "sk_test_x", runsDir: "", includeSignedIn: true };
 const withDir = (extra: Record<string, unknown> = {}) => ({ ...options, runsDir, ...extra });
 const deletes = () => requests.filter((request) => request.method === "DELETE");
 
@@ -269,6 +270,29 @@ describe("--dry-run", () => {
       preview: { toDelete: 2, signedInSince: 1, alreadyGone: 0, alreadyDeleted: 0 },
       dryRun: true,
     });
+  });
+});
+
+describe("users who signed in since the import", () => {
+  test("--yes alone refuses to delete them, and deletes nothing", async () => {
+    const record = importRun();
+
+    const error = (await undo(record.id, withDir({ yes: true, includeSignedIn: false })).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+    expect(error.message).toContain("1 user the import created has signed in since");
+    expect(error.examples?.[0]?.command).toContain("--yes --include-signed-in");
+    expect(deletes()).toHaveLength(0);
+  });
+
+  test("--include-signed-in deletes them too", async () => {
+    const record = importRun();
+
+    await undo(record.id, withDir({ yes: true, includeSignedIn: true }));
+
+    expect(deletes()).toHaveLength(2);
   });
 });
 

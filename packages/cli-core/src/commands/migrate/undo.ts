@@ -56,6 +56,8 @@ import { findInFlight, lookupUsers } from "./lib/user-lookup.ts";
 export type UndoOptions = {
   dryRun?: boolean;
   yes?: boolean;
+  /** With `--yes`, also delete users who have signed in since the import. */
+  includeSignedIn?: boolean;
   json?: boolean;
   secretKey?: string;
   app?: string;
@@ -368,7 +370,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
 
   if (!options.json) printPreview(record, preview);
 
-  const command = `clerk migrate undo ${record.id} --yes`;
+  const command = `clerk migrate undo ${record.id} --yes${preview.signedInSince > 0 ? " --include-signed-in" : ""}`;
   const nothingLeft = present.length === 0 && gone.length === 0;
 
   if (options.dryRun) {
@@ -403,6 +405,24 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       default: false,
     });
     if (!proceed) throwUserAbort();
+  }
+
+  // Rule 2: `--yes` consents to undoing the import, not to deleting accounts
+  // people have used since. That takes its own flag; a human at the prompt has
+  // the warning above.
+  if (options.yes && preview.signedInSince > 0 && !options.includeSignedIn) {
+    if (options.json) {
+      log.data(
+        JSON.stringify(jsonResult(target, record, preview, { consent: "required" }), null, 2),
+      );
+    }
+    throwUsageError(
+      `${plural(preview.signedInSince, "user")} the import created ${preview.signedInSince === 1 ? "has" : "have"} signed in since, and --yes alone does not delete them. ` +
+        "Pass --include-signed-in to delete them too. Nothing was deleted.",
+      undefined,
+      undefined,
+      [{ command, description: "Delete every user this import created" }],
+    );
   }
 
   // Gitignored only now, once there is consent to write a run.

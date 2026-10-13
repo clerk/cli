@@ -73,6 +73,7 @@ describe("registerMigrate", () => {
     expect(undoCommand?.options.map((option) => option.long)).toEqual([
       "--dry-run",
       "--yes",
+      "--include-signed-in",
       "--json",
       "--secret-key",
       "--app",
