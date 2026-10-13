@@ -666,7 +666,13 @@ describe("importUsers", () => {
       url.endsWith("/v1/users") && attempt === 1
         ? new Response(
             JSON.stringify({
-              errors: [{ code: "x", message: "bad phone", meta: { param_name: "phone_number" } }],
+              errors: [
+                {
+                  code: "form_param_format_invalid",
+                  message: "bad phone",
+                  meta: { param_name: "phone_number" },
+                },
+              ],
             }),
             { status: 422 },
           )
@@ -693,7 +699,13 @@ describe("importUsers", () => {
         url.endsWith("/v1/users") && attempt <= refusals
           ? new Response(
               JSON.stringify({
-                errors: [{ code: "x", message: "bad phone", meta: { param_name: "phone_number" } }],
+                errors: [
+                  {
+                    code: "form_param_format_invalid",
+                    message: "bad phone",
+                    meta: { param_name: "phone_number" },
+                  },
+                ],
               }),
               { status: 422 },
             )
@@ -779,7 +791,13 @@ describe("importUsers", () => {
       () =>
         new Response(
           JSON.stringify({
-            errors: [{ code: "x", message: "bad phone", meta: { param_name: "phone_number" } }],
+            errors: [
+              {
+                code: "form_param_format_invalid",
+                message: "bad phone",
+                meta: { param_name: "phone_number" },
+              },
+            ],
           }),
           { status: 422 },
         ),
@@ -793,6 +811,35 @@ describe("importUsers", () => {
     });
 
     expect(summary.failed).toBe(1);
+    expect(requests).toHaveLength(1);
+  });
+
+  test("fails a user whose phone another user holds, rather than drop the phone", async () => {
+    stub(
+      () =>
+        new Response(
+          JSON.stringify({
+            errors: [
+              {
+                code: "form_identifier_exists",
+                message: "That phone number is taken. Please try another.",
+                meta: { param_name: "phone_number" },
+              },
+            ],
+          }),
+          { status: 422 },
+        ),
+    );
+
+    const summary = await importUsers({
+      users: [user({ phone: "+15555550100" })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(summary).toMatchObject({ successful: 0, failed: 1 });
+    expect(summary.droppedPhones.size).toBe(0);
     expect(requests).toHaveLength(1);
   });
 

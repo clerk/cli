@@ -223,12 +223,14 @@ type CreateContext = {
 
 /**
  * True when Clerk refused the create for a phone. The country error names no
- * parameter, only its own code.
+ * parameter, only its own code. A phone another user holds also names
+ * `phone_number`, and fails the user.
  */
 function isPhoneRefusal(error: unknown): error is BapiError {
   return (
     error instanceof BapiError &&
-    (error.code === "unsupported_country_code" || error.meta?.param_name === "phone_number")
+    (error.code === "unsupported_country_code" ||
+      (error.code === "form_param_format_invalid" && error.meta?.param_name === "phone_number"))
   );
 }
 
