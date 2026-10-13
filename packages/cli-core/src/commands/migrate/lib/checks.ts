@@ -1031,14 +1031,17 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     }
   }
 
+  // No setting would let a duplicate in, so none earns a fix.
+  const duplicates = new Set<User>();
   const { reasons: fileDuplicates, keptBy } = findFileDuplicates(passed);
   let candidates: User[] = [];
   for (const user of passed) {
     const reason = fileDuplicates.get(user);
     const kept = keptBy.get(user);
-    if (reason)
+    if (reason) {
       rejects.push({ sourceId: user.userId, reason, ...(kept ? { keptSourceId: kept } : {}) });
-    else candidates.push(user);
+      duplicates.add(unstripped.get(user) ?? user);
+    } else candidates.push(user);
   }
 
   const instanceDuplicates =
@@ -1048,8 +1051,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const unique: User[] = [];
   for (const user of candidates) {
     const reason = instanceDuplicates.get(user.userId);
-    if (reason) rejects.push({ sourceId: user.userId, reason });
-    else unique.push(user);
+    if (reason) {
+      rejects.push({ sourceId: user.userId, reason });
+      duplicates.add(unstripped.get(user) ?? user);
+    } else unique.push(user);
   }
   candidates = unique;
 
@@ -1102,7 +1107,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
           ]
         : []),
     ],
-    fixes: buildFixes(input, input.users),
+    fixes: buildFixes(
+      input,
+      input.users.filter((user) => !duplicates.has(user)),
+    ),
     ...(quota ? { quota } : {}),
     settingsUnavailable: input.settings === null,
   };

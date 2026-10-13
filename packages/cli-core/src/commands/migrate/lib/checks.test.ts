@@ -876,6 +876,18 @@ describe("warnings", () => {
 });
 
 describe("fixes", () => {
+  // A re-run: the users already imported would gain nothing from the change.
+  test("leave out a user already in the instance", async () => {
+    existing = [{ id: "user_1", external_id: "a" }];
+    const checks = await checkImport(
+      input({
+        settings: settings({ email_address: { enabled: true }, first_name: { enabled: false } }),
+        users: [user("a", { firstName: "Ada" }), user("b")],
+      }),
+    );
+    expect(checks.fixes).toEqual([]);
+  });
+
   test("print a `clerk config patch` per flagged setting, targeting the instance", async () => {
     const checks = await checkImport(
       input({
