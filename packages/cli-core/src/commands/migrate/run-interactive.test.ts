@@ -328,6 +328,29 @@ describe("legal consent", () => {
     expect(created()).toHaveLength(2);
   });
 
+  // A rerun with --yes skips the prompt, so the command has to carry the answer.
+  test("a yes carries into the command the refusal suggests", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify([
+        ...EXPORT,
+        {
+          id: "u3",
+          primary_email_address: "c@x.dev",
+          password_digest: "d",
+          password_hasher: "rot13",
+        },
+      ]),
+    );
+
+    const error = (await run(importOptions).catch((caught: unknown) => caught)) as {
+      examples?: { command: string }[];
+    };
+
+    expect(confirmMessages[0]).toContain("no legal acceptance on record");
+    expect(error.examples?.[0]?.command).toContain("--skip-legal-checks");
+  });
+
   // `-y` is "import without prompting": the checks reject these users instead.
   test("--yes does not ask, and the checks reject them", async () => {
     await expect(run({ ...importOptions, yes: true })).rejects.toThrow(/2 users would be rejected/);

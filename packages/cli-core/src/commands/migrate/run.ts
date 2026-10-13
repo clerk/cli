@@ -959,6 +959,8 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
           message: `${plural(withoutLegal, "user")} ${withoutLegal === 1 ? "has" : "have"} no legal acceptance on record, which this instance requires. Import them without it?`,
           default: false,
         });
+        // The suggested commands carry the answer, so a rerun with --yes keeps it.
+        options = { ...options, skipLegalChecks };
       }
 
       // Unverified stays the default: reserved makes an address the source never
