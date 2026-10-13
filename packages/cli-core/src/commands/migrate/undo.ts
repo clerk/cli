@@ -341,6 +341,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
 
   const limits = resolveLimits(secretKey);
   const openUndo = findOpenUndo(runsDir, record.id);
+  const undoLines = openUndo ? readUserLines(runsDir, openUndo.id).length : 0;
   const recorded = usersToDelete(runsDir, record, openUndo);
   const { alreadyDeleted } = recorded;
 
@@ -438,8 +439,15 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     // Another undo that finished during the preview has already marked it.
     readImportRun(runsDir, record.id);
     // A re-import that continued the run during the preview created users
-    // the preview never listed.
-    if (readUserLines(runsDir, record.id).length !== importLines) {
+    // the preview never listed. Another undo that started or carried on an
+    // undo run in the meantime changed which users are left to delete, and a
+    // second undo run would split the import's deletes between the two.
+    const openNow = findOpenUndo(runsDir, record.id);
+    if (
+      readUserLines(runsDir, record.id).length !== importLines ||
+      openNow?.id !== openUndo?.id ||
+      (openUndo !== undefined && readUserLines(runsDir, openUndo.id).length !== undoLines)
+    ) {
       throwUsageError(
         `Run ${record.id} changed while this undo was waiting, so the preview is out of date. ` +
           `Nothing was deleted. Run \`clerk migrate undo ${record.id}\` again.`,

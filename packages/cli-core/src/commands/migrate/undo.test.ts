@@ -273,6 +273,38 @@ describe("--dry-run", () => {
   });
 });
 
+describe("another undo during the preview", () => {
+  test("refuses when another undo started an undo run on the import", async () => {
+    const record = importRun();
+    const stubbed = globalThis.fetch;
+    let raced = false;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      // The other undo gets its lock between this one's preview and its own.
+      if (!raced && (init?.method ?? "GET") === "GET" && input.toString().includes("/v1/users")) {
+        raced = true;
+        const other = startRun(runsDir, {
+          kind: "undo",
+          target: { instanceId: "ins_1", env: "development" },
+          undoes: record.id,
+          source: "clerk",
+        });
+        other.append({ sourceId: "a", clerkId: "user_a", status: "deleted" });
+        other.append({ sourceId: "b", clerkId: "user_b", status: "failed", error: "boom" });
+        other.finish();
+      }
+      return stubbed(input, init);
+    }) as typeof fetch;
+
+    const error = (await undo(record.id, withDir({ yes: true })).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain("preview is out of date");
+    expect(deletes()).toHaveLength(0);
+    expect(listRuns(runsDir).filter((run) => run.kind === "undo")).toHaveLength(1);
+  });
+});
+
 describe("users who signed in since the import", () => {
   test("--yes alone refuses to delete them, and deletes nothing", async () => {
     const record = importRun();
