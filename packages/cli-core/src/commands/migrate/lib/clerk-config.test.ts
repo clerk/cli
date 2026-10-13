@@ -1,7 +1,7 @@
 import { test, expect, describe, mock, beforeEach, afterAll } from "bun:test";
 import { stubFetch, useCaptureLog } from "../../../test/lib/stubs.ts";
 import type { UserSettingsJSON } from "../../../lib/fapi.ts";
-import { fetchInstanceSettings, fetchUserCount } from "./clerk-config.ts";
+import { enabledSocialProviders, fetchInstanceSettings, fetchUserCount } from "./clerk-config.ts";
 
 const USER_SETTINGS = {
   attributes: { email_address: { enabled: true, required: true } },
@@ -145,4 +145,11 @@ describe("fetchUserCount", () => {
     expect(await fetchUserCount("sk_test_abc")).toBe(42);
     expect(calls).toBe(2);
   });
+});
+
+test("enabledSocialProviders counts the legacy Twitter strategy as X", () => {
+  const enabled = enabledSocialProviders({
+    social: { oauth_twitter: { enabled: true }, oauth_github: { enabled: false } },
+  } as unknown as UserSettingsJSON);
+  expect(enabled).toEqual(["oauth_twitter", "oauth_x"]);
 });
