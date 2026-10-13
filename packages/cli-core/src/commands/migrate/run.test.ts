@@ -823,6 +823,21 @@ describe("run", () => {
       expect(listRuns(runsDir())).toHaveLength(2);
     });
 
+    test("a dry run says what it would start or continue", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run({ ...baseOptions, dryRun: true });
+      expect(captured.err).toContain("Would start a new run.");
+      expect(captured.err).not.toContain("Starting a new run.");
+
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      process.exitCode = 0;
+      captured.clear();
+      await run({ ...baseOptions, dryRun: true });
+      expect(captured.err).toContain(`Would continue run ${first!.id}, which finished partial`);
+      expect(captured.err).not.toContain("Continuing run");
+    });
+
     test("a partial run retries only the users that did not make it, in the same run", async () => {
       stubClerk({ failing: new Set(["u2"]) });
       await run(baseOptions);
