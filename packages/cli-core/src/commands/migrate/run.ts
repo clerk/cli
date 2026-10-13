@@ -503,6 +503,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           message: `${plural(withoutLegal, "user")} ${withoutLegal === 1 ? "has" : "have"} no legal acceptance on record, which this instance requires. Import them without it?`,
           default: false,
         });
+        // The suggested commands carry the answer, so a rerun with --yes keeps it.
+        options = { ...options, skipLegalChecks };
       }
 
       const checks = await withSpinner("Checking users against the instance...", async (spinner) =>
