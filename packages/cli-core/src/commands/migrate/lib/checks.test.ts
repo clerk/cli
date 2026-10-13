@@ -630,6 +630,16 @@ describe("rejects", () => {
         );
       });
 
+      // Clerk trims a phone before its E.164 check (create_service.go).
+      test("one with spaces around it is kept", async () => {
+        const checks = await checkImport(
+          input({ settings: numeric(true), users: [user("a", { phone: " +14155550100 " })] }),
+        );
+        expect(checks.rejects).toEqual([]);
+        expect(checks.importable).toEqual([user("a", { phone: " +14155550100 " })]);
+        expect(checks.warnings).toEqual([]);
+      });
+
       test("a user with only such phones is rejected", async () => {
         expect(
           await reasonsOf({

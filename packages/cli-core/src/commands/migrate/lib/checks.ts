@@ -284,9 +284,10 @@ const PHONE_FIELDS = ["phone", "phoneNumbers", "unverifiedPhoneNumbers"] as cons
 
 /**
  * Numeric usernames make Clerk require phones in E.164 form, on import and at
- * sign-up (`requireE164` in clerk_go's create_service.go).
+ * sign-up (`requireE164` in clerk_go's create_service.go). Clerk trims the
+ * phone before it checks.
  */
-const isE164 = (phone: string) => /^\+[1-9]\d{1,14}$/.test(phone);
+const isE164 = (phone: string) => /^\+[1-9]\d{1,14}$/.test(phone.trim());
 
 /** The file's phones Clerk would refuse once numeric usernames are on. */
 function loosePhoneCount(users: User[]): number {
