@@ -1,6 +1,6 @@
 # Effect application-listing spike
 
-Status: implementation prepared for independent review. Ticket 01 remains a draft until review is accepted. This does not authorize ticket 02 or further migration.
+Status: independent review accepted; production E2E acceptance remains blocked. Ticket 01 remains a draft until the remaining gate passes or the human explicitly waives it. This does not authorize ticket 02 or further migration.
 
 ## Scope
 
@@ -30,12 +30,12 @@ E2E execution was attempted by the coordinator. `bun run test:e2e:op` is blocked
 
 Reproducible baseline: commit `cda3bc1b090b7fac765892674b96349962dd7f4e`, Bun 1.4.3, macOS arm64, `bun run build:compile` default release flags, telemetry disabled and `CLERK_NO_UPDATE_CHECK=1`. Each startup case uses three warmups and twenty `Bun.spawnSync` samples; medians include process startup and command completion. Compiled binary size is measured in bytes.
 
-| Metric | Baseline | Spike |
-| --- | ---: | ---: |
-| Compiled binary size | 73,042,034 bytes | 73,339,250 bytes |
-| Compiled `--version` median | 30.423 ms | 36.627 ms |
-| Compiled `apps list --help` median | 32.999 ms | 49.643 ms |
-| Interpreted `apps list --help` median | 62.418 ms | 115.292 ms |
+| Metric                                |         Baseline |            Spike |
+| ------------------------------------- | ---------------: | ---------------: |
+| Compiled binary size                  | 73,042,034 bytes | 73,339,250 bytes |
+| Compiled `--version` median           |        30.423 ms |        36.627 ms |
+| Compiled `apps list --help` median    |        32.999 ms |        49.643 ms |
+| Interpreted `apps list --help` median |        62.418 ms |       115.292 ms |
 
 The spike adds 297,216 bytes (0.41%). Measurements were taken against the final implementation working tree, after rebuilding, with no test suite running. Startup measurements are host-dependent; no numerical acceptance threshold was agreed. Reproduce after installing dependencies and running `bun run build:compile`: `bun docs/effect-apps-list-benchmark.ts /absolute/path/to/checkout`. The same helper and environment were used for both measurements.
 
@@ -51,4 +51,10 @@ Review of `f2f6317c5be3d6ccbe343d477e395acecd85af7d` found two compatibility iss
 
 Original compiled code at `cda3bc1` was checked directly: a valid version option action runs before deferred help in either separate-flag order; `-vh` prints version, while `-hv` is unknown. The compatibility boundary preserves those observed actions, scalar values such as `--mode --version`, and operands after `--`. All built-in output is still produced by Effect CLI.
 
-Final follow-up gates: format, format check, lint, typecheck, compiled build, and 3,246 unit tests across 173 files pass, including 20 compiled tests. The measurement table above was refreshed after rebuilding the fixes. E2E was not retried because the secrets environment has not changed. Ticket 01 is still awaiting independent re-review and E2E completion or an explicit human waiver; acceptance is not complete.
+Final follow-up gates: format, format check, lint, typecheck, compiled build, and 3,246 unit tests across 173 files pass, including 20 compiled tests. The measurement table above was refreshed after rebuilding the fixes. E2E was not retried because the secrets environment has not changed. Independent re-review accepted both fixes and passed 44 targeted cases. Ticket 01 still requires E2E completion or an explicit human waiver; acceptance is not complete.
+
+## Remaining E2E gate retry — 2026-10-13
+
+After the human enabled 1Password desktop integration, the clean integration checkout at `8c176f840962f184183273359e6cc9339605374f` retried `bun run test:e2e:op`. It exited 1 before starting the test suite: 1Password CLI 2.39.0 reported that it could not connect to the 1Password desktop app. A retry after granting the runner access to the desktop IPC socket directory produced the same connection error. Zero E2E tests or production API assertions ran; secrets were neither printed nor written to disk. No direct-secret fallback or already-passing test suite was rerun.
+
+Independent review is accepted, but this remaining environment gate is not waived or complete. The original draft ticket and later migration tickets remain unchanged. No code changes or later migration work were performed during this retry.
