@@ -822,6 +822,14 @@ describe("run", () => {
       expect(created()).toEqual(["sb1"]);
     });
 
+    test("an unknown source fails before signing in", async () => {
+      const { secretKey: _key, ...signedOut } = baseOptions;
+      const error = (await run({ ...signedOut, source: "nope" }).catch(
+        (caught: unknown) => caught,
+      )) as CliError;
+      expect(error.message).toContain('Unknown source "nope"');
+    });
+
     test("an unknown source fails listing the valid keys", async () => {
       const error = (await run({ ...baseOptions, source: "nope" }).catch(
         (caught: unknown) => caught,
