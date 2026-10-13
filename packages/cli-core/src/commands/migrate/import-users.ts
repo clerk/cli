@@ -176,7 +176,9 @@ type CreateContext = {
   schedule: ApiScheduler;
   /** Aborted by the first `user_quota_exceeded`: every later create would be refused too. */
   quota: AbortController;
-  /** Aborted by a Ctrl-C or the quota. No create goes out after it. */
+  /** Aborted by a run-store write that failed. Nothing goes out after it. */
+  halt: AbortSignal;
+  /** Aborted by a Ctrl-C, the quota or a halt. No create goes out after it. */
   stop: AbortSignal;
 };
 
@@ -237,9 +239,9 @@ async function attachIdentifier(
       ? { user_id: clerkUserId, email_address: value, primary: false, verified }
       : { user_id: clerkUserId, phone_number: value, primary: false, verified };
 
-  // A Ctrl-C ends the wait for a slot or a backoff, and the attach is left
-  // pending for a re-run. The quota does not: the user exists already.
-  const stop = interruptSignal();
+  // A Ctrl-C or a halt ends the wait for a slot or a backoff, and the attach is
+  // left pending for a re-run. The quota does not: the user exists already.
+  const stop = AbortSignal.any([interruptSignal(), ctx.halt]);
   try {
     await retryOn429(
       async () =>
@@ -375,7 +377,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     users,
     secretKey,
     limits,
-    record,
+    record: recordLine,
     skipPasswordRequirement = true,
     validationFailed = 0,
     progress: report,
@@ -390,12 +392,28 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   let stopReason: string | undefined;
   const droppedPhones = new Map<string, number>();
 
+  // A line that cannot be written halts the import: a user created with no
+  // record is beyond both `undo` and a re-run. The error is rethrown once
+  // every user has settled, so no request goes out after the import rejects.
+  const halt = new AbortController();
+  let storeFailure: { error: unknown } | undefined;
+  const record = (line: UserLine) => {
+    try {
+      recordLine(line);
+    } catch (error) {
+      storeFailure ??= { error };
+      halt.abort();
+      throw error;
+    }
+  };
+
   const quota = new AbortController();
   const ctx: CreateContext = {
     secretKey,
     schedule: createApiScheduler(limits.concurrencyLimit, limits.rateLimit),
     quota,
-    stop: AbortSignal.any([interruptSignal(), quota.signal]),
+    halt: halt.signal,
+    stop: AbortSignal.any([interruptSignal(), quota.signal, halt.signal]),
   };
 
   const progress = () => report?.({ done: processed, ok: successful, failed });
@@ -448,8 +466,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       created = await retryOn429(
         async () =>
           createUser(ctx, user, identifiers, skipPasswordRequirement, () => {
-            sent = true;
             record({ sourceId: user.userId, status: "creating" });
+            sent = true;
           }),
         {
           signal: ctx.stop,
@@ -460,6 +478,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         },
       );
     } catch (error) {
+      // Not an API outcome: the request never went out.
+      if (storeFailure && error === storeFailure.error) throw error;
       // Unrecorded, so a re-run picks the user up like any other. A user whose
       // first create went out (a 429, a refused phone) has its `creating` line
       // to mark it unfinished, so it is not counted here as well.
@@ -507,7 +527,14 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   };
 
   progress();
-  await Promise.all(users.map(async (user) => processUser(user)));
+  await Promise.all(
+    users.map(async (user) =>
+      processUser(user).catch((error: unknown) => {
+        if (!storeFailure) throw error;
+      }),
+    ),
+  );
+  if (storeFailure) throw storeFailure.error;
 
   return {
     totalProcessed: total,
