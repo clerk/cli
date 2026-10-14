@@ -1050,10 +1050,15 @@ is linked to their imported account by verified email. See
 ### Metadata
 
 Metadata a user can edit on the source platform — Auth0's `user_metadata`,
-Supabase's `raw_user_meta_data`, WorkOS's `metadata` — goes to Clerk's
-`unsafe_metadata`, which is the user-editable one. Public metadata is read-only
-to the user, so putting it there would take away an edit the user had. Auth0's
-`app_metadata` goes to `private_metadata`. A Clerk Dashboard CSV carries no metadata.
+Supabase's `raw_user_meta_data` — goes to Clerk's `unsafe_metadata`, which is
+the user-editable one. Public metadata is read-only to the user, so putting it
+there would take away an edit the user had. Metadata only the source's backend
+can set — Auth0's `app_metadata`, WorkOS's `metadata` — goes to
+`private_metadata`, which the client cannot read either. Apps often trust these
+for a plan or a role, and `unsafe_metadata` would let the user change them. A
+key an app put in its tokens (an Auth0 Action claim, a WorkOS JWT template)
+belongs in `public_metadata`, and in the Clerk session token: move it after the
+import. A Clerk Dashboard CSV carries no metadata.
 
 ### Verified vs unverified identifiers
 

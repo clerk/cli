@@ -33,7 +33,7 @@ const workosSource = {
     mfa: { level: "no", note: "WorkOS returns TOTP secrets at enrolment only." },
     metadata: {
       level: "yes",
-      note: "`metadata` → unsafe metadata. WorkOS's `external_id` → private metadata `workosExternalId`; the WorkOS `id` becomes the Clerk external ID.",
+      note: "`metadata` → private metadata, with WorkOS's `external_id` as `workosExternalId`; the WorkOS `id` becomes the Clerk external ID. Keys an app exposed through a WorkOS JWT template belong in public metadata: move them after the import.",
     },
   },
   transformer: {
@@ -42,7 +42,10 @@ const workosSource = {
     email_verified: "emailVerified",
     first_name: "firstName",
     last_name: "lastName",
-    metadata: "unsafeMetadata",
+    // Only a backend with the secret key can set it, and the client never sees
+    // it unless a JWT template puts a key in the token: private, not the
+    // user-editable unsafe metadata, which an app could be trusting for a plan.
+    metadata: "privateMetadata",
     external_id: "workosExternalId",
     created_at: "createdAt",
   },
@@ -50,7 +53,11 @@ const workosSource = {
     routeByVerification(user, "email", "emailVerified", "boolean");
 
     if (user.workosExternalId) {
-      user.privateMetadata = { workosExternalId: String(user.workosExternalId) };
+      const metadata =
+        user.privateMetadata && typeof user.privateMetadata === "object"
+          ? user.privateMetadata
+          : {};
+      user.privateMetadata = { ...metadata, workosExternalId: String(user.workosExternalId) };
     }
     delete user.workosExternalId;
   },
