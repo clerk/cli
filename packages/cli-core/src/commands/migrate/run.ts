@@ -1083,6 +1083,20 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       // checked or sent again. Those whose extra identifiers never attached
       // get just the attaches.
       const continued = resume.kind === "continue" ? resume.record : undefined;
+      // The users this run created were made in its reserve mode, so the rest
+      // are too: a continue reuses the mode rather than asking, and refuses a
+      // flag that asks for the other. A run from before this was recorded has
+      // none, and continues as it did.
+      const recordedReserve = continued?.reserveUnverified;
+      if (recordedReserve !== undefined) {
+        if (options.reserveUnverified && !recordedReserve) {
+          throwUsageError(
+            `Run ${continued!.id} created its users' unverified emails and phones unverified, so --reserve-unverified would create the rest differently. Nothing was imported.\n` +
+              "Continue it without --reserve-unverified, or pass --new-run to start a new run.",
+          );
+        }
+        options = { ...options, reserveUnverified: recordedReserve };
+      }
       // What the plan below is built from; checked again once the run's lock
       // is held, since a prompt can wait while an undo or a continue writes.
       const plannedLines = continued ? readUserLines(runsDir, continued.id).length : undefined;
@@ -1211,13 +1225,14 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       // `-y` is consent to write, not a yes to this, so it does not ask.
       if (
         !reserveUnverified &&
+        recordedReserve === undefined &&
         withUnverified > 0 &&
         !options.dryRun &&
         !options.yes &&
         canPrompt(options)
       ) {
         reserveUnverified = await confirm({
-          message: `${plural(withUnverified, "user")} ${withUnverified === 1 ? "has" : "have"} an email or phone the source never verified. Create them reserved (usable for sign-in, locked to the user) instead of unverified?`,
+          message: `${plural(withUnverified, "user")} ${withUnverified === 1 ? "has" : "have"} an email or phone the source never verified. Create them reserved (usable for sign-in, locked to the user) instead of unverified? A reserved one another user already holds rejects its user, not just that address.`,
           default: false,
         });
       }
@@ -1446,6 +1461,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
             ...(input.fromExport ? { fromExport: input.fromExport } : {}),
             ...(options.envelopeSource ? { envelopeSource: options.envelopeSource } : {}),
             ...(firebaseHash ? { firebaseHash } : {}),
+            reserveUnverified,
             flags,
           });
       // Printed now, not on the way out: on a Ctrl-C the signal handler exits

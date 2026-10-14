@@ -408,10 +408,58 @@ describe("unverified identifiers", () => {
     await run(importOptions);
 
     expect(confirmMessages).toEqual([
-      "1 user has an email or phone the source never verified. Create them reserved (usable for sign-in, locked to the user) instead of unverified?",
+      "1 user has an email or phone the source never verified. Create them reserved (usable for sign-in, locked to the user) instead of unverified? A reserved one another user already holds rejects its user, not just that address.",
       "Import 2 users?",
     ]);
     expect(statuses()).toEqual([undefined, ["verified", "reserved"]]);
+  });
+
+  /** Rewrites the only run as one a crash stopped after creating u1, and returns its folder. */
+  const interruptAfterU1 = (patch: Record<string, unknown> = {}): string => {
+    const [id] = fs.readdirSync(runsDir());
+    const dir = path.join(runsDir(), id!);
+    const record = JSON.parse(fs.readFileSync(path.join(dir, "run.json"), "utf-8"));
+    delete record.finishedAt;
+    fs.writeFileSync(path.join(dir, "run.json"), JSON.stringify({ ...record, ...patch }));
+    const lines = fs.readFileSync(path.join(dir, "users.ndjson"), "utf-8").split("\n");
+    fs.writeFileSync(
+      path.join(dir, "users.ndjson"),
+      lines.filter((line) => line.includes('"u1"')).join("\n") + "\n",
+    );
+    requests = [];
+    confirmMessages = [];
+    return dir;
+  };
+
+  // A human said yes, and the continue runs under -y, which never asks.
+  test("a continued run creates the rest in the mode it recorded, without asking", async () => {
+    await run(importOptions);
+    interruptAfterU1();
+
+    await run({ ...importOptions, yes: true });
+
+    expect(confirmMessages).toEqual([]);
+    expect(statuses()).toEqual([["verified", "reserved"]]);
+  });
+
+  test("refuses --reserve-unverified on a continue of a run that kept them unverified", async () => {
+    reserveAnswer = false;
+    await run(importOptions);
+    interruptAfterU1();
+
+    await expect(run({ ...importOptions, yes: true, reserveUnverified: true })).rejects.toThrow(
+      /created its users' unverified emails and phones unverified/,
+    );
+    expect(created()).toHaveLength(0);
+  });
+
+  test("a run recorded before the mode was asks again", async () => {
+    await run(importOptions);
+    interruptAfterU1({ reserveUnverified: undefined });
+
+    await run(importOptions);
+
+    expect(confirmMessages.some((message) => message.includes("never verified"))).toBe(true);
   });
 
   test("a no keeps them unverified, attached after the user exists", async () => {
