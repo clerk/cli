@@ -179,6 +179,19 @@ every run.
 Run folders are created owner-only (`0700`), and export files `0600`: they hold
 password hashes and user data.
 
+#### The import lock
+
+Every import but a dry run also takes a lock outside the run store, before its
+checks and prompts: `clerk-migrate-import-<hash>.lock` in the temp directory
+(`os.tmpdir()`, usually `$TMPDIR` or `/tmp`). The hash covers the file's sha256,
+the source and the instance, so a second import of the same file into the same
+instance is refused with exit 2 even before either has written a run, and
+whichever `--runs-dir` each uses. It lives outside the runs folder because
+nothing may be written there before consent. It holds the importing process's
+PID and is removed however the import ends. One left by a process that died is
+reclaimed by the next import. The refusal names the file, which is safe to
+delete when no `clerk migrate import` is running.
+
 `users.ndjson` writes are synchronous appends, so a run interrupted with Ctrl-C
 still leaves a complete record of everything already processed. A line that
 cannot be written stops that user's create from going out. An export's file
@@ -1122,7 +1135,9 @@ clerk migrate sources --json
 full: its export command, what it carries with a note for each, where each
 field lands (`encrypted_password → password`), its fixed defaults, and any
 caveats. An unknown key exits 2 and lists the valid ones. There is no
-intro/outro gutter: this reads a static registry rather than running anything.
+intro/outro gutter. `sources` alone, or with a built-in key, reads a static
+registry and runs nothing. With a path, it loads and runs that file, as
+`--source` does, to check it and show what it maps.
 
 ### `clerk migrate help`
 
@@ -1208,8 +1223,12 @@ TypeScript is fine — Bun's transpiler is part of the runtime, so `interface`,
 Plain `.js` works too.
 
 An import run records a custom source's key and a hash of the file, so an
-edited source counts as a different source. The hash covers that file only:
-a local helper it imports is not part of it, so after editing one, pass
+edited source counts as a different source. A re-run with an edited source
+won't continue the earlier version's run, and won't start a new one beside it
+unasked either: it refuses with exit 2 and names the earlier run, since the
+users that run created would come back as conflicts. Pass `--new-run` to start
+a new run anyway, or undo the earlier one first. The hash covers that file
+only: a local helper it imports is not part of it, so after editing one, pass
 `--new-run` rather than continue a run made with the old helper.
 
 #### Validation
@@ -1226,6 +1245,7 @@ rejected with the specific problem rather than crashing mid-pipeline:
 | No `carries`                                        | `` `carries` must say what the source brings across: { passwords, mfa, metadata }, each { level, note } `` |
 | `key` clashes with a built-in                       | `key is "clerk", which is already a built-in source`                                                       |
 | `preTransform` or `postTransform` is not a function | `` `preTransform` must be a function when present `` (likewise `postTransform`)                            |
+| `caveats` is not a list of strings                  | `` `caveats` must be an array of strings when present ``                                                   |
 
 The `userId` check is the load-bearing one: without it the import would run to
 completion and create every user with no `external_id`, which is what makes a
