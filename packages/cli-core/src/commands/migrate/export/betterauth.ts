@@ -245,7 +245,8 @@ export function buildBetterAuthExport(
     if (conflicting) user.password_dropped = true;
 
     if (row.email) counts.email++;
-    if (row.emailVerified) counts.emailVerified++;
+    // From the exported value: a date that holds none is left out of it.
+    if (user.email_verified) counts.emailVerified++;
     if (row.password_hash && !conflicting) counts.password++;
     if (row.name) counts.name++;
     if (row.username) counts.username++;
