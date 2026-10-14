@@ -458,10 +458,13 @@ the import then needs `--firebase-signer-key`, `--firebase-salt-separator`,
 ⋮ → Password hash parameters** in the Firebase console). Each flag can come
 from its environment variable instead, `CLERK_FIREBASE_SIGNER_KEY`,
 `CLERK_FIREBASE_SALT_SEPARATOR`, `CLERK_FIREBASE_ROUNDS` and
-`CLERK_FIREBASE_MEM_COST`, which keeps the signer key out of shell history and
-`ps`. A flag wins over the export file, but a variable only fills in for an
-export file without the parameters, so one left set from another project can't
-replace them. At a terminal, without either, the import
+`CLERK_FIREBASE_MEM_COST`, which keeps the signer key out of `ps`. Set it from a
+secret manager or a file (`CLERK_FIREBASE_SIGNER_KEY=$(cat signer.key)`) rather
+than typing the key, or it lands in shell history anyway. A flag wins over the
+export file, but a variable only fills in for an export file without the
+parameters, so one left set from another project can't replace them, and a
+partial flag set is refused rather than completed from them. At a terminal,
+without either, the import
 asks, masking the signer key. The export file keeps the parameters, signer key
 included, owner-only in its run folder.
 
