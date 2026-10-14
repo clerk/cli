@@ -422,7 +422,9 @@ the import then needs `--firebase-signer-key`, `--firebase-salt-separator`,
 from its environment variable instead, `CLERK_FIREBASE_SIGNER_KEY`,
 `CLERK_FIREBASE_SALT_SEPARATOR`, `CLERK_FIREBASE_ROUNDS` and
 `CLERK_FIREBASE_MEM_COST`, which keeps the signer key out of shell history and
-`ps`; a flag wins over its variable. At a terminal, without either, the import
+`ps`. A flag wins over the export file, but a variable only fills in for an
+export file without the parameters, so one left set from another project can't
+replace them. At a terminal, without either, the import
 asks, masking the signer key. The export file keeps the parameters, signer key
 included, owner-only in its run folder.
 
@@ -489,22 +491,22 @@ clerk migrate import users.json --source clerk --secret-key sk_test_... -y
 clerk migrate import                                          # a human is asked
 ```
 
-| Flag                                    | Description                                                                            |
-| --------------------------------------- | -------------------------------------------------------------------------------------- |
-| `[file\|export-run-id]`                 | The export file, or the ID of the export run that wrote it                             |
-| `--source <key>`                        | Where the file came from: one of the [sources](#sources)                               |
-| `--dry-run`                             | Run the [checks](#checks) against the instance, and write nothing                      |
-| `--allow-partial`                       | Import the users that pass, and record the rest as skipped                             |
-| `--new-run`                             | Start a new run instead of [continuing](#re-running) an earlier one                    |
-| `--require-password`                    | Import only users that carry a password digest                                         |
-| `--skip-legal-checks`                   | Import users with no legal acceptance into an instance requiring it                    |
-| `--firebase-signer-key <key>`           | Firebase base64 signer key, or `CLERK_FIREBASE_SIGNER_KEY` (overrides the export file) |
-| `--firebase-salt-separator <separator>` | Firebase base64 salt separator, or `CLERK_FIREBASE_SALT_SEPARATOR`                     |
-| `--firebase-rounds <n>`                 | Firebase scrypt rounds, or `CLERK_FIREBASE_ROUNDS`                                     |
-| `--firebase-mem-cost <n>`               | Firebase scrypt memory cost, or `CLERK_FIREBASE_MEM_COST`                              |
-| `-y, --yes`                             | Import without prompting                                                               |
-| `--json`                                | Output as JSON. Never prompts, so importing needs `--yes`                              |
-| `--runs-dir <path>`                     | Where runs are kept (see [the run store](#the-run-store))                              |
+| Flag                                    | Description                                                                                       |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `[file\|export-run-id]`                 | The export file, or the ID of the export run that wrote it                                        |
+| `--source <key>`                        | Where the file came from: one of the [sources](#sources)                                          |
+| `--dry-run`                             | Run the [checks](#checks) against the instance, and write nothing                                 |
+| `--allow-partial`                       | Import the users that pass, and record the rest as skipped                                        |
+| `--new-run`                             | Start a new run instead of [continuing](#re-running) an earlier one                               |
+| `--require-password`                    | Import only users that carry a password digest                                                    |
+| `--skip-legal-checks`                   | Import users with no legal acceptance into an instance requiring it                               |
+| `--firebase-signer-key <key>`           | Firebase base64 signer key (overrides the export file), or `CLERK_FIREBASE_SIGNER_KEY` (does not) |
+| `--firebase-salt-separator <separator>` | Firebase base64 salt separator, or `CLERK_FIREBASE_SALT_SEPARATOR`                                |
+| `--firebase-rounds <n>`                 | Firebase scrypt rounds, or `CLERK_FIREBASE_ROUNDS`                                                |
+| `--firebase-mem-cost <n>`               | Firebase scrypt memory cost, or `CLERK_FIREBASE_MEM_COST`                                         |
+| `-y, --yes`                             | Import without prompting                                                                          |
+| `--json`                                | Output as JSON. Never prompts, so importing needs `--yes`                                         |
+| `--runs-dir <path>`                     | Where runs are kept (see [the run store](#the-run-store))                                         |
 
 Plus the targeting flags from the table above: `--secret-key`, `--app` and
 `--instance`.
