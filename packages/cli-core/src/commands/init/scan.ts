@@ -55,9 +55,17 @@ const AUTH_LIBRARY_SCANS: AuthLibraryScan[] = [
     docsUrl: "https://clerk.com/docs/migrations/overview",
   },
   {
-    packages: ["@workos-inc/authkit-nextjs", "@workos-inc/node"],
+    // AuthKit only: `@workos-inc/node` also serves SSO, Directory Sync and
+    // Audit Logs for apps that authenticate with something else.
+    packages: [
+      "@workos-inc/authkit-nextjs",
+      "@workos-inc/authkit-react",
+      "@workos-inc/authkit-react-router",
+      "@workos-inc/authkit-remix",
+      "@workos-inc/authkit-js",
+    ],
     name: "WorkOS",
-    docsUrl: "https://clerk.com/docs/migrations/overview",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/overview",
   },
   {
     packages: ["@kinde-oss/kinde-auth-nextjs"],
