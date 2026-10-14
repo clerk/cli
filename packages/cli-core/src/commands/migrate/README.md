@@ -1386,10 +1386,19 @@ A reserved identifier is unverified, but usable for sign-in and locked to the
 user, and becomes verified the first time the user signs in with it. That is
 how most source platforms treat an unconfirmed address, but it lets the user
 sign in with one nobody proved they own, so it is opt-in. `-y`, `--json` and
-agent mode never ask, and keep them unverified without the flag. A continued
-run uses whichever the flag or answer says that time for the users it creates;
-a user it adopts keeps the mode its first create recorded (`reserved` on its
-`creating` line).
+agent mode never ask, and keep them unverified without the flag.
+
+A run records its choice (`reserveUnverified` in `run.json`), and a continued
+run reuses it without asking, so every user of one run is created the same
+way. `--reserve-unverified` on a continue of a run that kept them unverified is
+refused; pass `--new-run` to change modes. A user a run adopts keeps the mode
+its first create recorded (`reserved` on its `creating` line).
+
+Reserved, an unverified identifier is checked for duplicates like a verified
+one, because it goes on the user's create: one that an instance user or an
+earlier record in the file already holds rejects the whole user, where without
+reserving only that address would fail to attach, with a note. If that rejects
+users you want, import without reserving.
 
 ### Firebase hash parameters
 
