@@ -234,6 +234,23 @@ describe("fetchAuth0Token", () => {
     await expect(fetchAuth0Token(CREDENTIALS)).rejects.toThrow(/read:users/);
   });
 
+  test("refuses a token granted without read:users, so the credentials are asked for again", async () => {
+    stubAuth0([[]], Response.json({ access_token: "tok", scope: "read:clients" }));
+    const error = (await fetchAuth0Token(CREDENTIALS).catch((e: unknown) => e)) as CliError;
+    expect(error.message).toContain("without the `read:users` scope");
+    expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+  });
+
+  test("takes a token whose scope includes read:users", async () => {
+    stubAuth0([[]], Response.json({ access_token: "tok", scope: "read:clients read:users" }));
+    expect(await fetchAuth0Token(CREDENTIALS)).toBe("tok");
+  });
+
+  test("names the tenant's own domain when the credentials are rejected", async () => {
+    stubAuth0([[]], new Response("{}", { status: 401 }));
+    await expect(fetchAuth0Token(CREDENTIALS)).rejects.toThrow(/not a custom domain/);
+  });
+
   test("fails when a 200 carries no token", async () => {
     stubAuth0([[]], Response.json({}));
     await expect(fetchAuth0Token(CREDENTIALS)).rejects.toThrow(CliError);
