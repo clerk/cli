@@ -122,6 +122,13 @@ export function validateSource(
     }
   }
 
+  if (
+    entry.caveats !== undefined &&
+    (!Array.isArray(entry.caveats) || entry.caveats.some((caveat) => typeof caveat !== "string"))
+  ) {
+    invalid("`caveats` must be an array of strings when present", file);
+  }
+
   if (reservedKeys.includes(entry.key as string)) {
     invalid(
       `\`key\` is "${String(entry.key)}", which is already a built-in source. Choose another key`,
