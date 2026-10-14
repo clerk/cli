@@ -722,6 +722,35 @@ describe("run", () => {
       const created = requests.find((r) => r.url.endsWith("/v1/users"));
       expect((created!.body as { password_digest: string }).password_digest).toContain("$FILE$");
     });
+
+    test("does not complete a partial flag set from the variables when the envelope has parameters", async () => {
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        {
+          firebase: {
+            base64_signer_key: "FILE",
+            base64_salt_separator: "Bw==",
+            rounds: 8,
+            mem_cost: 14,
+          },
+        },
+      );
+      const env = {
+        CLERK_FIREBASE_SALT_SEPARATOR: "Bw==",
+        CLERK_FIREBASE_ROUNDS: "8",
+        CLERK_FIREBASE_MEM_COST: "14",
+      };
+      Object.assign(process.env, env);
+      try {
+        await expect(
+          run({ ...noSource, input: record.id, firebaseSignerKey: "NEW" }),
+        ).rejects.toThrow(/must be supplied together/);
+      } finally {
+        for (const key of Object.keys(env)) delete process.env[key];
+      }
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
   });
 
   test("gitignores the project's .clerk folder before writing a run", async () => {
