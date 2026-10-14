@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { firebaseHashConfigProblem, resolveFirebaseHashConfig } from "./firebase-hash.ts";
+import {
+  fingerprintFirebaseHashConfig,
+  firebaseHashConfigProblem,
+  resolveFirebaseHashConfig,
+} from "./firebase-hash.ts";
 
 const ALL_FLAGS = {
   firebaseSignerKey: "SIGNER",
@@ -140,5 +144,29 @@ describe("firebaseHashConfigProblem", () => {
     ["a fractional memory cost", { mem_cost: 14.5 }, /memory cost must be a whole number/],
   ])("names %s", (_label, change, expected) => {
     expect(firebaseHashConfigProblem({ ...good, ...change })).toMatch(expected);
+  });
+});
+
+describe("fingerprintFirebaseHashConfig", () => {
+  const config = {
+    base64_signer_key: "SIGNER",
+    base64_salt_separator: "Bw==",
+    rounds: 8,
+    mem_cost: 14,
+  };
+
+  test("is the same for the same parameters, and holds no signer key", () => {
+    const fingerprint = fingerprintFirebaseHashConfig(config);
+    expect(fingerprintFirebaseHashConfig({ ...config })).toBe(fingerprint);
+    expect(fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprint).not.toContain("SIGNER");
+  });
+
+  test("changes with any parameter", () => {
+    const fingerprint = fingerprintFirebaseHashConfig(config);
+    expect(fingerprintFirebaseHashConfig({ ...config, base64_signer_key: "OTHER" })).not.toBe(
+      fingerprint,
+    );
+    expect(fingerprintFirebaseHashConfig({ ...config, rounds: 9 })).not.toBe(fingerprint);
   });
 });

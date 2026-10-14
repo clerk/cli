@@ -7,7 +7,7 @@
  * reads the config off {@link TransformContext}.
  */
 
-import { createHash } from "node:crypto";
+import { scryptSync } from "node:crypto";
 import { throwUsageError } from "../../../lib/errors.ts";
 import type { FirebaseHashConfig } from "../types.ts";
 
@@ -135,12 +135,15 @@ export function firebaseHashConfigProblem(config: FirebaseHashConfig): string | 
 
 /**
  * A fingerprint of the hash parameters, for a run record: two runs built
- * their digests alike exactly when these match. A hash, so the signer key is
- * not written to disk.
+ * their digests alike exactly when these match. Derived with scrypt, so the
+ * signer key is not written to disk, nor a fast hash of it.
  */
 export function fingerprintFirebaseHashConfig(config: FirebaseHashConfig): string {
   const { base64_signer_key, base64_salt_separator, rounds, mem_cost } = config;
-  return createHash("sha256")
-    .update(JSON.stringify([base64_signer_key, base64_salt_separator, rounds, mem_cost]))
-    .digest("hex");
+  // A fixed salt: the fingerprint has to come out the same on every run.
+  return scryptSync(
+    JSON.stringify([base64_signer_key, base64_salt_separator, rounds, mem_cost]),
+    "clerk-migrate-firebase-hash-config",
+    32,
+  ).toString("hex");
 }
