@@ -314,9 +314,14 @@ async function resolveInput(
   if (!record) {
     throwUsageError(`No run \`${value}\` in ${runsDir}. Run \`clerk migrate runs\` to list them.`);
   }
-  if (record.kind !== "export" || !record.file) {
+  if (record.kind !== "export") {
     throwUsageError(
       `Run ${value} is an ${record.kind} run, which has no file to import. Name an export run, or a file.`,
+    );
+  }
+  if (!record.file) {
+    throwUsageError(
+      `Export run ${value} never wrote its file: it was interrupted, or the write failed. Run the export again.`,
     );
   }
   // `--output` can point a later export, or an edit, at the same path. The run
