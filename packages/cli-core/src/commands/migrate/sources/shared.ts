@@ -80,12 +80,25 @@ export function routeByVerification(
   delete user[verifiedField];
 }
 
+/** The user's email addresses, wherever the source routed them. */
+function emailsOf(user: Record<string, unknown>): Set<string> {
+  const emails = new Set<string>();
+  for (const field of ["email", "emailAddresses", "unverifiedEmailAddresses"]) {
+    const value = user[field];
+    for (const email of Array.isArray(value) ? value : [value]) {
+      if (typeof email === "string") emails.add(email.trim().toLowerCase());
+    }
+  }
+  return emails;
+}
+
 /**
  * Splits a single display name into `firstName` and `lastName`: the first word,
  * then the rest. A one-word name (`Cher`) becomes the first name alone.
  *
- * A one-word value that is an email address is dropped instead: Auth0 fills
- * `name` with the email for database users, and that is not anyone's name.
+ * A one-word value that is one of the user's own email addresses is dropped
+ * instead: Auth0 fills `name` with the email for database users, and that is
+ * not anyone's name. Any other name with an `@` in it is kept.
  */
 export function splitName(user: Record<string, unknown>, field = "name"): void {
   const name = user[field];
@@ -95,7 +108,7 @@ export function splitName(user: Record<string, unknown>, field = "name"): void {
   if (parts.length > 1) {
     user.firstName = parts[0];
     user.lastName = parts.slice(1).join(" ");
-  } else if (parts[0] && !parts[0].includes("@")) {
+  } else if (parts[0] && !emailsOf(user).has(parts[0].toLowerCase())) {
     user.firstName = parts[0];
   }
   delete user[field];
