@@ -14,7 +14,7 @@ import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
-import type { DbClient } from "../lib/db.ts";
+import { exportValue, type DbClient } from "../lib/db.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 import {
   resolveDbUrl,
@@ -67,7 +67,8 @@ function normalizeRow(row: SupabaseRow): Record<string, unknown> {
     if (value === null || value === undefined) continue;
     // Postgres returns timestamps as Date objects; the transformer parses
     // strings, and JSON.stringify would otherwise bury the format difference.
-    normalized[key] = value instanceof Date ? value.toISOString() : value;
+    const exported = exportValue(value);
+    if (exported !== undefined) normalized[key] = exported;
   }
 
   return normalized;
