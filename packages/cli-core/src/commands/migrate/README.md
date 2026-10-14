@@ -241,7 +241,8 @@ told not to.
 Every export is a [run](#the-run-store), and the file lands in the run
 folder as `export.json`. `--output` writes it somewhere else instead,
 resolved against the **current directory** like every other path flag here;
-the run still records where. Nothing is asked about where the file goes.
+the run still records where. It must end in `.json`, since the import reads a
+file by its extension. Nothing is asked about where the file goes.
 
 The file is an envelope around the users:
 
