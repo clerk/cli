@@ -388,6 +388,14 @@ function applyEnvelope(
         "Drop --source: the file already says where it came from.",
     );
   }
+  // `--source` goes through the registry; the file's own word must too, or a
+  // file from a newer CLI fails late, inside the import, with no list.
+  if (!sourceKeys().includes(envelope.source)) {
+    throwUsageError(
+      `The file says it was exported from "${envelope.source}", which this version of the CLI does not know. ` +
+        `Valid sources: ${sourceKeys().join(", ")}.`,
+    );
+  }
   return { ...options, source: envelope.source };
 }
 
