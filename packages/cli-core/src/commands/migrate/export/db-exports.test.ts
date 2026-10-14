@@ -653,6 +653,26 @@ describe("supabase export", () => {
   });
 });
 
+// A MySQL zero date can come back as an Invalid Date, whose toISOString throws.
+describe("a date that holds no real date", () => {
+  const invalid = new Date(Number.NaN);
+
+  test("is no verification in an Auth.js export, and does not throw", () => {
+    const { users } = buildAuthJsExport([{ id: "aj1", email: "a@x.dev", email_verified: invalid }]);
+    expect(users[0]).not.toHaveProperty("email_verified");
+  });
+
+  // Supabase skipped the whole row on the throw; Better Auth ended the export.
+  test.each([
+    ["supabase", () => buildSupabaseExport([{ id: "u1", created_at: invalid }]).users],
+    ["betterauth", () => buildBetterAuthExport([{ id: "u1", createdAt: invalid }]).users],
+  ])("is left out of a %s export, which keeps the user", (_platform, build) => {
+    const users = build();
+    expect(users).toHaveLength(1);
+    expect(users[0]).not.toHaveProperty("created_at");
+  });
+});
+
 describe("connection failures", () => {
   // Supabase is Postgres: anything else would connect and then fail.
   test.each([["mysql://u:p@127.0.0.1:1/db"], ["./definitely-not-here.sqlite"]])(

@@ -21,6 +21,16 @@ import { CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
 
 export type DbType = "postgres" | "mysql" | "sqlite";
 
+/**
+ * A driver value as the export file carries it: a `Date` as ISO 8601, and
+ * one that holds no real date as absent. A MySQL zero date may come back as an
+ * Invalid Date, whose `toISOString()` throws.
+ */
+export function exportValue(value: unknown): unknown {
+  if (!(value instanceof Date)) return value;
+  return Number.isNaN(value.getTime()) ? undefined : value.toISOString();
+}
+
 export interface DbClient {
   dbType: DbType;
   query<T extends Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
