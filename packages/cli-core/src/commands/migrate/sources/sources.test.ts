@@ -413,6 +413,13 @@ describe("betterauth", () => {
     expect(users[0]?.passwordDropped).toBe(true);
   });
 
+  // The export drops a password it could not settle, and says so here.
+  test("carries the export's dropped password as passwordDropped", async () => {
+    const { users } = await load("betterauth", [{ ...base, password_dropped: true }]);
+    expect(users[0]?.passwordDropped).toBe(true);
+    expect(users[0]?.password).toBeUndefined();
+  });
+
   // Clerk's ban has no end: the checks warn using the one Better Auth set.
   test("a ban with an expiry keeps its end date; one without is permanent", () => {
     expect(

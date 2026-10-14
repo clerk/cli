@@ -213,8 +213,9 @@ export function buildBetterAuthExport(
 
   // The join returns a row per credential account, and nothing in Better
   // Auth's schema stops a user having two. Rows that agree are one user. Rows
-  // with different hashes cannot be settled here, so that user is skipped
-  // rather than given whichever hash came first.
+  // with different hashes cannot be settled here, so that user is exported
+  // without a password rather than given whichever hash came first: dropped,
+  // as the import drops a hash it cannot use, not left behind.
   const byId = new Map<string, { row: BetterAuthRow; accounts: number; hashes: Set<unknown> }>();
   for (const row of rows) {
     const userId = String(row.id ?? "");
@@ -229,38 +230,42 @@ export function buildBetterAuthExport(
 
   let conflicts = 0;
   for (const [userId, { row, accounts, hashes }] of byId) {
-    if (hashes.size > 1) {
-      conflicts++;
-      record({
-        sourceId: userId,
-        status: "skipped",
-        error: `has ${accounts} credential accounts with different password hashes; keep one in Better Auth and export again`,
-      });
-      continue;
-    }
+    const conflicting = hashes.size > 1;
+    if (conflicting) conflicts++;
 
     const user: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(row)) {
       if (value === null || value === undefined) continue;
+      if (conflicting && key === "password_hash") continue;
       user[FIELD_ALIASES[key] ?? key] = value instanceof Date ? value.toISOString() : value;
     }
+    // The source maps this to `passwordDropped`, which the checks count.
+    if (conflicting) user.password_dropped = true;
 
     if (row.email) counts.email++;
     if (row.emailVerified) counts.emailVerified++;
-    if (row.password_hash) counts.password++;
+    if (row.password_hash && !conflicting) counts.password++;
     if (row.name) counts.name++;
     if (row.username) counts.username++;
     if (row.phoneNumber) counts.phone++;
 
     users.push(user);
-    record({ sourceId: userId, status: "exported" });
+    record({
+      sourceId: userId,
+      status: "exported",
+      ...(conflicting
+        ? {
+            reason: `${accounts} credential accounts with different password hashes; exported without a password`,
+          }
+        : {}),
+    });
   }
 
   if (conflicts > 0) {
     log.warn(
-      `Skipped ${conflicts} user${conflicts === 1 ? "" : "s"} with more than one credential account and ` +
-        "different password hashes. Keep one account each in Better Auth, then export again.",
+      `Exported ${conflicts} user${conflicts === 1 ? "" : "s"} without a password: more than one credential ` +
+        "account with different password hashes. They reset it, or sign in another way; keep one account each in Better Auth and export again to bring the password.",
     );
   }
 
