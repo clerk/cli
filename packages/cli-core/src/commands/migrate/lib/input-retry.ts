@@ -54,9 +54,12 @@ export async function withInputRetry<I, T>(
       return { value: await work(candidate), input: candidate };
     } catch (error) {
       // Everything these steps raise for a bad credential is a usage error
-      // carrying its own explanation. An outage, a 429 or a refused
-      // connection is not fixed by another credential, and anything else (an
-      // interrupt, a bug) is not ours to retry.
+      // carrying its own explanation. An outage or a 429 is not fixed by
+      // another credential, and anything else (an interrupt, a bug) is not ours
+      // to retry. A database that cannot be reached is the exception: Bun
+      // reports a mistyped host or port exactly as it does a server that is
+      // down ("Connection closed"), and the string is the likelier culprit, so
+      // it is asked for again and, unanswered, exits 2.
       const badInput = error instanceof CliError && error.exitCode === EXIT_CODE.USAGE;
       if (!badInput || options.json || !isHuman() || isAgent() || isAssumeYes()) throw error;
 
