@@ -37,6 +37,8 @@ import {
   resolveDbUrl,
 } from "./db-options.ts";
 
+import { transformUsers } from "../lib/transform.ts";
+
 const captured = useCaptureLog();
 
 let workDir: string;
@@ -537,6 +539,24 @@ describe("supabase export", () => {
     } as unknown as DbClient);
     expect(sql).toContain("raw_user_meta_data->>'first_name' AS first_name");
     expect(sql).not.toContain("display_name");
+  });
+
+  // Without the column, the import would fail an anonymous user as having no
+  // identifier rather than skip it.
+  test("carries is_anonymous, so the import skips an anonymous user", async () => {
+    let sql = "";
+    await fetchSupabaseUsers({
+      query: async (query: string) => {
+        sql = query;
+        return [];
+      },
+    } as unknown as DbClient);
+    expect(sql).toContain("AS is_anonymous");
+
+    const { users } = buildSupabaseExport([{ id: "anon", is_anonymous: true }]);
+    const result = transformUsers(users, "supabase");
+    expect(result.validationFailed).toBe(0);
+    expect(result.transformedData[0]?.skipReason).toContain("anonymous");
   });
 
   test("serializes timestamps the transformer can parse", () => {
