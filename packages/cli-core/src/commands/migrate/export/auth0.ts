@@ -10,8 +10,9 @@
  * inside the compiled binary.
  *
  * **Passwords do not come out of the Management API.** Auth0 exports password
- * hashes only via a support request. The coverage report says so rather than
- * leaving it to be discovered when nobody can sign in.
+ * hashes only via a support request, and the API gives no way to count who has
+ * one. A warning after the export says so rather than leaving it to be
+ * discovered when nobody can sign in.
  */
 
 import { ApiError, CliError, throwUsageError } from "../../../lib/errors.ts";
