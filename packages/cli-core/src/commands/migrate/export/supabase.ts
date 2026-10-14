@@ -45,6 +45,8 @@ const EXPORT_QUERY = `
     banned_until,
     -- Through to_jsonb so an older auth.users without the column still reads.
     to_jsonb(u)->>'deleted_at' AS deleted_at,
+    -- The Supabase source skips an anonymous user: it has nothing to sign in with.
+    (to_jsonb(u)->>'is_anonymous')::boolean AS is_anonymous,
     created_at
   FROM auth.users u
   ORDER BY created_at
