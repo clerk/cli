@@ -103,6 +103,11 @@ export type RunRecord = {
    * not everyone, so it finishes `partial` and importing it says so.
    */
   truncated?: boolean;
+  /**
+   * Whether an import created unverified emails and phones reserved. A
+   * continue reuses it, so every user of one run is created the same way.
+   */
+  reserveUnverified?: boolean;
   /** The import run an undo reverses. */
   undoes?: string;
   /** The undo run that reversed this one. */
