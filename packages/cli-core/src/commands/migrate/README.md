@@ -365,10 +365,10 @@ alongside imports.
   even a password column on the user table: migrate those separately, or have
   those users reset their password.
 
-Each says so on every run. `clerk`'s and `workos`'s coverage also counts
-users who _have_ a password, so the size of the gap is visible up front —
-`workos` prints that row at zero unconditionally, because zero is the only value
-it can take.
+Each prints a warning whenever it exports anyone. `clerk`'s and `workos`'s
+coverage also counts users who _have_ a password, so the size of the gap is
+visible up front — `workos` prints that row at zero unconditionally, because
+zero is the only value it can take.
 
 #### Database-backed exports (`supabase`, `authjs`, `betterauth`)
 
