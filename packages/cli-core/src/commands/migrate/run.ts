@@ -767,10 +767,14 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
   }
 
   const { source, file } = validateRunOptions(options);
-  // The flags and variables win, so a rotated key can be passed without re-exporting.
-  const fromFlags = resolveFirebaseHashConfig(options, source);
-  let firebaseHashConfig = fromFlags ?? (source === "firebase" ? envelope?.firebase : undefined);
+  // A flag is typed for this run, so it wins over the export file. A variable
+  // is ambient, and may be left over from another project, so it only fills in
+  // for an export file without the parameters.
+  const fromEnvelope = source === "firebase" ? envelope?.firebase : undefined;
   const fromFlagsAtAll = FIREBASE_FLAGS.some(([key]) => options[key] !== undefined);
+  const fromFlags =
+    fromFlagsAtAll || !fromEnvelope ? resolveFirebaseHashConfig(options, source) : undefined;
+  let firebaseHashConfig = fromFlags ?? fromEnvelope;
   let configFrom = fromFlags
     ? fromFlagsAtAll
       ? "the --firebase-* flags"

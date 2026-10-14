@@ -82,7 +82,7 @@ export function registerMigrate(program: Program): void {
     )
     .option(
       "--firebase-signer-key <key>",
-      "Firebase base64 signer key, or CLERK_FIREBASE_SIGNER_KEY (overrides the export file)",
+      "Firebase base64 signer key (overrides the export file), or CLERK_FIREBASE_SIGNER_KEY (does not)",
     )
     .option(
       "--firebase-salt-separator <separator>",

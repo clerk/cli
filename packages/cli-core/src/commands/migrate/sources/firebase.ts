@@ -23,8 +23,8 @@ const FIREBASE_CSV_HEADERS =
  *
  * Firebase's scrypt is a modified variant, so Clerk needs the project's four
  * hash parameters alongside each digest. They arrive on the run's
- * {@link TransformContext} from the `--firebase-*` flags, the matching
- * `CLERK_FIREBASE_*` environment variables, the export file, or a prompt. The
+ * {@link TransformContext} from the `--firebase-*` flags, the export file, the
+ * matching `CLERK_FIREBASE_*` environment variables, or a prompt. The
  * export file keeps them, signer key included, owner-only in its run folder.
  *
  * See https://clerk.com/docs/guides/development/migrating/firebase
