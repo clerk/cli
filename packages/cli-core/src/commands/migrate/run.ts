@@ -641,7 +641,9 @@ function cleanupLines(runsDir: string, record: RunRecord): string[] {
     // `export --output` writes the file outside the run folder, and deleting
     // the folder alone would leave the password hashes on disk.
     const file = record.file?.path;
-    const outside = file && path.relative(exportDir, file).startsWith("..");
+    // On Windows a file on another drive comes back absolute, not as `..`.
+    const relative = file ? path.relative(exportDir, file) : "";
+    const outside = file && (path.isAbsolute(relative) || relative.startsWith(".."));
     lines.push(
       `The export in run ${record.fromExport} holds your users' data. Once you have checked the import, delete it:`,
       dim(`  rm -rf ${quoteArg(exportDir)}`),
