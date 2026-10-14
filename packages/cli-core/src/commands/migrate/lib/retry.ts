@@ -7,12 +7,12 @@
  */
 
 import { setTimeout as delay } from "node:timers/promises";
-import { BapiError } from "../../../lib/errors.ts";
+import { ApiError } from "../../../lib/errors.ts";
 import { interruptSignal } from "../../../lib/signals.ts";
 import { MAX_RETRIES, RETRY_DELAY_MS, getRetryDelay } from "./instance.ts";
 
 /** Seconds to wait per a 429's `Retry-After` header or error meta, if given. */
-export function readRetryAfter(error: BapiError): number | undefined {
+export function readRetryAfter(error: ApiError): number | undefined {
   const header = error.headers?.get("retry-after");
   if (header) {
     const parsed = Number(header);
@@ -44,7 +44,7 @@ export type RetryOptions = {
 };
 
 /**
- * Runs `fn`, backing off and retrying whenever BAPI answers 429.
+ * Runs `fn`, backing off and retrying whenever BAPI or FAPI answers 429.
  *
  * Anything other than a 429 propagates untouched — only rate limiting is
  * transient. Exhausting the retries raises {@link RateLimitExceededError} so
@@ -58,7 +58,7 @@ export async function retryOn429<T>(fn: () => Promise<T>, options: RetryOptions 
     try {
       return await fn();
     } catch (error) {
-      if (!(error instanceof BapiError) || error.status !== 429) throw error;
+      if (!(error instanceof ApiError) || error.status !== 429) throw error;
       if (attempt >= maxRetries) throw new RateLimitExceededError(maxRetries);
 
       const { delayMs, delaySeconds } = getRetryDelay(readRetryAfter(error), defaultDelayMs);
