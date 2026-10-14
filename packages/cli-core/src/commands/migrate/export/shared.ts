@@ -177,6 +177,9 @@ export function finishExport(input: FinishExportInput): FinishedExport {
   const carry = carryFlags({ runsDir: options.runsDir });
   const next = withFlags(`clerk migrate import ${record.id}`, carry);
   const skipped = record.counts.skipped ?? 0;
+  // Partial, like an import with failures: the file holds what came back, and
+  // the exit says it is not everyone, where `truncated` alone is easy to miss.
+  if (input.truncated) process.exitCode = 1;
 
   if (options.json) {
     log.data(
