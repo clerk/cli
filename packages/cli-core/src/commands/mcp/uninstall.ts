@@ -1,5 +1,7 @@
 /**
- * `clerk mcp uninstall` — remove the `clerk` MCP entry from supported clients.
+ * `clerk mcp uninstall` — remove the `clerk` MCP entry from supported clients,
+ * along with any clerk 3.x `clerk mcp run` bridge entries (under any name),
+ * which no longer connect.
  */
 
 import { cyan, dim, green, yellow } from "../../lib/color.ts";
@@ -11,6 +13,7 @@ import { collectEntries } from "./collect.ts";
 import type { McpClient, RemoveResult } from "./clients/types.ts";
 import {
   failWhenAllFailed,
+  legacyEntryNames,
   pickClients,
   resolveClients,
   resolveName,
@@ -35,8 +38,20 @@ async function installedClients(name: string, cwd: string): Promise<McpClient[]>
   const failed = new Set(failures.map((f) => f.client));
   return CLIENTS.filter(
     (client) =>
-      !failed.has(client.id) && entries.some((e) => e.client === client.id && e.name === name),
+      !failed.has(client.id) &&
+      entries.some((e) => e.client === client.id && (e.name === name || e.legacy)),
   );
+}
+
+/** Remove `name`, then any legacy bridge entries left under other names. */
+async function removeEntries(client: McpClient, name: string, cwd: string): Promise<RemoveResult> {
+  const legacy = (await legacyEntryNames(client, cwd)).filter((n) => n !== name);
+  const result = await client.remove(name, cwd);
+  let removedLegacy = false;
+  for (const legacyName of legacy) {
+    if ((await client.remove(legacyName, cwd)).removed) removedLegacy = true;
+  }
+  return { ...result, removed: result.removed || removedLegacy };
 }
 
 // The checked clients are removed; nothing is pre-checked, so the safe default
@@ -54,7 +69,7 @@ async function removeFrom(
   cwd: string,
   json: boolean,
 ): Promise<void> {
-  const outcome = await settleClients(clients, async (c) => c.remove(name, cwd));
+  const outcome = await settleClients(clients, async (c) => removeEntries(c, name, cwd));
   const { succeeded, failed } = outcome;
   const results = succeeded.map((s) => s.result);
   const removedCount = results.filter((r) => r.removed).length;

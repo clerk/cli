@@ -7,9 +7,18 @@ async function* lines(...chunks: string[]): AsyncIterable<string> {
   for (const chunk of chunks) yield chunk;
 }
 
-async function runAndCatch(input: AsyncIterable<string> | undefined): Promise<unknown> {
+// Yields `first` (if given), then blocks forever: a pipe left open with no newline.
+async function* neverEnding(first?: string): AsyncIterable<string> {
+  if (first !== undefined) yield first;
+  await new Promise<never>(() => {});
+}
+
+async function runAndCatch(
+  input: AsyncIterable<string> | undefined,
+  timeoutMs?: number,
+): Promise<unknown> {
   try {
-    await mcpRun({ input });
+    await mcpRun(timeoutMs === undefined ? { input } : { input, timeoutMs });
   } catch (error) {
     return error;
   }
@@ -39,6 +48,18 @@ describe("mcp run (removed)", () => {
     expect(reply.id).toBe(1);
     expect(reply.error.code).toBe(-32000);
     expect(reply.error.message).toContain("clerk mcp install");
+  });
+
+  test("gives up on stdin that stays open without sending a line", async () => {
+    const error = await runAndCatch(neverEnding(), 20);
+    expect((error as CliError).code).toBe(ERROR_CODE.MCP_BRIDGE_REMOVED);
+    expect(captured.out).toBe("");
+  });
+
+  test("gives up on an oversized first line", async () => {
+    const error = await runAndCatch(neverEnding("x".repeat(70_000)));
+    expect((error as CliError).code).toBe(ERROR_CODE.MCP_BRIDGE_REMOVED);
+    expect(captured.out).toBe("");
   });
 
   test.each([

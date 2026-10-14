@@ -106,10 +106,10 @@ export async function probeMcp(url: string): Promise<McpProbeResult> {
       body: JSON.stringify(INITIALIZE_REQUEST),
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
-    // The hosted server currently answers an unauthenticated `initialize` with
-    // 200 (verified live), but a server-side tightening to 401 must not make
-    // `doctor` flag a just-installed entry as unreachable — editors run their
-    // own OAuth flow that this probe deliberately doesn't perform.
+    // The hosted server answers an unauthenticated `initialize` with 401 and
+    // a `WWW-Authenticate` pointing at its protected-resource metadata
+    // (RFC 9728). That is reachable, not broken: `doctor` must not flag a
+    // just-installed entry — editors run the OAuth flow this probe doesn't.
     if (response.status === 401 || response.status === 403) {
       return { ok: false, status: response.status, authRequired: true };
     }

@@ -37,7 +37,7 @@ directory you run the CLI from).
 | `cursor`             | Cursor                   | direct file write (no CLI exists)                  | direct file write    | `~/.cursor/mcp.json` — `mcpServers.<name> = { url }`                               |
 | `vscode` (`copilot`) | GitHub Copilot (VS Code) | `code --add-mcp '<json>'`                          | direct file write    | VS Code user `mcp.json` (per-OS, below) — `servers.<name> = { type: "http", url }` |
 | `windsurf`           | Windsurf                 | direct file write (no CLI exists)                  | direct file write    | `~/.codeium/windsurf/mcp_config.json` — `mcpServers.<name> = { serverUrl }`        |
-| `gemini`             | Gemini Code Assist / CLI | `gemini mcp add --scope user --transport http`     | `gemini mcp remove`  | `~/.gemini/settings.json` — `mcpServers.<name> = { httpUrl }`                      |
+| `gemini`             | Gemini Code Assist / CLI | `gemini mcp add --scope user --transport http`     | `gemini mcp remove`  | `~/.gemini/settings.json` — `mcpServers.<name> = { url, type: "http" }`            |
 | `codex`              | Codex                    | append to `config.toml` (note below)               | `codex mcp remove`   | `~/.codex/config.toml` — `[mcp_servers.<name>] url = …`                            |
 | `opencode`           | opencode                 | direct file write (CLI is interactive-only)        | direct file write    | `opencode.json` in the XDG config dir — `mcp.<name> = { type: "remote", url }`     |
 | `openclaw`           | OpenClaw                 | `openclaw mcp add --url … --auth oauth --no-probe` | `openclaw mcp unset` | `~/.openclaw/openclaw.json` — `mcp.servers.<name> = { url, … }`                    |
@@ -45,9 +45,16 @@ directory you run the CLI from).
 | `hermes`             | Hermes Agent             | `hermes mcp add --url … --auth oauth`              | `hermes mcp remove`  | `~/.hermes/config.yaml` — `mcp_servers.<name> = { url, auth: oauth }`              |
 | `fx`                 | fx                       | direct file write (note below)                     | direct file write    | `~/.fx/mcp.json` — `mcp.<name> = { type: "http", url }`                            |
 
-Two clients relocate their config through an env var, and the CLI follows them:
+Some clients relocate their config through an env var, and the CLI follows them:
 `$CLAUDE_CONFIG_DIR` moves Claude Code's file to `$CLAUDE_CONFIG_DIR/.claude.json`,
-and `$CODEX_HOME` moves Codex's to `$CODEX_HOME/config.toml`.
+`$CODEX_HOME` moves Codex's to `$CODEX_HOME/config.toml`, `$GEMINI_CLI_HOME`
+moves Gemini's to `$GEMINI_CLI_HOME/.gemini/settings.json`, and `$HERMES_HOME`
+moves Hermes' to `$HERMES_HOME/config.yaml` (Hermes' default home also takes
+`$HERMES_DATA_DIR_SUFFIX`, and is `%LOCALAPPDATA%\hermes` on Windows).
+
+Config files we write ourselves are replaced atomically. A symlinked config
+(stow, chezmoi, home-manager) is written through to its target, so the link
+survives, and a file without write permission is refused rather than replaced.
 
 For CLI-registered clients there is **no file-write fallback**: if the client's
 binary isn't on PATH (e.g. VS Code without the `code` shell command installed),
@@ -77,8 +84,8 @@ client, Hermes the one YAML-backed client.
 
 Per-client dialect notes:
 
-- **Gemini** stores Streamable HTTP servers under `httpUrl`; its `url` key means
-  SSE, so a `url` entry would connect with the wrong transport.
+- **Gemini** CLIs save Streamable HTTP servers as `{ url, type: "http" }`;
+  older releases used `httpUrl`. Both shapes are read back.
 - **Codex** is added by appending a `[mcp_servers.<name>]` table to
   `config.toml`, not through `codex mcp add --url`: that command saves the
   entry and then, for an OAuth server like Clerk's, starts a browser sign-in
@@ -150,12 +157,13 @@ profiles (or changing `CLERK_MCP_URL`) does not move existing entries — re-run
 
 **Install always converges:** whatever entry currently sits under `--name`
 (a legacy `clerk mcp run` bridge, a stale URL, an unrelated server that happens
-to share the name) is replaced with the URL entry. For CLI-registered clients
+to share the name) is replaced with the URL entry, and legacy bridge entries
+saved under any other name (3.x took `--name` too) are removed. For CLI-registered clients
 this is a best-effort `remove` followed by `add` through the client's own CLI
 (so re-install works no matter how the CLI treats duplicate names); for
 file-backed clients the entry is overwritten in place. Success reports
-`status: installed` per client, plus `migrated: true` when the replaced entry
-was a legacy bridge (human mode notes it on the client's line). Failures are
+`status: installed` per client, plus `migrated: true` when a legacy bridge
+entry was replaced or removed (human mode notes it on the client's line). Failures are
 warned per client on stderr and listed in the `--json` output's `failures`
 array (`{ client, error }`); `uninstall --json` reports the same shape. The
 command exits non-zero only when every targeted client fails — and in `--json`
@@ -166,8 +174,8 @@ structured output.
 **After install:** registering the entry does not connect the server on its
 own. In human mode, `install` prints per-client next steps: reload the client,
 and sign in to Clerk — most clients prompt on first connect; Codex, Gemini,
-OpenClaw, Hermes, and fx have an explicit login command, which the next step
-names.
+opencode, OpenClaw, Hermes, and fx have an explicit login command, which the
+next step names.
 
 > **Concurrent writes:** for CLI-registered clients, write safety is the
 > client's own responsibility — its CLI owns the config. The file-backed
@@ -201,7 +209,8 @@ success, the config is re-read — if the entry is somehow still present, the
 client fails with `mcp_client_cli_failed` rather than reporting a removal that
 didn't happen (the mirror of the add-side `verifyAdd` check). Cursor, Windsurf, Warp, opencode, fx, and
 VS Code (add-only CLI) are removed by editing the config file directly. Legacy
-bridge entries are removed the same way.
+bridge entries are removed the same way, under whatever name they were saved —
+uninstall clears them alongside `--name`, since they no longer connect.
 
 In human mode with no `--client`/`--all`, it prompts with a
 multiselect of the clients that **currently have the entry**, all unchecked:

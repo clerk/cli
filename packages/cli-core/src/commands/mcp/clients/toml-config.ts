@@ -13,15 +13,13 @@
  * add because it starts a blocking browser OAuth login right after saving.
  */
 
-import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
 import {
   readConfigText,
   readParsedConfig,
   refuseConfigWrite,
-  restrictPermissions,
+  writeConfigText,
   type ConfigRecord,
 } from "./json-config.ts";
 
@@ -80,15 +78,5 @@ export async function appendTomlTable(
   }
 
   log.debug(`mcp: append [${table.join(".")}] to ${path}`);
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  // Atomic write (temp file + rename) so Codex never reads a partial file.
-  const tmp = `${path}.clerk-tmp-${process.pid}`;
-  try {
-    await writeFile(tmp, next, { mode: 0o600 });
-    await rename(tmp, path);
-  } catch (error) {
-    await unlink(tmp).catch(() => {});
-    throw error;
-  }
-  await restrictPermissions(path);
+  await writeConfigText(path, next);
 }

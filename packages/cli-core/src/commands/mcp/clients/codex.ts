@@ -17,14 +17,16 @@ import { codexHomePath } from "./paths.ts";
 import { appendTomlTable } from "./toml-config.ts";
 
 const configPath = (): string => codexHomePath("config.toml");
+const TOP_KEY = "mcp_servers";
+const encode = (url: string) => ({ url });
 
 const codexFileClient = makeTomlClient({
   id: "codex",
   displayName: "Codex",
   scope: "user",
   activation: (name) => `Run \`codex mcp login ${name}\` to sign in to Clerk, then restart Codex.`,
-  topKey: "mcp_servers",
-  encode: (url) => ({ url }),
+  topKey: TOP_KEY,
+  encode,
   extractUrl: urlField("url"),
   configPath,
 });
@@ -33,6 +35,6 @@ export const codexClient = makeCliClient({
   base: codexFileClient,
   binary: "codex",
   installHint: "Install the Codex CLI: https://github.com/openai/codex",
-  addEntry: async ({ name, url }) => appendTomlTable(configPath(), ["mcp_servers", name], { url }),
+  addEntry: async ({ name, url }) => appendTomlTable(configPath(), [TOP_KEY, name], encode(url)),
   removeArgs: (name) => ["mcp", "remove", name],
 });

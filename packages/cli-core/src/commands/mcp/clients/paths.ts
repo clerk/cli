@@ -35,6 +35,41 @@ export function codexHomePath(...segments: string[]): string {
 }
 
 /**
+ * Gemini CLI's user settings file. `$GEMINI_CLI_HOME` replaces the home
+ * directory Gemini roots `.gemini/` under, and `gemini mcp add` writes there.
+ */
+export function geminiSettingsPath(): string {
+  const geminiHome = process.env.GEMINI_CLI_HOME?.trim();
+  return join(geminiHome || homedir(), ".gemini", "settings.json");
+}
+
+/**
+ * Hermes' config root: `$HERMES_HOME` when set, otherwise the platform
+ * default — `%LOCALAPPDATA%\hermes` on Windows, `~/.hermes` elsewhere — with
+ * `$HERMES_DATA_DIR_SUFFIX` appended to the directory name.
+ */
+export function hermesHomePath(...segments: string[]): string {
+  const hermesHome = process.env.HERMES_HOME?.trim();
+  if (hermesHome) {
+    const expanded =
+      hermesHome === "~" || hermesHome.startsWith("~/")
+        ? join(homedir(), hermesHome.slice(1))
+        : hermesHome;
+    return join(expanded, ...segments);
+  }
+  const suffix = process.env.HERMES_DATA_DIR_SUFFIX ?? "";
+  if (platform() === "win32") {
+    const localAppData = process.env.LOCALAPPDATA?.trim();
+    return join(
+      localAppData || join(homedir(), "AppData", "Local"),
+      `hermes${suffix}`,
+      ...segments,
+    );
+  }
+  return userPath(`.hermes${suffix}`, ...segments);
+}
+
+/**
  * Candidate VS Code user-config dirs in priority order. Linux has three: the
  * standard XDG location plus Flatpak and Snap sandboxes, which redirect config
  * under their own per-app trees. The first existing one wins; the standard XDG

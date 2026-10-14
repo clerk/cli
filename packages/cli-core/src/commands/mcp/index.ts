@@ -62,10 +62,13 @@ export function registerMcp(program: Program): void {
     .action(async (options) => mcp.list(options));
 
   // Removed in 4.0 — hidden, and kept only so editors still launching the
-  // 3.x bridge get an error pointing at `clerk mcp install`.
+  // 3.x bridge get an error pointing at `clerk mcp install`. Any 3.x argv
+  // (e.g. a hand-edited `--url`) must reach that error, not a parse failure.
   mcpCmd
     .command("run", { hidden: true })
     .description("Removed — re-run `clerk mcp install` to switch to the HTTP-based server")
+    .allowUnknownOption()
+    .allowExcessArguments()
     .action(async () => mcp.run());
 
   mcpCmd

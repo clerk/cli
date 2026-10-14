@@ -3,6 +3,7 @@ import { afterEach, beforeEach, type spyOn } from "bun:test";
 import { type CapturedLogs, setActiveCapture } from "../../lib/log.ts";
 import { setUiOutput } from "../../lib/ui.ts";
 import type { TelemetryCommand, TelemetryResult } from "../../lib/telemetry.ts";
+import { MCP_CLIENT_ENV_VARS } from "./mcp-client-env.ts";
 
 export function capturedOutput(spy: ReturnType<typeof spyOn>): string {
   return spy.mock.calls.map((c: unknown[]) => c[0]).join("\n");
@@ -66,22 +67,22 @@ export function useCaptureLog() {
 }
 
 /**
- * Clear the env vars that relocate MCP client configs (`CLAUDE_CONFIG_DIR`,
- * `CODEX_HOME`) for every test in the enclosing scope, restoring them after.
- * Without this, a developer's own settings point the clients at their real
- * config files instead of the redirected test homedir.
+ * Clear the env vars that relocate MCP client configs
+ * ({@link MCP_CLIENT_ENV_VARS}) for every test in the enclosing scope,
+ * restoring them after. Without this, a developer's own settings — or a
+ * value an earlier test assigned — point the clients at real config files
+ * instead of the redirected test homedir.
  */
 export function useCleanMcpClientEnv(): void {
-  const keys = ["CLAUDE_CONFIG_DIR", "CODEX_HOME"] as const;
-  const saved: Partial<Record<(typeof keys)[number], string>> = {};
+  const saved: Partial<Record<(typeof MCP_CLIENT_ENV_VARS)[number], string>> = {};
   beforeEach(() => {
-    for (const key of keys) {
+    for (const key of MCP_CLIENT_ENV_VARS) {
       saved[key] = process.env[key];
       delete process.env[key];
     }
   });
   afterEach(() => {
-    for (const key of keys) {
+    for (const key of MCP_CLIENT_ENV_VARS) {
       const value = saved[key];
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

@@ -7,18 +7,21 @@
  * means re-running install.
  * Target clients: `--client <id>` (repeatable) > `--all` > human picker > all detected (agent mode).
  * Install always converges: whatever entry exists under the name is replaced,
- * including a clerk 3.x `clerk mcp run` bridge entry (reported as `migrated`).
+ * and every clerk 3.x `clerk mcp run` bridge entry in the client — under any
+ * name — is cleared (reported as `migrated`).
  * Clients with their own CLI (claude, gemini, vscode, openclaw, hermes) are
  * registered by shelling out to it; Codex (whose CLI add blocks on a browser
  * login) and the rest get their config file written directly.
  */
 
+import { errorMessage } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { cyan, dim, green } from "../../lib/color.ts";
 import { withGutter } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import {
   failWhenAllFailed,
+  legacyEntryNames,
   pickClients,
   resolveName,
   resolveUrl,
@@ -55,25 +58,25 @@ function printResult(client: McpClient, result: InstallResult): void {
   log.info(`${client.displayName} → ${dim(result.configPath)}: ${green(result.status)}${note}`);
 }
 
-// Best-effort: an unreadable config can't hold a detectable legacy entry, and
-// the upsert that follows surfaces the read error itself.
-async function hasLegacyEntry(client: McpClient, name: string, cwd: string): Promise<boolean> {
-  try {
-    const entries = await client.list(cwd);
-    return entries.some((entry) => entry.name === name && entry.legacy);
-  } catch {
-    return false;
-  }
-}
-
 async function install(
   client: McpClient,
   entry: McpServerEntry,
   cwd: string,
 ): Promise<InstallResult> {
-  const migrated = await hasLegacyEntry(client, entry.name, cwd);
+  const legacy = await legacyEntryNames(client, cwd);
   const result = await client.upsert(entry, cwd);
-  return { ...result, migrated };
+  // The upsert replaced a legacy entry under this name; one under another
+  // name would otherwise linger, dead, and keep `doctor` warning.
+  for (const legacyName of legacy.filter((n) => n !== entry.name)) {
+    try {
+      await client.remove(legacyName, cwd);
+    } catch (error) {
+      log.warn(
+        `${client.displayName}: could not remove the legacy \`${legacyName}\` entry — ${errorMessage(error)}. Remove it with \`clerk mcp uninstall --name ${legacyName}\`.`,
+      );
+    }
+  }
+  return { ...result, migrated: legacy.length > 0 };
 }
 
 type ClientUpsert = { client: McpClient; result: InstallResult };
@@ -94,7 +97,7 @@ export async function mcpInstall(options: McpOptions = {}): Promise<void> {
   const json = wantsJson(options);
 
   if (clients.length === 0 && json) {
-    log.data(JSON.stringify({ url, name, results: [] }, null, 2));
+    log.data(JSON.stringify({ url, name, results: [], failures: [] }, null, 2));
     return;
   }
   if (clients.length === 0) {

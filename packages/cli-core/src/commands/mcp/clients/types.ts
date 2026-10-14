@@ -84,4 +84,10 @@ export interface McpClient {
   remove(name: string, cwd: string): Promise<RemoveResult>;
   /** List `clerk`-flavored entries currently registered (those pointing at clerk.com URLs or named explicitly). */
   list(cwd: string): Promise<ListEntry[]>;
+  /**
+   * Does the config hold *any* entry under `name`, Clerk's or not? Unlike
+   * `list`, this doesn't filter to Clerk entries — install must clear
+   * whatever occupies the name before adding, or the add collides with it.
+   */
+  hasEntry(name: string, cwd: string): Promise<boolean>;
 }

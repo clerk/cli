@@ -84,6 +84,25 @@ describe("mcp uninstall", () => {
     expect(parsed.mcpServers).toBeUndefined();
   });
 
+  test("also removes legacy bridge entries saved under other names", async () => {
+    await mkdir(join(cwd, ".cursor"), { recursive: true });
+    await writeFile(
+      join(cwd, ".cursor", "mcp.json"),
+      JSON.stringify({
+        mcpServers: { "clerk-dev": RUN_SHAPE, other: { url: "https://x.test/mcp" } },
+      }),
+    );
+
+    await mcpUninstall({ client: ["cursor"] });
+
+    const payload = JSON.parse(captured.out) as { results: { client: string; removed: boolean }[] };
+    expect(payload.results).toEqual([expect.objectContaining({ client: "cursor", removed: true })]);
+    const parsed = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(parsed.mcpServers).toEqual({ other: { url: "https://x.test/mcp" } });
+  });
+
   test("delegates Claude Code removal to `claude mcp remove`", async () => {
     // Pre-write the entry as Claude Code's own CLI would have registered it.
     await writeFile(

@@ -206,7 +206,12 @@ describe("makeCliClient", () => {
     });
 
     test("addEntry replaces the CLI add but keeps the CLI pre-clean", async () => {
-      await writeBaseConfig();
+      const path = await writeBaseConfig();
+      // The CLI's remove drops its own entry, as the real one does.
+      mockRun.mockImplementation(async () => {
+        await writeFile(path, JSON.stringify({ mcpServers: {} }));
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
       const addEntry = mock((_entry: McpServerEntry, _cwd: string) => Promise.resolve());
       const client = makeCliClient({
         base: makeBase(),

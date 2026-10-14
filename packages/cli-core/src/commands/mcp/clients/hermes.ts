@@ -1,15 +1,16 @@
 /**
  * Registration is delegated to the Hermes Agent CLI:
  * `hermes mcp add <name> --url <url> --auth oauth` and
- * `hermes mcp remove <name>`. The YAML base reads `~/.hermes/config.yaml`
- * (`mcp_servers.<name> = { url, auth: oauth }`) for `list`/`doctor` only;
+ * `hermes mcp remove <name>`. The YAML base reads `config.yaml` in the Hermes
+ * home (`$HERMES_HOME`, default `~/.hermes`) —
+ * `mcp_servers.<name> = { url, auth: oauth }` — for `list`/`doctor` only;
  * YAML writes are refused (Hermes' CLI owns both mutations, and rewriting the
  * user's YAML would destroy comments).
  */
 
 import { makeCliClient } from "./make-cli-client.ts";
 import { makeYamlClient, urlField } from "./make-client.ts";
-import { userPath } from "./paths.ts";
+import { hermesHomePath } from "./paths.ts";
 
 const hermesFileClient = makeYamlClient({
   id: "hermes",
@@ -20,7 +21,7 @@ const hermesFileClient = makeYamlClient({
   topKey: "mcp_servers",
   encode: (url) => ({ url, auth: "oauth" }),
   extractUrl: urlField("url"),
-  configPath: () => userPath(".hermes", "config.yaml"),
+  configPath: () => hermesHomePath("config.yaml"),
 });
 
 export const hermesClient = makeCliClient({

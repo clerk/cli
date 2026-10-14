@@ -19,9 +19,10 @@ import { log } from "../../lib/log.ts";
 import { isRecord } from "../../lib/objects.ts";
 import { MCP_DOCS_URL } from "./clients/types.ts";
 
-/** Injectable stdin so the stub can be driven in-process by tests. */
+/** Injectable stdin (and read timeout) so the stub can be driven in-process by tests. */
 interface RunStreams {
   input?: AsyncIterable<Uint8Array | string> | undefined;
+  timeoutMs?: number;
 }
 
 const REMOVED_MESSAGE =
@@ -30,15 +31,37 @@ const REMOVED_MESSAGE =
 // JSON-RPC 2.0 reserves -32000 to -32099 for implementation-defined server errors.
 const SERVER_ERROR = -32000;
 
-async function readFirstLine(input: AsyncIterable<Uint8Array | string>): Promise<string> {
+// A client sends `initialize` as soon as it spawns the server. Give up after
+// this long, or on a line this large, so a pipe that stays open without one
+// can't hold the stub (and its buffer) forever.
+const FIRST_LINE_TIMEOUT_MS = 5_000;
+const FIRST_LINE_MAX_CHARS = 64 * 1024;
+
+async function scanFirstLine(input: AsyncIterable<Uint8Array | string>): Promise<string> {
   const decoder = new TextDecoder();
   let buffer = "";
   for await (const chunk of input) {
     buffer += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
     const newline = buffer.indexOf("\n");
     if (newline !== -1) return buffer.slice(0, newline);
+    if (buffer.length > FIRST_LINE_MAX_CHARS) return "";
   }
   return buffer;
+}
+
+async function readFirstLine(
+  input: AsyncIterable<Uint8Array | string>,
+  timeoutMs: number,
+): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<string>((resolve) => {
+    timer = setTimeout(() => resolve(""), timeoutMs);
+  });
+  try {
+    return await Promise.race([scanFirstLine(input), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function requestId(line: string): string | number | undefined {
@@ -57,7 +80,10 @@ export async function mcpRun(streams: RunStreams = {}): Promise<void> {
   // An interactive terminal never sends a request; don't wait on it.
   const input =
     "input" in streams ? streams.input : process.stdin.isTTY ? undefined : process.stdin;
-  const id = input === undefined ? undefined : requestId(await readFirstLine(input));
+  const id =
+    input === undefined
+      ? undefined
+      : requestId(await readFirstLine(input, streams.timeoutMs ?? FIRST_LINE_TIMEOUT_MS));
   if (id !== undefined) {
     log.data(
       JSON.stringify({

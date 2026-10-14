@@ -13,9 +13,10 @@
  * - No fallback: a missing binary or failing CLI is that client's failure,
  *   surfaced with the CLI's own stderr. We never write these configs ourselves,
  *   except Codex's add (`addEntry`), whose CLI add can't run headless.
- * - Install always converges: an existing entry is removed (via the client's
- *   own remove command, best-effort) before adding, so re-install works no
- *   matter how the CLI treats duplicate names.
+ * - Install always converges: any existing entry under the name — Clerk's or
+ *   not — is removed (via the client's own remove command, best-effort)
+ *   before adding, so re-install works no matter how the CLI treats
+ *   duplicate names.
  */
 
 import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
@@ -77,8 +78,10 @@ function requireBinary(binary: string, installHint: string): string {
 
 /**
  * Presence via our own read-only parse of the client's config — reads stay
- * ours; only writes are delegated. "unknown" = config unreadable, in which
- * case the CLI (which owns the format) gets the final say.
+ * ours; only writes are delegated. Any entry under the name counts, not just
+ * a Clerk-flavored one: a user's own `clerk` server (say, an `mcp-remote`
+ * command) still blocks the add. "unknown" = config unreadable, in which case
+ * the CLI (which owns the format) gets the final say.
  */
 async function presenceOf(
   base: McpClient,
@@ -86,9 +89,9 @@ async function presenceOf(
   cwd: string,
 ): Promise<"present" | "absent" | "unknown"> {
   try {
-    const entries = await base.list(cwd);
-    return entries.some((entry) => entry.name === name) ? "present" : "absent";
-  } catch {
+    return (await base.hasEntry(name, cwd)) ? "present" : "absent";
+  } catch (error) {
+    log.debug(`mcp: ${base.id} presence check failed — ${errorMessage(error)}`);
     return "unknown";
   }
 }
@@ -119,6 +122,7 @@ export function makeCliClient(spec: CliClientSpec): McpClient {
     configPath: (cwd) => base.configPath(cwd),
     detect: async () => findClientBinary(binary) !== null,
     list: async (cwd) => base.list(cwd),
+    hasEntry: async (name, cwd) => base.hasEntry(name, cwd),
 
     async upsert(entry: McpServerEntry, cwd: string): Promise<UpsertResult> {
       const bin = requireBinary(binary, spec.installHint);
@@ -135,9 +139,27 @@ export function makeCliClient(spec: CliClientSpec): McpClient {
         await base.remove(entry.name, cwd);
       }
       if (spec.addEntry) {
+        // A direct write can't overwrite: if the pre-clean didn't take, say
+        // so instead of surfacing the format's duplicate-key error.
+        if (presence === "present" && (await presenceOf(base, entry.name, cwd)) === "present") {
+          throw new CliError(
+            `could not replace the existing \`${entry.name}\` entry. Remove it from ${base.configPath(cwd)}, then re-run \`clerk mcp install\`.`,
+            { code: ERROR_CODE.MCP_CLIENT_CLI_FAILED, docsUrl: MCP_DOCS_URL },
+          );
+        }
         await spec.addEntry(entry, cwd);
       } else {
-        await runOrThrow([bin, ...spec.addArgs(entry)], "register the MCP server", spec.addStdin);
+        try {
+          await runOrThrow([bin, ...spec.addArgs(entry)], "register the MCP server", spec.addStdin);
+        } catch (error) {
+          if (presence !== "present") throw error;
+          // The pre-clean already removed the old entry, so the failed add
+          // left the client with none; say so rather than implying nothing changed.
+          throw new CliError(
+            `${errorMessage(error)}. The previous \`${entry.name}\` entry was already removed; re-run \`clerk mcp install\` once the problem is fixed.`,
+            { code: ERROR_CODE.MCP_CLIENT_CLI_FAILED, docsUrl: MCP_DOCS_URL },
+          );
+        }
       }
       if (spec.verifyAdd && (await presenceOf(base, entry.name, cwd)) === "absent") {
         throw new CliError(

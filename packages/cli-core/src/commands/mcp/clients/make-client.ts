@@ -187,6 +187,12 @@ function makeFileClient(spec: FileClientSpec, codec: ConfigCodec): McpClient {
       return { client: spec.id, configPath, removed: true };
     },
 
+    async hasEntry(name: string, cwd: string): Promise<boolean> {
+      const configPath = spec.configPath(cwd);
+      const servers = serversIn(normalize(await codec.read(configPath)), configPath);
+      return Object.prototype.hasOwnProperty.call(servers, name);
+    },
+
     async list(cwd: string): Promise<ListEntry[]> {
       const configPath = spec.configPath(cwd);
       // A half-written or structurally-invalid config propagates as
