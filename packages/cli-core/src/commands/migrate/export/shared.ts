@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { dim, green, yellow } from "../../../lib/color.ts";
+import { CliError } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
 import { ENVELOPE_VERSION, type ExportEnvelope } from "../lib/export-file.ts";
 import { ACCOUNT_LINKING_NOTE } from "../sources/registry.ts";
@@ -147,14 +148,26 @@ export type FinishedExport = { record: RunRecord; outputPath: string };
 export function finishExport(input: FinishExportInput): FinishedExport {
   const { run, options, users, coverage } = input;
   const platform = run.record.target.platform ?? run.record.source ?? "";
-  const outputPath = writeExportFile(exportPath(run, options.output), {
-    clerkMigrate: ENVELOPE_VERSION,
-    source: run.record.source ?? platform,
-    exportedAt: new Date().toISOString(),
-    runId: run.record.id,
-    ...(input.firebase ? { firebase: input.firebase } : {}),
-    users,
-  });
+  const target = exportPath(run, options.output);
+  let outputPath: string;
+  try {
+    outputPath = writeExportFile(target, {
+      clerkMigrate: ENVELOPE_VERSION,
+      source: run.record.source ?? platform,
+      exportedAt: new Date().toISOString(),
+      runId: run.record.id,
+      ...(input.firebase ? { firebase: input.firebase } : {}),
+      users,
+    });
+  } catch (error) {
+    // Released with no file, the run reads as an export that never finished,
+    // and an import by its ID says so.
+    run.release();
+    throw new CliError(
+      `Could not write the export to ${target}: ${(error as Error).message}\n` +
+        `Nothing was written. Run the export again${options.output ? " with another --output" : ""}.`,
+    );
+  }
   run.update({ file: { path: outputPath, sha256: sha256File(outputPath) } });
   const record = run.finish();
   const next = `clerk migrate import ${record.id}`;
