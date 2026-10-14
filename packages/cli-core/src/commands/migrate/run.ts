@@ -42,6 +42,7 @@ import { checkImport, type ImportChecks } from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
 import {
+  FIREBASE_FLAGS,
   firebaseHashConfigProblem,
   fingerprintFirebaseHashConfig,
   resolveFirebaseHashConfig,
@@ -766,10 +767,15 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
   }
 
   const { source, file } = validateRunOptions(options);
-  // The flags win, so a rotated key can be passed without re-exporting.
+  // The flags and variables win, so a rotated key can be passed without re-exporting.
   const fromFlags = resolveFirebaseHashConfig(options, source);
   let firebaseHashConfig = fromFlags ?? (source === "firebase" ? envelope?.firebase : undefined);
-  let configFrom = fromFlags ? "the --firebase-* flags" : "the export file";
+  const fromFlagsAtAll = FIREBASE_FLAGS.some(([key]) => options[key] !== undefined);
+  let configFrom = fromFlags
+    ? fromFlagsAtAll
+      ? "the --firebase-* flags"
+      : "the CLERK_FIREBASE_* variables"
+    : "the export file";
   // `-y` is "import without prompting": it gets the usage error naming the flags.
   if (source === "firebase" && !firebaseHashConfig && !options.yes && canPrompt(options)) {
     firebaseHashConfig = await promptForFirebaseHashConfig();

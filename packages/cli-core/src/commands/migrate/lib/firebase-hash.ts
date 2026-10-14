@@ -1,5 +1,6 @@
 /**
- * Firebase's four scrypt parameters, read from the `--firebase-*` flags.
+ * Firebase's four scrypt parameters, read from the `--firebase-*` flags or the
+ * matching `CLERK_FIREBASE_*` environment variables.
  *
  * **Only read when the source is `firebase`.** `migrate import` is one
  * command serving every platform, and nothing but the Firebase source
@@ -10,12 +11,12 @@ import { createHash } from "node:crypto";
 import { throwUsageError } from "../../../lib/errors.ts";
 import type { FirebaseHashConfig } from "../types.ts";
 
-/** The `--firebase-*` flags, keyed by their option name. */
+/** The `--firebase-*` flags, keyed by their option name, with their environment variables. */
 export const FIREBASE_FLAGS = [
-  ["firebaseSignerKey", "--firebase-signer-key"],
-  ["firebaseSaltSeparator", "--firebase-salt-separator"],
-  ["firebaseRounds", "--firebase-rounds"],
-  ["firebaseMemCost", "--firebase-mem-cost"],
+  ["firebaseSignerKey", "--firebase-signer-key", "CLERK_FIREBASE_SIGNER_KEY"],
+  ["firebaseSaltSeparator", "--firebase-salt-separator", "CLERK_FIREBASE_SALT_SEPARATOR"],
+  ["firebaseRounds", "--firebase-rounds", "CLERK_FIREBASE_ROUNDS"],
+  ["firebaseMemCost", "--firebase-mem-cost", "CLERK_FIREBASE_MEM_COST"],
 ] as const;
 
 export type FirebaseHashFlags = {
@@ -26,7 +27,9 @@ export type FirebaseHashFlags = {
 };
 
 /**
- * Resolves the four parameters from the flags.
+ * Resolves the four parameters from the flags, each falling back to its
+ * environment variable. The variables keep the signer key out of argv, and so
+ * out of shell history and `ps`.
  *
  * The four are required as a set: a digest built from a partial set is
  * well-formed but verifies against nothing, so every migrated user would fail
@@ -38,17 +41,33 @@ export type FirebaseHashFlags = {
  *   for an export that carries no password hashes.
  */
 export function resolveFirebaseHashConfig(
-  flags: FirebaseHashFlags,
+  options: FirebaseHashFlags,
   source: string | undefined,
+  env: Record<string, string | undefined> = process.env,
 ): FirebaseHashConfig | undefined {
   if (source !== "firebase") return undefined;
+
+  const flags: FirebaseHashFlags = { ...options };
+  for (const [key, flag, envVar] of FIREBASE_FLAGS) {
+    const raw = env[envVar];
+    if (flags[key] !== undefined || raw === undefined) continue;
+    if (key === "firebaseRounds" || key === "firebaseMemCost") {
+      const value = Number(raw.trim());
+      if (!Number.isInteger(value) || value < 1) {
+        throwUsageError(`${envVar} must be a positive whole number, like ${flag}. Got "${raw}".`);
+      }
+      flags[key] = value;
+    } else {
+      flags[key] = raw;
+    }
+  }
 
   const provided = FIREBASE_FLAGS.filter(([key]) => flags[key] !== undefined);
   if (provided.length === 0) return undefined;
 
   if (provided.length < FIREBASE_FLAGS.length) {
     const missing = FIREBASE_FLAGS.filter(([key]) => flags[key] === undefined).map(
-      ([, flag]) => flag,
+      ([, flag, envVar]) => `${flag} (or ${envVar})`,
     );
     throwUsageError(
       `The Firebase hash parameters must be supplied together. Missing: ${missing.join(", ")}.\n` +

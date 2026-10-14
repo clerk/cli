@@ -449,7 +449,13 @@ Without `firebaseauth.configs.getHashConfig`, users still export, but the
 export can't read the hash parameters. It says which permission is missing, and
 the import then needs `--firebase-signer-key`, `--firebase-salt-separator`,
 `--firebase-rounds` and `--firebase-mem-cost` (from **Authentication → Users →
-⋮ → Password hash parameters** in the Firebase console).
+⋮ → Password hash parameters** in the Firebase console). Each flag can come
+from its environment variable instead, `CLERK_FIREBASE_SIGNER_KEY`,
+`CLERK_FIREBASE_SALT_SEPARATOR`, `CLERK_FIREBASE_ROUNDS` and
+`CLERK_FIREBASE_MEM_COST`, which keeps the signer key out of shell history and
+`ps`; a flag wins over its variable. At a terminal, without either, the import
+asks, masking the signer key. The export file keeps the parameters, signer key
+included, owner-only in its run folder.
 
 Without `--service-account` you are prompted for it, the way `export supabase`
 prompts for its connection string. The answer can be a path to the downloaded
@@ -598,10 +604,10 @@ clerk migrate import                                          # a human is asked
 | `--require-password`                    | Import only users that carry a password digest                                                |
 | `--skip-legal-checks`                   | Import users with no legal acceptance into an instance requiring it                           |
 | `--reserve-unverified`                  | Create [unverified identifiers](#verified-vs-unverified-identifiers) reserved, not unverified |
-| `--firebase-signer-key <key>`           | Firebase base64 signer key (overrides the export file)                                        |
-| `--firebase-salt-separator <separator>` | Firebase base64 salt separator                                                                |
-| `--firebase-rounds <n>`                 | Firebase scrypt rounds                                                                        |
-| `--firebase-mem-cost <n>`               | Firebase scrypt memory cost                                                                   |
+| `--firebase-signer-key <key>`           | Firebase base64 signer key, or `CLERK_FIREBASE_SIGNER_KEY` (overrides the export file)        |
+| `--firebase-salt-separator <separator>` | Firebase base64 salt separator, or `CLERK_FIREBASE_SALT_SEPARATOR`                            |
+| `--firebase-rounds <n>`                 | Firebase scrypt rounds, or `CLERK_FIREBASE_ROUNDS`                                            |
+| `--firebase-mem-cost <n>`               | Firebase scrypt memory cost, or `CLERK_FIREBASE_MEM_COST`                                     |
 | `-y, --yes`                             | Import without prompting                                                                      |
 | `--json`                                | Output as JSON. Never prompts, so importing needs `--yes`                                     |
 | `--runs-dir <path>`                     | Where runs are kept (see [the run store](#the-run-store))                                     |

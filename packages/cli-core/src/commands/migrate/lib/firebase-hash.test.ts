@@ -52,7 +52,45 @@ describe("on a firebase run", () => {
   });
 
   test("returns nothing when no flag supplies a config", () => {
-    expect(resolveFirebaseHashConfig({}, "firebase")).toBeUndefined();
+    expect(resolveFirebaseHashConfig({}, "firebase", {})).toBeUndefined();
+  });
+});
+
+// The variables keep the signer key out of argv, shell history and `ps`.
+describe("from CLERK_FIREBASE_* variables", () => {
+  const ENV = {
+    CLERK_FIREBASE_SIGNER_KEY: "SIGNER",
+    CLERK_FIREBASE_SALT_SEPARATOR: "Bw==",
+    CLERK_FIREBASE_ROUNDS: "8",
+    CLERK_FIREBASE_MEM_COST: "14",
+  };
+
+  test("builds the config from all four", () => {
+    expect(resolveFirebaseHashConfig({}, "firebase", ENV)).toEqual({
+      base64_signer_key: "SIGNER",
+      base64_salt_separator: "Bw==",
+      rounds: 8,
+      mem_cost: 14,
+    });
+  });
+
+  test("a flag wins over its variable", () => {
+    expect(
+      resolveFirebaseHashConfig({ firebaseSignerKey: "ROTATED" }, "firebase", ENV)
+        ?.base64_signer_key,
+    ).toBe("ROTATED");
+  });
+
+  test("a partial set names each missing flag and variable", () => {
+    expect(() =>
+      resolveFirebaseHashConfig({}, "firebase", { CLERK_FIREBASE_SIGNER_KEY: "SIGNER" }),
+    ).toThrow(/--firebase-rounds \(or CLERK_FIREBASE_ROUNDS\)/);
+  });
+
+  test("refuses a cost that is not a whole number", () => {
+    expect(() =>
+      resolveFirebaseHashConfig({}, "firebase", { ...ENV, CLERK_FIREBASE_ROUNDS: "eight" }),
+    ).toThrow(/CLERK_FIREBASE_ROUNDS must be a positive whole number/);
   });
 });
 
