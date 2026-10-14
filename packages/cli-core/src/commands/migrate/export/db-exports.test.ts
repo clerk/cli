@@ -14,8 +14,14 @@ import path from "node:path";
 import type { DbClient } from "../lib/db.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
-import { buildSupabaseExport, exportSupabase, fetchSupabaseUsers } from "./supabase.ts";
 import {
+  buildSupabaseExport,
+  exportSupabase,
+  fetchSupabaseUsers,
+  SUPABASE_DB,
+} from "./supabase.ts";
+import {
+  dialectRefusal,
   looksLikeConnectionString,
   normalizeConnectionString,
   resolveDbUrl,
@@ -188,10 +194,26 @@ describe("connection failures", () => {
   test.each([["mysql://u:p@127.0.0.1:1/db"], ["./definitely-not-here.sqlite"]])(
     "refuses %s before connecting or writing a run",
     async (dbUrl) => {
-      await expect(exportSupabase({ dbUrl })).rejects.toThrow(/Supabase's database is Postgres/);
+      await expect(exportSupabase({ dbUrl })).rejects.toThrow(
+        /`clerk migrate export supabase` reads a Postgres database/,
+      );
       expect(fs.existsSync(path.join(workDir, ".clerk"))).toBe(false);
     },
   );
+
+  // Each retry of a refused connect is a fresh prompt, checked the same way.
+  test.each([["mysql://u:p@127.0.0.1:1/db"], ["libsql://db.turso.io"], ["./users.db"]])(
+    "the prompt refuses %s for Supabase",
+    (dbUrl) => {
+      expect(dialectRefusal(SUPABASE_DB, dbUrl)).toContain("reads a Postgres database");
+    },
+  );
+
+  test("the prompt takes a Postgres URL for Supabase", () => {
+    expect(dialectRefusal(SUPABASE_DB, "postgresql://u:p@db.x.supabase.co:5432/postgres")).toBe(
+      undefined,
+    );
+  });
 
   test("the failure never contains the password", async () => {
     await expect(

@@ -20,6 +20,7 @@ import {
   redactDbMessage,
   type DbClient,
   type DbPlatform,
+  type DbType,
 } from "../lib/db.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
@@ -40,7 +41,46 @@ export type ResolveConfig = {
   prompt: string;
   /** Extra guidance shown before prompting. */
   hint?: string;
+  /** The one dialect the platform's database speaks: any other is refused before connecting. */
+  dialect?: DbType;
 };
+
+const DIALECTS: Record<DbType, { label: string; expected: string }> = {
+  postgres: { label: "Postgres", expected: "postgres://… or postgresql://…" },
+  mysql: { label: "MySQL", expected: "mysql://…" },
+  sqlite: { label: "SQLite", expected: "libsql://… or a SQLite file path" },
+};
+
+/** The connection strings `config` accepts, for messages. */
+function expectedUrl(config: ResolveConfig): string {
+  return config.dialect
+    ? DIALECTS[config.dialect].expected
+    : "postgres://…, mysql://…, libsql://… or a SQLite file path";
+}
+
+/**
+ * Why `config` cannot use a connection string that parses: it names a dialect
+ * the platform's database doesn't speak, which would connect, then fail with
+ * nothing exported. Undefined when it can.
+ */
+export function dialectRefusal(
+  config: ResolveConfig,
+  connectionString: string,
+): string | undefined {
+  if (!config.dialect) return undefined;
+  const dialect = isLibsqlUrl(connectionString) ? "sqlite" : detectDbType(connectionString);
+  if (dialect === config.dialect) return undefined;
+  return `\`clerk migrate export ${config.platform}\` reads a ${DIALECTS[config.dialect].label} database: pass ${expectedUrl(config)}`;
+}
+
+/** Refuses a connection string the platform's database cannot be, before connecting. */
+function assertDialect(config: ResolveConfig, connectionString: string): void {
+  const refused = dialectRefusal(config, connectionString);
+  if (!refused) return;
+  throwUsageError(
+    `${refused}. Nothing was exported.${config.hint ? `\nFind it under ${config.hint}` : ""}`,
+  );
+}
 
 const URL_SCHEME = /^(postgresql|postgres|mysql|mysql2|libsql):\/\//i;
 
@@ -122,17 +162,21 @@ export async function resolveDbUrl(
   if (fromFlag) {
     if (!looksLikeConnectionString(fromFlag)) {
       throwUsageError(
-        `--db-url does not look like a connection string. Expected postgres://…, mysql://…, libsql://… or a SQLite file path.\n` +
+        `--db-url does not look like a connection string. Expected ${expectedUrl(config)}.\n` +
           "If the password contains @, # or /, URL-encode it.",
       );
     }
+    assertDialect(config, fromFlag);
     return fromFlag;
   }
 
   const raw = env[config.envVar];
   const fromEnv = raw ? normalizeConnectionString(raw) : undefined;
   if (fromEnv) {
-    if (looksLikeConnectionString(fromEnv)) return fromEnv;
+    if (looksLikeConnectionString(fromEnv)) {
+      assertDialect(config, fromEnv);
+      return fromEnv;
+    }
     // Falling through silently would make the prompt look unexplained.
     log.warn(`${config.envVar} is not a valid connection string; ignoring it.`);
   }
@@ -168,10 +212,13 @@ export async function resolveDbUrl(
 export async function promptDbUrl(config: ResolveConfig): Promise<string> {
   const answer = await passwordPrompt({
     message: config.prompt,
-    validate: (value) =>
-      looksLikeConnectionString(normalizeConnectionString(value ?? ""))
-        ? undefined
-        : "Expected postgres://…, mysql://…, libsql://… or a SQLite file path",
+    // Every retry of a refused connect comes back through here, so a pasted
+    // string of the wrong dialect is caught on each one.
+    validate: (value) => {
+      const candidate = normalizeConnectionString(value ?? "");
+      if (!looksLikeConnectionString(candidate)) return `Expected ${expectedUrl(config)}`;
+      return dialectRefusal(config, candidate);
+    },
   });
 
   return normalizeConnectionString(answer);
