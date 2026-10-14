@@ -327,6 +327,15 @@ describe("run", () => {
 
     const { source: _source, input: _input, ...noSource } = baseOptions;
 
+    test("refuses a file whose source this CLI does not know, before any request", async () => {
+      const { record } = exportRun("okta", export2);
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /exported from "okta", which this version of the CLI does not know\. Valid sources: /,
+      );
+      expect(requests).toHaveLength(0);
+    });
+
     // The run ID stands for the file that run wrote: a later export or an edit
     // at the same path must not import under the old run's name.
     test("refuses an export file that changed since its run wrote it", async () => {
