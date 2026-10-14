@@ -44,19 +44,32 @@ export function geminiSettingsPath(): string {
 }
 
 /**
- * Hermes' config root: `$HERMES_HOME` when set, otherwise the platform
- * default — `%LOCALAPPDATA%\hermes` on Windows, `~/.hermes` elsewhere — with
- * `$HERMES_DATA_DIR_SUFFIX` appended to the directory name.
+ * Hermes runs `$HERMES_HOME` through Python's `expandvars` then `expanduser`:
+ * `$NAME`/`${NAME}` (and `%NAME%` on Windows) take their env value, unknown
+ * variables stay literal, then a leading `~` becomes the home directory.
+ */
+function expandHermesHome(path: string): string {
+  const pattern =
+    platform() === "win32" ? /\$(\w+)|\$\{([^}]*)\}|%([^%]+)%/g : /\$(\w+)|\$\{([^}]*)\}/g;
+  const expanded = path.replace(
+    pattern,
+    (match, bare?: string, braced?: string, percent?: string) =>
+      process.env[bare ?? braced ?? percent ?? ""] ?? match,
+  );
+  return expanded === "~" || expanded.startsWith("~/")
+    ? join(homedir(), expanded.slice(1))
+    : expanded;
+}
+
+/**
+ * Hermes' config root: `$HERMES_HOME` (expanded as Hermes expands it) when
+ * set, otherwise the platform default — `%LOCALAPPDATA%\hermes` on Windows,
+ * `~/.hermes` elsewhere — with `$HERMES_DATA_DIR_SUFFIX` appended to the
+ * directory name.
  */
 export function hermesHomePath(...segments: string[]): string {
   const hermesHome = process.env.HERMES_HOME?.trim();
-  if (hermesHome) {
-    const expanded =
-      hermesHome === "~" || hermesHome.startsWith("~/")
-        ? join(homedir(), hermesHome.slice(1))
-        : hermesHome;
-    return join(expanded, ...segments);
-  }
+  if (hermesHome) return join(expandHermesHome(hermesHome), ...segments);
   const suffix = process.env.HERMES_DATA_DIR_SUFFIX ?? "";
   if (platform() === "win32") {
     const localAppData = process.env.LOCALAPPDATA?.trim();

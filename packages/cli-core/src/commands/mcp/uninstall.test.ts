@@ -103,6 +103,31 @@ describe("mcp uninstall", () => {
     expect(parsed.mcpServers).toEqual({ other: { url: "https://x.test/mcp" } });
   });
 
+  test("keeps the client successful when a legacy entry can't be removed", async () => {
+    // The named entry goes; the other-name bridge's removal fails.
+    await writeFile(
+      join(cwd, ".claude.json"),
+      JSON.stringify({ mcpServers: { clerk: { type: "http", url: URL }, "clerk-dev": RUN_SHAPE } }),
+    );
+    mockRun.mockImplementation(async (argv: string[]) => {
+      if (argv.at(-1) === "clerk-dev") return { exitCode: 1, stdout: "", stderr: "boom" };
+      await writeFile(
+        join(cwd, ".claude.json"),
+        JSON.stringify({ mcpServers: { "clerk-dev": RUN_SHAPE } }),
+      );
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    await mcpUninstall({ client: ["claude"] });
+
+    const payload = JSON.parse(captured.out) as { results: unknown[]; failures: unknown[] };
+    expect(payload.results).toEqual([
+      expect.objectContaining({ client: "claude", removed: true, legacyRemaining: ["clerk-dev"] }),
+    ]);
+    expect(payload.failures).toEqual([]);
+    expect(captured.err).toContain("could not remove the legacy `clerk-dev` entry");
+  });
+
   test("delegates Claude Code removal to `claude mcp remove`", async () => {
     // Pre-write the entry as Claude Code's own CLI would have registered it.
     await writeFile(

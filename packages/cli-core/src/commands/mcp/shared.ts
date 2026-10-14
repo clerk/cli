@@ -171,6 +171,31 @@ export async function legacyEntryNames(client: McpClient, cwd: string): Promise<
   }
 }
 
+/**
+ * Remove the given legacy bridge entries from a client. A failure doesn't fail
+ * the client — the operation it accompanies already succeeded — so it is
+ * warned with the manual fix and reported back in `remaining`.
+ */
+export async function removeLegacyEntries(
+  client: McpClient,
+  names: readonly string[],
+  cwd: string,
+): Promise<{ removed: string[]; remaining: string[] }> {
+  const removed: string[] = [];
+  const remaining: string[] = [];
+  for (const name of names) {
+    try {
+      if ((await client.remove(name, cwd)).removed) removed.push(name);
+    } catch (error) {
+      remaining.push(name);
+      log.warn(
+        `${client.displayName}: could not remove the legacy \`${name}\` entry — ${errorMessage(error)}. Remove it with \`clerk mcp uninstall --name ${name}\`.`,
+      );
+    }
+  }
+  return { removed, remaining };
+}
+
 /** A per-client failure, structurally reportable in `--json` output. */
 type ClientFailure = { client: ClientId; error: string };
 

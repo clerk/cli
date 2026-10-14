@@ -1,6 +1,16 @@
 import type { findClientBinary, runClientCli } from "./cli-exec.ts";
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import * as realOs from "node:os";
 import { join, sep } from "node:path";
 import { useCaptureLog, useCleanMcpClientEnv } from "../../../test/lib/stubs.ts";
@@ -34,6 +44,7 @@ const { warpClient } = await import("./warp.ts");
 const { hermesClient } = await import("./hermes.ts");
 const { fxClient } = await import("./fx.ts");
 const { vscodeUserDir } = await import("./paths.ts");
+const { writeJsonConfig } = await import("./json-config.ts");
 
 useCaptureLog();
 
@@ -267,6 +278,22 @@ describe("client contracts (homedir redirected)", () => {
     expect(client.configPath("/ignored")).toBe(expectedPath(dir));
   });
 
+  // Hermes runs HERMES_HOME through Python's expandvars + expanduser.
+  test.each([
+    { value: "$CLERK_TEST_HERMES_ROOT/hermes", expected: () => join(mockHome, "hermes") },
+    { value: "${CLERK_TEST_HERMES_ROOT}/hermes", expected: () => join(mockHome, "hermes") },
+    { value: "~/hermes", expected: () => join(mockHome, "hermes") },
+    { value: "$CLERK_TEST_UNSET_VAR/hermes", expected: () => "$CLERK_TEST_UNSET_VAR/hermes" },
+  ])("hermes expands HERMES_HOME=$value as Hermes does", ({ value, expected }) => {
+    process.env.CLERK_TEST_HERMES_ROOT = mockHome;
+    process.env.HERMES_HOME = value;
+    try {
+      expect(hermesClient.configPath("/ignored")).toBe(join(expected(), "config.yaml"));
+    } finally {
+      delete process.env.CLERK_TEST_HERMES_ROOT;
+    }
+  });
+
   test("hermes appends HERMES_DATA_DIR_SUFFIX to its default home", () => {
     process.env.HERMES_DATA_DIR_SUFFIX = "-work";
     expect(hermesClient.configPath("/ignored")).toBe(join(mockHome, ".hermes-work", "config.yaml"));
@@ -285,6 +312,25 @@ describe("client contracts (homedir redirected)", () => {
     expect(await geminiClient.list("/ignored")).toEqual([
       expect.objectContaining({ name: "clerk", url: DEFAULT_URL, legacy: false }),
     ]);
+  });
+
+  test("concurrent writes through two symlinks to one config both succeed", async () => {
+    // Each write needs its own temp file: both resolve to the same target.
+    const target = join(mockHome, "dotfiles", "mcp.json");
+    await mkdir(join(target, ".."), { recursive: true });
+    await writeFile(target, "{}\n");
+    const a = join(mockHome, "a.json");
+    const b = join(mockHome, "b.json");
+    await symlink(target, a);
+    await symlink(target, b);
+
+    await Promise.all([
+      writeJsonConfig(a, { a: "x".repeat(200_000) }),
+      writeJsonConfig(b, { b: "y".repeat(200_000) }),
+    ]);
+
+    expect(Object.keys(JSON.parse(await readFile(target, "utf8")) as object)).toHaveLength(1);
+    expect((await readdir(join(target, ".."))).filter((f) => f.includes("clerk-tmp"))).toEqual([]);
   });
 
   test("codex writes through a symlinked config.toml, keeping the link", async () => {
@@ -408,6 +454,43 @@ describe("client contracts (homedir redirected)", () => {
       `[mcp_servers.clerk]\nurl = "${DEFAULT_URL}"\n`,
     );
   });
+
+  test("codex includes the failed pre-clean's stderr when the entry can't be replaced", async () => {
+    const configPath = configPathInHome(codexClient);
+    await writeClientEntry(configPath);
+    const before = await readFile(configPath, "utf8");
+    mockRun.mockResolvedValue({ exitCode: 1, stdout: "", stderr: "Error: config.toml is locked" });
+    const error = await codexClient
+      .upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored")
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "mcp_client_cli_failed" });
+    expect((error as Error).message).toContain("could not replace the existing `clerk` entry");
+    expect((error as Error).message).toContain("config.toml is locked");
+    expect(await readFile(configPath, "utf8")).toBe(before);
+  });
+
+  test.each([
+    { case: "the pre-clean removed it", preCleanRemoves: true, claimsRemoved: true },
+    { case: "the pre-clean also failed", preCleanRemoves: false, claimsRemoved: false },
+  ])(
+    "a failed add says the old entry is gone only when $case",
+    async ({ preCleanRemoves, claimsRemoved }) => {
+      const configPath = configPathInHome(claudeClient);
+      await writeClientEntry(configPath);
+      mockRun.mockImplementation(async (argv: string[]) => {
+        if (argv.includes("remove") && preCleanRemoves) {
+          await writeFile(configPath, JSON.stringify({ mcpServers: {} }));
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        return { exitCode: 1, stdout: "", stderr: "boom" };
+      });
+      const error = await claudeClient
+        .upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored")
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ code: "mcp_client_cli_failed" });
+      expect((error as Error).message.includes("was already removed")).toBe(claimsRemoved);
+    },
+  );
 
   test("codex reports a pre-clean that left the entry instead of appending a duplicate", async () => {
     const configPath = configPathInHome(codexClient);

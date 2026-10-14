@@ -28,6 +28,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { log } from "../../../lib/log.ts";
 import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
@@ -106,7 +107,9 @@ export async function writeConfigText(path: string, text: string): Promise<void>
   const target = await resolveWriteTarget(path);
   log.debug(`mcp: write ${target}${target === path ? "" : ` (via symlink ${path})`}`);
   await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-  const tmp = `${target}.clerk-tmp-${process.pid}`;
+  // Unique per call: two configs symlinked to one file resolve to the same
+  // target, and a shared temp name would let one write rename the other's.
+  const tmp = `${target}.clerk-tmp-${process.pid}-${randomUUID()}`;
   try {
     await writeFile(tmp, text, { mode: 0o600 });
     await rename(tmp, target);

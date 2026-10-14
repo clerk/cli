@@ -14,7 +14,6 @@
  * login) and the rest get their config file written directly.
  */
 
-import { errorMessage } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { cyan, dim, green } from "../../lib/color.ts";
 import { withGutter } from "../../lib/spinner.ts";
@@ -23,6 +22,7 @@ import {
   failWhenAllFailed,
   legacyEntryNames,
   pickClients,
+  removeLegacyEntries,
   resolveName,
   resolveUrl,
   settleClients,
@@ -51,7 +51,7 @@ async function chooseClients(options: McpOptions, cwd: string): Promise<McpClien
 }
 
 /** An upsert result, flagged when it replaced a clerk 3.x bridge entry. */
-type InstallResult = UpsertResult & { migrated: boolean };
+type InstallResult = UpsertResult & { migrated: boolean; legacyRemaining?: string[] };
 
 function printResult(client: McpClient, result: InstallResult): void {
   const note = result.migrated ? dim(" (replaced the `clerk mcp run` bridge)") : "";
@@ -67,16 +67,13 @@ async function install(
   const result = await client.upsert(entry, cwd);
   // The upsert replaced a legacy entry under this name; one under another
   // name would otherwise linger, dead, and keep `doctor` warning.
-  for (const legacyName of legacy.filter((n) => n !== entry.name)) {
-    try {
-      await client.remove(legacyName, cwd);
-    } catch (error) {
-      log.warn(
-        `${client.displayName}: could not remove the legacy \`${legacyName}\` entry — ${errorMessage(error)}. Remove it with \`clerk mcp uninstall --name ${legacyName}\`.`,
-      );
-    }
-  }
-  return { ...result, migrated: legacy.length > 0 };
+  const { removed, remaining } = await removeLegacyEntries(
+    client,
+    legacy.filter((n) => n !== entry.name),
+    cwd,
+  );
+  const migrated = legacy.includes(entry.name) || removed.length > 0;
+  return { ...result, migrated, ...(remaining.length > 0 && { legacyRemaining: remaining }) };
 }
 
 type ClientUpsert = { client: McpClient; result: InstallResult };

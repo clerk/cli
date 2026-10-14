@@ -163,7 +163,10 @@ this is a best-effort `remove` followed by `add` through the client's own CLI
 (so re-install works no matter how the CLI treats duplicate names); for
 file-backed clients the entry is overwritten in place. Success reports
 `status: installed` per client, plus `migrated: true` when a legacy bridge
-entry was replaced or removed (human mode notes it on the client's line). Failures are
+entry was replaced or removed (human mode notes it on the client's line). A
+legacy entry under another name that can't be removed doesn't fail the client
+(the URL entry is installed): it is warned on stderr with the manual
+`clerk mcp uninstall --name <name>` fix and listed in `legacyRemaining`. Failures are
 warned per client on stderr and listed in the `--json` output's `failures`
 array (`{ client, error }`); `uninstall --json` reports the same shape. The
 command exits non-zero only when every targeted client fails — and in `--json`
@@ -210,7 +213,9 @@ client fails with `mcp_client_cli_failed` rather than reporting a removal that
 didn't happen (the mirror of the add-side `verifyAdd` check). Cursor, Windsurf, Warp, opencode, fx, and
 VS Code (add-only CLI) are removed by editing the config file directly. Legacy
 bridge entries are removed the same way, under whatever name they were saved —
-uninstall clears them alongside `--name`, since they no longer connect.
+uninstall clears them alongside `--name`, since they no longer connect. One
+that can't be removed is warned and listed in the result's `legacyRemaining`,
+without failing the client.
 
 In human mode with no `--client`/`--all`, it prompts with a
 multiselect of the clients that **currently have the entry**, all unchecked:

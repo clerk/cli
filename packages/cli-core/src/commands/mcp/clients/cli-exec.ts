@@ -19,7 +19,7 @@ export function findClientBinary(binary: string): string | null {
   return Bun.which(binary);
 }
 
-interface ClientCliResult {
+export interface ClientCliResult {
   exitCode: number;
   stdout: string;
   stderr: string;

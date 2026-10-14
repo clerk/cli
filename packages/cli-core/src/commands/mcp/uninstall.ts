@@ -15,6 +15,7 @@ import {
   failWhenAllFailed,
   legacyEntryNames,
   pickClients,
+  removeLegacyEntries,
   resolveClients,
   resolveName,
   settleClients,
@@ -43,15 +44,22 @@ async function installedClients(name: string, cwd: string): Promise<McpClient[]>
   );
 }
 
+type UninstallResult = RemoveResult & { legacyRemaining?: string[] };
+
 /** Remove `name`, then any legacy bridge entries left under other names. */
-async function removeEntries(client: McpClient, name: string, cwd: string): Promise<RemoveResult> {
+async function removeEntries(
+  client: McpClient,
+  name: string,
+  cwd: string,
+): Promise<UninstallResult> {
   const legacy = (await legacyEntryNames(client, cwd)).filter((n) => n !== name);
   const result = await client.remove(name, cwd);
-  let removedLegacy = false;
-  for (const legacyName of legacy) {
-    if ((await client.remove(legacyName, cwd)).removed) removedLegacy = true;
-  }
-  return { ...result, removed: result.removed || removedLegacy };
+  const { removed, remaining } = await removeLegacyEntries(client, legacy, cwd);
+  return {
+    ...result,
+    removed: result.removed || removed.length > 0,
+    ...(remaining.length > 0 && { legacyRemaining: remaining }),
+  };
 }
 
 // The checked clients are removed; nothing is pre-checked, so the safe default

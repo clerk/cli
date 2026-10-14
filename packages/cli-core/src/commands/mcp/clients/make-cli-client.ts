@@ -21,7 +21,7 @@
 
 import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
-import { findClientBinary, runClientCli } from "./cli-exec.ts";
+import { findClientBinary, runClientCli, type ClientCliResult } from "./cli-exec.ts";
 import { MCP_DOCS_URL } from "./types.ts";
 import type { McpClient, McpServerEntry, RemoveResult, UpsertResult } from "./types.ts";
 
@@ -96,6 +96,11 @@ async function presenceOf(
   }
 }
 
+/** The most useful line of a failed CLI run: its stderr, else stdout, else the exit code. */
+function failureDetail(result: ClientCliResult): string {
+  return result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`;
+}
+
 async function runOrThrow(
   argv: [string, ...string[]],
   action: string,
@@ -104,8 +109,7 @@ async function runOrThrow(
   const result =
     stdin === undefined ? await runClientCli(argv) : await runClientCli(argv, { stdin });
   if (result.exitCode === 0) return;
-  const detail = result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`;
-  throw new CliError(`failed to ${action} — ${detail}`, {
+  throw new CliError(`failed to ${action} — ${failureDetail(result)}`, {
     code: ERROR_CODE.MCP_CLIENT_CLI_FAILED,
     docsUrl: MCP_DOCS_URL,
   });
@@ -127,14 +131,20 @@ export function makeCliClient(spec: CliClientSpec): McpClient {
     async upsert(entry: McpServerEntry, cwd: string): Promise<UpsertResult> {
       const bin = requireBinary(binary, spec.installHint);
       const presence = await presenceOf(base, entry.name, cwd);
+      // Why the pre-clean failed, kept for the error if the old entry survives.
+      let preCleanFailure: string | undefined;
       if (presence !== "absent" && spec.removeArgs) {
         // Best-effort pre-clean: duplicate-name behavior varies per CLI, so a
         // failed remove (e.g. "no such server") just means add decides. A
         // non-zero exit is already debug-logged by runClientCli; only a
         // timeout rejects, which we log here before discarding.
-        await runClientCli([bin, ...spec.removeArgs(entry.name)]).catch((error: unknown) => {
-          log.debug(`mcp: ${base.id} pre-clean remove failed — ${errorMessage(error)}`);
-        });
+        preCleanFailure = await runClientCli([bin, ...spec.removeArgs(entry.name)]).then(
+          (result) => (result.exitCode === 0 ? undefined : failureDetail(result)),
+          (error: unknown) => {
+            log.debug(`mcp: ${base.id} pre-clean remove failed — ${errorMessage(error)}`);
+            return errorMessage(error);
+          },
+        );
       } else if (presence === "present") {
         await base.remove(entry.name, cwd);
       }
@@ -142,8 +152,11 @@ export function makeCliClient(spec: CliClientSpec): McpClient {
         // A direct write can't overwrite: if the pre-clean didn't take, say
         // so instead of surfacing the format's duplicate-key error.
         if (presence === "present" && (await presenceOf(base, entry.name, cwd)) === "present") {
+          const reason = preCleanFailure
+            ? ` — \`${binary}\` could not remove it: ${preCleanFailure}`
+            : "";
           throw new CliError(
-            `could not replace the existing \`${entry.name}\` entry. Remove it from ${base.configPath(cwd)}, then re-run \`clerk mcp install\`.`,
+            `could not replace the existing \`${entry.name}\` entry${reason}. Remove it from ${base.configPath(cwd)}, then re-run \`clerk mcp install\`.`,
             { code: ERROR_CODE.MCP_CLIENT_CLI_FAILED, docsUrl: MCP_DOCS_URL },
           );
         }
@@ -152,9 +165,12 @@ export function makeCliClient(spec: CliClientSpec): McpClient {
         try {
           await runOrThrow([bin, ...spec.addArgs(entry)], "register the MCP server", spec.addStdin);
         } catch (error) {
-          if (presence !== "present") throw error;
-          // The pre-clean already removed the old entry, so the failed add
-          // left the client with none; say so rather than implying nothing changed.
+          // Only when the pre-clean actually took the old entry did the failed
+          // add leave the client with none; say so rather than implying
+          // nothing changed. A pre-clean that also failed left it in place.
+          if (presence !== "present" || (await presenceOf(base, entry.name, cwd)) !== "absent") {
+            throw error;
+          }
           throw new CliError(
             `${errorMessage(error)}. The previous \`${entry.name}\` entry was already removed; re-run \`clerk mcp install\` once the problem is fixed.`,
             { code: ERROR_CODE.MCP_CLIENT_CLI_FAILED, docsUrl: MCP_DOCS_URL },
