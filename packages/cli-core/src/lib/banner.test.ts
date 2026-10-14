@@ -5,17 +5,26 @@ import { renderBanner, shouldShowBanner } from "./banner.ts";
 const ESC = new RegExp(String.raw`\u001b\[[0-9;]*m`, "g");
 
 describe("renderBanner", () => {
-  const base = { version: "3.4.1", subtitle: "my-app · staging", truecolor: true };
-
-  test("places the title, version, and subtitle on the dot's rows", () => {
-    const lines = renderBanner({ ...base, color: false })
+  const base = { version: "3.4.1", environment: "staging", truecolor: true };
+  const plainLines = (environment?: string) =>
+    renderBanner({ ...base, environment, color: false })
       .trimEnd()
       .split("\n");
+
+  test("places the title, version, and environment on the dot's rows", () => {
+    const lines = plainLines("staging");
     expect(lines).toHaveLength(7);
     expect(lines[2]).toEndWith("   Clerk CLI");
     expect(lines[3]).toEndWith("   v3.4.1");
-    expect(lines[4]).toEndWith("   my-app · staging");
+    expect(lines[4]).toEndWith("   staging");
     expect([lines[0], lines[1], lines[5], lines[6]].join("")).not.toMatch(/[a-z]/i);
+  });
+
+  test("omits the environment line when none is given", () => {
+    const lines = plainLines();
+    expect(lines[2]).toEndWith("   Clerk CLI");
+    expect(lines[3]).toEndWith("   v3.4.1");
+    expect(lines[4]).not.toMatch(/[a-z]/i);
   });
 
   test("emits no escape codes without color", () => {

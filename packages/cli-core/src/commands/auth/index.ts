@@ -25,7 +25,7 @@ export function registerAuth(program: Program): void {
       },
     ])
     .action(async (opts) => {
-      await printBanner();
+      printBanner();
       await login(opts);
     });
 
@@ -41,7 +41,7 @@ export function registerAuth(program: Program): void {
     .description("Log in to your Clerk account")
     .option("-y, --yes", "Proceed with OAuth without prompting when already logged in")
     .action(async (opts) => {
-      await printBanner();
+      printBanner();
       await login(opts);
     });
 
