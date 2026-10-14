@@ -15,6 +15,8 @@ This is a Bun workspace monorepo:
 See [docs/releasing.md](docs/releasing.md) for the full release flow, channels, and safeguards.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, pre-release install methods, and PR guidelines.
 
+The canonical `audit-clerk-skill` maintainer instructions live in [clerk/skills](https://github.com/clerk/skills/blob/main/.agents/skills/audit-clerk-skill/SKILL.md). Use that skill when auditing the CLI source against `skills/clerk-cli/`; do not maintain another copy here.
+
 ## Bun
 
 Default to using Bun instead of Node.js.
