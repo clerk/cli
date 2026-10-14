@@ -214,15 +214,21 @@ export const gitStubs = {
   getGitRepoIdentifier: async () => undefined,
   getGitNormalizedRemote: async () => undefined,
   normalizeGitRemoteUrl: (url: string) => url,
+  ensureGitignoreEntry: async () => {},
 };
 
 /**
  * Stubs for `lib/prompts.ts` — the @clack/prompts-backed wrapper. Default
  * responses return benign values so tests can mock the module without
  * configuring each prompt explicitly.
+ *
+ * Must cover every export of the real module: an omission is a module link
+ * error at import time, which takes down the whole test file rather than
+ * failing one prompt.
  */
 export const libPromptsStubs = {
   confirm: async () => true,
+  multiselect: async () => [],
   text: async () => "",
   password: async () => "",
   editor: async () => "{}",
