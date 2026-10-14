@@ -78,16 +78,16 @@ export function shineText(text: string, options: ShineOptions = {}): string {
   return opened ? out + "\x1b[39m" : out;
 }
 
-const isInteractive = () => !!process.stderr.isTTY && !process.env.CI;
+export const isInteractive = () => !!process.stderr.isTTY && !process.env.CI;
 
 const forceColor = () => {
   const v = process.env.FORCE_COLOR;
   return v != null && v !== "0" && v !== "false" && v !== "";
 };
 
-const colorDisabled = () => "NO_COLOR" in process.env && !forceColor();
+export const colorDisabled = () => "NO_COLOR" in process.env && !forceColor();
 
-const supportsTruecolor = () => /truecolor|24bit/i.test(process.env.COLORTERM ?? "");
+export const supportsTruecolor = () => /truecolor|24bit/i.test(process.env.COLORTERM ?? "");
 
 const sleep = async (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
