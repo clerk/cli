@@ -799,11 +799,14 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
   // A flag is typed for this run, so it wins over the export file. A variable
   // is ambient, and may be left over from another project, so it only fills in
-  // for an export file without the parameters.
+  // for an export file without the parameters: with one, a partial flag set is
+  // refused rather than completed from the variables.
   const fromEnvelope = source === "firebase" ? envelope?.firebase : undefined;
   const fromFlagsAtAll = FIREBASE_FLAGS.some(([key]) => options[key] !== undefined);
   const fromFlags =
-    fromFlagsAtAll || !fromEnvelope ? resolveFirebaseHashConfig(options, source) : undefined;
+    fromFlagsAtAll || !fromEnvelope
+      ? resolveFirebaseHashConfig(options, source, fromEnvelope ? {} : process.env)
+      : undefined;
   let firebaseHashConfig = fromFlags ?? fromEnvelope;
   let configFrom = fromFlags
     ? fromFlagsAtAll
