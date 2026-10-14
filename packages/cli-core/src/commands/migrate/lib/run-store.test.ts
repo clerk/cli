@@ -19,6 +19,7 @@ import {
   latestUserLines,
   listRuns,
   lockFile,
+  importLockFile,
   lockImport,
   newRunId,
   patchRun,
@@ -210,13 +211,36 @@ describe("locks and interruptions", () => {
   test("a lock is linked into place with its PID already written", () => {
     const identity = { sha256: "a".repeat(64), source: "supabase", instanceId: "ins_lock" };
     const write = spyOn(fs, "writeFileSync");
+    const link = spyOn(fs, "linkSync");
     try {
       const release = lockImport(identity);
       const lockPaths = write.mock.calls.map(([target]) => String(target));
-      expect(lockPaths.every((target) => target.endsWith(".tmp"))).toBe(true);
+      // Where hard links are refused, the fallback below writes the lock itself.
+      if (link.mock.results.every((result) => result.type === "return")) {
+        expect(lockPaths.every((target) => target.endsWith(".tmp"))).toBe(true);
+      }
       release();
     } finally {
       write.mockRestore();
+      link.mockRestore();
+    }
+  });
+
+  test("a filesystem without hard links gets the lock written exclusively", () => {
+    const identity = { sha256: "b".repeat(64), source: "supabase", instanceId: "ins_nolink" };
+    const link = spyOn(fs, "linkSync").mockImplementation(() => {
+      throw Object.assign(new Error("not supported"), { code: "EPERM" });
+    });
+    const write = spyOn(fs, "writeFileSync");
+    try {
+      const release = lockImport(identity);
+      const lock = write.mock.calls.find(([target]) => String(target).endsWith(".lock"));
+      expect(lock?.[2]).toMatchObject({ flag: "wx" });
+      expect(fs.readFileSync(importLockFile(identity), "utf-8")).toBe(String(process.pid));
+      release();
+    } finally {
+      write.mockRestore();
+      link.mockRestore();
     }
   });
 
