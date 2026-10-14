@@ -225,10 +225,9 @@ export async function fetchAllWorkOsUsers(options: {
  * returns can be imported, because `POST /v1/users` has no external-accounts
  * field. It is a line in the coverage report, and a record kept in the file.
  *
- * Agent mode and `--json` get the flag's answer and no question: there is
- * nobody to ask.
- * `-y` answers the question the way a `yes` would, so `--no-with-identities`
- * is the way to say no without being asked.
+ * Agent mode, `--json` and `-y` get the flag's answer and no question: there
+ * is nobody to ask, and `-y` takes the prompt's default, no, rather than
+ * committing to one request per user unasked.
  */
 export async function resolveWithIdentities(
   options: ExportWorkOsOptions,
@@ -236,7 +235,7 @@ export async function resolveWithIdentities(
 ): Promise<boolean> {
   if (options.withIdentities !== undefined) return options.withIdentities;
   if (userCount === 0) return false;
-  if (isAssumeYes()) return true;
+  if (isAssumeYes()) return false;
   if (options.json || isAgent() || !isHuman()) return false;
 
   return confirm({
@@ -294,29 +293,40 @@ export async function fetchAllWorkOsIdentities(options: {
   let failed = 0;
   let done = 0;
   let fatal: unknown;
+  // Aborted with `fatal`: each user still queued then runs at once and
+  // returns, rather than spending a paced slot first. A Ctrl-C reaches here as
+  // a cancelled request, and sets `fatal` like a rejected key.
+  const halt = new AbortController();
 
   await Promise.all(
     options.users.map(async (user) =>
-      schedule(async () => {
-        if (fatal) return;
-        const userId = String(user.id ?? "");
-        try {
-          if (userId) identities.set(userId, await fetchWorkOsIdentities(options.apiKey, userId));
-        } catch (error) {
-          const stops =
-            isCancelled(error) || (error instanceof CliError && error.exitCode === EXIT_CODE.USAGE);
-          if (stops) {
-            fatal ??= error;
-            return;
+      schedule(
+        async () => {
+          if (fatal) return;
+          const userId = String(user.id ?? "");
+          try {
+            // Counted, so the report's totals still add up.
+            if (!userId) failed++;
+            else identities.set(userId, await fetchWorkOsIdentities(options.apiKey, userId));
+          } catch (error) {
+            const stops =
+              isCancelled(error) ||
+              (error instanceof CliError && error.exitCode === EXIT_CODE.USAGE);
+            if (stops) {
+              fatal ??= error;
+              halt.abort();
+              return;
+            }
+            failed++;
           }
-          failed++;
-        }
-        done++;
-        options.spinner?.update(`Fetching OAuth providers: ${done}/${total}...`);
-        if (!isHuman() && done % IDENTITY_PROGRESS_EVERY === 0) {
-          log.info(`Fetched OAuth providers for ${done}/${total} users...`);
-        }
-      }),
+          done++;
+          options.spinner?.update(`Fetching OAuth providers: ${done}/${total}...`);
+          if (!isHuman() && done % IDENTITY_PROGRESS_EVERY === 0) {
+            log.info(`Fetched OAuth providers for ${done}/${total} users...`);
+          }
+        },
+        { stop: halt.signal },
+      ),
     ),
   );
 
