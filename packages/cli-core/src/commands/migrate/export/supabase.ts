@@ -95,10 +95,12 @@ export function buildSupabaseExport(
   for (const row of rows) {
     const userId = String(row.id ?? "");
     try {
-      users.push(normalizeRow(row));
+      const user = normalizeRow(row);
+      users.push(user);
 
       if (row.email) counts.email++;
-      if (row.email_confirmed_at) counts.emailConfirmed++;
+      // From the exported value: a date that holds none is left out of it.
+      if (user.email_confirmed_at) counts.emailConfirmed++;
       if (row.encrypted_password) counts.password++;
       if (row.phone) counts.phone++;
       if (row.first_name) counts.firstName++;
