@@ -464,6 +464,24 @@ describe("rejects", () => {
     ).toEqual({ neither: "only signs in with Discord, which is not enabled in Clerk" });
   });
 
+  // The create would strip it, so it can't be what saves the user.
+  test("an email Clerk refuses is no way in for a supabase user on a disabled provider", async () => {
+    expect(
+      await reasonsOf({
+        settings: settings({
+          email_address: {
+            enabled: true,
+            used_for_first_factor: true,
+            first_factors: ["email_code"],
+          },
+          username: { enabled: true },
+        }),
+        supabaseRows: [{ id: "u", raw_app_meta_data: { providers: ["discord"] } }],
+        users: [user("u", { email: "u@x.test", username: "uname" })],
+      }),
+    ).toEqual({ u: "only signs in with Discord, which is not enabled in Clerk" });
+  });
+
   test("an unverified email is no way in for a supabase user on a disabled provider", async () => {
     expect(
       await reasonsOf({
