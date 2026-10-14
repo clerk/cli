@@ -66,7 +66,7 @@ export function resolveFirebaseHashConfig(
 }
 
 /** Clerk's bounds on Firebase scrypt costs (clerk_go `pkg/hash/scrypt.go`). */
-const MAX_SCRYPT_COST = 16;
+export const MAX_SCRYPT_COST = 16;
 
 /** One whole base64 string: full groups of four, padded only at the end. */
 const STRICT_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;

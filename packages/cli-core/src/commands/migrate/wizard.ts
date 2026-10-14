@@ -11,7 +11,8 @@
 
 import { select } from "../../lib/listage.ts";
 import { log } from "../../lib/log.ts";
-import { text } from "../../lib/prompts.ts";
+import { password, text } from "../../lib/prompts.ts";
+import { MAX_SCRYPT_COST } from "./lib/firebase-hash.ts";
 import { fileExists, getFileType } from "./lib/transform.ts";
 import { sources } from "./sources/registry.ts";
 import type { FirebaseHashConfig } from "./types.ts";
@@ -53,8 +54,11 @@ async function askNumber(label: string): Promise<number> {
   const answer = await text({
     message: label,
     validate: (value) => {
+      // Clerk refuses a cost above 16: caught here, not after all four answers.
       const parsed = Number(value?.trim());
-      return Number.isInteger(parsed) && parsed > 0 ? undefined : "Enter a positive whole number";
+      return Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_SCRYPT_COST
+        ? undefined
+        : `Enter a whole number from 1 to ${MAX_SCRYPT_COST}`;
     },
   });
   return Number(answer.trim());
@@ -73,8 +77,10 @@ export async function promptForFirebaseHashConfig(): Promise<FirebaseHashConfig 
   );
   log.info("Pass the four --firebase-* flags to skip these prompts on the next run.");
 
+  // Masked: with the exported hashes and salts, the signer key is what lets
+  // anyone verify, or crack, the passwords offline.
   const signerKey = (
-    await text({
+    await password({
       message: "base64 signer key (leave blank if this export has no passwords)",
     })
   ).trim();

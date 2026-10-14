@@ -13,6 +13,7 @@ type SelectPrompt = Prompt & { choices: { name: string; value: string }[] };
 // This file is the only consumer of the mocked prompt modules.
 const mockSelect = mock(async (_config: SelectPrompt) => undefined as unknown);
 const mockText = mock(async (_config: Prompt) => "" as unknown);
+const mockPassword = mock(async (_config: Prompt) => "" as unknown);
 
 mock.module("../../lib/listage.ts", () => ({
   ...listageStubs,
@@ -22,7 +23,7 @@ mock.module("../../lib/listage.ts", () => ({
 mock.module("../../lib/prompts.ts", () => ({
   confirm: async () => true,
   text: (config: Prompt) => mockText(config),
-  password: async () => "",
+  password: (config: Prompt) => mockPassword(config),
   editor: async () => "{}",
 }));
 
@@ -48,6 +49,7 @@ afterAll(() => {
 beforeEach(() => {
   mockSelect.mockReset();
   mockText.mockReset();
+  mockPassword.mockReset();
 });
 
 /** The config object passed to the Nth `text`/`select` prompt. */
@@ -106,12 +108,9 @@ describe("promptForFile", () => {
 });
 
 describe("promptForFirebaseHashConfig", () => {
-  test("collects all four parameters as a set", async () => {
-    mockText
-      .mockResolvedValueOnce("SIGNER")
-      .mockResolvedValueOnce("Bw==")
-      .mockResolvedValueOnce("8")
-      .mockResolvedValueOnce("14");
+  test("collects all four parameters as a set, the signer key masked", async () => {
+    mockPassword.mockResolvedValueOnce("SIGNER");
+    mockText.mockResolvedValueOnce("Bw==").mockResolvedValueOnce("8").mockResolvedValueOnce("14");
 
     expect(await promptForFirebaseHashConfig()).toEqual({
       base64_signer_key: "SIGNER",
@@ -123,9 +122,24 @@ describe("promptForFirebaseHashConfig", () => {
 
   // An export with no password hashes needs none of them.
   test("stops when the signer key is left blank", async () => {
-    mockText.mockResolvedValueOnce("");
+    mockPassword.mockResolvedValueOnce("");
 
     expect(await promptForFirebaseHashConfig()).toBeUndefined();
-    expect(mockText).toHaveBeenCalledTimes(1);
+    expect(mockText).toHaveBeenCalledTimes(0);
+  });
+
+  // Clerk refuses a cost above 16: the prompt says so, not the run afterwards.
+  test.each([
+    ["17", "from 1 to 16"],
+    ["0", "from 1 to 16"],
+    ["16", undefined],
+  ])("a cost of %s is checked at its prompt", async (value, message) => {
+    mockPassword.mockResolvedValueOnce("SIGNER");
+    mockText.mockResolvedValueOnce("Bw==").mockResolvedValueOnce("8").mockResolvedValueOnce("14");
+    await promptForFirebaseHashConfig();
+    const rounds = mockText.mock.calls.find(([config]) => config.message === "rounds")?.[0];
+    const result = rounds?.validate?.(value);
+    if (message) expect(result).toContain(message);
+    else expect(result).toBeUndefined();
   });
 });
