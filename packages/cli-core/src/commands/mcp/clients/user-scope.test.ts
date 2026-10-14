@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import * as realOs from "node:os";
-import { useCaptureLog } from "../../../test/lib/stubs.ts";
+import { useCaptureLog, useCleanMcpClientEnv } from "../../../test/lib/stubs.ts";
 
 // Gemini and Windsurf read/write under the user's home (`~/.gemini`,
 // `~/.codeium`), so their logic can't be exercised through a cwd tmpdir like
@@ -57,6 +57,9 @@ const ALL_CLIENT_IDS = [
 
 // The clerk 3.x `clerk mcp run` bridge entry, removed in 4.0.
 const LEGACY_SHAPE = { command: "clerk", args: ["mcp", "run"] };
+
+// Developers' own CLAUDE_CONFIG_DIR/CODEX_HOME would escape the redirected homedir.
+useCleanMcpClientEnv();
 
 describe("user-scope MCP clients (homedir redirected)", () => {
   beforeEach(async () => {

@@ -2,13 +2,14 @@
  * Registration is delegated to Claude Code's own CLI:
  * `claude mcp add --scope user --transport http <name> <url>`, so Claude Code
  * owns its config format and write safety. The file-backed base still reads
- * the user-global `~/.claude.json` (`mcpServers.<name> = { type: "http", url }`)
- * — the store `--scope user` writes to — for `list`/`doctor`.
+ * the user-global `~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json` when
+ * set (`mcpServers.<name> = { type: "http", url }`) — the store
+ * `--scope user` writes to — for `list`/`doctor`.
  */
 
 import { makeCliClient } from "./make-cli-client.ts";
 import { makeReadOnlyJsonClient, urlField } from "./make-client.ts";
-import { userPath } from "./paths.ts";
+import { claudeConfigPath } from "./paths.ts";
 
 const claudeFileClient = makeReadOnlyJsonClient({
   id: "claude",
@@ -18,7 +19,7 @@ const claudeFileClient = makeReadOnlyJsonClient({
   topKey: "mcpServers",
   encode: (url) => ({ type: "http", url }),
   extractUrl: urlField("url"),
-  configPath: () => userPath(".claude.json"),
+  configPath: claudeConfigPath,
 });
 
 export const claudeClient = makeCliClient({

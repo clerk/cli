@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import * as realOs from "node:os";
 import { join } from "node:path";
-import { useCaptureLog } from "../../../test/lib/stubs.ts";
+import { useCaptureLog, useCleanMcpClientEnv } from "../../../test/lib/stubs.ts";
 import type { McpClient } from "./types.ts";
 
 // Every client reads/writes under the user's home, so redirect homedir to a
@@ -193,6 +193,9 @@ const cliRemoveCases: CliCase[] = [
 
 const VSCODE_ADD_JSON = JSON.stringify({ name: "clerk", type: "http", url: DEFAULT_URL });
 
+// Developers' own CLAUDE_CONFIG_DIR/CODEX_HOME would escape the redirected homedir.
+useCleanMcpClientEnv();
+
 describe("client contracts (homedir redirected)", () => {
   let origXdgConfigHome: string | undefined;
   let origAppData: string | undefined;
@@ -230,6 +233,37 @@ describe("client contracts (homedir redirected)", () => {
       expect(client.configPath("/ignored")).toBe(expectedPath());
     },
   );
+
+  // The clients relocate their config under these env vars; the CLI must read
+  // (and, for Codex, write) the file the client actually uses.
+  test.each([
+    {
+      name: "claude",
+      client: claudeClient,
+      envVar: "CLAUDE_CONFIG_DIR",
+      expectedPath: (dir: string) => join(dir, ".claude.json"),
+    },
+    {
+      name: "codex",
+      client: codexClient,
+      envVar: "CODEX_HOME",
+      expectedPath: (dir: string) => join(dir, "config.toml"),
+    },
+  ])("$name follows $envVar when set", ({ client, envVar, expectedPath }) => {
+    const dir = join(mockHome, "relocated");
+    process.env[envVar] = dir;
+    expect(client.configPath("/ignored")).toBe(expectedPath(dir));
+  });
+
+  test("codex appends to config.toml under CODEX_HOME", async () => {
+    const codexHome = join(mockHome, "relocated-codex");
+    process.env.CODEX_HOME = codexHome;
+    const result = await codexClient.upsert({ name: "clerk", url: DEFAULT_URL }, "/ignored");
+    expect(result.status).toBe("installed");
+    expect(await readFile(join(codexHome, "config.toml"), "utf8")).toContain(
+      `[mcp_servers.clerk]\nurl = "${DEFAULT_URL}"\n`,
+    );
+  });
 
   test.each(fileCases)(
     "$name writes the documented entry shape",

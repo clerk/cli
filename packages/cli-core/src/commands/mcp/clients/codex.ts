@@ -1,5 +1,6 @@
 /**
- * Codex reads `~/.codex/config.toml` (`[mcp_servers.<name>] url = …`).
+ * Codex reads `$CODEX_HOME/config.toml`, defaulting to `~/.codex/config.toml`
+ * (`[mcp_servers.<name>] url = …`).
  *
  * Removal is delegated to `codex mcp remove <name>` (Codex's config is global,
  * no scope flag). The add is not: `codex mcp add <name> --url <url>` saves the
@@ -12,10 +13,10 @@
 
 import { makeCliClient } from "./make-cli-client.ts";
 import { makeTomlClient, urlField } from "./make-client.ts";
-import { userPath } from "./paths.ts";
+import { codexHomePath } from "./paths.ts";
 import { appendTomlTable } from "./toml-config.ts";
 
-const configPath = (): string => userPath(".codex", "config.toml");
+const configPath = (): string => codexHomePath("config.toml");
 
 const codexFileClient = makeTomlClient({
   id: "codex",

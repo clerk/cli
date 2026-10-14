@@ -3,7 +3,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import * as realOs from "node:os";
 import { join } from "node:path";
-import { captureTelemetryPayload, useCaptureLog } from "../../test/lib/stubs.ts";
+import {
+  captureTelemetryPayload,
+  useCaptureLog,
+  useCleanMcpClientEnv,
+} from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 mock.module("../../mode.ts", () => ({
@@ -39,6 +43,9 @@ const { _setConfigDir } = await import("../../lib/config.ts");
 const URL = "https://mcp.clerk.com/mcp";
 const RUN_SHAPE = { command: "clerk", args: ["mcp", "run"] };
 const WINDSURF_CONFIG = [".codeium", "windsurf", "mcp_config.json"];
+
+// Developers' own CLAUDE_CONFIG_DIR/CODEX_HOME would escape the redirected homedir.
+useCleanMcpClientEnv();
 
 describe("mcp uninstall", () => {
   const captured = useCaptureLog();

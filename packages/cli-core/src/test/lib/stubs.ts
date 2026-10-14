@@ -65,6 +65,30 @@ export function useCaptureLog() {
   };
 }
 
+/**
+ * Clear the env vars that relocate MCP client configs (`CLAUDE_CONFIG_DIR`,
+ * `CODEX_HOME`) for every test in the enclosing scope, restoring them after.
+ * Without this, a developer's own settings point the clients at their real
+ * config files instead of the redirected test homedir.
+ */
+export function useCleanMcpClientEnv(): void {
+  const keys = ["CLAUDE_CONFIG_DIR", "CODEX_HOME"] as const;
+  const saved: Partial<Record<(typeof keys)[number], string>> = {};
+  beforeEach(() => {
+    for (const key of keys) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+  afterEach(() => {
+    for (const key of keys) {
+      const value = saved[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
+
 export function captureLog() {
   const captured: CapturedLogs = { stdout: [], stderr: [] };
   return {

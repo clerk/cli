@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import * as realOs from "node:os";
 import { join } from "node:path";
-import { captureUi, useCaptureLog } from "../../test/lib/stubs.ts";
+import { captureUi, useCaptureLog, useCleanMcpClientEnv } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 mock.module("../../mode.ts", () => ({
@@ -21,6 +21,9 @@ const { mcpInstall } = await import("./install.ts");
 const { mcpList } = await import("./list.ts");
 
 const URL = "https://mcp.clerk.com/mcp";
+
+// Developers' own CLAUDE_CONFIG_DIR/CODEX_HOME would escape the redirected homedir.
+useCleanMcpClientEnv();
 
 describe("mcp list", () => {
   const captured = useCaptureLog();

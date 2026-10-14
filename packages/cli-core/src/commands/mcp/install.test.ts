@@ -3,7 +3,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import * as realOs from "node:os";
 import { join } from "node:path";
-import { captureTelemetryPayload, useCaptureLog } from "../../test/lib/stubs.ts";
+import {
+  captureTelemetryPayload,
+  useCaptureLog,
+  useCleanMcpClientEnv,
+} from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 mock.module("../../mode.ts", () => ({
@@ -47,6 +51,9 @@ const CURRENT_SHAPE = { url: DEFAULT_URL };
 
 // The clerk 3.x `clerk mcp run` bridge entry, removed in 4.0.
 const LEGACY_SHAPE = { command: "clerk", args: ["mcp", "run"] };
+
+// Developers' own CLAUDE_CONFIG_DIR/CODEX_HOME would escape the redirected homedir.
+useCleanMcpClientEnv();
 
 describe("mcp install", () => {
   const captured = useCaptureLog();

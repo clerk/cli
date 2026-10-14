@@ -45,6 +45,10 @@ directory you run the CLI from).
 | `hermes`             | Hermes Agent             | `hermes mcp add --url … --auth oauth`              | `hermes mcp remove`  | `~/.hermes/config.yaml` — `mcp_servers.<name> = { url, auth: oauth }`              |
 | `fx`                 | fx                       | direct file write (note below)                     | direct file write    | `~/.fx/mcp.json` — `mcp.<name> = { type: "http", url }`                            |
 
+Two clients relocate their config through an env var, and the CLI follows them:
+`$CLAUDE_CONFIG_DIR` moves Claude Code's file to `$CLAUDE_CONFIG_DIR/.claude.json`,
+and `$CODEX_HOME` moves Codex's to `$CODEX_HOME/config.toml`.
+
 For CLI-registered clients there is **no file-write fallback**: if the client's
 binary isn't on PATH (e.g. VS Code without the `code` shell command installed),
 that client fails with an actionable error (`mcp_client_cli_not_found`), and

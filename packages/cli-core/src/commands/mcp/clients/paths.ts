@@ -16,6 +16,25 @@ export function userPath(...segments: string[]): string {
 }
 
 /**
+ * Claude Code's user config file. `$CLAUDE_CONFIG_DIR` relocates it from
+ * `~/.claude.json` to `$CLAUDE_CONFIG_DIR/.claude.json`, and `claude mcp add`
+ * writes there, so `list`/`doctor` must read the same file.
+ */
+export function claudeConfigPath(): string {
+  const configDir = process.env.CLAUDE_CONFIG_DIR?.trim();
+  return configDir ? join(configDir, ".claude.json") : userPath(".claude.json");
+}
+
+/**
+ * Codex's config root: `$CODEX_HOME` when set, otherwise `~/.codex`. Codex
+ * reads `config.toml` from here, so installs must write to the same place.
+ */
+export function codexHomePath(...segments: string[]): string {
+  const codexHome = process.env.CODEX_HOME?.trim();
+  return codexHome ? join(codexHome, ...segments) : userPath(".codex", ...segments);
+}
+
+/**
  * Candidate VS Code user-config dirs in priority order. Linux has three: the
  * standard XDG location plus Flatpak and Snap sandboxes, which redirect config
  * under their own per-app trees. The first existing one wins; the standard XDG
