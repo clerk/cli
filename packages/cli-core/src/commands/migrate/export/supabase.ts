@@ -10,12 +10,11 @@
  * the bcrypt digests across.
  */
 
-import { throwUsageError } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
-import { detectDbType, type DbClient } from "../lib/db.ts";
+import type { DbClient } from "../lib/db.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 import {
   resolveDbUrl,
@@ -121,23 +120,17 @@ export function buildSupabaseExport(
   };
 }
 
-const SUPABASE_DB = {
+export const SUPABASE_DB = {
   platform: "supabase",
   envVar: "SUPABASE_DB_URL",
   prompt: "Supabase Postgres connection string",
   hint: "Dashboard → Connect → Session pooler. Direct connections need the IPv4 add-on.",
+  // The query reads `auth.users` with Postgres syntax.
+  dialect: "postgres",
 } as const satisfies ResolveConfig;
 
 export async function exportSupabase(options: DbExportOptions): Promise<void> {
   const dbUrl = await resolveDbUrl(options, SUPABASE_DB);
-  // The query reads `auth.users` with Postgres syntax: a MySQL or SQLite URL
-  // would connect, then fail with nothing exported.
-  if (detectDbType(dbUrl) !== "postgres") {
-    throwUsageError(
-      "Supabase's database is Postgres: pass a postgres:// or postgresql:// connection string. Nothing was exported.\n" +
-        `Find it under ${SUPABASE_DB.hint}`,
-    );
-  }
 
   await withGutter("Exporting users from Supabase", async () => {
     if (!options.json) printTarget({ platform: "supabase" });

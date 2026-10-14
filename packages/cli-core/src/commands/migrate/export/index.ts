@@ -57,6 +57,7 @@ const DB_PLATFORMS = [
     key: "supabase",
     summary: "Export users from a Supabase Postgres database",
     envVar: "SUPABASE_DB_URL",
+    dbUrl: "Postgres connection string",
     example: "postgres://postgres:password@db.xxx.supabase.co:5432/postgres",
   },
 ] as const;
@@ -113,7 +114,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     exportCommand
       .command(platform.key)
       .description(platform.summary)
-      .option("--db-url <url>", "Postgres, MySQL, libsql/Turso or SQLite connection string")
+      .option("--db-url <url>", platform.dbUrl)
       .option("-o, --output <path>", "Write the export here instead of the run folder")
       .option("-y, --yes", "Do not prompt: fail on a rejected credential")
       .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
