@@ -1134,7 +1134,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         reason: "shares an email, phone or username with a user an earlier attempt already created",
         keptSourceId: holder,
       });
-      duplicates.add(unstripped.get(user) ?? user);
+      duplicates.add(originals.get(user) ?? user);
       continue;
     }
     // An adopted user is in Clerk already, so an earlier record sharing its
