@@ -11,20 +11,17 @@ describe("renderBanner", () => {
       .trimEnd()
       .split("\n");
 
-  test("places the title, version, and environment on the dot's rows", () => {
+  test("places the title, docs link, and version on the dot's rows", () => {
     const lines = plainLines("staging");
     expect(lines).toHaveLength(7);
     expect(lines[2]).toEndWith("   Clerk CLI");
-    expect(lines[3]).toEndWith("   v3.4.1");
-    expect(lines[4]).toEndWith("   staging");
+    expect(lines[3]).toEndWith("   https://clerk.com/docs");
+    expect(lines[4]).toEndWith("   v3.4.1 · staging");
     expect([lines[0], lines[1], lines[5], lines[6]].join("")).not.toMatch(/[a-z]/i);
   });
 
-  test("omits the environment line when none is given", () => {
-    const lines = plainLines();
-    expect(lines[2]).toEndWith("   Clerk CLI");
-    expect(lines[3]).toEndWith("   v3.4.1");
-    expect(lines[4]).not.toMatch(/[a-z]/i);
+  test("shows only the version when no environment is given", () => {
+    expect(plainLines()[4]).toEndWith("   v3.4.1");
   });
 
   test("emits no escape codes without color", () => {

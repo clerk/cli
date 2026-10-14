@@ -1,6 +1,7 @@
 /**
  * Startup banner for `clerk auth login`: the Clerk mark drawn in braille,
- * beside the CLI name, version, and any non-production environment.
+ * beside the CLI name, a docs link, and the version (plus any non-production
+ * environment).
  *
  * The mark uses the terminal's default foreground, so it reads correctly on
  * light and dark themes without probing the background. Only the center dot
@@ -32,9 +33,11 @@ const DOT = { top: 2, bottom: 4, left: 5, right: 8 } as const;
 
 const PURPLE: [number, number, number] = [108, 71, 255];
 
+const DOCS_URL = "https://clerk.com/docs";
+
 interface BannerOptions {
   version: string;
-  /** Active environment, shown as a third line. Omitted for production. */
+  /** Active environment, appended to the version line. Omitted for production. */
   environment?: string;
   color: boolean;
   truecolor: boolean;
@@ -50,8 +53,8 @@ export function renderBanner({ version, environment, color, truecolor }: BannerO
     : (s: string) =>
         `${truecolor ? `\x1b[38;2;${r};${g};${b}m` : `\x1b[38;5;${rgbTo256(r, g, b)}m`}${s}\x1b[39m`;
 
-  const text = [strong("Clerk CLI"), muted(`v${version}`)];
-  if (environment) text.push(muted(environment));
+  const release = environment ? `v${version} · ${environment}` : `v${version}`;
+  const text = [strong("Clerk CLI"), muted(DOCS_URL), muted(release)];
 
   const lines = LOGO.map((line, row) => {
     if (row < DOT.top || row > DOT.bottom) return line;
