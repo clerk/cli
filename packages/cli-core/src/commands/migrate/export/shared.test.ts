@@ -95,6 +95,19 @@ describe("finishExport", () => {
     expect(fs.readdirSync(runsDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
+  // The run is left behind with every user's line but no file.
+  test("a write that fails says where, and releases the run", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "supabase" });
+    const output = path.join(runsDir, "a-directory.json");
+    fs.mkdirSync(output);
+
+    expect(() => finishExport({ run, options: { output }, users, coverage })).toThrow(
+      new RegExp(`Could not write the export to ${output}: .*\\n.*with another --output`),
+    );
+    expect(fs.existsSync(path.join(run.dir, "lock"))).toBe(false);
+    expect(readRun(runsDir, run.record.id)?.file).toBeUndefined();
+  });
+
   test("--output writes somewhere else, and the run still records where", async () => {
     const run = await startExportRun({ runsDir }, { platform: "supabase" });
 

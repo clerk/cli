@@ -336,6 +336,19 @@ describe("run", () => {
       expect(requests).toHaveLength(0);
     });
 
+    test("an export run that never wrote its file says so", async () => {
+      const unfinished = startRun(runsDir(), {
+        kind: "export",
+        target: { platform: "clerk" },
+        source: "clerk",
+      });
+      unfinished.release();
+
+      await expect(run({ ...noSource, input: unfinished.record.id })).rejects.toThrow(
+        /never wrote its file: it was interrupted, or the write failed/,
+      );
+    });
+
     // The run ID stands for the file that run wrote: a later export or an edit
     // at the same path must not import under the old run's name.
     test("refuses an export file that changed since its run wrote it", async () => {
