@@ -336,7 +336,7 @@ profile in that order.
 The export run has one line per exported user, so `clerk migrate runs` lists it
 alongside imports.
 
-#### Four platforms export no passwords
+#### Platforms that export no passwords
 
 - **Clerk** never returns password digests, TOTP secrets or backup codes over
   the API — only the `*_enabled` booleans. Migrated users must reset their
@@ -352,14 +352,14 @@ alongside imports.
   even a password column on the user table: migrate those separately, or have
   those users reset their password.
 
-All four say so on every run. `clerk`'s and `workos`'s coverage also counts
+Each says so on every run. `clerk`'s and `workos`'s coverage also counts
 users who _have_ a password, so the size of the gap is visible up front —
 `workos` prints that row at zero unconditionally, because zero is the only value
 it can take.
 
 #### Database-backed exports (`supabase`, `authjs`, `betterauth`)
 
-These three read the database directly, over **`--db-url`**:
+These read the database directly, over **`--db-url`**:
 
 ```sh
 clerk migrate export supabase   --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
