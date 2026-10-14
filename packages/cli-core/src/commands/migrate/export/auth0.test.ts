@@ -259,8 +259,9 @@ describe("fetchAllAuth0Users", () => {
     expect(requests).toHaveLength(2);
   });
 
-  // A short page is not always the last: the total says how many there are.
-  test("keeps paging past a short page until the total is reached", async () => {
+  // Offset pages: paging past a short one would skip the records after it.
+  // The export says it is short instead of passing for complete.
+  test("a short page before the total ends it, and says the export is short", async () => {
     stubAuth0([
       Array.from({ length: 100 }, (_, i) => auth0User(i)),
       Array.from({ length: 50 }, (_, i) => auth0User(100 + i)),
@@ -272,9 +273,57 @@ describe("fetchAllAuth0Users", () => {
       token: "tok",
     });
 
-    expect(all).toHaveLength(180);
-    expect(truncated).toBe(false);
-    expect(requests).toHaveLength(3);
+    expect(all).toHaveLength(150);
+    expect(truncated).toBe(true);
+    expect(requests).toHaveLength(2);
+    expect(captured.err).toContain("Auth0 reported 180 users but returned 150");
+  });
+
+  test("backs off on a 429, honouring Retry-After, and carries on", async () => {
+    let calls = 0;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      requests.push({ url: input.toString(), body: null });
+      calls++;
+      if (calls === 1) {
+        return new Response("Too Many Requests", { status: 429, headers: { "retry-after": "1" } });
+      }
+      return Response.json({ users: [auth0User(0)], total: 1 });
+    }) as unknown as typeof fetch;
+
+    const started = performance.now();
+    const { users: all } = await fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" });
+
+    expect(all).toHaveLength(1);
+    expect(requests).toHaveLength(2);
+    expect(performance.now() - started).toBeGreaterThanOrEqual(900);
+  });
+
+  // A sign-up mid-export can shift a page and repeat a user.
+  test("asks for a stable order, and exports a repeated user once", async () => {
+    stubAuth0([
+      Array.from({ length: 100 }, (_, i) => auth0User(i)),
+      [auth0User(99), auth0User(100)],
+    ]);
+
+    const { users: all } = await fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" });
+
+    expect(requests[0]?.url).toContain("sort=created_at%3A1");
+    expect(all.map((user) => user.user_id).filter((id) => id === "auth0|a99")).toHaveLength(1);
+    expect(all).toHaveLength(101);
+  });
+
+  // Offset 1000 is past what this endpoint serves.
+  test("never asks for a page past offset 1000", async () => {
+    stubAuth0(
+      Array.from({ length: 12 }, (_, page) =>
+        Array.from({ length: 100 }, (_, i) => auth0User(page * 100 + i)),
+      ),
+    );
+
+    await fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" });
+
+    expect(requests).toHaveLength(10);
+    expect(requests.at(-1)?.url).toContain("page=9");
   });
 
   test("ends on a short page when Auth0 sends no total", async () => {
@@ -302,7 +351,9 @@ describe("fetchAllAuth0Users", () => {
   // would read as "that is everyone".
   test("stops at Auth0's 1000-record ceiling and says so", async () => {
     stubAuth0(
-      Array.from({ length: 12 }, () => Array.from({ length: 100 }, (_, i) => auth0User(i))),
+      Array.from({ length: 12 }, (_, page) =>
+        Array.from({ length: 100 }, (_, i) => auth0User(page * 100 + i)),
+      ),
     );
 
     const { users: all, truncated } = await fetchAllAuth0Users({
@@ -320,7 +371,9 @@ describe("fetchAllAuth0Users", () => {
   // told apart from 1000 of 50,000.
   test("a total of exactly 1000 may hide more, and says so", async () => {
     stubAuth0(
-      Array.from({ length: 10 }, () => Array.from({ length: 100 }, (_, i) => auth0User(i))),
+      Array.from({ length: 10 }, (_, page) =>
+        Array.from({ length: 100 }, (_, i) => auth0User(page * 100 + i)),
+      ),
     );
 
     const { users: all, truncated } = await fetchAllAuth0Users({
