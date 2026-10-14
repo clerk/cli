@@ -84,6 +84,18 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       handlers.picker(cmd.optsWithGlobals() as Record<string, unknown>),
     );
 
+  // The export is one JSON document, and the import reads a file by its
+  // extension: an envelope written to users.ndjson could not be imported by
+  // run ID. Checked before anything is read.
+  exportCommand.hook("preAction", (_thisCommand, actionCommand) => {
+    const { output } = actionCommand.opts() as { output?: unknown };
+    if (typeof output === "string" && !output.toLowerCase().endsWith(".json")) {
+      throwUsageError(
+        `--output must end in .json: the export is one JSON document, and \`clerk migrate import\` reads a file by its extension. Got ${output}.`,
+      );
+    }
+  });
+
   exportCommand
     .command("clerk")
     .description("Export users from a Clerk instance")
