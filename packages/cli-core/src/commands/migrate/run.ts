@@ -434,6 +434,17 @@ function assertNoActiveImport(
   }
 }
 
+/** True when a run's users are gone: it is marked undone, or an undo of it finished. */
+function undoneInFull(runsDir: string, record: RunRecord): boolean {
+  return (
+    runState(runsDir, record) === "undone" ||
+    listRuns(runsDir).some(
+      (undo) =>
+        undo.kind === "undo" && undo.undoes === record.id && runState(runsDir, undo) === "complete",
+    )
+  );
+}
+
 /** How this import relates to earlier runs of the same file, source and instance. */
 export type ResumeCase =
   | { kind: "new" }
@@ -451,7 +462,9 @@ export type ResumeCase =
  *
  * @throws UsageError when that run is still running in another process, or
  *   has an undo that never finished: some of its users are gone and some are
- *   not, so neither continuing it nor starting over is safe.
+ *   not, so neither continuing it nor starting over is safe. Also when the
+ *   latest run of this file was made with an earlier version of a custom
+ *   source and was not undone.
  */
 export function findResume(
   runsDir: string,
@@ -464,16 +477,26 @@ export function findResume(
     keyInstanceId?: string;
   },
 ): ResumeCase {
+  const sameJob = (record: RunRecord): boolean =>
+    record.kind === "import" &&
+    record.file?.sha256 === match.sha256 &&
+    record.source === match.source &&
+    (record.target.instanceId === match.instanceId ||
+      record.target.instanceId === match.keyInstanceId);
   const latest = listRuns(runsDir).find(
-    (record) =>
-      record.kind === "import" &&
-      record.file?.sha256 === match.sha256 &&
-      record.source === match.source &&
-      record.sourceHash === match.sourceHash &&
-      (record.target.instanceId === match.instanceId ||
-        record.target.instanceId === match.keyInstanceId),
+    (record) => sameJob(record) && record.sourceHash === match.sourceHash,
   );
   if (!latest) {
+    // An edited custom source is a different source, but its earlier run sent
+    // the same users: starting over beside it would reject every user it
+    // created and leave it unfinished, so that takes --new-run.
+    const earlier = listRuns(runsDir).find(sameJob);
+    if (earlier && !undoneInFull(runsDir, earlier)) {
+      throwUsageError(
+        `Run ${earlier.id} imported this file with an earlier version of this source, so the users it created would come back as conflicts. Nothing was imported.\n` +
+          `Pass --new-run to start a new run beside it, or undo it first with \`clerk migrate undo ${earlier.id}\`.`,
+      );
+    }
     // Clerk did not name the instance (GET /v1/instance failed), so a run of
     // this file recorded under a real ID can be neither matched nor ruled out.
     // Starting over would reject every user it created and leave it unfinished.
@@ -822,7 +845,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         const releases: (() => void)[] = [];
         try {
           for (const instanceId of new Set([keyInstanceId(secretKey), target.instanceId])) {
-            releases.push(lockImport(runsDir, { sha256, source, instanceId }));
+            releases.push(lockImport({ sha256, source, instanceId }));
           }
         } catch (error) {
           for (const release of releases) release();

@@ -1043,7 +1043,7 @@ describe("run", () => {
     // either has written a run. The import's own lock closes it.
     test("refuses while another process holds this import's lock, with no run yet", async () => {
       // Keyed by the key, so it holds whether or not `GET /v1/instance` answers.
-      const lock = importLockFile(runsDir(), {
+      const lock = importLockFile({
         sha256: sha256File(path.join(workDir, "export.json")),
         source: "clerk",
         instanceId: keyInstanceId(baseOptions.secretKey),
@@ -1061,9 +1061,27 @@ describe("run", () => {
       expect(listRuns(runsDir())).toHaveLength(0);
     });
 
+    // A different --runs-dir is a different record of the same job.
+    test("refuses while another process holds this import's lock under another runs folder", async () => {
+      const lock = importLockFile({
+        sha256: sha256File(path.join(workDir, "export.json")),
+        source: "clerk",
+        instanceId: keyInstanceId(baseOptions.secretKey),
+      });
+      fs.writeFileSync(lock, "1");
+      try {
+        await expect(
+          run({ ...baseOptions, runsDir: path.join(workDir, "other-runs") }),
+        ).rejects.toThrow(/importing this file into this instance right now/);
+      } finally {
+        fs.rmSync(lock, { force: true });
+      }
+      expect(created()).toHaveLength(0);
+    });
+
     // A second key for the same instance has its own stand-in ID.
     test("refuses while another key's process holds this instance's lock", async () => {
-      const lock = importLockFile(runsDir(), {
+      const lock = importLockFile({
         sha256: sha256File(path.join(workDir, "export.json")),
         source: "clerk",
         instanceId: "ins_1",
@@ -1078,7 +1096,7 @@ describe("run", () => {
       }
       expect(created()).toHaveLength(0);
       // The key's own lock, taken first, is let go when the second is refused.
-      const own = importLockFile(runsDir(), {
+      const own = importLockFile({
         sha256: sha256File(path.join(workDir, "export.json")),
         source: "clerk",
         instanceId: keyInstanceId(baseOptions.secretKey),
@@ -1089,7 +1107,7 @@ describe("run", () => {
     test("lets go of the import's locks when the run ends", async () => {
       await run(baseOptions);
       const lockFor = (instanceId: string) =>
-        importLockFile(runsDir(), {
+        importLockFile({
           sha256: sha256File(path.join(workDir, "export.json")),
           source: "clerk",
           instanceId,
@@ -1510,6 +1528,71 @@ describe("run", () => {
         run({ input: "export.json", source: edited, yes: true, secretKey: "sk_test_x" }),
       ).rejects.toThrow(/importing this file right now in another process/);
       expect(created()).toHaveLength(0);
+    });
+
+    /** Rewrites the only run as one a crash stopped, and returns its ID. */
+    const interruptOnly = (): string => {
+      const [first] = listRuns(runsDir());
+      const record = readRun(runsDir(), first!.id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(path.join(runsDir(), first!.id, "run.json"), JSON.stringify(record));
+      return first!.id;
+    };
+
+    test("continues an interrupted run when the source is unchanged", async () => {
+      stubClerk({ failing: new Set(["mp_2"]) });
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      const id = interruptOnly();
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+
+      expect(created().map((r) => (r.body as { external_id: string }).external_id)).toEqual([
+        "mp_2",
+      ]);
+      expect(captured.err).toContain(`Continuing run ${id}`);
+      expect(listRuns(runsDir())).toHaveLength(1);
+    });
+
+    // Starting over would bring the users the earlier run created back as conflicts.
+    test("refuses an edited source while an earlier version's run is interrupted, naming it", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      const id = interruptOnly();
+      const edited = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, edited), `${CUSTOM}\n// edited`);
+      requests = [];
+
+      const error = (await run({
+        input: "export.json",
+        source: edited,
+        yes: true,
+        secretKey: "sk_test_x",
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain(`Run ${id} imported this file with an earlier version`);
+      expect(error.message).toContain("--new-run");
+      expect(created()).toHaveLength(0);
+    });
+
+    test("an edited source with --new-run starts a new run beside the earlier one", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      interruptOnly();
+      const edited = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, edited), `${CUSTOM}\n// edited`);
+      requests = [];
+
+      await run({
+        input: "export.json",
+        source: edited,
+        yes: true,
+        secretKey: "sk_test_x",
+        newRun: true,
+      });
+
+      expect(listRuns(runsDir())).toHaveLength(2);
     });
 
     // The loader caches by URL: an edit at the same path must still load the
