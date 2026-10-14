@@ -92,13 +92,23 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
       "--skip-legal-checks",
       "Import users with no legal acceptance on record into an instance that requires it",
     )
-    .option("--firebase-signer-key <key>", "Firebase base64 signer key (overrides the export file)")
-    .option("--firebase-salt-separator <separator>", "Firebase base64 salt separator")
-    .option("--firebase-rounds <n>", "Firebase scrypt rounds", (value: string) =>
-      parseIntegerOption(value, "--firebase-rounds", { min: 1 }),
+    .option(
+      "--firebase-signer-key <key>",
+      "Firebase base64 signer key, or CLERK_FIREBASE_SIGNER_KEY (overrides the export file)",
     )
-    .option("--firebase-mem-cost <n>", "Firebase scrypt memory cost", (value: string) =>
-      parseIntegerOption(value, "--firebase-mem-cost", { min: 1 }),
+    .option(
+      "--firebase-salt-separator <separator>",
+      "Firebase base64 salt separator, or CLERK_FIREBASE_SALT_SEPARATOR",
+    )
+    .option(
+      "--firebase-rounds <n>",
+      "Firebase scrypt rounds, or CLERK_FIREBASE_ROUNDS",
+      (value: string) => parseIntegerOption(value, "--firebase-rounds", { min: 1 }),
+    )
+    .option(
+      "--firebase-mem-cost <n>",
+      "Firebase scrypt memory cost, or CLERK_FIREBASE_MEM_COST",
+      (value: string) => parseIntegerOption(value, "--firebase-mem-cost", { min: 1 }),
     )
     .option("-y, --yes", "Import without prompting")
     .option("--json", "Output as JSON; never prompts, so pair it with --yes to import")
