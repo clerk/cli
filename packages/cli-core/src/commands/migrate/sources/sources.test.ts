@@ -212,6 +212,12 @@ describe("auth0", () => {
     const user = one("auth0", { ...base, name: "a@x.dev" });
     expect(user?.firstName).toBeUndefined();
   });
+
+  // Only the user's own address is a placeholder.
+  test("keeps a one-word name with an @ that is not the user's email", () => {
+    const user = one("auth0", { ...base, name: "ada@work" });
+    expect(user?.firstName).toBe("ada@work");
+  });
 });
 
 describe("workos", () => {
@@ -278,6 +284,14 @@ describe("workos", () => {
 
 describe("authjs", () => {
   const base = { id: "cuid1", email: "a@x.dev" };
+
+  // Auth.js lets `name` be any string; only the user's own email is dropped.
+  test.each([
+    ["jane@acme", "jane@acme"],
+    ["a@x.dev", undefined],
+  ])("name %p becomes first name %p", (name, firstName) => {
+    expect(one("authjs", { ...base, name })?.firstName).toBe(firstName);
+  });
 
   test("treats a confirmation timestamp as verified", () => {
     const user = one("authjs", { ...base, email_verified: "2024-01-15T10:30:00.000Z" });
