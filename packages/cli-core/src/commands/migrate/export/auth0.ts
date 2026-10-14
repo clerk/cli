@@ -73,7 +73,10 @@ export function isAuth0Domain(domain: string): boolean {
   return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(normalizeAuth0Domain(domain));
 }
 
-const DOMAIN_HINT = "Pass just the tenant's host name, e.g. my-tenant.us.auth0.com.";
+/** The Management API answers only on the tenant's own domain, not a custom one. */
+const AUTH0_HOST = "the tenant's *.auth0.com domain, not a custom domain";
+
+const DOMAIN_HINT = `Pass just the host name of ${AUTH0_HOST}, e.g. my-tenant.us.auth0.com.`;
 
 /**
  * Resolves the tenant credentials: flags, then environment, then a prompt.
@@ -195,6 +198,7 @@ export async function fetchAuth0Token(credentials: Auth0Credentials): Promise<st
 
   const body = (await response.json().catch(() => ({}))) as {
     access_token?: string;
+    scope?: string;
     error_description?: string;
     error?: string;
   };
@@ -210,7 +214,17 @@ export async function fetchAuth0Token(credentials: Auth0Credentials): Promise<st
   if (!body.access_token) {
     throwUsageError(
       `Auth0 rejected the credentials (${response.status}): ${detail}\n` +
-        "Check the domain, client ID and secret, and that the application is authorized for the Management API with the `read:users` scope.",
+        `Check the domain (${AUTH0_HOST}), client ID and secret, and that the application is authorized for the Management API with the \`read:users\` scope.`,
+      DOCS_URL,
+    );
+  }
+  // Auth0 issues a token without the scope, and only the user listing then
+  // refuses it, outside the credential retry. The token lists what it was
+  // granted, so a missing scope is refused here, where it can be asked again.
+  // A response without `scope` is left to the listing.
+  if (body.scope !== undefined && !body.scope.split(" ").includes("read:users")) {
+    throwUsageError(
+      "Auth0 issued a token without the `read:users` scope. Grant it to the application under Applications → APIs → Auth0 Management API → Machine to Machine Applications.",
       DOCS_URL,
     );
   }
