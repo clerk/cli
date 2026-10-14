@@ -1,4 +1,5 @@
 import type { Program } from "../../cli-program.ts";
+import { printBanner } from "../../lib/banner.ts";
 import { login } from "./login.ts";
 import { logout } from "./logout.ts";
 
@@ -24,6 +25,7 @@ export function registerAuth(program: Program): void {
       },
     ])
     .action(async (opts) => {
+      printBanner();
       await login(opts);
     });
 
@@ -39,6 +41,7 @@ export function registerAuth(program: Program): void {
     .description("Log in to your Clerk account")
     .option("-y, --yes", "Proceed with OAuth without prompting when already logged in")
     .action(async (opts) => {
+      printBanner();
       await login(opts);
     });
 
