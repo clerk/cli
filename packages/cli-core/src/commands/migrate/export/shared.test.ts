@@ -163,6 +163,18 @@ describe("finishExport", () => {
     expect(readEnvelope(outputPath)?.firebase).toEqual(firebase);
   });
 
+  // `truncated: true` alone is easy for an agent to miss.
+  test("a truncated export exits 1, with its file still written", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "auth0" });
+    try {
+      const { outputPath } = finishExport({ run, options: {}, users, coverage, truncated: true });
+      expect(process.exitCode).toBe(1);
+      expect(fs.existsSync(outputPath)).toBe(true);
+    } finally {
+      process.exitCode = 0;
+    }
+  });
+
   test("prints the import command by run ID", async () => {
     const run = await startExportRun({ runsDir }, { platform: "clerk" });
 

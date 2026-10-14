@@ -499,14 +499,21 @@ it exits naming **every** missing credential at once rather than one per run.
 
 Auth0 pages this endpoint only through the first **1000** users. Past that the
 export stops and says so, pointing at Auth0's bulk export job — silently
-returning the first thousand would read as "that is everyone". It still exits
-0, and `--json` carries `truncated: true`. A tenant of exactly 1000 gets the
-warning too: Auth0 reports a larger tenant's total as 1000, so the two look the
-same. The bulk job's NDJSON file imports as it is.
+returning the first thousand would read as "that is everyone". A tenant of
+exactly 1000 gets the warning too: Auth0 reports a larger tenant's total as
+1000, so the two look the same. It also says so when fewer users come back
+than Auth0 counted. Either way the file holds what came back, `--json` carries
+`truncated: true`, and the export exits 1. The bulk job's NDJSON file imports
+as it is.
+
+Pages are read in `created_at` order, and a user a shifted page repeats is
+exported once. A `429` backs off, honouring `Retry-After`, as the import does;
+a free or development tenant allows only a few Management API requests a
+second.
 
 A credential the platform rejects (400, 401 or 403) is asked for again at a
-terminal. An outage, a `429` or a refused connection is not: another
-credential would not fix it, and it exits 1.
+terminal. An outage, a refused connection, or a `429` that outlasts its
+retries is not: another credential would not fix it, and it exits 1.
 
 ### `clerk migrate import`
 
