@@ -148,7 +148,10 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
   exportCommand
     .command("auth0")
     .description("Export users from an Auth0 tenant")
-    .option("--domain <domain>", "Auth0 tenant domain, e.g. my-tenant.us.auth0.com")
+    .option(
+      "--domain <domain>",
+      "Auth0 tenant domain, e.g. my-tenant.us.auth0.com, not a custom domain",
+    )
     .option("--client-id <id>", "Machine-to-machine application client ID")
     .option("--client-secret <secret>", "Machine-to-machine application client secret")
     .option("-o, --output <path>", "Write the export here instead of the run folder")

@@ -255,20 +255,20 @@ parameters, so the import needs no `--firebase-*` flags.
 coverage, next }` — and never prompts, so a missing credential exits 2 naming
 the flag to pass.
 
-| Flag                       | Platforms                          | Description                                               |
-| -------------------------- | ---------------------------------- | --------------------------------------------------------- |
-| `-o, --output <path>`      | all                                | Write the export here instead of the run folder           |
-| `-y, --yes`                | all                                | Do not prompt: fail on a rejected credential              |
-| `--json`                   | all                                | Print the result as JSON; never prompts                   |
-| `--runs-dir <path>`        | all                                | Where runs are kept (see [the run store](#the-run-store)) |
-| `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Connection string (Postgres only for `supabase`)          |
-| `--service-account <path>` | `firebase`                         | Path to a service account key JSON file                   |
-| `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com`              |
-| `--client-id <id>`         | `auth0`                            | Machine-to-machine application client ID                  |
-| `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret              |
-| `--api-key <key>`          | `workos`                           | WorkOS secret API key, the one starting `sk_`             |
-| `--with-identities`        | `workos`                           | Also record each user's OAuth providers                   |
-| `--no-with-identities`     | `workos`                           | Skip the OAuth provider fan-out without being asked       |
+| Flag                       | Platforms                          | Description                                                       |
+| -------------------------- | ---------------------------------- | ----------------------------------------------------------------- |
+| `-o, --output <path>`      | all                                | Write the export here instead of the run folder                   |
+| `-y, --yes`                | all                                | Do not prompt: fail on a rejected credential                      |
+| `--json`                   | all                                | Print the result as JSON; never prompts                           |
+| `--runs-dir <path>`        | all                                | Where runs are kept (see [the run store](#the-run-store))         |
+| `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Connection string (Postgres only for `supabase`)                  |
+| `--service-account <path>` | `firebase`                         | Path to a service account key JSON file                           |
+| `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com`, not a custom domain |
+| `--client-id <id>`         | `auth0`                            | Machine-to-machine application client ID                          |
+| `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret                      |
+| `--api-key <key>`          | `workos`                           | WorkOS secret API key, the one starting `sk_`                     |
+| `--with-identities`        | `workos`                           | Also record each user's OAuth providers                           |
+| `--no-with-identities`     | `workos`                           | Skip the OAuth provider fan-out without being asked               |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
 so it resolves a key the same way `clerk migrate import` does, with one extra
@@ -531,8 +531,9 @@ a free or development tenant allows only a few Management API requests a
 second.
 
 A credential the platform rejects (400, 401 or 403) is asked for again at a
-terminal. An outage, a refused connection, or a `429` that outlasts its
-retries is not: another credential would not fix it, and it exits 1.
+terminal, and so is an Auth0 token granted without `read:users`. An outage, a
+refused connection, or a `429` that outlasts its retries is not: another
+credential would not fix it, and it exits 1.
 
 #### WorkOS credentials
 
