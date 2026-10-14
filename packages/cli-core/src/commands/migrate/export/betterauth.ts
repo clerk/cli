@@ -20,7 +20,7 @@ import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
-import { withDbClient, type DbClient } from "../lib/db.ts";
+import { exportValue, withDbClient, type DbClient } from "../lib/db.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 import {
   promptDbUrl,
@@ -238,7 +238,8 @@ export function buildBetterAuthExport(
     for (const [key, value] of Object.entries(row)) {
       if (value === null || value === undefined) continue;
       if (conflicting && key === "password_hash") continue;
-      user[FIELD_ALIASES[key] ?? key] = value instanceof Date ? value.toISOString() : value;
+      const exported = exportValue(value);
+      if (exported !== undefined) user[FIELD_ALIASES[key] ?? key] = exported;
     }
     // The source maps this to `passwordDropped`, which the checks count.
     if (conflicting) user.password_dropped = true;

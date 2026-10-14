@@ -15,7 +15,7 @@ import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import { log } from "../../../lib/log.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
-import { withDbClient, type DbClient } from "../lib/db.ts";
+import { exportValue, withDbClient, type DbClient } from "../lib/db.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 import {
   promptDbUrl,
@@ -142,9 +142,10 @@ export function buildAuthJsExport(rows: AuthJsRow[], record: (line: UserLine) =>
       counts.email++;
     }
     // A nullable timestamp, not a boolean: the transformer reads presence.
-    if (row.email_verified) {
-      user.email_verified =
-        row.email_verified instanceof Date ? row.email_verified.toISOString() : row.email_verified;
+    // A zero date is no verification.
+    const verified = row.email_verified ? exportValue(row.email_verified) : undefined;
+    if (verified !== undefined) {
+      user.email_verified = verified;
       counts.emailVerified++;
     }
 
