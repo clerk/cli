@@ -46,6 +46,23 @@ export type ImportSummary = {
   totalProcessed: number;
   successful: number;
   failed: number;
+  /**
+   * Users never sent because a Ctrl-C or the instance's user quota stopped
+   * the run first, so they have no line in the run. One whose first create
+   * went out (a 429, a refused phone) is not among them: its `creating` line
+   * marks it unfinished. A re-run picks up both.
+   */
+  notSent: number;
+  /**
+   * Clerk's message when the user quota stopped the run, for the caller to
+   * print once any progress display is done.
+   */
+  stopReason?: string;
+  /**
+   * Users created without the phone Clerk refused, by Clerk's reason. They
+   * count as imported, so these are warnings, not failures.
+   */
+  droppedPhones: Map<string, number>;
   validationFailed: number;
   errorBreakdown: Map<string, number>;
 };
