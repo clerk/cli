@@ -428,7 +428,10 @@ plugin adds `username`, admin adds `banned` (carried only while `banExpires` is
 unset or in the future), phone-number adds `phoneNumber`, and so on; selecting a column that is not there fails the whole query, and the
 database answers the question better than the user can. Passwords come from a
 `LEFT JOIN` onto the credential `account` row — left, not inner, so a user who
-only ever signed in with OAuth is still exported.
+only ever signed in with OAuth is still exported. A user with two credential rows
+whose hashes differ is exported without a password (`password_dropped: true`,
+and a reason on the run line), since neither can be picked: keep one account
+each in Better Auth and export again to bring the password across.
 
 #### `firebase`
 
@@ -1107,6 +1110,13 @@ password whose NFKC form differs will not verify and that user resets it.
 A password Clerk cannot verify is **dropped, not rejected**: the user imports
 without it and can sign in another way or reset it. Their run line carries
 `passwordDropped: true`.
+
+**Unverified emails are common.** Better Auth doesn't require email
+verification unless the app turned on `requireEmailVerification`, so many users
+have `emailVerified` false, and their emails come across as unverified. On an
+instance that requires an email at sign-up, the checks reject those users, and
+the fix they print is to make email optional at sign-up. Imported that way, the
+address stays on the user, unverified.
 
 ### Verified vs unverified identifiers
 

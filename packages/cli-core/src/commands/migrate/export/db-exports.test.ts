@@ -370,10 +370,11 @@ describe("betterauth export", () => {
     ]);
   });
 
-  // Picking one hash would leave the user unable to sign in with the other.
-  test("skips a user whose credential accounts hold different hashes, and says so", () => {
+  // Picking one hash would leave the user unable to sign in with the other;
+  // leaving the user out would not migrate them at all.
+  test("exports a user whose credential accounts hold different hashes, without a password", () => {
     const lines: UserLine[] = [];
-    const { users } = buildBetterAuthExport(
+    const { users, coverage } = buildBetterAuthExport(
       [
         { id: "u1", email: "a@x.dev", password_hash: "salt:one" },
         { id: "u1", email: "a@x.dev", password_hash: "salt:two" },
@@ -381,15 +382,18 @@ describe("betterauth export", () => {
       (line) => lines.push(line),
     );
 
-    expect(users).toEqual([]);
+    expect(users).toHaveLength(1);
+    expect(users[0]).not.toHaveProperty("password_hash");
+    expect(users[0]?.password_dropped).toBe(true);
+    expect(coverage.find((row) => row.label === "have a password hash")?.count).toBe(0);
     expect(lines).toEqual([
       expect.objectContaining({
         sourceId: "u1",
-        status: "skipped",
-        error: expect.stringContaining("2 credential accounts with different password hashes"),
+        status: "exported",
+        reason: expect.stringContaining("2 credential accounts with different password hashes"),
       }),
     ]);
-    expect(captured.err).toContain("Skipped 1 user with more than one credential account");
+    expect(captured.err).toContain("Exported 1 user without a password");
   });
 
   test("renames camelCase columns onto what the transformer reads", () => {
