@@ -214,6 +214,17 @@ describe("validateSource", () => {
     expect(() => validateSource(value, "f.ts")).toThrow(new RegExp(`\`${field}\``));
   });
 
+  // `migrate sources` wraps each caveat as text: a number crashed it, and a
+  // string printed one bullet per character.
+  test.each([
+    ["a non-string caveat", [42]],
+    ["a string instead of a list", "text"],
+  ])("rejects caveats holding %s", (_label, caveats) => {
+    expect(() => validateSource({ ...valid, caveats }, "f.ts")).toThrow(
+      /`caveats` must be an array of strings/,
+    );
+  });
+
   test.each([["clerk"], ["auth0"], ["supabase"]])(
     "rejects %s, which would shadow a built-in",
     (key) => {
