@@ -26,6 +26,7 @@ import { listageStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockSelect = mock(async () => "clerk" as unknown);
 const mockText = mock(async () => "export.json" as unknown);
+const mockPassword = mock(async () => "" as unknown);
 let confirmAnswer = true;
 /** User settings the instance serves, or none (the settings read fails). */
 let instanceSettings: Record<string, unknown> | undefined;
@@ -47,7 +48,7 @@ mock.module("../../lib/prompts.ts", () => ({
   },
   multiselect: async () => [],
   text: (...args: unknown[]) => mockText(...(args as [])),
-  password: async () => "",
+  password: (...args: unknown[]) => mockPassword(...(args as [])),
   editor: async () => "{}",
 }));
 
@@ -104,6 +105,7 @@ beforeEach(() => {
   confirmMessages = [];
   mockSelect.mockReset();
   mockText.mockReset();
+  mockPassword.mockClear();
   mockSelect.mockResolvedValue("clerk");
   mockText.mockResolvedValue("export.json");
   fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
@@ -272,6 +274,25 @@ describe("consent", () => {
     );
 
     await expect(run(importOptions)).rejects.toThrow(/1 user would be rejected/);
+    expect(created()).toHaveLength(0);
+  });
+});
+
+describe("firebase hash parameters", () => {
+  // `-y` is "import without prompting", at a terminal too.
+  test("-y never asks for them, and names the flags instead", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify({
+        users: [{ localId: "fb1", email: "a@x.dev", passwordHash: "SGFzaA==", salt: "U2FsdA==" }],
+      }),
+    );
+
+    await expect(run({ ...importOptions, source: "firebase", yes: true })).rejects.toThrow(
+      /--firebase-signer-key --firebase-salt-separator --firebase-rounds --firebase-mem-cost/,
+    );
+    expect(mockPassword).not.toHaveBeenCalled();
+    expect(mockText).not.toHaveBeenCalled();
     expect(created()).toHaveLength(0);
   });
 });

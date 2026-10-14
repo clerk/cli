@@ -800,7 +800,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   const fromFlags = resolveFirebaseHashConfig(options, source);
   let firebaseHashConfig = fromFlags ?? (source === "firebase" ? envelope?.firebase : undefined);
   let configFrom = fromFlags ? "the --firebase-* flags" : "the export file";
-  if (source === "firebase" && !firebaseHashConfig && canPrompt(options)) {
+  // `-y` is "import without prompting": it gets the usage error naming the flags.
+  if (source === "firebase" && !firebaseHashConfig && !options.yes && canPrompt(options)) {
     firebaseHashConfig = await promptForFirebaseHashConfig();
     configFrom = "the parameters entered";
   }
