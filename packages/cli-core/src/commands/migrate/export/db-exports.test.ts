@@ -662,6 +662,22 @@ describe("a date that holds no real date", () => {
     expect(users[0]).not.toHaveProperty("email_verified");
   });
 
+  // Counted from what is exported, so coverage agrees with the file.
+  test.each([
+    [
+      "supabase",
+      () => buildSupabaseExport([{ id: "u1", email: "a@x.dev", email_confirmed_at: invalid }]),
+      "have a confirmed email",
+    ],
+    [
+      "betterauth",
+      () => buildBetterAuthExport([{ id: "u1", email: "a@x.dev", emailVerified: invalid }]),
+      "have a verified email",
+    ],
+  ])("is not counted as a verified email in a %s export", (_platform, build, label) => {
+    expect(build().coverage.find((row) => row.label === label)?.count).toBe(0);
+  });
+
   // Supabase skipped the whole row on the throw; Better Auth ended the export.
   test.each([
     ["supabase", () => buildSupabaseExport([{ id: "u1", created_at: invalid }]).users],
