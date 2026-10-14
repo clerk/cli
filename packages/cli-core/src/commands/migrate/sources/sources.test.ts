@@ -239,11 +239,13 @@ describe("workos", () => {
     expect(user?.unverifiedEmailAddresses).toBe(unverified);
   });
 
-  test("sends metadata to unsafe metadata", async () => {
+  // Backend-set on WorkOS, so never where the user could change it in Clerk.
+  test("sends metadata to private metadata, with external_id merged in", async () => {
     const { users } = await load("workos", [
-      { ...base, email_verified: true, metadata: { plan: "pro" } },
+      { ...base, email_verified: true, metadata: { plan: "pro" }, external_id: "cust_1" },
     ]);
-    expect(users[0]?.unsafeMetadata).toEqual({ plan: "pro" });
+    expect(users[0]?.privateMetadata).toEqual({ plan: "pro", workosExternalId: "cust_1" });
+    expect(users[0]?.unsafeMetadata).toBeUndefined();
   });
 
   // The WorkOS id stays the Clerk external_id; the tenant's own ID is kept
