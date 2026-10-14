@@ -220,12 +220,13 @@ describe("resolveWithIdentities", () => {
     }
   });
 
-  // `-y` is "answer the prompts yes", and the prompt is "also fetch providers?".
-  test("is on under -y, which answers the question rather than asking it", async () => {
+  // One request per user, for nothing the import can use: `-y` takes the
+  // prompt's default rather than committing to it unasked.
+  test("is off under -y, which takes the prompt's default", async () => {
     process.env.CLERK_MODE = "human";
     setAssumeYes(true);
     try {
-      expect(await resolveWithIdentities({}, 10)).toBe(true);
+      expect(await resolveWithIdentities({}, 10)).toBe(false);
     } finally {
       setAssumeYes(false);
     }
@@ -301,6 +302,33 @@ test("fetchAllWorkOsIdentities stops on a rejected key rather than counting it",
   expect(error).toBeInstanceOf(CliError);
   expect(error.exitCode).toBe(EXIT_CODE.USAGE);
   expect(requests.length).toBeLessThan(users.length);
+});
+
+// At 20 a second, 400 queued users would otherwise spend 20 seconds taking
+// paced turns only to be skipped.
+test("fetchAllWorkOsIdentities stops at once on a rejected key, without pacing the rest", async () => {
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    requests.push(input.toString());
+    return Response.json({ message: "Unauthorized" }, { status: 401 });
+  }) as unknown as typeof fetch;
+  const users = Array.from({ length: 400 }, (_, i) => workosUser(i));
+
+  const started = performance.now();
+  await fetchAllWorkOsIdentities({ apiKey: API_KEY, users }).catch(() => {});
+
+  expect(performance.now() - started).toBeLessThan(3000);
+});
+
+test("fetchAllWorkOsIdentities counts a user with no id as failed", async () => {
+  stubWorkOs([[]], { user_00: [] });
+
+  const { identities, failed } = await fetchAllWorkOsIdentities({
+    apiKey: API_KEY,
+    users: [workosUser(0), { ...workosUser(1), id: undefined }],
+  });
+
+  expect(identities.size).toBe(1);
+  expect(failed).toBe(1);
 });
 
 describe("buildIdentityReport", () => {

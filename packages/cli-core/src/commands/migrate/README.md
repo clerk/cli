@@ -553,8 +553,8 @@ becomes 1,010 for a thousand users. Nothing it returns can be imported —
 breakdown in the coverage report, and an `identities` array kept in the export
 file for whoever runs the migration. The interactive path asks once, after the
 user count is known, defaulting to no; agent mode takes the flag's answer and
-asks nothing. `-y` answers the question `yes`, so pass
-`--no-with-identities` to skip the fan-out without being asked.
+asks nothing. So does `-y`, which takes the prompt's default, no: pass
+`--with-identities` to fetch them without being asked.
 
 The breakdown prints as its own **OAuth providers** block under the coverage
 table, not as extra coverage rows:
@@ -1215,15 +1215,15 @@ instance settings: the checks print the `clerk config patch` to run instead.
 
 Three exports talk to their own platform rather than to Clerk:
 
-| Method | Path                                           | Used by                                                  |
-| ------ | ---------------------------------------------- | -------------------------------------------------------- |
-| `POST` | `https://<tenant>/oauth/token`                 | `export auth0` — Management API access token             |
-| `GET`  | `https://<tenant>/api/v2/users`                | `export auth0` — 100 per page, 1000 users maximum        |
-| `POST` | `https://oauth2.googleapis.com/token`          | `export firebase` — RS256 assertion → access token       |
-| `GET`  | `…/v1/projects/{project_id}/accounts:batchGet` | `export firebase` — pages users, 1000 at a time          |
-| `GET`  | `…/admin/v2/projects/{project_id}/config`      | `export firebase` — reads the scrypt hash parameters     |
-| `GET`  | `…/user_management/users`                      | `export workos` — 100 per page, cursor-paginated         |
-| `GET`  | `…/user_management/users/{id}/identities`      | `export workos` — `--with-identities` only, one per user |
+| Method | Path                                           | Used by                                                           |
+| ------ | ---------------------------------------------- | ----------------------------------------------------------------- |
+| `POST` | `https://<tenant>/oauth/token`                 | `export auth0` — Management API access token                      |
+| `GET`  | `https://<tenant>/api/v2/users`                | `export auth0` — 100 per page, 1000 users maximum                 |
+| `POST` | `https://oauth2.googleapis.com/token`          | `export firebase` — RS256 assertion → access token                |
+| `GET`  | `…/v1/projects/{project_id}/accounts:batchGet` | `export firebase` — pages users, 1000 at a time                   |
+| `GET`  | `…/admin/v2/projects/{project_id}/config`      | `export firebase` — reads the scrypt hash parameters              |
+| `GET`  | `…/user_management/users`                      | `export workos` — 100 per page, cursor-paginated                  |
+| `GET`  | `…/user_management/users/{id}/identities`      | `export workos` — when identity lookups are enabled, one per user |
 
 The two Identity Toolkit paths are on `identitytoolkit.googleapis.com`, or on
 `FIREBASE_AUTH_EMULATOR_HOST` when that is set. The emulator needs no token, so
