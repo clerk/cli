@@ -278,6 +278,25 @@ describe("the migrate group's -y hook", () => {
     }
   });
 
+  test("export refuses an --output that is not .json, before reading anything", async () => {
+    const program = createProgram();
+    program.exitOverride();
+    await expect(
+      program.parseAsync([
+        "node",
+        "clerk",
+        "migrate",
+        "export",
+        "supabase",
+        "--db-url",
+        "postgres://u:p@127.0.0.1:1/db",
+        "--output",
+        "users.ndjson",
+        "--json",
+      ]),
+    ).rejects.toThrow(/--output must end in \.json/);
+  });
+
   test("records its absence, so a previous run cannot leak into this one", async () => {
     setAssumeYes(true);
     expect(await parse(["migrate", "export", "supabase", "--db-url", "./none.sqlite"])).toBe(false);
