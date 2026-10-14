@@ -14,7 +14,7 @@
  * leaving it to be discovered when nobody can sign in.
  */
 
-import { throwUsageError } from "../../../lib/errors.ts";
+import { ApiError, CliError, throwUsageError } from "../../../lib/errors.ts";
 import { loggedFetch } from "../../../lib/fetch.ts";
 import { dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
@@ -25,6 +25,7 @@ import { isAssumeYes } from "../lib/assume-yes.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
 import { isCredentialStatus, throwApiFailure, withInputRetry } from "../lib/input-retry.ts";
+import { RateLimitExceededError, retryOn429 } from "../lib/retry.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 
 const PAGE_SIZE = 100;
@@ -229,6 +230,9 @@ async function fetchAuth0Page(
   url.searchParams.set("page", String(page));
   url.searchParams.set("per_page", String(PAGE_SIZE));
   url.searchParams.set("include_totals", "true");
+  // A stable order, so a sign-up mid-export shifts a page rather than
+  // repeating one user and skipping another.
+  url.searchParams.set("sort", "created_at:1");
 
   const response = await loggedFetch(url, {
     tag: "auth0",
@@ -239,6 +243,8 @@ async function fetchAuth0Page(
 
   if (!response.ok) {
     const body = await response.text();
+    // Thrown as an ApiError so `retryOn429` backs off, honouring Retry-After.
+    if (response.status === 429) throw new ApiError(429, body, response.headers);
     throwApiFailure(
       response.status,
       `Auth0 returned ${response.status} listing users: ${body}`,
@@ -250,11 +256,30 @@ async function fetchAuth0Page(
   return { users: body.users ?? [], total: body.total ?? 0 };
 }
 
+/** One page, backing off on a 429 as `export clerk` does. */
+async function fetchAuth0PageWithRetry(
+  credentials: Auth0Credentials,
+  token: string,
+  page: number,
+): Promise<{ users: Auth0User[]; total: number }> {
+  try {
+    return await retryOn429(async () => fetchAuth0Page(credentials, token, page));
+  } catch (error) {
+    if (!(error instanceof RateLimitExceededError)) throw error;
+    throw new CliError(
+      `Auth0 kept rate-limiting the Management API (429, ${error.attempts} retries). Nothing was exported. ` +
+        "Try again shortly; a free or development tenant allows only a few requests a second.",
+      { docsUrl: DOCS_URL },
+    );
+  }
+}
+
 /**
  * Pages through the tenant's users.
  *
  * Stops at Auth0's 1000-record ceiling with a warning naming the bulk export
- * job — silently truncating would read as "that is everyone".
+ * job — silently truncating would read as "that is everyone" — and says so
+ * too when fewer users come back than Auth0 counted.
  */
 export async function fetchAllAuth0Users(options: {
   credentials: Auth0Credentials;
@@ -262,19 +287,30 @@ export async function fetchAllAuth0Users(options: {
   spinner?: SpinnerControls;
 }): Promise<{ users: Auth0User[]; truncated: boolean }> {
   const all: Auth0User[] = [];
+  const seen = new Set<string>();
+  let total = 0;
 
   for (let page = 0; ; page++) {
-    const { users, total } = await fetchAuth0Page(options.credentials, options.token, page);
-    all.push(...users);
+    const result = await fetchAuth0PageWithRetry(options.credentials, options.token, page);
+    total = result.total;
+    for (const user of result.users) {
+      // A user a shifted page repeats would reach the import twice.
+      if (typeof user.user_id === "string") {
+        if (seen.has(user.user_id)) continue;
+        seen.add(user.user_id);
+      }
+      all.push(user);
+    }
     options.spinner?.update(`Fetching users from Auth0: ${all.length} so far...`);
 
-    // An empty page ends it whatever `total` says, so an overstated total
-    // cannot page forever.
-    if (users.length === 0) break;
+    // A short or empty page is the last one Auth0 has.
+    if (result.users.length < PAGE_SIZE) break;
+    // Complete under the ceiling. At it, Auth0 counts no higher, so 1000 of
+    // 1000 cannot be told apart from 1000 of 50,000.
+    if (total > 0 && total < AUTH0_PAGINATION_CEILING && all.length >= total) break;
 
-    if (all.length >= AUTH0_PAGINATION_CEILING) {
-      // Auth0 reports a larger tenant's total as 1000 too, so reaching the
-      // ceiling never proves the export is complete.
+    // The next page would start at the offset this endpoint won't serve.
+    if ((page + 1) * PAGE_SIZE >= AUTH0_PAGINATION_CEILING) {
       log.warn(
         `Auth0 only pages through the first ${AUTH0_PAGINATION_CEILING} users on this endpoint` +
           (total > AUTH0_PAGINATION_CEILING
@@ -284,12 +320,15 @@ export async function fetchAllAuth0Users(options: {
       );
       return { users: all, truncated: true };
     }
-
-    // Auth0 can send a short page before the last one, so `total` decides
-    // when it is known; a short page ends it only when Auth0 sent no total.
-    if (total > 0 ? all.length >= total : users.length < PAGE_SIZE) break;
   }
 
+  // Short of what Auth0 counted: some users were never returned.
+  if (total > 0 && all.length < Math.min(total, AUTH0_PAGINATION_CEILING)) {
+    log.warn(
+      `Auth0 reported ${total} users but returned ${all.length}. Exported what was returned; use Auth0's bulk user export job for the rest.`,
+    );
+    return { users: all, truncated: true };
+  }
   return { users: all, truncated: false };
 }
 
