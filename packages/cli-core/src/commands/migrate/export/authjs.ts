@@ -28,6 +28,17 @@ import { withInputRetry } from "../lib/input-retry.ts";
 /** Table names to try, in order. Prisma capitalizes; Drizzle does not. */
 const TABLE_CANDIDATES = ["User", "user", "users"] as const;
 
+/**
+ * The tables to try on this database. On Postgres, `@auth/supabase-adapter`
+ * keeps its own in the `next_auth` schema, off the default `search_path`:
+ * tried first, since an app's own `public.users` could otherwise answer for it.
+ */
+function tableCandidates(client: DbClient): string[] {
+  return client.dbType === "postgres"
+    ? ["next_auth.users", ...TABLE_CANDIDATES]
+    : [...TABLE_CANDIDATES];
+}
+
 type AuthJsRow = Record<string, unknown> & {
   id?: unknown;
   name?: string | null;
@@ -53,9 +64,11 @@ export function buildAuthJsQuery(
   verifiedColumn: (typeof VERIFIED_COLUMNS)[number] = "emailVerified",
 ): string {
   const q = (identifier: string) => client.quote(identifier);
+  // `next_auth.users` is a schema and a table, each quoted on its own.
+  const from = table.split(".").map(q).join(".");
   return (
     `SELECT u.${q("id")}, u.${q("name")}, u.${q("email")}, u.${q(verifiedColumn)} AS ${q("email_verified")} ` +
-    `FROM ${q(table)} u ORDER BY u.${q("id")} ASC`
+    `FROM ${from} u ORDER BY u.${q("id")} ASC`
   );
 }
 
@@ -87,7 +100,8 @@ export async function fetchAuthJsUsers(
   let lastError: unknown;
   let columnError: unknown;
 
-  for (const table of TABLE_CANDIDATES) {
+  const candidates = tableCandidates(client);
+  for (const table of candidates) {
     for (const column of VERIFIED_COLUMNS) {
       try {
         const rows = await client.query<AuthJsRow>(buildAuthJsQuery(client, table, column));
@@ -107,10 +121,8 @@ export async function fetchAuthJsUsers(
 
   if (columnError) throw columnError;
   throw lastError instanceof Error
-    ? new Error(
-        `No Auth.js user table found. Tried ${TABLE_CANDIDATES.join(", ")}. ${lastError.message}`,
-      )
-    : new Error(`No Auth.js user table found. Tried ${TABLE_CANDIDATES.join(", ")}.`);
+    ? new Error(`No Auth.js user table found. Tried ${candidates.join(", ")}. ${lastError.message}`)
+    : new Error(`No Auth.js user table found. Tried ${candidates.join(", ")}.`);
 }
 
 export function buildAuthJsExport(rows: AuthJsRow[], record: (line: UserLine) => void = () => {}) {

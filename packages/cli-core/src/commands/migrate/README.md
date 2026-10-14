@@ -433,7 +433,10 @@ also keeps `raw_app_meta_data`, which is what the import's
 
 **`authjs` tries `User`, then `user`, then `users`.** Auth.js has no single
 schema — Prisma capitalizes the table, Drizzle does not, and Postgres treats
-the difference as significant once quoted. The run reports which one it found.
+the difference as significant once quoted. On Postgres it tries
+`next_auth.users` first: `@auth/supabase-adapter` keeps its tables in the
+`next_auth` schema, off the default `search_path`, and an app's own
+`public.users` must not answer for it. The run reports which one it found.
 The verified column is read as `emailVerified`, or `email_verified` on a legacy
 NextAuth table. Auth.js core stores no passwords, so its users arrive without
 credentials. That is all an OAuth or email-link app has. An app that also uses
