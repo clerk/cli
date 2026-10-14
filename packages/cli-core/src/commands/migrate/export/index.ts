@@ -200,7 +200,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     .option("-o, --output <path>", "Write the export here instead of the run folder")
     .option(
       "-y, --yes",
-      "Do not prompt: fail on a rejected credential, and assume --with-identities",
+      "Do not prompt: fail on a rejected credential, and skip the OAuth provider fan-out unless --with-identities",
     )
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
     .option("--json", "Print the result as JSON; never prompts")
