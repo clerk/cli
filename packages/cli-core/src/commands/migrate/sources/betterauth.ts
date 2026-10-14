@@ -79,6 +79,8 @@ const betterAuthSource = {
     email_verified: "emailVerified",
     name: "name",
     password_hash: "password",
+    // Set by the export for a user whose credential accounts disagree.
+    password_dropped: "passwordDropped",
     username: "username",
     phone_number: "phone",
     phone_number_verified: "phoneVerified",
