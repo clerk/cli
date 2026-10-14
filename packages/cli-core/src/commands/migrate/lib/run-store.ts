@@ -320,19 +320,13 @@ export type ImportIdentity = { sha256: string; source: string; instanceId: strin
 
 /**
  * The lock one import of a file, by a source, into an instance holds. In the
- * temp directory, keyed by the runs folder too: it is taken before consent,
- * when nothing may be written to the runs folder yet.
+ * temp directory, as it is taken before consent, when nothing may be written
+ * to the runs folder yet. Not keyed by the runs folder: two imports with
+ * different `--runs-dir` values would still send the same users.
  */
-export function importLockFile(runsDir: string, identity: ImportIdentity): string {
+export function importLockFile(identity: ImportIdentity): string {
   const key = createHash("sha256")
-    .update(
-      JSON.stringify([
-        path.resolve(runsDir),
-        identity.sha256,
-        identity.source,
-        identity.instanceId,
-      ]),
-    )
+    .update(JSON.stringify([identity.sha256, identity.source, identity.instanceId]))
     .digest("hex")
     .slice(0, 32);
   return path.join(os.tmpdir(), `clerk-migrate-import-${key}.lock`);
@@ -345,8 +339,8 @@ export function importLockFile(runsDir: string, identity: ImportIdentity): strin
  * @returns Releases the lock.
  * @throws UsageError when a live process holds it.
  */
-export function lockImport(runsDir: string, identity: ImportIdentity): () => void {
-  const file = importLockFile(runsDir, identity);
+export function lockImport(identity: ImportIdentity): () => void {
+  const file = importLockFile(identity);
   acquireLockFile(file, (holder) =>
     throwUsageError(
       `Another process${holder ? ` (PID ${holder})` : ""} is importing this file into this instance right now. ` +

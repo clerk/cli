@@ -211,7 +211,7 @@ describe("locks and interruptions", () => {
     const identity = { sha256: "a".repeat(64), source: "supabase", instanceId: "ins_lock" };
     const write = spyOn(fs, "writeFileSync");
     try {
-      const release = lockImport(runsDir, identity);
+      const release = lockImport(identity);
       const lockPaths = write.mock.calls.map(([target]) => String(target));
       expect(lockPaths.every((target) => target.endsWith(".tmp"))).toBe(true);
       release();
