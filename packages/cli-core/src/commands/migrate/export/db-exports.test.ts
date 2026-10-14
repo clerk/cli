@@ -207,6 +207,29 @@ describe("authjs export", () => {
     });
   });
 
+  // `@auth/supabase-adapter` keeps its tables in the `next_auth` schema, and an
+  // app's own `public.users` must not answer for it.
+  test("on Postgres, reads next_auth.users first, quoting schema and table", async () => {
+    const sql: string[] = [];
+    const client = {
+      dbType: "postgres",
+      quote: (identifier: string) => `"${identifier}"`,
+      placeholder: (position: number) => `$${position}`,
+      close: async () => {},
+      query: async (query: string) => {
+        sql.push(query);
+        if (query.includes('"next_auth"."users"')) return [{ id: "aj1", email: "a@x.dev" }];
+        throw new Error('relation "public.users" does not exist');
+      },
+    } as unknown as DbClient;
+
+    const { rows, table } = await fetchAuthJsUsers(client);
+
+    expect(table).toBe("next_auth.users");
+    expect(rows).toHaveLength(1);
+    expect(sql[0]).toContain('FROM "next_auth"."users" u');
+  });
+
   // Prisma capitalizes the table, Drizzle does not, and Auth.js has no single
   // schema — so the export tries rather than making the user guess.
   test.each([["User"], ["user"], ["users"]])("finds the %s table", async (table) => {
