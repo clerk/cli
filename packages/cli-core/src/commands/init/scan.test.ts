@@ -70,6 +70,20 @@ describe("detectAuthLibraries", () => {
     expect(output).toContain("Kinde");
   });
 
+  test.each(["@workos-inc/authkit-nextjs", "@workos-inc/authkit-react"])(
+    "detects WorkOS via %s",
+    (pkg) => {
+      runDetectAuthLibraries({ [pkg]: "1.0.0" });
+      expect(captured.out).toContain("WorkOS");
+    },
+  );
+
+  // The Node SDK also serves WorkOS SSO and Directory Sync alone.
+  test("does not call @workos-inc/node alone WorkOS auth", () => {
+    runDetectAuthLibraries({ "@workos-inc/node": "7.0.0" });
+    expect(captured.out).not.toContain("WorkOS");
+  });
+
   test("detects multiple auth libraries", () => {
     runDetectAuthLibraries({ "next-auth": "5.0.0", firebase: "11.0.0" });
     const output = captured.out;
