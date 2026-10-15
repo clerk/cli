@@ -16,7 +16,7 @@ import {
   countLines,
   latestUserLines,
   listRuns,
-  openUndoOf,
+  importsOfFile,
   readRun,
   resolveRunsDir,
   runDir,
@@ -28,9 +28,9 @@ import {
   USERS_FILE,
   noRunMessage,
 } from "./lib/run-store.ts";
-import { carryFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
+import { carryFlags, importFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
 import { plural } from "./lib/plural.ts";
-import { describeTarget } from "./lib/target.ts";
+import { describeTarget, isStandInInstanceId } from "./lib/target.ts";
 
 export type RunsOptions = {
   json?: boolean;
@@ -108,30 +108,36 @@ function continueCommand(record: RunRecord, carry: string[]): string | undefined
   if (!input) return undefined;
   const parts = ["clerk migrate import", quoteArg(input)];
   if (!record.fromExport && record.source) parts.push("--source", quoteArg(record.source));
-  return withFlags(parts.join(" "), [...(record.flags ?? []), ...carry]);
+  return withFlags(parts.join(" "), [...importFlags(record.flags ?? {}), ...carry]);
 }
 
 /**
  * Whether importing the record's file again continues this run, rather than
- * starting another or refusing: it is the newest import of that file, source
- * and instance, which is the one an import picks; the file is unchanged; and
- * no undo of it is left unfinished, which an import refuses to continue.
+ * starting another or refusing: no newer import of that file and source may
+ * be for the same instance, the file is unchanged, and no undo of it exists.
+ * An unfinished undo makes an import refuse; a finished one that never marked
+ * the run makes it start a new one.
  */
 function continuesThisRun(runsDir: string, record: RunRecord): boolean {
   const file = record.file;
   if (!file) return false;
   const runs = listRuns(runsDir);
-  const newest = runs.find(
-    (other) =>
-      other.kind === "import" &&
-      other.file?.sha256 === file.sha256 &&
-      other.source === record.source &&
-      other.target.instanceId === record.target.instanceId,
+  // An import also takes a run recorded under its key's stand-in ID. Without
+  // the key, a stand-in on either side may be the same instance: offering the
+  // continue then could send the user to a newer run instead.
+  const mayBeSameInstance = (id: string | undefined) =>
+    id === record.target.instanceId ||
+    isStandInInstanceId(id) ||
+    isStandInInstanceId(record.target.instanceId);
+  const newest = importsOfFile(runs, { sha256: file.sha256, source: record.source }).find((other) =>
+    mayBeSameInstance(other.target.instanceId),
   );
-  if (newest?.id !== record.id || openUndoOf(runsDir, record.id, runs)) return false;
+  if (newest?.id !== record.id) return false;
+  if (runs.some((other) => other.kind === "undo" && other.undoes === record.id)) return false;
   try {
     return sha256File(file.path) === file.sha256;
-  } catch {
+  } catch (error) {
+    log.debug(`migrate: could not read ${file.path} to check it is unchanged: ${String(error)}`);
     return false;
   }
 }

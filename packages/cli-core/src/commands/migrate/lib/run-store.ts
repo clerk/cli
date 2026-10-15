@@ -25,7 +25,7 @@ import { resolveProfile } from "../../../lib/config.ts";
 import { throwUsageError } from "../../../lib/errors.ts";
 import { ensureGitignoreEntry, getGitRepoRoot } from "../../../lib/git.ts";
 import { log } from "../../../lib/log.ts";
-import { runsCommand, undoCommand } from "./carry-flags.ts";
+import { type ImportFlags, runsCommand, undoCommand } from "./carry-flags.ts";
 
 /** Overrides the runs directory, below `--runs-dir`. */
 export const RUNS_DIR_ENV = "CLERK_MIGRATE_DIR";
@@ -77,8 +77,11 @@ export type RunRecord = {
   file?: RunFile;
   /** The export run an import read its file from. */
   fromExport?: string;
-  /** An import's `importFlags`, from its latest attempt. */
-  flags?: string[];
+  /**
+   * The flags an import's latest attempt ran with, as values: a record
+   * outlives the CLI that wrote it, and `importFlags` spells them for this one.
+   */
+  flags?: ImportFlags;
   /** The import run an undo reverses. */
   undoes?: string;
   /** The undo run that reversed this one. */
@@ -298,6 +301,22 @@ export function runState(runsDir: string, record: RunRecord): RunState {
   // An interrupted run that was then undone has no finish time of its own.
   if (record.finishedAt || record.status === "undone") return record.status;
   return liveLockPid(runsDir, record.id) === undefined ? "interrupted" : "running";
+}
+
+/**
+ * The imports of this file with this source, newest first: the runs a
+ * re-import of it chooses among, before it looks at the instance.
+ */
+export function importsOfFile(
+  runs: RunRecord[],
+  file: { sha256: string; source?: string },
+): RunRecord[] {
+  return runs.filter(
+    (record) =>
+      record.kind === "import" &&
+      record.file?.sha256 === file.sha256 &&
+      record.source === file.source,
+  );
 }
 
 /**

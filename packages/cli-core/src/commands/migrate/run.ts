@@ -29,7 +29,13 @@ import {
 } from "../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { quoteArg } from "../../lib/json-body.ts";
-import { carryFlags, importFlags, runsCommand, undoCommand } from "./lib/carry-flags.ts";
+import {
+  carryFlags,
+  type ImportFlags,
+  importFlags,
+  runsCommand,
+  undoCommand,
+} from "./lib/carry-flags.ts";
 import { plural } from "./lib/plural.ts";
 import { canPrompt } from "./lib/terminal.ts";
 import { log } from "../../lib/log.ts";
@@ -57,6 +63,7 @@ import {
   unfinishedUndoMessage,
   inUseMessage,
   openUndoOf,
+  importsOfFile,
 } from "./lib/run-store.ts";
 import { withProgress } from "./lib/progress.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
@@ -325,12 +332,7 @@ function findResume(
   carry: string[],
 ): ResumeCase {
   const runs = listRuns(runsDir);
-  const ofFile = runs.filter(
-    (record) =>
-      record.kind === "import" &&
-      record.file?.sha256 === match.sha256 &&
-      record.source === match.source,
-  );
+  const ofFile = importsOfFile(runs, match);
   const latest = ofFile.find(
     (record) =>
       record.target.instanceId === match.instanceId ||
@@ -851,7 +853,11 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       // Gitignored only now, once there is consent to write a run.
       await resolveRunsDir(options.runsDir, { write: true });
-      const flags = importFlags(options);
+      const flags: ImportFlags = {
+        allowPartial: options.allowPartial,
+        requirePassword: options.requirePassword,
+        skipLegalChecks: options.skipLegalChecks,
+      };
       const run = continued
         ? continueRun(runsDir, continued, plannedLines, carry)
         : startRun(runsDir, {
@@ -958,17 +964,17 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       }
 
       // `runs` takes only --runs-dir.
-      const runs = runsCommand(carryFlags({ runsDir: options.runsDir }), record.id);
+      const runsStep = runsCommand(carryFlags({ runsDir: options.runsDir }), record.id);
       const undo = undoCommand(record.id, carry);
       const steps =
         summary.failed > 0
           ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(
-              runs,
+              runsStep,
               // The same import again continues this run; --new-run would not.
               commandFor({ ...options, newRun: false }, options.yes ? ["--yes"] : []),
               undo,
             )
-          : NEXT_STEPS.MIGRATE_DONE(runs, undo);
+          : NEXT_STEPS.MIGRATE_DONE(runsStep, undo);
       setNextSteps(steps);
       printAgentNextSteps(steps);
     },

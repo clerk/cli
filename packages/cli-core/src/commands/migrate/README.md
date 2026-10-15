@@ -477,11 +477,11 @@ clerk migrate runs --json
 It prints the runs folder first. The listing shows each run's ID, date, kind,
 status, target, file and counts. `runs <id>` adds the error breakdown and the
 users that failed or were skipped, with the path to the full record, then what
-to run next: the undo, and for an interrupted or partial import, the import
-that continues it, with the flags it ran with. The continue is left out when
-importing the file again would not reach this run: a newer run of the same
-file, a file changed since, or an undo of it left unfinished. An unknown ID
-exits 2.
+to run next: for an interrupted or partial import, the import that continues
+it, with the flags it ran with, then the undo. The continue is left out when
+importing the file again might not reach this run: a newer run of the same
+file that may be for the same instance (one recorded under a key's stand-in ID
+may be any), a file changed since, or any undo of it. An unknown ID exits 2.
 
 ### `clerk migrate undo`
 

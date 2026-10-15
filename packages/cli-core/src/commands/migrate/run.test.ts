@@ -9,6 +9,7 @@ import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 // Every test below names its own `--secret-key`, which short-circuits the
 // signed-in check — except the one that asserts what happens without it.
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
+import { importFlags } from "./lib/carry-flags.ts";
 import { latestUserLines, listRuns, readRun, startRun } from "./lib/run-store.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
 // After run.ts: imported first, signals.ts loads version.ts ahead of its Bun
@@ -318,7 +319,7 @@ describe("run", () => {
     });
     expect(record?.status).toBe("partial");
     // So `runs <id>` suggests a continue that still leaves them out.
-    expect(record?.flags).toEqual(["--require-password"]);
+    expect(importFlags(record?.flags ?? {})).toEqual(["--require-password"]);
   });
 
   // They never reach the checks, so the preview has to count them itself.
