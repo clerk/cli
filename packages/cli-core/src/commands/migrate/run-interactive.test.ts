@@ -8,7 +8,17 @@
  * `mode.ts` has no way to clear a forced mode once the file is done.
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+  spyOn,
+} from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -44,7 +54,7 @@ mock.module("../../lib/prompts.ts", () => ({
 const { run } = await import("./run.ts");
 const { terminal } = await import("./lib/terminal.ts");
 // The prompts are stubs; whether this process has a terminal is a test of its own.
-const realTerminal = terminal.available;
+const terminalAvailable = spyOn(terminal, "available");
 const { UserAbortError } = await import("../../lib/errors.ts");
 const { _setConfigDir } = await import("../../lib/config.ts");
 
@@ -75,7 +85,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  terminal.available = realTerminal;
+  terminalAvailable.mockRestore();
   if (originalMode === undefined) delete process.env.CLERK_MODE;
   else process.env.CLERK_MODE = originalMode;
   globalThis.fetch = originalFetch;
@@ -86,7 +96,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  terminal.available = () => true;
+  terminalAvailable.mockReturnValue(true);
   requests = [];
   confirmAnswer = true;
   instanceSettings = undefined;
@@ -149,7 +159,7 @@ describe("prompts for what was not passed", () => {
 
 // `CLERK_MODE=human` with no terminal: the prompt would fail to open one and spin.
 test("with no terminal, refuses for consent rather than prompting", async () => {
-  terminal.available = () => false;
+  terminalAvailable.mockReturnValue(false);
 
   await expect(run(importOptions)).rejects.toThrow(/--yes/);
 

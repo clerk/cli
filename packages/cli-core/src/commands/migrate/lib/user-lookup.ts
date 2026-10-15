@@ -10,6 +10,7 @@
  */
 
 import { bapiRequest } from "../../../lib/bapi.ts";
+import { CliError } from "../../../lib/errors.ts";
 import type { SpinnerControls } from "../../../lib/spinner.ts";
 import { retryOn429 } from "./retry.ts";
 import type { ApiScheduler } from "./scheduler.ts";
@@ -91,7 +92,7 @@ export async function lookupUsers(options: {
         // A cursor that does not move would page forever, and stopping there
         // would pass a short lookup off as complete.
         if (params.get("starting_after") === last) {
-          throw new Error(
+          throw new CliError(
             "Clerk returned the same page of users twice, so the lookup can't finish",
           );
         }

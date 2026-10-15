@@ -1,4 +1,13 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  spyOn,
+  test,
+} from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -451,13 +460,12 @@ describe("forced human mode with no terminal", () => {
   test("refuses for consent rather than prompting", async () => {
     const record = importRun();
     const mode = process.env.CLERK_MODE;
-    const available = terminal.available;
+    const available = spyOn(terminal, "available").mockReturnValue(false);
     process.env.CLERK_MODE = "human";
-    terminal.available = () => false;
     try {
       await expect(undo(record.id, withDir())).rejects.toThrow(/needs consent/);
     } finally {
-      terminal.available = available;
+      available.mockRestore();
       if (mode === undefined) delete process.env.CLERK_MODE;
       else process.env.CLERK_MODE = mode;
     }

@@ -4,7 +4,7 @@
  * Its own file because `mock.module` replaces `prompts.ts` for the whole
  * process, and `undo.test.ts` runs non-interactively.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,7 +27,7 @@ const AFTER_IMPORT = Date.parse("2026-09-02T00:00:00.000Z");
 let runsDir: string;
 let originalFetch: typeof globalThis.fetch;
 let originalMode: string | undefined;
-const realTerminal = terminal.available;
+const terminalAvailable = spyOn(terminal, "available");
 /** Clerk IDs the stubbed instance holds, with each one's last sign-in. */
 let instanceUsers: Map<string, number | null>;
 let deletes: string[];
@@ -38,14 +38,14 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  terminal.available = realTerminal;
+  terminalAvailable.mockRestore();
   if (originalMode === undefined) delete process.env.CLERK_MODE;
   else process.env.CLERK_MODE = originalMode;
 });
 
 beforeEach(() => {
   process.env.CLERK_MODE = "human";
-  terminal.available = () => true;
+  terminalAvailable.mockReturnValue(true);
   runsDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-undo-human-")));
   deletes = [];
   confirmed = () => {};

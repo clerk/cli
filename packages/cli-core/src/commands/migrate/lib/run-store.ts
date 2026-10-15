@@ -228,15 +228,18 @@ function acquireLock(runsDir: string, id: string): void {
 
   try {
     take();
+    log.debug(`migrate: locked run ${id} (${file})`);
     return;
   } catch (error) {
     if (!isExists(error)) throw error;
   }
   const holder = liveLockPid(runsDir, id);
   if (holder !== undefined) refuse(holder);
+  log.debug(`migrate: removing a stale lock on run ${id} (${file})`);
   fs.rmSync(file, { force: true });
   try {
     take();
+    log.debug(`migrate: locked run ${id} (${file})`);
   } catch (error) {
     // Another process took the stale lock between the remove and the write.
     if (isExists(error)) refuse(liveLockPid(runsDir, id));
@@ -506,7 +509,10 @@ export function continueRun(
  */
 export function lockRun(runsDir: string, id: string): () => void {
   acquireLock(runsDir, id);
-  return () => fs.rmSync(lockFile(runsDir, id), { force: true });
+  return () => {
+    log.debug(`migrate: released run ${id}`);
+    fs.rmSync(lockFile(runsDir, id), { force: true });
+  };
 }
 
 /**
@@ -521,6 +527,7 @@ export function patchRun(
   const record = readRun(runsDir, id);
   if (!record) return undefined;
   const patched = { ...record, ...patch };
+  log.debug(`migrate: patching run ${id}: ${Object.keys(patch).join(", ")}`);
   writeRecord(runsDir, patched);
   return patched;
 }
