@@ -1072,7 +1072,8 @@ describe("run", () => {
       const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
 
       expect(error.exitCode).toBe(EXIT_CODE.USAGE);
-      expect(error.message).toContain(`clerk migrate undo ${first!.id}`);
+      // With the key it was given, or it reaches whatever key it finds next.
+      expect(error.message).toContain(`clerk migrate undo ${first!.id} --secret-key <key>`);
       expect(created()).toEqual([]);
     });
 

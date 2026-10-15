@@ -20,10 +20,12 @@ import { bapiRequest } from "../../lib/bapi.ts";
 import { bold, dim, green, red } from "../../lib/color.ts";
 import { BapiError, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
+import { interruptedExitCode } from "../../lib/signals.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { normalizeErrorMessage } from "./import-users.ts";
+import { carryFlags, withFlags } from "./lib/carry-flags.ts";
 import { resolveLimits, type ResolvedLimits } from "./lib/instance.ts";
 import { RateLimitExceededError, retryOn429 } from "./lib/retry.ts";
 import {
@@ -320,14 +322,17 @@ function printPreview(record: RunRecord, preview: UndoPreview): void {
   }
 }
 
-/** The run header shared by every outcome, human and JSON alike. */
+/**
+ * The JSON every outcome prints. `import` is the run being undone; `run` is the
+ * undo's own run, null until one is written, as an import's is.
+ */
 function jsonResult(
   target: ClerkTarget,
   record: RunRecord,
   preview: UndoPreview,
   extra: Record<string, unknown> = {},
 ) {
-  return { target, run: record, preview, ...extra };
+  return { target, import: record, run: null, preview, ...extra };
 }
 
 export async function undo(runId: string, options: UndoOptions = {}): Promise<void> {
@@ -371,7 +376,14 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
 
   if (!options.json) printPreview(record, preview);
 
-  const command = `clerk migrate undo ${record.id} --yes${preview.signedInSince > 0 ? " --include-signed-in" : ""}`;
+  // The flags that found this run and instance, or the command looks elsewhere
+  // and refuses.
+  const command = [
+    `clerk migrate undo ${record.id} --yes`,
+    ...(preview.signedInSince > 0 ? ["--include-signed-in"] : []),
+    ...carryFlags(options),
+    ...(options.json ? ["--json"] : []),
+  ].join(" ");
   const nothingLeft = present.length === 0 && gone.length === 0;
 
   if (options.dryRun) {
@@ -450,7 +462,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     ) {
       throwUsageError(
         `Run ${record.id} changed while this undo was waiting, so the preview is out of date. ` +
-          `Nothing was deleted. Run \`clerk migrate undo ${record.id}\` again.`,
+          `Nothing was deleted. Run \`${withFlags(`clerk migrate undo ${record.id}`, carryFlags(options))}\` again.`,
       );
     }
 
@@ -471,6 +483,12 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
           )
         : { deleted: 0, failed: 0, errorBreakdown: new Map<string, number>() };
 
+    // A Ctrl-C rejects every delete still queued. Left unfinished, the undo
+    // reads as interrupted, as an import does.
+    if (interruptedExitCode() !== null) {
+      run.release();
+      throwUserAbort();
+    }
     undoRecord = run.finish();
     if (undoRecord.status === "complete") {
       patchRun(runsDir, record.id, { status: "undone", undoneBy: undoRecord.id });
@@ -482,7 +500,8 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   if (options.json) {
     log.data(
       JSON.stringify(
-        jsonResult(target, undoRecord, preview, {
+        jsonResult(target, record, preview, {
+          run: undoRecord,
           result: {
             deleted: summary.deleted,
             failed: summary.failed,
@@ -505,7 +524,9 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     if (undoRecord.status === "complete") {
       log.success(`Import run ${record.id} is undone.`);
     } else {
-      log.info(`Run \`clerk migrate undo ${record.id}\` again to retry the users that failed.`);
+      log.info(
+        `Run \`${withFlags(`clerk migrate undo ${record.id}`, carryFlags(options))}\` again to retry the users that failed.`,
+      );
     }
   }
 

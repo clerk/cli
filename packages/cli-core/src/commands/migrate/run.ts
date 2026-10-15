@@ -31,6 +31,7 @@ import {
 } from "../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { quoteArg } from "../../lib/json-body.ts";
+import { carryFlags, withFlags } from "./lib/carry-flags.ts";
 import { log } from "../../lib/log.ts";
 import { NEXT_STEPS, printAgentNextSteps } from "../../lib/next-steps.ts";
 import { confirm } from "../../lib/prompts.ts";
@@ -491,6 +492,8 @@ export function findResume(
     /** The key's stand-in ID, for a run recorded while Clerk could not name the instance. */
     keyInstanceId?: string;
   },
+  /** The import's runs-folder and target flags, for the command a refusal suggests. */
+  carry: string[] = [],
 ): ResumeCase {
   const sameJob = (record: RunRecord): boolean =>
     record.kind === "import" &&
@@ -548,7 +551,7 @@ export function findResume(
   if (undoRun && runState(runsDir, undoRun) !== "complete") {
     throwUsageError(
       `Run ${latest.id} has an undo that did not finish (run ${undoRun.id}). ` +
-        `Finish it with \`clerk migrate undo ${latest.id}\`, or pass --new-run to import into a new run.`,
+        `Finish it with \`${withFlags(`clerk migrate undo ${latest.id}`, carry)}\`, or pass --new-run to import into a new run.`,
     );
   }
   // Undone in full, though the import run was never marked so.
@@ -719,10 +722,7 @@ function commandFor(options: MigrateRunOptions, fromExport: string | undefined, 
     parts.push("--firebase-salt-separator", "SALT_SEPARATOR");
   if (options.firebaseRounds) parts.push("--firebase-rounds", "ROUNDS");
   if (options.firebaseMemCost) parts.push("--firebase-mem-cost", "MEM_COST");
-  if (options.secretKey) parts.push("--secret-key", "<key>");
-  if (options.app) parts.push("--app", quoteArg(options.app));
-  if (options.instance) parts.push("--instance", quoteArg(options.instance));
-  if (options.runsDir) parts.push("--runs-dir", quoteArg(options.runsDir));
+  parts.push(...carryFlags(options));
   if (options.json) parts.push("--json");
   return [...parts, ...extra].join(" ");
 }
@@ -879,13 +879,17 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       });
       const resume: ResumeCase = options.newRun
         ? { kind: "new" }
-        : findResume(runsDir, {
-            sha256,
-            source,
-            ...(options.sourceHash ? { sourceHash: options.sourceHash } : {}),
-            instanceId: target.instanceId,
-            keyInstanceId: keyInstanceId(secretKey),
-          });
+        : findResume(
+            runsDir,
+            {
+              sha256,
+              source,
+              ...(options.sourceHash ? { sourceHash: options.sourceHash } : {}),
+              instanceId: target.instanceId,
+              keyInstanceId: keyInstanceId(secretKey),
+            },
+            carryFlags(options),
+          );
 
       // The users this run created carry digests built from its parameters, so
       // the rest must be built from the same ones. A run from before this was
@@ -1153,7 +1157,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         attachOnly.length === 0
       ) {
         // Settled, so a continued run is finished rather than left interrupted.
-        if (continued) continueRun(runsDir, continued, plannedLines).finish();
+        if (continued) continueRun(runsDir, continued, plannedLines, carryFlags(options)).finish();
         if (options.json) preview({ nothingToImport: true });
         else log.warn("No users left to import.");
         return;
@@ -1191,7 +1195,10 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       // Gitignored only now, once there is consent to write a run.
       await resolveRunsDir(options.runsDir, { write: true });
       const run = continued
-        ? continueWithExport(continueRun(runsDir, continued, plannedLines), input.fromExport)
+        ? continueWithExport(
+            continueRun(runsDir, continued, plannedLines, carryFlags(options)),
+            input.fromExport,
+          )
         : startRun(runsDir, {
             kind: "import",
             target,
@@ -1301,8 +1308,8 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
 
       const steps =
         summary.failed > 0
-          ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(record.id)
-          : NEXT_STEPS.MIGRATE_DONE(record.id);
+          ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(record.id, carryFlags(options))
+          : NEXT_STEPS.MIGRATE_DONE(record.id, carryFlags(options));
       setNextSteps(steps);
       printAgentNextSteps(steps);
     },

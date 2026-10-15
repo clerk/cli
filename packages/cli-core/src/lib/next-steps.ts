@@ -2,6 +2,16 @@ import { cyan } from "./color.ts";
 import { isHuman } from "../mode.ts";
 import { log } from "./log.ts";
 
+/**
+ * A `clerk migrate` command with the caller's runs-folder and target flags.
+ * `clerk migrate runs` takes only `--runs-dir`.
+ */
+function migrateCommand(sub: string, carry: string[], runsDirOnly = false): string {
+  const at = carry.indexOf("--runs-dir");
+  const flags = runsDirOnly ? (at === -1 ? [] : carry.slice(at, at + 2)) : carry;
+  return ["clerk migrate", sub, ...flags].join(" ");
+}
+
 export const NEXT_STEPS = {
   LOGIN: [
     "Run `clerk init` to set up Clerk in your project",
@@ -75,13 +85,15 @@ export const NEXT_STEPS = {
     "Run `clerk apps list` to see your other applications",
     "Run `clerk config pull` to inspect the live configuration of this instance",
   ],
-  MIGRATE_DONE: (runId: string) => [
-    `Run \`clerk migrate runs ${runId}\` to see what happened to each user`,
-    `Run \`clerk migrate undo ${runId}\` to delete the users it created`,
+  // `carry` is the import's runs-folder and target flags, so the commands
+  // reach the same run and instance.
+  MIGRATE_DONE: (runId: string, carry: string[] = []) => [
+    `Run \`${migrateCommand(`runs ${runId}`, carry, true)}\` to see what happened to each user`,
+    `Run \`${migrateCommand(`undo ${runId}`, carry)}\` to delete the users it created`,
   ],
-  MIGRATE_DONE_WITH_ERRORS: (runId: string) => [
-    `Run \`clerk migrate runs ${runId}\` to see every user that failed and why`,
-    `Run \`clerk migrate undo ${runId}\` to delete the users it created`,
+  MIGRATE_DONE_WITH_ERRORS: (runId: string, carry: string[] = []) => [
+    `Run \`${migrateCommand(`runs ${runId}`, carry, true)}\` to see every user that failed and why`,
+    `Run \`${migrateCommand(`undo ${runId}`, carry)}\` to delete the users it created`,
   ],
 } as const;
 
