@@ -796,7 +796,7 @@ describe("rejects", () => {
         expect(
           await reasonsOf({ settings: required, users: [user("a", { phone: "415 555 0100" })] }),
         ).toEqual({
-          a: "only has phones not in E.164 form, and this instance requires a phone number (numeric usernames are on)",
+          a: "its phones aren't in E.164 form, and this instance requires a phone number (numeric usernames are on)",
         });
       });
 
