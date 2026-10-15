@@ -7,6 +7,7 @@
 import {
   confirm as clackConfirm,
   isCancel,
+  type CANCEL_SYMBOL,
   text as clackText,
   password as clackPassword,
   multiselect as clackMultiselect,
@@ -22,7 +23,7 @@ type ValidationResult = string | Error | true | undefined;
 type Validate = (value: string | undefined) => ValidationResult | Promise<ValidationResult>;
 type SyncValidate = (value: string | undefined) => string | Error | undefined;
 
-function unwrap<T>(value: T | symbol): T {
+function unwrap<T>(value: T | typeof CANCEL_SYMBOL): T {
   if (isCancel(value)) throwUserAbort();
   return value as T;
 }
