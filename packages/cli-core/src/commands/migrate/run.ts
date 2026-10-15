@@ -88,6 +88,7 @@ import {
   keyInstanceId,
   printTarget,
   resolveClerkTarget,
+  targetCarry,
 } from "./lib/target.ts";
 import { findInFlight } from "./lib/user-lookup.ts";
 import {
@@ -741,7 +742,13 @@ export function cleanupLines(runsDir: string, record: RunRecord): string[] {
  * The exact command that would carry on from here, for the consent and
  * refusal messages. Every value is shell-quoted; secrets are placeholders.
  */
-function commandFor(options: MigrateRunOptions, fromExport: string | undefined, extra: string[]) {
+function commandFor(
+  options: MigrateRunOptions,
+  fromExport: string | undefined,
+  extra: string[],
+  /** The target and runs-folder flags; a command for later passes the run's. */
+  carry = carryFlags(options),
+) {
   const input = fromExport ?? options.input ?? options.file ?? "<file>";
   const parts = ["clerk migrate import", quoteArg(input)];
   const source = options.sourceArg ?? options.source;
@@ -756,7 +763,7 @@ function commandFor(options: MigrateRunOptions, fromExport: string | undefined, 
     parts.push("--firebase-salt-separator", "SALT_SEPARATOR");
   if (options.firebaseRounds) parts.push("--firebase-rounds", "ROUNDS");
   if (options.firebaseMemCost) parts.push("--firebase-mem-cost", "MEM_COST");
-  parts.push(...carryFlags(options));
+  parts.push(...carry);
   if (options.json) parts.push("--json");
   return [...parts, ...extra].join(" ");
 }
@@ -1402,7 +1409,10 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
 
       // `runs` takes only --runs-dir.
       const runsStep = runsCommand(carryFlags({ runsDir: options.runsDir }), record.id);
-      const undo = undoCommand(record.id, carry);
+      // Run later, maybe without the key exported, so from the run's target,
+      // the way `runs <id>` builds them.
+      const later = carryFlags({ runsDir: options.runsDir, ...targetCarry(record.target) });
+      const undo = undoCommand(record.id, later);
       const steps =
         summary.failed > 0
           ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(
@@ -1412,6 +1422,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                 { ...options, newRun: false },
                 input.fromExport,
                 options.yes ? ["--yes"] : [],
+                later,
               ),
               undo,
             )

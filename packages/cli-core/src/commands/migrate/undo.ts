@@ -53,6 +53,7 @@ import {
   keyInstanceId,
   printTarget,
   resolveClerkTarget,
+  targetCarry,
 } from "./lib/target.ts";
 import { plural } from "./lib/plural.ts";
 import { findInFlight, lookupUsers, type SourceUser } from "./lib/user-lookup.ts";
@@ -324,11 +325,16 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   const runsCarry = carryFlags({ runsDir: options.runsDir });
   const record = readImportRun(runsDir, runId, runsCarry);
   const importLines = readUserLines(runsDir, record.id).length;
-  // The command a hint suggests, reaching the same runs folder and instance.
+  // The flags that found this run and instance, for a command run again now.
   const carry = carryFlags(options);
-  const undoAgain = undoCommand(record.id, carry);
 
   const { secretKey, target } = await resolveClerkTarget(options);
+  // Run later, maybe without the key exported, so from the target, the way
+  // `runs <id>` builds it.
+  const undoAgain = undoCommand(
+    record.id,
+    carryFlags({ runsDir: options.runsDir, ...targetCarry(target) }),
+  );
   if (!options.json) printTarget(target);
   assertSameInstance(record, target, secretKey);
 

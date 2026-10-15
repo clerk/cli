@@ -131,8 +131,8 @@ describe("runs <id>", () => {
     [{ keySource: "--app", appId: "app_1" }, "--app app_1 --instance ins_1"],
     // Left out, a profile resolves development, and only from its own directory.
     [{ keySource: "linked profile", appId: "app_1" }, "--app app_1 --instance ins_1"],
-    // Without the key exported again, the profile would pick the instance.
-    [{ keySource: "CLERK_SECRET_KEY env var" }, "--instance ins_1"],
+    // Maybe no longer exported, and `--instance` is refused next to a `.env`.
+    [{ keySource: "CLERK_SECRET_KEY env var" }, "--secret-key <key>"],
     // Both refuse `--instance`, and the file names the key.
     [{ keySource: ".env" }, "--runs-dir"],
     [{ keySource: "accountless app (.clerk/.tmp/keyless.json)" }, "--runs-dir"],
