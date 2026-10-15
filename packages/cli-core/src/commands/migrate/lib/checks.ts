@@ -16,6 +16,8 @@
  * Each rejected user gets the first reason that applies to them, so the counts
  * add up to the file.
  */
+import { isClerkInstanceId } from "./target.ts";
+import { plural } from "./plural.ts";
 
 import type { UserSettingsJSON } from "../../../lib/fapi.ts";
 import type { SpinnerControls } from "../../../lib/spinner.ts";
@@ -116,8 +118,6 @@ export type CheckInput = {
   adoptedSourceIds?: Set<string>;
   spinner?: SpinnerControls;
 };
-
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
 // --- Hash shapes -----------------------------------------------------------
 
@@ -854,7 +854,7 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
   // passes as is and Clerk answers "app not found", where `<app_id>` would
   // be read as a redirect.
   const { appId, instanceId } = input.target;
-  const named = instanceId.startsWith("ins_");
+  const named = isClerkInstanceId(instanceId);
   const flags = ` --app ${appId ?? "APP_ID"} --instance ${instanceId}`;
   const settings = input.settings;
   const mfa = MFA_SETTINGS.filter(

@@ -85,7 +85,7 @@ export async function fetchInstanceIdentity(
       bapiRequest({ method: "GET", path: "/v1/instance", secretKey }),
     );
     const instance = body as { id?: unknown; environment_type?: unknown };
-    if (typeof instance.id === "string" && instance.id.startsWith("ins_")) {
+    if (typeof instance.id === "string" && isClerkInstanceId(instance.id)) {
       return {
         instanceId: instance.id,
         env:
@@ -103,6 +103,16 @@ export async function fetchInstanceIdentity(
  * key. A run recorded under it is matched by the same key later, once
  * `GET /v1/instance` answers again.
  */
+/** A stand-in for an instance Clerk did not name: {@link keyInstanceId}'s `key_` hash. */
+export function isStandInInstanceId(id: string | undefined): boolean {
+  return id?.startsWith("key_") === true;
+}
+
+/** An instance ID Clerk itself returned. */
+export function isClerkInstanceId(id: string | undefined): boolean {
+  return id?.startsWith("ins_") === true;
+}
+
 export function keyInstanceId(secretKey: string): string {
   return `key_${createHash("sha256").update(secretKey).digest("hex").slice(0, 16)}`;
 }
@@ -127,7 +137,7 @@ function assertInstanceFlagMatches(
   if (matches) return;
   // A `key_` ID means Clerk did not name the instance, so a literal ID cannot
   // be checked; saying it "does not match" would blame the flag.
-  if (!wanted && identity.instanceId.startsWith("key_")) {
+  if (!wanted && isStandInInstanceId(identity.instanceId)) {
     throwUsageError(
       `Could not verify that the key from ${keySource} addresses --instance ${flag}: ` +
         "Clerk did not answer GET /v1/instance. Nothing was changed.\n" +

@@ -21,6 +21,11 @@ export function carryFlags(options: {
   ];
 }
 
+/** `clerk migrate undo <id>` with the flags that reach its runs folder and instance. */
+export function undoCommand(id: string, carry: string[]): string {
+  return withFlags(`clerk migrate undo ${id}`, carry);
+}
+
 /** `--` flags appended to a command, or nothing. */
 export function withFlags(command: string, flags: string[]): string {
   return flags.length > 0 ? `${command} ${flags.join(" ")}` : command;

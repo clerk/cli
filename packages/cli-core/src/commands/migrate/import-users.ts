@@ -34,6 +34,22 @@ export { readRetryAfter } from "./lib/retry.ts";
  * Groups error messages that differ only in field ordering, so the summary
  * reports "12 users: [\"first_name\" \"last_name\"] ..." once instead of twice.
  */
+/** A failed request's message and code, as a run line records them. */
+export function failureOf(error: unknown): { message: string; code: string } {
+  if (error instanceof RateLimitExceededError) return { message: error.message, code: "429" };
+  const apiError = error as BapiError;
+  return {
+    message: apiError.longMessage ?? apiError.message ?? "Unknown error",
+    code: String(apiError.status ?? "unknown"),
+  };
+}
+
+/** Counts a failure under its normalized message, the way every summary groups them. */
+export function tallyError(breakdown: Map<string, number>, message: string): void {
+  const key = normalizeErrorMessage(message);
+  breakdown.set(key, (breakdown.get(key) ?? 0) + 1);
+}
+
 export function normalizeErrorMessage(errorMessage: string): string {
   let normalized = "";
   let lastCopiedIndex = 0;
@@ -456,8 +472,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   ) => {
     failed++;
     processed++;
-    const normalized = normalizeErrorMessage(message);
-    errorBreakdown.set(normalized, (errorBreakdown.get(normalized) ?? 0) + 1);
+    tallyError(errorBreakdown, message);
     // With no answer, the `creating` line stays the latest: Clerk may hold
     // the user, and a re-run looks it up before creating it again.
     if (!unknown) {
@@ -538,11 +553,11 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         stopReason = apiError.longMessage ?? apiError.message;
       }
       const unknown = outcomeUnknown(error);
-      const message = apiError.longMessage ?? apiError.message ?? "Unknown error";
+      const { message, code } = failureOf(error);
       recordFailure(
         user.userId,
         unknown ? `${message} (Clerk may have created the user; a re-run checks)` : message,
-        String(apiError.status ?? "unknown"),
+        code,
         retries,
         unknown,
       );
