@@ -15,7 +15,7 @@ import { parseEnvFile } from "./dotenv.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "./errors.ts";
 import { decodePublishableKey } from "./fapi.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "./framework.ts";
-import { keylessCopy } from "./copy.ts";
+import { keylessCopy, type KeyAccess } from "./copy.ts";
 import { log } from "./log.ts";
 
 export interface KeylessTarget {
@@ -227,6 +227,11 @@ export async function isClaimedKeylessTarget(target: KeylessTarget): Promise<boo
   }
 }
 
+/** What a refusal needs to word itself for this key: see `KeyAccess`. */
+export async function keyAccess(target: KeylessTarget): Promise<KeyAccess> {
+  return { claimed: await isClaimedKeylessTarget(target), source: target.source };
+}
+
 /**
  * Resolves the keyless target for a command, or `undefined` when the
  * account-authenticated path applies.
@@ -260,9 +265,7 @@ export async function resolveKeylessTarget(options: {
   // The secret key addresses exactly one instance — its own — so there is no
   // instance to choose between.
   if (options.instance) {
-    throwUsageError(
-      keylessCopy.instanceFlagWithKey(target.source, await isClaimedKeylessTarget(target)),
-    );
+    throwUsageError(keylessCopy.instanceFlagWithKey(target.source, await keyAccess(target)));
   }
 
   return target;
