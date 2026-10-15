@@ -31,7 +31,7 @@ import {
 } from "./lib/run-store.ts";
 import { carryFlags, importFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
 import { plural } from "./lib/plural.ts";
-import { describeTarget, isStandInInstanceId, targetFlags } from "./lib/target.ts";
+import { describeTarget, isStandInInstanceId, targetCarry } from "./lib/target.ts";
 
 export type RunsOptions = {
   json?: boolean;
@@ -306,7 +306,7 @@ export async function runs(id: string | undefined, options: RunsOptions = {}): P
 
   // The record says where the import's key came from, and so which flags
   // reach that instance again.
-  const carry = carryFlags({ runsDir: options.runsDir, ...targetFlags(record.target) });
+  const carry = carryFlags({ runsDir: options.runsDir, ...targetCarry(record.target) });
   if (options.json) log.data(JSON.stringify(showJson(runsDir, record, carry), null, 2));
   else printRun(runsDir, record, carry);
 }

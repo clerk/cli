@@ -20,6 +20,7 @@ import { log } from "../../../lib/log.ts";
 import { isHuman } from "../../../mode.ts";
 import { detectInstanceType } from "./instance.ts";
 import { retryOn429 } from "./retry.ts";
+import type { CarryOptions } from "./carry-flags.ts";
 import type { RunTarget } from "./run-store.ts";
 
 export type TargetOptions = {
@@ -105,37 +106,43 @@ async function describeKeySource(options: TargetOptions): Promise<KeySource> {
   return fromAppContext(KEY_SOURCE.linkedProfile, options);
 }
 
-type TargetFlags = { secretKey?: string; app?: string; instance?: string };
+type TargetCarry = Omit<CarryOptions, "runsDir">;
+type CarryFor = (target: RunTarget, instance?: string) => TargetCarry;
+
+// The key again, as a placeholder: the key alone picks the instance, from
+// any directory. Not `--instance`: in an unlinked directory with a `.env`,
+// the keyless rung refuses it before a profile could resolve it.
+const keyAgain: CarryFor = () => ({ secretKey: "<key>" });
+// The app and the instance. A profile's own link resolves development, and
+// only from a directory linked to that app.
+const appAndInstance: CarryFor = (target, instance) => ({ app: target.appId, instance });
 
 /**
- * For each named key source, the flags that reach a recorded target again.
- * Every name needs an entry, so a new one fails to compile until it says how.
+ * For each named key source, what reaches a recorded target again. Every
+ * name needs an entry, so a new one fails to compile until it says how.
  */
-const TARGET_FLAGS: Record<NamedKeySource, (target: RunTarget, instance?: string) => TargetFlags> =
-  {
-    // The key again, as a placeholder.
-    [KEY_SOURCE.secretKeyFlag]: () => ({ secretKey: "<key>" }),
-    // The app and the instance. A profile's own link resolves development,
-    // and only from a directory linked to that app.
-    [KEY_SOURCE.app]: (target, instance) => ({ app: target.appId, instance }),
-    [KEY_SOURCE.linkedProfile]: (target, instance) => ({ app: target.appId, instance }),
-    // The instance. A key still exported must address it, which the target
-    // check enforces; without one, the profile reaches it by ID.
-    [KEY_SOURCE.envVar]: (_target, instance) => ({ instance }),
-  };
+const TARGET_CARRY: Record<NamedKeySource, CarryFor> = {
+  [KEY_SOURCE.secretKeyFlag]: keyAgain,
+  [KEY_SOURCE.envVar]: keyAgain,
+  [KEY_SOURCE.app]: appAndInstance,
+  [KEY_SOURCE.linkedProfile]: appAndInstance,
+};
+
+function isNamedKeySource(source: string | undefined): source is NamedKeySource {
+  return source !== undefined && Object.hasOwn(TARGET_CARRY, source);
+}
 
 /**
- * The flags a command `runs <id>` suggests needs to reach the run's target.
- * The instance goes by ID, not alias (a staging one has none), and only a
- * real one: no `--instance` resolves a stand-in. A `.env` file or a keyless
- * app gets none, because both refuse `--instance` and the file names the key.
+ * The `carryFlags` options that reach a run's target again, for a command run
+ * later: `runs <id>`'s, and an import's or undo's own next steps. The instance
+ * goes by ID, not alias (a staging one has none), and only a real one: no
+ * `--instance` resolves a stand-in. Any other source (a `.env` file, a
+ * keyless app, a framework's own key variable) gets none: each refuses
+ * `--instance`, and names its own key.
  */
-export function targetFlags(target: RunTarget): TargetFlags {
+export function targetCarry(target: RunTarget): TargetCarry {
   const instance = isClerkInstanceId(target.instanceId) ? target.instanceId : undefined;
-  const flags = (TARGET_FLAGS as Partial<Record<string, (typeof TARGET_FLAGS)[NamedKeySource]>>)[
-    target.keySource ?? ""
-  ];
-  return flags ? flags(target, instance) : {};
+  return isNamedKeySource(target.keySource) ? TARGET_CARRY[target.keySource](target, instance) : {};
 }
 
 /**

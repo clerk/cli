@@ -7,12 +7,14 @@ import { quoteArg } from "../../../lib/json-body.ts";
  * it loops on exit 2. Values are shell-quoted, and the secret key is a
  * placeholder.
  */
-export function carryFlags(options: {
+export type CarryOptions = {
   secretKey?: string;
   app?: string;
   instance?: string;
   runsDir?: string;
-}): string[] {
+};
+
+export function carryFlags(options: CarryOptions): string[] {
   return [
     ...(options.secretKey ? ["--secret-key", "<key>"] : []),
     ...(options.app ? ["--app", quoteArg(options.app)] : []),

@@ -483,9 +483,12 @@ importing the file again might not reach this run: a newer run of the same
 file and source that may be for the same instance (one recorded under a key's
 stand-in ID may be any), a file changed since, or any undo of it. Both carry
 what reaches the run's instance again: `--secret-key <key>` for a key passed
-that way, `--app` and `--instance` for `--app` or a linked profile, and
-`--instance` for `CLERK_SECRET_KEY`. A `.env` file or a keyless app gets
-neither, because both refuse `--instance`. An unknown ID exits 2.
+with `--secret-key` or exported as `CLERK_SECRET_KEY`, and `--app` and
+`--instance` for `--app` or a linked profile. Any other source (a `.env` file,
+a keyless app, or a framework's own key variable such as
+`NUXT_CLERK_SECRET_KEY`) gets no target flags, because each refuses
+`--instance` and names its own key. The import's own next steps, and an undo's,
+carry the same. An unknown ID exits 2.
 
 ### `clerk migrate undo`
 

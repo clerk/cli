@@ -75,6 +75,7 @@ import {
   keyInstanceId,
   printTarget,
   resolveClerkTarget,
+  targetCarry,
 } from "./lib/target.ts";
 import { findInFlight } from "./lib/user-lookup.ts";
 import {
@@ -499,13 +500,18 @@ function cleanupLines(runsDir: string, record: RunRecord): string[] {
  * The exact command that would carry on from here, for the consent and
  * refusal messages. Every value is shell-quoted; secrets are placeholders.
  */
-function commandFor(options: MigrateRunOptions, extra: string[]) {
+function commandFor(
+  options: MigrateRunOptions,
+  extra: string[],
+  /** The target and runs-folder flags; a command for later passes the run's. */
+  carry = carryFlags(options),
+) {
   const input = options.input ?? options.file ?? "<file>";
   const parts = ["clerk migrate import", quoteArg(input)];
   if (options.source) parts.push("--source", quoteArg(options.source));
   if (options.newRun) parts.push("--new-run");
   parts.push(...importFlags(options));
-  parts.push(...carryFlags(options));
+  parts.push(...carry);
   if (options.json) parts.push("--json");
   return [...parts, ...extra].join(" ");
 }
@@ -960,13 +966,16 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       // `runs` takes only --runs-dir.
       const runsStep = runsCommand(carryFlags({ runsDir: options.runsDir }), record.id);
-      const undo = undoCommand(record.id, carry);
+      // Run later, maybe without the key exported, so from the run's target,
+      // the way `runs <id>` builds them.
+      const later = carryFlags({ runsDir: options.runsDir, ...targetCarry(record.target) });
+      const undo = undoCommand(record.id, later);
       const steps =
         summary.failed > 0
           ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(
               runsStep,
               // The same import again continues this run; --new-run would not.
-              commandFor({ ...options, newRun: false }, options.yes ? ["--yes"] : []),
+              commandFor({ ...options, newRun: false }, options.yes ? ["--yes"] : [], later),
               undo,
             )
           : NEXT_STEPS.MIGRATE_DONE(runsStep, undo);

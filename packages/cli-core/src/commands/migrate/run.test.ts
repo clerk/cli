@@ -362,6 +362,25 @@ describe("run", () => {
     expect(listRuns(runsDir())[0]).toMatchObject({ status: "partial", counts: { failed: 1 } });
   });
 
+  // Run later, the key may no longer be exported: the steps name it as a
+  // placeholder, as `runs <id>` does, rather than nothing.
+  test("after failures with an exported key, the retry and undo name the key", async () => {
+    stubClerk({ failing: new Set(["u2"]) });
+    const previous = process.env.CLERK_SECRET_KEY;
+    process.env.CLERK_SECRET_KEY = "sk_test_x";
+    try {
+      await run({ source: "clerk", input: "export.json", yes: true });
+    } finally {
+      if (previous === undefined) delete process.env.CLERK_SECRET_KEY;
+      else process.env.CLERK_SECRET_KEY = previous;
+    }
+
+    const [record] = listRuns(runsDir());
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain("--source clerk --secret-key <key> --yes` to retry them");
+    expect(err).toContain(`\`clerk migrate undo ${record!.id} --secret-key <key>\``);
+  });
+
   // `runs` reads only a runs folder; the retry is the same import, which
   // continues this run, so it drops --new-run.
   test("after failures, names the runs listing and the import that retries them", async () => {
