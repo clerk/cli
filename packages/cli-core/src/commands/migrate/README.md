@@ -1310,7 +1310,9 @@ A run records its choice (`reserveUnverified` in `run.json`), and a continued
 run reuses it without asking, so every user of one run is created the same
 way. `--reserve-unverified` on a continue of a run that kept them unverified is
 refused; pass `--new-run` to change modes. A user a run adopts keeps the mode
-its first create recorded (`reserved` on its `creating` line).
+its first create recorded (`reserved` on its `creating` line). When Clerk refused a phone and the retry went out
+without the reserved phones, that line lists them as `pending`, and a continue
+that adopts the user attaches them, unverified.
 
 Reserved, an unverified identifier is checked for duplicates like a verified
 one, because it goes on the user's create: one that an instance user or an
