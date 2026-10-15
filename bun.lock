@@ -20,7 +20,7 @@
     },
     "packages/cli": {
       "name": "clerk",
-      "version": "3.4.1",
+      "version": "4.0.0",
       "bin": {
         "clerk": "./bin/clerk",
       },
@@ -33,7 +33,7 @@
       },
       "dependencies": {
         "@bacons/xcode": "1.0.0-alpha.33",
-        "@clack/prompts": "^1.7.0",
+        "@clack/prompts": "^1.8.1",
         "@clerk/cli-extras": "workspace:*",
         "@commander-js/extra-typings": "^15.0.0",
         "@napi-rs/keyring": "^2.1.1",
@@ -117,9 +117,9 @@
 
     "@changesets/write": ["@changesets/write@0.4.0", "", { "dependencies": { "@changesets/types": "^6.1.0", "fs-extra": "^7.0.1", "human-id": "^4.1.1", "prettier": "^2.7.1" } }, "sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q=="],
 
-    "@clack/core": ["@clack/core@1.4.3", "", { "dependencies": { "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ=="],
+    "@clack/core": ["@clack/core@1.5.1", "", { "dependencies": { "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-iHTrHA8MtVuLl2TfZySmcKv1qO2PoyC9Z7pfSDozEuV5vtY3/wcOPKJXlqJ5Oq2Cx5DDGQGAMVx6HZfRRoVEbQ=="],
 
-    "@clack/prompts": ["@clack/prompts@1.7.0", "", { "dependencies": { "@clack/core": "1.4.3", "fast-string-width": "^3.0.2", "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-y7/yvZ2TPAnR9+jnc00klvNNLkJiXFFrQA/hlLCcxA9a2A4zQIOimyFQ9XfwYKiGD1fb5GY8vbKIIgO8d5Tb2A=="],
+    "@clack/prompts": ["@clack/prompts@1.8.1", "", { "dependencies": { "@clack/core": "1.5.1", "fast-string-width": "^3.0.2", "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-dlT1m5e/0yUL0kRNcQn7yGLVThkgbB0Ga/1AmfDDC/8ik6AIiSf2QLQO2zPYvefsHP0aFgxO93cVLCCfDp7kzQ=="],
 
     "@clerk/backend": ["@clerk/backend@3.23.0", "", { "dependencies": { "@clerk/shared": "^4.39.0", "standardwebhooks": "^1.0.0", "tslib": "2.8.1" } }, "sha512-Cp+JvKJmM2/ePHG6WNyTIo9S8xUtOxHi6tpqUWXvb0L0fLA7v5DUDxWlPTnYjaXC0ZftUJ2TsajSeRLz/uWPKw=="],
 

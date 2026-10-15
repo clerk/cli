@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@bacons/xcode": "1.0.0-alpha.33",
-    "@clack/prompts": "^1.7.0",
+    "@clack/prompts": "^1.8.1",
     "@clerk/cli-extras": "workspace:*",
     "@commander-js/extra-typings": "^15.0.0",
     "@napi-rs/keyring": "^2.1.1",
