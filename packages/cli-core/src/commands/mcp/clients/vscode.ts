@@ -5,24 +5,23 @@
  * back to the file-backed base editing the user-global `mcp.json` under VS
  * Code's per-OS user config dir (the file behind `MCP: Open User
  * Configuration`). VS Code uses the top-level key `servers` (not `mcpServers`)
- * and tags stdio servers with `type: "stdio"`.
+ * and tags remote servers with `type: "http"`.
  */
 
 import { join } from "node:path";
-import { clerkRunArgs, clerkRunUrl, RUN_COMMAND } from "./clerk-run.ts";
 import { makeCliClient } from "./make-cli-client.ts";
-import { makeJsonClient } from "./make-client.ts";
+import { makeJsonClient, urlField } from "./make-client.ts";
 import { vscodeUserDir } from "./paths.ts";
 
 const vscodeFileClient = makeJsonClient({
   id: "vscode",
   displayName: "GitHub Copilot",
   scope: "user",
-  activation:
-    "Reload the VS Code window, then start the server from `MCP: List Servers` (`clerk` must be on your PATH).",
+  activation: () =>
+    "Reload the VS Code window, then start the server from `MCP: List Servers` and sign in to Clerk when prompted.",
   topKey: "servers",
-  encode: () => ({ type: "stdio", command: RUN_COMMAND, args: clerkRunArgs() }),
-  extractUrl: clerkRunUrl,
+  encode: (url) => ({ type: "http", url }),
+  extractUrl: urlField("url"),
   configPath: () => join(vscodeUserDir(), "mcp.json"),
 });
 
@@ -31,8 +30,5 @@ export const vscodeClient = makeCliClient({
   binary: "code",
   installHint:
     "Install the `code` shell command from VS Code (\"Shell Command: Install 'code' command in PATH\").",
-  addArgs: (name) => [
-    "--add-mcp",
-    JSON.stringify({ name, type: "stdio", command: RUN_COMMAND, args: clerkRunArgs() }),
-  ],
+  addArgs: ({ name, url }) => ["--add-mcp", JSON.stringify({ name, type: "http", url })],
 });

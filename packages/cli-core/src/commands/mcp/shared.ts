@@ -155,6 +155,47 @@ export function wantsJson(options: McpOptions): boolean {
   return Boolean(options.json) || isAgent();
 }
 
+/**
+ * Names of every clerk 3.x `clerk mcp run` bridge entry in this client,
+ * whatever it was named (3.x took `--name` too). Best-effort: an unreadable
+ * config can't be scanned, and the operation that follows surfaces the read
+ * error itself.
+ */
+export async function legacyEntryNames(client: McpClient, cwd: string): Promise<string[]> {
+  try {
+    const entries = await client.list(cwd);
+    return entries.filter((entry) => entry.legacy).map((entry) => entry.name);
+  } catch (error) {
+    log.debug(`mcp: ${client.id} legacy entry scan failed — ${errorMessage(error)}`);
+    return [];
+  }
+}
+
+/**
+ * Remove the given legacy bridge entries from a client. A failure doesn't fail
+ * the client — the operation it accompanies already succeeded — so it is
+ * warned with the manual fix and reported back in `remaining`.
+ */
+export async function removeLegacyEntries(
+  client: McpClient,
+  names: readonly string[],
+  cwd: string,
+): Promise<{ removed: string[]; remaining: string[] }> {
+  const removed: string[] = [];
+  const remaining: string[] = [];
+  for (const name of names) {
+    try {
+      if ((await client.remove(name, cwd)).removed) removed.push(name);
+    } catch (error) {
+      remaining.push(name);
+      log.warn(
+        `${client.displayName}: could not remove the legacy \`${name}\` entry — ${errorMessage(error)}. Remove it with \`clerk mcp uninstall --name ${name}\`.`,
+      );
+    }
+  }
+  return { removed, remaining };
+}
+
 /** A per-client failure, structurally reportable in `--json` output. */
 type ClientFailure = { client: ClientId; error: string };
 
