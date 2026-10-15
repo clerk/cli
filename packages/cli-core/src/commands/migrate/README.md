@@ -952,8 +952,12 @@ users that failed or were skipped, with the path to the full record, then what
 to run next: for an interrupted or partial import, the import that continues
 it, with the flags it ran with, then the undo. The continue is left out when
 importing the file again might not reach this run: a newer run of the same
-file and source that may be for the same instance (one recorded under a key's stand-in ID
-may be any), a file changed since, or any undo of it. An unknown ID exits 2.
+file and source that may be for the same instance (one recorded under a key's
+stand-in ID may be any), a file changed since, or any undo of it. Both carry
+what reaches the run's instance again: `--secret-key <key>` for a key passed
+that way, `--app` and `--instance` for `--app` or a linked profile, and
+`--instance` for `CLERK_SECRET_KEY`. A `.env` file or a keyless app gets
+neither, because both refuse `--instance`. An unknown ID exits 2.
 
 ### `clerk migrate undo`
 

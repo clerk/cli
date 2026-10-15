@@ -37,6 +37,47 @@ export type ClerkTarget = RunTarget & {
 };
 
 /**
+ * The key sources a run records by name. A `.env` file or a keyless app is
+ * recorded by its file, so those stay plain strings.
+ */
+export const KEY_SOURCE = {
+  secretKeyFlag: "--secret-key",
+  app: "--app",
+  envVar: "CLERK_SECRET_KEY env var",
+  linkedProfile: "linked profile",
+} as const;
+
+type NamedKeySource = (typeof KEY_SOURCE)[keyof typeof KEY_SOURCE];
+
+type InstanceIdentity = { instanceId: string; env: string };
+
+type KeySource = {
+  keySource: string;
+  appId?: string;
+  appLabel?: string;
+  /** No `env` when the instance was named by ID, which is no environment. */
+  instance?: { instanceId: string; env?: string };
+};
+
+/** The app and instance `--app` or a linked profile names. */
+async function fromAppContext(
+  keySource: NamedKeySource,
+  options: TargetOptions,
+): Promise<KeySource> {
+  const ctx = await resolveAppContext(options);
+  return {
+    keySource,
+    appId: ctx.appId,
+    appLabel: ctx.appLabel,
+    instance: {
+      instanceId: ctx.instanceId,
+      // A profile labels a literal `--instance ins_…` with the ID itself.
+      ...(isClerkInstanceId(ctx.instanceLabel) ? {} : { env: ctx.instanceLabel }),
+    },
+  };
+}
+
+/**
  * Which rung of `resolveBapiSecretKey`'s chain supplies the key, and the app
  * it belongs to when that rung knows one. `--app` and a linked profile also
  * know the instance, from the Platform API or the profile.
@@ -45,39 +86,12 @@ export type ClerkTarget = RunTarget & {
  * a linked profile, so the profile's app is not named for it: that key may
  * belong to any app at all.
  */
-type InstanceIdentity = { instanceId: string; env: string };
-
-type KeySource = {
-  keySource: string;
-  appId?: string;
-  appLabel?: string;
-  instance?: InstanceIdentity;
-};
-
-/** The app and instance a resolved app context names, for `describeKeySource`. */
-function fromAppContext(
-  keySource: string,
-  ctx: Awaited<ReturnType<typeof resolveAppContext>>,
-): KeySource {
-  return {
-    keySource,
-    appId: ctx.appId,
-    appLabel: ctx.appLabel,
-    instance: { instanceId: ctx.instanceId, env: ctx.instanceLabel },
-  };
-}
-
 async function describeKeySource(options: TargetOptions): Promise<KeySource> {
-  if (options.secretKey) return { keySource: "--secret-key" };
+  if (options.secretKey) return { keySource: KEY_SOURCE.secretKeyFlag };
 
-  if (options.app) {
-    return fromAppContext(
-      "--app",
-      await resolveAppContext({ app: options.app, instance: options.instance }),
-    );
-  }
+  if (options.app) return fromAppContext(KEY_SOURCE.app, options);
 
-  if (process.env.CLERK_SECRET_KEY) return { keySource: "CLERK_SECRET_KEY env var" };
+  if (process.env.CLERK_SECRET_KEY) return { keySource: KEY_SOURCE.envVar };
 
   // Only the SDK's own file says the app is accountless: a key in `.env`
   // may belong to any app, an account's included.
@@ -88,7 +102,40 @@ async function describeKeySource(options: TargetOptions): Promise<KeySource> {
       : { keySource: keyless.source };
   }
 
-  return fromAppContext("linked profile", await resolveAppContext({ instance: options.instance }));
+  return fromAppContext(KEY_SOURCE.linkedProfile, options);
+}
+
+type TargetFlags = { secretKey?: string; app?: string; instance?: string };
+
+/**
+ * For each named key source, the flags that reach a recorded target again.
+ * Every name needs an entry, so a new one fails to compile until it says how.
+ */
+const TARGET_FLAGS: Record<NamedKeySource, (target: RunTarget, instance?: string) => TargetFlags> =
+  {
+    // The key again, as a placeholder.
+    [KEY_SOURCE.secretKeyFlag]: () => ({ secretKey: "<key>" }),
+    // The app and the instance. A profile's own link resolves development,
+    // and only from a directory linked to that app.
+    [KEY_SOURCE.app]: (target, instance) => ({ app: target.appId, instance }),
+    [KEY_SOURCE.linkedProfile]: (target, instance) => ({ app: target.appId, instance }),
+    // The instance. A key still exported must address it, which the target
+    // check enforces; without one, the profile reaches it by ID.
+    [KEY_SOURCE.envVar]: (_target, instance) => ({ instance }),
+  };
+
+/**
+ * The flags a command `runs <id>` suggests needs to reach the run's target.
+ * The instance goes by ID, not alias (a staging one has none), and only a
+ * real one: no `--instance` resolves a stand-in. A `.env` file or a keyless
+ * app gets none, because both refuse `--instance` and the file names the key.
+ */
+export function targetFlags(target: RunTarget): TargetFlags {
+  const instance = isClerkInstanceId(target.instanceId) ? target.instanceId : undefined;
+  const flags = (TARGET_FLAGS as Partial<Record<string, (typeof TARGET_FLAGS)[NamedKeySource]>>)[
+    target.keySource ?? ""
+  ];
+  return flags ? flags(target, instance) : {};
 }
 
 /**
@@ -152,7 +199,7 @@ export function assertInstanceFlagMatches(
   identity: InstanceIdentity,
 ): void {
   const flag = options.instance;
-  if (!flag || (keySource !== "--secret-key" && !keySource.startsWith("CLERK_SECRET_KEY"))) return;
+  if (!flag || (keySource !== KEY_SOURCE.secretKeyFlag && keySource !== KEY_SOURCE.envVar)) return;
   const wanted = INSTANCE_ALIASES[flag];
   const matches = wanted ? identity.env === wanted : identity.instanceId === flag;
   if (matches) return;
@@ -180,15 +227,11 @@ export async function resolveClerkTarget(
   const { instance: named, ...source } = await describeKeySource(options);
   const fetched = await fetchInstanceIdentity(secretKey);
   // The Platform API or the profile already named the instance: recorded
-  // instead of a stand-in, a run's commands can reach it with `--instance`. A
-  // profile labels a literal `--instance ins_…` with the ID itself, so the
-  // key's own environment stands in for that label.
+  // instead of a stand-in, a run's commands can reach it with `--instance`.
+  // Named by ID, its environment is unknown: the key prefix only guesses it.
   const { instanceId, env } =
     named && isStandInInstanceId(fetched.instanceId) && isClerkInstanceId(named.instanceId)
-      ? {
-          instanceId: named.instanceId,
-          env: isClerkInstanceId(named.env) ? fetched.env : named.env,
-        }
+      ? { instanceId: named.instanceId, env: named.env ?? "unknown" }
       : fetched;
   assertInstanceFlagMatches(options, source.keySource, { instanceId, env });
 

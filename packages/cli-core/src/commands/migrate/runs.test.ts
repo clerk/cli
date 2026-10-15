@@ -124,12 +124,20 @@ describe("runs <id>", () => {
     });
   });
 
-  // The record says where the key came from, and which instance to reach again.
+  // The record says where the key came from, and which instance to reach
+  // again. One row per key source, so none is left to drop its target.
   test.each([
     [{ keySource: "--secret-key" }, "--secret-key <key>"],
     [{ keySource: "--app", appId: "app_1" }, "--app app_1 --instance ins_1"],
-    // Left out, a linked profile resolves the development instance.
-    [{ keySource: "linked profile", appId: "app_1" }, "--instance ins_1"],
+    // Left out, a profile resolves development, and only from its own directory.
+    [{ keySource: "linked profile", appId: "app_1" }, "--app app_1 --instance ins_1"],
+    // Without the key exported again, the profile would pick the instance.
+    [{ keySource: "CLERK_SECRET_KEY env var" }, "--instance ins_1"],
+    // Both refuse `--instance`, and the file names the key.
+    [{ keySource: ".env" }, "--runs-dir"],
+    [{ keySource: "accountless app (.clerk/.tmp/keyless.json)" }, "--runs-dir"],
+    // No `--instance` resolves a stand-in.
+    [{ keySource: "--app", appId: "app_1", instanceId: "key_abc" }, "--app app_1 --runs-dir"],
   ])("the next command keeps the import's target from %o", async (target, expected) => {
     const record = partialImport();
     const file = path.join(runsDir, record.id, "run.json");
