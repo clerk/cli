@@ -28,9 +28,15 @@
 import { fetchAppsTolerantly } from "../../../lib/app-picker.ts";
 import { describeBapiTarget, resolveBapiSecretKey } from "../../../lib/bapi-command.ts";
 import { resolveProfile } from "../../../lib/config.ts";
-import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../../lib/errors.ts";
+import {
+  CliError,
+  ERROR_CODE,
+  isAuthError,
+  throwUsageError,
+  throwUserAbort,
+} from "../../../lib/errors.ts";
 import { search } from "../../../lib/listage.ts";
-import type { ApplicationInstance } from "../../../lib/plapi.ts";
+import type { Application, ApplicationInstance } from "../../../lib/plapi.ts";
 import { confirm } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
@@ -77,7 +83,9 @@ function canAsk(options: ResolveClerkSourceOptions): boolean {
 /** {@link ClerkExportSource} plus whether the user already chose it out loud. */
 type ResolvedSource = ClerkExportSource & { chosen: boolean };
 
-async function resolveSource(options: ResolveClerkSourceOptions): Promise<ResolvedSource> {
+async function resolveSource(
+  options: ResolveClerkSourceOptions,
+): Promise<ResolvedSource | undefined> {
   // What separates the two tiers is not "did the CLI have to look anything up"
   // but "did the user say which instance". A flag or an exported key is a
   // sentence they typed for this run; the linked project is a choice they made
@@ -113,15 +121,22 @@ async function resolveSource(options: ResolveClerkSourceOptions): Promise<Resolv
         `\`clerk migrate export clerk\` has no source instance, and can't ask here. ${NAME_A_SOURCE}`,
       );
     }
+    // Nothing resolved: the caller offers every instance, as it does when
+    // something was resolved, rather than `clerk link`'s picker and its
+    // "create a new application" row.
+    return undefined;
+  }
+}
 
-    const ctx = await resolveUsersInstanceContext({});
-    return {
-      secretKey: ctx.secretKey,
-      target: ctx.appLabel ? `${ctx.appLabel} (${ctx.instanceLabel})` : undefined,
-      // The picker just asked. Confirming the answer to a question the user
-      // answered one prompt ago is noise.
-      chosen: true,
-    };
+/** The account's applications, or `undefined` when listing them needs a login. */
+async function listApps(): Promise<Application[] | undefined> {
+  try {
+    return await fetchAppsTolerantly();
+  } catch (error) {
+    // Only a missing or expired login is "can't list"; anything else is a
+    // failure of its own, and goes through as one.
+    if (isAuthError(error)) return undefined;
+    throw error;
   }
 }
 
@@ -138,26 +153,25 @@ async function resolveSource(options: ResolveClerkSourceOptions): Promise<Resolv
  * makes sense when you are choosing somewhere to *write*, and no sense at all
  * as an export source — a brand-new application has no users in it.
  *
- * @param currentAppId the application the CLI resolved on the user's behalf.
- *   Its instances lead the list, because they are the likeliest answer.
- * @returns undefined when there is nothing to offer, so the caller can fall
- *   back to telling the user which flags to pass instead of showing an empty
- *   list. `fetchAppsTolerantly` returns empty on a degraded PLAPI, not just on
- *   an account with no applications.
+ * @param linkedAppId the application the CLI resolved on the user's behalf.
+ *   Its instances go **last**, marked: it is usually the migration's
+ *   destination, and the first row is the one a reflexive Enter takes.
+ * @returns undefined when there is nothing to offer. `fetchAppsTolerantly`
+ *   returns empty on a degraded PLAPI, not just on an account with no
+ *   applications.
  */
-async function pickInstance(currentAppId?: string): Promise<ClerkExportSource | undefined> {
-  const apps = await fetchAppsTolerantly();
-
-  const ordered = currentAppId
-    ? [
-        ...apps.filter((app) => app.application_id === currentAppId),
-        ...apps.filter((app) => app.application_id !== currentAppId),
-      ]
-    : apps;
+async function pickInstance(
+  apps: Application[],
+  linkedAppId?: string,
+): Promise<ClerkExportSource | undefined> {
+  const linked = (app: Application) => app.application_id === linkedAppId;
+  const ordered = [...apps.filter((app) => !linked(app)), ...apps.filter(linked)];
 
   const choices = ordered.flatMap((app) =>
     (app.instances ?? []).map((instance) => ({
-      name: `${app.name || app.application_id} - ${instanceLabel(instance)} (${instance.instance_id})`,
+      name:
+        `${app.name || app.application_id} - ${instanceLabel(instance)} (${instance.instance_id})` +
+        (linked(app) ? " (linked: usually the destination)" : ""),
       value: { app: app.application_id, instance: instance.instance_id },
     })),
   );
@@ -190,8 +204,9 @@ async function currentAppId(options: ResolveClerkSourceOptions): Promise<string 
 export async function resolveClerkSource(
   options: ResolveClerkSourceOptions,
 ): Promise<ClerkExportSource> {
-  const { chosen, ...source } = await resolveSource(options);
-  if (chosen) return source;
+  const resolved = await resolveSource(options);
+  if (resolved?.chosen) return { secretKey: resolved.secretKey, target: resolved.target };
+  const source = resolved && { secretKey: resolved.secretKey, target: resolved.target };
 
   // What the CLI resolved on its own (the linked project, a key in `.env`) is
   // normally the migration's destination. With nobody to ask, exporting it
@@ -199,24 +214,28 @@ export async function resolveClerkSource(
   // at it, so the source has to be named.
   if (!canAsk(options)) {
     throwUsageError(
-      `\`clerk migrate export clerk\` won't export ${source.target ?? "the resolved instance"} without asking: it is usually where the users are going. ${NAME_A_SOURCE}`,
+      `\`clerk migrate export clerk\` won't export ${source?.target ?? "the resolved instance"} without asking: it is usually where the users are going. ${NAME_A_SOURCE}`,
     );
   }
 
-  let picked: ClerkExportSource | undefined;
-  try {
-    picked = await pickInstance(await currentAppId(options));
-  } catch (error) {
-    // Listing applications needs an account. An accountless app's key is
-    // already resolved, so offer it rather than stop at a login.
-    if (!(error instanceof CliError)) throw error;
+  const apps = await listApps();
+  if (!apps) {
+    // Listing applications needs a login. An accountless app's key is
+    // already resolved, so it can still be offered on its own.
+    if (!source) {
+      throwUsageError(
+        `Listing your applications needs \`clerk auth login\`, and nothing here names a source instance. ${NAME_A_SOURCE}`,
+      );
+    }
     const use = await confirm({
-      message: `Your applications can't be listed (${error.message.split("\n")[0]}). Export from ${source.target ?? "the resolved instance"}?`,
+      message: `Listing your applications needs a login, so they can't be offered. Export from ${source.target ?? "the resolved instance"} instead?`,
       default: false,
     });
     if (use) return source;
     throwUserAbort();
   }
+
+  const picked = await pickInstance(apps, await currentAppId(options));
   if (picked) return picked;
 
   throwUsageError(`There are no instances to pick from. ${NAME_A_SOURCE}`);

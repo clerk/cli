@@ -287,20 +287,19 @@ back into itself. Instead:
 - Anything resolved on your behalf — the linked project, a keyless app — is
   never taken silently. A picker of every **instance** on your account opens
   instead — one flat row each, `my-app - Production instance (ins_…)`, not an
-  application picker followed by an instance picker — with the resolved
-  application's instances listed **first** so taking one is still a single
-  Enter. When there are no instances to offer, it exits 2 naming
-  `--secret-key`, `--app`/`--instance` and `CLERK_SECRET_KEY`. When your
-  applications can't be listed (an accountless app with no login), it asks
-  whether to export the resolved instance instead.
-- With nothing to resolve at all (no link, no key, no flags), you get the
-  application picker `clerk users` uses — `Select a Clerk application to use:`,
-  followed by an instance picker when the application has more than one —
-  rather than an error about an unlinked directory. That is `clerk link`'s
-  picker, so it does offer `+ Create a new application`; a brand-new
-  application has no users to export, so it is never the answer here.
+  application picker followed by an instance picker. The resolved
+  application's instances come **last**, marked `(linked: usually the
+destination)`: it is usually where the users are going, and the first row is
+  what a reflexive Enter takes. When there are no instances to offer, it exits
+  2 naming `--secret-key`, `--app`/`--instance` and `CLERK_SECRET_KEY`. When
+  listing your applications needs a login (an accountless app, or an expired
+  session), it asks whether to export the resolved instance instead.
+- With nothing to resolve at all (no link, no key, no flags), you get the same
+  flat list of instances, rather than an error about an unlinked directory.
+  Not logged in, there is nothing to list, so it exits 2 naming the same flags.
 
-The instance picker (the second tier) has no "create a new application" choice.
+The instance picker has no "create a new application" choice: a brand-new
+application has no users to export.
 Its rows are searchable by what they show, so typing an application name,
 `production`, or an instance id all narrow it.
 
