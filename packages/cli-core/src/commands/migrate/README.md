@@ -264,6 +264,14 @@ The file is an envelope around the users:
 `--source`. A Firebase export adds `firebase`, the project's hash
 parameters, so the import needs no `--firebase-*` flags.
 
+`--source` with a different built-in name is refused, since it would map the
+users with the wrong fields. `--source` with the path to a
+[source you wrote](#custom-sources) replaces the envelope's: it gets the same
+users, in the platform's own shape, so it can bring across what the built-in
+mapping leaves out, such as a WorkOS `metadata.username`. The import keeps its
+link to the export run, and `run.json` records the source the envelope named
+as `envelopeSource`.
+
 `--json` prints the result on stdout instead — `{ target, run, output, users,
 coverage, next }` — and never prompts, so a missing credential exits 2 naming
 the flag to pass.

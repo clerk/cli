@@ -66,7 +66,7 @@ export function registerMigrate(program: Program): void {
     .argument("[file|export-run-id]", "The export file, or the ID of the export run that wrote it")
     .option(
       "--source <key|path>",
-      "Where the file came from: a built-in source, or a source you wrote. Not needed for a file from `clerk migrate export`",
+      "Where the file came from: a built-in source, or a source you wrote. Not needed for a file from `clerk migrate export`, though a source you wrote replaces its own",
     )
     .option("--dry-run", "Check the file against the instance, report, and write nothing")
     .option("--allow-partial", "Import the users that pass the checks, and skip the rest")
