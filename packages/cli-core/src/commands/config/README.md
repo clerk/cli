@@ -91,6 +91,8 @@ Partially updates instance configuration using a PATCH request. Only the fields 
 
 Input can be provided via `--json` (inline), `--file` (path to a JSON file), or piped to stdin. When running interactively, the command shows the payload and prompts for confirmation before sending.
 
+The diff printed before a `patch` or `put` shows string values under keys named like a secret (`*secret*`, `*private_key*`) as `[REDACTED]`, so credentials do not end up in terminal scrollback or captured stderr.
+
 ```sh
 clerk config patch --json '{"session":{"lifetime":3600}}'
 clerk config patch --app app_123 --json '{"session":{"lifetime":3600}}'

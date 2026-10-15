@@ -5,7 +5,13 @@ import { applyPrefix, isInsideGutter, log } from "../../lib/log.ts";
 import { bold, dim } from "../../lib/color.ts";
 import { animateHeader } from "../../lib/gradient.ts";
 import { bar, intro, outro, pausedOutro, withSpinner } from "../../lib/spinner.ts";
-import { CliError, ERROR_CODE, UserAbortError, throwUsageError } from "../../lib/errors.ts";
+import {
+  CliError,
+  ERROR_CODE,
+  UserAbortError,
+  throwUsageError,
+  withApiContext,
+} from "../../lib/errors.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { setProfile } from "../../lib/config.ts";
 import {
@@ -47,6 +53,7 @@ import {
   type OAuthProviderDescriptor,
 } from "./providers.ts";
 import {
+  assertValidDomain,
   chooseDnsVerificationAction,
   chooseDnsVerificationRetryAction,
   chooseOAuthCredentialAction,
@@ -84,18 +91,29 @@ import {
   recordOAuthObservation,
 } from "./telemetry.ts";
 
-type DeployOptions = Record<string, never>;
+type DeployOptions = {
+  /** Skips the domain prompt. In agent mode, it is what allows creating the instance. */
+  domain?: string;
+  yes?: boolean;
+};
 
-export async function deploy(_options: DeployOptions = {}) {
+export async function deploy(options: DeployOptions = {}) {
+  // Before anything is read, so `--domain ""` fails instead of falling back to
+  // the prompt or the read-only report.
+  const resolved: DeployOptions =
+    options.domain === undefined
+      ? options
+      : { ...options, domain: assertValidDomain(options.domain) };
+
   if (isAgent()) {
-    await emitAgentDeployHandoff();
+    await runAgentDeploy(resolved.domain);
     return;
   }
 
   intro("clerk deploy");
   try {
     const ctx = await resolveDeployContext();
-    await runDeploy(ctx);
+    await runDeploy(ctx, resolved);
   } catch (error) {
     // Ctrl-C during a request or a DNS poll rejects with an `AbortError`, not a
     // `UserAbortError`, and `runProgram` hands rendering to the signal handler
@@ -123,7 +141,13 @@ export async function deploy(_options: DeployOptions = {}) {
   }
 }
 
-async function emitAgentDeployHandoff(): Promise<void> {
+/**
+ * Agent mode never prompts. With `--domain` it creates the production
+ * instance, or resumes the one already there; without it nothing is written.
+ * Either way it prints the `clerk deploy status` report and exits 0 once its
+ * own work succeeded: `clerk deploy status` is the pass/fail gate.
+ */
+async function runAgentDeploy(domain: string | undefined): Promise<void> {
   const ctx = await resolveDeployContext();
   if (!ctx.appId || !ctx.developmentInstanceId) {
     throw new CliError(
@@ -132,13 +156,72 @@ async function emitAgentDeployHandoff(): Promise<void> {
     );
   }
 
-  const state = await resolveDeployState(ctx);
+  if (!domain) {
+    const state = await resolveDeployState(ctx);
+    recordDeployObservation(state);
+    log.data(JSON.stringify(buildDeployStatusReport(state, null), null, 2));
+    return;
+  }
+
+  // From here a production instance exists, created by this run or found by
+  // it, so a read that fails or comes back empty must not look like nothing
+  // happened: the caller would create again, or give up on a live instance.
+  await ensureProductionInstance(ctx, domain);
+  const state = await withApiContext(
+    resolveDeployState(ctx),
+    "The production instance exists, but its status could not be read; run `clerk deploy status` to retry",
+  );
+  if (state.kind === "not_started") {
+    throw new CliError(
+      "The production instance exists, but Clerk did not return it yet. Run `clerk deploy status` to check it.",
+      { code: ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED },
+    );
+  }
   recordDeployObservation(state);
-  const report = buildDeployStatusReport(state, null);
-  log.data(JSON.stringify(report, null, 2));
+  if (state.kind === "active") assertRequestedDomain(domain, state.snapshot.domain);
+  log.data(JSON.stringify(buildDeployStatusReport(state, null), null, 2));
 }
 
-async function runDeploy(ctx: DeployContext): Promise<void> {
+/**
+ * Create the production instance unless the application already has one, and
+ * save its id to the profile so `--instance prod` resolves for the commands the
+ * report points to next.
+ */
+async function ensureProductionInstance(ctx: DeployContext, domain: string): Promise<void> {
+  if (!ctx.productionInstanceId) {
+    recordDeployStage("not_started");
+    const production = await createProductionInstance(ctx, domain);
+    if (production === "exists") {
+      // Same as the wizard: `not_started` is now false and nothing has been
+      // read yet, so the run sends no stage unless the read that follows does.
+      setTelemetryStage(null);
+      const refreshed = await resolveLiveApplicationContext(ctx.profile);
+      ctx.productionInstanceId = refreshed.productionInstanceId;
+    } else {
+      recordDeployStage(production.active_domain ? "domain_pending" : "domain_provisioning");
+      ctx.productionInstanceId = production.id;
+    }
+  }
+  if (ctx.productionInstanceId && ctx.profile.instances.production !== ctx.productionInstanceId) {
+    await persistProductionInstance(ctx, ctx.productionInstanceId);
+  }
+}
+
+/**
+ * `--domain` only applies when the instance is created. Reporting an existing
+ * deploy on another domain as if the request had been honored would send the
+ * caller off to add DNS records for a domain they did not ask for.
+ */
+function assertRequestedDomain(requested: string, existing: string): void {
+  if (existing.toLowerCase() === requested) return;
+  throw new CliError(
+    `This application already has a production instance on ${existing}, so --domain ${requested} was not applied. ` +
+      `Run \`clerk deploy\` without --domain to continue with ${existing}, or change the domain in the Clerk Dashboard.`,
+    { code: ERROR_CODE.PRODUCTION_INSTANCE_EXISTS },
+  );
+}
+
+async function runDeploy(ctx: DeployContext, options: DeployOptions): Promise<void> {
   if (!ctx.appId || !ctx.developmentInstanceId) {
     throw new CliError(
       "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy`.",
@@ -147,14 +230,14 @@ async function runDeploy(ctx: DeployContext): Promise<void> {
   }
 
   if (ctx.productionInstanceId) {
-    await reconcileExistingDeploy(ctx);
+    await reconcileExistingDeploy(ctx, options);
     return;
   }
 
-  await startNewDeploy(ctx);
+  await startNewDeploy(ctx, options);
 }
 
-async function startNewDeploy(ctx: DeployContext): Promise<void> {
+async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promise<void> {
   // What `clerk deploy status` reports on exactly this condition. Set before
   // anything is read, so a run that ends at the plan, the domain prompt or the
   // create confirmation says where the deploy stood rather than nothing.
@@ -172,7 +255,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   log.blank();
 
   warnUnsupportedOAuthProviders(unsupported.length);
-  const proceed = await confirmProceed();
+  const proceed = options.yes || (await confirmProceed());
   if (!proceed) {
     log.info("No changes were made.");
     await outro("Cancelled");
@@ -180,8 +263,11 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   }
 
   bar();
-  const domain = await collectCustomDomain();
-  const shouldCreateProductionInstance = await confirmProductionInstanceCreation(domain);
+  const domain = options.domain ?? (await collectCustomDomain());
+  const shouldCreateProductionInstance = await confirmProductionInstanceCreation(
+    domain,
+    options.yes,
+  );
   if (!shouldCreateProductionInstance) return;
 
   const productionOrExists = await createProductionInstance(ctx, domain);
@@ -201,7 +287,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
     if (refreshed.productionInstanceId) {
       await persistProductionInstance(ctx, refreshed.productionInstanceId);
     }
-    await reconcileExistingDeploy(ctx);
+    await reconcileExistingDeploy(ctx, options);
     return;
   }
   const production = productionOrExists;
@@ -277,7 +363,7 @@ async function startNewDeploy(ctx: DeployContext): Promise<void> {
   );
 }
 
-async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
+async function reconcileExistingDeploy(ctx: DeployContext, options: DeployOptions): Promise<void> {
   if (ctx.productionInstanceId && ctx.profile.instances.production !== ctx.productionInstanceId) {
     await persistProductionInstance(ctx, ctx.productionInstanceId);
   }
@@ -298,6 +384,7 @@ async function reconcileExistingDeploy(ctx: DeployContext): Promise<void> {
   // substituted; a later poll that succeeds will. OAuth is recorded either
   // way, since the configuration read succeeded.
   recordDeployObservation({ kind: "active", snapshot });
+  if (options.domain) assertRequestedDomain(options.domain, snapshot.domain);
 
   log.blank();
   for (const line of printPlan(ctx.appLabel, buildLiveDeployPlan(snapshot))) {
@@ -413,13 +500,13 @@ async function createProductionInstance(
   });
 }
 
-async function confirmProductionInstanceCreation(domain: string): Promise<boolean> {
+async function confirmProductionInstanceCreation(domain: string, yes = false): Promise<boolean> {
   // Separate this screen from the domain the user just typed; without it the
   // echoed answer runs straight into the lead sentence.
   log.blank();
   for (const line of domainAssociationSummary(domain)) log.info(line);
   log.blank();
-  const confirmed = await confirmCreateProductionInstance();
+  const confirmed = yes || (await confirmCreateProductionInstance());
   if (confirmed) {
     log.blank();
     return true;
@@ -796,11 +883,37 @@ export function registerDeploy(program: Program): void {
   const deployCmd = program
     .command("deploy")
     .summary(DEPLOY_COMMAND_SUMMARY)
-    .description(DEPLOY_COMMAND_DESCRIPTION);
-  deployCmd.command("run", { isDefault: true, hidden: true }).action(deploy);
+    .description(DEPLOY_COMMAND_DESCRIPTION)
+    .option(
+      "--domain <domain>",
+      "Production domain you own (skips the prompt; in agent mode, creates the production instance)",
+    )
+    .option("--yes", "Skip the confirmations before the production instance is created")
+    .setExamples([
+      { command: "clerk deploy", description: "Interactive production setup" },
+      {
+        command: "clerk deploy --domain example.com",
+        description: "Use this domain without prompting",
+      },
+      {
+        command: "clerk deploy status --wait",
+        description: "Verify DNS, SSL, email DNS, and OAuth",
+      },
+    ]);
+  deployCmd
+    .command("run", { isDefault: true, hidden: true })
+    .action(async (_options, cmd) => deploy(cmd.optsWithGlobals() as DeployOptions));
   deployCmd
     .command("status")
     .description("Show production deploy status (read-only)")
     .option("--wait", "Wait for DNS, SSL, and email DNS verification with retries")
-    .action(deployStatus);
+    .action(async (options, cmd) => {
+      // Commander hands the parent's flags to `deploy` wherever they appear, so
+      // `deploy status --domain x` would otherwise report as if it had been used.
+      const { domain, yes } = cmd.optsWithGlobals() as DeployOptions;
+      if (domain !== undefined || yes) {
+        throwUsageError("--domain and --yes apply to `clerk deploy`, not `clerk deploy status`.");
+      }
+      await deployStatus(options);
+    });
 }

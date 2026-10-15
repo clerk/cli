@@ -485,7 +485,11 @@ describe("buildDeployStatusReport", () => {
     expect(report.domain).toBeNull();
     expect(report.productionInstanceId).toBeNull();
     expect(report.domainStatus).toBeNull();
-    expect(report.nextAction).toContain("clerk deploy");
+    // Creating is hard to undo and the domain is the user's to pick, so asking
+    // comes before the command.
+    expect(report.nextAction).toContain("Ask the user which domain they own");
+    expect(report.nextAction).toContain("clerk deploy --domain <domain>");
+    expect(report.nextAction).not.toContain("human terminal");
   });
 
   test("domain_provisioning reports production instance", () => {
@@ -559,6 +563,138 @@ describe("buildDeployStatusReport", () => {
     });
   });
 
+  test("oauth_pending hands over what each pending provider needs", () => {
+    const apple = {
+      provider: "apple",
+      configKey: "connection_oauth_apple",
+      label: "Apple",
+      docsUrl: "https://clerk.com/docs/apple",
+      credentialLabel: "",
+      redirectLabel: "Return URL",
+      setupCopy: "",
+      gotcha: "Save the .p8 file.",
+      fields: [
+        {
+          key: "client_id",
+          label: "Apple Services ID",
+          type: "text",
+          secret: false,
+          filePath: false,
+        },
+        {
+          key: "client_secret",
+          // The wizard's prompt asks for a path; the config field takes the key itself.
+          label: "Apple Private Key - path to .p8 file",
+          description: "Apple Private Key",
+          type: "password",
+          secret: true,
+          filePath: true,
+        },
+        {
+          key: "actor",
+          label: "Actor",
+          type: "select",
+          options: ["user", "application"],
+          secret: false,
+          filePath: false,
+        },
+      ],
+      requiredCredentialKeys: ["client_id", "client_secret"],
+      credentialSources: ["manual"],
+    } satisfies LiveDeploySnapshot["oauthProviderDescriptors"][number];
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: {
+          ...activeSnapshot,
+          frontendApiUrl: "https://clerk.example.com",
+          oauthProviders: ["google", "apple"],
+          // A configured provider gets no entry even though it has a descriptor.
+          oauthProviderDescriptors: [{ ...apple, provider: "google" }, apple],
+          completedOAuthProviders: ["google"],
+        },
+      },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.oauth.setup).toEqual([
+      {
+        provider: "apple",
+        label: "Apple",
+        configKey: "connection_oauth_apple",
+        fields: [
+          { key: "client_id", label: "Apple Services ID", required: true, secret: false },
+          {
+            key: "client_secret",
+            label: "Apple Private Key",
+            required: true,
+            secret: true,
+            fileContents: true,
+          },
+          {
+            key: "actor",
+            label: "Actor",
+            required: false,
+            secret: false,
+            options: ["user", "application"],
+          },
+        ],
+        authorizedOrigins: ["https://example.com", "https://www.example.com"],
+        redirectUri: "https://clerk.example.com/v1/oauth_callback",
+        docsUrl: "https://clerk.com/docs/apple",
+        note: "Save the .p8 file.",
+        // Required fields only: a placeholder for an optional one would be
+        // sent as its value.
+        payload: {
+          connection_oauth_apple: {
+            enabled: true,
+            client_id: "<client_id>",
+            client_secret: "<client_secret>",
+          },
+        },
+        // A file, not `--json`: secrets on a command line end up in process
+        // listings. The id, not `prod`: that alias needs the local profile.
+        command: "clerk config patch --instance ins_prod --file <file> --yes",
+      },
+    ]);
+    expect(report.nextAction).toContain("For each entry in `oauth.setup`");
+  });
+
+  test("setup entries are there while the domain is still pending", () => {
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: {
+          ...activeSnapshot,
+          oauthProviderDescriptors: [
+            {
+              provider: "github",
+              configKey: "connection_oauth_github",
+              label: "GitHub",
+              docsUrl: "",
+              credentialLabel: "",
+              redirectLabel: "",
+              setupCopy: "",
+              gotcha: null,
+              fields: [],
+              requiredCredentialKeys: [],
+              credentialSources: ["manual"],
+            },
+          ],
+        },
+      },
+      null,
+    );
+
+    expect(report.state).toBe("domain_pending");
+    expect(report.oauth.setup.map((entry) => entry.provider)).toEqual(["github"]);
+  });
+
+  test("a report with nothing pending has no setup entries", () => {
+    expect(buildDeployStatusReport({ kind: "not_started" }, null).oauth.setup).toEqual([]);
+    expect(buildInterruptedDeployStatusReport().oauth.setup).toEqual([]);
+  });
+
   test("active with complete domain and OAuth reports complete", () => {
     const allDone = {
       ...activeSnapshot,
@@ -598,7 +734,9 @@ describe("buildDeployStatusReport", () => {
     expect(report.nextAction).toContain(
       "Clerk's production setup for https://example.com is verified. If you haven't already:",
     );
-    expect(report.nextAction).toContain("clerk env pull --instance prod");
+    // A bare `env pull` would write the production keys over the local
+    // development ones.
+    expect(report.nextAction).toContain("clerk env pull --instance ins_prod --print");
     expect(report.nextAction).toContain("alongside the other Clerk variables from your env file");
     expect(report.nextAction).toContain("sign up at https://example.com to confirm");
     expect(report.nextAction).not.toContain("No action needed");
@@ -819,7 +957,7 @@ describe("deployNextStep", () => {
     pendingDnsRecords: [
       { type: "CNAME" as const, host: "clerk.example.com", value: "v", required: true },
     ],
-    oauth: { complete: true, configured: [], pending: [], unsupported: [] },
+    oauth: { complete: true, configured: [], pending: [], unsupported: [], setup: [] },
     urls: {
       domains: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
       instance: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod",

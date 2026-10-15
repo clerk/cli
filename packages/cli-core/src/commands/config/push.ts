@@ -305,16 +305,32 @@ export function printDiff(
       }
       const indent = path ? "      " : "    ";
       const useColor = isHuman();
+      const leaf = path.split(".").pop() || key;
       if (oldVal !== undefined) {
-        const line = `${indent}- ${JSON.stringify(oldVal)}`;
+        const line = `${indent}- ${JSON.stringify(redactSecrets(leaf, oldVal))}`;
         log.raw(useColor ? dim(red(line)) : line);
       }
       if (newVal !== undefined) {
-        const line = `${indent}+ ${JSON.stringify(newVal)}`;
+        const line = `${indent}+ ${JSON.stringify(redactSecrets(leaf, newVal))}`;
         log.raw(useColor ? bold(green(line)) : line);
       }
     }
   }
+}
+
+/**
+ * The diff goes to the terminal and to whatever captures an agent's or CI
+ * job's stderr, so a client secret or private key is shown as changed, not
+ * shown. Matched by key name because the diff has no schema to consult.
+ */
+function redactSecrets(key: string, value: unknown): unknown {
+  if (typeof value === "string") {
+    return value && /secret|private_key/i.test(key) ? "[REDACTED]" : value;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([childKey, child]) => [childKey, redactSecrets(childKey, child)]),
+  );
 }
 
 /**

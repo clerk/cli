@@ -711,6 +711,30 @@ describe("printDiff", () => {
     expect(lines()).toEqual(["  session:", '    + {"lifetime":3600}']);
   });
 
+  test("shows that a secret changed without showing it", () => {
+    const current = {
+      connection_oauth_google: { enabled: false, client_id: "", client_secret: "" },
+    };
+    const patch = {
+      connection_oauth_google: { enabled: true, client_id: "id-123", client_secret: "GOCSPX-abc" },
+    };
+
+    printDiff(current, patch, true);
+
+    expect(lines()).toContain('      + "id-123"');
+    expect(lines()).toContain('      + "[REDACTED]"');
+    expect(lines().join("\n")).not.toContain("GOCSPX-abc");
+  });
+
+  test("redacts a secret inside a key that is new as a whole", () => {
+    printDiff({}, { connection_oauth_apple: { client_id: "id", client_secret: "PEM" } }, true);
+
+    expect(lines()).toEqual([
+      "  connection_oauth_apple:",
+      '    + {"client_id":"id","client_secret":"[REDACTED]"}',
+    ]);
+  });
+
   test("patch mode: ignores keys not in patch", () => {
     const current = { session: { lifetime: 604800 }, sign_up: { mode: "public" } };
     const patch = { session: { lifetime: 3600 } };

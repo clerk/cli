@@ -56,12 +56,12 @@ test("users list exposes common filters and pagination options", () => {
   );
 });
 
-test("deploy relies on global options", () => {
+test("deploy exposes the domain and confirmation options", () => {
   const program = createProgram();
   const deploy = program.commands.find((command) => command.name() === "deploy")!;
   const optionNames = deploy.options.map((option) => option.long);
 
-  expect(optionNames).toEqual([]);
+  expect(optionNames).toEqual(["--domain", "--yes"]);
 });
 
 test("deploy --help describes the bare command, not only the status subcommand", () => {
@@ -85,22 +85,45 @@ test("deploy --help describes the bare command, not only the status subcommand",
       "production OAuth credentials, and verifies the domain. It needs a terminal;",
       "re-run it at any time to resume where you left off.",
       "",
-      "When run by an agent (or without a TTY), it is read-only: it prints a JSON",
+      "When run by an agent (or without a TTY), it never prompts. It prints a JSON",
       "status report with the current state and a `nextAction` field saying what to",
-      "do next. `clerk deploy status` prints the same report; add `--wait` to keep",
-      "checking until DNS, SSL, and email DNS are verified.",
+      "do next, and creates the production instance only when `--domain` is passed.",
+      "`clerk deploy status` prints the same report; add `--wait` to keep checking",
+      "until DNS, SSL, and email DNS are verified.",
       "",
       "Options:",
-      "  -h, --help  Display help for command",
+      "  --domain <domain>  Production domain you own (skips the prompt; in agent mode,",
+      "                     creates the production instance)",
+      "  -h, --help         Display help for command",
+      "  --yes              Skip the confirmations before the production instance is",
+      "                     created",
       "",
       "Commands:",
       "  help    [command]  Display help for command",
       "  status  [options]  Show production deploy status (read-only)",
       "",
+      "Examples:",
+      "  $ clerk deploy                       Interactive production setup",
+      "  $ clerk deploy --domain example.com  Use this domain without prompting",
+      "  $ clerk deploy status --wait         Verify DNS, SSL, email DNS, and OAuth",
+      "",
     ].join("\n"),
   );
   // The root `clerk --help` table keeps the one-line summary.
   expect(deploy.summary()).toBe("Deploy a Clerk application to production");
+});
+
+test("deploy passes its options through to the command", async () => {
+  // Rejected by the command's own validation, before anything is read.
+  await expect(
+    createProgram().parseAsync(["deploy", "--domain", "https://example.com"], { from: "user" }),
+  ).rejects.toThrow('Invalid --domain "https://example.com"');
+});
+
+test("deploy status refuses the flags that only create", async () => {
+  await expect(
+    createProgram().parseAsync(["deploy", "status", "--domain", "example.com"], { from: "user" }),
+  ).rejects.toThrow("apply to `clerk deploy`, not `clerk deploy status`");
 });
 
 test("deploy status exposes wait option", () => {

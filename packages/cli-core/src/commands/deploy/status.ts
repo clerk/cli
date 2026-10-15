@@ -29,6 +29,7 @@ import {
   OAUTH_KEY_PREFIX,
   buildOAuthProviderDescriptors,
   hasProviderRequiredCredentials,
+  oauthWalkthroughUrls,
   type OAuthProvider,
   type OAuthProviderDescriptor,
 } from "./providers.ts";
@@ -76,6 +77,36 @@ export type DeployStatusState =
  */
 export type DomainComponentState = "complete" | "pending";
 
+/**
+ * What it takes to give one pending provider its production credentials
+ * without the wizard: what the provider's OAuth app must allow, and how to
+ * save the credentials. Each entry stands on its own, because the report
+ * carries them while the domain is still pending and `nextAction` is about DNS.
+ */
+export type OAuthSetupGuide = {
+  provider: string;
+  label: string;
+  configKey: string;
+  fields: {
+    key: string;
+    label: string;
+    /** Counts toward `oauth.complete`; the rest are optional. */
+    required: boolean;
+    secret: boolean;
+    options?: string[];
+    /** The value is the contents of a file, such as Apple's `.p8` key, not its path. */
+    fileContents?: true;
+  }[];
+  redirectUri: string;
+  authorizedOrigins: string[];
+  docsUrl: string;
+  note: string | null;
+  /** The document `command` takes, with a `<key>` placeholder for each required field. */
+  payload: Record<string, Record<string, unknown>>;
+  /** Reads `payload` from a file so client secrets stay off the command line. */
+  command: string;
+};
+
 export interface DeployStatusReport {
   complete: boolean;
   state: DeployStatusState;
@@ -87,7 +118,14 @@ export interface DeployStatusReport {
     mail: DomainComponentState;
   } | null;
   pendingDnsRecords: { type: "CNAME"; host: string; value: string; required: boolean }[];
-  oauth: { complete: boolean; configured: string[]; pending: string[]; unsupported: string[] };
+  oauth: {
+    complete: boolean;
+    configured: string[];
+    pending: string[];
+    unsupported: string[];
+    /** One entry per provider in `pending`. */
+    setup: OAuthSetupGuide[];
+  };
   /**
    * Dashboard pages for this deploy: the production instance and its Domains
    * page. Null before a production instance exists, and when the run was
@@ -115,6 +153,7 @@ export type DeployNextStep =
   | {
       kind: "complete";
       domain: string;
+      productionInstanceId: string | null;
       oauthUnsupported: readonly string[];
       instanceUrl: string | null;
     }
@@ -420,7 +459,7 @@ function buildDeployStatusFacts(
       productionInstanceId: null,
       domainStatus: null,
       pendingDnsRecords: [],
-      oauth: { complete: false, configured: [], pending: [], unsupported: [] },
+      oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
       urls: null,
     };
   }
@@ -433,7 +472,7 @@ function buildDeployStatusFacts(
       productionInstanceId: state.productionInstanceId,
       domainStatus: null,
       pendingDnsRecords: [],
-      oauth: { complete: false, configured: [], pending: [], unsupported: [] },
+      oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
       urls: dashboardUrls(state.appId, state.productionInstanceId),
     };
   }
@@ -470,11 +509,49 @@ function buildDeployStatusFacts(
       configured: [...snapshot.completedOAuthProviders],
       pending: oauthPending,
       unsupported: [...snapshot.unsupportedOAuthProviders],
+      setup: oauthSetupGuides(snapshot, oauthPending),
     },
     urls: snapshot.productionInstanceId
       ? dashboardUrls(snapshot.appId, snapshot.productionInstanceId)
       : null,
   };
+}
+
+function oauthSetupGuides(
+  snapshot: LiveDeploySnapshot,
+  pending: readonly string[],
+): OAuthSetupGuide[] {
+  const urls = oauthWalkthroughUrls(snapshot.domain, snapshot.frontendApiUrl);
+  // The id, not `prod`: that alias reads the local profile, which has no
+  // production instance when it was created elsewhere.
+  const instance = snapshot.productionInstanceId ?? "prod";
+  return snapshot.oauthProviderDescriptors
+    .filter((descriptor) => pending.includes(descriptor.provider))
+    .map((descriptor) => ({
+      provider: descriptor.provider,
+      label: descriptor.label,
+      configKey: descriptor.configKey,
+      fields: descriptor.fields.map((field) => ({
+        key: field.key,
+        // The schema's description of the config field. `label` is the
+        // wizard's prompt, which for a key file asks for a path.
+        label: field.description ?? field.label,
+        required: descriptor.requiredCredentialKeys.includes(field.key),
+        secret: field.secret,
+        ...(field.options && { options: field.options }),
+        ...(field.filePath && { fileContents: true as const }),
+      })),
+      ...urls,
+      docsUrl: descriptor.docsUrl,
+      note: descriptor.gotcha,
+      payload: {
+        [descriptor.configKey]: {
+          enabled: true,
+          ...Object.fromEntries(descriptor.requiredCredentialKeys.map((key) => [key, `<${key}>`])),
+        },
+      },
+      command: `clerk config patch --instance ${instance} --file <file> --yes`,
+    }));
 }
 
 function dashboardUrls(appId: string, productionInstanceId: string): DeployStatusReport["urls"] {
@@ -501,7 +578,7 @@ export function buildInterruptedDeployStatusReport(): DeployStatusReport {
     productionInstanceId: null,
     domainStatus: null,
     pendingDnsRecords: [],
-    oauth: { complete: false, configured: [], pending: [], unsupported: [] },
+    oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
     urls: null,
   });
 }
@@ -525,6 +602,7 @@ export function deployNextStep(report: DeployStatusFacts): DeployNextStep {
       return {
         kind: "complete",
         domain: report.domain ?? "",
+        productionInstanceId: report.productionInstanceId,
         oauthUnsupported: report.oauth.unsupported,
         instanceUrl: report.urls?.instance ?? null,
       };
@@ -572,14 +650,18 @@ export function agentNextAction(step: DeployNextStep): string {
 
   switch (step.kind) {
     case "not_started":
+      // Creating the instance is hard to undo and the domain is the user's
+      // to choose, so the sentence makes asking the first step.
       return (
-        "No production instance yet. `clerk deploy` configures production interactively and " +
-        "needs a human terminal, ask the user to run `clerk deploy`, then run `clerk deploy status` to verify."
+        "No production instance yet. Ask the user which domain they own for production " +
+        "(for example example.com; a hosting provider's URL such as *.vercel.app won't work), " +
+        "then run `clerk deploy --domain <domain>` to create it and get the DNS records to add. " +
+        "Verify with `clerk deploy status`."
       );
     case "domain_provisioning":
       return (
         "A production instance exists but its domain is still provisioning. " +
-        "Run `clerk deploy status` again shortly, or ask the user to finish `clerk deploy`." +
+        "Run `clerk deploy status` again shortly." +
         domains(step.domainsUrl)
       );
     case "interrupted":
@@ -594,10 +676,15 @@ export function agentNextAction(step: DeployNextStep): string {
       // Nothing is left to monitor on the Domains page here, so the pointer is
       // the instance itself (users, settings, billing) rather than the shared
       // "visit the domains page" clause every pending state carries.
+      // `--print` rather than a bare `env pull`: that one writes the
+      // production keys into the local env file, over the development ones.
+      // The id rather than `prod` for the same reason as `oauth.setup`.
       return (
         `Clerk's production setup for https://${step.domain} is verified. If you haven't already: ` +
-        `run \`clerk env pull --instance prod\`, set those keys on your host alongside the other ` +
-        `Clerk variables from your env file, redeploy, then sign up at https://${step.domain} to confirm.` +
+        `run \`clerk env pull --instance ${step.productionInstanceId ?? "prod"} --print\` and set each line as a production ` +
+        `environment variable on your host (pipe it to the host's CLI rather than into a local env file), ` +
+        `alongside the other Clerk variables from your env file, redeploy, then sign up at ` +
+        `https://${step.domain} to confirm.` +
         unsupported(step.oauthUnsupported) +
         (step.instanceUrl
           ? ` Manage users, settings, and billing for this instance: ${step.instanceUrl}`
@@ -605,10 +692,14 @@ export function agentNextAction(step: DeployNextStep): string {
       );
     case "oauth_pending":
       // The domain is verified, so there is nothing to monitor on the Domains
-      // page; the wizard is the only way to supply credentials.
+      // page.
       return (
         `Domain verified, but these OAuth providers are missing production credentials: ` +
-        `${step.oauthPending.join(", ")}. Ask the user to finish \`clerk deploy\`, then run \`clerk deploy status\`.` +
+        `${step.oauthPending.join(", ")}. For each entry in \`oauth.setup\`: have the user create the ` +
+        `provider's OAuth app with its \`redirectUri\` and \`authorizedOrigins\`, save its \`payload\` ` +
+        `with the real values to a JSON file, run its \`command\` on that file, then delete the file. ` +
+        `Or the user can run \`clerk deploy\` in a terminal to enter them interactively. ` +
+        `Then run \`clerk deploy status\`.` +
         unsupported(step.oauthUnsupported)
       );
     case "records_available":

@@ -1125,7 +1125,13 @@ describe("humanNextAction", () => {
     { kind: "not_started" as const },
     { kind: "domain_provisioning" as const, domainsUrl: `${URL}/domains` },
     { kind: "interrupted" as const },
-    { kind: "complete" as const, domain: "example.com", oauthUnsupported: ["x"], instanceUrl: URL },
+    {
+      kind: "complete" as const,
+      domain: "example.com",
+      productionInstanceId: "ins_prod",
+      oauthUnsupported: ["x"],
+      instanceUrl: URL,
+    },
     { kind: "oauth_pending" as const, oauthPending: ["github"], oauthUnsupported: ["x"] },
     ...(["records_available", "records_unavailable", "ssl_pending", "finalizing"] as const).map(
       (kind) => ({ kind, domain: "example.com", records: "DNS", domainsUrl: `${URL}/domains` }),

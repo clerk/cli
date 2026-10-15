@@ -22,10 +22,11 @@ creates the production instance, prints the DNS records you must add, collects
 production OAuth credentials, and verifies the domain. It needs a terminal;
 re-run it at any time to resume where you left off.
 
-When run by an agent (or without a TTY), it is read-only: it prints a JSON
+When run by an agent (or without a TTY), it never prompts. It prints a JSON
 status report with the current state and a \`nextAction\` field saying what to
-do next. \`clerk deploy status\` prints the same report; add \`--wait\` to keep
-checking until DNS, SSL, and email DNS are verified.`;
+do next, and creates the production instance only when \`--domain\` is passed.
+\`clerk deploy status\` prints the same report; add \`--wait\` to keep checking
+until DNS, SSL, and email DNS are verified.`;
 
 export const INTRO_PREAMBLE = `This will prepare your linked Clerk app for production by cloning your
 development instance into a new production instance and walking you through

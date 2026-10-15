@@ -9,7 +9,7 @@ import {
   detectFramework,
   isNpmFramework,
 } from "../../lib/framework.ts";
-import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
 import {
   findLocalPublishableKey,
   hasKeyPairMismatch,
@@ -23,6 +23,8 @@ const DEV_LOCAL_ENV_FILE = ".env.development.local";
 
 interface EnvPullOptions extends AppContextOptions {
   file?: string;
+  /** Print `KEY=value` lines to stdout instead of writing an env file. */
+  print?: boolean;
 }
 
 /** Check whether a file contains Clerk keys (for backwards compat detection). */
@@ -56,6 +58,10 @@ async function resolveTargetFile(
 }
 
 export async function pull(options: EnvPullOptions): Promise<void> {
+  if (options.print && options.file) {
+    throwUsageError("--print and --file cannot be combined.");
+  }
+
   await withGutter("Pulling environment variables", async () => {
     const cwd = options.cwd ?? process.cwd();
 
@@ -64,7 +70,7 @@ export async function pull(options: EnvPullOptions): Promise<void> {
     // env file the framework reads, not fetching from an account.
     const keyless = await resolveKeylessTarget({ ...options, cwd });
     if (keyless) {
-      await pullKeylessKeys(cwd, keyless, options.file);
+      await pullKeylessKeys(cwd, keyless, options);
       return;
     }
 
@@ -72,37 +78,53 @@ export async function pull(options: EnvPullOptions): Promise<void> {
       resolveAppContext({ ...options, cwd }),
       detectEnvFile(cwd),
     ]);
+
+    const vars = await withSpinner(
+      `Pulling env vars from ${ctx.instanceLabel} instance...`,
+      async () => {
+        const app = await withApiContext(fetchApplication(ctx.appId), "Failed to fetch API keys");
+
+        const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
+        if (!matched) {
+          throw new CliError(`Instance ${ctx.instanceId} not found in application response.`, {
+            code: ERROR_CODE.INSTANCE_NOT_FOUND,
+            docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
+          });
+        }
+
+        const publishableKeyName = await detectPublishableKeyName(cwd);
+        const secretKeyName = await detectSecretKeyName(cwd);
+        // Native platforms (iOS/Android) configure Clerk with only the publishable
+        // key in client source; a secret key has no use there and their default
+        // .gitignore templates don't cover .env, so skip writing it entirely
+        // rather than leaving a live credential in a tracked file. --print
+        // writes nothing, so it always includes the key.
+        const includeSecretKey =
+          options.print || isNpmFramework((await detectFramework(cwd)) ?? {});
+
+        return {
+          [publishableKeyName]: matched.publishable_key,
+          ...(matched.secret_key && includeSecretKey && { [secretKeyName]: matched.secret_key }),
+        };
+      },
+    );
+
+    if (options.print) {
+      log.data(formatEnvLines(vars));
+      return;
+    }
+
     const targetFile = await resolveTargetFile(cwd, options.file, preferredEnvFile);
-    const displayPath = options.file ?? basename(targetFile);
-
-    await withSpinner(`Pulling env vars from ${ctx.instanceLabel} instance...`, async () => {
-      const app = await withApiContext(fetchApplication(ctx.appId), "Failed to fetch API keys");
-
-      const matched = app.instances.find((i) => i.instance_id === ctx.instanceId);
-      if (!matched) {
-        throw new CliError(`Instance ${ctx.instanceId} not found in application response.`, {
-          code: ERROR_CODE.INSTANCE_NOT_FOUND,
-          docsUrl: "https://clerk.com/docs/guides/development/managing-environments",
-        });
-      }
-
-      const publishableKeyName = await detectPublishableKeyName(cwd);
-      const secretKeyName = await detectSecretKeyName(cwd);
-      // Native platforms (iOS/Android) configure Clerk with only the publishable
-      // key in client source; a secret key has no use there and their default
-      // .gitignore templates don't cover .env, so skip writing it entirely
-      // rather than leaving a live credential in a tracked file.
-      const framework = await detectFramework(cwd);
-      const includeSecretKey = isNpmFramework(framework ?? {});
-
-      await mergeKeysIntoEnvFile(targetFile, {
-        [publishableKeyName]: matched.publishable_key,
-        ...(matched.secret_key && includeSecretKey && { [secretKeyName]: matched.secret_key }),
-      });
-    });
-
-    log.info(`Environment variables written to ${displayPath}`);
+    await mergeKeysIntoEnvFile(targetFile, vars);
+    log.info(`Environment variables written to ${options.file ?? basename(targetFile)}`);
   });
+}
+
+/** `KEY=value` lines for --print. Clerk keys are plain tokens, so nothing needs quoting. */
+function formatEnvLines(vars: Record<string, string>): string {
+  return Object.entries(vars)
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
 }
 
 /** Merges keys into an env file, preserving everything already in it. */
@@ -124,7 +146,7 @@ async function mergeKeysIntoEnvFile(
 async function pullKeylessKeys(
   cwd: string,
   keyless: KeylessTarget,
-  fileFlag?: string,
+  options: Pick<EnvPullOptions, "file" | "print">,
 ): Promise<void> {
   const [preferredEnvFile, publishableKeyName, secretKeyName, publishableKey] = await Promise.all([
     detectEnvFile(cwd),
@@ -152,15 +174,20 @@ async function pullKeylessKeys(
     }
   }
 
-  const targetFile = await resolveTargetFile(cwd, fileFlag, preferredEnvFile);
-  const displayPath = fileFlag ?? basename(targetFile);
-
-  await mergeKeysIntoEnvFile(targetFile, {
+  const vars = {
     [secretKeyName]: keyless.secretKey,
     ...(publishableKey && { [publishableKeyName]: publishableKey }),
-  });
+  };
 
-  log.info(`Accountless application keys from \`${keyless.source}\` written to ${displayPath}`);
+  if (options.print) {
+    log.data(formatEnvLines(vars));
+  } else {
+    const targetFile = await resolveTargetFile(cwd, options.file, preferredEnvFile);
+    await mergeKeysIntoEnvFile(targetFile, vars);
+    log.info(
+      `Accountless application keys from \`${keyless.source}\` written to ${options.file ?? basename(targetFile)}`,
+    );
+  }
   if (!publishableKey) {
     log.warn(
       `No publishable key found locally — set ${publishableKeyName} manually, or run \`clerk auth login\` to claim the application.`,
