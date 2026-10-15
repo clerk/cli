@@ -928,6 +928,23 @@ describe("run", () => {
     expect(listRuns(runsDir())[0]).toMatchObject({ status: "partial", counts: { failed: 1 } });
   });
 
+  // `runs` reads only a runs folder; the retry is the same import, which
+  // continues this run, so it drops --new-run.
+  test("after failures, names the runs listing and the import that retries them", async () => {
+    stubClerk({ failing: new Set(["u2"]) });
+    const dir = path.join(workDir, "runs");
+
+    await run({ ...baseOptions, runsDir: dir, newRun: true });
+
+    const [record] = listRuns(dir);
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain(`\`clerk migrate runs ${record!.id} --runs-dir ${dir}\``);
+    expect(err).toContain(
+      `\`clerk migrate import export.json --source clerk --secret-key <key> --runs-dir ${dir} --yes\` to retry them`,
+    );
+    expect(err).not.toContain("--new-run");
+  });
+
   // Tests run non-TTY, the same signal an agent gives.
   describe("without a file or a source", () => {
     test("names what to pass rather than prompting for the file", async () => {

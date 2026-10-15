@@ -9,6 +9,7 @@
 import path from "node:path";
 import { bold, dim, green, red, yellow } from "../../lib/color.ts";
 import { throwUsageError } from "../../lib/errors.ts";
+import { quoteArg } from "../../lib/json-body.ts";
 import { log } from "../../lib/log.ts";
 import { tallyError } from "./import-users.ts";
 import {
@@ -23,8 +24,9 @@ import {
   type RunState,
   type UserLine,
   USERS_FILE,
+  noRunMessage,
 } from "./lib/run-store.ts";
-import { carryFlags, undoCommand } from "./lib/carry-flags.ts";
+import { carryFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
 import { describeTarget } from "./lib/target.ts";
 
 export type RunsOptions = {
@@ -95,13 +97,35 @@ function errorBreakdown(lines: UserLine[]): { error: string; count: number }[] {
 }
 
 /**
+ * The import that continues this run: its file (or export run) and source,
+ * with the flags that reach the same runs folder and instance.
+ */
+function continueCommand(record: RunRecord, carry: string[]): string | undefined {
+  const input = record.fromExport ?? record.file?.path;
+  if (!input) return undefined;
+  const parts = ["clerk migrate import", quoteArg(input)];
+  if (!record.fromExport && record.source) parts.push("--source", quoteArg(record.source));
+  return withFlags(parts.join(" "), carry);
+}
+
+/**
  * What to run after reading about this run. `carry` is the runs folder this
  * listing read, and the target flags the record says the import used.
  */
 export function nextCommands(record: RunRecord, state: RunState, carry: string[] = []): string[] {
   if (state === "running") return [];
   if (record.kind === "import" && state !== "undone") {
-    return [`Run \`${undoCommand(record.id, carry)}\` to delete the users it created`];
+    const undo = `Run \`${undoCommand(record.id, carry)}\` to delete the users it created`;
+    const again = continueCommand(record, carry);
+    if (!again || state === "complete") return [undo];
+    // Continuing is what a stopped run is for: the same file, source and
+    // target pick it up where it left off.
+    return [
+      state === "interrupted"
+        ? `Run \`${again}\` to continue it`
+        : `Run \`${again}\` to retry the users that failed or were skipped`,
+      undo,
+    ];
   }
   if (record.kind === "undo" && state !== "complete" && record.undoes) {
     return [`Run \`${undoCommand(record.undoes, carry)}\` to retry the users that failed`];
@@ -239,9 +263,7 @@ export async function runs(id: string | undefined, options: RunsOptions = {}): P
   }
 
   const stored = readRun(runsDir, id);
-  if (!stored) {
-    throwUsageError(`No run \`${id}\` in ${runsDir}. Run \`clerk migrate runs\` to list them.`);
-  }
+  if (!stored) throwUsageError(noRunMessage(runsDir, id, carryFlags({ runsDir: options.runsDir })));
   const record = withLiveCounts(runsDir, stored);
 
   // The record says where the import's key came from: `--secret-key` or

@@ -25,7 +25,7 @@ import { confirm } from "../../lib/prompts.ts";
 import { withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { failureOf, tallyError } from "./import-users.ts";
-import { carryFlags, undoCommand } from "./lib/carry-flags.ts";
+import { carryFlags, runsListCommand, undoCommand } from "./lib/carry-flags.ts";
 import { terminal } from "./lib/terminal.ts";
 import { resolveLimits } from "./lib/instance.ts";
 import { retryOn429 } from "./lib/retry.ts";
@@ -43,6 +43,7 @@ import {
   type RunRecord,
   openUndoOf,
   inUseMessage,
+  noRunMessage,
 } from "./lib/run-store.ts";
 import { withProgress, type ProgressUpdate } from "./lib/progress.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
@@ -83,18 +84,19 @@ export type UndoPreview = {
   alreadyDeleted: number;
 };
 
-/** Loads the import run, refusing anything that cannot be undone. */
-function readImportRun(runsDir: string, runId: string): RunRecord {
+/**
+ * Loads the import run, refusing anything that cannot be undone. `runsCarry`
+ * is `--runs-dir`, so a suggested listing reads the same runs folder.
+ */
+function readImportRun(runsDir: string, runId: string, runsCarry: string[]): RunRecord {
   const record = readRun(runsDir, runId);
-  if (!record) {
-    throwUsageError(`No run \`${runId}\` in ${runsDir}. Run \`clerk migrate runs\` to list them.`);
-  }
+  if (!record) throwUsageError(noRunMessage(runsDir, runId, runsCarry));
   if (record.kind !== "import") {
     throwUsageError(
       `Run ${runId} is an ${record.kind} run. Only an import run can be undone.`,
       undefined,
       undefined,
-      [{ command: "clerk migrate runs", description: "Find the import run to undo" }],
+      [{ command: runsListCommand(runsCarry), description: "Find the import run to undo" }],
     );
   }
   if (record.status === "undone") {
@@ -339,7 +341,8 @@ function jsonResult(
 
 export async function undo(runId: string, options: UndoOptions = {}): Promise<void> {
   const runsDir = await resolveRunsDir(options.runsDir);
-  const record = readImportRun(runsDir, runId);
+  const runsCarry = carryFlags({ runsDir: options.runsDir });
+  const record = readImportRun(runsDir, runId, runsCarry);
   const importLines = readUserLines(runsDir, record.id).length;
   // The command a hint suggests, reaching the same runs folder and instance.
   const undoAgain = undoCommand(record.id, carryFlags(options));
@@ -476,7 +479,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     try {
       // Another undo that finished during the preview has already marked it.
       try {
-        readImportRun(runsDir, record.id);
+        readImportRun(runsDir, record.id, runsCarry);
       } catch (error) {
         if (error instanceof CliError) refuseChanged(error.message);
         throw error;

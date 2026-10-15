@@ -143,6 +143,12 @@ describe("refusals, all exit 2 and delete nothing", () => {
     expect(await exitCodeOf(undo("nope", withDir({ yes: true })))).toBe(EXIT_CODE.USAGE);
   });
 
+  test("an unknown run lists the same runs folder", async () => {
+    await expect(undo("nope", withDir({ yes: true }))).rejects.toThrow(
+      `clerk migrate runs --runs-dir ${quoteArg(runsDir)}`,
+    );
+  });
+
   test("a run that is not an import", async () => {
     const run = startRun(runsDir, { kind: "export", target: { platform: "auth0" } });
     run.finish();

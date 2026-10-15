@@ -26,7 +26,7 @@ import { resolveProfile } from "../../../lib/config.ts";
 import { throwUsageError } from "../../../lib/errors.ts";
 import { ensureGitignoreEntry, getGitRepoRoot } from "../../../lib/git.ts";
 import { log } from "../../../lib/log.ts";
-import { undoCommand } from "./carry-flags.ts";
+import { runsListCommand, undoCommand } from "./carry-flags.ts";
 
 /** Overrides the runs directory, below `--runs-dir`. */
 export const RUNS_DIR_ENV = "CLERK_MIGRATE_DIR";
@@ -406,6 +406,11 @@ export function unfinishedUndoMessage(importId: string, undoId: string, carry: s
     `Run ${importId} has an undo that did not finish (run ${undoId}). ` +
     `Finish it with \`${undoCommand(importId, carry)}\`, or pass --new-run to import into a new run.`
   );
+}
+
+/** Why a run ID matched nothing, and the listing of that same runs folder. */
+export function noRunMessage(runsDir: string, id: string, carry: string[]): string {
+  return `No run \`${id}\` in ${runsDir}. Run \`${runsListCommand(carry)}\` to list them.`;
 }
 
 /** Why a run another live process holds is refused, and how to clear a stale lock. */
