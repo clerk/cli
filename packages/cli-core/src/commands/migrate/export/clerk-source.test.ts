@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { CliError, ERROR_CODE, UserAbortError } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "../../../lib/errors.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 
 const mockDescribeBapiTarget = mock();
@@ -29,6 +29,11 @@ mock.module("../../users/interactive/instance-context.ts", () => ({
   resolveUsersInstanceContext: (...args: unknown[]) => mockResolveUsersInstanceContext(...args),
 }));
 
+const mockConfirm = mock();
+mock.module("../../../lib/prompts.ts", () => ({
+  confirm: (...args: unknown[]) => mockConfirm(...args),
+}));
+
 let human = true;
 mock.module("../../../mode.ts", () => ({
   isHuman: () => human,
@@ -52,6 +57,7 @@ beforeEach(() => {
   mockResolveUsersInstanceContext.mockReset();
   mockFetchApps.mockReset();
   mockSearch.mockReset();
+  mockConfirm.mockReset();
   delete process.env.CLERK_SECRET_KEY;
 });
 
@@ -192,71 +198,99 @@ describe("resolveClerkSource", () => {
 
   // An empty list is not a picker. PLAPI being degraded looks the same as an
   // account with no applications, and neither one has an instance to offer.
-  test("no instances to offer falls back to the flags", async () => {
+  test("no instances to offer is a usage error naming the flags", async () => {
     stubResolved("my-app (development)");
     // An application with no instances is not an offer either.
     mockFetchApps.mockResolvedValue([{ application_id: "app_1", name: "my-app", instances: [] }]);
 
+    const error = (await resolveClerkSource({}).catch((e: unknown) => e)) as CliError;
+
+    expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+    expect(error.message).toContain("There are no instances to pick from");
+    expect(error.message).toContain("--secret-key");
+    expect(error.message).toContain("--app");
+    expect(mockSearch).not.toHaveBeenCalled();
+  });
+
+  // An accountless app's key is resolved; listing applications needs a login.
+  test("offers the resolved instance when applications can't be listed", async () => {
+    stubResolved("this accountless application (secret key from .env)");
+    mockFetchApps.mockRejectedValue(new CliError("Not authenticated. Run `clerk auth login`."));
+    mockConfirm.mockResolvedValue(true);
+
+    const source = await resolveClerkSource({});
+
+    expect(source.secretKey).toBe("sk_test_resolved");
+    expect(mockConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  test("a no to the resolved instance, when applications can't be listed, exports nothing", async () => {
+    stubResolved("this accountless application (secret key from .env)");
+    mockFetchApps.mockRejectedValue(new CliError("Not authenticated. Run `clerk auth login`."));
+    mockConfirm.mockResolvedValue(false);
+
     await expect(resolveClerkSource({})).rejects.toBeInstanceOf(UserAbortError);
-
-    expect(mockSearch).not.toHaveBeenCalled();
-    expect(captured.err).toContain("--secret-key");
-    expect(captured.err).toContain("--app");
-    expect(captured.err).toContain("clerk link");
   });
 
-  test("agent mode takes the resolved instance without prompting", async () => {
+  // Nobody to ask, and the resolved instance is usually the destination: an
+  // agent would export it and import it straight back.
+  test.each([
+    [
+      "agent mode",
+      (): void => {
+        human = false;
+      },
+      {},
+    ],
+    ["-y", (): void => setAssumeYes(true), {}],
+    ["--json", (): void => {}, { json: true }],
+  ] as const)(
+    "%s refuses the resolved instance, naming the flags",
+    async (_label, arrange, options) => {
+      stubResolved("my-app (production)");
+      arrange();
+
+      const error = (await resolveClerkSource(options).catch((e: unknown) => e)) as CliError;
+
+      expect(error).toBeInstanceOf(CliError);
+      expect(error.message).toContain("won't export my-app (production) without asking");
+      expect(error.message).toContain("--secret-key");
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(mockSearch).not.toHaveBeenCalled();
+    },
+  );
+
+  test("agent mode still takes a named source", async () => {
     human = false;
-    stubResolved("my-app (production)");
+    stubResolved(undefined, "sk_test_explicit");
 
-    const source = await resolveClerkSource({});
+    const source = await resolveClerkSource({ secretKey: "sk_test_explicit" });
 
-    expect(source.secretKey).toBe("sk_test_resolved");
-    expect(mockSearch).not.toHaveBeenCalled();
+    expect(source.secretKey).toBe("sk_test_explicit");
   });
 
-  // `--json` never prompts, even at a terminal: it takes what an agent would.
-  // `-y` is "do not prompt": it takes the resolved instance as an agent does.
-  test("-y takes the resolved instance without the picker", async () => {
-    stubResolved("my-app (production)");
-    setAssumeYes(true);
+  // Unlinked with no key, the resolver says "not linked" before "no key".
+  test.each([
+    ["-y", (): void => setAssumeYes(true), {}, ERROR_CODE.NOT_LINKED],
+    ["--json", (): void => {}, { json: true }, ERROR_CODE.NOT_LINKED],
+    ["--json, no key", (): void => {}, { json: true }, ERROR_CODE.NO_SECRET_KEY],
+  ] as const)(
+    "%s in an unlinked directory is a usage error naming the flags",
+    async (_label, arrange, options, code) => {
+      mockDescribeBapiTarget.mockRejectedValue(new CliError("No Clerk project linked.", { code }));
+      arrange();
 
-    const source = await resolveClerkSource({});
+      await expect(resolveClerkSource(options)).rejects.toThrow(
+        /has no source instance, and can't ask here/,
+      );
+      expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
+    },
+  );
 
-    expect(source.secretKey).toBe("sk_test_resolved");
-    expect(mockSearch).not.toHaveBeenCalled();
-  });
-
-  test("-y in an unlinked directory fails rather than opening the picker", async () => {
-    const failure = new CliError("No secret key found.", { code: ERROR_CODE.NO_SECRET_KEY });
-    mockDescribeBapiTarget.mockRejectedValue(failure);
-    setAssumeYes(true);
-
-    await expect(resolveClerkSource({})).rejects.toThrow(failure);
-    expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
-  });
-
-  test("--json takes the resolved instance without prompting", async () => {
-    stubResolved("my-app (production)");
-
-    const source = await resolveClerkSource({ json: true });
-
-    expect(source.secretKey).toBe("sk_test_resolved");
-    expect(mockSearch).not.toHaveBeenCalled();
-  });
-
-  test("--json in an unlinked directory fails rather than opening the picker", async () => {
-    const failure = new CliError("No secret key found.", { code: ERROR_CODE.NO_SECRET_KEY });
-    mockDescribeBapiTarget.mockRejectedValue(failure);
-
-    await expect(resolveClerkSource({ json: true })).rejects.toThrow(failure);
-
-    expect(mockResolveUsersInstanceContext).not.toHaveBeenCalled();
-  });
-
+  // What the real resolver throws in an unlinked directory with no key.
   test("an unlinked directory picks an application instead of failing", async () => {
     mockDescribeBapiTarget.mockRejectedValue(
-      new CliError("No secret key found.", { code: ERROR_CODE.NO_SECRET_KEY }),
+      new CliError("No Clerk project linked to this directory.", { code: ERROR_CODE.NOT_LINKED }),
     );
     mockResolveUsersInstanceContext.mockResolvedValue({
       secretKey: "sk_test_picked",

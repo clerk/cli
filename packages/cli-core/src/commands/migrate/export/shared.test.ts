@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { quoteArg } from "../../../lib/json-body.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { readEnvelope } from "../lib/export-file.ts";
 import { latestUserLines, readRun } from "../lib/run-store.ts";
@@ -96,7 +97,7 @@ describe("finishExport", () => {
   });
 
   // The run is left behind with every user's line but no file.
-  test("a write that fails says where, and releases the run", async () => {
+  test("a write that fails says where, and leaves no run behind", async () => {
     const run = await startExportRun({ runsDir }, { platform: "supabase" });
     const output = path.join(runsDir, "a-directory.json");
     fs.mkdirSync(output);
@@ -104,8 +105,34 @@ describe("finishExport", () => {
     expect(() => finishExport({ run, options: { output }, users, coverage })).toThrow(
       new RegExp(`Could not write the export to ${output}: .*\\n.*with another --output`),
     );
-    expect(fs.existsSync(path.join(run.dir, "lock"))).toBe(false);
-    expect(readRun(runsDir, run.record.id)?.file).toBeUndefined();
+    expect(fs.existsSync(run.dir)).toBe(false);
+    expect(readRun(runsDir, run.record.id)).toBeUndefined();
+  });
+
+  // Import looks the run ID up in the runs folder it is given.
+  test("the printed commands keep --runs-dir", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "supabase" });
+
+    finishExport({ run, options: { runsDir }, users, coverage });
+
+    expect(captured.err).toContain(
+      `clerk migrate import ${run.record.id} --runs-dir ${quoteArg(runsDir)}`,
+    );
+    expect(captured.err).toContain(
+      `clerk migrate runs ${run.record.id} --runs-dir ${quoteArg(runsDir)}`,
+    );
+  });
+
+  test("--json's next keeps --runs-dir, and counts the users skipped", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "supabase" });
+    run.append({ sourceId: "bad", status: "skipped", error: "no id" });
+
+    finishExport({ run, options: { runsDir, json: true }, users, coverage });
+
+    expect(JSON.parse(captured.out)).toMatchObject({
+      next: `clerk migrate import ${run.record.id} --runs-dir ${quoteArg(runsDir)}`,
+      skipped: 1,
+    });
   });
 
   test("--output writes somewhere else, and the run still records where", async () => {

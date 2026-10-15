@@ -34,7 +34,7 @@ mock.module("../../../lib/prompts.ts", () => ({
   note: () => {},
 }));
 
-const { withInputRetry } = await import("./input-retry.ts");
+const { terminal, withInputRetry } = await import("./input-retry.ts");
 const { promptDbUrl, resolveDbUrl, withDbConnection } = await import("../export/db-options.ts");
 const { setAssumeYes } = await import("./assume-yes.ts");
 
@@ -63,14 +63,38 @@ afterAll(() => {
   else process.env.CLERK_MODE = originalMode;
 });
 
+// The prompts here are stubs; whether this process has a terminal is not
+// what most of these tests are about.
+const realTerminal = terminal.available;
+
 beforeEach(() => {
   process.env.CLERK_MODE = "human";
   setAssumeYes(false);
   answers = [];
   cancelPrompt = false;
+  terminal.available = () => true;
+});
+
+afterAll(() => {
+  terminal.available = realTerminal;
 });
 
 describe("withInputRetry", () => {
+  // `CLERK_MODE=human` with no terminal: a prompt would fail to open one and spin.
+  test("fails rather than asking again when there is no terminal to ask on", async () => {
+    terminal.available = () => false;
+    answers = [SECOND];
+
+    await expect(
+      withInputRetry(
+        FIRST,
+        () => promptDbUrl(CONFIG),
+        () => Promise.reject(rejected()),
+      ),
+    ).rejects.toThrow("Could not reach it");
+    expect(answers).toEqual([SECOND]);
+  });
+
   test("returns the first result without prompting when the work succeeds", async () => {
     const seen: string[] = [];
 

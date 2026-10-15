@@ -15,6 +15,7 @@
  */
 
 import { bapiRequest } from "../../../lib/bapi.ts";
+import { ApiError, CliError } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
@@ -30,13 +31,6 @@ import { finishExport, startExportRun } from "./shared.ts";
 
 /** BAPI's maximum page size for `GET /v1/users`. */
 const PAGE_SIZE = 500;
-
-/**
- * How many rows each page re-reads from the end of the one before. A user
- * deleted mid-export shifts every later row back one, so without it the row
- * at each page boundary would be skipped; the Map drops the repeats.
- */
-const PAGE_OVERLAP = 20;
 
 export type ExportClerkOptions = {
   output?: string;
@@ -182,38 +176,51 @@ export function mapClerkUserToExport(user: BapiUser): Record<string, unknown> {
   return exported;
 }
 
-/** Pages through every user in the instance. */
+/**
+ * Pages through every user in the instance, oldest first, each page from the
+ * last user of the one before (`starting_after`). A sign-up mid-export lands
+ * at the end, and a deletion can't slide a user past a page boundary the way
+ * it would with an offset.
+ *
+ * @throws CliError when the user a page continues from was deleted before the
+ *   request: Clerk refuses the cursor (422), and the export stops rather than
+ *   guess where to carry on.
+ */
 export async function fetchAllClerkUsers(options: {
   secretKey: string;
   spinner?: SpinnerControls;
 }): Promise<BapiUser[]> {
-  const all = new Map<string, BapiUser>();
+  const all: BapiUser[] = [];
+  let after: string | undefined;
 
-  // Oldest first, so a sign-up during the export lands at the end instead of
-  // shifting every later page by one (BAPI's default is newest first). A
-  // deletion shifts later rows back, which would skip the row at the next
-  // page boundary, so each page overlaps the last.
-  // ponytail: offset paging, safe for up to PAGE_OVERLAP deletions per page
-  // mid-export; /v1/users has no cursor to page by instead.
-  for (let offset = 0; ; offset += PAGE_SIZE - PAGE_OVERLAP) {
-    const response = await retryOn429(async () =>
-      bapiRequest({
-        method: "GET",
-        path: `/v1/users?limit=${PAGE_SIZE}&offset=${offset}&order_by=%2Bcreated_at`,
-        secretKey: options.secretKey,
-      }),
-    );
+  for (;;) {
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE), order_by: "+created_at" });
+    if (after) params.set("starting_after", after);
+    let response;
+    try {
+      response = await retryOn429(async () =>
+        bapiRequest({ method: "GET", path: `/v1/users?${params}`, secretKey: options.secretKey }),
+      );
+    } catch (error) {
+      if (after && error instanceof ApiError && error.status === 422) {
+        throw new CliError(
+          "Users changed during the export: the user the next page continues from was deleted. Nothing was exported. Run the export again.",
+        );
+      }
+      throw error;
+    }
 
     const page = Array.isArray(response.body) ? (response.body as BapiUser[]) : [];
-    for (const user of page) all.set(user.id, user);
-    options.spinner?.update(`Fetching users from Clerk: ${all.size} so far...`);
+    all.push(...page);
+    options.spinner?.update(`Fetching users from Clerk: ${all.length} so far...`);
 
     // A short page means the end; anything else would loop forever on an
     // instance whose size happens to be a multiple of the page size.
     if (page.length < PAGE_SIZE) break;
+    after = page.at(-1)!.id;
   }
 
-  return [...all.values()];
+  return all;
 }
 
 export type ClerkExportResult = {
@@ -299,10 +306,20 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
     const { users: exported, coverage } = buildClerkExport(users, run.append);
     finishExport({ run, options, users: exported, coverage });
 
-    if (exported.length > 0) {
+    if (users.some((user) => user.password_enabled)) {
       log.warn(
         "Clerk's API never returns password digests, TOTP secrets or backup codes, so they are not in this file. " +
           "Users will need to reset their password in the destination instance.",
+      );
+    }
+    // The import makes each user's ID here its external_id, which undo and a
+    // re-run rely on, so an app that keys its own records on external_id has
+    // to look in the metadata after the move.
+    const withExternalId = users.filter((user) => user.external_id).length;
+    if (withExternalId > 0) {
+      log.warn(
+        `${withExternalId} user${withExternalId === 1 ? " has" : "s have"} an external_id. The import sets each user's external_id to its ID in this instance, ` +
+          "and keeps the app's own value as `private_metadata.clerkExternalId`: update anything that looks users up by external_id.",
       );
     }
   });

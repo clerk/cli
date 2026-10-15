@@ -185,7 +185,9 @@ export async function resolveDbUrl(
   if (options.json || isAssumeYes() || isAgent() || !isHuman()) {
     throwUsageError(
       `\`clerk migrate export ${config.platform}\` needs a database connection and cannot prompt here.\n` +
-        `Pass --db-url, or set ${config.envVar}.`,
+        (fromEnv
+          ? `${config.envVar} is set, but isn't a connection string. Fix it, or pass --db-url.`
+          : `Pass --db-url, or set ${config.envVar}.`),
       undefined,
       undefined,
       [
