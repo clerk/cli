@@ -3,5 +3,6 @@
 minimumReleaseAge = 172800
 
 [test]
-# Clears env vars that would point tests at real client configs.
-preload = ["./packages/cli-core/src/test/preload.ts"]
+# Clears env vars that would point tests at real client configs, and loads the
+# version module first so its macro resolves the same way in every test worker.
+preload = ["./packages/cli-core/src/test/preload.ts", "./packages/cli-core/src/test/version-preload.ts"]
