@@ -49,25 +49,15 @@ describe("expandInputJson", () => {
     expect(result).toEqual(["clerk", "init", "--yes"]);
   });
 
-  test("leaves `mcp run` stdin untouched even when piped", async () => {
-    // `mcp run` streams JSON-RPC on stdin; reaching the stdin auto-read here
-    // would consume the stream. It must return unchanged without reading.
+  test.each([
+    ["the removed `mcp run` stub", ["clerk", "mcp", "run"]],
+    ["global flags before the command", ["clerk", "--mode", "agent", "mcp", "run"]],
+  ])("never reads piped stdin implicitly (%s)", async (_label, argv) => {
+    // The `mcp run` stub reads stdin for the editor's `initialize` request;
+    // an implicit read here would consume it. Without --input-json, argv is
+    // returned unchanged and stdin is left alone.
     process.stdin.isTTY = false;
-    const argv = ["clerk", "mcp", "run"];
     expect(await expandInputJson(argv)).toEqual(argv);
-  });
-
-  test("bypasses `mcp run` even with global flags before the command", async () => {
-    process.stdin.isTTY = false;
-    const argv = ["clerk", "--mode", "agent", "mcp", "run"];
-    expect(await expandInputJson(argv)).toEqual(argv);
-  });
-
-  test("does NOT bypass when `mcp run` appears only as an option value", async () => {
-    // `--name mcp run` on an unrelated command must still expand --input-json.
-    const argv = ["clerk", "init", "--name", "mcp", "run", "--input-json", '{"yes":true}'];
-    const result = await expandInputJson(argv);
-    expect(result).toEqual(["clerk", "init", "--name", "mcp", "run", "--yes"]);
   });
 
   test("expands string values to flags", async () => {

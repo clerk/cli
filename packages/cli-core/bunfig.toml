@@ -1,0 +1,4 @@
+[test]
+# Clears env vars that would point tests at real client configs. Mirrors the
+# root bunfig.toml, which Bun ignores when tests run from this directory.
+preload = ["./src/test/preload.ts"]
