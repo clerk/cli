@@ -37,9 +37,11 @@ shows what every run did. Every subcommand takes `--runs-dir <path>` (or
 
 Every command follows these:
 
-1. **Nothing writes without consent.** Consent is a yes at a terminal prompt, or
-   `--yes`. Without either, `import` and `undo` print what they would do and
-   exit 2 with the command to run. `--json` means non-interactive: it never prompts.
+1. **Nothing writes to Clerk without consent.** Consent is a yes at a terminal
+   prompt, or `--yes`. Without either, `import` and `undo` print what they would
+   do and exit 2 with the command to run. `--json` means non-interactive: it
+   never prompts. A run with nothing left to send is still marked finished, which
+   touches only its own record.
 2. **`--dry-run` checks against the real instance, and writes nothing.** An
    import's [checks](#checks) run before anything is written. Predicted
    rejects stop the import unless `--allow-partial` is passed; fields that would
@@ -231,7 +233,7 @@ leaves out the file is asked for its path, and then for its source. An agent, a
 non-TTY run, or `--json` without the file or `--source` exits 2 naming what to
 pass.
 
-**Nothing is written without consent.** After the checks, a human is asked
+**Nothing is written to Clerk without consent.** After the checks, a human is asked
 `Import N users?`, and declining writes nothing. `--yes` skips the question.
 Without either — an agent, a non-TTY run, `--json` — the run prints the checks
 and exits 2 with the exact command to run. Printed commands shell-quote their
@@ -522,7 +524,9 @@ without prompting.
 since: when any user has signed in after the import, `--yes` alone exits 2 and
 deletes nothing, naming the command with `--include-signed-in` that deletes
 them too. A yes at the prompt follows the preview's warning, so it needs no
-flag.
+flag. Right before the deletes, undo looks again: a user who signed in after
+the preview was in no one's consent, so without `--include-signed-in` it exits
+2 and deletes nothing.
 
 It refuses with exit 2, and deletes nothing, when:
 
@@ -555,8 +559,9 @@ object:
 ```
 
 `import` is the run being undone. `run` is the undo's own run, `null` until one
-is written, as an import's is: a dry run adds `"dryRun": true`, and a refusal
-for consent `"consent": "required"`. Once the deletes run, `run` is the undo run
+is written, as an import's is: a dry run adds `"dryRun": true`, a refusal for
+consent `"consent": "required"`, and a refusal because the run changed while
+the preview waited `"changed": true`. Once the deletes run, `run` is the undo run
 and `result` holds `deleted`, `failed` and an `errors` breakdown.
 
 ### `clerk migrate help`

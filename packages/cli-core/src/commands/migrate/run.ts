@@ -30,6 +30,7 @@ import {
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { quoteArg } from "../../lib/json-body.ts";
 import { carryFlags, withFlags } from "./lib/carry-flags.ts";
+import { terminal } from "./lib/terminal.ts";
 import { log } from "../../lib/log.ts";
 import { NEXT_STEPS, printAgentNextSteps } from "../../lib/next-steps.ts";
 import { confirm } from "../../lib/prompts.ts";
@@ -105,7 +106,7 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
 
 /** Nobody can answer a prompt: an agent, a non-TTY run, or `--json`. */
 function canPrompt(options: MigrateRunOptions): boolean {
-  return !options.json && isHuman() && !isAgent();
+  return !options.json && isHuman() && !isAgent() && terminal.available();
 }
 
 /**
@@ -532,6 +533,36 @@ function rejectSummary(checks: ImportChecks, json = false): string {
   return ` ${why}${json ? " See `checks.rejects` for each user." : ""}`;
 }
 
+/** How the checks name a user an earlier import already created here. */
+const ALREADY_IMPORTED = "already in the instance, with this source ID";
+
+/**
+ * The earlier import run, of this source into this instance, that created the
+ * users the checks reject as already there, and how many of them: fixing a
+ * skipped row changes the file, and the changed file's run meets them.
+ */
+function earlierRunHolding(
+  runsDir: string,
+  source: string,
+  instanceId: string,
+  checks: ImportChecks,
+): { id: string; count: number } | undefined {
+  const already = new Set(
+    checks.rejects.filter((reject) => reject.reason === ALREADY_IMPORTED).map((r) => r.sourceId),
+  );
+  if (already.size === 0) return undefined;
+  for (const record of listRuns(runsDir)) {
+    if (record.kind !== "import" || record.source !== source) continue;
+    if (record.target.instanceId !== instanceId || runState(runsDir, record) === "undone") continue;
+    let count = 0;
+    for (const line of latestUserLines(runsDir, record.id).values()) {
+      if (line.status === "created" && already.has(line.sourceId)) count++;
+    }
+    if (count > 0) return { id: record.id, count };
+  }
+  return undefined;
+}
+
 /**
  * Records the checks' rejects as skipped users, so the run says who they were.
  * The checks never reject an adopted user: it is created already.
@@ -760,10 +791,17 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       if (refused) {
         if (options.json) preview({ refused: true });
+        const earlier = earlierRunHolding(runsDir, source, target.instanceId, checks);
+        const undoEarlier = earlier
+          ? withFlags(`clerk migrate undo ${earlier.id}`, carryFlags(options))
+          : undefined;
         throwUsageError(
           `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported.` +
             `${rejectSummary(checks, options.json)} ` +
-            "Fix them, or pass --allow-partial to import the rest and record them as skipped.",
+            (earlier
+              ? `${earlier.count} of them ${earlier.count === 1 ? "was" : "were"} created by run ${earlier.id}, from an earlier version of this file. ` +
+                `Pass --allow-partial to import the rest into a new run, or undo run ${earlier.id} first (\`${undoEarlier}\`) to import the whole file again.`
+              : "Fix them, or pass --allow-partial to import the rest and record them as skipped."),
           undefined,
           undefined,
           [
@@ -771,6 +809,9 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
               command: commandFor(options, ["--allow-partial", "--yes"]),
               description: "Import the users that pass",
             },
+            ...(undoEarlier
+              ? [{ command: undoEarlier, description: `Undo run ${earlier!.id} first` }]
+              : []),
           ],
         );
       }

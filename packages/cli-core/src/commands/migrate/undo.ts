@@ -18,7 +18,7 @@
 
 import { bapiRequest } from "../../lib/bapi.ts";
 import { bold, dim, green, red } from "../../lib/color.ts";
-import { BapiError, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
+import { BapiError, CliError, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { confirm } from "../../lib/prompts.ts";
@@ -26,6 +26,7 @@ import { withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { normalizeErrorMessage } from "./import-users.ts";
 import { carryFlags, withFlags } from "./lib/carry-flags.ts";
+import { terminal } from "./lib/terminal.ts";
 import { resolveLimits, type ResolvedLimits } from "./lib/instance.ts";
 import { RateLimitExceededError, retryOn429 } from "./lib/retry.ts";
 import {
@@ -399,7 +400,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   // Rule 1: nothing is deleted without consent — `--yes`, or a yes at a
   // prompt. `--json` never prompts.
   if (!nothingLeft && !options.yes) {
-    const canAsk = !options.json && isHuman() && !isAgent();
+    const canAsk = !options.json && isHuman() && !isAgent() && terminal.available();
     if (!canAsk) {
       if (options.json) {
         log.data(
@@ -447,9 +448,25 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   let run: Run;
   let summary: UndoSummary;
   let undoRecord: RunRecord;
+  let importRecord = record;
+  // After the preview, --json always prints its object: a refusal here
+  // carries `changed`, and the reason goes to stderr as for any error.
+  const refuseChanged = (message: string, extra: Record<string, unknown> = {}): never => {
+    if (options.json) {
+      log.data(
+        JSON.stringify(jsonResult(target, record, preview, { changed: true, ...extra }), null, 2),
+      );
+    }
+    throwUsageError(message);
+  };
   try {
     // Another undo that finished during the preview has already marked it.
-    readImportRun(runsDir, record.id);
+    try {
+      readImportRun(runsDir, record.id);
+    } catch (error) {
+      if (error instanceof CliError) refuseChanged(error.message);
+      throw error;
+    }
     // A re-import that continued the run during the preview created users
     // the preview never listed. Another undo that started or carried on an
     // undo run in the meantime changed which users are left to delete, and a
@@ -460,10 +477,29 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       openNow?.id !== openUndo?.id ||
       (openUndo !== undefined && readUserLines(runsDir, openUndo.id).length !== undoLines)
     ) {
-      throwUsageError(
+      refuseChanged(
         `Run ${record.id} changed while this undo was waiting, so the preview is out of date. ` +
           `Nothing was deleted. Run \`${withFlags(`clerk migrate undo ${record.id}`, carryFlags(options))}\` again.`,
       );
+    }
+
+    // A user who signed in after the preview is one nobody agreed to delete:
+    // --yes covered the preview's count, and so did a yes at the prompt.
+    if (present.length > 0 && !options.includeSignedIn) {
+      const now = await inspectUsers({
+        users: present,
+        since: record.startedAt,
+        secretKey,
+        schedule,
+      });
+      const more = now.signedInSince - preview.signedInSince;
+      if (more > 0) {
+        refuseChanged(
+          `${plural(more, "more user")} the import created signed in after the preview, and nothing agreed to delete them. Nothing was deleted.\n` +
+            `Run \`${withFlags(`clerk migrate undo ${record.id}`, carryFlags(options))}\` again to see them, or pass --include-signed-in to delete them too.`,
+          { signedInSincePreview: more },
+        );
+      }
     }
 
     run = openUndo
@@ -491,7 +527,8 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     }
     undoRecord = run.finish();
     if (undoRecord.status === "complete") {
-      patchRun(runsDir, record.id, { status: "undone", undoneBy: undoRecord.id });
+      importRecord =
+        patchRun(runsDir, record.id, { status: "undone", undoneBy: undoRecord.id }) ?? record;
     }
   } finally {
     releaseImport();
@@ -500,7 +537,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   if (options.json) {
     log.data(
       JSON.stringify(
-        jsonResult(target, record, preview, {
+        jsonResult(target, importRecord, preview, {
           run: undoRecord,
           result: {
             deleted: summary.deleted,

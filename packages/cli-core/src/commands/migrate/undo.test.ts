@@ -17,6 +17,7 @@ import {
   type RunRecord,
 } from "./lib/run-store.ts";
 import { keyInstanceId } from "./lib/target.ts";
+import { terminal } from "./lib/terminal.ts";
 import { undo } from "./undo.ts";
 
 const captured = useCaptureLog();
@@ -232,6 +233,58 @@ describe("refusals, all exit 2 and delete nothing", () => {
       expect(fs.existsSync(lockFile(runsDir, record.id))).toBe(false);
     });
 
+    // After the preview, --json always prints its object.
+    test("--json prints the preview, marked changed, when it is out of date", async () => {
+      const record = importRun();
+      duringPreview(() => {
+        const run = continueRun(runsDir, record);
+        run.append({ sourceId: "c", status: "created", clerkId: "user_c" });
+        run.finish();
+      });
+
+      await expect(undo(record.id, withDir({ yes: true, json: true }))).rejects.toThrow(
+        /preview is out of date/,
+      );
+      expect(JSON.parse(captured.out)).toMatchObject({ import: { id: record.id }, changed: true });
+    });
+
+    // --yes agreed to the preview's count, not to someone who signed in since.
+    test("refuses when a user signs in after the preview, without --include-signed-in", async () => {
+      instanceUsers.set("user_b", null);
+      const record = importRun();
+      let lookups = 0;
+      const stubbed = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(input.toString());
+        if (url.searchParams.has("user_id") && lookups++ === 1)
+          instanceUsers.set("user_a", AFTER_IMPORT);
+        return stubbed(input, init);
+      }) as typeof fetch;
+
+      await expect(undo(record.id, withDir({ yes: true, includeSignedIn: false }))).rejects.toThrow(
+        /1 more user the import created signed in after the preview/,
+      );
+      expect(deletes()).toHaveLength(0);
+      expect(readRun(runsDir, record.id)?.status).not.toBe("undone");
+    });
+
+    test("--include-signed-in deletes a user who signed in after the preview", async () => {
+      instanceUsers.set("user_b", null);
+      const record = importRun();
+      let lookups = 0;
+      const stubbed = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(input.toString());
+        if (url.searchParams.has("user_id") && lookups++ === 0)
+          instanceUsers.set("user_a", AFTER_IMPORT);
+        return stubbed(input, init);
+      }) as typeof fetch;
+
+      await undo(record.id, withDir({ yes: true, includeSignedIn: true }));
+
+      expect(deletes()).toHaveLength(2);
+    });
+
     test("undone by another undo: refused, and its undo is kept", async () => {
       const record = importRun();
       duringPreview(() =>
@@ -333,6 +386,25 @@ describe("stopped part-way", () => {
     expect(undoRun?.finishedAt).toBeUndefined();
     expect(fs.existsSync(path.join(runsDir, undoRun?.id ?? "", "lock"))).toBe(false);
     expect(readRun(runsDir, record.id)?.status).not.toBe("undone");
+  });
+});
+
+// `CLERK_MODE=human` with no terminal: the prompt would fail to open one and spin.
+describe("forced human mode with no terminal", () => {
+  test("refuses for consent rather than prompting", async () => {
+    const record = importRun();
+    const mode = process.env.CLERK_MODE;
+    const available = terminal.available;
+    process.env.CLERK_MODE = "human";
+    terminal.available = () => false;
+    try {
+      await expect(undo(record.id, withDir())).rejects.toThrow(/needs consent/);
+    } finally {
+      terminal.available = available;
+      if (mode === undefined) delete process.env.CLERK_MODE;
+      else process.env.CLERK_MODE = mode;
+    }
+    expect(deletes()).toHaveLength(0);
   });
 });
 
@@ -536,8 +608,10 @@ describe("deleting", () => {
 
     await undo(record.id, withDir({ yes: true, json: true }));
 
-    expect(JSON.parse(captured.out)).toMatchObject({
-      import: { id: record.id, kind: "import" },
+    const out = JSON.parse(captured.out);
+    // The import as it is now: undone, by this undo.
+    expect(out.import).toMatchObject({ id: record.id, status: "undone", undoneBy: out.run.id });
+    expect(out).toMatchObject({
       run: { kind: "undo", undoes: record.id, status: "complete" },
       result: { deleted: 2, failed: 0, errors: [] },
     });

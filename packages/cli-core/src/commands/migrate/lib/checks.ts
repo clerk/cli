@@ -654,6 +654,7 @@ async function findInstanceDuplicates(
       if (sourceId && sourceId !== own && !reasons.has(sourceId)) reasons.set(sourceId, reason);
     };
     if (existing.external_id) {
+      // Matched by run.ts's ALREADY_IMPORTED, which names the run that created them.
       claim(byExternalId.get(existing.external_id), "already in the instance, with this source ID");
     }
     for (const email of existing.email_addresses ?? []) {

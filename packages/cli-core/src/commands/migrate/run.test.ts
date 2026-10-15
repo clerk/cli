@@ -1104,6 +1104,30 @@ describe("run", () => {
       expect(listRuns(runsDir())).toHaveLength(2);
     });
 
+    // Fixing the row a partial run skipped changes the file, so its run meets
+    // the users the first one created: the refusal says which run that was.
+    test("a changed file's refusal names the earlier run that created the users it rejects", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([export2[0], { ...export2[1], primary_email_address: "fixed@x.dev" }]),
+      );
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+      const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain(`1 of them was created by run ${first!.id}`);
+      expect(error.examples?.map((example) => example.command)).toContain(
+        `clerk migrate undo ${first!.id} --secret-key <key>`,
+      );
+      expect(created()).toEqual([]);
+    });
+
     test("a changed file is a new run", async () => {
       await run(baseOptions);
       fs.writeFileSync(
