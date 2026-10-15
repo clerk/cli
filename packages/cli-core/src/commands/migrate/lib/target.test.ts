@@ -1,4 +1,13 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  spyOn,
+  test,
+} from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +23,7 @@ import {
 } from "./target.ts";
 
 const captured = useCaptureLog();
+const plapiModule = await import("../../../lib/plapi.ts");
 
 describe("printTarget", () => {
   test.each([
@@ -236,5 +246,40 @@ describe("resolveClerkTarget key source", () => {
       keySource: "accountless app (.clerk/.tmp/keyless.json)",
       appLabel: "accountless app",
     });
+  });
+});
+
+// A stand-in is no ID `--app --instance` can resolve again, so a run recorded
+// under one would suggest commands that fail, or reach another instance.
+describe("resolveClerkTarget --app", () => {
+  let originalFetch: typeof globalThis.fetch;
+  let fetchApplication: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response("nope", { status: 500 })) as unknown as typeof fetch;
+    fetchApplication = spyOn(plapiModule, "fetchApplication").mockResolvedValue({
+      application_id: "app_123",
+      name: "My App",
+      instances: [
+        {
+          instance_id: "ins_staging",
+          environment_type: "staging",
+          publishable_key: "pk_test_x",
+          secret_key: "sk_test_x",
+        },
+      ],
+    } as never);
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    fetchApplication.mockRestore();
+  });
+
+  test("records the instance the Platform API named when GET /v1/instance fails", async () => {
+    const { target } = await resolveClerkTarget({ app: "app_123", instance: "ins_staging" });
+    expect(target).toMatchObject({ instanceId: "ins_staging", env: "staging", keySource: "--app" });
   });
 });
