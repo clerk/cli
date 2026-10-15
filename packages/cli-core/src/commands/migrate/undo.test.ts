@@ -129,8 +129,12 @@ function importRun(overrides: Partial<RunRecord> = {}): RunRecord {
 }
 
 // `user_b` has signed in since the import; the guard on that has its own tests.
-const options = { secretKey: "sk_test_x", runsDir: "", includeSignedIn: true };
-const withDir = (extra: Record<string, unknown> = {}) => ({ ...options, runsDir, ...extra });
+const withDir = (extra: Record<string, unknown> = {}) => ({
+  secretKey: "sk_test_x",
+  includeSignedIn: true,
+  runsDir,
+  ...extra,
+});
 const deletes = () => requests.filter((request) => request.method === "DELETE");
 
 describe("refusals, all exit 2 and delete nothing", () => {

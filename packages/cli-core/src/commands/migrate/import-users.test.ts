@@ -5,10 +5,10 @@ import { useCaptureLog } from "../../test/lib/stubs.ts";
 import {
   buildCreateUserBody,
   importUsers,
-  normalizeErrorMessage,
   readRetryAfter,
   splitIdentifiers,
 } from "./import-users.ts";
+import { normalizeErrorMessage } from "./lib/failures.ts";
 import type { ResolvedLimits } from "./lib/instance.ts";
 import type { UserLine } from "./lib/run-store.ts";
 import type { User } from "./types.ts";

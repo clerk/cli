@@ -33,13 +33,12 @@ import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { quoteArg } from "../../lib/json-body.ts";
 import { carryFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
 import { plural } from "./lib/plural.ts";
-import { terminal } from "./lib/terminal.ts";
+import { canPrompt } from "./lib/terminal.ts";
 import { log } from "../../lib/log.ts";
 import { NEXT_STEPS, printAgentNextSteps } from "../../lib/next-steps.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
-import { isAgent, isHuman } from "../../mode.ts";
 import { importUsers, splitIdentifiers } from "./import-users.ts";
 import { ALREADY_IMPORTED, checkImport, type ImportChecks } from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
@@ -68,7 +67,6 @@ import {
   type Run,
   type RunRecord,
   type UserLine,
-  openUndoOf,
   unfinishedUndoMessage,
   inUseMessage,
 } from "./lib/run-store.ts";
@@ -134,11 +132,6 @@ export type MigrateRunOptions = {
   /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
   runsDir?: string;
 } & FirebaseHashFlags;
-
-/** Nobody can answer a prompt: an agent, a non-TTY run, or `--json`. */
-function canPrompt(options: MigrateRunOptions): boolean {
-  return !options.json && isHuman() && !isAgent() && terminal.available();
-}
 
 /**
  * Validates what a run needs before anything is read or sent.
@@ -488,7 +481,7 @@ function undoneInFull(runsDir: string, record: RunRecord): boolean {
 }
 
 /** How this import relates to earlier runs of the same file, source and instance. */
-export type ResumeCase =
+type ResumeCase =
   | { kind: "new" }
   | { kind: "continue"; record: RunRecord; because: "interrupted" | "partial" }
   | { kind: "complete"; record: RunRecord };
@@ -508,7 +501,7 @@ export type ResumeCase =
  *   latest run of this file was made with an earlier version of a custom
  *   source and was not undone.
  */
-export function findResume(
+function findResume(
   runsDir: string,
   match: {
     sha256: string;
@@ -516,14 +509,15 @@ export function findResume(
     sourceHash?: string;
     instanceId: string;
     /** The key's stand-in ID, for a run recorded while Clerk could not name the instance. */
-    keyInstanceId?: string;
+    keyInstanceId: string;
   },
   /** The import's runs-folder and target flags, for the command a refusal suggests. */
-  carry: string[] = [],
+  carry: string[],
 ): ResumeCase {
+  const runs = listRuns(runsDir);
   // Only a run of this same source, and the same version of a custom one,
   // is continued.
-  const latest = listRuns(runsDir).find(
+  const latest = runs.find(
     (record) =>
       sameFileAndInstance(record, match) &&
       record.source === match.source &&
@@ -535,7 +529,7 @@ export function findResume(
     // created and leave it unfinished, so that takes --new-run. Any such run
     // not undone, not just the newest: an older interrupted run behind a
     // newer undone one still holds its users.
-    const earlier = listRuns(runsDir).find(
+    const earlier = runs.find(
       (record) => sameFileAndInstance(record, match) && !undoneInFull(runsDir, record),
     );
     if (earlier) {
@@ -552,7 +546,7 @@ export function findResume(
     // this file recorded under a real ID can be neither matched nor ruled out.
     // Starting over would reject every user it created and leave it unfinished.
     if (isStandInInstanceId(match.instanceId)) {
-      const unconfirmed = listRuns(runsDir).find(
+      const unconfirmed = runs.find(
         (record) =>
           record.kind === "import" &&
           record.file?.sha256 === match.sha256 &&
@@ -576,12 +570,11 @@ export function findResume(
   }
   if (state === "undone") return { kind: "new" };
 
-  const openUndo = openUndoOf(runsDir, latest.id);
+  const undos = runs.filter((record) => record.kind === "undo" && record.undoes === latest.id);
+  const openUndo = undos.find((record) => runState(runsDir, record) !== "complete");
   if (openUndo) throwUsageError(unfinishedUndoMessage(latest.id, openUndo.id, carry));
   // Undone in full, though the import run was never marked so.
-  if (listRuns(runsDir).some((record) => record.kind === "undo" && record.undoes === latest.id)) {
-    return { kind: "new" };
-  }
+  if (undos.length > 0) return { kind: "new" };
 
   if (state === "complete") return { kind: "complete", record: latest };
   return {
@@ -871,6 +864,9 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
   }
 
   const { source, file } = validateRunOptions(options);
+  // The flags every suggested command needs to reach this runs folder and instance.
+  const carry = carryFlags(options);
+
   // A Firebase export through a source you wrote is still Firebase's: its
   // digests need the project's parameters, from the envelope or the flags.
   const hashSource = options.envelopeSource ?? source;
@@ -962,7 +958,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
               instanceId: target.instanceId,
               keyInstanceId: keyInstanceId(secretKey),
             },
-            carryFlags(options),
+            carry,
           );
 
       // The users this run created carry digests built from its parameters, so
@@ -1217,7 +1213,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       if (refused) {
         if (options.json) preview({ refused: true });
         const earlier = earlierRunHolding(runsDir, source, target.instanceId, checks);
-        const undoEarlier = earlier ? undoCommand(earlier.id, carryFlags(options)) : undefined;
+        const undoEarlier = earlier ? undoCommand(earlier.id, carry) : undefined;
         throwUsageError(
           `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported.` +
             `${rejectSummary(checks, options.json)} ` +
@@ -1248,7 +1244,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         // Settled, so a continued run is finished rather than left interrupted,
         // and the JSON reports it as finished, as run.json now does.
         const finished = continued
-          ? continueRun(runsDir, continued, plannedLines, carryFlags(options)).finish()
+          ? continueRun(runsDir, continued, plannedLines, carry).finish()
           : undefined;
         if (options.json)
           preview({ nothingToImport: true, ...(finished ? { run: finished } : {}) });
@@ -1288,10 +1284,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       // Gitignored only now, once there is consent to write a run.
       await resolveRunsDir(options.runsDir, { write: true });
       const run = continued
-        ? continueWithExport(
-            continueRun(runsDir, continued, plannedLines, carryFlags(options)),
-            input.fromExport,
-          )
+        ? continueWithExport(continueRun(runsDir, continued, plannedLines, carry), input.fromExport)
         : startRun(runsDir, {
             kind: "import",
             target,
@@ -1405,15 +1398,20 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         `clerk migrate runs ${record.id}`,
         carryFlags({ runsDir: options.runsDir }),
       );
+      const undo = undoCommand(record.id, carry);
       const steps =
         summary.failed > 0
           ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(
               runsCommand,
               // The same import again continues this run; --new-run would not.
-              commandFor({ ...options, newRun: false }, options.yes ? ["--yes"] : []),
-              undoCommand(record.id, carryFlags(options)),
+              commandFor(
+                { ...options, newRun: false },
+                input.fromExport,
+                options.yes ? ["--yes"] : [],
+              ),
+              undo,
             )
-          : NEXT_STEPS.MIGRATE_DONE(runsCommand, undoCommand(record.id, carryFlags(options)));
+          : NEXT_STEPS.MIGRATE_DONE(runsCommand, undo);
       setNextSteps(steps);
       printAgentNextSteps(steps);
     },

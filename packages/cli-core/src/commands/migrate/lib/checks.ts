@@ -1047,6 +1047,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   }));
 
   const disabledProviders = findDisabledProviderRejects(input);
+  // Users an earlier attempt already created, which this one only attaches.
+  const adopted = (user: User) => input.adoptedSourceIds?.has(user.userId) ?? false;
 
   // Users that pass every per-user check. Only these claim identifiers in
   // the file: a rejected record must not cost a later one its email. Each is
@@ -1071,9 +1073,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     if (phoned.dropped) loosePhoneUsers.add(original.userId);
     const user = phoned.user;
     const sent = dropDisabledIdentifiers(user, input.settings);
-    const adopted = input.adoptedSourceIds?.has(original.userId) ?? false;
     const reserve = reservesFor(input)(user);
-    const reason = adopted
+    const reason = adopted(original)
       ? undefined
       : (original.skipReason ??
         (refused.length > 0 && phoned.dropped && !hasAnyIdentifier(user)
@@ -1125,7 +1126,6 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   // An adopted user already holds its email, phone and username in Clerk, so
   // it claims them first, wherever it sits in the file: a fresh record sharing
   // one is the create Clerk would refuse, and is not kept in its place.
-  const adopted = (user: User) => input.adoptedSourceIds?.has(user.userId) ?? false;
   const { reasons: fileDuplicates, keptBy } = findFileDuplicates(
     [...passed.filter(adopted), ...passed.filter((user) => !adopted(user))],
     reservesFor(input),
@@ -1147,10 +1147,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     // email costs it nothing. A second record with its source ID would be
     // created as the same user, so that one is still rejected.
     const duplicate = fileDuplicates.get(user);
-    const reason =
-      input.adoptedSourceIds?.has(user.userId) && duplicate !== DUPLICATE_SOURCE_ID
-        ? undefined
-        : duplicate;
+    const reason = adopted(user) && duplicate !== DUPLICATE_SOURCE_ID ? undefined : duplicate;
     if (reason) {
       rejects.push({ sourceId: user.userId, reason, ...(kept ? { keptSourceId: kept } : {}) });
       duplicates.add(originals.get(user) ?? user);
@@ -1163,9 +1160,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       : new Map<string, string>();
   const unique: User[] = [];
   for (const user of candidates) {
-    const reason = input.adoptedSourceIds?.has(user.userId)
-      ? undefined
-      : instanceDuplicates.get(user.userId);
+    const reason = adopted(user) ? undefined : instanceDuplicates.get(user.userId);
     if (reason) {
       rejects.push({ sourceId: user.userId, reason });
       duplicates.add(originals.get(user) ?? user);
@@ -1182,8 +1177,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     // An adopted user is in the instance's count already, and is never
     // created: only the new users take headroom, in file order.
     const headroom = Math.max(0, limit - (input.existingUsers ?? 0));
-    const isNew = (user: User) => !input.adoptedSourceIds?.has(user.userId);
-    const fresh = candidates.filter(isNew);
+    const fresh = candidates.filter((user) => !adopted(user));
     const over = Math.max(0, fresh.length - headroom);
     quota = { existing: input.existingUsers ?? null, limit, headroom, over };
     if (over > 0) {

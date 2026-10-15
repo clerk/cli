@@ -23,10 +23,9 @@ import { log } from "../../lib/log.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
-import { isAgent, isHuman } from "../../mode.ts";
-import { failureOf, tallyError } from "./import-users.ts";
+import { failureOf, tallyError } from "./lib/failures.ts";
 import { carryFlags, runsListCommand, undoCommand } from "./lib/carry-flags.ts";
-import { terminal } from "./lib/terminal.ts";
+import { canPrompt } from "./lib/terminal.ts";
 import { resolveLimits } from "./lib/instance.ts";
 import { retryOn429 } from "./lib/retry.ts";
 import {
@@ -70,10 +69,7 @@ export type UndoOptions = {
   runsDir?: string;
 };
 
-/** One user the import created, still to be deleted. */
-export type UndoUser = SourceUser;
-
-export type UndoPreview = {
+type UndoPreview = {
   /** Users that will be deleted. */
   toDelete: number;
   /** Of those, how many have signed in since the import started. */
@@ -143,7 +139,7 @@ function usersToDelete(
   runsDir: string,
   record: RunRecord,
   openUndo: RunRecord | undefined,
-): { users: UndoUser[]; unconfirmed: string[]; alreadyDeleted: number } {
+): { users: SourceUser[]; unconfirmed: string[]; alreadyDeleted: number } {
   const deleted = new Set<string>();
   if (openUndo) {
     for (const line of latestUserLines(runsDir, openUndo.id).values()) {
@@ -151,7 +147,7 @@ function usersToDelete(
     }
   }
 
-  const users: UndoUser[] = [];
+  const users: SourceUser[] = [];
   const unconfirmed: string[] = [];
   for (const line of latestUserLines(runsDir, record.id).values()) {
     if (deleted.has(line.sourceId)) continue;
@@ -169,14 +165,14 @@ function usersToDelete(
  *   the import started — the ones whose deletion someone will notice.
  */
 async function inspectUsers(options: {
-  users: UndoUser[];
+  users: SourceUser[];
   since: string;
   secretKey: string;
   schedule: ApiScheduler;
   spinner?: SpinnerControls;
 }): Promise<{
-  present: UndoUser[];
-  gone: UndoUser[];
+  present: SourceUser[];
+  gone: SourceUser[];
   /** The Clerk IDs of the users who signed in since the import. */
   signedIn: string[];
 }> {
@@ -203,7 +199,7 @@ async function inspectUsers(options: {
   return { present, gone, signedIn };
 }
 
-export type UndoSummary = {
+type UndoSummary = {
   deleted: number;
   failed: number;
   errorBreakdown: Map<string, number>;
@@ -211,7 +207,7 @@ export type UndoSummary = {
 
 /** Deletes each user, rate-limited and 429-retried exactly as the import is. */
 async function deleteUsers(options: {
-  users: UndoUser[];
+  users: SourceUser[];
   secretKey: string;
   /** Undo's own scheduler, so its lookups and deletes share one rate budget. */
   schedule: ApiScheduler;
@@ -220,15 +216,14 @@ async function deleteUsers(options: {
 }): Promise<UndoSummary> {
   const { users, secretKey, schedule, run, progress: report } = options;
   const errorBreakdown = new Map<string, number>();
-  let processed = 0;
   let deleted = 0;
   let failed = 0;
 
-  const progress = () => report?.({ done: processed, ok: deleted, failed });
+  const progress = () => report?.({ done: deleted + failed, ok: deleted, failed });
 
   // A failure on one user must not stop the rest: a half-undone import with
   // no record of which half is far worse than a reported failure.
-  const deleteOne = async (user: UndoUser): Promise<void> => {
+  const deleteOne = async (user: SourceUser): Promise<void> => {
     const retries: string[] = [];
     try {
       await retryOn429(
@@ -274,7 +269,6 @@ async function deleteUsers(options: {
         });
       }
     }
-    processed++;
     progress();
   };
 
@@ -284,7 +278,6 @@ async function deleteUsers(options: {
 }
 
 function printPreview(record: RunRecord, preview: UndoPreview): void {
-  const are = (count: number) => (count === 1 ? "is" : "are");
   log.blank();
   log.info(
     `${bold(`Will delete ${plural(preview.toDelete, "user")}`)} created by import run ${record.id}.`,
@@ -297,7 +290,7 @@ function printPreview(record: RunRecord, preview: UndoPreview): void {
   if (preview.alreadyGone > 0) {
     log.info(
       dim(
-        `${plural(preview.alreadyGone, "user")} the import created ${are(preview.alreadyGone)} already gone.`,
+        `${plural(preview.alreadyGone, "user")} the import created ${preview.alreadyGone === 1 ? "is" : "are"} already gone.`,
       ),
     );
   }
@@ -310,10 +303,6 @@ function printPreview(record: RunRecord, preview: UndoPreview): void {
   }
 }
 
-/**
- * The JSON every outcome prints. `import` is the run being undone; `run` is the
- * undo's own run, null until one is written, as an import's is.
- */
 /**
  * What the JSON adds to the preview: why undo stopped before deleting, or,
  * once it did, its run and result. One of these, never two.
@@ -330,34 +319,25 @@ type UndoOutcome =
       result: { deleted: number; failed: number; errors: { error: string; count: number }[] };
     };
 
-function jsonResult(
-  target: ClerkTarget,
-  record: RunRecord,
-  preview: UndoPreview,
-  extra: UndoOutcome,
-) {
-  return { target, import: record, run: null, preview, ...extra };
-}
-
 export async function undo(runId: string, options: UndoOptions = {}): Promise<void> {
   const runsDir = await resolveRunsDir(options.runsDir);
   const runsCarry = carryFlags({ runsDir: options.runsDir });
   const record = readImportRun(runsDir, runId, runsCarry);
   const importLines = readUserLines(runsDir, record.id).length;
   // The command a hint suggests, reaching the same runs folder and instance.
-  const undoAgain = undoCommand(record.id, carryFlags(options));
+  const carry = carryFlags(options);
+  const undoAgain = undoCommand(record.id, carry);
 
   const { secretKey, target } = await resolveClerkTarget(options);
   if (!options.json) printTarget(target);
   assertSameInstance(record, target, secretKey);
 
-  const limits = resolveLimits(secretKey);
+  const { concurrencyLimit, rateLimit } = resolveLimits(secretKey);
   const openUndo = openUndoOf(runsDir, record.id);
   const undoLines = openUndo ? readUserLines(runsDir, openUndo.id).length : 0;
   const recorded = usersToDelete(runsDir, record, openUndo);
-  const { alreadyDeleted } = recorded;
 
-  const schedule = createApiScheduler(limits.concurrencyLimit, limits.rateLimit);
+  const schedule = createApiScheduler(concurrencyLimit, rateLimit);
   const users = [
     ...recorded.users,
     ...(await findInFlight({
@@ -378,47 +358,48 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     toDelete: present.length,
     signedInSince: signedIn.length,
     alreadyGone: gone.length,
-    alreadyDeleted,
+    alreadyDeleted: recorded.alreadyDeleted,
   };
 
   if (!options.json) printPreview(record, preview);
 
   // The flags that found this run and instance, or the command looks elsewhere
   // and refuses.
-  const command = [
-    `clerk migrate undo ${record.id} --yes`,
+  const command = undoCommand(record.id, [
+    "--yes",
     ...(preview.signedInSince > 0 ? ["--include-signed-in"] : []),
-    ...carryFlags(options),
+    ...carry,
     ...(options.json ? ["--json"] : []),
-  ].join(" ");
+  ]);
   const nothingLeft = present.length === 0 && gone.length === 0;
 
+  // After the preview, --json prints its object exactly once, whatever
+  // happens: the dry run, the result, a refusal with its marker, or, for
+  // anything else that stops the undo, the preview marked `writeFailed` (the
+  // file system refused) or `stopped`. The reason goes to stderr as for any
+  // error. `import` is the run being undone; `run` is the undo's own run, null
+  // until one is written, as an import's is.
+  let printed = false;
+  const printJson = (extra: UndoOutcome, imported = record) => {
+    if (!options.json || printed) return;
+    printed = true;
+    log.data(JSON.stringify({ target, import: imported, run: null, preview, ...extra }, null, 2));
+  };
+
   if (options.dryRun) {
-    if (options.json) {
-      log.data(JSON.stringify(jsonResult(target, record, preview, { dryRun: true }), null, 2));
-    } else {
+    printJson({ dryRun: true });
+    if (!options.json) {
       log.blank();
       log.info(dim(`Dry run: nothing was deleted. Run \`${command}\` to delete them.`));
     }
     return;
   }
 
-  // After the preview, --json prints its object exactly once, whatever
-  // happens: the result, a refusal with its marker, or, for anything else
-  // that stops the undo, the preview marked `writeFailed` (the file system
-  // refused) or `stopped`. The reason goes to stderr as for any error.
-  let printed = false;
-  const printJsonPreview = (extra: UndoOutcome) => {
-    if (!options.json || printed) return;
-    printed = true;
-    log.data(JSON.stringify(jsonResult(target, record, preview, extra), null, 2));
-  };
   // Rule 1: nothing is deleted without consent — `--yes`, or a yes at a
   // prompt. `--json` never prompts.
   if (!nothingLeft && !options.yes) {
-    const canAsk = !options.json && isHuman() && !isAgent() && terminal.available();
-    if (!canAsk) {
-      printJsonPreview({ consent: "required" });
+    if (!canPrompt(options)) {
+      printJson({ consent: "required" });
       throwUsageError(
         `\`clerk migrate undo\` permanently deletes ${plural(present.length, "user")} and needs consent. Pass --yes to confirm.`,
         undefined,
@@ -437,7 +418,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   // people have used since. That takes its own flag; a human at the prompt has
   // the warning above.
   if (options.yes && preview.signedInSince > 0 && !options.includeSignedIn) {
-    printJsonPreview({ consent: "required" });
+    printJson({ consent: "required" });
     throwUsageError(
       `${plural(preview.signedInSince, "user")} the import created ${preview.signedInSince === 1 ? "has" : "have"} signed in since, and --yes alone does not delete them. ` +
         "Pass --include-signed-in to delete them too. Nothing was deleted.",
@@ -448,14 +429,14 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   }
 
   const refuseChanged = (message: string, extra: { signedInSincePreview?: number } = {}): never => {
-    printJsonPreview({ changed: true, ...extra });
+    printJson({ changed: true, ...extra });
     throwUsageError(message);
   };
 
   try {
     await deleteAfterPreview();
   } catch (error) {
-    printJsonPreview(isFileSystemError(error) ? { writeFailed: true } : { stopped: true });
+    printJson(isFileSystemError(error) ? { writeFailed: true } : { stopped: true });
     throw error;
   }
 
@@ -513,7 +494,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
             schedule,
           });
         } catch (error) {
-          printJsonPreview({ recheckFailed: true });
+          printJson({ recheckFailed: true });
           throw error;
         }
         const seen = new Set(signedIn);
@@ -560,20 +541,16 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     }
 
     if (options.json) {
-      printed = true;
-      log.data(
-        JSON.stringify(
-          jsonResult(target, importRecord, preview, {
-            run: undoRecord,
-            result: {
-              deleted: summary.deleted,
-              failed: summary.failed,
-              errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
-            },
-          }),
-          null,
-          2,
-        ),
+      printJson(
+        {
+          run: undoRecord,
+          result: {
+            deleted: summary.deleted,
+            failed: summary.failed,
+            errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
+          },
+        },
+        importRecord,
       );
     } else {
       log.blank();

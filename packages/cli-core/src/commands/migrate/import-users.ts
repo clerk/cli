@@ -21,6 +21,7 @@ import { BapiError } from "../../lib/errors.ts";
 import { interruptSignal } from "../../lib/signals.ts";
 import type { ResolvedLimits } from "./lib/instance.ts";
 import type { ProgressUpdate } from "./lib/progress.ts";
+import { failureOf, normalizeErrorMessage, tallyError } from "./lib/failures.ts";
 import { RateLimitExceededError, retryOn429 } from "./lib/retry.ts";
 import type { PendingIdentifier, UserLine } from "./lib/run-store.ts";
 import { RUN_MARKER_KEY } from "./lib/user-lookup.ts";
@@ -29,69 +30,6 @@ import type { ImportSummary, User } from "./types.ts";
 
 // Re-exported for the tests and callers that grew up against this module.
 export { readRetryAfter } from "./lib/retry.ts";
-
-/**
- * Groups error messages that differ only in field ordering, so the summary
- * reports "12 users: [\"first_name\" \"last_name\"] ..." once instead of twice.
- */
-/** A failed request's message and code, as a run line records them. */
-export function failureOf(error: unknown): { message: string; code: string } {
-  if (error instanceof RateLimitExceededError) return { message: error.message, code: "429" };
-  const apiError = error as BapiError;
-  return {
-    message: apiError.longMessage ?? apiError.message ?? "Unknown error",
-    code: String(apiError.status ?? "unknown"),
-  };
-}
-
-/** Counts a failure under its normalized message, the way every summary groups them. */
-export function tallyError(breakdown: Map<string, number>, message: string): void {
-  const key = normalizeErrorMessage(message);
-  breakdown.set(key, (breakdown.get(key) ?? 0) + 1);
-}
-
-export function normalizeErrorMessage(errorMessage: string): string {
-  let normalized = "";
-  let lastCopiedIndex = 0;
-  let arrayStartIndex = -1;
-
-  for (let i = 0; i < errorMessage.length; i++) {
-    const char = errorMessage[i];
-
-    if (arrayStartIndex === -1) {
-      if (char === "[") arrayStartIndex = i;
-      continue;
-    }
-    if (char !== "]") continue;
-
-    normalized += errorMessage.slice(lastCopiedIndex, arrayStartIndex);
-    normalized += normalizeFieldArray(errorMessage.slice(arrayStartIndex + 1, i));
-    lastCopiedIndex = i + 1;
-    arrayStartIndex = -1;
-  }
-
-  return normalized + errorMessage.slice(lastCopiedIndex);
-}
-
-function normalizeFieldArray(fields: string): string {
-  const fieldNames: string[] = [];
-  let current = "";
-
-  for (const char of fields) {
-    if (char === '"' || char === "'" || char.trim() === "") {
-      if (current.length > 0) {
-        fieldNames.push(current);
-        current = "";
-      }
-      continue;
-    }
-    current += char;
-  }
-  if (current.length > 0) fieldNames.push(current);
-
-  fieldNames.sort();
-  return `[${fieldNames.map((name) => `"${name}"`).join(" ")}]`;
-}
 
 function toArray(value: string | string[] | undefined): string[] {
   if (!value) return [];
@@ -582,13 +520,13 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     quota,
     halt: halt.signal,
     stop: AbortSignal.any([interruptSignal(), quota.signal, halt.signal]),
-    ...(runId ? { runId } : {}),
+    runId,
   };
 
   // Attach-only users count towards the bar too: a continue with only those
   // left would otherwise sit at 0/0.
-  let attached = 0;
-  const progress = () => report?.({ done: processed + attached, ok: successful, failed });
+  let attachedUsers = 0;
+  const progress = () => report?.({ done: processed + attachedUsers, ok: successful, failed });
 
   const recordFailure = (
     userId: string,
@@ -743,6 +681,11 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   };
 
   progress();
+  const attachOnlyUser = async (line: (typeof attachOnly)[number]) => {
+    await finishUser(line, line.pending ?? [], []);
+    attachedUsers++;
+    progress();
+  };
   // A halt leaves its error to be rethrown below, once every user has settled.
   const settle = async (work: Promise<void>) =>
     work.catch((error: unknown) => {
@@ -750,14 +693,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     });
   await Promise.all([
     ...users.map(async (user) => settle(processUser(user))),
-    ...attachOnly.map(async (line) =>
-      settle(
-        finishUser(line, line.pending ?? [], []).then(() => {
-          attached++;
-          progress();
-        }),
-      ),
-    ),
+    ...attachOnly.map(async (line) => settle(attachOnlyUser(line))),
   ]);
   if (storeFailure) throw storeFailure.error;
 
