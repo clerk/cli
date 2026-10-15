@@ -3,9 +3,10 @@
  *
  * `resolveBapiSecretKey` picks the key. This names what that key points at:
  * the instance ID and environment come from `GET /v1/instance`, so every key
- * source yields the same identity. That identity is what the run store keys
- * resumes and undos on, so an app label or an `--instance` alias is never
- * enough on its own.
+ * source yields the same identity. When that call fails, `--app` and a linked
+ * profile use the instance the Platform API or the profile names. That
+ * identity is what the run store keys resumes and undos on, so an app label or
+ * an `--instance` alias is never enough on its own.
  */
 
 import { createHash } from "node:crypto";
@@ -44,22 +45,36 @@ export type ClerkTarget = RunTarget & {
  * a linked profile, so the profile's app is not named for it: that key may
  * belong to any app at all.
  */
-async function describeKeySource(options: TargetOptions): Promise<{
+type InstanceIdentity = { instanceId: string; env: string };
+
+type KeySource = {
   keySource: string;
   appId?: string;
   appLabel?: string;
-  instance?: { instanceId: string; env: string };
-}> {
+  instance?: InstanceIdentity;
+};
+
+/** The app and instance a resolved app context names, for `describeKeySource`. */
+function fromAppContext(
+  keySource: string,
+  ctx: Awaited<ReturnType<typeof resolveAppContext>>,
+): KeySource {
+  return {
+    keySource,
+    appId: ctx.appId,
+    appLabel: ctx.appLabel,
+    instance: { instanceId: ctx.instanceId, env: ctx.instanceLabel },
+  };
+}
+
+async function describeKeySource(options: TargetOptions): Promise<KeySource> {
   if (options.secretKey) return { keySource: "--secret-key" };
 
   if (options.app) {
-    const ctx = await resolveAppContext({ app: options.app, instance: options.instance });
-    return {
-      keySource: "--app",
-      appId: ctx.appId,
-      appLabel: ctx.appLabel,
-      instance: { instanceId: ctx.instanceId, env: ctx.instanceLabel },
-    };
+    return fromAppContext(
+      "--app",
+      await resolveAppContext({ app: options.app, instance: options.instance }),
+    );
   }
 
   if (process.env.CLERK_SECRET_KEY) return { keySource: "CLERK_SECRET_KEY env var" };
@@ -73,13 +88,7 @@ async function describeKeySource(options: TargetOptions): Promise<{
       : { keySource: keyless.source };
   }
 
-  const ctx = await resolveAppContext({ instance: options.instance });
-  return {
-    keySource: "linked profile",
-    appId: ctx.appId,
-    appLabel: ctx.appLabel,
-    instance: { instanceId: ctx.instanceId, env: ctx.instanceLabel },
-  };
+  return fromAppContext("linked profile", await resolveAppContext({ instance: options.instance }));
 }
 
 /**
@@ -90,9 +99,7 @@ async function describeKeySource(options: TargetOptions): Promise<{
  * instances apart, and nothing is sent anywhere. A 429 is retried first: it is
  * most likely straight after a large import, which is when `undo` runs.
  */
-export async function fetchInstanceIdentity(
-  secretKey: string,
-): Promise<{ instanceId: string; env: string }> {
+export async function fetchInstanceIdentity(secretKey: string): Promise<InstanceIdentity> {
   const fallbackEnv = detectInstanceType(secretKey) === "prod" ? "production" : "development";
   try {
     const { body } = await retryOn429(async () =>
@@ -142,7 +149,7 @@ export function keyInstanceId(secretKey: string): string {
 export function assertInstanceFlagMatches(
   options: TargetOptions,
   keySource: string,
-  identity: { instanceId: string; env: string },
+  identity: InstanceIdentity,
 ): void {
   const flag = options.instance;
   if (!flag || (keySource !== "--secret-key" && !keySource.startsWith("CLERK_SECRET_KEY"))) return;
@@ -173,10 +180,15 @@ export async function resolveClerkTarget(
   const { instance: named, ...source } = await describeKeySource(options);
   const fetched = await fetchInstanceIdentity(secretKey);
   // The Platform API or the profile already named the instance: recorded
-  // instead of a stand-in, a run's commands can reach it with `--instance`.
+  // instead of a stand-in, a run's commands can reach it with `--instance`. A
+  // profile labels a literal `--instance ins_…` with the ID itself, so the
+  // key's own environment stands in for that label.
   const { instanceId, env } =
     named && isStandInInstanceId(fetched.instanceId) && isClerkInstanceId(named.instanceId)
-      ? named
+      ? {
+          instanceId: named.instanceId,
+          env: isClerkInstanceId(named.env) ? fetched.env : named.env,
+        }
       : fetched;
   assertInstanceFlagMatches(options, source.keySource, { instanceId, env });
 

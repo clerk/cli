@@ -11,7 +11,7 @@ import {
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { _setConfigDir } from "../../../lib/config.ts";
+import { _setConfigDir, setProfile } from "../../../lib/config.ts";
 import { getMode, setMode } from "../../../mode.ts";
 import { EXIT_CODE, type CliError } from "../../../lib/errors.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
@@ -246,6 +246,54 @@ describe("resolveClerkTarget key source", () => {
     expect(target).toMatchObject({
       keySource: "accountless app (.clerk/.tmp/keyless.json)",
       appLabel: "accountless app",
+    });
+  });
+
+  // The profile names the instance; a stand-in would leave `runs` nothing it
+  // can pass back with `--instance`.
+  describe("a linked profile while GET /v1/instance fails", () => {
+    let fetchApplication: ReturnType<typeof spyOn>;
+
+    beforeEach(async () => {
+      await setProfile(workDir, {
+        workspaceId: "org_1",
+        appId: "app_1",
+        appName: "My App",
+        instances: { development: "ins_dev", production: "ins_prod" },
+      });
+      fetchApplication = spyOn(plapiModule, "fetchApplication").mockResolvedValue({
+        application_id: "app_1",
+        name: "My App",
+        instances: [
+          {
+            instance_id: "ins_prod",
+            environment_type: "production",
+            publishable_key: "pk_live_x",
+            secret_key: "sk_live_x",
+          },
+        ],
+      } as never);
+      globalThis.fetch = (async () =>
+        new Response("nope", { status: 500 })) as unknown as typeof fetch;
+    });
+
+    afterEach(() => {
+      fetchApplication.mockRestore();
+    });
+
+    test("records the profile's instance", async () => {
+      const { target } = await resolveClerkTarget({ instance: "prod" });
+      expect(target).toMatchObject({
+        instanceId: "ins_prod",
+        env: "production",
+        keySource: "linked profile",
+      });
+    });
+
+    // The profile labels a literal ID with itself, which is no environment.
+    test("names the key's environment for a literal --instance", async () => {
+      const { target } = await resolveClerkTarget({ instance: "ins_prod" });
+      expect(target).toMatchObject({ instanceId: "ins_prod", env: "production" });
     });
   });
 });

@@ -124,10 +124,12 @@ describe("runs <id>", () => {
     });
   });
 
-  // The record says where the key came from, which a linked profile may not reach.
+  // The record says where the key came from, and which instance to reach again.
   test.each([
     [{ keySource: "--secret-key" }, "--secret-key <key>"],
     [{ keySource: "--app", appId: "app_1" }, "--app app_1 --instance ins_1"],
+    // Left out, a linked profile resolves the development instance.
+    [{ keySource: "linked profile", appId: "app_1" }, "--instance ins_1"],
   ])("the next command keeps the import's target from %o", async (target, expected) => {
     const record = partialImport();
     const file = path.join(runsDir, record.id, "run.json");
@@ -183,8 +185,8 @@ describe("runs <id>", () => {
       expect(next).toEqual([expect.stringContaining(`clerk migrate undo ${id}`)]);
     };
 
-    // `runs` has no key, so it can't tell whether a stand-in is `ins_1`: an
-    // import with that key could take the newer run either way.
+    // In the stand-in rows, `runs` has no key, so it can't tell whether a
+    // stand-in is `ins_1`: an import with that key could take the newer run.
     test.each([
       ["a newer run of the same file", "ins_1", "ins_1"],
       ["a newer run under a key's stand-in, when this one has a real ID", "ins_1", "key_abc"],

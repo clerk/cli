@@ -31,7 +31,7 @@ import {
 } from "./lib/run-store.ts";
 import { carryFlags, importFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
 import { plural } from "./lib/plural.ts";
-import { describeTarget, isStandInInstanceId } from "./lib/target.ts";
+import { describeTarget, isClerkInstanceId, isStandInInstanceId } from "./lib/target.ts";
 
 export type RunsOptions = {
   json?: boolean;
@@ -307,13 +307,18 @@ export async function runs(id: string | undefined, options: RunsOptions = {}): P
   if (!stored) throwUsageError(noRunMessage(runsDir, id, carryFlags({ runsDir: options.runsDir })));
   const record = withLiveCounts(runsDir, stored);
 
-  // The record says where the import's key came from: `--secret-key` or
-  // `--app` is the instance to reach again, which a linked profile may not be.
+  // The record says where the import's key came from. `--secret-key` needs
+  // the key again; `--app` and a linked profile need the instance, which a
+  // profile would otherwise resolve to development. By ID, not alias: a
+  // staging instance has none.
   const { keySource, appId, instanceId } = record.target;
   const carry = carryFlags({
     runsDir: options.runsDir,
     ...(keySource === "--secret-key" ? { secretKey: "<key>" } : {}),
     ...(keySource === "--app" && appId ? { app: appId, instance: instanceId } : {}),
+    ...(keySource === "linked profile" && isClerkInstanceId(instanceId)
+      ? { instance: instanceId }
+      : {}),
   });
   if (options.json) log.data(JSON.stringify(showJson(runsDir, record, carry), null, 2));
   else printRun(runsDir, record, carry);
