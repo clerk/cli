@@ -559,12 +559,18 @@ object:
 ```
 
 `import` is the run being undone. `run` is the undo's own run, `null` until one
-is written, as an import's is: a dry run adds `"dryRun": true`, a refusal for
-consent `"consent": "required"`, a refusal because the run changed while
-the preview waited, or another process holds it, `"changed": true`, a failed
-second look at sign-ins `"recheckFailed": true`, and a runs folder that can't
-be written `"failed": true`. Once the deletes run, `run` is the undo run
-and `result` holds `deleted`, `failed` and an `errors` breakdown.
+is written, as an import's is. Once the deletes run, `run` is the undo run, and
+`result` holds `deleted`, `failed` and an `errors` breakdown. When undo stops
+before that, the object says why:
+
+- `"dryRun": true`: a dry run.
+- `"consent": "required"`: refused for consent.
+- `"changed": true`: refused because the run changed while the preview waited,
+  or another process holds it.
+- `"recheckFailed": true`: the second look at sign-ins, right before the
+  deletes, failed.
+- `"writeFailed": true`: the file system refused a write to the runs folder.
+- `"stopped": true`: anything else stopped it, such as a Ctrl-C.
 
 ### `clerk migrate help`
 
