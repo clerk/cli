@@ -15,12 +15,16 @@ import { dim } from "../../../lib/color.ts";
 import { resolveBapiSecretKey } from "../../../lib/bapi-command.ts";
 import { INSTANCE_ALIASES, resolveAppContext } from "../../../lib/config.ts";
 import { throwUsageError } from "../../../lib/errors.ts";
-import { resolveKeylessTarget, SDK_KEYLESS_SOURCE } from "../../../lib/keyless-target.ts";
+import {
+  resolveKeylessTarget,
+  SDK_KEYLESS_SOURCE,
+  ENV_VAR_SOURCE_SUFFIX,
+} from "../../../lib/keyless-target.ts";
 import { log } from "../../../lib/log.ts";
 import { isHuman } from "../../../mode.ts";
 import { detectInstanceType } from "./instance.ts";
 import { retryOn429 } from "./retry.ts";
-import type { CarryOptions } from "./carry-flags.ts";
+import { type CarryOptions, carryFlags } from "./carry-flags.ts";
 import type { RunTarget } from "./run-store.ts";
 
 export type TargetOptions = {
@@ -136,13 +140,20 @@ function isNamedKeySource(source: string | undefined): source is NamedKeySource 
  * The `carryFlags` options that reach a run's target again, for a command run
  * later: `runs <id>`'s, and an import's or undo's own next steps. The instance
  * goes by ID, not alias (a staging one has none), and only a real one: no
- * `--instance` resolves a stand-in. Any other source (a `.env` file, a
- * keyless app, a framework's own key variable) gets none: each refuses
- * `--instance`, and names its own key.
+ * `--instance` resolves a stand-in. A framework's own key variable, exported
+ * like `CLERK_SECRET_KEY`, gets the key again. A key file (`.env`, a keyless
+ * app's) gets nothing: it refuses `--instance`, and run from the same project
+ * it names the key itself.
  */
-export function targetCarry(target: RunTarget): TargetCarry {
+function targetCarry(target: RunTarget): TargetCarry {
   const instance = isClerkInstanceId(target.instanceId) ? target.instanceId : undefined;
-  return isNamedKeySource(target.keySource) ? TARGET_CARRY[target.keySource](target, instance) : {};
+  if (isNamedKeySource(target.keySource)) return TARGET_CARRY[target.keySource](target, instance);
+  return target.keySource?.endsWith(ENV_VAR_SOURCE_SUFFIX) ? keyAgain(target, instance) : {};
+}
+
+/** The flags a command meant for later needs to reach this target and runs folder again. */
+export function laterCarry(runsDir: string | undefined, target: RunTarget): string[] {
+  return carryFlags({ runsDir, ...targetCarry(target) });
 }
 
 /**

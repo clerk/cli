@@ -10,7 +10,7 @@ import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 // signed-in check — except the one that asserts what happens without it.
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 import { importFlags } from "./lib/carry-flags.ts";
-import { latestUserLines, listRuns, readRun, startRun } from "./lib/run-store.ts";
+import { latestUserLines, listRuns, patchRun, readRun, startRun } from "./lib/run-store.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
 // After run.ts: imported first, signals.ts loads version.ts ahead of its Bun
 // macro here, and the file fails to load.
@@ -875,6 +875,22 @@ describe("run", () => {
       await run({ ...baseOptions, dryRun: true });
       expect(captured.err).toContain(`Would continue run ${first!.id}, which finished partial`);
       expect(captured.err).not.toContain("Continuing run");
+    });
+
+    // The steps are run later: they need the key this attempt used, not the
+    // first one's `.env`, which may not be there.
+    test("a continue records its own key source, which its next steps carry", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      patchRun(runsDir(), first!.id, { target: { ...first!.target, keySource: ".env" } });
+
+      process.exitCode = 0;
+      captured.clear();
+      await run(baseOptions);
+
+      expect(readRun(runsDir(), first!.id)?.target.keySource).toBe("--secret-key");
+      expect(Bun.stripANSI(captured.err)).toContain("--secret-key <key> --yes` to retry them");
     });
 
     test("a partial run retries only the users that did not make it, in the same run", async () => {

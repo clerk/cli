@@ -75,7 +75,7 @@ import {
   keyInstanceId,
   printTarget,
   resolveClerkTarget,
-  targetCarry,
+  laterCarry,
 } from "./lib/target.ts";
 import { findInFlight } from "./lib/user-lookup.ts";
 import {
@@ -497,8 +497,10 @@ function cleanupLines(runsDir: string, record: RunRecord): string[] {
 // --- The import ------------------------------------------------------------
 
 /**
- * The exact command that would carry on from here, for the consent and
- * refusal messages. Every value is shell-quoted; secrets are placeholders.
+ * The exact command that would carry on from here. The consent and refusal
+ * messages, run straight away, use the live flags; the retry step after a run,
+ * run later, passes `carry` built from the run's target. Every value is
+ * shell-quoted; secrets are placeholders.
  */
 function commandFor(
   options: MigrateRunOptions,
@@ -868,8 +870,19 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             file: { path: filePath, sha256 },
             flags,
           });
-      // The flags this attempt ran with, which the next continue repeats.
-      if (continued) run.update({ flags });
+      // The flags and key this attempt ran with, which the run's later commands
+      // repeat. The instance ID stays: `findResume` and `undo` key on it.
+      if (continued) {
+        run.update({
+          flags,
+          target: {
+            ...run.record.target,
+            keySource: target.keySource,
+            appId: target.appId,
+            appLabel: target.appLabel,
+          },
+        });
+      }
       // Printed now, not on the way out: on a Ctrl-C the signal handler exits
       // before the import returns, and the folder is the only record of who
       // was created.
@@ -966,9 +979,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       // `runs` takes only --runs-dir.
       const runsStep = runsCommand(carryFlags({ runsDir: options.runsDir }), record.id);
-      // Run later, maybe without the key exported, so from the run's target,
-      // the way `runs <id>` builds them.
-      const later = carryFlags({ runsDir: options.runsDir, ...targetCarry(record.target) });
+      // Run later, maybe without the key exported: from the run's target.
+      const later = laterCarry(options.runsDir, record.target);
       const undo = undoCommand(record.id, later);
       const steps =
         summary.failed > 0

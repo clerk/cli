@@ -133,6 +133,9 @@ describe("runs <id>", () => {
     [{ keySource: "linked profile", appId: "app_1" }, "--app app_1 --instance ins_1"],
     // Maybe no longer exported, and `--instance` is refused next to a `.env`.
     [{ keySource: "CLERK_SECRET_KEY env var" }, "--secret-key <key>"],
+    // A framework's own variable, exported the same way: without it, `.env`'s
+    // key would be read instead.
+    [{ keySource: "NUXT_CLERK_SECRET_KEY env var" }, "--secret-key <key>"],
     // Both refuse `--instance`, and the file names the key.
     [{ keySource: ".env" }, "--runs-dir"],
     [{ keySource: "accountless app (.clerk/.tmp/keyless.json)" }, "--runs-dir"],

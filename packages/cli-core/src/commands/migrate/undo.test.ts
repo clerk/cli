@@ -653,6 +653,24 @@ describe("deleting", () => {
     expect(readRun(runsDir, record.id)?.status).toBe("undone");
   });
 
+  // Run later, the exported key may be gone: the retry names it as a placeholder.
+  test("a failed delete with an exported key suggests the retry with the key", async () => {
+    failing.add("user_b");
+    const record = importRun();
+    const previous = process.env.CLERK_SECRET_KEY;
+    process.env.CLERK_SECRET_KEY = "sk_test_x";
+    try {
+      await undo(record.id, withDir({ yes: true, secretKey: undefined }));
+    } finally {
+      if (previous === undefined) delete process.env.CLERK_SECRET_KEY;
+      else process.env.CLERK_SECRET_KEY = previous;
+    }
+
+    expect(Bun.stripANSI(captured.err)).toContain(
+      `\`clerk migrate undo ${record.id} --secret-key <key> --runs-dir ${quoteArg(runsDir)}\` again to retry the users that failed`,
+    );
+  });
+
   test("a failed delete leaves the undo partial, exits 1, and a re-run continues it", async () => {
     failing.add("user_b");
     const record = importRun();

@@ -53,7 +53,7 @@ import {
   keyInstanceId,
   printTarget,
   resolveClerkTarget,
-  targetCarry,
+  laterCarry,
 } from "./lib/target.ts";
 import { plural } from "./lib/plural.ts";
 import { findInFlight, lookupUsers, type SourceUser } from "./lib/user-lookup.ts";
@@ -325,16 +325,14 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   const runsCarry = carryFlags({ runsDir: options.runsDir });
   const record = readImportRun(runsDir, runId, runsCarry);
   const importLines = readUserLines(runsDir, record.id).length;
-  // The flags that found this run and instance, for a command run again now.
+  // The flags that found this run and instance, for a refusal's command, run
+  // again straight away in the same shell.
   const carry = carryFlags(options);
+  const undoAgain = undoCommand(record.id, carry);
 
   const { secretKey, target } = await resolveClerkTarget(options);
-  // Run later, maybe without the key exported, so from the target, the way
-  // `runs <id>` builds it.
-  const undoAgain = undoCommand(
-    record.id,
-    carryFlags({ runsDir: options.runsDir, ...targetCarry(target) }),
-  );
+  // After a partial undo, run later, maybe without the key exported: from the target.
+  const undoLater = undoCommand(record.id, laterCarry(options.runsDir, target));
   if (!options.json) printTarget(target);
   assertSameInstance(record, target, secretKey);
 
@@ -369,8 +367,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
 
   if (!options.json) printPreview(record, preview);
 
-  // The flags that found this run and instance, or the command looks elsewhere
-  // and refuses.
+  // Consent to go ahead, for the same run and instance.
   const command = undoCommand(record.id, [
     "--yes",
     ...(preview.signedInSince > 0 ? ["--include-signed-in"] : []),
@@ -570,7 +567,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       if (undoRecord.status === "complete") {
         log.success(`Import run ${record.id} is undone.`);
       } else {
-        log.info(`Run \`${undoAgain}\` again to retry the users that failed.`);
+        log.info(`Run \`${undoLater}\` again to retry the users that failed.`);
       }
     }
 
