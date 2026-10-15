@@ -1071,6 +1071,23 @@ describe("run", () => {
       expect(readRun(runsDir(), first!.id)?.finishedAt).toBeDefined();
     });
 
+    // Automation reads the status from the JSON, not run.json.
+    test("--json reports a continued run with nothing left as finished", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      // A crash leaves the record as it was while running.
+      interrupt(first!.id, { status: "running" });
+      requests = [];
+      captured.clear();
+
+      await run({ ...baseOptions, json: true });
+
+      expect(JSON.parse(captured.out)).toMatchObject({
+        nothingToImport: true,
+        run: { id: first!.id, status: "complete", finishedAt: expect.any(String) },
+      });
+    });
+
     // "Interrupted, so undo it and start over": the undo marks the run undone
     // but leaves it with no finish time.
     test("an interrupted run that was then undone is imported again as a new run", async () => {
