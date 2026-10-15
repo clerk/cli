@@ -481,14 +481,18 @@ parameters (`signIn.hashConfig`). Either of these works, both verified live:
   ```
 
 Without `firebaseauth.configs.getHashConfig`, users still export, but the
-export can't read the hash parameters. It says which permission is missing, and
-the import then needs `--firebase-signer-key`, `--firebase-salt-separator`,
-`--firebase-rounds` and `--firebase-mem-cost` (from **Authentication → Users →
-⋮ → Password hash parameters** in the Firebase console). Each flag can come
+export can't read the hash parameters, and Firebase may redact the password
+hashes themselves: the same permission covers both. It says which permission is
+missing. A redacted hash can't be brought back by anything the import is given,
+so to keep passwords, grant the permission and export again. When the hashes
+came through and only the parameters are missing, the import needs
+`--firebase-signer-key`, `--firebase-salt-separator`, `--firebase-rounds` and
+`--firebase-mem-cost` (from **Authentication → Users → ⋮ → Password hash
+parameters** in the Firebase console). Each flag can come
 from its environment variable instead, `CLERK_FIREBASE_SIGNER_KEY`,
 `CLERK_FIREBASE_SALT_SEPARATOR`, `CLERK_FIREBASE_ROUNDS` and
 `CLERK_FIREBASE_MEM_COST`, which keeps the signer key out of `ps`. Set it from a
-secret manager or a file (`CLERK_FIREBASE_SIGNER_KEY=$(cat signer.key)`) rather
+secret manager or a file (`export CLERK_FIREBASE_SIGNER_KEY="$(cat signer.key)"`) rather
 than typing the key, or it lands in shell history anyway. A flag wins over the
 export file, but a variable only fills in for an export file without the
 parameters, so one left set from another project can't replace them, and a
