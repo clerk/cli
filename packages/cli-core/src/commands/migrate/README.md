@@ -561,8 +561,9 @@ object:
 `import` is the run being undone. `run` is the undo's own run, `null` until one
 is written, as an import's is: a dry run adds `"dryRun": true`, a refusal for
 consent `"consent": "required"`, a refusal because the run changed while
-the preview waited `"changed": true`, and a failed second look at sign-ins
-`"recheckFailed": true`. Once the deletes run, `run` is the undo run
+the preview waited, or another process holds it, `"changed": true`, a failed
+second look at sign-ins `"recheckFailed": true`, and a runs folder that can't
+be written `"failed": true`. Once the deletes run, `run` is the undo run
 and `result` holds `deleted`, `failed` and an `errors` breakdown.
 
 ### `clerk migrate help`

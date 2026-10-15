@@ -447,26 +447,41 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     );
   }
 
+  // After the preview, --json always prints its object: a refusal from here
+  // on carries `changed` (the run changed, or another process holds it), and
+  // the reason goes to stderr as for any error.
+  const printJsonPreview = (extra: Record<string, unknown>) => {
+    if (options.json) {
+      log.data(JSON.stringify(jsonResult(target, record, preview, extra), null, 2));
+    }
+  };
+  const refuseChanged = (message: string, extra: Record<string, unknown> = {}): never => {
+    printJsonPreview({ changed: true, ...extra });
+    throwUsageError(message);
+  };
+
   // Gitignored only now, once there is consent to write a run.
-  await resolveRunsDir(options.runsDir, { write: true });
+  try {
+    await resolveRunsDir(options.runsDir, { write: true });
+  } catch (error) {
+    printJsonPreview({ failed: true });
+    throw error;
+  }
 
   // Held until the import is marked undone, so a re-import cannot continue
   // the run while its users are deleted and overwrite the `undone` mark.
-  const releaseImport = lockRun(runsDir, record.id);
+  let releaseImport: () => void;
+  try {
+    releaseImport = lockRun(runsDir, record.id);
+  } catch (error) {
+    if (error instanceof CliError) refuseChanged(error.message);
+    printJsonPreview({ failed: true });
+    throw error;
+  }
   let run: Run;
   let summary: UndoSummary;
   let undoRecord: RunRecord;
   let importRecord = record;
-  // After the preview, --json always prints its object: a refusal here
-  // carries `changed`, and the reason goes to stderr as for any error.
-  const refuseChanged = (message: string, extra: Record<string, unknown> = {}): never => {
-    if (options.json) {
-      log.data(
-        JSON.stringify(jsonResult(target, record, preview, { changed: true, ...extra }), null, 2),
-      );
-    }
-    throwUsageError(message);
-  };
   try {
     // Another undo that finished during the preview has already marked it.
     try {
