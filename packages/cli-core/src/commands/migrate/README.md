@@ -183,10 +183,10 @@ password hashes and user data.
 
 Every import but a dry run also takes a lock outside the run store, before its
 checks and prompts: `clerk-migrate-import-<hash>.lock` in the temp directory
-(`os.tmpdir()`, usually `$TMPDIR` or `/tmp`). The hash covers the file's sha256,
-the source and the instance, so a second import of the same file into the same
-instance is refused with exit 2 even before either has written a run, and
-whichever `--runs-dir` each uses. It lives outside the runs folder because
+(`os.tmpdir()`, usually `$TMPDIR` or `/tmp`). The hash covers the file's sha256
+and the instance, not the source, so a second import of the same file into the
+same instance is refused with exit 2 even before either has written a run,
+whichever source and `--runs-dir` each uses. It lives outside the runs folder because
 nothing may be written there before consent. It holds the importing process's
 PID and is removed however the import ends. One left by a process that died is
 reclaimed by the next import. The refusal names the file, which is safe to
@@ -295,7 +295,14 @@ users with the wrong fields. `--source` with the path to a
 users, in the platform's own shape, so it can bring across what the built-in
 mapping leaves out, such as a WorkOS `metadata.username`. The import keeps its
 link to the export run, and `run.json` records the source the envelope named
-as `envelopeSource`.
+as `envelopeSource`. A Firebase export keeps its hash parameters through it:
+the envelope's, the `--firebase-*` flags or the variables reach the source's
+`postTransform` as `context.firebaseHashConfig`, as they do the built-in's.
+
+An earlier import of the same export into the same instance, through the
+built-in or another source, holds the same users. While it isn't undone, a
+re-run through your source refuses with exit 2 and names it, rather than
+starting a new run beside it: pass `--new-run`, or undo it first.
 
 `--json` prints the result on stdout instead — `{ target, run, output, users,
 skipped, coverage, next }` — and never prompts, so a missing credential exits 2
@@ -1231,10 +1238,11 @@ TypeScript is fine — Bun's transpiler is part of the runtime, so `interface`,
 Plain `.js` works too.
 
 An import run records a custom source's key and a hash of the file, so an
-edited source counts as a different source. A re-run with an edited source
-won't continue the earlier version's run, and won't start a new one beside it
-unasked either: it refuses with exit 2 and names the earlier run, since the
-users that run created would come back as conflicts. Pass `--new-run` to start
+edited source counts as a different source. A re-run with an edited source,
+or with another source altogether, won't continue the earlier run of the file,
+and won't start a new one beside it unasked either: while that run isn't
+undone, it refuses with exit 2 and names it, since the users it created would
+come back as conflicts. Pass `--new-run` to start
 a new run anyway, or undo the earlier one first. The hash covers that file
 only: a local helper it imports is not part of it, so after editing one, pass
 `--new-run` rather than continue a run made with the old helper.
