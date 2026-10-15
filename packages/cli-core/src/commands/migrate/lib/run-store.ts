@@ -77,6 +77,8 @@ export type RunRecord = {
   file?: RunFile;
   /** The export run an import read its file from. */
   fromExport?: string;
+  /** An import's `importFlags`, from its latest attempt. */
+  flags?: string[];
   /** The import run an undo reverses. */
   undoes?: string;
   /** The undo run that reversed this one. */

@@ -16,10 +16,12 @@ import {
   countLines,
   latestUserLines,
   listRuns,
+  openUndoOf,
   readRun,
   resolveRunsDir,
   runDir,
   runState,
+  sha256File,
   type RunRecord,
   type RunState,
   type UserLine,
@@ -106,19 +108,48 @@ function continueCommand(record: RunRecord, carry: string[]): string | undefined
   if (!input) return undefined;
   const parts = ["clerk migrate import", quoteArg(input)];
   if (!record.fromExport && record.source) parts.push("--source", quoteArg(record.source));
-  return withFlags(parts.join(" "), carry);
+  return withFlags(parts.join(" "), [...(record.flags ?? []), ...carry]);
+}
+
+/**
+ * Whether importing the record's file again continues this run, rather than
+ * starting another or refusing: it is the newest import of that file, source
+ * and instance, which is the one an import picks; the file is unchanged; and
+ * no undo of it is left unfinished, which an import refuses to continue.
+ */
+function continuesThisRun(runsDir: string, record: RunRecord): boolean {
+  const file = record.file;
+  if (!file) return false;
+  const newest = listRuns(runsDir).find(
+    (other) =>
+      other.kind === "import" &&
+      other.file?.sha256 === file.sha256 &&
+      other.source === record.source &&
+      other.target.instanceId === record.target.instanceId,
+  );
+  if (newest?.id !== record.id || openUndoOf(runsDir, record.id)) return false;
+  try {
+    return sha256File(file.path) === file.sha256;
+  } catch {
+    return false;
+  }
 }
 
 /**
  * What to run after reading about this run. `carry` is the runs folder this
  * listing read, and the target flags the record says the import used.
  */
-function nextCommands(record: RunRecord, state: RunState, carry: string[]): string[] {
+function nextCommands(
+  runsDir: string,
+  record: RunRecord,
+  state: RunState,
+  carry: string[],
+): string[] {
   if (state === "running") return [];
   if (record.kind === "import" && state !== "undone") {
     const undo = `Run \`${undoCommand(record.id, carry)}\` to delete the users it created`;
     const again = continueCommand(record, carry);
-    if (!again || state === "complete") return [undo];
+    if (!again || state === "complete" || !continuesThisRun(runsDir, record)) return [undo];
     // Continuing is what a stopped run is for: the same file, source and
     // target pick it up where it left off.
     return [
@@ -173,7 +204,7 @@ function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   return {
     runsDir,
     run: { ...record, state },
-    next: nextCommands(record, state, carry),
+    next: nextCommands(runsDir, record, state, carry),
     errors: errorBreakdown(lines),
     failed: lines.filter((line) => line.status === "failed"),
     skipped: lines.filter((line) => line.status === "skipped"),
@@ -242,7 +273,7 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
 
   log.blank();
   log.info(dim(`Every outcome: ${usersFile}`));
-  for (const step of nextCommands(record, state, carry)) log.info(`  → ${step}`);
+  for (const step of nextCommands(runsDir, record, state, carry)) log.info(`  → ${step}`);
 }
 
 /**

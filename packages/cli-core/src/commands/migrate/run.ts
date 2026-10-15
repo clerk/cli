@@ -29,7 +29,7 @@ import {
 } from "../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { quoteArg } from "../../lib/json-body.ts";
-import { carryFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
+import { carryFlags, importFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
 import { plural } from "./lib/plural.ts";
 import { canPrompt } from "./lib/terminal.ts";
 import { log } from "../../lib/log.ts";
@@ -500,10 +500,8 @@ function commandFor(options: MigrateRunOptions, extra: string[]) {
   const input = options.input ?? options.file ?? "<file>";
   const parts = ["clerk migrate import", quoteArg(input)];
   if (options.source) parts.push("--source", quoteArg(options.source));
-  if (options.allowPartial) parts.push("--allow-partial");
   if (options.newRun) parts.push("--new-run");
-  if (options.requirePassword) parts.push("--require-password");
-  if (options.skipLegalChecks) parts.push("--skip-legal-checks");
+  parts.push(...importFlags(options));
   parts.push(...carryFlags(options));
   if (options.json) parts.push("--json");
   return [...parts, ...extra].join(" ");
@@ -672,7 +670,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const failures = loaded.failures.filter((failure) => !done.has(failure.userId));
 
       // An instruction about this import, not a prediction: users without a
-      // password are left out of the job rather than recorded as skipped.
+      // password are left out of the checks and recorded as skipped.
       let withoutPassword: User[] = [];
       if (options.requirePassword) {
         withoutPassword = users.filter((user) => !user.password && !adopted.has(user.userId));
@@ -851,6 +849,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       // Gitignored only now, once there is consent to write a run.
       await resolveRunsDir(options.runsDir, { write: true });
+      const flags = importFlags(options);
       const run = continued
         ? continueRun(runsDir, continued, plannedLines, carry)
         : startRun(runsDir, {
@@ -858,7 +857,10 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             target,
             source,
             file: { path: filePath, sha256 },
+            flags,
           });
+      // The flags this attempt ran with, which the next continue repeats.
+      if (continued) run.update({ flags });
       // Printed now, not on the way out: on a Ctrl-C the signal handler exits
       // before the import returns, and the folder is the only record of who
       // was created.
