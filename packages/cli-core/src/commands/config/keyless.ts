@@ -13,8 +13,8 @@
  */
 
 import { bapiRequest } from "../../lib/bapi.ts";
-import { ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
-import type { KeylessTarget } from "../../lib/keyless-target.ts";
+import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
+import { isClaimedKeylessTarget, type KeylessTarget } from "../../lib/keyless-target.ts";
 import { keylessCopy } from "../../lib/copy.ts";
 import { log } from "../../lib/log.ts";
 
@@ -116,12 +116,12 @@ const ACCOUNT_ONLY_INSTANCE_FIELDS: Record<string, string> = {
  * Rejects `instance` fields BAPI would silently discard, before the request is
  * sent. Runs only for that group — see `INSTANCE_FIELDS`.
  */
-function assertInstanceFields(fields: Record<string, unknown>): void {
+function assertInstanceFields(fields: Record<string, unknown>, claimed?: boolean): void {
   const unknown = Object.keys(fields).filter((field) => !INSTANCE_FIELDS.has(field));
   if (unknown.length === 0) return;
 
   const lines = [
-    keylessCopy.unsupportedInstanceFieldsLine(unknown),
+    keylessCopy.unsupportedInstanceFieldsLine(unknown, claimed),
     keylessCopy.supportedInstanceFieldsLine([...INSTANCE_FIELDS]),
   ];
 
@@ -134,7 +134,7 @@ function assertInstanceFields(fields: Record<string, unknown>): void {
     ),
   ];
   for (const reason of reasons) {
-    lines.push(keylessCopy.noRouteForInstanceFieldLine(reason));
+    lines.push(keylessCopy.noRouteForInstanceFieldLine(reason, claimed));
   }
 
   throwUsageError(lines.join("\n"));
@@ -144,17 +144,23 @@ function assertInstanceFields(fields: Record<string, unknown>): void {
  * Validates caller-supplied names once, at the boundary, so everything
  * downstream works with a known group instead of re-checking strings.
  */
-function asGroupNames(names: string[]): KeylessGroup[] {
+function asGroupNames(names: string[], claimed?: boolean): KeylessGroup[] {
   const unknown = names.filter((name) => !isGroupName(name));
   if (unknown.length > 0) {
-    throwUsageError(keylessCopy.unsupportedConfigKeys(unknown, KEYLESS_GROUP_NAMES));
+    throwUsageError(keylessCopy.unsupportedConfigKeys(unknown, KEYLESS_GROUP_NAMES, claimed));
   }
   return names.filter(isGroupName);
 }
 
-/** Rejects payload keys that don't name a BAPI resource, before anything is sent. */
+/**
+ * Rejects payload keys that don't name a BAPI resource, before anything is sent.
+ *
+ * @param claimed - Whether the key's application is claimed, which only
+ *   changes how a refusal reads. See `isClaimedKeylessTarget`.
+ */
 export function assertKeylessPayload(
   payload: Record<string, unknown>,
+  claimed?: boolean,
 ): asserts payload is Record<KeylessGroup, Record<string, unknown>> {
   const unknown = Object.keys(payload).filter((key) => !(key in KEYLESS_GROUPS));
   if (unknown.length > 0) {
@@ -162,19 +168,19 @@ export function assertKeylessPayload(
     const accountOnly = unknown.filter((key) => !API_REACHABLE_KEYLESS_KEYS.has(key));
 
     const lines = [
-      keylessCopy.unsupportedPayloadKeysLine(unknown),
+      keylessCopy.unsupportedPayloadKeysLine(unknown, claimed),
       keylessCopy.supportedPayloadKeysLine(KEYLESS_GROUP_NAMES),
     ];
 
     // Point these at `clerk api` — they're reachable today, and claiming the
     // application wouldn't move them into the config document anyway.
     if (apiReachable.length > 0) {
-      lines.push(keylessCopy.apiReachableKeysLine(apiReachable));
+      lines.push(keylessCopy.apiReachableKeysLine(apiReachable, claimed));
     }
 
     // Everything left really is part of the account-mode config document.
     if (accountOnly.length > 0) {
-      lines.push(keylessCopy.claimForFullConfigLine());
+      lines.push(keylessCopy.claimForFullConfigLine(claimed));
     }
 
     throwUsageError(lines.join("\n"));
@@ -187,7 +193,25 @@ export function assertKeylessPayload(
   }
 
   if (payload.instance) {
-    assertInstanceFields(payload.instance as Record<string, unknown>);
+    assertInstanceFields(payload.instance as Record<string, unknown>, claimed);
+  }
+}
+
+/**
+ * Runs a check worded for an unclaimed application, and when it refuses, asks
+ * Clerk whether the application is claimed and runs it again worded for that.
+ * Only a refusal costs the extra request.
+ */
+export async function withClaimedWording<T>(
+  target: KeylessTarget,
+  check: (claimed?: boolean) => T,
+): Promise<T> {
+  try {
+    return check();
+  } catch (error) {
+    if (!(error instanceof CliError)) throw error;
+    if ((await isClaimedKeylessTarget(target)) === true) check(true);
+    throw error;
   }
 }
 
@@ -200,7 +224,9 @@ export async function pullKeylessConfig(
   target: KeylessTarget,
   keys?: string[],
 ): Promise<Record<string, unknown>> {
-  const requested = keys?.length ? asGroupNames(keys) : KEYLESS_GROUP_NAMES;
+  const requested = keys?.length
+    ? await withClaimedWording(target, (claimed) => asGroupNames(keys, claimed))
+    : KEYLESS_GROUP_NAMES;
 
   // Only worth saying when the caller named a write-only group. A default pull
   // asks for everything, and reporting the same omission every time is noise.

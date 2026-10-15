@@ -13,35 +13,56 @@
  * identifiers (`lib/log.ts` renders them cyan), and a refusal names the
  * reason and a working alternative rather than just saying no.
  */
+/**
+ * What a secret-key target is called in a refusal. Any `sk_` key found on disk
+ * or in the environment takes the secret-key path, claimed application or
+ * not, so `claimed` (from `isClaimedKeylessTarget`) picks the wording.
+ */
+const keyTarget = (claimed?: boolean): string =>
+  claimed ? "with only a secret key" : "for an unclaimed accountless application";
+
+/** The way to the full config document, for a claimed application reached by its key. */
+const loginForClaimed =
+  "This application is claimed: run `clerk auth login`, then `clerk link` or pass `--app <id>`, so the command uses your account instead of the secret key.";
+
 export const keylessCopy = {
   // --- config payload validation (config/keyless.ts) ---
 
-  unsupportedConfigKeys: (unknown: string[], supported: readonly string[]): string =>
-    `Unsupported config ${unknown.length === 1 ? "key" : "keys"} for an unclaimed accountless application: ${unknown.join(", ")}.\n` +
-    `Supported keys: ${supported.join(", ")}.`,
+  unsupportedConfigKeys: (
+    unknown: string[],
+    supported: readonly string[],
+    claimed?: boolean,
+  ): string =>
+    `Unsupported config ${unknown.length === 1 ? "key" : "keys"} ${keyTarget(claimed)}: ${unknown.join(", ")}.\n` +
+    `Supported keys: ${supported.join(", ")}.` +
+    (claimed ? `\n${loginForClaimed}` : ""),
 
-  unsupportedPayloadKeysLine: (unknown: string[]): string =>
-    `Unsupported config ${unknown.length === 1 ? "key" : "keys"} for an unclaimed accountless application: ${unknown.join(", ")}.`,
+  unsupportedPayloadKeysLine: (unknown: string[], claimed?: boolean): string =>
+    `Unsupported config ${unknown.length === 1 ? "key" : "keys"} ${keyTarget(claimed)}: ${unknown.join(", ")}.`,
 
   supportedPayloadKeysLine: (supported: readonly string[]): string =>
     `Supported top-level keys: ${supported.join(", ")}.`,
 
-  apiReachableKeysLine: (keys: string[]): string =>
-    `${keys.join(", ")} ${keys.length === 1 ? "is" : "are"} already reachable on an unclaimed application — use ${keys.map((key) => `\`clerk api /${key}\``).join(" or ")} directly instead of this config document.`,
+  apiReachableKeysLine: (keys: string[], claimed?: boolean): string =>
+    `${keys.join(", ")} ${keys.length === 1 ? "is" : "are"} already reachable ${claimed ? "with the secret key" : "on an unclaimed application"} — use ${keys.map((key) => `\`clerk api /${key}\``).join(" or ")} directly instead of this config document.`,
 
-  claimForFullConfigLine: (): string =>
-    "Run `clerk auth login` to claim the application and use the full config document.",
+  claimForFullConfigLine: (claimed?: boolean): string =>
+    claimed
+      ? loginForClaimed
+      : "Run `clerk auth login` to claim the application and use the full config document.",
 
   configKeyMustBeObject: (key: string): string => `Config key \`${key}\` must be a JSON object.`,
 
-  unsupportedInstanceFieldsLine: (unknown: string[]): string =>
-    `Unsupported ${unknown.length === 1 ? "field" : "fields"} on \`instance\` for an unclaimed accountless application: ${unknown.join(", ")}.`,
+  unsupportedInstanceFieldsLine: (unknown: string[], claimed?: boolean): string =>
+    `Unsupported ${unknown.length === 1 ? "field" : "fields"} on \`instance\` ${keyTarget(claimed)}: ${unknown.join(", ")}.`,
 
   supportedInstanceFieldsLine: (fields: readonly string[]): string =>
     `Supported fields: ${fields.join(", ")}.`,
 
-  noRouteForInstanceFieldLine: (reason: string): string =>
-    `Clerk's Backend API has no route for ${reason}, so this can't be changed from an unclaimed application at all — claim it first with \`clerk auth login\`.`,
+  noRouteForInstanceFieldLine: (reason: string, claimed?: boolean): string =>
+    claimed
+      ? `Clerk's Backend API has no route for ${reason}, so a secret key can't change it. ${loginForClaimed}`
+      : `Clerk's Backend API has no route for ${reason}, so this can't be changed from an unclaimed application at all — claim it first with \`clerk auth login\`.`,
 
   // --- "needs a claimed application" refusals ---
 
@@ -49,13 +70,23 @@ export const keylessCopy = {
     "Billing can only be configured on a claimed application — Clerk's Backend API has no billing settings, so an unclaimed accountless application can't reach them.\n" +
     "Run `clerk auth login` to claim this application, then re-run the command.",
 
-  schemaNeedsClaimedApplication: (): string =>
-    "Config schema is only available for a claimed application — the schema describes the account-level config document, which an unclaimed accountless application has no access to.\n" +
-    "Run `clerk auth login` to claim this application, then re-run `clerk config schema`.",
+  schemaNeedsClaimedApplication: (claimed?: boolean): string =>
+    claimed
+      ? `Config schema comes from your account, not the secret key — it describes the account-level config document.\n${loginForClaimed}`
+      : "Config schema is only available for a claimed application — the schema describes the account-level config document, which an unclaimed accountless application has no access to.\n" +
+        "Run `clerk auth login` to claim this application, then re-run `clerk config schema`.",
 
-  putNeedsClaimedApplication: (): string =>
-    "Replacing the entire configuration is only available for a claimed application — an unclaimed accountless application has no full config document to replace.\n" +
-    "Use `clerk config patch` to update individual settings, or run `clerk auth login` to claim the application first.",
+  putNeedsClaimedApplication: (claimed?: boolean): string =>
+    claimed
+      ? `Replacing the entire configuration needs your account, not the secret key.\n${loginForClaimed} Or use \`clerk config patch\` to update the settings a secret key reaches.`
+      : "Replacing the entire configuration is only available for a claimed application — an unclaimed accountless application has no full config document to replace.\n" +
+        "Use `clerk config patch` to update individual settings, or run `clerk auth login` to claim the application first.",
+
+  instanceFlagWithKey: (source: string, claimed?: boolean): string =>
+    claimed
+      ? `--instance is not supported with only a secret key: the key in ${source} already targets its own instance.\n${loginForClaimed}`
+      : `--instance is not supported for an unclaimed accountless application: the secret key in ${source} already targets its own instance.\n` +
+        "Run `clerk auth login` to claim the application, then target instances by name.",
 
   userDashboardNeedsClaim: (keySource: string, userId: string): string =>
     `This directory holds an unclaimed accountless application (secret key from ${keySource}), which has no Dashboard page — a dashboard link needs an application ID, and one is only assigned when the application is claimed.\n` +

@@ -14,6 +14,7 @@ import {
   assertKeylessPayload,
   patchKeylessConfig,
   readCurrentGroups,
+  withClaimedWording,
   type KeylessWriteVerification,
 } from "./keyless.ts";
 
@@ -35,11 +36,13 @@ export interface WriteResult {
  * prompt is shown. Only the keyless path constrains the payload — the account
  * API validates the document server-side.
  */
-export function assertPayloadWritable(
+export async function assertPayloadWritable(
   target: InstanceTarget,
   payload: Record<string, unknown>,
-): void {
-  if (target.kind === "keyless") assertKeylessPayload(payload);
+): Promise<void> {
+  if (target.kind === "keyless") {
+    await withClaimedWording(target.keyless, (claimed) => assertKeylessPayload(payload, claimed));
+  }
 }
 
 /**

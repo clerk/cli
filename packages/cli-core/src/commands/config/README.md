@@ -182,6 +182,8 @@ Both must hold, otherwise the account-authenticated path runs unchanged:
 
 When credentials _are_ present and the directory simply isn't linked, the command prints a warning that it's using the reduced key-based view and points at `clerk link`, so the narrower output is never a silent surprise.
 
+The same path takes a secret key for a **claimed** application, since the key alone doesn't say which it is. A refusal (an unsupported key, `put`, `schema`, `--instance`) reads `GET /v1/instance` once to find out: a non-null `workspace_id` means the application belongs to an account, and the refusal then says to run `clerk auth login` and `clerk link` (or pass `--app <id>`) rather than to claim it. Only a refusal makes that request, and a failed lookup keeps the accountless wording.
+
 The secret key is resolved the way the app itself would resolve one, and this order is shared by every accountless-capable command (`lib/keyless-target.ts`):
 
 1. `CLERK_SECRET_KEY`, or the framework's secret key variable (e.g. `NUXT_CLERK_SECRET_KEY`), in the environment
