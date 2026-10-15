@@ -1107,9 +1107,11 @@ which is what `scrypt_werkzeug` verifies once N, r and p are written inline. It
 also normalizes a password to NFKC before hashing, and Clerk does not, so a
 password whose NFKC form differs will not verify and that user resets it.
 
-A password Clerk cannot verify is **dropped, not rejected**: the user imports
-without it and can sign in another way or reset it. Their run line carries
-`passwordDropped: true`.
+A password Clerk cannot verify is **dropped, not rejected**: dropping it doesn't
+reject the user, who imports without it and can sign in another way or reset
+it. Their run line carries `passwordDropped: true`. The usual [checks](#checks)
+still apply to what is left, so where a password is the instance's only way to
+sign in, a user left without one is rejected there.
 
 **Unverified emails are common.** Better Auth doesn't require email
 verification unless the app turned on `requireEmailVerification`, so many users
