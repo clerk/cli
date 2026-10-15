@@ -114,6 +114,11 @@ describe("runs <id>", () => {
   test.each([
     [{ keySource: "--secret-key" }, "--secret-key <key>"],
     [{ keySource: "--app", appId: "app_1" }, "--app app_1 --instance ins_1"],
+    // Recorded while Clerk could not name the instance: `--app` needs the alias.
+    [
+      { keySource: "--app", appId: "app_1", instanceId: "key_abc" },
+      "--app app_1 --instance development",
+    ],
   ])("the next command keeps the import's target from %o", async (target, expected) => {
     const record = partialImport();
     const file = path.join(runsDir, record.id, "run.json");
@@ -205,6 +210,21 @@ describe("runs <id>", () => {
       await onlyUndo(record.id);
     });
 
+    // Here the newer run's stand-in may be `ins_1` too.
+    test("a newer run under a key's stand-in, when this one has a real ID", async () => {
+      const record = partialImport();
+      const newer = startRun(runsDir, {
+        kind: "import",
+        target: { appLabel: "My App", env: "development", instanceId: "key_abc" },
+        source: "clerk",
+        file: record.file,
+      });
+      newer.update({ startedAt: new Date(Date.parse(record.startedAt) + 1000).toISOString() });
+      newer.finish();
+
+      await onlyUndo(record.id);
+    });
+
     // `runs` has no key, so it can't tell whether the stand-in is `ins_1`. An
     // import with that key would take the newer run.
     test("a newer run under a real ID, when this one has a key's stand-in", async () => {
@@ -222,6 +242,26 @@ describe("runs <id>", () => {
 
       await onlyUndo(record.id);
     });
+  });
+
+  // Dev first, then prod, from the same file: the dev run is still the one
+  // an import into dev continues.
+  test("a newer run on another instance keeps the continue", async () => {
+    const record = partialImport();
+    const other = startRun(runsDir, {
+      kind: "import",
+      target: { appLabel: "My App", env: "production", instanceId: "ins_2" },
+      source: "clerk",
+      file: record.file,
+    });
+    other.update({ startedAt: new Date(Date.parse(record.startedAt) + 1000).toISOString() });
+    other.finish();
+
+    await runs(record.id, { runsDir, json: true });
+
+    const { next } = JSON.parse(captured.out) as { next: string[] };
+    expect(next).toHaveLength(2);
+    expect(next[0]).toContain("to retry the users that failed or were skipped");
   });
 
   test("an unknown ID is a usage error", async () => {

@@ -319,6 +319,11 @@ export function importsOfFile(
   );
 }
 
+/** Every undo of this import, finished or not, newest first. */
+export function undosOf(runs: RunRecord[], importId: string): RunRecord[] {
+  return runs.filter((record) => record.kind === "undo" && record.undoes === importId);
+}
+
 /**
  * The undo of this import that has not finished, if any. `runs` is the
  * caller's `listRuns`, when it has one already.
@@ -328,12 +333,7 @@ export function openUndoOf(
   importId: string,
   runs = listRuns(runsDir),
 ): RunRecord | undefined {
-  return runs.find(
-    (candidate) =>
-      candidate.kind === "undo" &&
-      candidate.undoes === importId &&
-      runState(runsDir, candidate) !== "complete",
-  );
+  return undosOf(runs, importId).find((undo) => runState(runsDir, undo) !== "complete");
 }
 
 /**

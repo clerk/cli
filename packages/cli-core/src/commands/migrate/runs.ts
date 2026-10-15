@@ -17,6 +17,7 @@ import {
   latestUserLines,
   listRuns,
   importsOfFile,
+  undosOf,
   readRun,
   resolveRunsDir,
   runDir,
@@ -133,7 +134,7 @@ function continuesThisRun(runsDir: string, record: RunRecord): boolean {
     mayBeSameInstance(other.target.instanceId),
   );
   if (newest?.id !== record.id) return false;
-  if (runs.some((other) => other.kind === "undo" && other.undoes === record.id)) return false;
+  if (undosOf(runs, record.id).length > 0) return false;
   try {
     return sha256File(file.path) === file.sha256;
   } catch (error) {
@@ -309,7 +310,11 @@ export async function runs(id: string | undefined, options: RunsOptions = {}): P
   const carry = carryFlags({
     runsDir: options.runsDir,
     ...(keySource === "--secret-key" ? { secretKey: "<key>" } : {}),
-    ...(keySource === "--app" && appId ? { app: appId, instance: instanceId } : {}),
+    // A stand-in is no ID `--app` can resolve; its environment, always
+    // `development` or `production`, is an alias `--instance` takes.
+    ...(keySource === "--app" && appId
+      ? { app: appId, instance: isStandInInstanceId(instanceId) ? record.target.env : instanceId }
+      : {}),
   });
   if (options.json) log.data(JSON.stringify(showJson(runsDir, record, carry), null, 2));
   else printRun(runsDir, record, carry);

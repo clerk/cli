@@ -31,8 +31,8 @@ import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { quoteArg } from "../../lib/json-body.ts";
 import {
   carryFlags,
-  type ImportFlags,
   importFlags,
+  pickImportFlags,
   runsCommand,
   undoCommand,
 } from "./lib/carry-flags.ts";
@@ -64,6 +64,7 @@ import {
   inUseMessage,
   openUndoOf,
   importsOfFile,
+  undosOf,
 } from "./lib/run-store.ts";
 import { withProgress } from "./lib/progress.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
@@ -365,9 +366,7 @@ function findResume(
   const openUndo = openUndoOf(runsDir, latest.id, runs);
   if (openUndo) throwUsageError(unfinishedUndoMessage(latest.id, openUndo.id, carry));
   // Undone in full, though the import run was never marked so.
-  if (runs.some((record) => record.kind === "undo" && record.undoes === latest.id)) {
-    return { kind: "new" };
-  }
+  if (undosOf(runs, latest.id).length > 0) return { kind: "new" };
 
   if (state === "complete") return { kind: "complete", record: latest };
   return {
@@ -853,11 +852,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       // Gitignored only now, once there is consent to write a run.
       await resolveRunsDir(options.runsDir, { write: true });
-      const flags: ImportFlags = {
-        allowPartial: options.allowPartial,
-        requirePassword: options.requirePassword,
-        skipLegalChecks: options.skipLegalChecks,
-      };
+      const flags = pickImportFlags(options);
       const run = continued
         ? continueRun(runsDir, continued, plannedLines, carry)
         : startRun(runsDir, {

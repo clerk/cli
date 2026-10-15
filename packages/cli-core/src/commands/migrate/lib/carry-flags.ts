@@ -40,6 +40,20 @@ export function importFlags(options: ImportFlags): string[] {
   ];
 }
 
+/**
+ * The `ImportFlags` fields of wider options, for the run to record. The return
+ * type names every key, so a new flag fails to compile until it is picked here.
+ */
+export function pickImportFlags(
+  options: ImportFlags,
+): Record<keyof ImportFlags, boolean | undefined> {
+  return {
+    allowPartial: options.allowPartial,
+    requirePassword: options.requirePassword,
+    skipLegalChecks: options.skipLegalChecks,
+  };
+}
+
 /** `clerk migrate runs [id]`, reading the runs folder these flags name. */
 export function runsCommand(carry: string[], id?: string): string {
   return withFlags(id ? `clerk migrate runs ${id}` : "clerk migrate runs", carry);
