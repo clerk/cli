@@ -61,8 +61,6 @@ import {
   continueRun,
   latestUserLines,
   listRuns,
-  liveLockPid,
-  lockFile,
   lockImport,
   readRun,
   readUserLines,
@@ -451,23 +449,33 @@ function applyEnvelope(
  */
 function assertNoActiveImport(
   runsDir: string,
-  match: { sha256: string; source: string; instanceId: string; keyInstanceId?: string },
+  match: { sha256: string; instanceId: string; keyInstanceId?: string },
 ): void {
   const active = listRuns(runsDir).find(
-    (record) =>
-      record.kind === "import" &&
-      record.file?.sha256 === match.sha256 &&
-      record.source === match.source &&
-      (record.target.instanceId === match.instanceId ||
-        record.target.instanceId === match.keyInstanceId) &&
-      runState(runsDir, record) === "running",
+    (record) => sameFileAndInstance(record, match) && runState(runsDir, record) === "running",
   );
   if (active) {
     throwUsageError(
-      `Run ${active.id} is importing this file right now in another process (PID ${liveLockPid(runsDir, active.id)}). ` +
-        `Wait for it to finish. If that process is not a migrate run, delete ${lockFile(runsDir, active.id)}.`,
+      inUseMessage(runsDir, active.id, "importing this file", "Wait for it to finish."),
     );
   }
+}
+
+/**
+ * An import of this file into this instance, by its ID or its key's stand-in
+ * ID, under any source. Whichever source maps them, its users are the same
+ * people, so another source's run, or another version of one, holds them too.
+ */
+function sameFileAndInstance(
+  record: RunRecord,
+  match: { sha256: string; instanceId: string; keyInstanceId?: string },
+): boolean {
+  return (
+    record.kind === "import" &&
+    record.file?.sha256 === match.sha256 &&
+    (record.target.instanceId === match.instanceId ||
+      record.target.instanceId === match.keyInstanceId)
+  );
 }
 
 /** True when a run's users are gone: it is marked undone, or an undo of it finished. */
@@ -516,39 +524,39 @@ function findResume(
   /** The import's runs-folder and target flags, for the command a refusal suggests. */
   carry: string[],
 ): ResumeCase {
-  const sameJob = (record: RunRecord): boolean =>
-    record.kind === "import" &&
-    record.file?.sha256 === match.sha256 &&
-    record.source === match.source &&
-    (record.target.instanceId === match.instanceId ||
-      record.target.instanceId === match.keyInstanceId);
-  const latest = listRuns(runsDir).find(
-    (record) => sameJob(record) && record.sourceHash === match.sourceHash,
+  const runs = listRuns(runsDir);
+  // Only a run of this same source, and the same version of a custom one,
+  // is continued.
+  const latest = importsOfFile(runs, match).find(
+    (record) => sameFileAndInstance(record, match) && record.sourceHash === match.sourceHash,
   );
   if (!latest) {
-    // An edited custom source is a different source, but its earlier run sent
-    // the same users: starting over beside it would reject every user it
-    // created and leave it unfinished, so that takes --new-run.
-    // Any run of it not undone, not just the newest: an older interrupted run
-    // behind a newer undone one still holds its users.
-    const earlier = listRuns(runsDir).find(
-      (record) => sameJob(record) && !undoneInFull(runsDir, record),
+    // Another source's run of this file, or an earlier version of this one,
+    // sent the same users: starting over beside it would reject every user it
+    // created and leave it unfinished, so that takes --new-run. Any such run
+    // not undone, not just the newest: an older interrupted run behind a
+    // newer undone one still holds its users.
+    const earlier = runs.find(
+      (record) => sameFileAndInstance(record, match) && !undoneInFull(runsDir, record),
     );
     if (earlier) {
+      const how =
+        earlier.source === match.source
+          ? "with an earlier version of this source"
+          : `with the \`${earlier.source}\` source`;
       throwUsageError(
-        `Run ${earlier.id} imported this file with an earlier version of this source, so the users it created would come back as conflicts. Nothing was imported.\n` +
-          `Pass --new-run to start a new run beside it, or undo it first with \`${withFlags(`clerk migrate undo ${earlier.id}`, carry)}\`.`,
+        `Run ${earlier.id} imported this file into this instance ${how}, so the users it created would come back as conflicts. Nothing was imported.\n` +
+          `Pass --new-run to start a new run beside it, or undo it first with \`${undoCommand(earlier.id, carry)}\`.`,
       );
     }
     // Clerk did not name the instance (GET /v1/instance failed), so a run of
     // this file recorded under a real ID can be neither matched nor ruled out.
     // Starting over would reject every user it created and leave it unfinished.
     if (isStandInInstanceId(match.instanceId)) {
-      const unconfirmed = listRuns(runsDir).find(
+      const unconfirmed = runs.find(
         (record) =>
           record.kind === "import" &&
           record.file?.sha256 === match.sha256 &&
-          record.source === match.source &&
           isClerkInstanceId(record.target.instanceId),
       );
       if (unconfirmed) {
@@ -569,12 +577,10 @@ function findResume(
   }
   if (state === "undone") return { kind: "new" };
 
-  const openUndo = openUndoOf(runsDir, latest.id);
+  const openUndo = openUndoOf(runsDir, latest.id, runs);
   if (openUndo) throwUsageError(unfinishedUndoMessage(latest.id, openUndo.id, carry));
   // Undone in full, though the import run was never marked so.
-  if (listRuns(runsDir).some((record) => record.kind === "undo" && record.undoes === latest.id)) {
-    return { kind: "new" };
-  }
+  if (undosOf(runs, latest.id).length > 0) return { kind: "new" };
 
   if (state === "complete") return { kind: "complete", record: latest };
   return {
@@ -908,15 +914,18 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
   // The flags every suggested command needs to reach this runs folder and instance.
   const carry = carryFlags(options);
 
+  // A Firebase export through a source you wrote is still Firebase's: its
+  // digests need the project's parameters, from the envelope or the flags.
+  const hashSource = options.envelopeSource ?? source;
   // A flag is typed for this run, so it wins over the export file. A variable
   // is ambient, and may be left over from another project, so it only fills in
   // for an export file without the parameters: with one, a partial flag set is
   // refused rather than completed from the variables.
-  const fromEnvelope = source === "firebase" ? envelope?.firebase : undefined;
+  const fromEnvelope = hashSource === "firebase" ? envelope?.firebase : undefined;
   const fromFlagsAtAll = FIREBASE_FLAGS.some(([key]) => options[key] !== undefined);
   const fromFlags =
     fromFlagsAtAll || !fromEnvelope
-      ? resolveFirebaseHashConfig(options, source, fromEnvelope ? {} : process.env)
+      ? resolveFirebaseHashConfig(options, hashSource, fromEnvelope ? {} : process.env)
       : undefined;
   let firebaseHashConfig = fromFlags ?? fromEnvelope;
   let configFrom = fromFlags
@@ -925,7 +934,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       : "the CLERK_FIREBASE_* variables"
     : "the export file";
   // `-y` is "import without prompting": it gets the usage error naming the flags.
-  if (source === "firebase" && !firebaseHashConfig && !options.yes && canPrompt(options)) {
+  if (hashSource === "firebase" && !firebaseHashConfig && !options.yes && canPrompt(options)) {
     firebaseHashConfig = await promptForFirebaseHashConfig();
     configFrom = "the parameters entered";
     // A suggested command runs with --yes, which never asks: it names the flags.
@@ -980,7 +989,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         const releases: (() => void)[] = [];
         try {
           for (const instanceId of new Set([keyInstanceId(secretKey), target.instanceId])) {
-            releases.push(lockImport({ sha256, source, instanceId }));
+            releases.push(lockImport({ sha256, instanceId }));
           }
         } catch (error) {
           for (const release of releases) release();
@@ -992,7 +1001,6 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       }
       assertNoActiveImport(runsDir, {
         sha256,
-        source,
         instanceId: target.instanceId,
         keyInstanceId: keyInstanceId(secretKey),
       });

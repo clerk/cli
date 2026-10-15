@@ -209,7 +209,7 @@ describe("locks and interruptions", () => {
   // A lock created empty and written after reads as stale to a second
   // process in between, which would remove it and import beside the first.
   test("a lock is linked into place with its PID already written", () => {
-    const identity = { sha256: "a".repeat(64), source: "supabase", instanceId: "ins_lock" };
+    const identity = { sha256: "a".repeat(64), instanceId: "ins_lock" };
     const write = spyOn(fs, "writeFileSync");
     const link = spyOn(fs, "linkSync");
     try {
@@ -227,7 +227,7 @@ describe("locks and interruptions", () => {
   });
 
   test("a filesystem without hard links gets the lock written exclusively", () => {
-    const identity = { sha256: "b".repeat(64), source: "supabase", instanceId: "ins_nolink" };
+    const identity = { sha256: "b".repeat(64), instanceId: "ins_nolink" };
     const link = spyOn(fs, "linkSync").mockImplementation(() => {
       throw Object.assign(new Error("not supported"), { code: "EPERM" });
     });
