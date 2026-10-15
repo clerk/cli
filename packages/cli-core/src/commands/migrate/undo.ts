@@ -24,7 +24,7 @@ import { interruptedExitCode } from "../../lib/signals.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
 import { failureOf, tallyError } from "./lib/failures.ts";
-import { carryFlags, runsListCommand, undoCommand } from "./lib/carry-flags.ts";
+import { carryFlags, runsCommand, undoCommand } from "./lib/carry-flags.ts";
 import { canPrompt } from "./lib/terminal.ts";
 import { resolveLimits } from "./lib/instance.ts";
 import { retryOn429 } from "./lib/retry.ts";
@@ -92,7 +92,7 @@ function readImportRun(runsDir: string, runId: string, runsCarry: string[]): Run
       `Run ${runId} is an ${record.kind} run. Only an import run can be undone.`,
       undefined,
       undefined,
-      [{ command: runsListCommand(runsCarry), description: "Find the import run to undo" }],
+      [{ command: runsCommand(runsCarry), description: "Find the import run to undo" }],
     );
   }
   if (record.status === "undone") {
