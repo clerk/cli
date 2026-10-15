@@ -98,11 +98,6 @@ export async function fetchInstanceIdentity(
   return { instanceId: keyInstanceId(secretKey), env: fallbackEnv };
 }
 
-/**
- * The stand-in ID for a key whose instance Clerk did not name: a hash of the
- * key. A run recorded under it is matched by the same key later, once
- * `GET /v1/instance` answers again.
- */
 /** A stand-in for an instance Clerk did not name: {@link keyInstanceId}'s `key_` hash. */
 export function isStandInInstanceId(id: string | undefined): boolean {
   return id?.startsWith("key_") === true;
@@ -113,6 +108,11 @@ export function isClerkInstanceId(id: string | undefined): boolean {
   return id?.startsWith("ins_") === true;
 }
 
+/**
+ * The stand-in ID for a key whose instance Clerk did not name: a hash of the
+ * key. A run recorded under it is matched by the same key later, once
+ * `GET /v1/instance` answers again.
+ */
 export function keyInstanceId(secretKey: string): string {
   return `key_${createHash("sha256").update(secretKey).digest("hex").slice(0, 16)}`;
 }

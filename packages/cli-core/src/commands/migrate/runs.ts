@@ -11,7 +11,7 @@ import { bold, dim, green, red, yellow } from "../../lib/color.ts";
 import { throwUsageError } from "../../lib/errors.ts";
 import { quoteArg } from "../../lib/json-body.ts";
 import { log } from "../../lib/log.ts";
-import { tallyError } from "./import-users.ts";
+import { tallyError } from "./lib/failures.ts";
 import {
   countLines,
   latestUserLines,
@@ -27,6 +27,7 @@ import {
   noRunMessage,
 } from "./lib/run-store.ts";
 import { carryFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
+import { plural } from "./lib/plural.ts";
 import { describeTarget } from "./lib/target.ts";
 
 export type RunsOptions = {
@@ -51,7 +52,7 @@ function colorState(state: RunState): string {
 }
 
 /** The counts that matter for a run's kind, in the order they are read. */
-export function formatCounts(record: RunRecord): string {
+function formatCounts(record: RunRecord): string {
   const counts = record.counts;
   const order =
     record.kind === "export"
@@ -112,7 +113,7 @@ function continueCommand(record: RunRecord, carry: string[]): string | undefined
  * What to run after reading about this run. `carry` is the runs folder this
  * listing read, and the target flags the record says the import used.
  */
-export function nextCommands(record: RunRecord, state: RunState, carry: string[] = []): string[] {
+function nextCommands(record: RunRecord, state: RunState, carry: string[]): string[] {
   if (state === "running") return [];
   if (record.kind === "import" && state !== "undone") {
     const undo = `Run \`${undoCommand(record.id, carry)}\` to delete the users it created`;
@@ -163,15 +164,16 @@ function printList(runsDir: string, records: RunRecord[]): void {
   ];
   for (const line of pad(rows)) log.info(line);
   log.blank();
-  log.info(dim(`${records.length} run${records.length === 1 ? "" : "s"}`));
+  log.info(dim(plural(records.length, "run")));
 }
 
 function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   const lines = [...latestUserLines(runsDir, record.id).values()];
+  const state = runState(runsDir, record);
   return {
     runsDir,
-    run: { ...record, state: runState(runsDir, record) },
-    next: nextCommands(record, runState(runsDir, record), carry),
+    run: { ...record, state },
+    next: nextCommands(record, state, carry),
     errors: errorBreakdown(lines),
     failed: lines.filter((line) => line.status === "failed"),
     skipped: lines.filter((line) => line.status === "skipped"),

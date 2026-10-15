@@ -8,9 +8,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, mock, spyOn, test }
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { libPromptsStubs } from "../../test/lib/stubs.ts";
 
+// The whole module, so a file sharing this process still finds `text` and the rest.
 let confirmed: () => void = () => {};
 mock.module("../../lib/prompts.ts", () => ({
+  ...libPromptsStubs,
   confirm: async () => {
     confirmed();
     return true;

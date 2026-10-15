@@ -550,7 +550,9 @@ export function patchRun(
   const record = readRun(runsDir, id);
   if (!record) return undefined;
   const patched = { ...record, ...patch };
-  log.debug(`migrate: patching run ${id}: ${Object.keys(patch).join(", ")}`);
+  log.debug(
+    `migrate: patching run ${id} (${path.join(runDir(runsDir, id), RUN_FILE)}): ${Object.keys(patch).join(", ")}`,
+  );
   writeRecord(runsDir, patched);
   return patched;
 }
