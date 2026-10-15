@@ -97,7 +97,7 @@ function errorBreakdown(lines: UserLine[]): { error: string; count: number }[] {
 
 /**
  * What to run after reading about this run. `carry` is the runs folder this
- * listing read; the target flags the import used are not on record.
+ * listing read, and the target flags the record says the import used.
  */
 export function nextCommands(record: RunRecord, state: RunState, carry: string[] = []): string[] {
   if (state === "running") return [];
@@ -249,7 +249,14 @@ export async function runs(id: string | undefined, options: RunsOptions = {}): P
   }
   const record = withLiveCounts(runsDir, stored);
 
-  const carry = carryFlags({ runsDir: options.runsDir });
+  // The record says where the import's key came from: `--secret-key` or
+  // `--app` is the instance to reach again, which a linked profile may not be.
+  const { keySource, appId, instanceId } = record.target;
+  const carry = carryFlags({
+    runsDir: options.runsDir,
+    ...(keySource === "--secret-key" ? { secretKey: "<key>" } : {}),
+    ...(keySource === "--app" && appId ? { app: appId, instance: instanceId } : {}),
+  });
   if (options.json) log.data(JSON.stringify(showJson(runsDir, record, carry), null, 2));
   else printRun(runsDir, record, carry);
 }

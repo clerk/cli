@@ -45,6 +45,9 @@ mock.module("../../lib/prompts.ts", () => ({
 }));
 
 const { run } = await import("./run.ts");
+const { terminal } = await import("./lib/terminal.ts");
+// The prompts are stubs; whether this process has a terminal is a test of its own.
+const realTerminal = terminal.available;
 const { UserAbortError } = await import("../../lib/errors.ts");
 const { _setConfigDir } = await import("../../lib/config.ts");
 const { listRuns, sha256File, startRun } = await import("./lib/run-store.ts");
@@ -76,6 +79,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  terminal.available = realTerminal;
   if (originalMode === undefined) delete process.env.CLERK_MODE;
   else process.env.CLERK_MODE = originalMode;
   globalThis.fetch = originalFetch;
@@ -86,6 +90,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  terminal.available = () => true;
   requests = [];
   confirmAnswer = true;
   reserveAnswer = true;
@@ -177,6 +182,16 @@ describe("prompts for what was not passed", () => {
     expect(mockSelect).not.toHaveBeenCalled();
     expect(created()).toHaveLength(2);
   });
+});
+
+// `CLERK_MODE=human` with no terminal: the prompt would fail to open one and spin.
+test("with no terminal, refuses for consent rather than prompting", async () => {
+  terminal.available = () => false;
+
+  await expect(run(importOptions)).rejects.toThrow(/--yes/);
+
+  expect(confirmMessages).toEqual([]);
+  expect(requests.some((r) => r.url.endsWith("/v1/users") && r.method === "POST")).toBe(false);
 });
 
 describe("consent", () => {

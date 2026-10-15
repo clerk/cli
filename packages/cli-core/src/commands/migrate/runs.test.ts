@@ -105,6 +105,21 @@ describe("runs <id>", () => {
     });
   });
 
+  // The record says where the key came from, which a linked profile may not reach.
+  test.each([
+    [{ keySource: "--secret-key" }, "--secret-key <key>"],
+    [{ keySource: "--app", appId: "app_1" }, "--app app_1 --instance ins_1"],
+  ])("the next command keeps the import's target from %o", async (target, expected) => {
+    const record = partialImport();
+    const file = path.join(runsDir, record.id, "run.json");
+    fs.writeFileSync(file, JSON.stringify({ ...record, target: { ...record.target, ...target } }));
+
+    await runs(record.id, { runsDir, json: true });
+
+    const { next } = JSON.parse(captured.out) as { next: string[] };
+    expect(next[0]).toContain(`clerk migrate undo ${record.id} ${expected}`);
+  });
+
   // The suggested undo has to look in the same runs folder.
   test("the next command keeps the runs folder", async () => {
     const record = partialImport();

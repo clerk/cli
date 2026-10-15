@@ -159,7 +159,7 @@ describe("migrate README", () => {
   test("states the rules every command follows", () => {
     expect(README).toContain("## The rules");
     for (const rule of [
-      "Nothing writes without consent",
+      "Nothing writes to Clerk without consent",
       "`--dry-run` checks against the real instance",
       "State lives in one place",
       "Every command prints its target first",

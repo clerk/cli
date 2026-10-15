@@ -598,7 +598,15 @@ export function lockRun(runsDir: string, id: string): () => void {
 }
 
 /** Merges fields into a run this process is not writing, such as `undoneBy`. */
-export function patchRun(runsDir: string, id: string, patch: Partial<RunRecord>): void {
+/** Writes `patch` over the stored record, and returns what was written. */
+export function patchRun(
+  runsDir: string,
+  id: string,
+  patch: Partial<RunRecord>,
+): RunRecord | undefined {
   const record = readRun(runsDir, id);
-  if (record) writeRecord(runsDir, { ...record, ...patch });
+  if (!record) return undefined;
+  const patched = { ...record, ...patch };
+  writeRecord(runsDir, patched);
+  return patched;
 }
