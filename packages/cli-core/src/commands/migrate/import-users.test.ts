@@ -673,6 +673,29 @@ describe("importUsers", () => {
     expect(requests).toEqual([]);
   });
 
+  // The retry that dropped them was cut off before its answer: the reserved
+  // phones it left out are attached, unverified, as they would have been.
+  test("attaches the reserved phones an adopted user's retried create left out", async () => {
+    stub(() => ok("idn_1"));
+
+    await importUsers({
+      users: [
+        user({ unverifiedEmailAddresses: ["c@x.dev"], unverifiedPhoneNumbers: ["+31612345678"] }),
+      ],
+      adopted: new Map([["u1", "user_found"]]),
+      adoptedReserved: new Set(["u1"]),
+      adoptedPending: new Map([["u1", ["+31612345678"]]]),
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    // The email went on the create reserved, so it is not attached again.
+    expect(requests.map((r) => r.body)).toEqual([
+      { user_id: "user_found", phone_number: "+31612345678", primary: false, verified: false },
+    ]);
+  });
+
   // Shapes from clerk_go's apierror: the country error carries its own code
   // and no param_name; the E.164 error is a form error on phone_number.
   test.each([
@@ -785,6 +808,13 @@ describe("importUsers", () => {
 
       expect(requests[1]?.body).toMatchObject({ phone_number: ["+15555550100"] });
       expect(requests[1]?.body).not.toHaveProperty("phone_number_identification_status");
+      // Recorded before the retry goes out, so a continue can attach them.
+      const creating = allLines.filter((line) => line.status === "creating");
+      expect(creating[0]).not.toHaveProperty("pending");
+      expect(creating[1]).toMatchObject({
+        reserved: true,
+        pending: [{ kind: "phone", value: "+31612345678", verified: false }],
+      });
       expect(lines.at(-1)?.error).toContain("Failed to add phone +31612345678:");
       expect(lines.at(-1)?.error).not.toContain("+15555550100");
     });
