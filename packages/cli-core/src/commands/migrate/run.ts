@@ -529,11 +529,15 @@ function findResume(
     // An edited custom source is a different source, but its earlier run sent
     // the same users: starting over beside it would reject every user it
     // created and leave it unfinished, so that takes --new-run.
-    const earlier = listRuns(runsDir).find(sameJob);
-    if (earlier && !undoneInFull(runsDir, earlier)) {
+    // Any run of it not undone, not just the newest: an older interrupted run
+    // behind a newer undone one still holds its users.
+    const earlier = listRuns(runsDir).find(
+      (record) => sameJob(record) && !undoneInFull(runsDir, record),
+    );
+    if (earlier) {
       throwUsageError(
         `Run ${earlier.id} imported this file with an earlier version of this source, so the users it created would come back as conflicts. Nothing was imported.\n` +
-          `Pass --new-run to start a new run beside it, or undo it first with \`clerk migrate undo ${earlier.id}\`.`,
+          `Pass --new-run to start a new run beside it, or undo it first with \`${withFlags(`clerk migrate undo ${earlier.id}`, carry)}\`.`,
       );
     }
     // Clerk did not name the instance (GET /v1/instance failed), so a run of
