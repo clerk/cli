@@ -526,7 +526,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   };
 
   progress();
-  const attachOnlyUser = async (line: (typeof attachOnly)[number]) => {
+  const attachOnlyUser = async (line: UserLine) => {
     await finishUser(line, line.pending ?? [], []);
     attachedUsers++;
     progress();

@@ -289,10 +289,11 @@ describe("resolveClerkTarget key source", () => {
       });
     });
 
-    // The profile labels a literal ID with itself, which is no environment.
-    test("names the key's environment for a literal --instance", async () => {
+    // The profile labels a literal ID with itself, which is no environment,
+    // and the key prefix would only guess one: a staging key is `sk_live_`.
+    test("records the environment as unknown for a literal --instance", async () => {
       const { target } = await resolveClerkTarget({ instance: "ins_prod" });
-      expect(target).toMatchObject({ instanceId: "ins_prod", env: "production" });
+      expect(target).toMatchObject({ instanceId: "ins_prod", env: "unknown" });
     });
   });
 });
