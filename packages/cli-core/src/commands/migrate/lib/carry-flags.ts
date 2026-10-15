@@ -21,6 +21,11 @@ export function carryFlags(options: {
   ];
 }
 
+/** `clerk migrate runs`, listing the runs folder these flags name. */
+export function runsListCommand(carry: string[]): string {
+  return withFlags("clerk migrate runs", carry);
+}
+
 /** `clerk migrate undo <id>` with the flags that reach its runs folder and instance. */
 export function undoCommand(id: string, carry: string[]): string {
   return withFlags(`clerk migrate undo ${id}`, carry);

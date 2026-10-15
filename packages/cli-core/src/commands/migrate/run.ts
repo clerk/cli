@@ -970,6 +970,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         summary.failed > 0
           ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(
               runsCommand,
+              // The same import again continues this run; --new-run would not.
+              commandFor({ ...options, newRun: false }, options.yes ? ["--yes"] : []),
               undoCommand(record.id, carryFlags(options)),
             )
           : NEXT_STEPS.MIGRATE_DONE(runsCommand, undoCommand(record.id, carryFlags(options)));

@@ -117,7 +117,7 @@ describe("runs <id>", () => {
     await runs(record.id, { runsDir, json: true });
 
     const { next } = JSON.parse(captured.out) as { next: string[] };
-    expect(next[0]).toContain(`clerk migrate undo ${record.id} ${expected}`);
+    expect(next.at(-1)).toContain(`clerk migrate undo ${record.id} ${expected}`);
   });
 
   // The suggested undo has to look in the same runs folder.
@@ -127,10 +127,32 @@ describe("runs <id>", () => {
     await runs(record.id, { runsDir, json: true });
 
     const { next } = JSON.parse(captured.out) as { next: string[] };
-    expect(next[0]).toContain(`clerk migrate undo ${record.id} --runs-dir ${quoteArg(runsDir)}`);
+    expect(next.at(-1)).toContain(
+      `clerk migrate undo ${record.id} --runs-dir ${quoteArg(runsDir)}`,
+    );
+  });
+
+  // A partial run is continued by importing the same file again.
+  test("a partial import suggests re-running it, then undoing it", async () => {
+    const record = partialImport();
+
+    await runs(record.id, { runsDir, json: true });
+
+    const { next } = JSON.parse(captured.out) as { next: string[] };
+    expect(next).toHaveLength(2);
+    expect(next[0]).toContain(
+      `clerk migrate import /tmp/users.json --source clerk --runs-dir ${quoteArg(runsDir)}`,
+    );
+    expect(next[0]).toContain("to retry the users that failed or were skipped");
   });
 
   test("an unknown ID is a usage error", async () => {
     await expect(runs("nope", { runsDir })).rejects.toThrow(/No run `nope`/);
+  });
+
+  test("an unknown ID lists the same runs folder", async () => {
+    await expect(runs("nope", { runsDir })).rejects.toThrow(
+      `clerk migrate runs --runs-dir ${quoteArg(runsDir)}`,
+    );
   });
 });
