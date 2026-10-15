@@ -88,6 +88,8 @@ export const ERROR_CODE = {
   MCP_CLIENT_CLI_NOT_FOUND: "mcp_client_cli_not_found",
   /** The target client's own CLI exited non-zero or timed out while registering/removing the entry. */
   MCP_CLIENT_CLI_FAILED: "mcp_client_cli_failed",
+  /** An editor launched the `clerk mcp run` bridge, removed in clerk 4.0; `clerk mcp install` replaces the entry. */
+  MCP_BRIDGE_REMOVED: "mcp_bridge_removed",
   /** No supported framework could be detected in the target directory. */
   FRAMEWORK_UNDETECTED: "framework_undetected",
   /** The detected framework has no `clerk init` bootstrap generator. */
@@ -104,6 +106,8 @@ export const ERROR_CODE = {
   INSTALLER_NOT_FOUND: "installer_not_found",
   /** The npm registry was unreachable. */
   REGISTRY_UNREACHABLE: "registry_unreachable",
+  /** The command is experimental and its `CLERK_EXPERIMENTAL` name isn't set. */
+  EXPERIMENT_DISABLED: "experiment_disabled",
   /** Production instance was created but came back without a domain. */
   DEPLOY_DOMAIN_MISSING: "deploy_domain_missing",
   /**

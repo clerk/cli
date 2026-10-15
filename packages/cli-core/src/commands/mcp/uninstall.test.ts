@@ -3,7 +3,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import * as realOs from "node:os";
 import { join } from "node:path";
-import { captureTelemetryPayload, useCaptureLog } from "../../test/lib/stubs.ts";
+import {
+  captureTelemetryPayload,
+  useCaptureLog,
+  useCleanMcpClientEnv,
+} from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 mock.module("../../mode.ts", () => ({
@@ -40,6 +44,9 @@ const URL = "https://mcp.clerk.com/mcp";
 const RUN_SHAPE = { command: "clerk", args: ["mcp", "run"] };
 const WINDSURF_CONFIG = [".codeium", "windsurf", "mcp_config.json"];
 
+// Developers' own CLAUDE_CONFIG_DIR/CODEX_HOME would escape the redirected homedir.
+useCleanMcpClientEnv();
+
 describe("mcp uninstall", () => {
   const captured = useCaptureLog();
   let cwd: string;
@@ -75,6 +82,50 @@ describe("mcp uninstall", () => {
     // Removing the only entry drops the now-empty `mcpServers` key entirely
     // rather than leaving `{ "mcpServers": {} }` behind.
     expect(parsed.mcpServers).toBeUndefined();
+  });
+
+  test("also removes legacy bridge entries saved under other names", async () => {
+    await mkdir(join(cwd, ".cursor"), { recursive: true });
+    await writeFile(
+      join(cwd, ".cursor", "mcp.json"),
+      JSON.stringify({
+        mcpServers: { "clerk-dev": RUN_SHAPE, other: { url: "https://x.test/mcp" } },
+      }),
+    );
+
+    await mcpUninstall({ client: ["cursor"] });
+
+    const payload = JSON.parse(captured.out) as { results: { client: string; removed: boolean }[] };
+    expect(payload.results).toEqual([expect.objectContaining({ client: "cursor", removed: true })]);
+    const parsed = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(parsed.mcpServers).toEqual({ other: { url: "https://x.test/mcp" } });
+  });
+
+  test("keeps the client successful when a legacy entry can't be removed", async () => {
+    // The named entry goes; the other-name bridge's removal fails.
+    await writeFile(
+      join(cwd, ".claude.json"),
+      JSON.stringify({ mcpServers: { clerk: { type: "http", url: URL }, "clerk-dev": RUN_SHAPE } }),
+    );
+    mockRun.mockImplementation(async (argv: string[]) => {
+      if (argv.at(-1) === "clerk-dev") return { exitCode: 1, stdout: "", stderr: "boom" };
+      await writeFile(
+        join(cwd, ".claude.json"),
+        JSON.stringify({ mcpServers: { "clerk-dev": RUN_SHAPE } }),
+      );
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    await mcpUninstall({ client: ["claude"] });
+
+    const payload = JSON.parse(captured.out) as { results: unknown[]; failures: unknown[] };
+    expect(payload.results).toEqual([
+      expect.objectContaining({ client: "claude", removed: true, legacyRemaining: ["clerk-dev"] }),
+    ]);
+    expect(payload.failures).toEqual([]);
+    expect(captured.err).toContain("could not remove the legacy `clerk-dev` entry");
   });
 
   test("delegates Claude Code removal to `claude mcp remove`", async () => {

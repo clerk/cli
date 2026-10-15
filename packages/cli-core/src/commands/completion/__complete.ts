@@ -1,4 +1,5 @@
 import type { CommandUnknownOpts, Option } from "@commander-js/extra-typings";
+import { sources } from "../migrate/sources/registry.ts";
 import { KNOWN_DASHBOARD_PATHS } from "../open/dashboard-paths.ts";
 
 const DIRECTIVE = {
@@ -33,6 +34,12 @@ const HTTP_METHOD_COMPLETIONS: Completion[] = [
   { name: "DELETE", description: "Delete resource" },
 ];
 
+/** The built-in migrate sources. Kept off `.choices()` so an unknown key gets the source error. */
+const SOURCE_COMPLETIONS: Completion[] = sources.map((entry) => ({
+  name: entry.key,
+  description: entry.label,
+}));
+
 /**
  * Hardcoded option-value completions for options that don't use Commander's `.choices()`.
  * Keys are the long or short flag (e.g., "--mode", "-X").
@@ -52,6 +59,7 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
     { name: "latest", description: "Latest stable release" },
     { name: "canary", description: "Latest canary (pre-release) build" },
   ],
+  "--source": SOURCE_COMPLETIONS,
   "--for": [
     { name: "orgs", description: "Organizations only" },
     { name: "users", description: "Users only" },

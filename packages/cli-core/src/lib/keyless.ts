@@ -5,6 +5,7 @@ import { detectPublishableKeyName, detectSecretKeyName, detectEnvFile } from "./
 import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "./dotenv.ts";
 import { BapiError } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
+import { ensureGitignoreEntry } from "./git.ts";
 import { log } from "./log.ts";
 
 const BREADCRUMB_DIR = ".clerk";
@@ -111,18 +112,6 @@ export function parseClaimToken(claimUrl: string): string {
 
 function breadcrumbPath(cwd: string): string {
   return join(cwd, BREADCRUMB_DIR, BREADCRUMB_FILE);
-}
-
-async function ensureGitignoreEntry(cwd: string, entry: string): Promise<void> {
-  const gitignorePath = join(cwd, ".gitignore");
-  const content = await Bun.file(gitignorePath)
-    .text()
-    .catch(() => "");
-  const lines = content.split("\n").map((l) => l.trim());
-  if (lines.includes(entry)) return;
-  const separator = content && !content.endsWith("\n") ? "\n" : "";
-  await Bun.write(gitignorePath, `${content}${separator}${entry}\n`);
-  log.debug(`Added ${entry} to .gitignore`);
 }
 
 export async function writeKeylessBreadcrumb(cwd: string, claimToken: string): Promise<void> {

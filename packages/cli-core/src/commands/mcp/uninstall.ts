@@ -1,5 +1,7 @@
 /**
- * `clerk mcp uninstall` — remove the `clerk` MCP entry from supported clients.
+ * `clerk mcp uninstall` — remove the `clerk` MCP entry from supported clients,
+ * along with any clerk 3.x `clerk mcp run` bridge entries (under any name),
+ * which no longer connect.
  */
 
 import { cyan, dim, green, yellow } from "../../lib/color.ts";
@@ -11,7 +13,9 @@ import { collectEntries } from "./collect.ts";
 import type { McpClient, RemoveResult } from "./clients/types.ts";
 import {
   failWhenAllFailed,
+  legacyEntryNames,
   pickClients,
+  removeLegacyEntries,
   resolveClients,
   resolveName,
   settleClients,
@@ -35,8 +39,27 @@ async function installedClients(name: string, cwd: string): Promise<McpClient[]>
   const failed = new Set(failures.map((f) => f.client));
   return CLIENTS.filter(
     (client) =>
-      !failed.has(client.id) && entries.some((e) => e.client === client.id && e.name === name),
+      !failed.has(client.id) &&
+      entries.some((e) => e.client === client.id && (e.name === name || e.legacy)),
   );
+}
+
+type UninstallResult = RemoveResult & { legacyRemaining?: string[] };
+
+/** Remove `name`, then any legacy bridge entries left under other names. */
+async function removeEntries(
+  client: McpClient,
+  name: string,
+  cwd: string,
+): Promise<UninstallResult> {
+  const legacy = (await legacyEntryNames(client, cwd)).filter((n) => n !== name);
+  const result = await client.remove(name, cwd);
+  const { removed, remaining } = await removeLegacyEntries(client, legacy, cwd);
+  return {
+    ...result,
+    removed: result.removed || removed.length > 0,
+    ...(remaining.length > 0 && { legacyRemaining: remaining }),
+  };
 }
 
 // The checked clients are removed; nothing is pre-checked, so the safe default
@@ -54,7 +77,7 @@ async function removeFrom(
   cwd: string,
   json: boolean,
 ): Promise<void> {
-  const outcome = await settleClients(clients, async (c) => c.remove(name, cwd));
+  const outcome = await settleClients(clients, async (c) => removeEntries(c, name, cwd));
   const { succeeded, failed } = outcome;
   const results = succeeded.map((s) => s.result);
   const removedCount = results.filter((r) => r.removed).length;
