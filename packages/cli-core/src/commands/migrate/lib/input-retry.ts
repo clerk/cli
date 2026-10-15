@@ -15,28 +15,11 @@
  * full re-run for one line they could not see.
  */
 
-import fs from "node:fs";
 import { CliError, EXIT_CODE, throwUsageError } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
 import { isAgent, isHuman } from "../../../mode.ts";
 import { isAssumeYes } from "./assume-yes.ts";
-
-/**
- * Whether a prompt has a terminal to read: stdin, or `/dev/tty` behind a piped
- * stdin. `CLERK_MODE=human` forces human mode without one, and a prompt with
- * no terminal fails to open it and spins. An object so tests can swap it.
- */
-export const terminal = {
-  available(): boolean {
-    if (process.stdin.isTTY) return true;
-    try {
-      fs.closeSync(fs.openSync(process.platform === "win32" ? "CONIN$" : "/dev/tty", "r"));
-      return true;
-    } catch {
-      return false;
-    }
-  },
-};
+import { terminal } from "./terminal.ts";
 
 /**
  * Runs `work`, and on failure asks for the input again and runs it once more.
