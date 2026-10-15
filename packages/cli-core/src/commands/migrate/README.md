@@ -7,7 +7,7 @@ Clerk instance.
 clerk migrate export [platform] [-o <path>] [--json]
 clerk migrate import [file|export-run-id] [--source <source>] [--dry-run] [--allow-partial] [--new-run] [--yes] [--json]
 clerk migrate runs [run-id] [--json]
-clerk migrate undo <run-id> [--dry-run] [--yes] [--json]
+clerk migrate undo <run-id> [--dry-run] [--yes] [--include-signed-in] [--json]
 clerk migrate sources [source] [--json]
 clerk migrate help
 ```
@@ -750,15 +750,15 @@ A continued run also finishes what the last one left open:
   record as already in the instance. Only when the lookup finds no user at
   all is it created.
 
+- A user whose `created` line has `pending` identifiers gets just those
+  attaches.
+
 Every create sends the run's ID in the user's private metadata, as
 `clerkMigrateRun`, merged with any private metadata the source carries. It
 replaces a `clerkMigrateRun` the source already has, from a run that imported
 the user into the source instance. It is how a cut-off create is told apart
 from a user an app or another tool made with the same `external_id`, and it
 stays on the user. A run recorded before the marker existed adopts nothing.
-
-- A user whose `created` line has `pending` identifiers gets just those
-  attaches.
 
 When an import completes, it names the folders it no longer needs: the export it
 read, which holds your users' data, and its own run, which only `undo` needs.
@@ -948,8 +948,9 @@ clerk migrate runs --json
 
 It prints the runs folder first. The listing shows each run's ID, date, kind,
 status, target, file and counts. `runs <id>` adds the error breakdown and the
-users that failed or were skipped, with the path to the full record. An unknown
-ID exits 2.
+users that failed or were skipped, with the path to the full record, then what
+to run next: for an interrupted or partial import, the import that continues
+it, and the undo. An unknown ID exits 2.
 
 ### `clerk migrate undo`
 
