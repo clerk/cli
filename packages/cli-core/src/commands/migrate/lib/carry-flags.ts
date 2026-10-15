@@ -26,11 +26,13 @@ export function carryFlags(options: {
  * the command that continues it, wherever it is suggested, repeats them:
  * left out, `--require-password` no longer holds back the users it skipped.
  */
-export function importFlags(options: {
+export type ImportFlags = {
   allowPartial?: boolean;
   requirePassword?: boolean;
   skipLegalChecks?: boolean;
-}): string[] {
+};
+
+export function importFlags(options: ImportFlags): string[] {
   return [
     ...(options.allowPartial ? ["--allow-partial"] : []),
     ...(options.requirePassword ? ["--require-password"] : []),

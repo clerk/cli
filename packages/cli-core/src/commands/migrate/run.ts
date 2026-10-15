@@ -31,7 +31,13 @@ import {
 } from "../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { quoteArg } from "../../lib/json-body.ts";
-import { carryFlags, importFlags, runsCommand, undoCommand } from "./lib/carry-flags.ts";
+import {
+  carryFlags,
+  type ImportFlags,
+  importFlags,
+  runsCommand,
+  undoCommand,
+} from "./lib/carry-flags.ts";
 import { plural } from "./lib/plural.ts";
 import { canPrompt } from "./lib/terminal.ts";
 import { log } from "../../lib/log.ts";
@@ -70,6 +76,7 @@ import {
   unfinishedUndoMessage,
   inUseMessage,
   openUndoOf,
+  importsOfFile,
 } from "./lib/run-store.ts";
 import { withProgress } from "./lib/progress.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
@@ -518,11 +525,8 @@ function findResume(
   const runs = listRuns(runsDir);
   // Only a run of this same source, and the same version of a custom one,
   // is continued.
-  const latest = runs.find(
-    (record) =>
-      sameFileAndInstance(record, match) &&
-      record.source === match.source &&
-      record.sourceHash === match.sourceHash,
+  const latest = importsOfFile(runs, match).find(
+    (record) => sameFileAndInstance(record, match) && record.sourceHash === match.sourceHash,
   );
   if (!latest) {
     // Another source's run of this file, or an earlier version of this one,
@@ -1283,7 +1287,11 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
 
       // Gitignored only now, once there is consent to write a run.
       await resolveRunsDir(options.runsDir, { write: true });
-      const flags = importFlags(options);
+      const flags: ImportFlags = {
+        allowPartial: options.allowPartial,
+        requirePassword: options.requirePassword,
+        skipLegalChecks: options.skipLegalChecks,
+      };
       const run = continued
         ? continueWithExport(continueRun(runsDir, continued, plannedLines, carry), input.fromExport)
         : startRun(runsDir, {
@@ -1398,12 +1406,12 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       }
 
       // `runs` takes only --runs-dir.
-      const runs = runsCommand(carryFlags({ runsDir: options.runsDir }), record.id);
+      const runsStep = runsCommand(carryFlags({ runsDir: options.runsDir }), record.id);
       const undo = undoCommand(record.id, carry);
       const steps =
         summary.failed > 0
           ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(
-              runs,
+              runsStep,
               // The same import again continues this run; --new-run would not.
               commandFor(
                 { ...options, newRun: false },
@@ -1412,7 +1420,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
               ),
               undo,
             )
-          : NEXT_STEPS.MIGRATE_DONE(runs, undo);
+          : NEXT_STEPS.MIGRATE_DONE(runsStep, undo);
       setNextSteps(steps);
       printAgentNextSteps(steps);
     },

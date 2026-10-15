@@ -153,7 +153,7 @@ describe("runs <id>", () => {
 
   // Left out, the continue creates the users --require-password held back.
   test("the continue repeats the flags the import ran with", async () => {
-    const record = partialImport({ flags: ["--require-password"] });
+    const record = partialImport({ flags: { requirePassword: true } });
 
     await runs(record.id, { runsDir, json: true });
 
@@ -193,6 +193,32 @@ describe("runs <id>", () => {
     test("an undo of it left unfinished", async () => {
       const record = partialImport();
       startRun(runsDir, { kind: "undo", target: record.target, undoes: record.id }).release();
+
+      await onlyUndo(record.id);
+    });
+
+    // Cut off before it marked the import undone: an import starts a new run.
+    test("an undo of it that finished", async () => {
+      const record = partialImport();
+      startRun(runsDir, { kind: "undo", target: record.target, undoes: record.id }).finish();
+
+      await onlyUndo(record.id);
+    });
+
+    // `runs` has no key, so it can't tell whether the stand-in is `ins_1`. An
+    // import with that key would take the newer run.
+    test("a newer run under a real ID, when this one has a key's stand-in", async () => {
+      const record = partialImport({
+        target: { appLabel: "My App", env: "development", instanceId: "key_abc" },
+      });
+      const newer = startRun(runsDir, {
+        kind: "import",
+        target: { appLabel: "My App", env: "development", instanceId: "ins_1" },
+        source: "clerk",
+        file: record.file,
+      });
+      newer.update({ startedAt: new Date(Date.parse(record.startedAt) + 1000).toISOString() });
+      newer.finish();
 
       await onlyUndo(record.id);
     });
