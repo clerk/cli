@@ -781,9 +781,13 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         withoutPassword.length === 0 &&
         attachOnly.length === 0
       ) {
-        // Settled, so a continued run is finished rather than left interrupted.
-        if (continued) continueRun(runsDir, continued, plannedLines, carryFlags(options)).finish();
-        if (options.json) preview({ nothingToImport: true });
+        // Settled, so a continued run is finished rather than left interrupted,
+        // and the JSON reports it as finished, as run.json now does.
+        const finished = continued
+          ? continueRun(runsDir, continued, plannedLines, carryFlags(options)).finish()
+          : undefined;
+        if (options.json)
+          preview({ nothingToImport: true, ...(finished ? { run: finished } : {}) });
         else log.warn("No users left to import.");
         return;
       }

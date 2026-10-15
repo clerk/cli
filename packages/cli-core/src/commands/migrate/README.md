@@ -540,7 +540,10 @@ every user is deleted. A partial undo exits 1, and running `undo` again retries
 the users that failed, in the same undo run. A Ctrl-C leaves the undo run
 `interrupted`, as it does an import, and running `undo` again carries on.
 
-`--json` prints one object on stdout, whatever the outcome:
+Once undo reaches its preview, `--json` prints one object on stdout, whatever
+happens next. A refusal before that — no such run, a run that isn't an import,
+or a key for another instance — is an error, as it is for every command. The
+object:
 
 ```json
 {
