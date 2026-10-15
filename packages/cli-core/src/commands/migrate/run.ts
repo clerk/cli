@@ -690,21 +690,33 @@ function formatSummary(
  * export carries user data and password hashes, and the run is only needed
  * for `undo`.
  */
-function cleanupLines(runsDir: string, record: RunRecord): string[] {
+export function cleanupLines(runsDir: string, record: RunRecord): string[] {
   const lines: string[] = [];
   if (record.fromExport) {
     const exportDir = runDir(runsDir, record.fromExport);
     // `export --output` writes the file outside the run folder, and deleting
-    // the folder alone would leave the password hashes on disk.
-    const file = record.file?.path;
-    // On Windows a file on another drive comes back absolute, not as `..`.
-    const relative = file ? path.relative(exportDir, file) : "";
-    const outside = file && (path.isAbsolute(relative) || relative.startsWith(".."));
+    // the folder alone would leave the password hashes on disk. The export
+    // run's own record says where: this run may have started from a copy,
+    // and kept the copy's path when continued by the export's ID.
+    const exportFile = readRun(runsDir, record.fromExport)?.file?.path;
+    const importFile = record.file?.path;
+    const outside = (file: string | undefined): file is string => {
+      if (!file) return false;
+      // On Windows a file on another drive comes back absolute, not as `..`.
+      const relative = path.relative(exportDir, file);
+      return path.isAbsolute(relative) || relative.startsWith("..");
+    };
     lines.push(
       `The export in run ${record.fromExport} holds your users' data. Once you have checked the import, delete it:`,
       dim(`  rm -rf ${quoteArg(exportDir)}`),
-      ...(outside ? [dim(`  rm ${quoteArg(file)}`)] : []),
+      ...(outside(exportFile) ? [dim(`  rm ${quoteArg(exportFile)}`)] : []),
     );
+    if (importFile !== exportFile && outside(importFile)) {
+      lines.push(
+        "The file this import read holds the same data:",
+        dim(`  rm ${quoteArg(importFile)}`),
+      );
+    }
   }
   lines.push(
     `Keep run ${record.id} while you might still undo it. After that:`,

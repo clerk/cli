@@ -110,7 +110,9 @@ describe("resolveClerkSource", () => {
   // Exporting the instance that is about to be imported *into* is the failure
   // this whole module exists to prevent, so a resolved instance is offered as
   // one choice among the account's applications rather than taken silently.
-  test("offers every instance, flat, with the linked application's first", async () => {
+  // The linked application is usually the destination, and the first row is
+  // what a reflexive Enter takes: it goes last, marked.
+  test("offers every instance, flat, with the linked application's last and marked", async () => {
     stubResolved("my-app (development)");
     mockResolveProfile.mockResolvedValue({ profile: { appId: "app_2" } });
     mockFetchApps.mockResolvedValue([
@@ -144,16 +146,16 @@ describe("resolveClerkSource", () => {
     expect(message).toBe("What Clerk instance do you want to export users from?");
     expect(listSource("")).toEqual([
       {
-        name: "other-app - Development instance (ins_2d)",
-        value: { app: "app_2", instance: "ins_2d" },
-      },
-      {
         name: "my-app - Development instance (ins_1d)",
         value: { app: "app_1", instance: "ins_1d" },
       },
       {
         name: "my-app - Production instance (ins_1p)",
         value: { app: "app_1", instance: "ins_1p" },
+      },
+      {
+        name: "other-app - Development instance (ins_2d) (linked: usually the destination)",
+        value: { app: "app_2", instance: "ins_2d" },
       },
     ]);
     // Both halves are handed on, so the secret-key lookup runs against exactly
@@ -215,7 +217,11 @@ describe("resolveClerkSource", () => {
   // An accountless app's key is resolved; listing applications needs a login.
   test("offers the resolved instance when applications can't be listed", async () => {
     stubResolved("this accountless application (secret key from .env)");
-    mockFetchApps.mockRejectedValue(new CliError("Not authenticated. Run `clerk auth login`."));
+    mockFetchApps.mockRejectedValue(
+      new CliError("Not authenticated. Run `clerk auth login`.", {
+        code: ERROR_CODE.AUTH_REQUIRED,
+      }),
+    );
     mockConfirm.mockResolvedValue(true);
 
     const source = await resolveClerkSource({});
@@ -226,7 +232,11 @@ describe("resolveClerkSource", () => {
 
   test("a no to the resolved instance, when applications can't be listed, exports nothing", async () => {
     stubResolved("this accountless application (secret key from .env)");
-    mockFetchApps.mockRejectedValue(new CliError("Not authenticated. Run `clerk auth login`."));
+    mockFetchApps.mockRejectedValue(
+      new CliError("Not authenticated. Run `clerk auth login`.", {
+        code: ERROR_CODE.AUTH_REQUIRED,
+      }),
+    );
     mockConfirm.mockResolvedValue(false);
 
     await expect(resolveClerkSource({})).rejects.toBeInstanceOf(UserAbortError);
@@ -287,11 +297,20 @@ describe("resolveClerkSource", () => {
     },
   );
 
-  // What the real resolver throws in an unlinked directory with no key.
-  test("an unlinked directory picks an application instead of failing", async () => {
+  // What the real resolver throws in an unlinked directory with no key. The
+  // same flat list as the linked case, with no "create a new application" row.
+  test("an unlinked directory offers every instance, flat, instead of failing", async () => {
     mockDescribeBapiTarget.mockRejectedValue(
       new CliError("No Clerk project linked to this directory.", { code: ERROR_CODE.NOT_LINKED }),
     );
+    mockFetchApps.mockResolvedValue([
+      {
+        application_id: "app_1",
+        name: "other-app",
+        instances: [{ instance_id: "ins_1p", environment_type: "production" }],
+      },
+    ]);
+    mockSearch.mockResolvedValue({ app: "app_1", instance: "ins_1p" });
     mockResolveUsersInstanceContext.mockResolvedValue({
       secretKey: "sk_test_picked",
       appLabel: "other-app",
@@ -301,8 +320,67 @@ describe("resolveClerkSource", () => {
     const source = await resolveClerkSource({});
 
     expect(source).toEqual({ secretKey: "sk_test_picked", target: "other-app (production)" });
-    // The picker just asked which application; asking again is noise.
-    expect(mockSearch).not.toHaveBeenCalled();
+    const { source: listSource } = mockSearch.mock.calls[0]![0];
+    expect(listSource("").map((choice: { name: string }) => choice.name)).toEqual([
+      "other-app - Production instance (ins_1p)",
+    ]);
+    expect(mockResolveUsersInstanceContext).toHaveBeenCalledWith({
+      app: "app_1",
+      instance: "ins_1p",
+    });
+  });
+
+  test("an unlinked directory with no login is a usage error naming the flags", async () => {
+    mockDescribeBapiTarget.mockRejectedValue(
+      new CliError("No Clerk project linked to this directory.", { code: ERROR_CODE.NOT_LINKED }),
+    );
+    mockFetchApps.mockRejectedValue(
+      new CliError("Not authenticated. Run `clerk auth login`.", {
+        code: ERROR_CODE.AUTH_REQUIRED,
+      }),
+    );
+
+    const error = (await resolveClerkSource({}).catch((e: unknown) => e)) as CliError;
+
+    expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+    expect(error.message).toContain("Listing your applications needs `clerk auth login`");
+    expect(error.message).toContain("--secret-key");
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  // Only "can't list" offers the resolved instance. A failure after picking
+  // another one is that failure, not a reason to offer the destination.
+  test("a failure after picking an instance goes through, not to the fallback", async () => {
+    stubResolved("my-app (development)");
+    mockFetchApps.mockResolvedValue([
+      {
+        application_id: "app_1",
+        name: "other-app",
+        instances: [{ instance_id: "ins_1p", environment_type: "production" }],
+      },
+    ]);
+    mockSearch.mockResolvedValue({ app: "app_1", instance: "ins_1p" });
+    const failure = new CliError("Could not fetch that instance's secret key.");
+    mockResolveUsersInstanceContext.mockRejectedValue(failure);
+
+    await expect(resolveClerkSource({})).rejects.toThrow(failure);
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  test("names why it offers the resolved instance when applications can't be listed", async () => {
+    stubResolved("this accountless application (secret key from .env)");
+    mockFetchApps.mockRejectedValue(
+      new CliError("Not authenticated. Run `clerk auth login`.", {
+        code: ERROR_CODE.AUTH_REQUIRED,
+      }),
+    );
+    mockConfirm.mockResolvedValue(true);
+
+    await resolveClerkSource({});
+
+    expect(mockConfirm.mock.calls[0]![0].message).toContain(
+      "Listing your applications needs a login",
+    );
   });
 
   test("an explicit --app that fails to resolve surfaces the error, not the picker", async () => {

@@ -405,6 +405,71 @@ describe("run", () => {
       expect(captured.err).toContain(`rm ${outside}`);
     });
 
+    // Started from a copy, continued by the export's ID: the run kept the
+    // copy's path, but the export's own file outside its folder must go too.
+    test("names the export's own file, and the copy the import read, when they differ", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const exported = path.join(workDir, `users-${record.id}.json`);
+      fs.renameSync(file, exported);
+      patchRun(runsDir(), record.id, { file: { path: exported, sha256: sha256File(exported) } });
+      const copy = path.join(workDir, "copy.json");
+      fs.copyFileSync(exported, copy);
+      stubClerk({ failing: new Set(["u2"]) });
+      await run({ ...noSource, input: copy });
+
+      stubClerk();
+      process.exitCode = 0;
+      captured.clear();
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).toContain(`rm -rf ${path.join(runsDir(), record.id)}`);
+      expect(captured.err).toContain(`rm ${exported}`);
+      expect(captured.err).toContain("The file this import read holds the same data:");
+      expect(captured.err).toContain(`rm ${copy}`);
+    });
+
+    test("names one file once when the import read the export's own", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const exported = path.join(workDir, `users-${record.id}.json`);
+      fs.renameSync(file, exported);
+      patchRun(runsDir(), record.id, { file: { path: exported, sha256: sha256File(exported) } });
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err.split(`rm ${exported}`)).toHaveLength(2);
+      expect(captured.err).not.toContain("The file this import read");
+    });
+
+    test("names no file inside the export's folder, which the folder's rm covers", async () => {
+      const { record } = exportRun("clerk", export2);
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).not.toMatch(/\n\s*rm (?!-rf)/);
+    });
+
+    // The copy is still named, but not as the export.
+    test("names the copy on its own when the export's record is gone", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const copy = path.join(workDir, "copy.json");
+      fs.copyFileSync(file, copy);
+      stubClerk({ failing: new Set(["u2"]) });
+      await run({ ...noSource, input: copy });
+      stubClerk();
+      process.exitCode = 0;
+      await run({ ...noSource, input: record.id });
+      fs.rmSync(path.join(runsDir(), record.id, "run.json"));
+      const [imported] = listRuns(runsDir());
+      captured.clear();
+
+      // The cleanup reads the export's record as it prints, so print it again.
+      expect(imported?.fromExport).toBe(record.id);
+      const { cleanupLines } = await import("./run.ts");
+      const lines = cleanupLines(runsDir(), imported!).join("\n");
+      expect(lines).toContain("The file this import read holds the same data:");
+      expect(lines).toContain(`rm ${copy}`);
+    });
+
     test("imports by export run ID, with the source the envelope names", async () => {
       const { record } = exportRun("clerk", export2);
 
