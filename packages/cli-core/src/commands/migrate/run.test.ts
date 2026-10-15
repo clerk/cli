@@ -886,6 +886,8 @@ describe("run", () => {
       reason: "no password (--require-password)",
     });
     expect(record?.status).toBe("partial");
+    // So `runs <id>` suggests a continue that still leaves them out.
+    expect(record?.flags).toEqual(["--require-password"]);
   });
 
   // They never reach the checks, so the preview has to count them itself.

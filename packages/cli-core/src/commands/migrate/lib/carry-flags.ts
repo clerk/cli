@@ -21,6 +21,23 @@ export function carryFlags(options: {
   ];
 }
 
+/**
+ * The import flags that choose which users go in. The run records them, so
+ * the command that continues it, wherever it is suggested, repeats them:
+ * left out, `--require-password` no longer holds back the users it skipped.
+ */
+export function importFlags(options: {
+  allowPartial?: boolean;
+  requirePassword?: boolean;
+  skipLegalChecks?: boolean;
+}): string[] {
+  return [
+    ...(options.allowPartial ? ["--allow-partial"] : []),
+    ...(options.requirePassword ? ["--require-password"] : []),
+    ...(options.skipLegalChecks ? ["--skip-legal-checks"] : []),
+  ];
+}
+
 /** `clerk migrate runs`, listing the runs folder these flags name. */
 export function runsListCommand(carry: string[]): string {
   return withFlags("clerk migrate runs", carry);

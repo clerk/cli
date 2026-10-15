@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { quoteArg } from "../../lib/json-body.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
-import { startRun } from "./lib/run-store.ts";
+import { sha256File, startRun, type StartRunInit } from "./lib/run-store.ts";
 import { runs } from "./runs.ts";
 
 const captured = useCaptureLog();
@@ -19,12 +19,17 @@ afterEach(() => {
   fs.rmSync(runsDir, { recursive: true, force: true });
 });
 
-function partialImport() {
+/** The file the fixture's import read, so a continue can find it unchanged. */
+const usersFile = () => path.join(runsDir, "users.json");
+
+function partialImport(init: Partial<StartRunInit> = {}) {
+  fs.writeFileSync(usersFile(), "[]");
   const run = startRun(runsDir, {
     kind: "import",
     target: { appLabel: "My App", env: "development", instanceId: "ins_1" },
     source: "clerk",
-    file: { path: "/tmp/users.json", sha256: "abc" },
+    file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    ...init,
   });
   run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
   run.append({ sourceId: "b", status: "failed", error: "That email address is taken." });
@@ -141,21 +146,66 @@ describe("runs <id>", () => {
     const { next } = JSON.parse(captured.out) as { next: string[] };
     expect(next).toHaveLength(2);
     expect(next[0]).toContain(
-      `clerk migrate import /tmp/users.json --source clerk --runs-dir ${quoteArg(runsDir)}`,
+      `clerk migrate import ${quoteArg(usersFile())} --source clerk --runs-dir ${quoteArg(runsDir)}`,
     );
     expect(next[0]).toContain("to retry the users that failed or were skipped");
   });
 
-  // The record has the custom source's hash, not its path.
-  test("a partial import from a source you wrote names the source file to pass", async () => {
-    const record = partialImport();
-    const file = path.join(runsDir, record.id, "run.json");
-    fs.writeFileSync(file, JSON.stringify({ ...record, source: "acme", sourceHash: "abc123" }));
+  // Left out, the continue creates the users --require-password held back.
+  test("the continue repeats the flags the import ran with", async () => {
+    const record = partialImport({ flags: ["--require-password"] });
 
     await runs(record.id, { runsDir, json: true });
 
     const { next } = JSON.parse(captured.out) as { next: string[] };
-    expect(next[0]).toContain("clerk migrate import /tmp/users.json --source SOURCE_FILE");
+    expect(next[0]).toContain("--source clerk --require-password --runs-dir");
+  });
+
+  // Each of these would start another run, or refuse, rather than continue it.
+  describe("offers only the undo when importing the file again would not continue the run", () => {
+    const onlyUndo = async (id: string) => {
+      await runs(id, { runsDir, json: true });
+      const { next } = JSON.parse(captured.out) as { next: string[] };
+      expect(next).toEqual([expect.stringContaining(`clerk migrate undo ${id}`)]);
+    };
+
+    test("a newer run of the same file", async () => {
+      const record = partialImport();
+      const newer = startRun(runsDir, {
+        kind: "import",
+        target: record.target,
+        source: "clerk",
+        file: record.file,
+      });
+      newer.update({ startedAt: new Date(Date.parse(record.startedAt) + 1000).toISOString() });
+      newer.finish();
+
+      await onlyUndo(record.id);
+    });
+
+    test("a file changed since", async () => {
+      const record = partialImport();
+      fs.writeFileSync(usersFile(), "[{}]");
+
+      await onlyUndo(record.id);
+    });
+
+    test("an undo of it left unfinished", async () => {
+      const record = partialImport();
+      startRun(runsDir, { kind: "undo", target: record.target, undoes: record.id }).release();
+
+      await onlyUndo(record.id);
+    });
+  });
+
+  // The record has the custom source's hash, not its path.
+  test("a partial import from a source you wrote names the source file to pass", async () => {
+    const record = partialImport({ source: "acme", sourceHash: "abc123" });
+
+    await runs(record.id, { runsDir, json: true });
+
+    const { next } = JSON.parse(captured.out) as { next: string[] };
+    expect(next[0]).toContain(`clerk migrate import ${quoteArg(usersFile())} --source SOURCE_FILE`);
   });
 
   test("an unknown ID is a usage error", async () => {

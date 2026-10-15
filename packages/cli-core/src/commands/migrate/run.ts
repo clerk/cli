@@ -31,7 +31,7 @@ import {
 } from "../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { quoteArg } from "../../lib/json-body.ts";
-import { carryFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
+import { carryFlags, importFlags, runsCommand, undoCommand } from "./lib/carry-flags.ts";
 import { plural } from "./lib/plural.ts";
 import { canPrompt } from "./lib/terminal.ts";
 import { log } from "../../lib/log.ts";
@@ -69,6 +69,7 @@ import {
   type UserLine,
   unfinishedUndoMessage,
   inUseMessage,
+  openUndoOf,
 } from "./lib/run-store.ts";
 import { withProgress } from "./lib/progress.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
@@ -570,11 +571,12 @@ function findResume(
   }
   if (state === "undone") return { kind: "new" };
 
-  const undos = runs.filter((record) => record.kind === "undo" && record.undoes === latest.id);
-  const openUndo = undos.find((record) => runState(runsDir, record) !== "complete");
+  const openUndo = openUndoOf(runsDir, latest.id, runs);
   if (openUndo) throwUsageError(unfinishedUndoMessage(latest.id, openUndo.id, carry));
   // Undone in full, though the import run was never marked so.
-  if (undos.length > 0) return { kind: "new" };
+  if (runs.some((record) => record.kind === "undo" && record.undoes === latest.id)) {
+    return { kind: "new" };
+  }
 
   if (state === "complete") return { kind: "complete", record: latest };
   return {
@@ -742,10 +744,8 @@ function commandFor(options: MigrateRunOptions, fromExport: string | undefined, 
   const source = options.sourceArg ?? options.source;
   // An export names its own source, unless a source you wrote replaced it.
   if ((!fromExport || options.envelopeSource) && source) parts.push("--source", quoteArg(source));
-  if (options.allowPartial) parts.push("--allow-partial");
   if (options.newRun) parts.push("--new-run");
-  if (options.requirePassword) parts.push("--require-password");
-  if (options.skipLegalChecks) parts.push("--skip-legal-checks");
+  parts.push(...importFlags(options));
   if (options.reserveUnverified) parts.push("--reserve-unverified");
   // Names, not `<…>`: pasted as is, a shell reads `<key>` as a redirect.
   if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "SIGNER_KEY");
@@ -1069,7 +1069,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       const failures = loaded.failures.filter((failure) => !done.has(failure.userId));
 
       // An instruction about this import, not a prediction: users without a
-      // password are left out of the job rather than recorded as skipped.
+      // password are left out of the checks and recorded as skipped.
       let withoutPassword: User[] = [];
       if (options.requirePassword) {
         withoutPassword = users.filter((user) => !user.password && !adopted.has(user.userId));
@@ -1283,6 +1283,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
 
       // Gitignored only now, once there is consent to write a run.
       await resolveRunsDir(options.runsDir, { write: true });
+      const flags = importFlags(options);
       const run = continued
         ? continueWithExport(continueRun(runsDir, continued, plannedLines, carry), input.fromExport)
         : startRun(runsDir, {
@@ -1295,7 +1296,10 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
             ...(options.envelopeSource ? { envelopeSource: options.envelopeSource } : {}),
             ...(firebaseHash ? { firebaseHash } : {}),
             reserveUnverified,
+            flags,
           });
+      // The flags this attempt ran with, which the next continue repeats.
+      if (continued) run.update({ flags });
       // Printed now, not on the way out: on a Ctrl-C the signal handler exits
       // before the import returns, and the folder is the only record of who
       // was created.
@@ -1394,15 +1398,12 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       }
 
       // `runs` takes only --runs-dir.
-      const runsCommand = withFlags(
-        `clerk migrate runs ${record.id}`,
-        carryFlags({ runsDir: options.runsDir }),
-      );
+      const runs = runsCommand(carryFlags({ runsDir: options.runsDir }), record.id);
       const undo = undoCommand(record.id, carry);
       const steps =
         summary.failed > 0
           ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(
-              runsCommand,
+              runs,
               // The same import again continues this run; --new-run would not.
               commandFor(
                 { ...options, newRun: false },
@@ -1411,7 +1412,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
               ),
               undo,
             )
-          : NEXT_STEPS.MIGRATE_DONE(runsCommand, undo);
+          : NEXT_STEPS.MIGRATE_DONE(runs, undo);
       setNextSteps(steps);
       printAgentNextSteps(steps);
     },

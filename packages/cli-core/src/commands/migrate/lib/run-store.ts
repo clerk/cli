@@ -78,6 +78,8 @@ export type RunRecord = {
   file?: RunFile;
   /** The export run an import read its file from. */
   fromExport?: string;
+  /** An import's `importFlags`, from its latest attempt. */
+  flags?: string[];
   /** The source the export file named, when a custom source replaced it. */
   envelopeSource?: string;
   /**

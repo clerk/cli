@@ -130,7 +130,7 @@ Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 
 | File           | Contents                                                                                                                               |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, and the counts                                  |
+| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, an import's flags, and the counts               |
 | `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code`, `pending` or `passwordDropped` when present |
 | `lock`         | The PID of the process writing the run, while it runs                                                                                  |
 
@@ -949,8 +949,11 @@ clerk migrate runs --json
 It prints the runs folder first. The listing shows each run's ID, date, kind,
 status, target, file and counts. `runs <id>` adds the error breakdown and the
 users that failed or were skipped, with the path to the full record, then what
-to run next: for an interrupted or partial import, the import that continues
-it, and the undo. An unknown ID exits 2.
+to run next: the undo, and for an interrupted or partial import, the import
+that continues it, with the flags it ran with. The continue is left out when
+importing the file again would not reach this run: a newer run of the same
+file, a file changed since, or an undo of it left unfinished. An unknown ID
+exits 2.
 
 ### `clerk migrate undo`
 
