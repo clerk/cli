@@ -197,7 +197,7 @@ describe("mapClerkUserToExport", () => {
 });
 
 describe("fetchAllClerkUsers", () => {
-  test("pages until a short page arrives", async () => {
+  test("pages until a short page arrives, each page from the last user of the one before", async () => {
     stubPages([
       Array.from({ length: 500 }, (_, i) => user({ id: `u${i}` })),
       Array.from({ length: 12 }, (_, i) => user({ id: `v${i}` })),
@@ -207,23 +207,25 @@ describe("fetchAllClerkUsers", () => {
 
     expect(all).toHaveLength(512);
     expect(requests).toHaveLength(2);
-    expect(requests[1]).toContain("offset=480");
+    expect(requests[0]).toContain("order_by=%2Bcreated_at");
+    expect(requests[0]).not.toContain("starting_after");
+    expect(requests[1]).toContain("starting_after=u499");
   });
 
-  // A user deleted after the first page shifts every later row back one. The
-  // overlap re-reads the boundary, so the row that slid onto it isn't lost.
-  test("keeps the user a mid-export deletion slides onto a page boundary", async () => {
+  // An offset would slide u500 back onto the page already read and skip it.
+  test("keeps every user when one already read is deleted mid-export", async () => {
     const users = Array.from({ length: 600 }, (_, i) => user({ id: `u${i}` }));
     let pages = 0;
-    // A server that answers by offset, and loses u10 after the first page.
+    // A server that answers by cursor, and loses u10 after the first page.
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = new URL(input.toString());
       if (url.pathname === "/v1/instance") {
         return Response.json({ object: "instance", id: "ins_src", environment_type: "production" });
       }
-      const offset = Number(url.searchParams.get("offset"));
       const rows = pages++ === 0 ? users : users.filter((entry) => entry.id !== "u10");
-      return Response.json(rows.slice(offset, offset + 500));
+      const after = url.searchParams.get("starting_after");
+      const from = after ? rows.findIndex((entry) => entry.id === after) + 1 : 0;
+      return Response.json(rows.slice(from, from + 500));
     }) as unknown as typeof fetch;
 
     const all = await fetchAllClerkUsers({ secretKey: "sk_test_x" });
@@ -232,18 +234,20 @@ describe("fetchAllClerkUsers", () => {
     expect(all).toHaveLength(600);
   });
 
-  // Oldest first, so a sign-up mid-export lands at the end; a repeat the
-  // overlap reads again is dropped.
-  test("pages oldest first and drops a user a shifted page repeats", async () => {
-    stubPages([
-      Array.from({ length: 500 }, (_, i) => user({ id: `u${i}` })),
-      [user({ id: "u499" }), user({ id: "v0" })],
-    ]);
+  // Clerk refuses a cursor user that is gone; the export must not carry on as if complete.
+  test("stops, saying so, when the user it continues from was deleted", async () => {
+    let call = 0;
+    globalThis.fetch = (async () =>
+      call++ === 0
+        ? Response.json(Array.from({ length: 500 }, (_, i) => user({ id: `u${i}` })))
+        : Response.json(
+            { errors: [{ code: "form_param_value_invalid", message: "invalid starting_after" }] },
+            { status: 422 },
+          )) as unknown as typeof fetch;
 
-    const all = await fetchAllClerkUsers({ secretKey: "sk_test_x" });
-
-    expect(all).toHaveLength(501);
-    expect(requests[0]).toContain("order_by=%2Bcreated_at");
+    await expect(fetchAllClerkUsers({ secretKey: "sk_test_x" })).rejects.toThrow(
+      /Users changed during the export/,
+    );
   });
 
   // A full final page must still trigger one more request, or an instance whose
@@ -374,6 +378,20 @@ describe("exportClerk", () => {
     stubPages([[user({ password_enabled: true })], []]);
     await exportClerk({ secretKey: "sk_test_x" });
     expect(captured.err).toContain("never returns password digests");
+  });
+
+  test("says nothing about passwords when nobody had one", async () => {
+    stubPages([[user({ password_enabled: false })], []]);
+    await exportClerk({ secretKey: "sk_test_x" });
+    expect(captured.err).not.toContain("never returns password digests");
+  });
+
+  // An app keyed on external_id breaks after the move unless it knows.
+  test("says an app's external_id moves to private metadata", async () => {
+    stubPages([[user({ id: "u1", external_id: "app-1" }), user({ id: "u2" })], []]);
+    await exportClerk({ secretKey: "sk_test_x" });
+    expect(captured.err).toContain("1 user has an external_id");
+    expect(captured.err).toContain("private_metadata.clerkExternalId");
   });
 
   test("writes an empty file and says so when the instance has no users", async () => {

@@ -132,6 +132,12 @@ describe("resolveDbUrl", () => {
     expect(captured.err).toContain("SUPABASE_DB_URL is not a valid connection string");
   });
 
+  test("says the variable is set but unusable, rather than asking for it", async () => {
+    await expect(resolveDbUrl({}, config, { [config.envVar]: "garbage" })).rejects.toThrow(
+      `${config.envVar} is set, but isn't a connection string`,
+    );
+  });
+
   test("names both the flag and the variable when it cannot prompt", async () => {
     await expect(resolveDbUrl({}, config, {})).rejects.toThrow(/--db-url.*SUPABASE_DB_URL/s);
   });
@@ -192,6 +198,27 @@ describe("supabase export", () => {
     ]);
     const byLabel = Object.fromEntries(coverage.map((c) => [c.label, c.count]));
     expect(byLabel["have a password hash"]).toBe(1);
+  });
+
+  // The source splits a metadata name into first and last; so does the count.
+  test("counts a first and last name split from the metadata", () => {
+    const { coverage } = buildSupabaseExport([
+      { id: "u1", email: "a@x.dev", raw_user_meta_data: { full_name: "Gus Smith" } },
+      { id: "u2", email: "b@x.dev", raw_user_meta_data: { name: "Ada" } },
+      { id: "u3", email: "c@x.dev" },
+    ]);
+    const byLabel = Object.fromEntries(coverage.map((c) => [c.label, c.count]));
+    expect(byLabel["have a first name"]).toBe(2);
+    expect(byLabel["have a last name"]).toBe(1);
+  });
+
+  test("keeps a ban Postgres stores as 'infinity', which JSON would write as null", () => {
+    const { users } = buildSupabaseExport([
+      { id: "u1", email: "a@x.dev", banned_until: Infinity },
+      { id: "u2", email: "b@x.dev", banned_until: -Infinity },
+    ]);
+    expect(users[0]?.banned_until).toBe("9999-12-31T23:59:59.999Z");
+    expect(users[1]).not.toHaveProperty("banned_until");
   });
 
   test("keeps raw_app_meta_data, which the import checks read for providers", () => {

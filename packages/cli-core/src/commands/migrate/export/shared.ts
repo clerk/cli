@@ -13,6 +13,7 @@ import path from "node:path";
 import { dim, green, yellow } from "../../../lib/color.ts";
 import { CliError } from "../../../lib/errors.ts";
 import { log } from "../../../lib/log.ts";
+import { carryFlags, withFlags } from "../lib/carry-flags.ts";
 import { ENVELOPE_VERSION, type ExportEnvelope } from "../lib/export-file.ts";
 import { ACCOUNT_LINKING_NOTE } from "../sources/registry.ts";
 import {
@@ -112,10 +113,10 @@ export type ExportSection = { title: string; rows: string[] };
  * for anyone holding `CLERK_SECRET_KEY=sk_live_…`, which is the reader who can
  * least afford it. So the note names what picks the instance instead.
  */
-export function formatImportCommand(runId: string): string[] {
+export function formatImportCommand(runId: string, carry: string[] = []): string[] {
   return [
     "Import them with:",
-    dim(`  clerk migrate import ${runId}`),
+    dim(`  ${withFlags(`clerk migrate import ${runId}`, carry)}`),
     "",
     dim("  Imports into whichever instance the resolved secret key belongs to."),
     dim("  For production, add `--instance prod` or use a production secret key."),
@@ -160,9 +161,10 @@ export function finishExport(input: FinishExportInput): FinishedExport {
       users,
     });
   } catch (error) {
-    // Released with no file, the run reads as an export that never finished,
-    // and an import by its ID says so.
+    // Nothing was written, so there is no run either: left behind, it would
+    // list as an export that stopped part-way.
     run.release();
+    fs.rmSync(run.dir, { recursive: true, force: true });
     throw new CliError(
       `Could not write the export to ${target}: ${(error as Error).message}\n` +
         `Nothing was written. Run the export again${options.output ? " with another --output" : ""}.`,
@@ -170,7 +172,11 @@ export function finishExport(input: FinishExportInput): FinishedExport {
   }
   run.update({ file: { path: outputPath, sha256: sha256File(outputPath) } });
   const record = run.finish();
-  const next = `clerk migrate import ${record.id}`;
+  // Only the runs folder: the export's --secret-key, --app and --instance name
+  // the source, and would aim the import at it.
+  const carry = carryFlags({ runsDir: options.runsDir });
+  const next = withFlags(`clerk migrate import ${record.id}`, carry);
+  const skipped = record.counts.skipped ?? 0;
 
   if (options.json) {
     log.data(
@@ -180,6 +186,7 @@ export function finishExport(input: FinishExportInput): FinishedExport {
           run: record,
           output: outputPath,
           users: users.length,
+          skipped,
           coverage,
           ...(input.sections?.length ? { sections: input.sections } : {}),
           ...(input.truncated ? { truncated: true } : {}),
@@ -210,13 +217,22 @@ export function finishExport(input: FinishExportInput): FinishedExport {
 
   log.blank();
   log.success(`Exported ${users.length} user${users.length === 1 ? "" : "s"} to ${outputPath}`);
-  log.info(dim(`Run ${record.id}. See each user with \`clerk migrate runs ${record.id}\`.`));
+  if (skipped > 0) {
+    log.warn(
+      `Skipped ${skipped} user${skipped === 1 ? "" : "s"} the export couldn't read. Each is a \`skipped\` line in the run, with why.`,
+    );
+  }
+  log.info(
+    dim(
+      `Run ${record.id}. See each user with \`${withFlags(`clerk migrate runs ${record.id}`, carry)}\`.`,
+    ),
+  );
 
   log.blank();
   log.info(dim(ACCOUNT_LINKING_NOTE));
 
   log.blank();
-  for (const line of formatImportCommand(record.id)) log.info(line);
+  for (const line of formatImportCommand(record.id, carry)) log.info(line);
 
   return { record, outputPath };
 }
