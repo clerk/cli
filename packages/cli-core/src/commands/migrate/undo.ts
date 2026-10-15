@@ -27,7 +27,7 @@ import { isAgent, isHuman } from "../../mode.ts";
 import { failureOf, tallyError } from "./import-users.ts";
 import { carryFlags, undoCommand } from "./lib/carry-flags.ts";
 import { terminal } from "./lib/terminal.ts";
-import { resolveLimits, type ResolvedLimits } from "./lib/instance.ts";
+import { resolveLimits } from "./lib/instance.ts";
 import { retryOn429 } from "./lib/retry.ts";
 import {
   continueRun,
@@ -211,12 +211,12 @@ export type UndoSummary = {
 async function deleteUsers(options: {
   users: UndoUser[];
   secretKey: string;
-  limits: ResolvedLimits;
+  /** Undo's own scheduler, so its lookups and deletes share one rate budget. */
+  schedule: ApiScheduler;
   run: Run;
   progress?: ProgressUpdate;
 }): Promise<UndoSummary> {
-  const { users, secretKey, limits, run, progress: report } = options;
-  const schedule = createApiScheduler(limits.concurrencyLimit, limits.rateLimit);
+  const { users, secretKey, schedule, run, progress: report } = options;
   const errorBreakdown = new Map<string, number>();
   let processed = 0;
   let deleted = 0;
@@ -537,7 +537,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       summary =
         present.length > 0
           ? await withProgress({ total: present.length, verb: "deleted" }, async (progress) =>
-              deleteUsers({ users: present, secretKey, limits, run, progress }),
+              deleteUsers({ users: present, secretKey, schedule, run, progress }),
             )
           : { deleted: 0, failed: 0, errorBreakdown: new Map<string, number>() };
 

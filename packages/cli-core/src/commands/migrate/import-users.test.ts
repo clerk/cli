@@ -547,6 +547,30 @@ describe("importUsers", () => {
     expect(lines.at(-1)).toEqual({ sourceId: "u1", clerkId: "user_1", status: "created" });
   });
 
+  // A continue with only attaches left would otherwise read 0/0 throughout.
+  test("counts an attach-only user towards progress once its attaches are sent", async () => {
+    stub(() => ok("idn_1"));
+    const reported: number[] = [];
+
+    await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          clerkId: "user_1",
+          status: "created",
+          pending: [{ kind: "phone", value: "+15555550100", verified: false }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      progress: ({ done }) => reported.push(done),
+    });
+
+    expect(reported.at(-1)).toBe(1);
+  });
+
   test("an adopted user is not created again; only its extras attach", async () => {
     stub(() => ok("idn_1"));
 

@@ -585,7 +585,10 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     ...(runId ? { runId } : {}),
   };
 
-  const progress = () => report?.({ done: processed, ok: successful, failed });
+  // Attach-only users count towards the bar too: a continue with only those
+  // left would otherwise sit at 0/0.
+  let attached = 0;
+  const progress = () => report?.({ done: processed + attached, ok: successful, failed });
 
   const recordFailure = (
     userId: string,
@@ -747,7 +750,14 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     });
   await Promise.all([
     ...users.map(async (user) => settle(processUser(user))),
-    ...attachOnly.map(async (line) => settle(finishUser(line, line.pending ?? [], []))),
+    ...attachOnly.map(async (line) =>
+      settle(
+        finishUser(line, line.pending ?? [], []).then(() => {
+          attached++;
+          progress();
+        }),
+      ),
+    ),
   ]);
   if (storeFailure) throw storeFailure.error;
 
