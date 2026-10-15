@@ -61,8 +61,15 @@ import {
 } from "./bootstrap.js";
 import type { ProjectContext } from "./frameworks/types.js";
 import { type PackageManager, PACKAGE_MANAGERS } from "../../lib/package-manager.ts";
+import {
+  applicationRequired,
+  canSetUpXcode,
+  runAppleInit,
+  type AppleInitOptions,
+} from "./ios/coordinator.js";
+import { withNativeProgress } from "./ios/progress.js";
 
-type InitOptions = {
+type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
   /** Framework to set up (skips auto-detection). */
   framework?: string;
   pm?: PackageManager;
@@ -99,7 +106,11 @@ export async function init(options: InitOptions = {}) {
 
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework) ?? undefined)
-    : undefined;
+    : options.xcodeProject
+      ? (lookupFramework("ios") ?? undefined)
+      : undefined;
+  // Before any bootstrap, so an unsupported flag never leaves a new project behind.
+  if (frameworkOverride) assertFrameworkFlags(options, frameworkOverride);
 
   // In agent mode, implicitly enable --yes to skip all confirmation prompts.
   const overrides: BootstrapOverrides = {
@@ -111,9 +122,18 @@ export async function init(options: InitOptions = {}) {
   intro("Setting up Clerk");
 
   setTelemetryStage("detect");
-  const resolved = options.starter
-    ? await handleStarter(cwd, frameworkOverride, overrides)
-    : await resolveProjectContext(cwd, frameworkOverride, overrides);
+  // Only an existing native Apple project supports these, and init never bootstraps one,
+  // so they skip project creation instead of being rejected after it.
+  const existingProjectFlags = [
+    options.dryRun && "--dry-run",
+    options.json && "--json",
+    ...APPLE_FLAGS.filter(([key]) => options[key] != null).map(([, flag]) => flag),
+  ].filter((flag): flag is string => Boolean(flag));
+  const resolved = existingProjectFlags.length
+    ? await resolveExistingProjectContext(cwd, frameworkOverride, overrides, existingProjectFlags)
+    : options.starter
+      ? await handleStarter(cwd, frameworkOverride, overrides)
+      : await resolveProjectContext(cwd, frameworkOverride, overrides);
 
   if (!resolved) return;
 
@@ -122,6 +142,11 @@ export async function init(options: InitOptions = {}) {
   if (bootstrap) {
     ctx.isBootstrap = true;
   }
+
+  assertFrameworkFlags(options, ctx.framework);
+  const appleOptions = { ...options, root: ctx.cwd, agent };
+  // Only native Apple supports a dry run today; it inspects without signing in.
+  if (options.dryRun) return withNativeProgress(async () => runAppleInit(appleOptions, undefined));
 
   await enrichProjectContext(ctx);
 
@@ -161,7 +186,30 @@ export async function init(options: InitOptions = {}) {
     const createIfMissing = agent
       ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
       : undefined;
-    await authenticateAndLink(ctx.cwd, options.app, createIfMissing);
+    await authenticateAndLink(
+      ctx.cwd,
+      options.app,
+      createIfMissing,
+      // Native setup continues right after linking, so link's `clerk env pull` advice doesn't apply.
+      ctx.framework.dep === "ios" && canSetUpXcode() ? { showNextSteps: false } : {},
+    );
+  }
+
+  // Native Apple setup edits the Xcode project and registers the app instead of
+  // scaffolding files and pulling keys into an env file.
+  if (ctx.framework.dep === "ios" && strategy === "authenticate" && canSetUpXcode()) {
+    const linked = await resolveProfile(ctx.cwd);
+    if (!linked)
+      throw new CliError("Link a Clerk application before native setup.", {
+        code: ERROR_CODE.NOT_LINKED,
+      });
+    return withNativeProgress(async () => runAppleInit(appleOptions, linked.profile.appId));
+  }
+  // An agent that asked for JSON gets the usual "choose an app" guidance as data.
+  if (ctx.framework.dep === "ios" && strategy === "manual" && options.json) {
+    log.data(JSON.stringify(applicationRequired(), null, 2));
+    setTelemetryStage("done");
+    return;
   }
 
   // Short-circuit on a fully-clean re-run so env pull / skills prompt don't
@@ -235,6 +283,20 @@ async function assertUsableFlags(
       "--fresh applies to accountless applications and cannot be combined with --login.",
     );
   }
+  if (options.starter && (options.dryRun || options.json)) {
+    throwUsageError("--dry-run and --json work on an existing project, not with --starter.");
+  }
+  if (options.dryRun && (options.app || accountless || options.login)) {
+    throwUsageError(
+      "--dry-run never signs in or changes your Clerk application; drop --app, --login, and --accountless.",
+    );
+  }
+  if (options.appIdPrefix != null && !/^[A-Z0-9]{10}$/.test(options.appIdPrefix.trim())) {
+    throwUsageError("--app-id-prefix must be the 10-character App ID Prefix from Apple Developer.");
+  }
+  if (options.appleSdk === "core" && options.prebuiltAuthUi) {
+    throwUsageError("--prebuilt-auth-ui needs ClerkKitUI; use --apple-sdk ui or omit --apple-sdk.");
+  }
   // Presence-only here would repeat the hang below: an agent can't complete an
   // interactive login, so a stored-but-broken credential must read as
   // unauthenticated rather than let this guard wave the request through.
@@ -243,6 +305,37 @@ async function assertUsableFlags(
       "--login requires an interactive terminal to complete the browser login. Ask the user to run `clerk auth login`, then re-run `clerk init`.",
     );
   }
+}
+
+const APPLE_FLAGS = [
+  ["xcodeProject", "--xcode-project"],
+  ["xcodeTarget", "--xcode-target"],
+  ["xcodeConfiguration", "--xcode-configuration"],
+  ["appleSdk", "--apple-sdk"],
+  ["bundleId", "--bundle-id"],
+  ["appIdPrefix", "--app-id-prefix"],
+  ["signInWithApple", "--sign-in-with-apple"],
+  ["prebuiltAuthUi", "--prebuilt-auth-ui"],
+] as const;
+
+/** Rejects flags the detected (or requested) framework can't honour. */
+function assertFrameworkFlags(options: InitOptions, framework: FrameworkInfo): void {
+  if (options.dryRun && !framework.supportsDryRun)
+    throwUsageError(`--dry-run isn't supported for ${framework.name} yet.`);
+  if (options.json && !framework.supportsJson)
+    throwUsageError(`--json isn't supported for ${framework.name} yet.`);
+  const apple = APPLE_FLAGS.filter(([key]) => options[key] != null).map(([, flag]) => flag);
+  const needsXcode = [options.dryRun && "--dry-run", options.json && "--json", ...apple].filter(
+    Boolean,
+  );
+  if (framework.dep === "ios" && !canSetUpXcode() && needsXcode.length)
+    throwUsageError(
+      `${needsXcode.join(", ")} ${needsXcode.length === 1 ? "needs" : "need"} Xcode on macOS. Without them, clerk init links your app and prints the setup steps.`,
+    );
+  if (apple.length && framework.dep !== "ios")
+    throwUsageError(
+      `${apple.join(", ")} ${apple.length === 1 ? "applies" : "apply"} only to iOS (Swift) projects.`,
+    );
 }
 
 /**
@@ -386,6 +479,24 @@ async function resolveProjectContext(
   return bootstrapAndDetect(cwd, frameworkOverride, overrides);
 }
 
+/** A dry run inspects what's here; it never bootstraps a new project. */
+async function resolveExistingProjectContext(
+  cwd: string,
+  frameworkOverride: FrameworkInfo | undefined,
+  overrides: BootstrapOverrides,
+  flags: readonly string[],
+): Promise<ResolvedContext> {
+  const ctx = await withSpinner("Detecting framework...", async () =>
+    gatherContext(cwd, frameworkOverride, overrides.pmOverride),
+  );
+  if (!ctx)
+    throw new CliError(
+      `${flags.join(", ")} ${flags.length === 1 ? "needs" : "need"} an existing project, and none was detected here.`,
+      { code: ERROR_CODE.FRAMEWORK_UNDETECTED },
+    );
+  return { ctx, bootstrap: null };
+}
+
 // --- Next steps ---
 
 function devCommand(pm: string): string {
@@ -410,7 +521,8 @@ function printBootstrapManualSetupInfo(framework: FrameworkInfo): void {
     `\n  Set up Clerk for ${framework.name}:`,
     `    ${framework.name} requires API keys — set them up manually:`,
     "    clerk init --app <app_id>",
-    "    clerk env pull",
+    // Swift apps configure the key in source; there's no env file to pull into.
+    ...(framework.dep === "ios" && canSetUpXcode() ? [] : ["    clerk env pull"]),
   ];
   log.info(lines.map(dim).join("\n"));
 }
@@ -502,6 +614,7 @@ async function authenticateAndLink(
   cwd: string,
   app: string | undefined,
   createIfMissing: string | undefined,
+  linkOptions: { showNextSteps?: false } = {},
 ): Promise<void> {
   const label = await resolveAuthLabel();
   const profile = await resolveProfile(cwd);
@@ -517,7 +630,7 @@ async function authenticateAndLink(
     log.info(dim(label));
   }
 
-  await link({ skipIfLinked: true, app, cwd, createIfMissing });
+  await link({ skipIfLinked: true, app, cwd, createIfMissing, ...linkOptions });
 }
 
 // --- Keyless app setup ---
@@ -711,6 +824,27 @@ export function registerInit(program: Program): void {
       "--fresh",
       "Replace an existing unclaimed accountless application with a new one, instead of keeping it. Only applies when the strategy resolves to accountless — errors otherwise",
     )
+    .option(
+      "--dry-run",
+      "Inspect the project and print the setup plan without changing anything (iOS only)",
+    )
+    .option("--json", "Print the setup result as JSON (iOS only)")
+    .option("--xcode-project <path>", "Xcode project or workspace to set up")
+    .option("--xcode-target <name-or-id>", "Xcode app target to set up, by name or ID")
+    .option("--xcode-configuration <name>", "Xcode build configuration to inspect")
+    .addOption(
+      createOption(
+        "--apple-sdk <products>",
+        "Clerk SDK products: core (ClerkKit) or ui (ClerkKit + ClerkKitUI)",
+      ).choices(["core", "ui"]),
+    )
+    .option("--bundle-id <id>", "Bundle ID to register when Xcode's is ambiguous")
+    .option("--app-id-prefix <prefix>", "10-character Apple App ID Prefix for a new registration")
+    .option("--sign-in-with-apple", "Enable native Sign in with Apple")
+    .option(
+      "--prebuilt-auth-ui",
+      "Add ClerkKitUI's prebuilt sign-in screen to an unchanged SwiftUI starter",
+    )
     .option("-y, --yes", "Skip confirmation prompts")
     .option("--no-skills", "Skip the optional agent skills install prompt")
     .setExamples([
@@ -743,6 +877,10 @@ export function registerInit(program: Program): void {
       {
         command: "clerk init --accountless --fresh",
         description: "Replace an existing unclaimed accountless app with a new one",
+      },
+      {
+        command: "clerk init --dry-run --json",
+        description: "Inspect an Xcode project and print its setup plan as JSON",
       },
       { command: "clerk init -y", description: "Skip all confirmation prompts" },
       { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },

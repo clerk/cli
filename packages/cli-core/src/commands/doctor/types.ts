@@ -115,4 +115,7 @@ export interface DoctorOptions {
   json?: boolean;
   spotlight?: boolean;
   fix?: boolean;
+  xcodeProject?: string;
+  xcodeTarget?: string;
+  xcodeConfiguration?: string;
 }
