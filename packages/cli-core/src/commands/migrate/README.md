@@ -534,8 +534,10 @@ compiled binary can import the SDK and complete `listUsers`, so the known
 Firestore-under-compile bug does not reach the Auth Admin surface. It was still
 not adopted: the SDK is 74 MB across 158 packages, including Firestore and
 Cloud Storage, which would roughly double the ~62 MB binary every user
-downloads, to serve one subcommand. What it does here is two REST calls and an
-RS256 JWT, and Bun's Web Crypto signs RS256 with no dependency at all.
+downloads, to serve one subcommand. What it does here is an RS256 JWT traded
+for an access token, then two Identity Toolkit endpoints, `accounts:batchGet`
+(paged, 1000 users a request) and the project config, and Bun's Web Crypto
+signs RS256 with no dependency at all.
 
 #### Auth0 credentials
 
