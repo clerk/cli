@@ -37,20 +37,29 @@ export type ClerkTarget = RunTarget & {
 
 /**
  * Which rung of `resolveBapiSecretKey`'s chain supplies the key, and the app
- * it belongs to when that rung knows one.
+ * it belongs to when that rung knows one. `--app` and a linked profile also
+ * know the instance, from the Platform API or the profile.
  *
  * Mirrors the chain's order exactly. An exported `CLERK_SECRET_KEY` wins over
  * a linked profile, so the profile's app is not named for it: that key may
  * belong to any app at all.
  */
-async function describeKeySource(
-  options: TargetOptions,
-): Promise<{ keySource: string; appId?: string; appLabel?: string }> {
+async function describeKeySource(options: TargetOptions): Promise<{
+  keySource: string;
+  appId?: string;
+  appLabel?: string;
+  instance?: { instanceId: string; env: string };
+}> {
   if (options.secretKey) return { keySource: "--secret-key" };
 
   if (options.app) {
     const ctx = await resolveAppContext({ app: options.app, instance: options.instance });
-    return { keySource: "--app", appId: ctx.appId, appLabel: ctx.appLabel };
+    return {
+      keySource: "--app",
+      appId: ctx.appId,
+      appLabel: ctx.appLabel,
+      instance: { instanceId: ctx.instanceId, env: ctx.instanceLabel },
+    };
   }
 
   if (process.env.CLERK_SECRET_KEY) return { keySource: "CLERK_SECRET_KEY env var" };
@@ -65,7 +74,12 @@ async function describeKeySource(
   }
 
   const ctx = await resolveAppContext({ instance: options.instance });
-  return { keySource: "linked profile", appId: ctx.appId, appLabel: ctx.appLabel };
+  return {
+    keySource: "linked profile",
+    appId: ctx.appId,
+    appLabel: ctx.appLabel,
+    instance: { instanceId: ctx.instanceId, env: ctx.instanceLabel },
+  };
 }
 
 /**
@@ -156,8 +170,14 @@ export async function resolveClerkTarget(
   options: TargetOptions,
 ): Promise<{ secretKey: string; target: ClerkTarget }> {
   const secretKey = await resolveBapiSecretKey(options);
-  const source = await describeKeySource(options);
-  const { instanceId, env } = await fetchInstanceIdentity(secretKey);
+  const { instance: named, ...source } = await describeKeySource(options);
+  const fetched = await fetchInstanceIdentity(secretKey);
+  // The Platform API or the profile already named the instance: recorded
+  // instead of a stand-in, a run's commands can reach it with `--instance`.
+  const { instanceId, env } =
+    named && isStandInInstanceId(fetched.instanceId) && isClerkInstanceId(named.instanceId)
+      ? named
+      : fetched;
   assertInstanceFlagMatches(options, source.keySource, { instanceId, env });
 
   return {

@@ -313,11 +313,7 @@ export async function runs(id: string | undefined, options: RunsOptions = {}): P
   const carry = carryFlags({
     runsDir: options.runsDir,
     ...(keySource === "--secret-key" ? { secretKey: "<key>" } : {}),
-    // A stand-in is no ID `--app` can resolve; its environment, always
-    // `development` or `production`, is an alias `--instance` takes.
-    ...(keySource === "--app" && appId
-      ? { app: appId, instance: isStandInInstanceId(instanceId) ? record.target.env : instanceId }
-      : {}),
+    ...(keySource === "--app" && appId ? { app: appId, instance: instanceId } : {}),
   });
   if (options.json) log.data(JSON.stringify(showJson(runsDir, record, carry), null, 2));
   else printRun(runsDir, record, carry);

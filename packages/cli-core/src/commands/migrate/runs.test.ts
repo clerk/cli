@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { quoteArg } from "../../lib/json-body.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
-import { sha256File, startRun, type StartRunInit } from "./lib/run-store.ts";
+import { type RunRecord, sha256File, startRun, type StartRunInit } from "./lib/run-store.ts";
 import { runs } from "./runs.ts";
 
 const captured = useCaptureLog();
@@ -19,6 +19,8 @@ afterEach(() => {
   fs.rmSync(runsDir, { recursive: true, force: true });
 });
 
+const TARGET = { appLabel: "My App", env: "development", instanceId: "ins_1" };
+
 /** The file the fixture's import read, so a continue can find it unchanged. */
 const usersFile = () => path.join(runsDir, "users.json");
 
@@ -26,7 +28,7 @@ function partialImport(init: Partial<StartRunInit> = {}) {
   fs.writeFileSync(usersFile(), "[]");
   const run = startRun(runsDir, {
     kind: "import",
-    target: { appLabel: "My App", env: "development", instanceId: "ins_1" },
+    target: TARGET,
     source: "clerk",
     file: { path: usersFile(), sha256: sha256File(usersFile()) },
     ...init,
@@ -35,6 +37,18 @@ function partialImport(init: Partial<StartRunInit> = {}) {
   run.append({ sourceId: "b", status: "failed", error: "That email address is taken." });
   run.append({ sourceId: "c", status: "failed", error: "That email address is taken." });
   run.append({ sourceId: "d", status: "skipped", reason: "no password (--require-password)" });
+  return run.finish();
+}
+
+/** A finished import of the same file and source, a second after `record`. */
+function newerImport(record: RunRecord, instanceId: string) {
+  const run = startRun(runsDir, {
+    kind: "import",
+    target: { ...record.target, instanceId },
+    source: "clerk",
+    file: record.file,
+  });
+  run.update({ startedAt: new Date(Date.parse(record.startedAt) + 1000).toISOString() });
   return run.finish();
 }
 
@@ -114,11 +128,6 @@ describe("runs <id>", () => {
   test.each([
     [{ keySource: "--secret-key" }, "--secret-key <key>"],
     [{ keySource: "--app", appId: "app_1" }, "--app app_1 --instance ins_1"],
-    // Recorded while Clerk could not name the instance: `--app` needs the alias.
-    [
-      { keySource: "--app", appId: "app_1", instanceId: "key_abc" },
-      "--app app_1 --instance development",
-    ],
   ])("the next command keeps the import's target from %o", async (target, expected) => {
     const record = partialImport();
     const file = path.join(runsDir, record.id, "run.json");
@@ -174,16 +183,15 @@ describe("runs <id>", () => {
       expect(next).toEqual([expect.stringContaining(`clerk migrate undo ${id}`)]);
     };
 
-    test("a newer run of the same file", async () => {
-      const record = partialImport();
-      const newer = startRun(runsDir, {
-        kind: "import",
-        target: record.target,
-        source: "clerk",
-        file: record.file,
-      });
-      newer.update({ startedAt: new Date(Date.parse(record.startedAt) + 1000).toISOString() });
-      newer.finish();
+    // `runs` has no key, so it can't tell whether a stand-in is `ins_1`: an
+    // import with that key could take the newer run either way.
+    test.each([
+      ["a newer run of the same file", "ins_1", "ins_1"],
+      ["a newer run under a key's stand-in, when this one has a real ID", "ins_1", "key_abc"],
+      ["a newer run under a real ID, when this one has a key's stand-in", "key_abc", "ins_1"],
+    ])("%s", async (_name, instanceId, newerInstanceId) => {
+      const record = partialImport({ target: { ...TARGET, instanceId } });
+      newerImport(record, newerInstanceId);
 
       await onlyUndo(record.id);
     });
@@ -209,53 +217,13 @@ describe("runs <id>", () => {
 
       await onlyUndo(record.id);
     });
-
-    // Here the newer run's stand-in may be `ins_1` too.
-    test("a newer run under a key's stand-in, when this one has a real ID", async () => {
-      const record = partialImport();
-      const newer = startRun(runsDir, {
-        kind: "import",
-        target: { appLabel: "My App", env: "development", instanceId: "key_abc" },
-        source: "clerk",
-        file: record.file,
-      });
-      newer.update({ startedAt: new Date(Date.parse(record.startedAt) + 1000).toISOString() });
-      newer.finish();
-
-      await onlyUndo(record.id);
-    });
-
-    // `runs` has no key, so it can't tell whether the stand-in is `ins_1`. An
-    // import with that key would take the newer run.
-    test("a newer run under a real ID, when this one has a key's stand-in", async () => {
-      const record = partialImport({
-        target: { appLabel: "My App", env: "development", instanceId: "key_abc" },
-      });
-      const newer = startRun(runsDir, {
-        kind: "import",
-        target: { appLabel: "My App", env: "development", instanceId: "ins_1" },
-        source: "clerk",
-        file: record.file,
-      });
-      newer.update({ startedAt: new Date(Date.parse(record.startedAt) + 1000).toISOString() });
-      newer.finish();
-
-      await onlyUndo(record.id);
-    });
   });
 
   // Dev first, then prod, from the same file: the dev run is still the one
   // an import into dev continues.
   test("a newer run on another instance keeps the continue", async () => {
     const record = partialImport();
-    const other = startRun(runsDir, {
-      kind: "import",
-      target: { appLabel: "My App", env: "production", instanceId: "ins_2" },
-      source: "clerk",
-      file: record.file,
-    });
-    other.update({ startedAt: new Date(Date.parse(record.startedAt) + 1000).toISOString() });
-    other.finish();
+    newerImport(record, "ins_2");
 
     await runs(record.id, { runsDir, json: true });
 
