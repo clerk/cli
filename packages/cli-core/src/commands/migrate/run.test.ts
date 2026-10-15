@@ -630,6 +630,74 @@ describe("run", () => {
       expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
     });
 
+    test("says how to map the users differently when a built-in source contradicts it", async () => {
+      const { record } = exportRun("clerk", export2);
+
+      await expect(run({ ...noSource, source: "auth0", input: record.id })).rejects.toThrow(
+        /pass the path to a source you wrote/,
+      );
+    });
+
+    /** A source of your own, for an Auth0 export, that also brings `nickname` across. */
+    const ownAuth0Source = () => {
+      const file = `./own-auth0-${Date.now()}-${Math.random().toString(36).slice(2)}.ts`;
+      fs.writeFileSync(
+        path.join(workDir, file),
+        `export default {
+          key: "myauth0",
+          label: "My Auth0",
+          transformer: { user_id: "userId", email: "email", nickname: "firstName" },
+          carries: {
+            passwords: { level: "no", note: "None." },
+            mfa: { level: "no", note: "None." },
+            metadata: { level: "no", note: "None." },
+          },
+        };`,
+      );
+      return file;
+    };
+    const auth0Rows = [{ user_id: "auth0|a1", email: "a@x.dev", nickname: "Ada" }];
+
+    // The built-in mapping leaves `nickname` out; the customer's source brings it.
+    test("a source you wrote replaces the envelope's, reading its users", async () => {
+      const { record } = exportRun("auth0", auth0Rows);
+      const own = ownAuth0Source();
+
+      await run({ ...noSource, source: own, input: record.id });
+
+      const created = requests.filter((r) => r.url.endsWith("/v1/users"));
+      expect(created).toHaveLength(1);
+      expect(created[0]?.body).toMatchObject({ external_id: "auth0|a1", first_name: "Ada" });
+      expect(captured.err).toContain("in place of the built-in");
+    });
+
+    test("an import through a source you wrote keeps its export run, and records what it replaced", async () => {
+      const { record } = exportRun("auth0", auth0Rows);
+
+      await run({ ...noSource, source: ownAuth0Source(), input: record.id });
+
+      const imported = listRuns(runsDir()).find((r) => r.kind === "import");
+      expect(imported).toMatchObject({
+        source: "myauth0",
+        fromExport: record.id,
+        envelopeSource: "auth0",
+      });
+    });
+
+    // A re-run without it would map the rest with the built-in source.
+    test("the printed command keeps a source you wrote in place of the envelope's", async () => {
+      const { record } = exportRun("auth0", auth0Rows);
+      const own = ownAuth0Source();
+
+      const error = (await run({ ...noSource, source: own, input: record.id, yes: false }).catch(
+        (caught: unknown) => caught,
+      )) as CliError;
+
+      expect(error.examples?.[0]?.command).toContain(
+        `clerk migrate import ${record.id} --source ${own}`,
+      );
+    });
+
     test("refuses a run ID that is not an export", async () => {
       await run(baseOptions);
       const [imported] = listRuns(runsDir());

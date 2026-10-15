@@ -120,6 +120,8 @@ export type MigrateRunOptions = {
   sourceHash?: string;
   /** `--source` as typed, for printed commands: a custom source's path. Not a flag. */
   sourceArg?: string;
+  /** The source an export file named, when a custom `--source` replaced it. Not a flag. */
+  envelopeSource?: string;
   /** The file to read, once `input` is resolved. Not a flag. */
   file?: string;
   requirePassword?: boolean;
@@ -403,20 +405,33 @@ async function applySource(options: MigrateRunOptions): Promise<MigrateRunOption
 
 /**
  * The source an export file names for itself, checked against the one the
- * flags name.
+ * flags name. A source you wrote replaces it: it reads the same users, in the
+ * platform's own shape, and maps them as it says.
  *
- * @throws UsageError when the two disagree: importing an Auth0 export through
- *   the Supabase mapping would create users with the wrong fields.
+ * @throws UsageError when two built-in sources disagree: importing an Auth0
+ *   export through the Supabase mapping would create users with the wrong
+ *   fields.
  */
 function applyEnvelope(
   options: MigrateRunOptions,
   envelope: ExportEnvelope | undefined,
 ): MigrateRunOptions {
   if (!envelope) return options;
+  // A built-in name is a claim about where the file came from, and a wrong
+  // one is a mistake. A path is a choice to map it differently, say to bring
+  // across fields the built-in mapping leaves out.
+  if (options.sourceHash) {
+    if (!options.json) {
+      log.info(
+        `Mapping this ${envelope.source} export with ${options.sourceArg}, in place of the built-in \`${envelope.source}\` source.`,
+      );
+    }
+    return { ...options, envelopeSource: envelope.source };
+  }
   if (options.source && options.source !== envelope.source) {
     throwUsageError(
       `The file was exported from ${envelope.source}, but --source names ${options.source}. ` +
-        "Drop --source: the file already says where it came from.",
+        "Drop --source: the file already says where it came from. To map its users differently, pass the path to a source you wrote.",
     );
   }
   // `--source` goes through the registry; the file's own word must too, or a
@@ -746,7 +761,8 @@ function commandFor(
   const input = fromExport ?? options.input ?? options.file ?? "<file>";
   const parts = ["clerk migrate import", quoteArg(input)];
   const source = options.sourceArg ?? options.source;
-  if (!fromExport && source) parts.push("--source", quoteArg(source));
+  // An export names its own source, unless a source you wrote replaced it.
+  if ((!fromExport || options.envelopeSource) && source) parts.push("--source", quoteArg(source));
   if (options.newRun) parts.push("--new-run");
   parts.push(...importFlags(options));
   // Names, not `<…>`: pasted as is, a shell reads `<key>` as a redirect.
@@ -1371,6 +1387,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
             ...(options.sourceHash ? { sourceHash: options.sourceHash } : {}),
             file: { path: filePath, sha256 },
             ...(input.fromExport ? { fromExport: input.fromExport } : {}),
+            ...(options.envelopeSource ? { envelopeSource: options.envelopeSource } : {}),
             ...(firebaseHash ? { firebaseHash } : {}),
             flags,
           });
