@@ -49,7 +49,7 @@
         "zod": "^4.4.3",
       },
       "devDependencies": {
-        "@clerk/shared": "^4.36.0",
+        "@clerk/shared": "^4.40.0",
         "@modelcontextprotocol/sdk": "^1.30.0",
         "@types/semver": "^7.8.0",
       },
@@ -127,7 +127,7 @@
 
     "@clerk/cli-extras": ["@clerk/cli-extras@workspace:packages/extras"],
 
-    "@clerk/shared": ["@clerk/shared@4.39.0", "", { "dependencies": { "@tanstack/query-core": "^5.101.4", "dequal": "2.0.3", "glob-to-regexp": "0.4.1", "js-cookie": "3.0.8" }, "peerDependencies": { "react": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0", "react-dom": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0" }, "optionalPeers": ["react", "react-dom"] }, "sha512-XlQh2c3Q6A9ax3fWSeuHfZJ3TCxqBVVYIxahAvOPnMAFPOQGLHStgztKymzUL/vEvc7kg7yf1CGAdy0/my5byA=="],
+    "@clerk/shared": ["@clerk/shared@4.40.0", "", { "dependencies": { "@tanstack/query-core": "^5.101.4", "dequal": "2.0.3", "glob-to-regexp": "0.4.1", "js-cookie": "3.0.8" }, "peerDependencies": { "react": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0", "react-dom": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0" }, "optionalPeers": ["react", "react-dom"] }, "sha512-80KM/uw5ZseYTKwJjIhJj7jsHqX6rFem6cwcFJVCUriE3R4tpzkhXsfbhtdho6cG2pQD3NVqKspxTVbSjATzPg=="],
 
     "@clerk/testing": ["@clerk/testing@2.2.42", "", { "dependencies": { "@clerk/backend": "^3.22.0", "@clerk/shared": "^4.38.0", "dotenv": "17.2.2" }, "peerDependencies": { "@playwright/test": "^1", "cypress": "^13 || ^14 || ^15" }, "optionalPeers": ["@playwright/test", "cypress"] }, "sha512-TlbtOk+WBNbOVXI1Mfyyk3qg2NQTqMfG6d3uWEVzIA5AQX3gbGStify4wLo8J2MMgjYrZTN2AsHAyDDcvax55g=="],
 
