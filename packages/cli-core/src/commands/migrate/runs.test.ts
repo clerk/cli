@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { quoteArg } from "../../lib/json-body.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 import { startRun } from "./lib/run-store.ts";
 import { runs } from "./runs.ts";
@@ -102,6 +103,16 @@ describe("runs <id>", () => {
       failed: [{ sourceId: "b" }, { sourceId: "c" }],
       skipped: [{ sourceId: "d" }],
     });
+  });
+
+  // The suggested undo has to look in the same runs folder.
+  test("the next command keeps the runs folder", async () => {
+    const record = partialImport();
+
+    await runs(record.id, { runsDir, json: true });
+
+    const { next } = JSON.parse(captured.out) as { next: string[] };
+    expect(next[0]).toContain(`clerk migrate undo ${record.id} --runs-dir ${quoteArg(runsDir)}`);
   });
 
   test("an unknown ID is a usage error", async () => {

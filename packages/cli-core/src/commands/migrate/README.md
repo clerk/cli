@@ -513,7 +513,10 @@ how many of them have signed in since the import (from each user's
 `last_sign_in_at`). When users remain to delete or record as gone, nothing is
 deleted without consent: a yes at the prompt, or `--yes`. Without either — an
 agent, a non-TTY run, or `--json` — it prints the preview and exits 2 with the
-command to run. When none remain, undo completes without prompting.
+command to run. That command keeps `--runs-dir`, `--app`, `--instance` and
+`--secret-key` (as `<key>`) when they were passed, or it would look in another
+runs folder or reach another instance. When none remain, undo completes
+without prompting.
 
 `--yes` is consent to undo the import, not to delete accounts people have used
 since: when any user has signed in after the import, `--yes` alone exits 2 and
@@ -534,7 +537,24 @@ Deletes go through the same scheduler and `429` backoff as the import. A user
 already gone from the instance counts as deleted. The undo is a run of its own,
 `kind: "undo"` with `undoes: <id>`. The import is marked `undone` only when
 every user is deleted. A partial undo exits 1, and running `undo` again retries
-the users that failed, in the same undo run.
+the users that failed, in the same undo run. A Ctrl-C leaves the undo run
+`interrupted`, as it does an import, and running `undo` again carries on.
+
+`--json` prints one object on stdout, whatever the outcome:
+
+```json
+{
+  "target": { "instanceId": "ins_…", "env": "development", "keySource": "--secret-key" },
+  "import": { "id": "20260929-141502-a1b2", "kind": "import", … },
+  "run": null,
+  "preview": { "toDelete": 2, "signedInSince": 1, "alreadyGone": 0, "alreadyDeleted": 0 }
+}
+```
+
+`import` is the run being undone. `run` is the undo's own run, `null` until one
+is written, as an import's is: a dry run adds `"dryRun": true`, and a refusal
+for consent `"consent": "required"`. Once the deletes run, `run` is the undo run
+and `result` holds `deleted`, `failed` and an `errors` breakdown.
 
 ### `clerk migrate help`
 

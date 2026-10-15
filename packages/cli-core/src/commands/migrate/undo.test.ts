@@ -3,6 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EXIT_CODE, type CliError } from "../../lib/errors.ts";
+import { quoteArg } from "../../lib/json-body.ts";
+import { _resetInterruptState, abortInFlight, beginInterrupt } from "../../lib/signals.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 import {
   continueRun,
@@ -259,14 +261,16 @@ describe("--dry-run", () => {
     expect(listRuns(runsDir)).toHaveLength(1);
   });
 
-  test("--json returns the target, the run and the preview", async () => {
+  // `run` is the undo's own run, as an import's is: null until one is written.
+  test("--json returns the target, the import, no run yet, and the preview", async () => {
     const record = importRun();
 
     await undo(record.id, withDir({ dryRun: true, json: true }));
 
     expect(JSON.parse(captured.out)).toMatchObject({
       target: { instanceId: "ins_1", keySource: "--secret-key" },
-      run: { id: record.id },
+      import: { id: record.id },
+      run: null,
       preview: { toDelete: 2, signedInSince: 1, alreadyGone: 0, alreadyDeleted: 0 },
       dryRun: true,
     });
@@ -305,6 +309,33 @@ describe("another undo during the preview", () => {
   });
 });
 
+describe("stopped part-way", () => {
+  // The deletes still queued are rejected; the undo must not read as done.
+  test("a Ctrl-C during the deletes leaves the undo unfinished, as interrupted", async () => {
+    const record = importRun();
+    const clerk = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const response = await clerk(input, init);
+      if (init?.method === "DELETE") {
+        beginInterrupt();
+        abortInFlight();
+      }
+      return response;
+    }) as typeof fetch;
+    try {
+      await expect(undo(record.id, withDir({ yes: true }))).rejects.toThrow();
+    } finally {
+      _resetInterruptState();
+      globalThis.fetch = clerk;
+    }
+
+    const undoRun = listRuns(runsDir).find((r) => r.kind === "undo");
+    expect(undoRun?.finishedAt).toBeUndefined();
+    expect(fs.existsSync(path.join(runsDir, undoRun?.id ?? "", "lock"))).toBe(false);
+    expect(readRun(runsDir, record.id)?.status).not.toBe("undone");
+  });
+});
+
 describe("users who signed in since the import", () => {
   test("--yes alone refuses to delete them, and deletes nothing", async () => {
     const record = importRun();
@@ -317,6 +348,20 @@ describe("users who signed in since the import", () => {
     expect(error.message).toContain("1 user the import created has signed in since");
     expect(error.examples?.[0]?.command).toContain("--yes --include-signed-in");
     expect(deletes()).toHaveLength(0);
+  });
+
+  // Without them the suggested command looks in the default runs folder, or
+  // reaches another instance, and refuses.
+  test("the suggested command keeps the runs folder and the key", async () => {
+    const record = importRun();
+
+    const error = (await undo(record.id, withDir({ yes: true, includeSignedIn: false })).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.examples?.[0]?.command).toBe(
+      `clerk migrate undo ${record.id} --yes --include-signed-in --secret-key <key> --runs-dir ${quoteArg(runsDir)}`,
+    );
   });
 
   test("--include-signed-in deletes them too", async () => {
@@ -492,6 +537,7 @@ describe("deleting", () => {
     await undo(record.id, withDir({ yes: true, json: true }));
 
     expect(JSON.parse(captured.out)).toMatchObject({
+      import: { id: record.id, kind: "import" },
       run: { kind: "undo", undoes: record.id, status: "complete" },
       result: { deleted: 2, failed: 0, errors: [] },
     });

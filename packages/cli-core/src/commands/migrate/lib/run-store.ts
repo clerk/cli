@@ -25,6 +25,7 @@ import { resolveProfile } from "../../../lib/config.ts";
 import { throwUsageError } from "../../../lib/errors.ts";
 import { ensureGitignoreEntry, getGitRepoRoot } from "../../../lib/git.ts";
 import { log } from "../../../lib/log.ts";
+import { withFlags } from "./carry-flags.ts";
 
 /** Overrides the runs directory, below `--runs-dir`. */
 export const RUNS_DIR_ENV = "CLERK_MIGRATE_DIR";
@@ -446,6 +447,8 @@ export function continueRun(
    * undo, or another continue, can change either in the meantime.
    */
   plannedLines?: number,
+  /** The caller's runs-folder and target flags, for the command a refusal suggests. */
+  carry: string[] = [],
 ): Run {
   acquireLock(runsDir, record.id);
   if (plannedLines !== undefined) {
@@ -479,7 +482,7 @@ export function continueRun(
     fs.rmSync(lockFile(runsDir, record.id), { force: true });
     throwUsageError(
       `Run ${record.id} has an undo that did not finish (run ${undoRun.id}). ` +
-        `Finish it with \`clerk migrate undo ${record.id}\`, or pass --new-run to import into a new run.`,
+        `Finish it with \`${withFlags(`clerk migrate undo ${record.id}`, carry)}\`, or pass --new-run to import into a new run.`,
     );
   }
   // A crash mid-write leaves a torn last line; end it so the next append
