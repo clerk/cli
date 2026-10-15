@@ -373,7 +373,8 @@ async function createUser(
   user: User,
   identifiers: Identifiers,
   skipPasswordRequirement: boolean,
-  sending: () => void,
+  /** Called as each attempt goes out, with what it sends. */
+  sending: (body: Record<string, unknown>) => void,
 ): Promise<CreatedUser> {
   // A Ctrl-C or a full instance hands the slot on to queued creates; none
   // of them is sent, and none waits for a paced turn to find that out.
@@ -381,7 +382,7 @@ async function createUser(
     ctx.schedule(
       async () => {
         if (ctx.stop.aborted) throw new NotSentError();
-        sending();
+        sending(body);
         return bapiRequest({
           method: "POST",
           path: "/v1/users",
@@ -493,6 +494,12 @@ export type ImportUsersOptions = {
    * run's `reserveUnverified` says.
    */
   adoptedReserved?: Set<string>;
+  /**
+   * Reserved phones an adopted user's create left out, from its `creating`
+   * line: the retry after a refused phone sends without them. Attached once
+   * the user is adopted, unverified, as they would have been.
+   */
+  adoptedPending?: Map<string, string[]>;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
   /** Create the identifiers the source never verified as reserved. */
@@ -520,6 +527,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     runId,
     adopted = new Map<string, string>(),
     adoptedReserved = new Set<string>(),
+    adoptedPending = new Map<string, string[]>(),
     skipPasswordRequirement = true,
     reserveUnverified = false,
     validationFailed = 0,
@@ -614,14 +622,30 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     let sent = false;
     try {
       created = adoptedId
-        ? { clerkUserId: adoptedId, notes: [] }
+        ? { clerkUserId: adoptedId, notes: [], attachLater: adoptedPending.get(user.userId) ?? [] }
         : await retryOn429(
             async () =>
-              createUser(ctx, user, identifiers, skipPasswordRequirement, () => {
+              createUser(ctx, user, identifiers, skipPasswordRequirement, (body) => {
+                // A retry after a refused phone sends without the reserved
+                // ones. Cut off before its answer, the user would be adopted
+                // as reserved, those phones never attached.
+                const sentPhones = new Set((body.phone_number as string[] | undefined) ?? []);
+                const leftOut = reserved
+                  ? identifiers.unverifiedPhones.filter((phone) => !sentPhones.has(phone))
+                  : [];
                 record({
                   sourceId: user.userId,
                   status: "creating",
                   ...(reserved ? { reserved: true } : {}),
+                  ...(leftOut.length > 0
+                    ? {
+                        pending: leftOut.map((value) => ({
+                          kind: "phone" as const,
+                          value,
+                          verified: false,
+                        })),
+                      }
+                    : {}),
                 });
                 sent = true;
               }),
