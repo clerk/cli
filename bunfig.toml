@@ -1,3 +1,7 @@
 [install]
 # Only install package versions published at least 2 days ago
 minimumReleaseAge = 172800
+
+[test]
+# Clears env vars that would point tests at real client configs.
+preload = ["./packages/cli-core/src/test/preload.ts"]

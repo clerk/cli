@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import * as realOs from "node:os";
 import { join } from "node:path";
-import { captureUi, useCaptureLog } from "../../test/lib/stubs.ts";
+import { captureUi, useCaptureLog, useCleanMcpClientEnv } from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 mock.module("../../mode.ts", () => ({
@@ -21,6 +21,9 @@ const { mcpInstall } = await import("./install.ts");
 const { mcpList } = await import("./list.ts");
 
 const URL = "https://mcp.clerk.com/mcp";
+
+// Developers' own CLAUDE_CONFIG_DIR/CODEX_HOME would escape the redirected homedir.
+useCleanMcpClientEnv();
 
 describe("mcp list", () => {
   const captured = useCaptureLog();
@@ -97,6 +100,33 @@ describe("mcp list", () => {
     await mcpList({});
     expect(captured.out).toBe("");
     expect(uiCapture.out).toContain("No Clerk MCP entries");
+  });
+
+  test("reports a legacy bridge entry with legacy: true", async () => {
+    const cursorDir = join(cwd, ".cursor");
+    await mkdir(cursorDir, { recursive: true });
+    await writeFile(
+      join(cursorDir, "mcp.json"),
+      JSON.stringify({ mcpServers: { clerk: { command: "clerk", args: ["mcp", "run"] } } }),
+    );
+    await mcpList({});
+    const payload = JSON.parse(captured.out) as { entries: { name: string; legacy: boolean }[] };
+    expect(payload.entries).toEqual([
+      expect.objectContaining({ client: "cursor", name: "clerk", url: URL, legacy: true }),
+    ]);
+  });
+
+  test("human-mode marks legacy entries and points at `clerk mcp install`", async () => {
+    mockIsAgent.mockReturnValue(false);
+    const cursorDir = join(cwd, ".cursor");
+    await mkdir(cursorDir, { recursive: true });
+    await writeFile(
+      join(cursorDir, "mcp.json"),
+      JSON.stringify({ mcpServers: { clerk: { command: "clerk", args: ["mcp", "run"] } } }),
+    );
+    await mcpList({});
+    expect(uiCapture.out).toContain("clerk mcp run (legacy)");
+    expect(uiCapture.out).toContain("clerk mcp install");
   });
 
   test("human-mode renders the table and next steps after an install", async () => {

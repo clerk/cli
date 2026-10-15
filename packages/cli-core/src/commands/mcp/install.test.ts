@@ -3,7 +3,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import * as realOs from "node:os";
 import { join } from "node:path";
-import { captureTelemetryPayload, useCaptureLog } from "../../test/lib/stubs.ts";
+import {
+  captureTelemetryPayload,
+  useCaptureLog,
+  useCleanMcpClientEnv,
+} from "../../test/lib/stubs.ts";
 
 const mockIsAgent = mock();
 mock.module("../../mode.ts", () => ({
@@ -42,8 +46,14 @@ const DEFAULT_URL = "https://mcp.clerk.com/mcp";
 // A foreign URL not in the default profile — used to simulate a pre-existing foreign entry.
 const FOREIGN_URL = "http://localhost:8787/mcp";
 
-// The entry shape written by the current CLI — no URL in args.
-const CURRENT_SHAPE = { command: "clerk", args: ["mcp", "run"] };
+// The entry shape the current CLI writes for Cursor: the resolved URL.
+const CURRENT_SHAPE = { url: DEFAULT_URL };
+
+// The clerk 3.x `clerk mcp run` bridge entry, removed in 4.0.
+const LEGACY_SHAPE = { command: "clerk", args: ["mcp", "run"] };
+
+// Developers' own CLAUDE_CONFIG_DIR/CODEX_HOME would escape the redirected homedir.
+useCleanMcpClientEnv();
 
 describe("mcp install", () => {
   const captured = useCaptureLog();
@@ -212,6 +222,156 @@ describe("mcp install", () => {
       mcpServers: { clerk: unknown };
     };
     expect(parsed.mcpServers.clerk).toEqual(CURRENT_SHAPE);
+  });
+
+  test("replaces a legacy bridge entry and reports it as migrated", async () => {
+    await mkdir(join(cwd, ".cursor"), { recursive: true });
+    await writeFile(
+      join(cwd, ".cursor", "mcp.json"),
+      JSON.stringify({ mcpServers: { clerk: LEGACY_SHAPE } }),
+    );
+
+    mockIsAgent.mockReturnValue(true);
+    await mcpInstall({ client: ["cursor"] });
+
+    const payload = JSON.parse(captured.out) as { results: { migrated: boolean }[] };
+    expect(payload.results[0]?.migrated).toBe(true);
+    const parsed = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
+      mcpServers: { clerk: unknown };
+    };
+    expect(parsed.mcpServers.clerk).toEqual(CURRENT_SHAPE);
+  });
+
+  test("notes the bridge migration in human output", async () => {
+    await mkdir(join(cwd, ".cursor"), { recursive: true });
+    await writeFile(
+      join(cwd, ".cursor", "mcp.json"),
+      JSON.stringify({ mcpServers: { clerk: LEGACY_SHAPE } }),
+    );
+
+    await mcpInstall({ client: ["cursor"] });
+
+    expect(Bun.stripANSI(captured.err)).toContain("replaced the `clerk mcp run` bridge");
+  });
+
+  test("clears a legacy bridge entry saved under another name", async () => {
+    // 3.x took `--name` too, so a bridge entry may not be named `clerk`.
+    await mkdir(join(cwd, ".cursor"), { recursive: true });
+    await writeFile(
+      join(cwd, ".cursor", "mcp.json"),
+      JSON.stringify({ mcpServers: { "clerk-dev": LEGACY_SHAPE, other: { url: FOREIGN_URL } } }),
+    );
+
+    mockIsAgent.mockReturnValue(true);
+    await mcpInstall({ client: ["cursor"] });
+
+    const payload = JSON.parse(captured.out) as { results: { migrated: boolean }[] };
+    expect(payload.results[0]?.migrated).toBe(true);
+    const parsed = JSON.parse(await readFile(join(cwd, ".cursor", "mcp.json"), "utf8")) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(parsed.mcpServers).toEqual({ clerk: CURRENT_SHAPE, other: { url: FOREIGN_URL } });
+  });
+
+  test.each([
+    { case: "only another-name bridge", sameName: false, migrated: false },
+    { case: "a same-name bridge too", sameName: true, migrated: true },
+  ])(
+    "reports legacyRemaining when a legacy entry can't be removed ($case)",
+    async ({ sameName, migrated }) => {
+      const configPath = join(cwd, ".codex", "config.toml");
+      await mkdir(join(cwd, ".codex"), { recursive: true });
+      const bridge = (name: string) =>
+        `[mcp_servers.${name}]\ncommand = "clerk"\nargs = ["mcp", "run"]\n`;
+      await writeFile(
+        configPath,
+        `${sameName ? `${bridge("clerk")}\n` : ""}${bridge("clerk-dev")}`,
+      );
+      // `codex mcp remove clerk` (the pre-clean) works; removing `clerk-dev` fails.
+      mockRun.mockImplementation(async (argv: string[]) => {
+        if (argv.at(-1) === "clerk-dev") return { exitCode: 1, stdout: "", stderr: "boom" };
+        await writeFile(configPath, bridge("clerk-dev"));
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+
+      mockIsAgent.mockReturnValue(true);
+      await mcpInstall({ client: ["codex"] });
+
+      const payload = JSON.parse(captured.out) as { results: unknown[]; failures: unknown[] };
+      expect(payload.results).toEqual([
+        expect.objectContaining({ status: "installed", migrated, legacyRemaining: ["clerk-dev"] }),
+      ]);
+      expect(payload.failures).toEqual([]);
+      expect(captured.err).toContain("could not remove the legacy `clerk-dev` entry");
+      expect(await readFile(configPath, "utf8")).toEndWith(
+        `[mcp_servers.clerk]\nurl = "${DEFAULT_URL}"\n`,
+      );
+    },
+  );
+
+  test("migrates a Codex bridge entry through `codex mcp remove`, then appends the URL entry", async () => {
+    const configPath = join(cwd, ".codex", "config.toml");
+    await mkdir(join(cwd, ".codex"), { recursive: true });
+    await writeFile(configPath, '[mcp_servers.clerk]\ncommand = "clerk"\nargs = ["mcp", "run"]\n');
+    // `codex mcp remove` drops its own table, as the real CLI does.
+    mockRun.mockImplementation(async () => {
+      await writeFile(configPath, "");
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    mockIsAgent.mockReturnValue(true);
+    await mcpInstall({ client: ["codex"] });
+
+    expect(mockRun).toHaveBeenCalledWith(["/fake/bin/codex", "mcp", "remove", "clerk"]);
+    const payload = JSON.parse(captured.out) as { results: { migrated: boolean }[] };
+    expect(payload.results[0]?.migrated).toBe(true);
+    expect(await readFile(configPath, "utf8")).toBe(
+      `[mcp_servers.clerk]\nurl = "${DEFAULT_URL}"\n`,
+    );
+  });
+
+  test("replaces a non-Clerk Codex entry that holds the name", async () => {
+    // A pre-4.0 hand setup: not a Clerk entry by shape, but it owns the name.
+    const configPath = join(cwd, ".codex", "config.toml");
+    await mkdir(join(cwd, ".codex"), { recursive: true });
+    await writeFile(
+      configPath,
+      `[mcp_servers.clerk]\ncommand = "npx"\nargs = ["-y", "mcp-remote", "${DEFAULT_URL}"]\n`,
+    );
+    mockRun.mockImplementation(async () => {
+      await writeFile(configPath, "");
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    mockIsAgent.mockReturnValue(true);
+    await mcpInstall({ client: ["codex"] });
+
+    expect(mockRun).toHaveBeenCalledWith(["/fake/bin/codex", "mcp", "remove", "clerk"]);
+    const payload = JSON.parse(captured.out) as { results: { migrated: boolean }[] };
+    expect(payload.results[0]?.migrated).toBe(false);
+    expect(await readFile(configPath, "utf8")).toBe(
+      `[mcp_servers.clerk]\nurl = "${DEFAULT_URL}"\n`,
+    );
+  });
+
+  test("includes an empty failures list when no clients are selected", async () => {
+    mockMultiselect.mockResolvedValue([]);
+    await mkdir(join(cwd, ".cursor"), { recursive: true });
+    await mkdir(join(cwd, ".windsurf"), { recursive: true });
+    await mcpInstall({ json: true });
+    expect(JSON.parse(captured.out)).toEqual({
+      url: DEFAULT_URL,
+      name: "clerk",
+      results: [],
+      failures: [],
+    });
+  });
+
+  test("reports migrated: false for a fresh install", async () => {
+    mockIsAgent.mockReturnValue(true);
+    await mcpInstall({ client: ["cursor"] });
+    const payload = JSON.parse(captured.out) as { results: { migrated: boolean }[] };
+    expect(payload.results[0]?.migrated).toBe(false);
   });
 
   test("uses --name to customize the entry key", async () => {

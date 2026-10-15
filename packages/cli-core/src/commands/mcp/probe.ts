@@ -12,7 +12,6 @@ import { isRecord } from "../../lib/objects.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { loggedFetch } from "../../lib/fetch.ts";
 import { CURRENT_VERSION } from "../../lib/version.ts";
-import { sseEventData } from "./sse.ts";
 // Type-only: erased at compile, so the SDK stays a devDependency and is never
 // bundled — it exists purely as a TS gate keeping this request spec-valid.
 import type { InitializeRequest, JSONRPCRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -48,6 +47,17 @@ function safeJsonParse(text: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+// Reassemble the `data:` payload of a single SSE event block. The SSE spec
+// allows a payload to span several `data:` lines; they join back with
+// newlines. Returns "" when the block carries no data lines.
+function sseEventData(rawEvent: string): string {
+  return rawEvent
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trim())
+    .join("\n");
 }
 
 // The streamable-HTTP transport answers `initialize` as either application/json
@@ -96,10 +106,10 @@ export async function probeMcp(url: string): Promise<McpProbeResult> {
       body: JSON.stringify(INITIALIZE_REQUEST),
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
-    // The hosted server currently answers an unauthenticated `initialize` with
-    // 200 (verified live), but a server-side tightening to 401 must not make
-    // `doctor` flag a just-installed entry as unreachable — editors run their
-    // own OAuth flow that this probe deliberately doesn't perform.
+    // The hosted server answers an unauthenticated `initialize` with 401 and
+    // a `WWW-Authenticate` pointing at its protected-resource metadata
+    // (RFC 9728). That is reachable, not broken: `doctor` must not flag a
+    // just-installed entry — editors run the OAuth flow this probe doesn't.
     if (response.status === 401 || response.status === 403) {
       return { ok: false, status: response.status, authRequired: true };
     }
