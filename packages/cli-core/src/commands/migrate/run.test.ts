@@ -517,6 +517,35 @@ describe("run", () => {
       );
     });
 
+    /** Records which instance an export run read, as `export clerk` does. */
+    const exportedFrom = (id: string, instanceId: string) => {
+      const record = readRun(runsDir(), id)!;
+      fs.writeFileSync(
+        path.join(runsDir(), id, "run.json"),
+        JSON.stringify({ ...record, target: { ...record.target, instanceId } }),
+      );
+    };
+
+    // Every user is already there; each would come back a duplicate.
+    test("refuses to import an export into the instance it came from", async () => {
+      const { record } = exportRun("clerk", export2);
+      exportedFrom(record.id, "ins_1");
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /exported this instance's own users/,
+      );
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
+    test("imports an export of another instance", async () => {
+      const { record } = exportRun("clerk", export2);
+      exportedFrom(record.id, "ins_other");
+
+      await run({ ...noSource, input: record.id });
+
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+    });
+
     test("refuses a run ID that is not an export", async () => {
       await run(baseOptions);
       const [imported] = listRuns(runsDir());

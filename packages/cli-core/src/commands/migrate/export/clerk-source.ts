@@ -28,10 +28,10 @@
 import { fetchAppsTolerantly } from "../../../lib/app-picker.ts";
 import { describeBapiTarget, resolveBapiSecretKey } from "../../../lib/bapi-command.ts";
 import { resolveProfile } from "../../../lib/config.ts";
-import { CliError, ERROR_CODE, throwUserAbort } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../../lib/errors.ts";
 import { search } from "../../../lib/listage.ts";
 import type { ApplicationInstance } from "../../../lib/plapi.ts";
-import { log } from "../../../lib/log.ts";
+import { confirm } from "../../../lib/prompts.ts";
 import { isHuman } from "../../../mode.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
 import { resolveUsersInstanceContext } from "../../users/interactive/instance-context.ts";
@@ -62,6 +62,18 @@ export type ClerkExportSource = {
   target?: string;
 };
 
+/** The flags that name a source instance, for a refusal that can't ask. */
+const NAME_A_SOURCE =
+  "Name the source instance with one of:\n" +
+  "  `--secret-key <sk_...>` — the source instance's secret key\n" +
+  "  `--app <app_id> --instance <development|production>` — an application on your account\n" +
+  "  `CLERK_SECRET_KEY` — the source instance's secret key, exported";
+
+/** Whether anyone is there to answer a picker. `-y` takes no question. */
+function canAsk(options: ResolveClerkSourceOptions): boolean {
+  return !options.json && !isAssumeYes() && isHuman();
+}
+
 /** {@link ClerkExportSource} plus whether the user already chose it out loud. */
 type ResolvedSource = ClerkExportSource & { chosen: boolean };
 
@@ -90,15 +102,16 @@ async function resolveSource(options: ResolveClerkSourceOptions): Promise<Resolv
       chosen: named,
     };
   } catch (error) {
-    if (
-      options.json ||
-      isAssumeYes() ||
-      !isHuman() ||
-      named ||
-      !(error instanceof CliError) ||
-      error.code !== ERROR_CODE.NO_SECRET_KEY
-    ) {
-      throw error;
+    // An unlinked directory with no key: the resolver that names the target
+    // runs first, and says "not linked" rather than "no key".
+    const nothingToResolve =
+      error instanceof CliError &&
+      (error.code === ERROR_CODE.NO_SECRET_KEY || error.code === ERROR_CODE.NOT_LINKED);
+    if (named || !nothingToResolve) throw error;
+    if (!canAsk(options)) {
+      throwUsageError(
+        `\`clerk migrate export clerk\` has no source instance, and can't ask here. ${NAME_A_SOURCE}`,
+      );
     }
 
     const ctx = await resolveUsersInstanceContext({});
@@ -178,17 +191,33 @@ export async function resolveClerkSource(
   options: ResolveClerkSourceOptions,
 ): Promise<ClerkExportSource> {
   const { chosen, ...source } = await resolveSource(options);
-  // `-y` takes the resolved instance without the picker, as an agent does.
-  if (chosen || !source.target || options.json || isAssumeYes() || !isHuman()) return source;
+  if (chosen) return source;
 
-  const picked = await pickInstance(await currentAppId(options));
+  // What the CLI resolved on its own (the linked project, a key in `.env`) is
+  // normally the migration's destination. With nobody to ask, exporting it
+  // and printing `clerk migrate import <id>` points the import straight back
+  // at it, so the source has to be named.
+  if (!canAsk(options)) {
+    throwUsageError(
+      `\`clerk migrate export clerk\` won't export ${source.target ?? "the resolved instance"} without asking: it is usually where the users are going. ${NAME_A_SOURCE}`,
+    );
+  }
+
+  let picked: ClerkExportSource | undefined;
+  try {
+    picked = await pickInstance(await currentAppId(options));
+  } catch (error) {
+    // Listing applications needs an account. An accountless app's key is
+    // already resolved, so offer it rather than stop at a login.
+    if (!(error instanceof CliError)) throw error;
+    const use = await confirm({
+      message: `Your applications can't be listed (${error.message.split("\n")[0]}). Export from ${source.target ?? "the resolved instance"}?`,
+      default: false,
+    });
+    if (use) return source;
+    throwUserAbort();
+  }
   if (picked) return picked;
 
-  log.info(
-    "Export from a different instance with one of:\n" +
-      "  `--secret-key <sk_...>` — the source instance's secret key\n" +
-      "  `--app <app_id> --instance <development|production>` — another application on your account\n" +
-      "  `clerk link` — link this directory to a different application first",
-  );
-  throwUserAbort();
+  throwUsageError(`There are no instances to pick from. ${NAME_A_SOURCE}`);
 }

@@ -59,12 +59,33 @@ type SupabaseRow = Record<string, unknown> & {
   raw_app_meta_data?: unknown;
 };
 
+/**
+ * The words of a display name in the user's metadata, as the Supabase source
+ * splits it into first and last name; empty when there is none.
+ */
+function metadataName(meta: unknown): string[] {
+  if (!meta || typeof meta !== "object") return [];
+  const { display_name, full_name, name } = meta as Record<string, unknown>;
+  const value = display_name ?? full_name ?? name;
+  return typeof value === "string" ? value.trim().split(/\s+/).filter(Boolean) : [];
+}
+
+/** How a ban Postgres stores as `'infinity'` is written: the last date JSON can hold. */
+const FOREVER = "9999-12-31T23:59:59.999Z";
+
 /** Serializes values the JSON export cannot carry as-is. */
 function normalizeRow(row: SupabaseRow): Record<string, unknown> {
   const normalized: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(row)) {
     if (value === null || value === undefined) continue;
+    // Bun.SQL returns a timestamp of 'infinity' as the number Infinity, which
+    // JSON writes as null: a ban set by hand to last forever would be lost.
+    if (value === Infinity) {
+      normalized[key] = FOREVER;
+      continue;
+    }
+    if (value === -Infinity) continue;
     // Postgres returns timestamps as Date objects; the transformer parses
     // strings, and JSON.stringify would otherwise bury the format difference.
     const exported = exportValue(value);
@@ -103,8 +124,10 @@ export function buildSupabaseExport(
       if (user.email_confirmed_at) counts.emailConfirmed++;
       if (row.encrypted_password) counts.password++;
       if (row.phone) counts.phone++;
-      if (row.first_name) counts.firstName++;
-      if (row.last_name) counts.lastName++;
+      // The source splits a name it finds in the metadata, so count those too.
+      const [first, ...rest] = metadataName(row.raw_user_meta_data);
+      if (row.first_name || first) counts.firstName++;
+      if (row.last_name || rest.length > 0) counts.lastName++;
 
       record({ sourceId: userId, status: "exported" });
     } catch (error) {

@@ -273,8 +273,9 @@ link to the export run, and `run.json` records the source the envelope named
 as `envelopeSource`.
 
 `--json` prints the result on stdout instead — `{ target, run, output, users,
-coverage, next }` — and never prompts, so a missing credential exits 2 naming
-the flag to pass.
+skipped, coverage, next }` — and never prompts, so a missing credential exits 2
+naming the flag to pass. `next`, and the commands printed after a human run,
+keep `--runs-dir`: the import looks the run ID up there.
 
 | Flag                       | Platforms                          | Description                                                       |
 | -------------------------- | ---------------------------------- | ----------------------------------------------------------------- |
@@ -308,8 +309,10 @@ back into itself. Instead:
   instead — one flat row each, `my-app - Production instance (ins_…)`, not an
   application picker followed by an instance picker — with the resolved
   application's instances listed **first** so taking one is still a single
-  Enter. Only when there are no instances to offer does it stop and list
-  `--secret-key`, `--app`/`--instance` and `clerk link` instead.
+  Enter. When there are no instances to offer, it exits 2 naming
+  `--secret-key`, `--app`/`--instance` and `CLERK_SECRET_KEY`. When your
+  applications can't be listed (an accountless app with no login), it asks
+  whether to export the resolved instance instead.
 - With nothing to resolve at all (no link, no key, no flags), you get the
   application picker `clerk users` uses — `Select a Clerk application to use:`,
   followed by an instance picker when the application has more than one —
@@ -321,8 +324,13 @@ The instance picker (the second tier) has no "create a new application" choice.
 Its rows are searchable by what they show, so typing an application name,
 `production`, or an instance id all narrow it.
 
-In agent mode the resolved instance is used without a prompt; pass
-`--secret-key` or `--app`/`--instance` to be explicit.
+With nobody to ask — agent mode, `--json` or `-y` — an instance resolved on
+your behalf is never taken: the export exits 2 and names the flags, since
+exporting the destination and importing it back is the mistake this guards
+against. The same goes for nothing to resolve at all. Name the source with
+`--secret-key`, `--app`/`--instance` or `CLERK_SECRET_KEY`. And `clerk migrate
+import` refuses an export run of the instance it would import into: every user
+is already there.
 
 After each export you get a field-coverage table — which Clerk-relevant fields
 were present on how many users — so you know the data is thin _before_ you
@@ -740,7 +748,8 @@ stays on the user. A run recorded before the marker existed adopts nothing.
 
 When an import completes, it names the folders it no longer needs: the export it
 read, which holds your users' data, and its own run, which only `undo` needs.
-Each comes with the `rm -rf` to remove it.
+Each comes with the command to remove it: `rm -rf` for a run folder, and a
+plain `rm` for an export written with `--output` outside one.
 
 #### Checks
 
@@ -1325,19 +1334,19 @@ stamping every user with today's.
 
 ## API endpoints
 
-| Method   | Path                                            | Used by                                                                         |
-| -------- | ----------------------------------------------- | ------------------------------------------------------------------------------- |
-| `POST`   | `/v1/users`                                     | `migrate import` — creates each user                                            |
-| `POST`   | `/v1/email_addresses`                           | `migrate import` — attaches additional emails                                   |
-| `POST`   | `/v1/phone_numbers`                             | `migrate import` — attaches additional phones                                   |
-| `GET`    | `/v1/users?limit=&offset=&order_by=+created_at` | `migrate export clerk` — pages the whole instance, oldest first, 500 at a time  |
-| `GET`    | `/v1/users/count`                               | `migrate import` — headroom against a development instance's user limit         |
-| `GET`    | `/v1/users?external_id=…`                       | `migrate import` — checks for users already in the instance, 100 values a call  |
-| `GET`    | `/v1/users?external_id=…`                       | `migrate undo` — finds users whose create was in flight when the import stopped |
-| `GET`    | `/v1/users?user_id=…`                           | `migrate undo` — reads the imported users back, 100 a call                      |
-| `DELETE` | `/v1/users/{user_id}`                           | `migrate undo` — deletes one user                                               |
-| `GET`    | `/v1/instance`                                  | `migrate import`, `undo`, `export clerk` — names the instance behind the key    |
-| `GET`    | `/v1/domains`                                   | `migrate import` checks — resolves the Frontend API host                        |
+| Method   | Path                                                    | Used by                                                                                                                        |
+| -------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `POST`   | `/v1/users`                                             | `migrate import` — creates each user                                                                                           |
+| `POST`   | `/v1/email_addresses`                                   | `migrate import` — attaches additional emails                                                                                  |
+| `POST`   | `/v1/phone_numbers`                                     | `migrate import` — attaches additional phones                                                                                  |
+| `GET`    | `/v1/users?limit=&starting_after=&order_by=+created_at` | `migrate export clerk` — pages the whole instance, oldest first, 500 at a time, each page from the last user of the one before |
+| `GET`    | `/v1/users/count`                                       | `migrate import` — headroom against a development instance's user limit                                                        |
+| `GET`    | `/v1/users?external_id=…`                               | `migrate import` — checks for users already in the instance, 100 values a call                                                 |
+| `GET`    | `/v1/users?external_id=…`                               | `migrate undo` — finds users whose create was in flight when the import stopped                                                |
+| `GET`    | `/v1/users?user_id=…`                                   | `migrate undo` — reads the imported users back, 100 a call                                                                     |
+| `DELETE` | `/v1/users/{user_id}`                                   | `migrate undo` — deletes one user                                                                                              |
+| `GET`    | `/v1/instance`                                          | `migrate import`, `undo`, `export clerk` — names the instance behind the key                                                   |
+| `GET`    | `/v1/domains`                                           | `migrate import` checks — resolves the Frontend API host                                                                       |
 
 The checks also read the instance's Frontend API `GET /v1/environment`
 (bootstrapping a dev browser first on development instances) for its

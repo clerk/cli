@@ -287,9 +287,13 @@ async function ensureImportTarget(options: MigrateRunOptions): Promise<void> {
  * Settles which file to read. The argument may name the export run that wrote
  * the file; a human who gave none is asked for a path.
  */
-async function resolveInput(
-  options: MigrateRunOptions,
-): Promise<{ file: string; fromExport?: string; exportSha256?: string }> {
+async function resolveInput(options: MigrateRunOptions): Promise<{
+  file: string;
+  fromExport?: string;
+  exportSha256?: string;
+  /** The instance an export run read its users from. */
+  exportInstanceId?: string;
+}> {
   const value = options.input;
   if (!value) {
     if (!canPrompt(options)) {
@@ -341,7 +345,12 @@ async function resolveInput(
   }
   // Carried on, so the file is checked again where the users are read: another
   // export can still overwrite the path after this.
-  return { file, fromExport: record.id, exportSha256: sha256 };
+  return {
+    file,
+    fromExport: record.id,
+    exportSha256: sha256,
+    ...(record.target.instanceId ? { exportInstanceId: record.target.instanceId } : {}),
+  };
 }
 
 /** A file the import read changed before it finished reading it. */
@@ -842,6 +851,13 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
     async ({ setNextSteps }) => {
       const { secretKey, target } = await resolveClerkTarget(options);
       if (!options.json) printTarget(target);
+      // Every user is already here, so each would be refused as a duplicate.
+      if (input.exportInstanceId && input.exportInstanceId === target.instanceId) {
+        throwUsageError(
+          `Run ${input.fromExport} exported this instance's own users, so importing it here would put them back where they came from. Nothing was imported.\n` +
+            "Import into another instance: pass --instance prod, --app <app_id> --instance <id>, or that instance's --secret-key.",
+        );
+      }
       const limits = resolveLimits(secretKey);
 
       const filePath = resolveImportFilePath(file);
