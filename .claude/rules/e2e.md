@@ -124,7 +124,7 @@ On failure: takes a screenshot to `/tmp/clerk-e2e-<name>-failure.png` and logs d
 
 ### Playwright patch
 
-`playwright-core` is patched via `patchedDependencies` in `package.json` to work around a `route.fetch()` incompatibility under Bun. The patch file lives at `patches/playwright-core@1.60.0.patch`.
+`playwright-core` is patched via `patchedDependencies` in `package.json` to work around a `route.fetch()` incompatibility under Bun. The patch file lives at `patches/playwright-core@1.63.0.patch`.
 
 ### Additional dependency
 
