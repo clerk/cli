@@ -207,6 +207,18 @@ describe("refusals, all exit 2 and delete nothing", () => {
       }) as typeof fetch;
     };
 
+    // After the preview, --json always prints its object.
+    test("--json prints the preview, marked changed, when another process holds the run", async () => {
+      const record = importRun();
+      duringPreview(() => fs.writeFileSync(lockFile(runsDir, record.id), String(process.ppid)));
+
+      await expect(undo(record.id, withDir({ yes: true, json: true }))).rejects.toThrow(
+        /in use by another process/,
+      );
+      expect(JSON.parse(captured.out)).toMatchObject({ import: { id: record.id }, changed: true });
+      expect(deletes()).toHaveLength(0);
+    });
+
     test("still running: refused by the import run's lock", async () => {
       const record = importRun();
       duringPreview(() => fs.writeFileSync(lockFile(runsDir, record.id), String(process.ppid)));
