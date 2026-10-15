@@ -20,7 +20,12 @@ import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner, type SpinnerControls } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { retryOn429 } from "../lib/retry.ts";
-import { assertInstanceFlagMatches, fetchInstanceIdentity, printTarget } from "../lib/target.ts";
+import {
+  assertInstanceFlagMatches,
+  fetchInstanceIdentity,
+  KEY_SOURCE,
+  printTarget,
+} from "../lib/target.ts";
 import { resolveClerkSource } from "./clerk-source.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 
@@ -279,9 +284,9 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
     // must agree, as on import: otherwise this reads the wrong user pool under
     // the requested instance's name.
     const keyFrom = options.secretKey
-      ? "--secret-key"
+      ? KEY_SOURCE.secretKeyFlag
       : !options.app && process.env.CLERK_SECRET_KEY
-        ? "CLERK_SECRET_KEY env var"
+        ? KEY_SOURCE.envVar
         : undefined;
     if (keyFrom) assertInstanceFlagMatches({ instance: options.instance }, keyFrom, identity);
     // describeBapiTarget already names where the key came from, env key included.
