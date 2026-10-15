@@ -182,7 +182,13 @@ Both must hold, otherwise the account-authenticated path runs unchanged:
 
 When credentials _are_ present and the directory simply isn't linked, the command prints a warning that it's using the reduced key-based view and points at `clerk link`, so the narrower output is never a silent surprise.
 
-The same path takes a secret key for a **claimed** application, since the key alone doesn't say which it is. A refusal (an unsupported key, `put`, `schema`, `--instance`) reads `GET /v1/instance` once to find out: a non-null `workspace_id` means the application belongs to an account, and the refusal then says to run `clerk auth login` and `clerk link` (or pass `--app <id>`) rather than to claim it. Only a refusal makes that request, and a failed lookup keeps the accountless wording.
+The same path takes a secret key for a **claimed** application, since the key alone doesn't say which it is, and the precedence above doesn't change for it. A refusal (an unsupported key or `instance` field, `put`, `schema`, `--instance`) reads `GET /v1/instance` once to word itself, and only a refusal makes that request:
+
+- `workspace_id` null: the application is unclaimed, and the refusal says to claim it with `clerk auth login`.
+- `workspace_id` set: the application belongs to an account. The refusal says a secret key can't change those keys, and to pass `--app <id> --instance <dev|prod>` (or run `clerk link`) with `clerk auth login` or `CLERK_PLATFORM_API_KEY`. A login alone isn't enough while the secret key is found, since it takes precedence.
+- The lookup fails: the refusal gives both, and never calls the application unclaimed.
+
+A `config pull` of a claimed application warns that the secret key read only some groups, worded the same way. It reads `workspace_id` from the `instance` group it pulls, so it costs no extra request when that group is included.
 
 The secret key is resolved the way the app itself would resolve one, and this order is shared by every accountless-capable command (`lib/keyless-target.ts`):
 
