@@ -18,7 +18,7 @@ import { getAuth, setAuth, resolveProfile } from "../../lib/config.ts";
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH, CLERK_CLIENT_CLI } from "../../lib/constants.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
-import { errorMessage, throwUserAbort } from "../../lib/errors.ts";
+import { errorMessage, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { attemptAutoclaim, type AutoclaimResult } from "../../lib/autoclaim.ts";
@@ -27,10 +27,12 @@ import { cyan, dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
 import { currentTelemetryStage, setTelemetryStage } from "../../lib/telemetry.ts";
 import { ensureFirstApplication } from "../../lib/first-application.ts";
+import { loginWithTicket } from "../../lib/ticket-auth.ts";
 
 interface LoginOptions {
   showNextSteps?: boolean;
   yes?: boolean;
+  ticket?: boolean;
 }
 
 async function getExistingSession(): Promise<UserInfo | null> {
@@ -133,6 +135,49 @@ async function performOAuthFlow(): Promise<OAuthFlowResult> {
   return { userInfo, previousSession };
 }
 
+async function performTicketFlow(yes?: boolean): Promise<OAuthFlowResult> {
+  if (process.stdin.isTTY) {
+    throwUsageError(
+      "--ticket reads the sign-in ticket from stdin. Pipe it in (for example with a heredoc); it is never accepted as an argument.",
+    );
+  }
+  const ticket = (await Bun.stdin.text()).trim();
+  if (!ticket) throwUsageError("No sign-in ticket received on stdin.");
+
+  setTelemetryStage("token_exchange");
+  const tokenResponse = await withSpinner("Redeeming sign-in ticket...", async () =>
+    loginWithTicket(ticket),
+  );
+  const userInfo = await fetchUserInfo(tokenResponse.access_token);
+
+  log.info(`Signing in as ${userInfo.email}`);
+  if (isHuman() && !yes) {
+    const proceed = await confirm({
+      message: `Save CLI credentials for ${userInfo.email}?`,
+      default: true,
+    });
+    if (!proceed) {
+      await outro();
+      throwUserAbort();
+    }
+  }
+
+  // Same snapshot point as the browser flow: read the outgoing session right
+  // before it is overwritten so it can be revoked afterwards.
+  let previousSession: OAuthSession | null = null;
+  try {
+    previousSession = await getStoredSession();
+  } catch (error) {
+    log.debug(`credentials: could not read outgoing session — ${errorMessage(error)}`);
+  }
+
+  setTelemetryStage("store");
+  await storeToken(createOAuthSession(tokenResponse));
+  await setAuth({ userId: userInfo.userId });
+
+  return { userInfo, previousSession };
+}
+
 export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   // `init` and `link` call this mid-flow and share the one process-global
   // telemetry stage. Login's own markers are worth having while it runs, but
@@ -146,7 +191,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
 }
 
 async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
-  const { showNextSteps = true, yes } = options;
+  const { showNextSteps = true, yes, ticket } = options;
   intro("Signing in");
   setTelemetryStage("session_check");
   const existingSession = await withSpinner("Checking session...", async () =>
@@ -181,7 +226,9 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   // errors are all swallowed, so a transient failure there would silently
   // orphan a live grant instead of revoking it. The store is the authority on
   // whether there is anything to revoke.
-  const { userInfo, previousSession } = await performOAuthFlow();
+  const { userInfo, previousSession } = ticket
+    ? await performTicketFlow(yes)
+    : await performOAuthFlow();
 
   // Revoked only after the replacement is safely stored: doing it up front
   // would leave the user with no session at all if the flow were abandoned.
