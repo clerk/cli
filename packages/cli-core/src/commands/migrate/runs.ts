@@ -105,7 +105,10 @@ function continueCommand(record: RunRecord, carry: string[]): string | undefined
   const input = record.fromExport ?? record.file?.path;
   if (!input) return undefined;
   const parts = ["clerk migrate import", quoteArg(input)];
-  if (!record.fromExport && record.source) parts.push("--source", quoteArg(record.source));
+  // A source you wrote is a file the record knows only by its hash. A name,
+  // not `<…>`: pasted as is, a shell reads `<file>` as a redirect.
+  if (record.sourceHash) parts.push("--source", "SOURCE_FILE");
+  else if (!record.fromExport && record.source) parts.push("--source", quoteArg(record.source));
   return withFlags(parts.join(" "), carry);
 }
 

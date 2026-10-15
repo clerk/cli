@@ -146,6 +146,18 @@ describe("runs <id>", () => {
     expect(next[0]).toContain("to retry the users that failed or were skipped");
   });
 
+  // The record has the custom source's hash, not its path.
+  test("a partial import from a source you wrote names the source file to pass", async () => {
+    const record = partialImport();
+    const file = path.join(runsDir, record.id, "run.json");
+    fs.writeFileSync(file, JSON.stringify({ ...record, source: "acme", sourceHash: "abc123" }));
+
+    await runs(record.id, { runsDir, json: true });
+
+    const { next } = JSON.parse(captured.out) as { next: string[] };
+    expect(next[0]).toContain("clerk migrate import /tmp/users.json --source SOURCE_FILE");
+  });
+
   test("an unknown ID is a usage error", async () => {
     await expect(runs("nope", { runsDir })).rejects.toThrow(/No run `nope`/);
   });
