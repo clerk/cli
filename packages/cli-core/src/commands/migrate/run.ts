@@ -29,7 +29,7 @@ import {
 } from "../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { quoteArg } from "../../lib/json-body.ts";
-import { carryFlags, importFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
+import { carryFlags, importFlags, runsCommand, undoCommand } from "./lib/carry-flags.ts";
 import { plural } from "./lib/plural.ts";
 import { canPrompt } from "./lib/terminal.ts";
 import { log } from "../../lib/log.ts";
@@ -56,6 +56,7 @@ import {
   type UserLine,
   unfinishedUndoMessage,
   inUseMessage,
+  openUndoOf,
 } from "./lib/run-store.ts";
 import { withProgress } from "./lib/progress.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
@@ -359,11 +360,12 @@ function findResume(
   }
   if (state === "undone") return { kind: "new" };
 
-  const undos = runs.filter((record) => record.kind === "undo" && record.undoes === latest.id);
-  const openUndo = undos.find((record) => runState(runsDir, record) !== "complete");
+  const openUndo = openUndoOf(runsDir, latest.id, runs);
   if (openUndo) throwUsageError(unfinishedUndoMessage(latest.id, openUndo.id, carry));
   // Undone in full, though the import run was never marked so.
-  if (undos.length > 0) return { kind: "new" };
+  if (runs.some((record) => record.kind === "undo" && record.undoes === latest.id)) {
+    return { kind: "new" };
+  }
 
   if (state === "complete") return { kind: "complete", record: latest };
   return {
@@ -956,20 +958,17 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       }
 
       // `runs` takes only --runs-dir.
-      const runsCommand = withFlags(
-        `clerk migrate runs ${record.id}`,
-        carryFlags({ runsDir: options.runsDir }),
-      );
+      const runs = runsCommand(carryFlags({ runsDir: options.runsDir }), record.id);
       const undo = undoCommand(record.id, carry);
       const steps =
         summary.failed > 0
           ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(
-              runsCommand,
+              runs,
               // The same import again continues this run; --new-run would not.
               commandFor({ ...options, newRun: false }, options.yes ? ["--yes"] : []),
               undo,
             )
-          : NEXT_STEPS.MIGRATE_DONE(runsCommand, undo);
+          : NEXT_STEPS.MIGRATE_DONE(runs, undo);
       setNextSteps(steps);
       printAgentNextSteps(steps);
     },

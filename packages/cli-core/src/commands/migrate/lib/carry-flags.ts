@@ -38,9 +38,9 @@ export function importFlags(options: {
   ];
 }
 
-/** `clerk migrate runs`, listing the runs folder these flags name. */
-export function runsListCommand(carry: string[]): string {
-  return withFlags("clerk migrate runs", carry);
+/** `clerk migrate runs [id]`, reading the runs folder these flags name. */
+export function runsCommand(carry: string[], id?: string): string {
+  return withFlags(id ? `clerk migrate runs ${id}` : "clerk migrate runs", carry);
 }
 
 /** `clerk migrate undo <id>` with the flags that reach its runs folder and instance. */

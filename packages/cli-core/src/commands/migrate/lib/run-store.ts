@@ -25,7 +25,7 @@ import { resolveProfile } from "../../../lib/config.ts";
 import { throwUsageError } from "../../../lib/errors.ts";
 import { ensureGitignoreEntry, getGitRepoRoot } from "../../../lib/git.ts";
 import { log } from "../../../lib/log.ts";
-import { runsListCommand, undoCommand } from "./carry-flags.ts";
+import { runsCommand, undoCommand } from "./carry-flags.ts";
 
 /** Overrides the runs directory, below `--runs-dir`. */
 export const RUNS_DIR_ENV = "CLERK_MIGRATE_DIR";
@@ -300,9 +300,16 @@ export function runState(runsDir: string, record: RunRecord): RunState {
   return liveLockPid(runsDir, record.id) === undefined ? "interrupted" : "running";
 }
 
-/** The undo of this import that has not finished, if any. */
-export function openUndoOf(runsDir: string, importId: string): RunRecord | undefined {
-  return listRuns(runsDir).find(
+/**
+ * The undo of this import that has not finished, if any. `runs` is the
+ * caller's `listRuns`, when it has one already.
+ */
+export function openUndoOf(
+  runsDir: string,
+  importId: string,
+  runs = listRuns(runsDir),
+): RunRecord | undefined {
+  return runs.find(
     (candidate) =>
       candidate.kind === "undo" &&
       candidate.undoes === importId &&
@@ -323,7 +330,7 @@ export function unfinishedUndoMessage(importId: string, undoId: string, carry: s
 
 /** Why a run ID matched nothing, and the listing of that same runs folder. */
 export function noRunMessage(runsDir: string, id: string, carry: string[]): string {
-  return `No run \`${id}\` in ${runsDir}. Run \`${runsListCommand(carry)}\` to list them.`;
+  return `No run \`${id}\` in ${runsDir}. Run \`${runsCommand(carry)}\` to list them.`;
 }
 
 /** Why a run another live process holds is refused, and how to clear a stale lock. */

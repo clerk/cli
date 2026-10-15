@@ -120,14 +120,15 @@ function continueCommand(record: RunRecord, carry: string[]): string | undefined
 function continuesThisRun(runsDir: string, record: RunRecord): boolean {
   const file = record.file;
   if (!file) return false;
-  const newest = listRuns(runsDir).find(
+  const runs = listRuns(runsDir);
+  const newest = runs.find(
     (other) =>
       other.kind === "import" &&
       other.file?.sha256 === file.sha256 &&
       other.source === record.source &&
       other.target.instanceId === record.target.instanceId,
   );
-  if (newest?.id !== record.id || openUndoOf(runsDir, record.id)) return false;
+  if (newest?.id !== record.id || openUndoOf(runsDir, record.id, runs)) return false;
   try {
     return sha256File(file.path) === file.sha256;
   } catch {
@@ -152,12 +153,9 @@ function nextCommands(
     if (!again || state === "complete" || !continuesThisRun(runsDir, record)) return [undo];
     // Continuing is what a stopped run is for: the same file, source and
     // target pick it up where it left off.
-    return [
-      state === "interrupted"
-        ? `Run \`${again}\` to continue it`
-        : `Run \`${again}\` to retry the users that failed or were skipped`,
-      undo,
-    ];
+    const why =
+      state === "interrupted" ? "continue it" : "retry the users that failed or were skipped";
+    return [`Run \`${again}\` to ${why}`, undo];
   }
   if (record.kind === "undo" && state !== "complete" && record.undoes) {
     return [`Run \`${undoCommand(record.undoes, carry)}\` to retry the users that failed`];
