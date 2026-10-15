@@ -883,7 +883,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const summary: ImportSummary =
         checks.importable.length > 0 || attachOnly.length > 0
           ? await withProgress(
-              { total: checks.importable.length, verb: "created" },
+              { total: checks.importable.length + attachOnly.length, verb: "created" },
               async (progress) =>
                 importUsers({
                   users: checks.importable,
