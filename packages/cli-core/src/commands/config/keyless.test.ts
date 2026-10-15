@@ -289,6 +289,24 @@ describe("keyless config", () => {
       );
     });
 
+    test("rejects --instance for a claimed application without calling it unclaimed", async () => {
+      await writeEnv(".env", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
+      stubFetch(
+        async () =>
+          new Response(JSON.stringify({ ...INSTANCE, workspace_id: "org_123" }), { status: 200 }),
+      );
+      const { resolveKeylessTarget } = await import("../../lib/keyless-target.ts");
+
+      const error = await resolveKeylessTarget({ instance: "prod", cwd: projectDir }).catch(
+        (e: unknown) => e,
+      );
+
+      expect((error as Error).message).toContain(
+        "--instance is not supported with only a secret key",
+      );
+      expect((error as Error).message).not.toContain("unclaimed");
+    });
+
     test("rejects a key that is not a secret key", async () => {
       await writeEnv(".env", "CLERK_SECRET_KEY=pk_test_not_a_secret\n");
       const { resolveKeylessTarget } = await import("../../lib/keyless-target.ts");
@@ -661,10 +679,13 @@ describe("keyless config", () => {
       expect(captured.err).toContain("[dry-run] Nothing sent");
     });
 
+    // The refusal reads the instance once, to word itself; nothing else is sent.
     test("patch rejects unreachable keys before showing a diff or touching the API", async () => {
-      let requested = false;
-      stubFetch(async () => {
-        requested = true;
+      const requests: string[] = [];
+      stubFetch(async (input, init) => {
+        requests.push(
+          `${(init?.method ?? "GET").toUpperCase()} ${new URL(input.toString()).pathname}`,
+        );
         return new Response(JSON.stringify(INSTANCE), { status: 200 });
       });
       const { configPatch } = await import("./push.ts");
@@ -672,8 +693,58 @@ describe("keyless config", () => {
       await expect(configPatch({ json: '{"session":{"lifetime":1}}', yes: true })).rejects.toThrow(
         /Unsupported config key/,
       );
-      expect(requested).toBe(false);
+      expect(requests).toEqual(["GET /v1/instance"]);
       expect(captured.err).not.toContain("Updating config");
+    });
+
+    /** Answers GET /v1/instance with this `workspace_id`, or fails it. */
+    const stubWorkspace = (workspaceId: string | null | "fail") =>
+      stubFetch(async () =>
+        workspaceId === "fail"
+          ? new Response("{}", { status: 500 })
+          : new Response(JSON.stringify({ ...INSTANCE, workspace_id: workspaceId }), {
+              status: 200,
+            }),
+      );
+    const usernamePatch = '{"auth_username":{"allow_extended_special_characters":true}}';
+
+    // A secret key for a claimed application takes this path too.
+    test("patch does not call a claimed application unclaimed, and says how to reach the setting", async () => {
+      stubWorkspace("org_123");
+      const { configPatch } = await import("./push.ts");
+
+      const error = await configPatch({ json: usernamePatch, yes: true }).catch((e: unknown) => e);
+
+      const message = (error as Error).message;
+      expect(message).toContain("Unsupported config key with only a secret key: auth_username");
+      expect(message).not.toContain("unclaimed");
+      expect(message).toContain("`clerk auth login`, then `clerk link` or pass `--app <id>`");
+      expect(message).toContain("Supported top-level keys: instance");
+    });
+
+    test.each([
+      ["unclaimed", null],
+      ["unknown, when the lookup fails", "fail"],
+    ] as const)(
+      "patch keeps the accountless wording when the application is %s",
+      async (_label, id) => {
+        stubWorkspace(id);
+        const { configPatch } = await import("./push.ts");
+
+        await expect(configPatch({ json: usernamePatch, yes: true })).rejects.toThrow(
+          /for an unclaimed accountless application: auth_username/,
+        );
+      },
+    );
+
+    test("put on a claimed application points at the account, not at claiming it", async () => {
+      stubWorkspace("org_123");
+      const { configPut } = await import("./push.ts");
+
+      const error = await configPut({ json: "{}", yes: true }).catch((e: unknown) => e);
+
+      expect((error as Error).message).toContain("needs your account, not the secret key");
+      expect((error as Error).message).not.toContain("unclaimed");
     });
 
     test("patch rejects config keys BAPI cannot reach", async () => {
