@@ -315,27 +315,28 @@ function releaseLock(runsDir: string, id: string): void {
 }
 
 /**
- * What makes two imports the same job: the file, the source and the instance,
- * by its ID or its key's stand-in ID.
+ * What makes two imports the same job: the file and the instance, by its ID
+ * or its key's stand-in ID. Not the source: whichever source maps the file,
+ * its users are the same people.
  */
-export type ImportIdentity = { sha256: string; source: string; instanceId: string };
+export type ImportIdentity = { sha256: string; instanceId: string };
 
 /**
- * The lock one import of a file, by a source, into an instance holds. In the
+ * The lock one import of a file into an instance holds. In the
  * temp directory, as it is taken before consent, when nothing may be written
  * to the runs folder yet. Not keyed by the runs folder: two imports with
  * different `--runs-dir` values would still send the same users.
  */
 export function importLockFile(identity: ImportIdentity): string {
   const key = createHash("sha256")
-    .update(JSON.stringify([identity.sha256, identity.source, identity.instanceId]))
+    .update(JSON.stringify([identity.sha256, identity.instanceId]))
     .digest("hex")
     .slice(0, 32);
   return path.join(os.tmpdir(), `clerk-migrate-import-${key}.lock`);
 }
 
 /**
- * Takes the lock for one import of this file, source and instance, before
+ * Takes the lock for one import of this file into this instance, before
  * its checks, so no second process can pass them and start a run beside it.
  *
  * @returns Releases the lock.

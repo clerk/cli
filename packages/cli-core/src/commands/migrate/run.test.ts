@@ -676,6 +676,93 @@ describe("run", () => {
     });
 
     // A re-run without it would map the rest with the built-in source.
+    // Import with the built-in, notice a field is missing, write a source, re-run:
+    // the first run's users are the same people, whichever source maps them.
+    test("refuses a source you wrote while the built-in's run of the same export holds its users", async () => {
+      const { record } = exportRun("auth0", auth0Rows);
+      await run({ ...noSource, input: record.id });
+      const [first] = listRuns(runsDir()).filter((r) => r.kind === "import");
+      requests = [];
+
+      const error = (await run({ ...noSource, source: ownAuth0Source(), input: record.id }).catch(
+        (caught: unknown) => caught,
+      )) as CliError;
+
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain(
+        `Run ${first!.id} imported this file into this instance with the \`auth0\` source`,
+      );
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+
+      await run({ ...noSource, source: ownAuth0Source(), input: record.id, newRun: true });
+      expect(listRuns(runsDir()).filter((r) => r.kind === "import")).toHaveLength(2);
+    });
+
+    // One lock for the file and instance, whichever source each import uses.
+    test("a source you wrote takes the same import lock as the built-in", async () => {
+      const { record, file } = exportRun("auth0", auth0Rows);
+      const lock = importLockFile({
+        sha256: sha256File(file),
+        instanceId: keyInstanceId(baseOptions.secretKey),
+      });
+      fs.writeFileSync(lock, "1");
+      try {
+        await expect(
+          run({ ...noSource, source: ownAuth0Source(), input: record.id }),
+        ).rejects.toThrow(/importing this file into this instance right now/);
+      } finally {
+        fs.rmSync(lock, { force: true });
+      }
+    });
+
+    // A Firebase export's digests need the project's parameters, whatever maps it.
+    test("a source you wrote over a Firebase export gets its hash parameters", async () => {
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", passwordSalt: "SALT" }],
+        {
+          firebase: {
+            base64_signer_key: "SIGNER",
+            base64_salt_separator: "Bw==",
+            rounds: 8,
+            mem_cost: 14,
+          },
+        },
+      );
+      const own = `./own-firebase-${Date.now()}.ts`;
+      fs.writeFileSync(
+        path.join(workDir, own),
+        `export default {
+          key: "myfirebase",
+          label: "My Firebase",
+          transformer: { localId: "userId", email: "email", passwordHash: "passwordHash", passwordSalt: "salt" },
+          carries: {
+            passwords: { level: "yes", note: "scrypt." },
+            mfa: { level: "no", note: "None." },
+            metadata: { level: "no", note: "None." },
+          },
+          defaults: { passwordHasher: "scrypt_firebase" },
+          postTransform: (user, context) => {
+            const c = context.firebaseHashConfig;
+            if (!c) throw new Error("no hash parameters");
+            user.password = [user.passwordHash, user.salt, c.base64_signer_key, c.base64_salt_separator, c.rounds, c.mem_cost].join("$");
+            delete user.passwordHash;
+            delete user.salt;
+          },
+        };`,
+      );
+
+      await run({ ...noSource, source: own, input: record.id });
+
+      const created = requests.find((r) => r.url.endsWith("/v1/users"));
+      expect(created?.body).toMatchObject({
+        password_hasher: "scrypt_firebase",
+        password_digest: "HASH$SALT$SIGNER$Bw==$8$14",
+      });
+      const imported = listRuns(runsDir()).find((r) => r.kind === "import");
+      expect(imported?.firebaseHash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
     test("the printed command keeps a source you wrote in place of the envelope's", async () => {
       const { record } = exportRun("auth0", auth0Rows);
       const own = ownAuth0Source();
@@ -2093,7 +2180,6 @@ describe("run", () => {
       // Keyed by the key, so it holds whether or not `GET /v1/instance` answers.
       const lock = importLockFile({
         sha256: sha256File(path.join(workDir, "export.json")),
-        source: "clerk",
         instanceId: keyInstanceId(baseOptions.secretKey),
       });
       // PID 1 is always alive, and never this test.
@@ -2113,7 +2199,6 @@ describe("run", () => {
     test("refuses while another process holds this import's lock under another runs folder", async () => {
       const lock = importLockFile({
         sha256: sha256File(path.join(workDir, "export.json")),
-        source: "clerk",
         instanceId: keyInstanceId(baseOptions.secretKey),
       });
       fs.writeFileSync(lock, "1");
@@ -2131,7 +2216,6 @@ describe("run", () => {
     test("refuses while another key's process holds this instance's lock", async () => {
       const lock = importLockFile({
         sha256: sha256File(path.join(workDir, "export.json")),
-        source: "clerk",
         instanceId: "ins_1",
       });
       fs.writeFileSync(lock, "1");
@@ -2146,7 +2230,6 @@ describe("run", () => {
       // The key's own lock, taken first, is let go when the second is refused.
       const own = importLockFile({
         sha256: sha256File(path.join(workDir, "export.json")),
-        source: "clerk",
         instanceId: keyInstanceId(baseOptions.secretKey),
       });
       expect(fs.existsSync(own)).toBe(false);
@@ -2157,7 +2240,6 @@ describe("run", () => {
       const lockFor = (instanceId: string) =>
         importLockFile({
           sha256: sha256File(path.join(workDir, "export.json")),
-          source: "clerk",
           instanceId,
         });
       expect(fs.existsSync(lockFor(keyInstanceId(baseOptions.secretKey)))).toBe(false);
@@ -2366,7 +2448,9 @@ describe("run", () => {
       }).catch((caught: unknown) => caught)) as CliError;
 
       expect(error.exitCode).toBe(EXIT_CODE.USAGE);
-      expect(error.message).toContain(`Run ${id} imported this file with an earlier version`);
+      expect(error.message).toContain(
+        `Run ${id} imported this file into this instance with an earlier version`,
+      );
       expect(error.message).toContain("--new-run");
       expect(created()).toHaveLength(0);
     });
@@ -2400,7 +2484,9 @@ describe("run", () => {
         secretKey: "sk_test_x",
       }).catch((caught: unknown) => caught)) as CliError;
 
-      expect(error.message).toContain(`Run ${older} imported this file with an earlier version`);
+      expect(error.message).toContain(
+        `Run ${older} imported this file into this instance with an earlier version`,
+      );
       expect(error.message).toContain(`clerk migrate undo ${older} --secret-key <key>`);
       expect(created()).toHaveLength(0);
     });
