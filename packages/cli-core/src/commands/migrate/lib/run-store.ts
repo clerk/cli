@@ -26,7 +26,7 @@ import { resolveProfile } from "../../../lib/config.ts";
 import { throwUsageError } from "../../../lib/errors.ts";
 import { ensureGitignoreEntry, getGitRepoRoot } from "../../../lib/git.ts";
 import { log } from "../../../lib/log.ts";
-import { withFlags } from "./carry-flags.ts";
+import { undoCommand } from "./carry-flags.ts";
 
 /** Overrides the runs directory, below `--runs-dir`. */
 export const RUNS_DIR_ENV = "CLERK_MIGRATE_DIR";
@@ -126,7 +126,7 @@ export type UserLine = {
 export type RunState = RunStatus | "interrupted";
 
 const RUN_FILE = "run.json";
-const USERS_FILE = "users.ndjson";
+export const USERS_FILE = "users.ndjson";
 const LOCK_FILE = "lock";
 
 // --- Location --------------------------------------------------------------
@@ -386,6 +386,35 @@ export function runState(runsDir: string, record: RunRecord): RunState {
   return liveLockPid(runsDir, record.id) === undefined ? "interrupted" : "running";
 }
 
+/** The undo of this import that has not finished, if any. */
+export function openUndoOf(runsDir: string, importId: string): RunRecord | undefined {
+  return listRuns(runsDir).find(
+    (candidate) =>
+      candidate.kind === "undo" &&
+      candidate.undoes === importId &&
+      runState(runsDir, candidate) !== "complete",
+  );
+}
+
+/**
+ * Why an import with an unfinished undo can't continue: some of its users are
+ * gone and some are not. `carry` reaches the same runs folder and instance.
+ */
+export function unfinishedUndoMessage(importId: string, undoId: string, carry: string[]): string {
+  return (
+    `Run ${importId} has an undo that did not finish (run ${undoId}). ` +
+    `Finish it with \`${undoCommand(importId, carry)}\`, or pass --new-run to import into a new run.`
+  );
+}
+
+/** Why a run another live process holds is refused, and how to clear a stale lock. */
+export function inUseMessage(runsDir: string, id: string, doing: string, then: string): string {
+  return (
+    `Run ${id} is ${doing} right now in another process (PID ${liveLockPid(runsDir, id)}). ${then} ` +
+    `If that process is not a migrate run, delete ${lockFile(runsDir, id)}.`
+  );
+}
+
 /** Every readable run, newest first. */
 export function listRuns(runsDir: string): RunRecord[] {
   let entries: fs.Dirent[];
@@ -560,21 +589,10 @@ export function continueRun(
   // Checked again under the lock, before the record says running: an undo
   // can start, and stop part-way, after the caller's own check, leaving the
   // import's status and lines as they were.
-  const undoRun =
-    record.kind === "import"
-      ? listRuns(runsDir).find(
-          (candidate) =>
-            candidate.kind === "undo" &&
-            candidate.undoes === record.id &&
-            runState(runsDir, candidate) !== "complete",
-        )
-      : undefined;
+  const undoRun = record.kind === "import" ? openUndoOf(runsDir, record.id) : undefined;
   if (undoRun) {
     fs.rmSync(lockFile(runsDir, record.id), { force: true });
-    throwUsageError(
-      `Run ${record.id} has an undo that did not finish (run ${undoRun.id}). ` +
-        `Finish it with \`${withFlags(`clerk migrate undo ${record.id}`, carry)}\`, or pass --new-run to import into a new run.`,
-    );
+    throwUsageError(unfinishedUndoMessage(record.id, undoRun.id, carry));
   }
   // A crash mid-write leaves a torn last line; end it so the next append
   // starts a line of its own instead of fusing with it.

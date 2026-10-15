@@ -31,7 +31,8 @@ import {
 } from "../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { quoteArg } from "../../lib/json-body.ts";
-import { carryFlags, withFlags } from "./lib/carry-flags.ts";
+import { carryFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
+import { plural } from "./lib/plural.ts";
 import { terminal } from "./lib/terminal.ts";
 import { log } from "../../lib/log.ts";
 import { NEXT_STEPS, printAgentNextSteps } from "../../lib/next-steps.ts";
@@ -69,11 +70,20 @@ import {
   type Run,
   type RunRecord,
   type UserLine,
+  openUndoOf,
+  unfinishedUndoMessage,
+  inUseMessage,
 } from "./lib/run-store.ts";
 import { withProgress } from "./lib/progress.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
 import { readSupabaseRows } from "./lib/supabase-providers.ts";
-import { keyInstanceId, printTarget, resolveClerkTarget } from "./lib/target.ts";
+import {
+  isClerkInstanceId,
+  isStandInInstanceId,
+  keyInstanceId,
+  printTarget,
+  resolveClerkTarget,
+} from "./lib/target.ts";
 import { findInFlight } from "./lib/user-lookup.ts";
 import {
   fileExists,
@@ -126,8 +136,6 @@ export type MigrateRunOptions = {
   /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
   runsDir?: string;
 } & FirebaseHashFlags;
-
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
 /** Nobody can answer a prompt: an agent, a non-TTY run, or `--json`. */
 function canPrompt(options: MigrateRunOptions): boolean {
@@ -532,13 +540,13 @@ export function findResume(
     // Clerk did not name the instance (GET /v1/instance failed), so a run of
     // this file recorded under a real ID can be neither matched nor ruled out.
     // Starting over would reject every user it created and leave it unfinished.
-    if (match.instanceId.startsWith("key_")) {
+    if (isStandInInstanceId(match.instanceId)) {
       const unconfirmed = listRuns(runsDir).find(
         (record) =>
           record.kind === "import" &&
           record.file?.sha256 === match.sha256 &&
           record.source === match.source &&
-          record.target.instanceId?.startsWith("ins_") === true,
+          isClerkInstanceId(record.target.instanceId),
       );
       if (unconfirmed) {
         throwUsageError(
@@ -553,23 +561,17 @@ export function findResume(
   const state = runState(runsDir, latest);
   if (state === "running") {
     throwUsageError(
-      `Run ${latest.id} is importing this file right now in another process (PID ${liveLockPid(runsDir, latest.id)}). ` +
-        `Wait for it to finish. If that process is not a migrate run, delete ${lockFile(runsDir, latest.id)}.`,
+      inUseMessage(runsDir, latest.id, "importing this file", "Wait for it to finish."),
     );
   }
   if (state === "undone") return { kind: "new" };
 
-  const undoRun = listRuns(runsDir).find(
-    (record) => record.kind === "undo" && record.undoes === latest.id,
-  );
-  if (undoRun && runState(runsDir, undoRun) !== "complete") {
-    throwUsageError(
-      `Run ${latest.id} has an undo that did not finish (run ${undoRun.id}). ` +
-        `Finish it with \`${withFlags(`clerk migrate undo ${latest.id}`, carry)}\`, or pass --new-run to import into a new run.`,
-    );
-  }
+  const openUndo = openUndoOf(runsDir, latest.id);
+  if (openUndo) throwUsageError(unfinishedUndoMessage(latest.id, openUndo.id, carry));
   // Undone in full, though the import run was never marked so.
-  if (undoRun) return { kind: "new" };
+  if (listRuns(runsDir).some((record) => record.kind === "undo" && record.undoes === latest.id)) {
+    return { kind: "new" };
+  }
 
   if (state === "complete") return { kind: "complete", record: latest };
   return {
@@ -1203,9 +1205,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       if (refused) {
         if (options.json) preview({ refused: true });
         const earlier = earlierRunHolding(runsDir, source, target.instanceId, checks);
-        const undoEarlier = earlier
-          ? withFlags(`clerk migrate undo ${earlier.id}`, carryFlags(options))
-          : undefined;
+        const undoEarlier = earlier ? undoCommand(earlier.id, carryFlags(options)) : undefined;
         throwUsageError(
           `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported.` +
             `${rejectSummary(checks, options.json)} ` +
@@ -1388,10 +1388,18 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         for (const line of cleanupLines(runsDir, record)) log.info(line);
       }
 
+      // `runs` takes only --runs-dir.
+      const runsCommand = withFlags(
+        `clerk migrate runs ${record.id}`,
+        carryFlags({ runsDir: options.runsDir }),
+      );
       const steps =
         summary.failed > 0
-          ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(record.id, carryFlags(options))
-          : NEXT_STEPS.MIGRATE_DONE(record.id, carryFlags(options));
+          ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(
+              runsCommand,
+              undoCommand(record.id, carryFlags(options)),
+            )
+          : NEXT_STEPS.MIGRATE_DONE(runsCommand, undoCommand(record.id, carryFlags(options)));
       setNextSteps(steps);
       printAgentNextSteps(steps);
     },

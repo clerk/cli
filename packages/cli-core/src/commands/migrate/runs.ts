@@ -10,7 +10,7 @@ import path from "node:path";
 import { bold, dim, green, red, yellow } from "../../lib/color.ts";
 import { throwUsageError } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
-import { normalizeErrorMessage } from "./import-users.ts";
+import { tallyError } from "./import-users.ts";
 import {
   countLines,
   latestUserLines,
@@ -22,8 +22,9 @@ import {
   type RunRecord,
   type RunState,
   type UserLine,
+  USERS_FILE,
 } from "./lib/run-store.ts";
-import { carryFlags, withFlags } from "./lib/carry-flags.ts";
+import { carryFlags, undoCommand } from "./lib/carry-flags.ts";
 import { describeTarget } from "./lib/target.ts";
 
 export type RunsOptions = {
@@ -88,9 +89,7 @@ function pad(rows: string[][]): string[] {
 function errorBreakdown(lines: UserLine[]): { error: string; count: number }[] {
   const counts = new Map<string, number>();
   for (const line of lines) {
-    if (line.status !== "failed" || !line.error) continue;
-    const key = normalizeErrorMessage(line.error);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    if (line.status === "failed" && line.error) tallyError(counts, line.error);
   }
   return [...counts].map(([error, count]) => ({ error, count })).sort((a, b) => b.count - a.count);
 }
@@ -102,14 +101,10 @@ function errorBreakdown(lines: UserLine[]): { error: string; count: number }[] {
 export function nextCommands(record: RunRecord, state: RunState, carry: string[] = []): string[] {
   if (state === "running") return [];
   if (record.kind === "import" && state !== "undone") {
-    return [
-      `Run \`${withFlags(`clerk migrate undo ${record.id}`, carry)}\` to delete the users it created`,
-    ];
+    return [`Run \`${undoCommand(record.id, carry)}\` to delete the users it created`];
   }
   if (record.kind === "undo" && state !== "complete" && record.undoes) {
-    return [
-      `Run \`${withFlags(`clerk migrate undo ${record.undoes}`, carry)}\` to retry the users that failed`,
-    ];
+    return [`Run \`${undoCommand(record.undoes, carry)}\` to retry the users that failed`];
   }
   return [];
 }
@@ -175,7 +170,7 @@ function printUsers(title: string, lines: UserLine[], usersFile: string): void {
 function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
   const state = runState(runsDir, record);
   const dir = runDir(runsDir, record.id);
-  const usersFile = path.join(dir, "users.ndjson");
+  const usersFile = path.join(dir, USERS_FILE);
   const lines = [...latestUserLines(runsDir, record.id).values()];
 
   log.info(`Runs folder: ${runsDir}`);

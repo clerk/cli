@@ -117,6 +117,9 @@ export async function lookupUsers(options: {
  */
 export const RUN_MARKER_KEY = "clerkMigrateRun";
 
+/** A user a run recorded: its source ID, and the Clerk user it became. */
+export type SourceUser = { sourceId: string; clerkId: string };
+
 /**
  * The users behind creates that were in flight when run `runId` stopped:
  * found by `external_id`, and counted only when they carry the run's marker.
@@ -129,7 +132,7 @@ export async function findInFlight(options: {
   sourceIds: string[];
   secretKey: string;
   schedule: ApiScheduler;
-}): Promise<{ sourceId: string; clerkId: string }[]> {
+}): Promise<SourceUser[]> {
   if (options.sourceIds.length === 0) return [];
   const found = await lookupUsers({
     filter: "external_id",
