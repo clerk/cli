@@ -207,6 +207,27 @@ describe("refusals, all exit 2 and delete nothing", () => {
       }) as typeof fetch;
     };
 
+    // The run's own folder takes the lock, but the undo run can't be created
+    // beside it. `--runs-dir` is never written to by resolveRunsDir.
+    test.skipIf(process.platform === "win32")(
+      "--json prints the preview, marked writeFailed, when the runs folder can't be written",
+      async () => {
+        const record = importRun();
+        fs.chmodSync(runsDir, 0o555);
+        try {
+          await expect(undo(record.id, withDir({ yes: true, json: true }))).rejects.toThrow();
+        } finally {
+          fs.chmodSync(runsDir, 0o755);
+        }
+        expect(JSON.parse(captured.out)).toMatchObject({
+          import: { id: record.id },
+          run: null,
+          writeFailed: true,
+        });
+        expect(deletes()).toHaveLength(0);
+      },
+    );
+
     // After the preview, --json always prints its object.
     test("--json prints the preview, marked changed, when another process holds the run", async () => {
       const record = importRun();

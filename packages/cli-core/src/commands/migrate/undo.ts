@@ -447,156 +447,168 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     );
   }
 
-  // After the preview, --json always prints its object: a refusal from here
-  // on carries `changed` (the run changed, or another process holds it), and
-  // the reason goes to stderr as for any error.
+  // After the preview, --json prints its object exactly once, whatever
+  // happens: the result, a refusal with its marker, or, for anything else
+  // that stops the undo, the preview marked `writeFailed` (the file system
+  // refused) or `stopped`. The reason goes to stderr as for any error.
+  let printed = false;
   const printJsonPreview = (extra: Record<string, unknown>) => {
-    if (options.json) {
-      log.data(JSON.stringify(jsonResult(target, record, preview, extra), null, 2));
-    }
+    if (!options.json || printed) return;
+    printed = true;
+    log.data(JSON.stringify(jsonResult(target, record, preview, extra), null, 2));
   };
   const refuseChanged = (message: string, extra: Record<string, unknown> = {}): never => {
     printJsonPreview({ changed: true, ...extra });
     throwUsageError(message);
   };
 
-  // Gitignored only now, once there is consent to write a run.
   try {
-    await resolveRunsDir(options.runsDir, { write: true });
+    await deleteAfterPreview();
   } catch (error) {
-    printJsonPreview({ failed: true });
+    printJsonPreview(isFileSystemError(error) ? { writeFailed: true } : { stopped: true });
     throw error;
   }
 
-  // Held until the import is marked undone, so a re-import cannot continue
-  // the run while its users are deleted and overwrite the `undone` mark.
-  let releaseImport: () => void;
-  try {
-    releaseImport = lockRun(runsDir, record.id);
-  } catch (error) {
-    if (error instanceof CliError) refuseChanged(error.message);
-    printJsonPreview({ failed: true });
-    throw error;
-  }
-  let run: Run;
-  let summary: UndoSummary;
-  let undoRecord: RunRecord;
-  let importRecord = record;
-  try {
-    // Another undo that finished during the preview has already marked it.
+  async function deleteAfterPreview(): Promise<void> {
+    // Gitignored only now, once there is consent to write a run.
+    await resolveRunsDir(options.runsDir, { write: true });
+
+    // Held until the import is marked undone, so a re-import cannot continue
+    // the run while its users are deleted and overwrite the `undone` mark.
+    let releaseImport: () => void;
     try {
-      readImportRun(runsDir, record.id);
+      releaseImport = lockRun(runsDir, record.id);
     } catch (error) {
       if (error instanceof CliError) refuseChanged(error.message);
       throw error;
     }
-    // A re-import that continued the run during the preview created users
-    // the preview never listed. Another undo that started or carried on an
-    // undo run in the meantime changed which users are left to delete, and a
-    // second undo run would split the import's deletes between the two.
-    const openNow = findOpenUndo(runsDir, record.id);
-    if (
-      readUserLines(runsDir, record.id).length !== importLines ||
-      openNow?.id !== openUndo?.id ||
-      (openUndo !== undefined && readUserLines(runsDir, openUndo.id).length !== undoLines)
-    ) {
-      refuseChanged(
-        `Run ${record.id} changed while this undo was waiting, so the preview is out of date. ` +
-          `Nothing was deleted. Run \`${withFlags(`clerk migrate undo ${record.id}`, carryFlags(options))}\` again.`,
-      );
-    }
-
-    // A user who signed in after the preview is one nobody agreed to delete:
-    // --yes covered the preview's users, and so did a yes at the prompt. By
-    // ID, not count: one the preview showed can leave as another signs in.
-    if (present.length > 0 && !options.includeSignedIn) {
-      let now: Awaited<ReturnType<typeof inspectUsers>>;
+    let run: Run;
+    let summary: UndoSummary;
+    let undoRecord: RunRecord;
+    let importRecord = record;
+    try {
+      // Another undo that finished during the preview has already marked it.
       try {
-        now = await inspectUsers({ users: present, since: record.startedAt, secretKey, schedule });
+        readImportRun(runsDir, record.id);
       } catch (error) {
-        // Past the preview, --json still prints its object.
-        if (options.json) {
-          log.data(
-            JSON.stringify(jsonResult(target, record, preview, { recheckFailed: true }), null, 2),
-          );
-        }
+        if (error instanceof CliError) refuseChanged(error.message);
         throw error;
       }
-      const seen = new Set(signedIn);
-      const more = now.signedIn.filter((clerkId) => !seen.has(clerkId)).length;
-      if (more > 0) {
+      // A re-import that continued the run during the preview created users
+      // the preview never listed. Another undo that started or carried on an
+      // undo run in the meantime changed which users are left to delete, and a
+      // second undo run would split the import's deletes between the two.
+      const openNow = findOpenUndo(runsDir, record.id);
+      if (
+        readUserLines(runsDir, record.id).length !== importLines ||
+        openNow?.id !== openUndo?.id ||
+        (openUndo !== undefined && readUserLines(runsDir, openUndo.id).length !== undoLines)
+      ) {
         refuseChanged(
-          `${plural(more, "more user")} the import created signed in after the preview, and nothing agreed to delete them. Nothing was deleted.\n` +
-            `Run \`${withFlags(`clerk migrate undo ${record.id}`, carryFlags(options))}\` again to see them, or pass --include-signed-in to delete them too.`,
-          { signedInSincePreview: more },
+          `Run ${record.id} changed while this undo was waiting, so the preview is out of date. ` +
+            `Nothing was deleted. Run \`${withFlags(`clerk migrate undo ${record.id}`, carryFlags(options))}\` again.`,
+        );
+      }
+
+      // A user who signed in after the preview is one nobody agreed to delete:
+      // --yes covered the preview's users, and so did a yes at the prompt. By
+      // ID, not count: one the preview showed can leave as another signs in.
+      if (present.length > 0 && !options.includeSignedIn) {
+        let now: Awaited<ReturnType<typeof inspectUsers>>;
+        try {
+          now = await inspectUsers({
+            users: present,
+            since: record.startedAt,
+            secretKey,
+            schedule,
+          });
+        } catch (error) {
+          printJsonPreview({ recheckFailed: true });
+          throw error;
+        }
+        const seen = new Set(signedIn);
+        const more = now.signedIn.filter((clerkId) => !seen.has(clerkId)).length;
+        if (more > 0) {
+          refuseChanged(
+            `${plural(more, "more user")} the import created signed in after the preview, and nothing agreed to delete them. Nothing was deleted.\n` +
+              `Run \`${withFlags(`clerk migrate undo ${record.id}`, carryFlags(options))}\` again to see them, or pass --include-signed-in to delete them too.`,
+            { signedInSincePreview: more },
+          );
+        }
+      }
+
+      run = openUndo
+        ? continueRun(runsDir, openUndo)
+        : startRun(runsDir, { kind: "undo", target, undoes: record.id, source: record.source });
+
+      // Users the import created that are no longer there: the undo's goal for
+      // them is already met, so they count as deleted without another request.
+      for (const user of gone) {
+        run.append({ ...user, status: "deleted", reason: "not found in the instance" });
+      }
+
+      summary =
+        present.length > 0
+          ? await withProgress({ total: present.length, verb: "deleted" }, async (progress) =>
+              deleteUsers({ users: present, secretKey, limits, run, progress }),
+            )
+          : { deleted: 0, failed: 0, errorBreakdown: new Map<string, number>() };
+
+      // A Ctrl-C rejects every delete still queued. Left unfinished, the undo
+      // reads as interrupted, as an import does.
+      if (interruptedExitCode() !== null) {
+        run.release();
+        throwUserAbort();
+      }
+      undoRecord = run.finish();
+      if (undoRecord.status === "complete") {
+        importRecord =
+          patchRun(runsDir, record.id, { status: "undone", undoneBy: undoRecord.id }) ?? record;
+      }
+    } finally {
+      releaseImport();
+    }
+
+    if (options.json) {
+      printed = true;
+      log.data(
+        JSON.stringify(
+          jsonResult(target, importRecord, preview, {
+            run: undoRecord,
+            result: {
+              deleted: summary.deleted,
+              failed: summary.failed,
+              errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
+            },
+          }),
+          null,
+          2,
+        ),
+      );
+    } else {
+      log.blank();
+      log.info(`${bold("Deleted:")} ${green(String(summary.deleted))}`);
+      log.info(`${bold("Failed:")} ${red(String(summary.failed))}`);
+      for (const [error, count] of summary.errorBreakdown) {
+        log.info(`  ${plural(count, "user")}: ${error}`);
+      }
+      log.blank();
+      log.info(dim(`Undo run ${undoRecord.id}: ${run.dir}`));
+      if (undoRecord.status === "complete") {
+        log.success(`Import run ${record.id} is undone.`);
+      } else {
+        log.info(
+          `Run \`${withFlags(`clerk migrate undo ${record.id}`, carryFlags(options))}\` again to retry the users that failed.`,
         );
       }
     }
 
-    run = openUndo
-      ? continueRun(runsDir, openUndo)
-      : startRun(runsDir, { kind: "undo", target, undoes: record.id, source: record.source });
-
-    // Users the import created that are no longer there: the undo's goal for
-    // them is already met, so they count as deleted without another request.
-    for (const user of gone) {
-      run.append({ ...user, status: "deleted", reason: "not found in the instance" });
-    }
-
-    summary =
-      present.length > 0
-        ? await withProgress({ total: present.length, verb: "deleted" }, async (progress) =>
-            deleteUsers({ users: present, secretKey, limits, run, progress }),
-          )
-        : { deleted: 0, failed: 0, errorBreakdown: new Map<string, number>() };
-
-    // A Ctrl-C rejects every delete still queued. Left unfinished, the undo
-    // reads as interrupted, as an import does.
-    if (interruptedExitCode() !== null) {
-      run.release();
-      throwUserAbort();
-    }
-    undoRecord = run.finish();
-    if (undoRecord.status === "complete") {
-      importRecord =
-        patchRun(runsDir, record.id, { status: "undone", undoneBy: undoRecord.id }) ?? record;
-    }
-  } finally {
-    releaseImport();
+    if (undoRecord.status !== "complete") process.exitCode = 1;
   }
+}
 
-  if (options.json) {
-    log.data(
-      JSON.stringify(
-        jsonResult(target, importRecord, preview, {
-          run: undoRecord,
-          result: {
-            deleted: summary.deleted,
-            failed: summary.failed,
-            errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
-          },
-        }),
-        null,
-        2,
-      ),
-    );
-  } else {
-    log.blank();
-    log.info(`${bold("Deleted:")} ${green(String(summary.deleted))}`);
-    log.info(`${bold("Failed:")} ${red(String(summary.failed))}`);
-    for (const [error, count] of summary.errorBreakdown) {
-      log.info(`  ${plural(count, "user")}: ${error}`);
-    }
-    log.blank();
-    log.info(dim(`Undo run ${undoRecord.id}: ${run.dir}`));
-    if (undoRecord.status === "complete") {
-      log.success(`Import run ${record.id} is undone.`);
-    } else {
-      log.info(
-        `Run \`${withFlags(`clerk migrate undo ${record.id}`, carryFlags(options))}\` again to retry the users that failed.`,
-      );
-    }
-  }
-
-  if (undoRecord.status !== "complete") process.exitCode = 1;
+/** An error the file system raised (EACCES, ENOSPC, …), rather than the API or the user. */
+function isFileSystemError(error: unknown): boolean {
+  const { code, errno } = (error ?? {}) as { code?: unknown; errno?: unknown };
+  return typeof code === "string" && typeof errno === "number";
 }
