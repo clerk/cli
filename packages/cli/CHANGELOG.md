@@ -1,5 +1,11 @@
 # clerk
 
+## 4.1.0
+
+### Minor Changes
+
+- Sign in from a machine without a browser: `clerk auth login` now accepts the URL your browser lands on after signing in on another device, pasted back into the terminal. ([#513](https://github.com/clerk/cli/pull/513)) by [@wyattjoh](https://github.com/wyattjoh)
+
 ## 4.0.0
 
 ### Major Changes
