@@ -35,7 +35,8 @@ mock.module("../../../lib/prompts.ts", () => ({
   note: () => {},
 }));
 
-const { terminal, withInputRetry } = await import("./input-retry.ts");
+const { withInputRetry } = await import("./input-retry.ts");
+const { terminal } = await import("./terminal.ts");
 const { promptDbUrl, resolveDbUrl, withDbConnection } = await import("../export/db-options.ts");
 const { setAssumeYes } = await import("./assume-yes.ts");
 
