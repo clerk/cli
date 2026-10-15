@@ -2046,6 +2046,53 @@ describe("run", () => {
       });
     });
 
+    // The retry after a refused phone sent without the reserved phones, and was
+    // cut off: they are attached, the reserved email isn't sent again.
+    test("an adopted user gets the reserved phones its cut-off retry left out", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          {
+            id: "u2",
+            primary_email_address: "b@x.dev",
+            unverified_email_addresses: "c@x.dev",
+            unverified_phone_numbers: "+31612345678",
+          },
+        ]),
+      );
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({
+          sourceId: "u2",
+          status: "creating",
+          reserved: true,
+          pending: [{ kind: "phone", value: "+31612345678", verified: false }],
+        })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
+      await run(baseOptions);
+
+      expect(created()).toEqual([]);
+      expect(requests.filter((r) => r.url.endsWith("/v1/email_addresses"))).toEqual([]);
+      expect(
+        requests.filter((r) => r.url.endsWith("/v1/phone_numbers")).map((r) => r.body),
+      ).toEqual([
+        { user_id: "user_found", phone_number: "+31612345678", primary: false, verified: false },
+      ]);
+    });
+
     // Created reserved by the run that stopped: its unverified email exists
     // reserved, and meets the requirement, though this run has no flag.
     test("an adopted user created reserved meets a required email without the flag", async () => {
