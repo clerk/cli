@@ -88,8 +88,13 @@ export async function lookupUsers(options: {
         found.push(...page);
         const last = page.at(-1)?.id;
         if (page.length < LOOKUP_BATCH || typeof last !== "string") break;
-        // A cursor that does not move would page forever.
-        if (params.get("starting_after") === last) break;
+        // A cursor that does not move would page forever, and stopping there
+        // would pass a short lookup off as complete.
+        if (params.get("starting_after") === last) {
+          throw new Error(
+            "Clerk returned the same page of users twice, so the lookup can't finish",
+          );
+        }
         params.set("starting_after", last);
       }
       progress.done++;

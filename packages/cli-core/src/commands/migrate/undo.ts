@@ -186,7 +186,13 @@ async function inspectUsers(options: {
   secretKey: string;
   schedule: ApiScheduler;
   spinner?: SpinnerControls;
-}): Promise<{ present: UndoUser[]; gone: UndoUser[]; signedInSince: number }> {
+}): Promise<{
+  present: UndoUser[];
+  gone: UndoUser[];
+  signedInSince: number;
+  /** The Clerk IDs of the users who signed in since the import. */
+  signedIn: string[];
+}> {
   const found = await lookupUsers({
     filter: "user_id",
     values: options.users.map((user) => user.clerkId),
@@ -200,12 +206,14 @@ async function inspectUsers(options: {
   const since = Date.parse(options.since);
   const present = options.users.filter((user) => byId.has(user.clerkId));
   const gone = options.users.filter((user) => !byId.has(user.clerkId));
-  const signedInSince = present.filter((user) => {
-    const lastSignIn = byId.get(user.clerkId)?.last_sign_in_at;
-    return typeof lastSignIn === "number" && lastSignIn > since;
-  }).length;
+  const signedIn = present
+    .filter((user) => {
+      const lastSignIn = byId.get(user.clerkId)?.last_sign_in_at;
+      return typeof lastSignIn === "number" && lastSignIn > since;
+    })
+    .map((user) => user.clerkId);
 
-  return { present, gone, signedInSince };
+  return { present, gone, signedInSince: signedIn.length, signedIn };
 }
 
 export type UndoSummary = {
@@ -361,12 +369,12 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       schedule,
     })),
   ];
-  const { present, gone, signedInSince } =
+  const { present, gone, signedInSince, signedIn } =
     users.length > 0
       ? await withSpinner("Checking the imported users...", async (spinner) =>
           inspectUsers({ users, since: record.startedAt, secretKey, schedule, spinner }),
         )
-      : { present: [], gone: [], signedInSince: 0 };
+      : { present: [], gone: [], signedInSince: 0, signedIn: [] };
 
   const preview: UndoPreview = {
     toDelete: present.length,
@@ -484,15 +492,23 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     }
 
     // A user who signed in after the preview is one nobody agreed to delete:
-    // --yes covered the preview's count, and so did a yes at the prompt.
+    // --yes covered the preview's users, and so did a yes at the prompt. By
+    // ID, not count: one the preview showed can leave as another signs in.
     if (present.length > 0 && !options.includeSignedIn) {
-      const now = await inspectUsers({
-        users: present,
-        since: record.startedAt,
-        secretKey,
-        schedule,
-      });
-      const more = now.signedInSince - preview.signedInSince;
+      let now: Awaited<ReturnType<typeof inspectUsers>>;
+      try {
+        now = await inspectUsers({ users: present, since: record.startedAt, secretKey, schedule });
+      } catch (error) {
+        // Past the preview, --json still prints its object.
+        if (options.json) {
+          log.data(
+            JSON.stringify(jsonResult(target, record, preview, { recheckFailed: true }), null, 2),
+          );
+        }
+        throw error;
+      }
+      const seen = new Set(signedIn);
+      const more = now.signedIn.filter((clerkId) => !seen.has(clerkId)).length;
       if (more > 0) {
         refuseChanged(
           `${plural(more, "more user")} the import created signed in after the preview, and nothing agreed to delete them. Nothing was deleted.\n` +

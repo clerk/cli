@@ -988,11 +988,11 @@ without prompting.
 
 `--yes` is consent to undo the import, not to delete accounts people have used
 since: when any user has signed in after the import, `--yes` alone exits 2 and
-deletes nothing, naming the command with `--include-signed-in` that deletes
-them too. A yes at the prompt follows the preview's warning, so it needs no
-flag. Right before the deletes, undo looks again: a user who signed in after
-the preview was in no one's consent, so without `--include-signed-in` it exits
-2 and deletes nothing.
+deletes nothing, naming the command with `--include-signed-in` that deletes them
+too. A yes at the prompt follows the preview's warning, so it needs no flag.
+Right before the deletes, undo looks again, by user rather than by count: a user
+who signed in after the preview was in no one's consent, so without
+`--include-signed-in` it exits 2 and deletes nothing.
 
 It refuses with exit 2, and deletes nothing, when:
 
@@ -1026,8 +1026,9 @@ object:
 
 `import` is the run being undone. `run` is the undo's own run, `null` until one
 is written, as an import's is: a dry run adds `"dryRun": true`, a refusal for
-consent `"consent": "required"`, and a refusal because the run changed while
-the preview waited `"changed": true`. Once the deletes run, `run` is the undo run
+consent `"consent": "required"`, a refusal because the run changed while
+the preview waited `"changed": true`, and a failed second look at sign-ins
+`"recheckFailed": true`. Once the deletes run, `run` is the undo run
 and `result` holds `deleted`, `failed` and an `errors` breakdown.
 
 ### `clerk migrate sources`

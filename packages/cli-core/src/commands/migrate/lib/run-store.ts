@@ -597,8 +597,10 @@ export function lockRun(runsDir: string, id: string): () => void {
   return () => fs.rmSync(lockFile(runsDir, id), { force: true });
 }
 
-/** Merges fields into a run this process is not writing, such as `undoneBy`. */
-/** Writes `patch` over the stored record, and returns what was written. */
+/**
+ * Merges fields into a run this process is not writing, such as `undoneBy`,
+ * and returns what was written.
+ */
 export function patchRun(
   runsDir: string,
   id: string,

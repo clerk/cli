@@ -709,8 +709,7 @@ async function findInstanceDuplicates(
       if (sourceId && sourceId !== own && !reasons.has(sourceId)) reasons.set(sourceId, reason);
     };
     if (existing.external_id) {
-      // Matched by run.ts's ALREADY_IMPORTED, which names the run that created them.
-      claim(byExternalId.get(existing.external_id), "already in the instance, with this source ID");
+      claim(byExternalId.get(existing.external_id), ALREADY_IMPORTED);
     }
     for (const email of existing.email_addresses ?? []) {
       claim(
@@ -1035,6 +1034,12 @@ function placeholderWarning(count: number): string[] {
   ];
 }
 
+/**
+ * The reason for a user an earlier import already created here. Exported so
+ * the import can name the run that created them.
+ */
+export const ALREADY_IMPORTED = "already in the instance, with this source ID";
+
 export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const rejects: Reject[] = input.failures.map((failure) => ({
     sourceId: failure.userId,
@@ -1084,7 +1089,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         (phoned.dropped &&
         missingRequiredIdentifier(user, input.settings, reserve) &&
         !missingRequiredIdentifier(emailed, input.settings, reserve)
-          ? "only has phones not in E.164 form, and this instance requires a phone number (numeric usernames are on)"
+          ? "its phones aren't in E.164 form, and this instance requires a phone number (numeric usernames are on)"
           : undefined) ??
         missingRequiredIdentifier(user, input.settings, reserve) ??
         // Stripping the identifiers the instance has off can leave nothing to

@@ -268,6 +268,30 @@ describe("refusals, all exit 2 and delete nothing", () => {
       expect(readRun(runsDir, record.id)?.status).not.toBe("undone");
     });
 
+    // Past the preview, --json still prints its object, whatever happens next.
+    test("--json prints the preview, marked, when the recheck itself fails", async () => {
+      instanceUsers.set("user_b", null);
+      const record = importRun();
+      let lookups = 0;
+      const stubbed = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(input.toString());
+        if (url.searchParams.has("user_id") && lookups++ === 1) {
+          return Response.json({ errors: [{ code: "boom", message: "boom" }] }, { status: 500 });
+        }
+        return stubbed(input, init);
+      }) as typeof fetch;
+
+      await expect(
+        undo(record.id, withDir({ yes: true, includeSignedIn: false, json: true })),
+      ).rejects.toThrow();
+      expect(JSON.parse(captured.out)).toMatchObject({
+        import: { id: record.id },
+        recheckFailed: true,
+      });
+      expect(deletes()).toHaveLength(0);
+    });
+
     test("--include-signed-in deletes a user who signed in after the preview", async () => {
       instanceUsers.set("user_b", null);
       const record = importRun();

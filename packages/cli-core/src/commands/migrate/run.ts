@@ -40,7 +40,7 @@ import { interruptedExitCode } from "../../lib/signals.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { importUsers, splitIdentifiers } from "./import-users.ts";
-import { checkImport, type ImportChecks } from "./lib/checks.ts";
+import { ALREADY_IMPORTED, checkImport, type ImportChecks } from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
 import {
@@ -754,9 +754,6 @@ function rejectSummary(checks: ImportChecks, json = false): string {
       : `Most common reason (${top.count}): ${top.reason}; and ${plural(rest.length, "other reason")}.`;
   return ` ${why}${json ? " See `checks.rejects` for each user." : ""}`;
 }
-
-/** How the checks name a user an earlier import already created here. */
-const ALREADY_IMPORTED = "already in the instance, with this source ID";
 
 /**
  * The earlier import run, of this source into this instance, that created the
