@@ -2393,6 +2393,40 @@ describe("run", () => {
       expect(created()).toHaveLength(0);
     });
 
+    // The newest run being undone doesn't clear an older one that still holds users.
+    test("refuses an edited source while any earlier version's run is unfinished, not just the newest", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      const older = interruptOnly();
+      const second = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, second), `${CUSTOM}\n// second`);
+      await run({
+        input: "export.json",
+        source: second,
+        yes: true,
+        secretKey: "sk_test_x",
+        newRun: true,
+      });
+      const newer = listRuns(runsDir()).find((record) => record.id !== older)!;
+      fs.writeFileSync(
+        path.join(runsDir(), newer.id, "run.json"),
+        JSON.stringify({ ...readRun(runsDir(), newer.id), status: "undone" }),
+      );
+      const third = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, third), `${CUSTOM}\n// third`);
+      requests = [];
+
+      const error = (await run({
+        input: "export.json",
+        source: third,
+        yes: true,
+        secretKey: "sk_test_x",
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.message).toContain(`Run ${older} imported this file with an earlier version`);
+      expect(error.message).toContain(`clerk migrate undo ${older} --secret-key <key>`);
+      expect(created()).toHaveLength(0);
+    });
+
     test("an edited source with --new-run starts a new run beside the earlier one", async () => {
       await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
       interruptOnly();
