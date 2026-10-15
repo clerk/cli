@@ -55,6 +55,16 @@ Import goes first because the risky behavior lives there: writing to production,
 | 5     | Custom sources (`--source ./file.ts`) and `migrate sources`                                                             | 1   |
 | 6     | Remove the gate, then the docs and skills written against the final help output                                         | 1   |
 
+**Slice 2, as reviewed (#515).** Review changed some of the plan above; the slice is what shipped, not the row:
+
+- **Adoption uses a marker, not `clerkIdsCreatedByOtherRuns`.** Every created user carries `clerkMigrateRun` (its run's ID) in `private_metadata`, replacing any value the source had there. A continue adopts a cut-off create only when Clerk holds a user with that `external_id` and this run's marker, and undo deletes such a user on the same terms. The changeset says so.
+- **Adopted users are checked as candidates** (`adoptedSourceIds` beside `adoptedClerkIds`): never rejected, not counted against the dev quota, and they claim their identifiers before the file's order does.
+- **`undo --yes` refuses once users have signed in**, unless `--include-signed-in`. Right before the deletes, undo looks again by user ID, and refuses a user who signed in after the preview.
+- **Undo's `--json`** is `{ target, import, run, preview, … }`: `import` is the run being undone, `run` the undo's own run, `null` until one is written. After the preview it always prints its object, with a marker when it stops (`dryRun`, `consent`, `changed`, `recheckFailed`, `writeFailed`, `stopped`).
+- **Suggested commands keep `--runs-dir` and the target flags**, `--secret-key` as `<key>`.
+- **A changed file's refusal names the earlier run** of the same source and instance that created the users it rejects.
+- **Prompts check for a terminal** (`lib/terminal.ts`), so `CLERK_MODE=human` with none exits 2 rather than spinning, and a lookup whose cursor stalls fails rather than passing as complete.
+
 **Where the non-`migrate` files from #479 go:**
 
 - Slice 3: the `.gitignore` lines for `exports/` and `*service-account*.json`, and the MySQL note in `scripts/check-bun-version.ts`.
