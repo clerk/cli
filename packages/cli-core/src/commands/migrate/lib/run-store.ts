@@ -274,6 +274,7 @@ function acquireLockFile(
 
   try {
     take();
+    log.debug(`migrate: took the lock ${file}`);
     return;
   } catch (error) {
     if (!isExists(error)) throw error;
@@ -284,9 +285,11 @@ function acquireLockFile(
   // is failed lines, not duplicate users. A lock on the reclaim would close it.
   const holder = livePidIn(file);
   if (holder !== undefined) refuse(holder, file);
+  log.debug(`migrate: removing a stale lock (${file})`);
   fs.rmSync(file, { force: true });
   try {
     take();
+    log.debug(`migrate: took the lock ${file}`);
   } catch (error) {
     // Another process took the stale lock between the remove and the write.
     if (isExists(error)) refuse(livePidIn(file), file);
@@ -594,7 +597,10 @@ export function continueRun(
  */
 export function lockRun(runsDir: string, id: string): () => void {
   acquireLock(runsDir, id);
-  return () => fs.rmSync(lockFile(runsDir, id), { force: true });
+  return () => {
+    log.debug(`migrate: released run ${id}`);
+    fs.rmSync(lockFile(runsDir, id), { force: true });
+  };
 }
 
 /**
@@ -609,6 +615,7 @@ export function patchRun(
   const record = readRun(runsDir, id);
   if (!record) return undefined;
   const patched = { ...record, ...patch };
+  log.debug(`migrate: patching run ${id}: ${Object.keys(patch).join(", ")}`);
   writeRecord(runsDir, patched);
   return patched;
 }
