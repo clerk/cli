@@ -1,5 +1,33 @@
 # clerk
 
+## 4.0.0
+
+### Major Changes
+
+- Connect AI clients to the Clerk MCP server by URL and remove the `clerk mcp run` stdio bridge. Re-run `clerk mcp install` to replace entries installed by earlier versions; until then they fail to connect, and `clerk mcp list` and `clerk doctor` flag them as legacy. ([#535](https://github.com/clerk/cli/pull/535)) by [@wyattjoh](https://github.com/wyattjoh)
+
+  - Every supported client now gets a native Streamable HTTP entry in its own config format and signs in to Clerk itself, so `clerk` no longer needs to be on the editor's `PATH`. Each client's next step says how to sign in, for example `codex mcp login clerk`.
+  - The server URL is saved when you install. After switching environments or changing `CLERK_MCP_URL`, re-run `clerk mcp install` to update existing entries.
+  - `clerk mcp install --json` results include `migrated: true` when a legacy bridge entry was replaced, and `legacyRemaining` when one couldn't be removed. `clerk mcp list --json` entries include a `legacy` field.
+  - Re-running `clerk mcp install` also clears legacy entries saved under a custom `--name`, and `clerk mcp uninstall` removes them alongside the named entry.
+  - `clerk mcp install`, `list`, `uninstall`, and `clerk doctor` honor `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GEMINI_CLI_HOME`, and `HERMES_HOME`, so entries are read and written where each client looks for them. A symlinked config file is written through to its target, and a read-only one is left untouched.
+
+### Minor Changes
+
+- Show the Clerk logo, a link to the Clerk docs, and the CLI version when running `clerk auth login` in an interactive terminal. Set `CLERK_NO_BANNER=1` to hide it. ([#538](https://github.com/clerk/cli/pull/538)) by [@wyattjoh](https://github.com/wyattjoh)
+
+- Add an experimental `clerk migrate import` that checks a Clerk or Supabase user export against your instance and imports it. It is hidden and refuses to run unless `CLERK_EXPERIMENTAL=migrate` is set. ([#520](https://github.com/clerk/cli/pull/520)) by [@royanger](https://github.com/royanger)
+
+- Set up iOS and macOS apps with `clerk init`. Once init has linked a Clerk application, it links the Clerk Swift packages, configures capabilities, registers the native app, and optionally enables native Sign in with Apple, for both classic and JSON Xcode projects. Unchanged SwiftUI starters are initialized directly. New flags: `--dry-run` and `--json` (iOS only for now), `--xcode-project`, `--xcode-target`, `--xcode-configuration`, `--apple-sdk`, `--bundle-id`, `--app-id-prefix`, `--sign-in-with-apple`, and `--prebuilt-auth-ui`. `clerk doctor` adds read-only checks for Xcode projects. ([#512](https://github.com/clerk/cli/pull/512)) by [@seanperez29](https://github.com/seanperez29)
+
+### Patch Changes
+
+- Run in agent mode under OpenAI's Codex CLI, so `clerk init` creates temporary (accountless) keys instead of waiting on a browser login nobody can complete. Codex attaches a terminal to every command, which the TTY check read as a person. All commands now skip prompts and emit agent output under Codex, the same as under Claude Code; pass `--mode human` or set `CLERK_MODE=human` to override. Telemetry's `mode` field reports `agent` for Codex runs from this release. ([#522](https://github.com/clerk/cli/pull/522)) by [@shane-kercheval](https://github.com/shane-kercheval)
+
+- Recognize native-only Sign in with Apple in `clerk deploy` and `clerk deploy status`. Apple counts as configured once its production Bundle ID registration and Native API are ready; until then deploy offers Apple web credentials or pauses with a link to the production Native Applications page. Doctor recognizes Platform API keys and verifies account access through the Clerk API when OAuth userinfo rejects a valid session. Concurrent OAuth token refreshes in one process now share a single refresh. ([#509](https://github.com/clerk/cli/pull/509)) by [@seanperez29](https://github.com/seanperez29)
+
+- Add the internal iOS and macOS setup engine: inspect Xcode projects and workspaces, manage Clerk Swift packages and capabilities, reconcile native registration and Apple sign-in settings, and recover interrupted local edits. Support both classic and JSON Xcode project formats, unchanged SwiftUI starters, and documentation-based agent handoffs. ([#510](https://github.com/clerk/cli/pull/510)) by [@seanperez29](https://github.com/seanperez29)
+
 ## 3.4.1
 
 ### Patch Changes

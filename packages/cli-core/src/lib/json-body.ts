@@ -85,7 +85,7 @@ function preview(raw: string): string {
  * literal `"` inside doubled; everywhere else single quotes pass the value
  * through untouched.
  */
-function quoteArg(value: string): string {
+export function quoteArg(value: string): string {
   if (/^[A-Za-z0-9_\-./:@]+$/.test(value)) return value;
   if (process.platform === "win32") return `"${value.replace(/"/g, '""')}"`;
   return `'${value.replace(/'/g, `'\\''`)}'`;

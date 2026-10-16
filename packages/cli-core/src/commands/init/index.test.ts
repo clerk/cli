@@ -478,53 +478,53 @@ describe("init", () => {
   test("native framework skips npm SDK install but still pulls env keys", async () => {
     setup({ email: "test@test.com" });
 
-    const iosCtx = {
+    const androidCtx = {
       ...FAKE_CTX,
       existingClerk: false,
       deps: {},
       envFile: ".env",
       framework: {
-        dep: "ios",
-        name: "iOS (Swift)",
-        sdk: "ClerkKit",
+        dep: "android",
+        name: "Android (Kotlin)",
+        sdk: "com.clerk:clerk-android-ui",
         envVar: "CLERK_PUBLISHABLE_KEY",
         envFile: ".env" as const,
-        ecosystem: "swift" as const,
+        ecosystem: "gradle" as const,
       },
     };
-    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(context, "gatherContext").mockResolvedValue(androidCtx);
     spyOn(scaffoldMod, "scaffold").mockResolvedValue({
       actions: [],
-      postInstructions: ["Add the Clerk iOS SDK via Swift Package Manager"],
+      postInstructions: ["Add the Clerk Android SDK via Gradle"],
     });
 
     await init({ yes: true });
 
     expect(heuristics.installSdk).not.toHaveBeenCalled();
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: iosCtx.cwd });
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: androidCtx.cwd });
   });
 
   test("native framework skips the agent skills install prompt", async () => {
     setup({ email: "test@test.com" });
 
-    const iosCtx = {
+    const androidCtx = {
       ...FAKE_CTX,
       existingClerk: false,
       deps: {},
       envFile: ".env",
       framework: {
-        dep: "ios",
-        name: "iOS (Swift)",
-        sdk: "ClerkKit",
+        dep: "android",
+        name: "Android (Kotlin)",
+        sdk: "com.clerk:clerk-android-ui",
         envVar: "CLERK_PUBLISHABLE_KEY",
         envFile: ".env" as const,
-        ecosystem: "swift" as const,
+        ecosystem: "gradle" as const,
       },
     };
-    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(context, "gatherContext").mockResolvedValue(androidCtx);
     spyOn(scaffoldMod, "scaffold").mockResolvedValue({
       actions: [],
-      postInstructions: ["Add the Clerk iOS SDK via Swift Package Manager"],
+      postInstructions: ["Add the Clerk Android SDK via Gradle"],
     });
 
     await init({ yes: true });
@@ -532,33 +532,33 @@ describe("init", () => {
     expect(skillsMod.installSkills).not.toHaveBeenCalled();
   });
 
-  test("--framework ios without package.json does not trigger bootstrap", async () => {
+  test("--framework android without package.json does not trigger bootstrap", async () => {
     setup({ email: "test@test.com" });
 
-    const iosFramework = {
-      dep: "ios",
-      name: "iOS (Swift)",
-      sdk: "ClerkKit",
+    const androidFramework = {
+      dep: "android",
+      name: "Android (Kotlin)",
+      sdk: "com.clerk:clerk-android-ui",
       envVar: "CLERK_PUBLISHABLE_KEY",
       envFile: ".env" as const,
-      ecosystem: "swift" as const,
+      ecosystem: "gradle" as const,
     };
-    const iosCtx = {
+    const androidCtx = {
       ...FAKE_CTX,
       existingClerk: false,
       deps: {},
       envFile: ".env",
-      framework: iosFramework,
+      framework: androidFramework,
     };
-    spyOn(frameworkMod, "lookupFramework").mockReturnValue(iosFramework);
-    spyOn(context, "gatherContext").mockResolvedValue(iosCtx);
+    spyOn(frameworkMod, "lookupFramework").mockReturnValue(androidFramework);
+    spyOn(context, "gatherContext").mockResolvedValue(androidCtx);
     spyOn(context, "hasPackageJson").mockResolvedValue(false);
     spyOn(scaffoldMod, "scaffold").mockResolvedValue({
       actions: [],
-      postInstructions: ["Add the Clerk iOS SDK via Swift Package Manager"],
+      postInstructions: ["Add the Clerk Android SDK via Gradle"],
     });
 
-    await init({ yes: true, framework: "ios" });
+    await init({ yes: true, framework: "android" });
 
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     expect(pullMod.pull).toHaveBeenCalled();

@@ -10,6 +10,7 @@ import {
   select as clackSelect,
   autocomplete as clackAutocomplete,
   isCancel,
+  type CANCEL_SYMBOL,
   type Option as ClackOption,
 } from "@clack/prompts";
 import { throwUserAbort } from "./errors.ts";
@@ -123,7 +124,7 @@ function toClackOptions<Value>(
   }) as ClackOption<Value>[];
 }
 
-function unwrap<T>(value: T | symbol): T {
+function unwrap<T>(value: T | typeof CANCEL_SYMBOL): T {
   if (isCancel(value)) throwUserAbort();
   if (value === SEPARATOR_VALUE) {
     throw new Error("listage: separator received as selected value");

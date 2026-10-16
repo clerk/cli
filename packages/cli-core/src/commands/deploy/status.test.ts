@@ -8,6 +8,8 @@ import type { LiveDeploySnapshot } from "./status.ts";
 
 const mockFetchApplication = mock();
 const mockListApplicationDomains = mock();
+const mockListIOSApplications = mock();
+const mockGetNativeSettings = mock();
 const mockFetchInstanceConfig = mock();
 const mockFetchInstanceConfigSchema = mock();
 const mockGetApplicationDomainStatus = mock();
@@ -16,6 +18,8 @@ const mockTriggerApplicationDomainDNSCheck = mock();
 mock.module("../../lib/plapi.ts", () => ({
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
   listApplicationDomains: (...args: unknown[]) => mockListApplicationDomains(...args),
+  listIOSApplications: (...args: unknown[]) => mockListIOSApplications(...args),
+  getNativeSettings: (...args: unknown[]) => mockGetNativeSettings(...args),
   fetchInstanceConfig: (...args: unknown[]) => mockFetchInstanceConfig(...args),
   fetchInstanceConfigSchema: (...args: unknown[]) => mockFetchInstanceConfigSchema(...args),
   getApplicationDomainStatus: (...args: unknown[]) => mockGetApplicationDomainStatus(...args),
@@ -62,14 +66,62 @@ const passthroughHandlers = {
     work({ update: () => {} }),
 };
 
+const appleOAuthSchema = {
+  type: "object",
+  properties: {
+    enabled: { type: "boolean" },
+    authenticatable: { type: "boolean" },
+    client_id: { type: "string" },
+    client_secret: { type: "string", "x-clerk-sensitive": true },
+    team_id: { type: "string" },
+    key_id: { type: "string" },
+    bundle_id: { type: "string" },
+  },
+};
+
+function mockActiveProductionEnvironment(): void {
+  mockFetchApplication.mockResolvedValue({
+    application_id: "app_1",
+    name: "app",
+    instances: [
+      { instance_id: "ins_dev", environment_type: "development" },
+      { instance_id: "ins_prod", environment_type: "production" },
+    ],
+  });
+  mockListApplicationDomains.mockResolvedValue({
+    data: [
+      {
+        object: "domain",
+        id: "dmn_1",
+        name: "example.com",
+        is_satellite: false,
+        is_provider_domain: false,
+        frontend_api_url: "https://clerk.example.com",
+        accounts_portal_url: "https://accounts.example.com",
+        development_origin: "",
+        cname_targets: [],
+      },
+    ],
+    total_count: 1,
+  });
+  mockFetchInstanceConfigSchema.mockResolvedValue({
+    properties: { connection_oauth_apple: appleOAuthSchema },
+  });
+  mockGetApplicationDomainStatus.mockResolvedValue(completeStatus);
+}
+
 beforeEach(() => {
   mockFetchInstanceConfig.mockResolvedValue({});
   mockFetchInstanceConfigSchema.mockResolvedValue({ properties: {} });
+  mockListIOSApplications.mockResolvedValue([]);
+  mockGetNativeSettings.mockResolvedValue({ object: "native_settings", api_enabled: true });
 });
 
 afterEach(() => {
   mockFetchApplication.mockReset();
   mockListApplicationDomains.mockReset();
+  mockListIOSApplications.mockReset();
+  mockGetNativeSettings.mockReset();
   mockFetchInstanceConfig.mockReset();
   mockFetchInstanceConfigSchema.mockReset();
   mockGetApplicationDomainStatus.mockReset();
@@ -168,6 +220,132 @@ describe("resolveDeployState", () => {
       expect(state.snapshot.oauthProviders).toEqual(["google"]);
       expect(state.snapshot.completedOAuthProviders).toEqual(["google"]);
     }
+  });
+
+  describe("native-only Apple", () => {
+    const nativeConnection = {
+      enabled: true,
+      authenticatable: true,
+      bundle_id: "com.example.native",
+    };
+    const registration = {
+      object: "ios_application",
+      id: "ios_native",
+      app_id_prefix: "ABCDE12345",
+      bundle_id: "com.example.native",
+    };
+
+    function mockProductionApple(
+      connection: Record<string, unknown>,
+      development: Record<string, unknown> = { enabled: true },
+    ): void {
+      mockActiveProductionEnvironment();
+      mockFetchInstanceConfig.mockImplementation((_appId: string, instanceId: string) =>
+        instanceId === "ins_prod"
+          ? { connection_oauth_apple: connection }
+          : { connection_oauth_apple: development },
+      );
+    }
+
+    test("is complete with an exact production registration", async () => {
+      mockProductionApple(nativeConnection);
+      mockListIOSApplications.mockResolvedValue([registration]);
+
+      const state = await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" });
+
+      expect(state.kind).toBe("active");
+      if (state.kind === "active") {
+        expect(state.snapshot.completedOAuthProviders).toEqual(["apple"]);
+        expect(state.snapshot.nativeAppleReadinessIssue).toBeUndefined();
+        expect(buildDeployStatusReport(state, null).complete).toBe(true);
+      }
+      expect(mockListIOSApplications).toHaveBeenCalledWith("app_1", "ins_prod");
+      expect(mockGetNativeSettings).toHaveBeenCalledWith("app_1", "ins_prod");
+    });
+
+    test("points a missing registration at the production Native Applications page", async () => {
+      mockProductionApple(nativeConnection);
+      mockListIOSApplications.mockResolvedValue([
+        { ...registration, bundle_id: "com.example.other" },
+      ]);
+
+      const state = await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" });
+
+      expect(state.kind).toBe("active");
+      if (state.kind === "active") {
+        expect(state.snapshot.pending).toEqual({ type: "oauth", provider: "apple" });
+        expect(state.snapshot.nativeAppleReadinessIssue).toEqual({
+          bundleId: "com.example.native",
+          reason: "registration-missing",
+          dashboardUrl:
+            "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/native-applications",
+        });
+        const report = buildDeployStatusReport(state, null);
+        expect(report.state).toBe("oauth_pending");
+        expect(report.nextAction).toContain(
+          "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/native-applications",
+        );
+        expect(report.nextAction).not.toContain("missing production credentials: apple");
+      }
+    });
+
+    test("keeps development's native-only intent when production was cloned without a Bundle ID", async () => {
+      // Creating production clones Apple without its provider settings.
+      mockProductionApple({ enabled: true, authenticatable: true }, nativeConnection);
+
+      const state = await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" });
+
+      expect(state.kind).toBe("active");
+      if (state.kind === "active") {
+        expect(state.snapshot.pending).toEqual({ type: "oauth", provider: "apple" });
+        expect(state.snapshot.nativeAppleReadinessIssue).toMatchObject({
+          bundleId: "com.example.native",
+          reason: "bundle-id-missing",
+        });
+        const report = buildDeployStatusReport(state, null);
+        expect(report.nextAction).toContain("has no Bundle ID");
+        expect(report.nextAction).not.toContain("missing production credentials: apple");
+      }
+      expect(mockListIOSApplications).not.toHaveBeenCalled();
+    });
+
+    test("reports unverifiable rather than missing when native reads fail", async () => {
+      mockProductionApple(nativeConnection);
+      mockListIOSApplications.mockRejectedValue(new Error("native endpoint unavailable"));
+
+      const state = await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" });
+
+      expect(state.kind).toBe("active");
+      if (state.kind === "active") {
+        expect(state.snapshot.nativeAppleReadinessIssue?.reason).toBe("verification-unavailable");
+        expect(buildDeployStatusReport(state, null).nextAction).toContain(
+          "don't create another registration",
+        );
+      }
+    });
+
+    test("leaves hosted Apple credential-based without native reads", async () => {
+      mockProductionApple(
+        {
+          enabled: true,
+          bundle_id: "com.example.native",
+          client_id: "com.example.web",
+          client_secret: "REDACTED",
+          team_id: "TEAM123456",
+          key_id: "KEY1234567",
+        },
+        nativeConnection,
+      );
+
+      const state = await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" });
+
+      expect(state.kind).toBe("active");
+      if (state.kind === "active") {
+        expect(state.snapshot.completedOAuthProviders).toEqual(["apple"]);
+        expect(state.snapshot.nativeAppleReadinessIssue).toBeUndefined();
+      }
+      expect(mockListIOSApplications).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -408,6 +586,32 @@ describe("resolveLiveDeploySnapshot records each read as it succeeds", () => {
       { captureError: true },
     );
   }
+
+  test("records verified native Apple registration as OAuth complete without web credentials", async () => {
+    mockActiveProductionEnvironment();
+    mockFetchInstanceConfig.mockImplementation((_appId: string, instanceId: string) => ({
+      connection_oauth_apple: {
+        enabled: true,
+        authenticatable: true,
+        ...(instanceId === "ins_prod" && { bundle_id: "com.example.native" }),
+      },
+    }));
+    mockListIOSApplications.mockResolvedValue([
+      {
+        object: "ios_application",
+        id: "ios_native",
+        app_id_prefix: "ABCDE12345",
+        bundle_id: "com.example.native",
+        created_at: 1,
+        updated_at: 1,
+      },
+    ]);
+
+    const { payload, error } = await resolved();
+
+    expect(error).toBeUndefined();
+    expect(payload.components).toEqual({ dns: true, ssl: true, mail: true, oauth: true });
+  });
 
   test("a failed configuration read keeps what the domain read observed", async () => {
     mockConfigReads(serverError());

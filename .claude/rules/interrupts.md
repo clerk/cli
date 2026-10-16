@@ -82,12 +82,12 @@ as an obvious "wait" and got wrapped — which is how a poll loop came to report
 success. **If the thing being awaited is a timer or a request rather than a
 person, it does not belong here.**
 
-One trap to know about: **a wait that can never settle.**
-`whileAwaitingUser(callbackPromise)` in `auth-server.ts` never decrements,
-because nothing rejects that promise on abort. Harmless only because the process
-always exits while the wait is open. If you race such a promise and then
-continue, the counter stays pinned and _every_ later Ctrl-C in that process
-reports 0.
+One trap to know about: **a wait that can never settle.** If you race a wrapped
+promise and then continue, the loser must still settle, or the counter stays
+pinned and _every_ later Ctrl-C in that process reports 0. `auth login` races
+`waitForCallback` against its paste-back prompt and carries on when the paste
+wins, so `auth-server`'s `stop()` rejects the pending callback promise rather
+than leaving it open.
 
 ## Adding an interruptible operation
 

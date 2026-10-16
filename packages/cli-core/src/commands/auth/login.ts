@@ -1,5 +1,5 @@
 import { generateCodeVerifier, generateCodeChallenge, generateState } from "../../lib/pkce.ts";
-import { startAuthServer } from "../../lib/auth-server.ts";
+import { parseCallback, startAuthServer } from "../../lib/auth-server.ts";
 import {
   exchangeCodeForToken,
   fetchUserInfo,
@@ -16,9 +16,9 @@ import {
 } from "../../lib/credential-store.ts";
 import { getAuth, setAuth, resolveProfile } from "../../lib/config.ts";
 import { AUTH_TIMEOUT_MS, CALLBACK_PATH, CLERK_CLIENT_CLI } from "../../lib/constants.ts";
-import { confirm } from "../../lib/prompts.ts";
+import { confirm, text } from "../../lib/prompts.ts";
 import { isHuman } from "../../mode.ts";
-import { errorMessage, throwUserAbort } from "../../lib/errors.ts";
+import { ERROR_CODE, errorMessage, throwUserAbort } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { attemptAutoclaim, type AutoclaimResult } from "../../lib/autoclaim.ts";
@@ -53,6 +53,69 @@ interface OAuthFlowResult {
    * replaced it, or null if there was none. The caller revokes it.
    */
   previousSession: OAuthSession | null;
+}
+
+type AuthServer = ReturnType<typeof startAuthServer>;
+
+/**
+ * Wait for the authorization code from whichever channel delivers it first:
+ * the loopback redirect, or — when someone is at an interactive terminal — the
+ * redirect URL pasted back by hand. The paste path is for machines without a
+ * browser: the user signs in on another device, where the redirect to
+ * `127.0.0.1` fails to load, and copies that URL from the address bar.
+ *
+ * Pasting is as safe as the redirect: the URL passes the same state check, and
+ * the code is useless without the PKCE verifier, which never leaves this
+ * process. Never log the pasted value — it carries the authorization code.
+ */
+async function awaitAuthorizationCode(authServer: AuthServer, state: string): Promise<string> {
+  // No paste prompt for agents, pipes, or CI: there is no one to paste, and
+  // they keep the loopback-only behaviour they had before.
+  if (!isHuman() || !process.stdin.isTTY) {
+    const { code } = await withSpinner("Waiting for authentication...", async () =>
+      authServer.waitForCallback().catch((error: unknown) => {
+        authServer.stop();
+        throw error;
+      }),
+    );
+    return code;
+  }
+
+  const prompt = new AbortController();
+  const pasted = text({
+    message: "Signing in from another device? Paste the URL your browser ended up on",
+    placeholder: "http://127.0.0.1:…",
+    validate: (value) => checkPastedRedirect(value, state),
+    signal: prompt.signal,
+  }).then((value) => {
+    const outcome = parseCallback(new URL(value.trim()), state);
+    // Validation lets an OAuth error through on purpose: a denied consent
+    // ends the login, the same as it does on the loopback path.
+    if (!outcome.ok) throw outcome.error;
+    return outcome.code;
+  });
+
+  try {
+    // `Promise.race` subscribes to both, so the loser's rejection — the prompt
+    // aborted below, or the wait rejected by `stop()` — is handled.
+    return await Promise.race([authServer.waitForCallback().then(({ code }) => code), pasted]);
+  } finally {
+    prompt.abort();
+    authServer.stop();
+  }
+}
+
+/** Prompt validation for a pasted redirect URL; returns a message to re-prompt with. */
+function checkPastedRedirect(value: string | undefined, state: string): string | undefined {
+  const url = URL.parse(value?.trim() ?? "");
+  if (!url) return "Paste the full URL from your browser's address bar.";
+
+  const outcome = parseCallback(url, state);
+  if (outcome.ok || outcome.error.code === ERROR_CODE.OAUTH_PROVIDER_ERROR) return undefined;
+  if (outcome.error.code === ERROR_CODE.OAUTH_STATE_MISMATCH) {
+    return "That URL is from a different sign-in attempt. Use the URL printed above.";
+  }
+  return "That URL has no authorization code. Paste the full URL from your browser's address bar.";
 }
 
 async function performOAuthFlow(): Promise<OAuthFlowResult> {
@@ -94,12 +157,7 @@ async function performOAuthFlow(): Promise<OAuthFlowResult> {
   log.info(`Waiting for authentication (timeout in ${timeoutMinutes}m)...`);
 
   setTelemetryStage("awaiting_callback");
-  const { code } = await withSpinner("Waiting for authentication...", async () =>
-    authServer.waitForCallback().catch((error: unknown) => {
-      authServer.stop();
-      throw error;
-    }),
-  );
+  const code = await awaitAuthorizationCode(authServer, state);
 
   // Snapshotted here: the authorization code has arrived, so the store still
   // holds the outgoing session and is about to be overwritten. Reading any
