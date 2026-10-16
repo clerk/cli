@@ -261,7 +261,8 @@ The file is an envelope around the users:
 
 `source` is what lets `clerk migrate import <export-run-id>` run with no
 `--source`. A Firebase export adds `firebase`, the project's hash
-parameters, so the import needs no `--firebase-*` flags.
+parameters, when it could read them: the import then needs no `--firebase-*`
+flags. When it couldn't, pass them to the import, or enter them at its prompt.
 
 `--json` prints the result on stdout instead — `{ target, run, output, users,
 skipped, coverage, next }` — and never prompts, so a missing credential exits 2
