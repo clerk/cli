@@ -426,8 +426,8 @@ also keeps `raw_app_meta_data`, which is what the import's
 (`user` and `account`, or `users` and `accounts` under `usePlural: true`), how
 the columns are spelled (camelCase, or the snake_case Better Auth's Drizzle
 generator writes by default), and which plugin columns exist. The username
-plugin adds `username`, admin adds `banned` (carried only while `banExpires` is
-unset or in the future), phone-number adds `phoneNumber`, and so on; selecting a column that is not there fails the whole query, and the
+plugin adds `username`, admin adds `banned` (carried while `banExpires` is
+unset, in the future, or can't be read), phone-number adds `phoneNumber`, and so on; selecting a column that is not there fails the whole query, and the
 database answers the question better than the user can. Passwords come from a
 `LEFT JOIN` onto the credential `account` row — left, not inner, so a user who
 only ever signed in with OAuth is still exported. A user with two credential rows
