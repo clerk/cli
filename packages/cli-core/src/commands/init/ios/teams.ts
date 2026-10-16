@@ -1,5 +1,6 @@
 import { log } from "../../../lib/log.ts";
 import { TEAM_ID } from "./starter-project.ts";
+import type { Inspection } from "./xcode.ts";
 
 export interface AppleTeam {
   id: string;
@@ -84,4 +85,12 @@ export function readXcodeDefaults(): XcodeDefaults {
     log.debug(`Could not read Xcode settings: ${String(error)}`);
     return { teams: [] };
   }
+}
+
+/** Whether a team signing the app is one Xcode's account list marks as a Personal Team. */
+export function signedByPersonalTeam(inspection: Inspection, teams?: AppleTeam[]): boolean {
+  const ids = new Set(inspection.contexts.map((context) => context.settings.DEVELOPMENT_TEAM));
+  ids.delete(undefined);
+  if (!ids.size) return false;
+  return (teams ?? readXcodeDefaults().teams).some((team) => team.personal && ids.has(team.id));
 }

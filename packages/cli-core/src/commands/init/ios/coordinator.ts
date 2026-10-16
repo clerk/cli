@@ -2,7 +2,7 @@ import { readdirSync } from "node:fs";
 import { confirm, text } from "../../../lib/prompts.ts";
 import { select } from "../../../lib/listage.ts";
 import { log } from "../../../lib/log.ts";
-import { CliError, ERROR_CODE, throwUserAbort } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../../lib/errors.ts";
 import { setTelemetryStage } from "../../../lib/telemetry.ts";
 import { interruptSignal } from "../../../lib/signals.ts";
 import { outro } from "../../../lib/spinner.ts";
@@ -11,6 +11,7 @@ import { isUnchangedStarter } from "./starter.ts";
 import { planAppleSetup } from "./plan.ts";
 import { sdkLinked } from "./sdk.ts";
 import { inspectSelectedProject } from "./xcode.ts";
+import { signedByPersonalTeam } from "./teams.ts";
 import { nonDefaultXcodeNote } from "./xcode-tools.ts";
 import { SelectionNeeded } from "./discovery.ts";
 import { IdentityRequired, describeIdentity } from "./identity.ts";
@@ -50,7 +51,10 @@ export function canSetUpXcode(): boolean {
 export const CLERK_SWIFT_MINIMUM_VERSION = "1.5.8";
 export const SWIFT_QUICKSTART = "https://clerk.com/docs/ios/getting-started/quickstart";
 
-export function setupNextSteps(result: ApplyResult, starter?: StarterProjectSummary): string[] {
+export function setupNextSteps(
+  result: ApplyResult,
+  starter?: StarterProjectSummary & { personalTeam: boolean },
+): string[] {
   const initialized = result.handoff.completed.some((item) => item.id === "initialize-clerk");
   if (starter && initialized)
     return [
@@ -109,7 +113,10 @@ export function printSetupPreview(preview: SetupPreview): void {
     log.info("  Swift integration remains: initialize Clerk and connect your sign-in flow.");
 }
 
-export function printSetupResult(result: ApplyResult, starter?: StarterProjectSummary): void {
+export function printSetupResult(
+  result: ApplyResult,
+  starter?: StarterProjectSummary & { personalTeam: boolean },
+): void {
   if (result.message) log.warn(result.message);
   const completed = result.handoff.completed;
   const summary = [
@@ -165,7 +172,6 @@ export interface AppleInitOptions {
 export interface StarterProjectSummary {
   projectName: string;
   platform: "ios" | "macos";
-  personalTeam: boolean;
 }
 
 /**
@@ -244,12 +250,20 @@ export async function runAppleInit(
     );
     stopNativeProgress();
     setup.inspection = inspection;
-    // A Mac app has no simulator to fall back to, so it's signed with a provisioning profile,
-    // which a Personal Team can't get with Associated Domains. Only a new starter knows its team
-    // this way; Sign in with Apple is already off for it (see `starterAppleOptions`).
-    if (options.starterProject?.personalTeam && inspection.input.selection.sdk === "macosx")
-      setup.associatedDomain = false;
     const starter = await isUnchangedStarter(inspection);
+    // An unchanged starter is still signed by the team it was created with. A Personal Team can't
+    // use Sign in with Apple, and a Mac app has no simulator to fall back to, so it also can't keep
+    // Associated Domains. Reading the team from the project covers an agent's run after creating
+    // the starter too; other apps keep their 4.0.0 setup.
+    const personalTeam = starter && signedByPersonalTeam(inspection, dependencies.xcodeTeams);
+    if (personalTeam) {
+      if (options.signInWithApple)
+        throwUsageError(
+          "Sign in with Apple needs a paid Apple Developer Program team, and this app is signed by a Personal Team. Choose a paid team in Xcode, or drop --sign-in-with-apple.",
+        );
+      setup.signInWithApple = false;
+      if (inspection.input.selection.sdk === "macosx") setup.associatedDomain = false;
+    }
     let installedProducts: "core" | "ui" | undefined;
     if (!options.appleSdk && !options.prebuiltAuthUi) {
       for (const products of ["ui", "core"] as const) {
@@ -348,7 +362,11 @@ export async function runAppleInit(
     const result = await applySetup(preview, dependencies, signal);
     stopNativeProgress();
     if (json) log.data(JSON.stringify(result, null, 2));
-    else printSetupResult(result, options.starterProject);
+    else
+      printSetupResult(
+        result,
+        options.starterProject && { ...options.starterProject, personalTeam },
+      );
     if (result.status === "incomplete")
       throw new CliError(
         result.message ??

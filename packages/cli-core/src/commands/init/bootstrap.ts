@@ -208,6 +208,8 @@ export type BootstrapOverrides = {
   implicitBootstrap?: boolean;
   pmOverride?: PackageManager;
   nameOverride?: string;
+  /** Accountless-only flags that were passed, which a native iOS or macOS starter can't use. */
+  accountlessFlags?: readonly string[];
   /** Answers for a native iOS or macOS starter; `flags` names the Apple flags that were passed. */
   apple?: {
     platform?: ApplePlatform;
@@ -235,6 +237,7 @@ export async function promptAndBootstrap(
     implicitBootstrap = false,
     pmOverride,
     nameOverride,
+    accountlessFlags = [],
     apple,
   }: BootstrapOverrides = { skipConfirm: false },
 ): Promise<BootstrapResult> {
@@ -263,6 +266,10 @@ export async function promptAndBootstrap(
 
   const choice = await pickFramework(frameworkOverride, apple?.platform);
   if (choice.kind === "apple") {
+    if (accountlessFlags.length)
+      throwUsageError(
+        `${accountlessFlags.join(", ")} ${accountlessFlags.length === 1 ? "applies" : "apply"} only to accountless web setup; iOS and macOS apps link a Clerk application instead.`,
+      );
     return promptAppleStarter(cwd, choice.platform, {
       skipConfirm,
       name: nameOverride,

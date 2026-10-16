@@ -1,3 +1,4 @@
+import type { AppleTeam } from "./teams.ts";
 import type { ScaffoldPlan } from "../frameworks/types.ts";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -72,6 +73,8 @@ export interface Dependencies {
   api?: NativeAPI;
   appleAPI?: IOSNativeAppleAPI;
   promptIdentity?: IdentityPrompt;
+  /** Xcode's signed-in teams, instead of reading them from Xcode's settings. */
+  xcodeTeams?: AppleTeam[];
 }
 export interface SetupPreview {
   inspection: Inspection;

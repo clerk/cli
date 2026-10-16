@@ -239,7 +239,7 @@ describe("clerk init for native Apple projects", () => {
         expect.objectContaining({
           bundleId: undefined,
           appIdPrefix: "COMPANY001",
-          starterProject: { projectName: "MyApp", platform: "ios", personalTeam: false },
+          starterProject: { projectName: "MyApp", platform: "ios" },
         }),
         "app_test",
       );
@@ -252,17 +252,6 @@ describe("clerk init for native Apple projects", () => {
 
       expect(run).toHaveBeenCalledWith(
         expect.objectContaining({ appIdPrefix: "LEGACY0001" }),
-        "app_test",
-      );
-    });
-
-    test("doesn't offer Sign in with Apple on a Personal Team", async () => {
-      const run = starter({ personalTeam: true });
-
-      await init({ starter: true, framework: "ios" });
-
-      expect(run).toHaveBeenCalledWith(
-        expect.objectContaining({ signInWithApple: false }),
         "app_test",
       );
     });
@@ -334,17 +323,18 @@ describe("clerk init for native Apple projects", () => {
         name: "explicit options",
         options: { appleSdk: "core" as const, appIdPrefix: "LEGACY0001", signInWithApple: true },
         command:
-          "clerk init --app <app_id> --json --apple-sdk core --app-id-prefix LEGACY0001 --sign-in-with-apple",
+          "cd MyApp && clerk init --app <app_id> --json --apple-sdk core --app-id-prefix LEGACY0001 --sign-in-with-apple",
       },
       {
         name: "the starter's team as the App ID Prefix",
         options: { prebuiltAuthUi: true },
-        command: "clerk init --app <app_id> --json --app-id-prefix COMPANY001 --prebuilt-auth-ui",
+        command:
+          "cd MyApp && clerk init --app <app_id> --json --app-id-prefix COMPANY001 --prebuilt-auth-ui",
       },
       {
         name: "no Bundle ID or team, which the new project already holds",
         options: { bundleId: "com.example.MyApp", teamId: "COMPANY001" },
-        command: "clerk init --app <app_id> --json --app-id-prefix COMPANY001",
+        command: "cd MyApp && clerk init --app <app_id> --json --app-id-prefix COMPANY001",
       },
     ])("an agent's continuation carries $name", async ({ options, command }) => {
       const run = agentStarter();
@@ -352,11 +342,44 @@ describe("clerk init for native Apple projects", () => {
       await init({ starter: true, framework: "ios", ...options });
 
       expect(run).not.toHaveBeenCalled();
-      // Every place that names the next command names the same one.
+      // Every place that names the next command names the same one, starting in the new app.
       const plain = Bun.stripANSI(captured.err);
-      expect(plain).toContain("cd MyApp");
       expect(plain).toContain(`Then run \`${command}\``);
-      expect(plain.match(/clerk init --app <app_id>[^\n`]*/g)).toEqual([command, command, command]);
+      expect(plain.match(/(?:cd \S+ && )?clerk init --app <app_id>[^\n`]*/g)).toEqual([
+        command,
+        command,
+        command,
+      ]);
+    });
+
+    test.each([
+      [{ xcodeProject: "Other.xcodeproj" }, "--xcode-project selects an existing Xcode project"],
+      [{ xcodeTarget: "Foo" }, "--xcode-target selects an existing Xcode project"],
+      [
+        { xcodeTarget: "Foo", xcodeConfiguration: "Debug" },
+        "--xcode-target, --xcode-configuration select an existing Xcode project",
+      ],
+    ])("rejects %o with --starter before creating anything", async (options, message) => {
+      setup();
+
+      await expect(init({ starter: true, framework: "ios", ...options })).rejects.toThrow(message);
+      expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      [{ accountless: true }, "--accountless"],
+      [{ template: "native" as const }, "--template"],
+      [{ fresh: true }, "--fresh"],
+    ])("hands %o to the starter so it's rejected before writing", async (options, flag) => {
+      starter();
+
+      await init({ starter: true, framework: "ios", ...options }).catch(() => undefined);
+
+      expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(
+        expect.any(String),
+        iosFramework,
+        expect.objectContaining({ accountlessFlags: [flag] }),
+      );
     });
 
     test("--team-id needs --starter", async () => {

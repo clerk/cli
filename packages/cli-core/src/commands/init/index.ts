@@ -118,11 +118,18 @@ export async function init(options: InitOptions = {}) {
   if (frameworkOverride) assertFrameworkFlags(options, frameworkOverride);
 
   const appleFlags = APPLE_FLAGS.filter(([key]) => options[key] != null).map(([, flag]) => flag);
+  // iOS and macOS have no accountless setup, so a native starter rejects these before writing.
+  const accountlessFlags = [
+    optsAccountless && "--accountless",
+    options.template != null && "--template",
+    options.fresh && "--fresh",
+  ].filter((flag): flag is string => Boolean(flag));
   // In agent mode, implicitly enable --yes to skip all confirmation prompts.
   const overrides: BootstrapOverrides = {
     skipConfirm: options.yes || agent,
     pmOverride: options.pm,
     nameOverride: options.name,
+    ...(accountlessFlags.length && { accountlessFlags }),
     ...((appleFlags.length || options.framework === MACOS) && {
       apple: {
         platform: options.framework === MACOS ? "macos" : undefined,
@@ -160,7 +167,7 @@ export async function init(options: InitOptions = {}) {
 
   assertFrameworkFlags(options, ctx.framework);
   if (ctx.framework.dep === "ios")
-    ctx.nativeContinuation = appleContinuation(options, bootstrap?.apple);
+    ctx.nativeContinuation = appleContinuation(options, bootstrap?.apple && bootstrap);
   const appleOptions: AppleInitOptions = {
     ...options,
     root: ctx.cwd,
@@ -313,6 +320,16 @@ async function assertUsableFlags(
       "--dry-run never signs in or changes your Clerk application; drop --app, --login, and --accountless.",
     );
   }
+  const xcodeSelection = [
+    options.xcodeProject != null && "--xcode-project",
+    options.xcodeTarget != null && "--xcode-target",
+    options.xcodeConfiguration != null && "--xcode-configuration",
+  ].filter(Boolean);
+  if (options.starter && xcodeSelection.length) {
+    throwUsageError(
+      `${xcodeSelection.join(", ")} ${xcodeSelection.length === 1 ? "selects" : "select"} an existing Xcode project and can't be combined with --starter.`,
+    );
+  }
   if (options.teamId != null && !options.starter) {
     throwUsageError(
       "--team-id applies to a new app with --starter. For an existing app, set the team in Xcode, or pass --app-id-prefix.",
@@ -363,26 +380,30 @@ function starterAppleOptions(
     // The project already carries `--bundle-id`; passing it again would mask what Xcode reports.
     bundleId: undefined,
     appIdPrefix: options.appIdPrefix ?? apple.teamId,
-    // A Personal Team can't use Sign in with Apple, so setup doesn't offer it.
-    signInWithApple: apple.personalTeam ? false : options.signInWithApple,
-    starterProject: { projectName, platform: apple.platform, personalTeam: apple.personalTeam },
+    starterProject: { projectName, platform: apple.platform },
   };
 }
 
 /**
  * The `clerk init` an agent runs once it has chosen an application, carrying this run's native
  * setup options so the next run doesn't fall back to defaults. After a new starter it runs inside
- * the new app: the project already holds the Bundle ID and team, so their flags and any Xcode
- * selection (relative to this directory) are dropped, and the starter's own decisions are carried.
+ * the new app, so it starts with `cd`: the project already holds the Bundle ID and team, so their
+ * flags are dropped, and the starter's own decisions are carried.
  */
-function appleContinuation(options: InitOptions, starter?: AppleStarter): string {
+function appleContinuation(
+  options: InitOptions,
+  starter?: { projectName: string; apple: AppleStarter },
+): string {
   const values: Partial<InitOptions> = {
     ...options,
-    ...(starter && starterAppleOptions(options, "", starter)),
+    ...(starter && starterAppleOptions(options, starter.projectName, starter.apple)),
   };
-  const parts = ["clerk init --app <app_id> --json"];
+  const parts = [
+    ...(starter ? [`cd ${quoteArg(starter.projectName)}`, "&&"] : []),
+    "clerk init --app <app_id> --json",
+  ];
   for (const [key, flag] of APPLE_FLAGS) {
-    if (key === "teamId" || (starter && (key === "bundleId" || key.startsWith("xcode")))) continue;
+    if (key === "teamId" || (starter && key === "bundleId")) continue;
     const value = values[key];
     if (value === true) parts.push(flag);
     else if (typeof value === "string" && value) parts.push(flag, quoteArg(value));
@@ -583,10 +604,7 @@ function printBootstrapNextSteps(
   // Reached for a native starter only when an agent hasn't chosen a Clerk application yet. The
   // agent must finish setup from inside the new app, so it gets the steps too.
   if (bootstrap.apple) {
-    const steps = [
-      `cd ${quoteArg(bootstrap.projectName)}`,
-      appleContinuation(options, bootstrap.apple),
-    ];
+    const steps = [appleContinuation(options, bootstrap)];
     printNextSteps(steps);
     printAgentNextSteps(steps);
     return;

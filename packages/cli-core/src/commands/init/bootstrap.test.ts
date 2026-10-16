@@ -1,5 +1,5 @@
 import { test, expect, describe, spyOn, afterAll, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BOOTSTRAP_REGISTRY } from "./bootstrap-registry.ts";
@@ -355,4 +355,37 @@ describe("promptAndBootstrap for native Apple starters", () => {
     });
     expect(spawn).not.toHaveBeenCalled();
   });
+});
+
+describe("accountless flags with a native Apple starter", () => {
+  const spies: { mockRestore(): void }[] = [];
+  afterEach(() => {
+    for (const spy of spies.splice(0)) spy.mockRestore();
+  });
+
+  // iOS and macOS have no accountless setup, so these are rejected before any file is written.
+  test.each(["--accountless", "--template", "--fresh"])(
+    "%s stops before the project is created",
+    async (flag) => {
+      const tmp = mkdtempSync(join(tmpdir(), "clerk-bootstrap-"));
+      const starter = spyOn(appleStarter, "promptAppleStarter");
+      spies.push(starter);
+      try {
+        await expect(
+          promptAndBootstrap(tmp, { name: "iOS (Swift)", dep: "ios" } as never, {
+            skipConfirm: true,
+            nameOverride: "MyApp",
+            accountlessFlags: [flag],
+          }),
+        ).rejects.toMatchObject({
+          exitCode: 2,
+          message: expect.stringContaining(`${flag} applies only to accountless web setup`),
+        });
+        expect(starter).not.toHaveBeenCalled();
+        expect(readdirSync(tmp)).toEqual([]);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 });
