@@ -59,7 +59,6 @@ import {
   startRun,
   type Run,
   type RunRecord,
-  type RunState,
   type UserLine,
   hasRetryableUsers,
   NO_PASSWORD_CODE,
@@ -542,9 +541,9 @@ function rejectSummary(checks: ImportChecks, json = false): string {
 
 /**
  * The earlier import run, of this source into this instance, that created the
- * users the checks reject as already there: how many of them, whether it ran
- * this same file, and its state. Fixing a skipped row changes the file, and the
- * changed file's run meets them; so does the same file run with `--new-run`.
+ * users the checks reject as already there: how many of them, and whether it
+ * ran this same file. Fixing a skipped row changes the file, and the changed
+ * file's run meets them; so does the same file run with `--new-run`.
  */
 function earlierRunHolding(
   runsDir: string,
@@ -552,23 +551,46 @@ function earlierRunHolding(
   instanceId: string,
   checks: ImportChecks,
   sha256: string,
-): { id: string; count: number; sameFile: boolean; state: RunState } | undefined {
+): { id: string; count: number; sameFile: boolean } | undefined {
   const already = new Set(
     checks.rejects.filter((reject) => reject.reason === ALREADY_IMPORTED).map((r) => r.sourceId),
   );
   if (already.size === 0) return undefined;
   for (const record of listRuns(runsDir)) {
     if (record.kind !== "import" || record.source !== source) continue;
-    if (record.target.instanceId !== instanceId) continue;
-    const state = runState(runsDir, record);
-    if (state === "undone") continue;
+    if (record.target.instanceId !== instanceId || runState(runsDir, record) === "undone") continue;
     let count = 0;
     for (const line of latestUserLines(runsDir, record.id).values()) {
       if (line.status === "created" && already.has(line.sourceId)) count++;
     }
-    if (count > 0) return { id: record.id, count, sameFile: record.file?.sha256 === sha256, state };
+    if (count > 0) return { id: record.id, count, sameFile: record.file?.sha256 === sha256 };
   }
   return undefined;
+}
+
+/**
+ * Whether the same import without `--new-run` would continue run `id` and
+ * import someone: `findResume` has to pick it, and `--require-password` has to
+ * leave a user it would retry.
+ */
+function continuesWithoutNewRun(
+  runsDir: string,
+  match: Parameters<typeof findResume>[1],
+  carry: string[],
+  id: string,
+  requirePassword: boolean | undefined,
+): boolean {
+  let resume: ResumeCase;
+  try {
+    resume = findResume(runsDir, match, carry);
+  } catch {
+    // It would refuse: the run is still going, or has an unfinished undo.
+    return false;
+  }
+  if (resume.kind !== "continue" || resume.record.id !== id) return false;
+  return (
+    !requirePassword || hasRetryableUsers(resume.record, latestUserLines(runsDir, id).values())
+  );
 }
 
 /**
@@ -612,18 +634,15 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const sha256 = sha256File(filePath);
       const runsDir = await resolveRunsDir(options.runsDir);
 
+      const match = {
+        sha256,
+        source,
+        instanceId: target.instanceId,
+        keyInstanceId: keyInstanceId(secretKey),
+      };
       const resume: ResumeCase = options.newRun
         ? { kind: "new" }
-        : findResume(
-            runsDir,
-            {
-              sha256,
-              source,
-              instanceId: target.instanceId,
-              keyInstanceId: keyInstanceId(secretKey),
-            },
-            carry,
-          );
+        : findResume(runsDir, match, carry);
 
       if (resume.kind === "complete") {
         if (options.json) {
@@ -803,11 +822,10 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         if (options.json) preview({ refused: true });
         const earlier = earlierRunHolding(runsDir, source, target.instanceId, checks, sha256);
         const undoEarlier = earlier ? undoCommand(earlier.id, carry) : undefined;
-        // Without --new-run, the same file continues that run and creates the rest.
         const continueEarlier =
           options.newRun &&
-          earlier?.sameFile &&
-          (earlier.state === "partial" || earlier.state === "interrupted")
+          earlier &&
+          continuesWithoutNewRun(runsDir, match, carry, earlier.id, options.requirePassword)
             ? commandFor({ ...options, newRun: false }, ["--yes"])
             : undefined;
         throwUsageError(

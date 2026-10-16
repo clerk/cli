@@ -141,8 +141,9 @@ Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 | `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code`, `pending` or `passwordDropped` when present |
 | `lock`         | The PID of the process writing the run, while it runs                                                                                  |
 
-On a `failed` line, `code` is the HTTP status (`422`, `429` or `unknown`). On a
-`skipped` line it gives the reason in machine form, such as `no_password`.
+On a `failed` line, `code` is the HTTP status, such as `422` or `429`, or
+`unknown`. On a `skipped` line it gives the reason in machine form, such as
+`no_password`.
 
 A user's status is `creating`, `created`, `failed`, `skipped` or `deleted`. The last line
 for each `sourceId` wins. A `429` retry, an extra email or phone that did not

@@ -389,6 +389,58 @@ describe("run", () => {
     expect(error.message).not.toContain("Drop --new-run");
   });
 
+  // findResume continues the newest run of the file, so the refusal offers the
+  // continue only when that is the run that created the users.
+  test("--new-run doesn't offer to continue a run a newer one would take over", async () => {
+    stubClerk({ failing: new Set(["u2"]) });
+    await run(baseOptions);
+    stubClerk({ failing: new Set(["u2"]), existing: [{ id: "user_u1", external_id: "u1" }] });
+    await run({ ...baseOptions, newRun: true, allowPartial: true });
+    expect(listRuns(runsDir())).toHaveLength(2);
+    captured.clear();
+
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain("from this file.");
+    expect(error.message).not.toContain("Drop --new-run");
+  });
+
+  // Without --new-run the import refuses over the unfinished undo.
+  test("--new-run doesn't offer to continue a run with an unfinished undo", async () => {
+    await run({ ...baseOptions, requirePassword: true });
+    const [first] = listRuns(runsDir());
+    const undoRun = startRun(runsDir(), {
+      kind: "undo",
+      target: { instanceId: "ins_1" },
+      undoes: first!.id,
+    });
+    undoRun.append({ sourceId: "u1", status: "failed", clerkId: "user_u1" });
+    undoRun.finish();
+    stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain(`created by run ${first!.id}, from this file.`);
+    expect(error.message).not.toContain("Drop --new-run");
+  });
+
+  // The continue would carry --require-password and leave the same users out.
+  test("--new-run --require-password doesn't offer a continue that imports nobody", async () => {
+    await run({ ...baseOptions, requirePassword: true });
+    stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+    const error = (await run({ ...baseOptions, newRun: true, requirePassword: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain("from this file.");
+    expect(error.message).not.toContain("Drop --new-run");
+  });
+
   // They never reach the checks, so the preview has to count them itself.
   test("--require-password counts the users it left out in the --json preview", async () => {
     await run({ ...baseOptions, requirePassword: true, dryRun: true, json: true });
