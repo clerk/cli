@@ -817,6 +817,16 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   if (source === "firebase" && !firebaseHashConfig && !options.yes && canPrompt(options)) {
     firebaseHashConfig = await promptForFirebaseHashConfig();
     configFrom = "the parameters entered";
+    // A suggested command runs with --yes, which never asks: it names the flags.
+    if (firebaseHashConfig) {
+      options = {
+        ...options,
+        firebaseSignerKey: firebaseHashConfig.base64_signer_key,
+        firebaseSaltSeparator: firebaseHashConfig.base64_salt_separator,
+        firebaseRounds: firebaseHashConfig.rounds,
+        firebaseMemCost: firebaseHashConfig.mem_cost,
+      };
+    }
   }
   // Wherever they came from, each goes into every password digest.
   const problem = firebaseHashConfig && firebaseHashConfigProblem(firebaseHashConfig);

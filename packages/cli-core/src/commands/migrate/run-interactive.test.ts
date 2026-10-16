@@ -295,6 +295,45 @@ describe("firebase hash parameters", () => {
     expect(mockText).not.toHaveBeenCalled();
     expect(created()).toHaveLength(0);
   });
+
+  // The suggested retry runs with --yes, which never asks again.
+  test("parameters entered at the prompt go into the retry the import suggests", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify({
+        users: [
+          { localId: "fb1", email: "a@x.dev", passwordHash: "SGFzaA==", salt: "U2FsdA==" },
+          { localId: "fb2", email: "b@x.dev", passwordHash: "SGFzaA==", salt: "U2FsdA==" },
+        ],
+      }),
+    );
+    mockPassword.mockResolvedValueOnce("c2lnbmVy");
+    mockText.mockImplementation((async (prompt: { message: string }) =>
+      prompt.message.includes("salt separator")
+        ? "c2VwYXJhdG9y"
+        : prompt.message === "rounds"
+          ? "8"
+          : "14") as unknown as typeof mockText);
+
+    // fb2's create fails, so the run ends partial and suggests the retry.
+    const clerk = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? init.body : "";
+      return init?.method === "POST" && body.includes('"fb2"')
+        ? Response.json(
+            { errors: [{ message: "taken", code: "form_identifier_exists" }] },
+            { status: 422 },
+          )
+        : clerk(input, init);
+    }) as typeof fetch;
+    await run({ ...importOptions, source: "firebase" });
+
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain(
+      "--firebase-signer-key SIGNER_KEY --firebase-salt-separator SALT_SEPARATOR --firebase-rounds ROUNDS --firebase-mem-cost MEM_COST",
+    );
+    expect(err).not.toContain("c2lnbmVy");
+  });
 });
 
 describe("legal consent", () => {
