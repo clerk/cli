@@ -111,7 +111,7 @@ export type UserLine = {
   /** Why a user was skipped. */
   reason?: string;
   error?: string;
-  /** Failed: the HTTP status, or "unknown". Skipped: a machine reason, such as NO_PASSWORD_CODE. */
+  /** Failed: the HTTP status, or "unknown". Skipped: a machine reason, NO_PASSWORD_CODE or IN_FILE_CODE. */
   code?: string;
   passwordDropped?: boolean;
 };
@@ -334,9 +334,17 @@ export function withLiveCounts(runsDir: string, record: RunRecord): RunRecord {
 export const NO_PASSWORD_CODE = "no_password";
 
 /**
+ * The `code` on a user the checks skipped for the file's own data: invalid,
+ * a duplicate within it, an email Clerk refuses, a malformed hash. A continue
+ * reads the same file, so it skips them again.
+ */
+export const IN_FILE_CODE = "in_file";
+
+/**
  * Whether a continue has users to retry: one never sent, or a latest line it
- * retries. Not a `--require-password` skip: the continue carries the flag, so
- * it leaves that user out again, and suggesting it would loop. A run that never
+ * retries. Not a `--require-password` skip, nor one for the file's own data:
+ * the continue carries the flag and reads the same file, so it leaves that
+ * user out again, and suggesting it would loop. A run that never
  * finished counts as having some: the users it never sent have no lines to
  * count.
  */
@@ -344,7 +352,7 @@ export function hasRetryableUsers(record: RunRecord, latest: Iterable<UserLine>)
   if (!record.finishedAt || (record.counts.notSent ?? 0) > 0) return true;
   return [...latest].some((line) =>
     line.status === "skipped"
-      ? line.code !== NO_PASSWORD_CODE
+      ? line.code !== NO_PASSWORD_CODE && line.code !== IN_FILE_CODE
       : line.status !== "created" || (line.pending?.length ?? 0) > 0,
   );
 }

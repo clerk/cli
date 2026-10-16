@@ -142,8 +142,10 @@ Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 | `lock`         | The PID of the process writing the run, while it runs                                                                                  |
 
 On a `failed` line, `code` is the HTTP status, such as `422` or `429`, or
-`unknown`. On a `skipped` line it gives the reason in machine form, such as
-`no_password`.
+`unknown`. On a `skipped` line it gives the reason in machine form:
+`no_password` for a user `--require-password` left out, or `in_file` for one
+the checks skipped for the file's own data (invalid, a duplicate within it, an
+email Clerk refuses, a malformed hash).
 
 A user's status is `creating`, `created`, `failed`, `skipped` or `deleted`. The last line
 for each `sourceId` wins. A `429` retry, an extra email or phone that did not
@@ -259,14 +261,17 @@ failed.
 `code: "no_password"`, so the run ends `partial`. A continue carries the flag
 and leaves them out again, so when they are all that's left, neither the import
 nor `runs <id>` suggests one. To import them, run the same import again without
-the flag: it continues this run and creates them.
+the flag: it continues this run and creates them. A skip for the file's own data
+(`code: "in_file"`) comes back on every continue too, so it isn't counted as
+something to retry: fix the file, which makes a new run.
 
 `--json` returns `{ target, run, resume, checks, result }`. When a run stops
 before importing, it carries one of `dryRun: true`, `refused: true`,
 `consent: "required"` or `nothingToImport: true` in place of `result`, and a
 file already imported in full returns `alreadyImported: true`. With
 `--require-password`, `withoutPassword` counts the users it left out before the
-checks, so `checks.total` plus it is the file's size. A continue with
+checks, so on a first import `checks.total` plus it is the file's size. A
+continue leaves out the users the run already created. A continue with
 identifiers left to attach carries `attachOnly`: the users it attaches them to,
 which skip the checks too.
 
@@ -467,8 +472,10 @@ Users that do exceed the limit come back in the error breakdown as
 `You have reached your limit of N users`, annotated with what a development
 instance can do about it. The first refusal stops the import: the users it
 never sent are counted under "Not sent" (`result.notSent` in `--json`, and
-`counts.notSent` in `run.json`). Once the limit is raised,
-[run the import again](#re-running) to send them.
+`counts.notSent` in `run.json`), written when the run finishes. A run stopped
+with Ctrl-C never finishes, so it can't count them, and `runs <id>` offers its
+continue instead. Once the limit is raised, [run the import again](#re-running)
+to send them.
 
 ### `clerk migrate runs`
 
@@ -495,8 +502,9 @@ with the flags it ran with, then the undo. The continue is left out when
 importing the file again might not reach this run: a newer run of the same file
 and source that may be for the same instance (a run under a key's stand-in ID
 could be for any instance), a file changed since, or any undo of it. It is also
-left out when only `--require-password` skips are left, or for a run from an
-earlier build, whose flags can't be read. Both carry what reaches
+left out when only `--require-password` skips, or skips for the file's own
+data, are left, or for a run from an earlier build, whose flags can't be read.
+Both carry what reaches
 the run's instance again, from the key its latest attempt used: `--secret-key
 <key>` for a key passed with `--secret-key` or exported (as `CLERK_SECRET_KEY`,
 or a framework's own variable such as `NUXT_CLERK_SECRET_KEY`), and `--app` and
@@ -573,7 +581,8 @@ the users that failed, in the same undo run. A Ctrl-C leaves the undo run
 `interrupted`, as it does an import, and running `undo` again carries on.
 
 Once undo reaches its preview, `--json` prints one object on stdout, whatever
-happens next. A refusal before that — no such run, a run that isn't an import,
+happens next, unless a Ctrl-C exits first (see `stopped` below). A refusal
+before that — no such run, a run that isn't an import,
 or a key for another instance — is an error, as it is for every command. The
 object:
 
@@ -601,8 +610,8 @@ before that, the object says why:
   deletes, failed.
 - `"writeFailed": true`: the file system refused a write to the runs folder.
 - `"stopped": true`: anything else stopped it. A Ctrl-C may exit before the
-  object is printed: `clerk migrate runs` then lists the undo run, and
-  `runs <id>` shows how far it got.
+  object is printed: `clerk migrate runs` then lists the undo run, if one was
+  written, and `runs <id>` shows how far it got.
 
 With `writeFailed` or `stopped`, `run` is the undo run as it stands on disk,
 once one was written: its counts come from its lines, and `state` says how it

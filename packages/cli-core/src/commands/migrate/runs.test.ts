@@ -324,6 +324,31 @@ describe("runs <id>", () => {
     expect(next).toEqual([expect.stringContaining(`clerk migrate undo ${record.id}`)]);
   });
 
+  // The continue reads the same file, so the checks skip them again.
+  test("offers no continue when only skips for the file's own data are left", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+      flags: { allowPartial: true },
+    });
+    run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    run.append({
+      sourceId: "b",
+      status: "skipped",
+      reason: "invalid: Invalid email",
+      code: "in_file",
+    });
+    const record = run.finish();
+
+    await runs(record.id, { runsDir, json: true });
+
+    const { next } = JSON.parse(captured.out) as { next: string[] };
+    expect(next).toEqual([expect.stringContaining(`clerk migrate undo ${record.id}`)]);
+  });
+
   // Each of these would start another run, or refuse, rather than continue it.
   describe("offers only the undo when importing the file again would not continue the run", () => {
     const onlyUndo = async (id: string) => {

@@ -164,7 +164,9 @@ describe("rejects", () => {
     const checks = await checkImport(
       input({ failures: [{ userId: "bad", row: 0, error: "Invalid email", path: ["email"] }] }),
     );
-    expect(checks.rejects).toEqual([{ sourceId: "bad", reason: "invalid: Invalid email" }]);
+    expect(checks.rejects).toEqual([
+      { sourceId: "bad", reason: "invalid: Invalid email", inFile: true },
+    ]);
     expect(checks.total).toBe(1);
   });
 
@@ -247,6 +249,7 @@ describe("rejects", () => {
         sourceId: "auth0|1",
         reason: "email is also used by an earlier user in the file, which is kept",
         keptSourceId: "email|1",
+        inFile: true,
       },
     ]);
   });
@@ -332,7 +335,7 @@ describe("rejects", () => {
     const checks = await checkImport(input({ users: [user("a"), user("a")] }));
     expect(checks.importable.map((u) => u.userId)).toEqual(["a"]);
     expect(checks.rejects).toEqual([
-      { sourceId: "a", reason: "duplicate source ID in the file", keptSourceId: "a" },
+      { sourceId: "a", reason: "duplicate source ID in the file", keptSourceId: "a", inFile: true },
     ]);
   });
 
@@ -529,6 +532,7 @@ describe("rejects", () => {
         sourceId: "early",
         reason: "shares an email, phone or username with a user an earlier attempt already created",
         keptSourceId: "late",
+        inFile: true,
       },
     ]);
   });
@@ -551,6 +555,7 @@ describe("rejects", () => {
         sourceId: "a",
         reason: "shares an email, phone or username with a user an earlier attempt already created",
         keptSourceId: "b",
+        inFile: true,
       },
     ]);
   });
@@ -564,7 +569,7 @@ describe("rejects", () => {
     );
     expect(checks.importable).toHaveLength(1);
     expect(checks.rejects).toEqual([
-      { sourceId: "a", reason: "duplicate source ID in the file", keptSourceId: "a" },
+      { sourceId: "a", reason: "duplicate source ID in the file", keptSourceId: "a", inFile: true },
     ]);
   });
 
@@ -592,7 +597,9 @@ describe("rejects", () => {
     const checks = await checkImport(
       input({ users: [user("a", { skipReason: "anonymous Better Auth user" }), user("b")] }),
     );
-    expect(checks.rejects).toEqual([{ sourceId: "a", reason: "anonymous Better Auth user" }]);
+    expect(checks.rejects).toEqual([
+      { sourceId: "a", reason: "anonymous Better Auth user", inFile: true },
+    ]);
     expect(checks.importable.map((entry) => entry.userId)).toEqual(["b"]);
   });
 
@@ -607,6 +614,7 @@ describe("rejects", () => {
         {
           sourceId: "a",
           reason: "only has emails Clerk refuses (malformed, or a domain that can't receive mail)",
+          inFile: true,
         },
       ]);
     });

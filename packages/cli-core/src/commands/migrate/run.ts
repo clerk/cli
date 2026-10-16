@@ -62,6 +62,7 @@ import {
   type UserLine,
   hasRetryableUsers,
   NO_PASSWORD_CODE,
+  IN_FILE_CODE,
   unfinishedUndoMessage,
   inUseMessage,
   openUndoOf,
@@ -570,9 +571,10 @@ function earlierRunHolding(
 }
 
 /**
- * Whether the same import without `--new-run` would continue run `id` and
- * import someone: `findResume` has to pick it, and `--require-password` has to
- * leave a user it would retry.
+ * The run the same import without `--new-run` would continue, when that is
+ * run `id` and it would import someone: `findResume` has to pick it, and it
+ * has to hold a user the continue retries. A `--require-password` skip is one
+ * when this import drops the flag.
  */
 function continuesWithoutNewRun(
   runsDir: string,
@@ -580,18 +582,21 @@ function continuesWithoutNewRun(
   carry: string[],
   id: string,
   requirePassword: boolean | undefined,
-): boolean {
+): RunRecord | undefined {
   let resume: ResumeCase;
   try {
     resume = findResume(runsDir, match, carry);
   } catch {
     // It would refuse: see findResume's @throws.
-    return false;
+    return undefined;
   }
-  if (resume.kind !== "continue" || resume.record.id !== id) return false;
-  return (
-    !requirePassword || hasRetryableUsers(resume.record, latestUserLines(runsDir, id).values())
-  );
+  if (resume.kind !== "continue" || resume.record.id !== id) return undefined;
+  const lines = [...latestUserLines(runsDir, id).values()];
+  const retries =
+    hasRetryableUsers(resume.record, lines) ||
+    (!requirePassword &&
+      lines.some((line) => line.status === "skipped" && line.code === NO_PASSWORD_CODE));
+  return retries ? resume.record : undefined;
 }
 
 /**
@@ -599,11 +604,12 @@ function continuesWithoutNewRun(
  * The checks never reject an adopted user: it is created already.
  */
 function recordRejects(run: Run, checks: ImportChecks): void {
-  for (const { sourceId, reason, keptSourceId } of checks.rejects) {
+  for (const { sourceId, reason, keptSourceId, inFile } of checks.rejects) {
     run.append({
       sourceId,
       status: "skipped",
       reason: keptSourceId ? `${reason} (kept: ${keptSourceId})` : reason,
+      ...(inFile ? { code: IN_FILE_CODE } : {}),
     });
   }
 }
@@ -827,12 +833,25 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         if (options.json) preview({ refused: true });
         const earlier = earlierRunHolding(runsDir, source, target.instanceId, checks, sha256);
         const undoEarlier = earlier ? undoCommand(earlier.id, carry) : undefined;
-        const continueEarlier =
-          options.newRun &&
-          earlier &&
-          continuesWithoutNewRun(runsDir, match, carry, earlier.id, options.requirePassword)
-            ? commandFor({ ...options, newRun: false }, ["--yes"])
+        const earlierRun =
+          options.newRun && earlier
+            ? continuesWithoutNewRun(runsDir, match, carry, earlier.id, options.requirePassword)
             : undefined;
+        // The flags that got that run past its checks: without them its
+        // continue refuses the same users again.
+        const recorded =
+          earlierRun?.flags && !Array.isArray(earlierRun.flags) ? earlierRun.flags : {};
+        const continueEarlier = earlierRun
+          ? commandFor(
+              {
+                ...options,
+                newRun: false,
+                allowPartial: options.allowPartial || recorded.allowPartial,
+                skipLegalChecks: options.skipLegalChecks || recorded.skipLegalChecks,
+              },
+              ["--yes"],
+            )
+          : undefined;
         throwUsageError(
           `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported.` +
             `${rejectSummary(checks, options.json)} ` +
@@ -1037,7 +1056,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           ? NEXT_STEPS.MIGRATE_PARTIAL(
               runsStep,
               // The same import again continues this run; --new-run would not.
-              commandFor({ ...options, newRun: false }, options.yes ? ["--yes"] : [], later),
+              // Run as printed: consent was given to this run, at the prompt or by -y.
+              commandFor({ ...options, newRun: false }, ["--yes"], later),
               undo,
             )
           : NEXT_STEPS.MIGRATE_DONE(runsStep, undo);

@@ -458,6 +458,56 @@ describe("run", () => {
     expect(error.message).toContain(`Drop --new-run to continue run ${first!.id}.`);
   });
 
+  // The same file rejects it again, so a continue would only loop.
+  test("a run left partial only by the file's own bad data offers no retry, nor a continue", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify([...export2, { id: "u3", primary_email_address: "not-an-email" }]),
+    );
+    await run({ ...baseOptions, allowPartial: true });
+    const [first] = listRuns(runsDir());
+    expect(first).toMatchObject({ status: "partial" });
+    expect(latestUserLines(runsDir(), first!.id).get("u3")).toMatchObject({
+      status: "skipped",
+      code: "in_file",
+    });
+    expect(Bun.stripANSI(captured.err)).not.toContain("to retry them");
+
+    captured.clear();
+    stubClerk({
+      existing: [
+        { id: "user_u1", external_id: "u1" },
+        { id: "user_u2", external_id: "u2" },
+      ],
+    });
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+    expect(error.message).not.toContain("Drop --new-run");
+  });
+
+  // Without the flag that got the earlier run past its checks, its continue
+  // would refuse the same users again.
+  test("--new-run's continue carries the --allow-partial the earlier run needed", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify([...export2, { id: "u3", primary_email_address: "not-an-email" }]),
+    );
+    stubClerk({ failing: new Set(["u2"]) });
+    await run({ ...baseOptions, allowPartial: true });
+    const [first] = listRuns(runsDir());
+    captured.clear();
+    stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain(`Drop --new-run to continue run ${first!.id}.`);
+    expect(error.examples?.[0]?.command).toContain("--allow-partial");
+    expect(error.examples?.[0]?.command).not.toContain("--new-run");
+  });
+
   // The continue would carry --require-password and leave the same users out.
   test("--new-run --require-password doesn't offer a continue that imports nobody", async () => {
     await run({ ...baseOptions, requirePassword: true });

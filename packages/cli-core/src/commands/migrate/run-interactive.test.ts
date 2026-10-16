@@ -140,6 +140,25 @@ const created = () =>
 
 const importOptions = { input: "export.json", source: "clerk", secretKey: "sk_test_x" };
 
+// A yes at the prompt is consent to this run, so the retry it suggests runs
+// as printed, like `runs <id>`'s continue.
+test("after a yes at the prompt, the suggested retry carries --yes", async () => {
+  const clerk = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const body = typeof init?.body === "string" ? init.body : "";
+    return init?.method === "POST" && body.includes('"u2"')
+      ? Response.json(
+          { errors: [{ message: "taken", code: "form_identifier_exists" }] },
+          { status: 422 },
+        )
+      : clerk(input, init);
+  }) as typeof fetch;
+
+  await run(importOptions);
+
+  expect(Bun.stripANSI(captured.err)).toMatch(/--yes` to retry them/);
+});
+
 describe("prompts for what was not passed", () => {
   test("bare `clerk migrate import` asks for the file, then the source, then imports", async () => {
     await run({ secretKey: "sk_test_x" });

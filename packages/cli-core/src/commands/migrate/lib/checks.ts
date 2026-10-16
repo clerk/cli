@@ -50,6 +50,11 @@ export type Reject = {
   reason: string;
   /** For a duplicate: the earlier user in the file that is kept instead. */
   keptSourceId?: string;
+  /**
+   * Caused by the file's own data, so the same file rejects it again: no
+   * setting or instance change lets it in on a continue.
+   */
+  inFile?: true;
 };
 
 export type ReasonCount = { reason: string; count: number };
@@ -983,6 +988,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const rejects: Reject[] = input.failures.map((failure) => ({
     sourceId: failure.userId,
     reason: `invalid: ${failure.error}`,
+    inFile: true,
   }));
 
   const disabledProviders = findDisabledProviderRejects(input);
@@ -1012,15 +1018,22 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     if (phoned.dropped) loosePhoneUsers.add(original.userId);
     const user = phoned.user;
     const sent = dropDisabledIdentifiers(user, input.settings);
+    // The file's own data, which the same file brings back on a continue.
+    const refusedOnly =
+      refused.length > 0 && !phoned.dropped && !hasAnyIdentifier(user)
+        ? "only has emails Clerk refuses (malformed, or a domain that can't receive mail)"
+        : undefined;
+    const hashProblem =
+      user.password && user.passwordHasher
+        ? hashShapeProblem(user.password, user.passwordHasher)
+        : undefined;
     const reason = adopted(original)
       ? undefined
       : (original.skipReason ??
         (refused.length > 0 && phoned.dropped && !hasAnyIdentifier(user)
           ? "only has emails Clerk refuses and phones not in E.164 form (numeric usernames are on)"
           : undefined) ??
-        (refused.length > 0 && !hasAnyIdentifier(user)
-          ? "only has emails Clerk refuses (malformed, or a domain that can't receive mail)"
-          : undefined) ??
+        refusedOnly ??
         (phoned.dropped && !hasAnyIdentifier(user)
           ? "only has phones not in E.164 form, which this instance refuses (numeric usernames are on)"
           : undefined) ??
@@ -1045,12 +1058,12 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
           ? "no legal acceptance on record, which this instance requires (--skip-legal-checks imports them without it)"
           : undefined) ??
         usernameProblem(user, input.settings, loosePhones) ??
-        (user.password && user.passwordHasher
-          ? hashShapeProblem(user.password, user.passwordHasher)
-          : undefined) ??
+        hashProblem ??
         disabledProviders.get(user.userId));
     if (reason) {
-      rejects.push({ sourceId: user.userId, reason });
+      const inFile =
+        reason === original.skipReason || reason === refusedOnly || reason === hashProblem;
+      rejects.push({ sourceId: user.userId, reason, ...(inFile ? { inFile: true as const } : {}) });
     } else {
       passed.push(sent);
       unstripped.set(sent, user);
@@ -1077,6 +1090,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         sourceId: user.userId,
         reason: "shares an email, phone or username with a user an earlier attempt already created",
         keptSourceId: holder,
+        inFile: true,
       });
       duplicates.add(originals.get(user) ?? user);
       continue;
@@ -1087,7 +1101,12 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     const duplicate = fileDuplicates.get(user);
     const reason = adopted(user) && duplicate !== DUPLICATE_SOURCE_ID ? undefined : duplicate;
     if (reason) {
-      rejects.push({ sourceId: user.userId, reason, ...(kept ? { keptSourceId: kept } : {}) });
+      rejects.push({
+        sourceId: user.userId,
+        reason,
+        ...(kept ? { keptSourceId: kept } : {}),
+        inFile: true,
+      });
       duplicates.add(originals.get(user) ?? user);
     } else candidates.push(user);
   }
