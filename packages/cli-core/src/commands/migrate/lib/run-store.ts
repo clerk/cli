@@ -335,7 +335,8 @@ export const NO_PASSWORD_CODE = "no_password";
  * Whether a continue has users to retry: one never sent, or a latest line it
  * retries. Not a `--require-password` skip: the continue carries the flag, so
  * it leaves that user out again, and suggesting it would loop. A run that never
- * finished always has: the users it never sent have no lines to count.
+ * finished counts as having some: the users it never sent have no lines to
+ * count.
  */
 export function hasRetryableUsers(record: RunRecord, latest: Iterable<UserLine>): boolean {
   if (!record.finishedAt || (record.counts.notSent ?? 0) > 0) return true;
