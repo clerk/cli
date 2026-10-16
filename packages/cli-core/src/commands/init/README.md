@@ -252,7 +252,7 @@ No files are written. The scaffold plan prints the quickstart steps: SDK install
 
 Once init has linked a Clerk application (the usual authenticated flow), it sets up the Xcode project directly instead of scaffolding files or pulling keys into `.env`. Xcode is required; JSON (`project.xcproj`) projects need Xcode 27, which init finds in `/Applications` without changing `xcode-select`. Without Xcode (another OS, or a Mac with only the Command Line Tools), init links the app, prints the manual steps, and pulls the key into `.env` as before.
 
-- **Discovery.** Finds app targets in root `.xcodeproj` and `.xcworkspace` bundles and asks when there's more than one. `--xcode-project` and `--xcode-target` select explicitly; projects in subdirectories such as `ios/` need `--xcode-project`. Debug and Release are inspected unless `--xcode-configuration` is given.
+- **Discovery.** Finds app targets in root `.xcodeproj` and `.xcworkspace` bundles and asks when there's more than one. `--xcode-project` and `--xcode-target` select explicitly; projects in subdirectories such as `ios/` need `--xcode-project`. Debug and Release are inspected unless `--xcode-configuration` is given. Both are set up against the development instance only; `clerk doctor` checks Release against production (registration, Associated Domain, and publishable key).
 - **Changes**, previewed before they're applied:
   - links ClerkKit (and ClerkKitUI unless `--apple-sdk core`) and resolves packages;
   - adds Associated Domains for the development instance and, for sandboxed macOS apps, outgoing network access;

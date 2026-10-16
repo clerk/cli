@@ -129,6 +129,22 @@ export function capabilityXML(source: string, domain?: string, apple = false, ma
   );
 }
 
+/** The entitlements file one configuration signs with, or undefined when it has none. Throws when it can't be read. */
+export async function readEntitlements(
+  context: Inspection["contexts"][number],
+): Promise<string | undefined> {
+  const path = context.settings.CODE_SIGN_ENTITLEMENTS?.trim();
+  if (!path) return undefined;
+  const sourceRoot =
+    context.settings.SRCROOT ?? resolve(context.selection.root, dirname(context.selection.project));
+  return (await snapshotFile(context.selection.root, resolve(sourceRoot, path))).source;
+}
+
+/** Whether entitlements already grant a web-credentials domain and/or Sign in with Apple. Throws on XML it can't read. */
+export function hasCapabilities(source: string, domain?: string, apple = false): boolean {
+  return capabilityXML(source, domain, apple) === source;
+}
+
 interface CapabilityPlan {
   status: "planned" | "satisfied" | "manual";
   scope: string;

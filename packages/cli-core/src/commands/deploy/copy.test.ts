@@ -193,6 +193,24 @@ describe("nextStepsBody", () => {
   });
 });
 
+describe("nextStepsBody for an iOS or macOS app", () => {
+  test.each([
+    { appleProject: true, doctor: true },
+    { appleProject: false, doctor: false },
+  ])(
+    "points at clerk doctor only in an Apple project: $appleProject",
+    ({ appleProject, doctor }) => {
+      const output = stripAnsi(
+        nextStepsBody("app_123", "ins_456", "example.com", "verified", appleProject),
+      );
+      expect(output.includes("7. Check the iOS or macOS app's Release build")).toBe(doctor);
+      expect(output.includes("clerk doctor")).toBe(doctor);
+      // The web steps stay as they are either way.
+      expect(output).toContain("clerk env pull --instance prod");
+    },
+  );
+});
+
 describe("productionSummary", () => {
   test("only calls production ready once the domain is verified", () => {
     const verified = stripAnsi(productionSummary("example.com", ["Google"], "verified").join("\n"));

@@ -5,7 +5,12 @@ import { interruptedExitCode } from "../../lib/signals.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { declareSoftExitOutcome } from "../../lib/telemetry.ts";
-import { deployComponentLabels, dnsRecords, nativeAppleGuidance } from "./copy.ts";
+import {
+  appleProjectNextStep,
+  deployComponentLabels,
+  dnsRecords,
+  nativeAppleGuidance,
+} from "./copy.ts";
 import {
   buildDeployStatusReport,
   buildInterruptedDeployStatusReport,
@@ -252,6 +257,7 @@ export function humanNextAction(step: DeployNextStep): string {
         `Clerk's production setup for https://${step.domain} is verified. If you haven't already: ` +
         `run \`clerk env pull --instance prod\`, set those keys on your host alongside the other ` +
         `Clerk variables from your env file, redeploy, then sign up at https://${step.domain} to confirm.` +
+        (step.appleProject ? ` ${appleProjectNextStep()}` : "") +
         (step.instanceUrl
           ? ` Manage users, settings, and billing for this instance: ${step.instanceUrl}`
           : "")

@@ -1169,6 +1169,19 @@ describe("humanNextAction", () => {
     },
   );
 
+  test("a complete Apple project is pointed at clerk doctor for the Xcode side", () => {
+    const step = {
+      kind: "complete" as const,
+      domain: "example.com",
+      oauthUnsupported: [],
+      instanceUrl: URL,
+    };
+    expect(humanNextAction(step)).not.toContain("clerk doctor");
+    expect(humanNextAction({ ...step, appleProject: true })).toContain(
+      "For the iOS or macOS app, run `clerk doctor` in its Xcode project",
+    );
+  });
+
   test("points a person at the wizard to resume, and at the Dashboard to watch", () => {
     const line = humanNextAction({
       kind: "records_available",

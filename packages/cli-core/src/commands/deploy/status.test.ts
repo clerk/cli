@@ -808,6 +808,27 @@ describe("buildDeployStatusReport", () => {
     expect(report.nextAction).not.toContain("No action needed");
   });
 
+  test.each([
+    { appleProject: true, field: true },
+    { appleProject: false, field: false },
+  ])(
+    "complete next action points an Apple project at clerk doctor: $appleProject",
+    ({ appleProject, field }) => {
+      const allDone = {
+        ...activeSnapshot,
+        completedOAuthProviders: ["google", "github"],
+        appleProject,
+      } satisfies LiveDeploySnapshot;
+      const report = buildDeployStatusReport(
+        { kind: "active", snapshot: allDone },
+        { verified: true, status: { dns: true, ssl: true, mail: true } },
+      );
+      expect("appleProject" in report).toBe(field);
+      expect(report.nextAction.includes("run `clerk doctor` in its Xcode project")).toBe(field);
+      expect(report.nextAction).toContain("clerk env pull --instance prod");
+    },
+  );
+
   test("pending DNS records tell the agent to add them, not to keep polling", () => {
     const report = buildDeployStatusReport(
       { kind: "active", snapshot: activeSnapshot },

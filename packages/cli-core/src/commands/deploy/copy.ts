@@ -547,6 +547,7 @@ export function nextStepsBody(
   productionInstanceId: string,
   domain: string,
   domainStatus: "verified" | "pending",
+  appleProject = false,
 ): string {
   // Until DNS is verified the domain doesn't resolve, so "sign up there"
   // would send the user to a page that doesn't exist yet.
@@ -586,7 +587,17 @@ ${step3}
          ${dim(instanceDashboardUrl(appId, productionInstanceId))}
        - DNS and SSL status:
          ${dim(domainsDashboardUrl(appId, productionInstanceId))}
+${
+  appleProject
+    ? `
+  7. Check the iOS or macOS app's Release build
+       clerk doctor
 
+     It reports whether Release uses the production publishable key,
+     Associated Domain, and native registration.
+`
+    : ""
+}
 ${keysNote}
 
 ${dim("Reference: https://clerk.com/docs/guides/development/deployment/production#api-keys-and-environment-variables")}`;
@@ -614,6 +625,11 @@ export function nativeApplicationsDashboardUrl(
   productionInstanceId: string,
 ): string {
   return buildDashboardUrl(appId, productionInstanceId, "native-applications");
+}
+
+/** Where to check the Xcode side of production, which deploy can't see. */
+export function appleProjectNextStep(): string {
+  return "For the iOS or macOS app, run `clerk doctor` in its Xcode project to check that Release builds use the production publishable key, Associated Domain, and native registration.";
 }
 
 /** What blocks native-only Sign in with Apple in production, and how to fix it. */

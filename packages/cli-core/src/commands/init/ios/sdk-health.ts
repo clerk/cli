@@ -9,6 +9,8 @@ export interface Check {
   name: string;
   status: "pass" | "warn" | "fail";
   message: string;
+  /** How to resolve a non-passing check, when it isn't something `clerk init` completes. */
+  remedy?: string;
 }
 
 /** The project resolver's lockfile can establish compatibility without raising its minimum. */
