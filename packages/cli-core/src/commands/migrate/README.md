@@ -856,10 +856,11 @@ after them. They sort the users four ways:
     any other user, with a warning. Spaces around a phone don't count, as Clerk
     trims them. Phones the instance has off are stripped anyway, so they are
     not checked
-  - it lacks an identifier the instance requires. An email or phone counts
-    only when it is verified, because an unverified one is attached after the
-    user exists, or with `--reserve-unverified`, which creates it reserved. A
-    required phone dropped for not being in E.164 form is named as such
+  - it lacks an identifier the instance requires. An email or phone counts when
+    it is verified, or when it is created reserved (`--reserve-unverified`, or
+    an adopted user's recorded mode). An unverified one attached after the user
+    exists does not. A required phone dropped for not being in E.164 form is
+    named as such
   - it has no identifier left once the emails and phones Clerk would refuse
     are stripped: those of an instance that neither has them on nor signs in
     or does MFA with them. A username is kept, as Clerk stores it with
@@ -884,9 +885,9 @@ after them. They sort the users four ways:
     to 15, `scrypt_firebase`, `argon2i`/`argon2id` and `scrypt_werkzeug` are
     checked; other hashers are not, and Clerk refuses a bad one at create)
   - Supabase: its only providers are ones Clerk has off, or doesn't offer at all
-    (Figma, Kakao, Keycloak, WorkOS, Zoom, Fly), and it has no verified email or
-    phone the instance signs in with by code or link. The checks offer to turn
-    on the first kind; nothing can turn on the second
+    (Figma, Kakao, Keycloak, WorkOS, Zoom, Fly), and it has no verified or
+    reserved email or phone the instance signs in with by code or link. The
+    checks offer to turn on the first kind; nothing can turn on the second
   - its source ID, primary email, primary phone or username repeats an
     earlier user in the file that passes the checks above. Only what the
     create sends counts: an extra email is attached after it, and a stripped
@@ -1389,18 +1390,20 @@ sign in with one nobody proved they own, so it is opt-in. `-y`, `--json` and
 agent mode never ask, and keep them unverified without the flag.
 
 A run records its choice (`reserveUnverified` in `run.json`), and a continued
-run reuses it without asking, so every user of one run is created the same
-way. `--reserve-unverified` on a continue of a run that kept them unverified is
+run reuses it without asking, so every user of one run is created the same way.
+A run recorded before the choice existed asks once, and records the answer.
+`--reserve-unverified` on a continue of a run that kept them unverified is
 refused; pass `--new-run` to change modes. A user a run adopts keeps the mode
-its first create recorded (`reserved` on its `creating` line). When Clerk refused a phone and the retry went out
-without the reserved phones, that line lists them as `pending`, and a continue
-that adopts the user attaches them, unverified.
+its first create recorded (`reserved` on its `creating` line). When Clerk
+refused a phone and the retry went out without the reserved phones, that line
+lists them as `pending`, and a continue that adopts the user attaches them,
+unverified (one Clerk refuses again fails with a note).
 
 Reserved, an unverified identifier is checked for duplicates like a verified
 one, because it goes on the user's create: one that an instance user or an
-earlier record in the file already holds rejects the whole user, where without
-reserving only that address would fail to attach, with a note. If that rejects
-users you want, import without reserving.
+earlier record in the file that passes the checks already holds rejects the
+whole user, where without reserving only that address would fail to attach, with
+a note. If that rejects users you want, import without reserving.
 
 ### Firebase hash parameters
 
