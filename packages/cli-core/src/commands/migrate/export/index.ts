@@ -98,9 +98,8 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
         description: "Export from a Clerk instance into a new run",
       },
       {
-        command:
-          "clerk migrate export auth0 --domain my-tenant.us.auth0.com --client-id … --client-secret …",
-        description: "Export from an Auth0 tenant",
+        command: "clerk migrate export auth0 --domain my-tenant.us.auth0.com --client-id …",
+        description: "Export from an Auth0 tenant; asks for the secret, masked",
       },
     ])
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
@@ -160,9 +159,9 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     .option("--json", "Print the result as JSON; never prompts")
     .setExamples([
       {
-        command:
-          "clerk migrate export auth0 --domain my-tenant.us.auth0.com --client-id … --client-secret …",
-        description: "Export with explicit credentials",
+        command: "clerk migrate export auth0 --domain my-tenant.us.auth0.com --client-id …",
+        description:
+          "Export with the secret entered at a masked prompt, or from AUTH0_CLIENT_SECRET",
       },
       {
         command: "clerk migrate export auth0",
