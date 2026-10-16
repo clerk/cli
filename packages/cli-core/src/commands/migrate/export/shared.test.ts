@@ -136,7 +136,7 @@ describe("finishExport", () => {
   });
 
   test("--output writes somewhere else, and the run still records where", async () => {
-    const run = await startExportRun({ runsDir }, { platform: "supabase" });
+    const run = await startExportRun({ runsDir }, { platform: "auth0" });
 
     const { record, outputPath } = finishExport({
       run,
@@ -161,6 +161,18 @@ describe("finishExport", () => {
     const { outputPath } = finishExport({ run, options: {}, users, coverage, firebase });
 
     expect(readEnvelope(outputPath)?.firebase).toEqual(firebase);
+  });
+
+  // `truncated: true` alone is easy for an agent to miss.
+  test("a truncated export exits 1, with its file still written", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "auth0" });
+    try {
+      const { outputPath } = finishExport({ run, options: {}, users, coverage, truncated: true });
+      expect(process.exitCode).toBe(1);
+      expect(fs.existsSync(outputPath)).toBe(true);
+    } finally {
+      process.exitCode = 0;
+    }
   });
 
   test("prints the import command by run ID", async () => {
