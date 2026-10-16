@@ -293,3 +293,122 @@ test("installed core products and a compatible resolved SDK are preserved withou
   });
   expect(process.exitCode).toBe(0);
 });
+
+// Signed by PERSONAL01; Xcode's account list marks it a Personal Team only where `personal` is set.
+async function signedFixture(platform: "ios" | "macos", starter: boolean, personal: boolean) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-public-init-")));
+  roots.push(root);
+  const f = await capabilityFixture(root, platform);
+  if (starter) await useStarterSources(root);
+  // Apple is on in Clerk, so setup would add its entitlement unless the team rules it out.
+  f.state.apple = { ...f.state.apple, enabled: true, bundle_id: "com.example.MyApp" };
+  const run = f.dependencies.run;
+  const dependencies = {
+    ...f.dependencies,
+    xcodeTeams: [{ id: "PERSONAL01", name: "Sean Perez", personal }],
+    run: async (...args: Parameters<typeof run>) => {
+      const rows = JSON.parse(await run(...args));
+      for (const row of rows) row.buildSettings.DEVELOPMENT_TEAM = "PERSONAL01";
+      return JSON.stringify(rows);
+    },
+  };
+  return { root, f, dependencies };
+}
+
+test.each([
+  {
+    name: "a macOS starter on a Personal Team",
+    platform: "macos",
+    starter: true,
+    personal: true,
+    domain: false,
+    apple: false,
+  },
+  {
+    name: "a macOS starter on a paid team",
+    platform: "macos",
+    starter: true,
+    personal: false,
+    domain: true,
+    apple: true,
+  },
+  // A simulator build signs locally, so an iOS starter keeps the domain on a Personal Team.
+  {
+    name: "an iOS starter on a Personal Team",
+    platform: "ios",
+    starter: true,
+    personal: true,
+    domain: true,
+    apple: false,
+  },
+  // Setup for an app that's no longer an unchanged starter keeps its 4.0.0 behavior.
+  {
+    name: "a customized macOS app on a Personal Team",
+    platform: "macos",
+    starter: false,
+    personal: true,
+    domain: true,
+    apple: true,
+  },
+] as const)(
+  "$name: Associated Domain $domain, Sign in with Apple $apple",
+  async ({ platform, starter, personal, domain, apple }) => {
+    const { root, dependencies } = await signedFixture(platform, starter, personal);
+    // No starterProject: the agent's run after creating the starter reads the team from the project.
+    await runAppleInit(
+      { root, agent: true, json: true, appIdPrefix: "PERSONAL01" },
+      "app_test",
+      dependencies,
+    );
+    const entitlements = await readFile(join(root, "MyApp/MyApp.entitlements"), "utf8");
+    expect(entitlements.includes("webcredentials:")).toBe(domain);
+    expect(entitlements.includes("com.apple.developer.applesignin")).toBe(apple);
+    if (platform === "macos") expect(entitlements).toContain("com.apple.security.network.client");
+  },
+);
+
+test("rejects --sign-in-with-apple for a starter on a Personal Team", async () => {
+  const { root, dependencies } = await signedFixture("ios", true, true);
+  await expect(
+    runAppleInit(
+      { root, agent: true, json: true, appIdPrefix: "PERSONAL01", signInWithApple: true },
+      "app_test",
+      dependencies,
+    ),
+  ).rejects.toThrow("Sign in with Apple needs a paid Apple Developer Program team");
+});
+
+test.each([
+  { name: "takes the starter's sign-in screen default", options: {}, authView: true },
+  {
+    name: "keeps an explicit ClerkKit-only choice",
+    options: { appleSdk: "core" as const },
+    authView: false,
+  },
+  { name: "keeps --prebuilt-auth-ui off", options: { prebuiltAuthUi: false }, authView: false },
+  {
+    name: "leaves an agent's UI to the user",
+    options: { agent: true, json: true },
+    authView: false,
+  },
+])("a new starter with --yes $name", async ({ options, authView }) => {
+  const f = await fixture(true);
+  const p = promptsFor(true);
+  spies.push(spyOn(spinner, "outro").mockResolvedValue(undefined));
+  await runAppleInit(
+    {
+      root: f.root,
+      agent: false,
+      yes: true,
+      starterProject: { projectName: "MyApp", platform: "ios" },
+      ...options,
+    },
+    "app_test",
+    f.dependencies,
+  );
+  expect(p.confirm).not.toHaveBeenCalled();
+  expect(await readFile(join(f.root, "MyApp/MyAppApp.swift"), "utf8")).toContain("Clerk.configure");
+  expect(
+    (await readFile(join(f.root, "MyApp/ContentView.swift"), "utf8")).includes("AuthView()"),
+  ).toBe(authView);
+});

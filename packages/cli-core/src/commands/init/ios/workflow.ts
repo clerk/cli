@@ -1,3 +1,4 @@
+import type { AppleTeam } from "./teams.ts";
 import type { ScaffoldPlan } from "../frameworks/types.ts";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -62,6 +63,8 @@ export interface SetupOptions extends InspectOptions {
   starter?: boolean;
   inspectOnly?: boolean;
   checkAppleConnection?: boolean;
+  /** False when the signing team can't provision Associated Domains (a new macOS starter on a Personal Team). */
+  associatedDomain?: boolean;
   /** An inspection of the same project taken earlier (say, before prompting), to avoid a second xcodebuild pass. */
   inspection?: Inspection;
 }
@@ -70,6 +73,8 @@ export interface Dependencies {
   api?: NativeAPI;
   appleAPI?: IOSNativeAppleAPI;
   promptIdentity?: IdentityPrompt;
+  /** Xcode's signed-in teams, instead of reading them from Xcode's settings. */
+  xcodeTeams?: AppleTeam[];
 }
 export interface SetupPreview {
   inspection: Inspection;
@@ -162,6 +167,7 @@ export async function prepareSetup(
           originalAction.type === "modify" ? originalAction.content : inspection.document.source,
           remote?.context.frontendHost,
           appleEnabled,
+          options.associatedDomain !== false,
         )
       : undefined;
   if (capabilities) {
