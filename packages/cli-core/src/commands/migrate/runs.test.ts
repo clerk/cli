@@ -414,6 +414,7 @@ describe("runs <id>", () => {
 
     const { next } = JSON.parse(captured.out) as { next: string[] };
     expect(next[0]).toContain(`clerk migrate import ${quoteArg(usersFile())} --source SOURCE_FILE`);
+    expect(next[0]).toContain("with SOURCE_FILE replaced by the path to the source you wrote");
   });
 
   test("an unknown ID is a usage error", async () => {
