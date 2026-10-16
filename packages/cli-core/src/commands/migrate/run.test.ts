@@ -364,6 +364,29 @@ describe("run", () => {
 
     expect(error.exitCode).toBe(EXIT_CODE.USAGE);
     expect(error.message).toContain(`created by run ${first!.id}, from this file.`);
+    // Dropping --new-run continues that run, so the refusal offers it first.
+    expect(error.message).toContain(`Drop --new-run to continue run ${first!.id}.`);
+    expect(error.examples?.[0]?.command).not.toContain("--new-run");
+    expect(error.examples?.[0]?.description).toBe(`Continue run ${first!.id}`);
+  });
+
+  // A complete run has nothing to continue: without --new-run it is already imported.
+  test("--new-run on the same file doesn't offer to continue a complete run", async () => {
+    await run(baseOptions);
+    captured.clear();
+    stubClerk({
+      existing: [
+        { id: "user_u1", external_id: "u1" },
+        { id: "user_u2", external_id: "u2" },
+      ],
+    });
+
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain("from this file.");
+    expect(error.message).not.toContain("Drop --new-run");
   });
 
   // They never reach the checks, so the preview has to count them itself.

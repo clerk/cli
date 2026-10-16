@@ -59,6 +59,7 @@ import {
   startRun,
   type Run,
   type RunRecord,
+  type RunState,
   type UserLine,
   hasRetryableUsers,
   NO_PASSWORD_CODE,
@@ -541,8 +542,9 @@ function rejectSummary(checks: ImportChecks, json = false): string {
 
 /**
  * The earlier import run, of this source into this instance, that created the
- * users the checks reject as already there, and how many of them: fixing a
- * skipped row changes the file, and the changed file's run meets them.
+ * users the checks reject as already there: how many of them, whether it ran
+ * this same file, and its state. Fixing a skipped row changes the file, and the
+ * changed file's run meets them; so does the same file run with `--new-run`.
  */
 function earlierRunHolding(
   runsDir: string,
@@ -550,19 +552,21 @@ function earlierRunHolding(
   instanceId: string,
   checks: ImportChecks,
   sha256: string,
-): { id: string; count: number; sameFile: boolean } | undefined {
+): { id: string; count: number; sameFile: boolean; state: RunState } | undefined {
   const already = new Set(
     checks.rejects.filter((reject) => reject.reason === ALREADY_IMPORTED).map((r) => r.sourceId),
   );
   if (already.size === 0) return undefined;
   for (const record of listRuns(runsDir)) {
     if (record.kind !== "import" || record.source !== source) continue;
-    if (record.target.instanceId !== instanceId || runState(runsDir, record) === "undone") continue;
+    if (record.target.instanceId !== instanceId) continue;
+    const state = runState(runsDir, record);
+    if (state === "undone") continue;
     let count = 0;
     for (const line of latestUserLines(runsDir, record.id).values()) {
       if (line.status === "created" && already.has(line.sourceId)) count++;
     }
-    if (count > 0) return { id: record.id, count, sameFile: record.file?.sha256 === sha256 };
+    if (count > 0) return { id: record.id, count, sameFile: record.file?.sha256 === sha256, state };
   }
   return undefined;
 }
@@ -799,16 +803,29 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         if (options.json) preview({ refused: true });
         const earlier = earlierRunHolding(runsDir, source, target.instanceId, checks, sha256);
         const undoEarlier = earlier ? undoCommand(earlier.id, carry) : undefined;
+        // Without --new-run, the same file continues that run and creates the rest.
+        const continueEarlier =
+          options.newRun &&
+          earlier?.sameFile &&
+          (earlier.state === "partial" || earlier.state === "interrupted")
+            ? commandFor({ ...options, newRun: false }, ["--yes"])
+            : undefined;
         throwUsageError(
           `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported.` +
             `${rejectSummary(checks, options.json)} ` +
             (earlier
               ? `${earlier.count} of them ${earlier.count === 1 ? "was" : "were"} created by run ${earlier.id}, from ${earlier.sameFile ? "this file" : "an earlier version of this file"}. ` +
-                `Pass --allow-partial to import the rest into a new run, or undo run ${earlier.id} first (\`${undoEarlier}\`) to import the whole file again.`
+                (continueEarlier
+                  ? `Drop --new-run to continue run ${earlier.id}. Or pass`
+                  : "Pass") +
+                ` --allow-partial to import the rest into a new run, or undo run ${earlier.id} first (\`${undoEarlier}\`) to import the whole file again.`
               : "Fix them, or pass --allow-partial to import the rest and record them as skipped."),
           undefined,
           undefined,
           [
+            ...(continueEarlier
+              ? [{ command: continueEarlier, description: `Continue run ${earlier!.id}` }]
+              : []),
             {
               command: commandFor(options, ["--allow-partial", "--yes"]),
               description: "Import the users that pass",

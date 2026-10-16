@@ -109,6 +109,7 @@ export type UserLine = {
   /** Why a user was skipped. */
   reason?: string;
   error?: string;
+  /** Failed: the HTTP status, or "unknown". Skipped: a machine reason, such as NO_PASSWORD_CODE. */
   code?: string;
   passwordDropped?: boolean;
 };
