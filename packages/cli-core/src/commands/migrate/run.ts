@@ -322,7 +322,8 @@ type ResumeCase =
  *
  * @throws UsageError when that run is still running in another process, or
  *   has an undo that never finished: some of its users are gone and some are
- *   not, so neither continuing it nor starting over is safe.
+ *   not, so neither continuing it nor starting over is safe. Also when Clerk
+ *   did not confirm the instance and a run of this file names a real one.
  */
 function findResume(
   runsDir: string,
@@ -584,7 +585,7 @@ function continuesWithoutNewRun(
   try {
     resume = findResume(runsDir, match, carry);
   } catch {
-    // It would refuse: the run is still going, or has an unfinished undo.
+    // It would refuse: see findResume's @throws.
     return false;
   }
   if (resume.kind !== "continue" || resume.record.id !== id) return false;

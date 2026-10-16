@@ -428,6 +428,36 @@ describe("run", () => {
     expect(error.message).not.toContain("Drop --new-run");
   });
 
+  // Stopped before finish(), a run has no lines for the users it never sent.
+  test("--new-run --require-password offers to continue an interrupted run", async () => {
+    const both = export2.map((user) => ({
+      ...user,
+      password_digest: BCRYPT,
+      password_hasher: "bcrypt",
+    }));
+    fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(both));
+    await run(baseOptions);
+    const [first] = listRuns(runsDir());
+    // As a Ctrl-C after u1 leaves it: no finish time, the opening counts, one line.
+    const record = readRun(runsDir(), first!.id)!;
+    delete record.finishedAt;
+    fs.writeFileSync(
+      path.join(runsDir(), first!.id, "run.json"),
+      JSON.stringify({ ...record, status: "running", counts: { total: 0 } }),
+    );
+    fs.writeFileSync(
+      path.join(runsDir(), first!.id, "users.ndjson"),
+      `${JSON.stringify({ sourceId: "u1", clerkId: "user_u1", status: "created" })}\n`,
+    );
+    stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+    const error = (await run({ ...baseOptions, newRun: true, requirePassword: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain(`Drop --new-run to continue run ${first!.id}.`);
+  });
+
   // The continue would carry --require-password and leave the same users out.
   test("--new-run --require-password doesn't offer a continue that imports nobody", async () => {
     await run({ ...baseOptions, requirePassword: true });
