@@ -325,6 +325,16 @@ describe("authjs export", () => {
     expect("email_verified" in (users[1] ?? {})).toBe(false);
   });
 
+  // Postgres and MySQL hand back a Date: the epoch is no verification there either.
+  test("a zero-epoch Date exports as unverified", () => {
+    const { users } = buildAuthJsExport([
+      { id: "a", email: "a@x.dev", email_verified: new Date(0) },
+      { id: "b", email: "b@x.dev", email_verified: new Date("2024-01-15T00:00:00Z") },
+    ]);
+    expect("email_verified" in (users[0] ?? {})).toBe(false);
+    expect(users[1]?.email_verified).toBe("2024-01-15T00:00:00.000Z");
+  });
+
   test("counts coverage", () => {
     const { coverage } = buildAuthJsExport([
       { id: "a", email: "a@x.dev", name: "A", email_verified: "2024-01-01" },
