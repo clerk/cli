@@ -78,6 +78,34 @@ connection. It never edits the project, resolves packages, or writes to Clerk.
 Without Xcode (another OS, or a Mac with only the Command Line Tools) these checks become one warning and the env-file check stays, matching `clerk init`'s fallback. If Clerk can't
 be reached, the local checks still run and a warning says so.
 
+`clerk init` sets up only the development instance, so doctor also checks the
+non-Debug configurations it inspected (Release by default) against the
+production instance. Each warning carries its own remedy rather than pointing
+back at `clerk init`:
+
+| Check                                 | Passes when                                                                                                                                        |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Production native registration        | Release's Bundle ID is registered on production with the app's App ID Prefix, and Native API is enabled there                                      |
+| Production associated domain: Release | The entitlements file Release signs with (resolved by Xcode, including `[sdk=…]` conditions) lists `webcredentials:<production Frontend API host>` |
+| Production publishable key: Release   | Release passes the production instance's publishable key to `Clerk.configure`                                                                      |
+
+The publishable key is read without building, and only when the app loads it
+in a standard way: a string literal in `Clerk.configure`, an Info.plist entry
+the Swift sources name (literal or `$(BUILD_SETTING)`, so xcconfig values per
+configuration count), or the one key literal compiled into that configuration.
+`#if` blocks are evaluated against each configuration's
+`SWIFT_ACTIVE_COMPILATION_CONDITIONS` and `-D` flags. Test bundles and build
+products are not scanned. A key loaded any other way (a bundled file, the
+environment, a build script, CI) is reported as "Not verified" with the reason.
+Keys are compared, never printed. The suggested setup keeps the development key
+in Debug: a `CLERK_PUBLISHABLE_KEY` build setting per configuration, exposed as
+`ClerkPublishableKey = $(CLERK_PUBLISHABLE_KEY)` in Info.plist and read with
+`Bundle.main.object(forInfoDictionaryKey:)`.
+
+Without a production instance these become one passing note, since production
+is optional (the Instances check already mentions it). Selecting only Debug with
+`--xcode-configuration Debug` skips them the same way.
+
 ## Auto-Fix (`--fix`)
 
 When `--fix` is passed in human mode, the command prompts to fix each
@@ -149,3 +177,11 @@ drift apart.
 | `GET`  | `/oauth/userinfo`                   | Validates the stored auth token                                     |
 | `GET`  | `/v1/platform/applications/{appId}` | Verifies the linked app and its instances exist                     |
 | `GET`  | `/v1/instance`                      | Names the accountless application (best-effort, via its secret key) |
+
+Xcode projects also read, for the development and (when present) production
+instances:
+
+| Method | Endpoint                                                                           | Description                        |
+| ------ | ---------------------------------------------------------------------------------- | ---------------------------------- |
+| `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/native_settings`         | Whether Native API is enabled      |
+| `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/native_applications/ios` | Registered Bundle IDs and prefixes |
