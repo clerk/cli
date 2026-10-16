@@ -507,6 +507,31 @@ describe("run", () => {
       expect(captured.err).toContain(`The export in run ${record.id} holds your users' data`);
     });
 
+    // Stopped after its last create, the run has nothing left, but the
+    // continue by export run ID still links it and names the export.
+    test("a continue by export run ID with nothing left links the run to the export", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      await run({ ...noSource, input: file });
+      const imported = listRuns(runsDir()).find((c) => c.kind === "import")!;
+      // A crash after the last create writes no finish time.
+      const crashed = readRun(runsDir(), imported.id)!;
+      delete crashed.finishedAt;
+      fs.writeFileSync(
+        path.join(runsDir(), imported.id, "run.json"),
+        JSON.stringify({ ...crashed, status: "running" }),
+      );
+      captured.clear();
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).toContain("No users left to import.");
+      expect(readRun(runsDir(), imported.id)).toMatchObject({
+        status: "complete",
+        fromExport: record.id,
+      });
+      expect(captured.err).toContain(`The export in run ${record.id} holds your users' data`);
+    });
+
     test("imports an envelope file with no source named", async () => {
       const { file } = exportRun("clerk", export2);
 
