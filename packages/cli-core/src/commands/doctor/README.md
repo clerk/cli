@@ -87,19 +87,18 @@ back at `clerk init`:
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Production native registration        | Release's Bundle ID is registered on production with the app's App ID Prefix, and Native API is enabled there                                                                                             |
 | Production associated domain: Release | The entitlements file Release signs with (resolved by Xcode, including `[sdk=…]` conditions) lists `webcredentials:<production Frontend API host>`, with `$(…)` build settings expanded as Xcode signs it |
-| Production publishable key: Release   | Release's `ClerkPublishableKey` Info.plist entry resolves to the production instance's publishable key                                                                                                    |
+| Production publishable key: Release   | Release passes the production instance's publishable key to `Clerk.configure`                                                                                                                             |
 
-The publishable key is read from the suggested setup only: the
-`ClerkPublishableKey` Info.plist entry, as a literal or a `$(BUILD_SETTING)`
-that Xcode resolves per configuration, so xcconfig values per configuration
-count. Doctor doesn't read Swift, so it doesn't confirm that `Clerk.configure`
-reads that entry, and an app that loads its key another way (a literal in
-Swift, `#if`, the environment, a bundled file, CI) is reported as "Not
-verified" with the reason. Keys are compared, never printed. The suggested setup keeps the development key
-in Debug: a `CLERK_PUBLISHABLE_KEY` build setting per configuration, exposed as
-`ClerkPublishableKey = $(CLERK_PUBLISHABLE_KEY)` in Info.plist, and passed
-straight to `Clerk.configure` as
-`Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") as! String`.
+The publishable key is read without building, and only when the argument to
+`Clerk.configure` is a string literal or an Info.plist read
+(`Bundle.main.object(forInfoDictionaryKey:)` or `infoDictionary[…]`) whose
+entry is a literal or a `$(BUILD_SETTING)`, so xcconfig values per
+configuration count. Only the selected target's Swift files count (its
+compile-sources files and synchronized folders less their membership
+exceptions, or its `target-membership` entries in a `.xcproj`), less the
+configuration's `EXCLUDED_SOURCE_FILE_NAMES`. Anything else is reported as
+"Not verified" with the reason: a constant, a call inside `#if`, a fallback
+(`?? "pk_…"`), the environment, a bundled file, a build script, or CI. Keys are compared, never printed.
 
 Without a production instance these become one passing note, since production
 is optional (the Instances check already mentions it). Selecting only Debug with

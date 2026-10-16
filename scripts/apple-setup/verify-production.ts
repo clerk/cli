@@ -1,8 +1,8 @@
 /**
  * Real Xcode resolves what `clerk doctor`'s production checks read: a
  * per-configuration xcconfig key surfaced through an Info.plist entry and a
- * Release-only entitlements file. Doctor doesn't read Swift, so `#if DEBUG`
- * literals report the key as not verified. Uses a fake Clerk API and
+ * Release-only entitlements file. `#if DEBUG` literals, which doctor doesn't
+ * evaluate, report the key as not verified. Uses a fake Clerk API and
  * disposable fixtures.
  *
  * Usage:
@@ -17,7 +17,10 @@ import {
   IOS_FIXTURE_IDS as ids,
 } from "../../packages/cli-core/src/commands/init/ios/test-helpers.ts";
 import { auditProduction } from "../../packages/cli-core/src/commands/init/ios/production.ts";
-import { configuredPublishableKey } from "../../packages/cli-core/src/commands/init/ios/publishable-key.ts";
+import {
+  configuredPublishableKey,
+  scanSwiftSources,
+} from "../../packages/cli-core/src/commands/init/ios/publishable-key.ts";
 import type { NativeAPI } from "../../packages/cli-core/src/commands/init/ios/remote.ts";
 import { inspectSelectedProject } from "../../packages/cli-core/src/commands/init/ios/xcode.ts";
 import { convertFixtureToXCProj } from "../../packages/cli-core/src/commands/init/ios/setup-test-helpers.ts";
@@ -179,10 +182,11 @@ for (const {
       minimumVersion: "1.0.0",
       resolvePackages: false,
     });
+    const scan = await scanSwiftSources(inspection);
     const debug = inspection.contexts.find(
       (context) => context.selection.configuration === "Debug",
     )!;
-    const debugKey = await configuredPublishableKey(debug);
+    const debugKey = await configuredPublishableKey(debug, scan);
     if (
       debugExpected === "development"
         ? debugKey.status !== "resolved" || debugKey.key !== DEV
