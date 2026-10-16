@@ -1257,6 +1257,23 @@ describe("run", () => {
     expect(error.examples ?? []).toEqual([]);
   });
 
+  // A continue of a run that kept them unverified refuses the flag.
+  test("--new-run's continue keeps the earlier run's reservation mode", async () => {
+    stubClerk({ failing: new Set(["u2"]) });
+    await run(baseOptions);
+    const [first] = listRuns(runsDir());
+    expect(first?.reserveUnverified).toBe(false);
+    captured.clear();
+    stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+    const error = (await run({ ...baseOptions, newRun: true, reserveUnverified: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain(`Drop --new-run to continue run ${first!.id}.`);
+    expect(error.examples?.[0]?.command).not.toContain("--reserve-unverified");
+  });
+
   // The continue would carry --require-password and leave the same users out.
   test("--new-run --require-password doesn't offer a continue that imports nobody", async () => {
     await run({ ...baseOptions, requirePassword: true });

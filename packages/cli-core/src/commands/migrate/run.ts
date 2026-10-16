@@ -1339,6 +1339,9 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                 newRun: false,
                 allowPartial: options.allowPartial || recorded.allowPartial,
                 skipLegalChecks: options.skipLegalChecks || recorded.skipLegalChecks,
+                // Its own mode: a continue refuses --reserve-unverified on a run
+                // that kept them unverified.
+                reserveUnverified: earlierRun.reserveUnverified ?? options.reserveUnverified,
               },
               input.fromExport,
               ["--yes"],
