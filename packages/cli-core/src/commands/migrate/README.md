@@ -445,11 +445,12 @@ the difference as significant once quoted. On Postgres it tries
 `next_auth` schema, off the default `search_path`, and an app's own
 `public.users` must not answer for it. The run reports which one it found.
 The verified column is read as `emailVerified`, or `email_verified` on a legacy
-NextAuth table. Auth.js core stores no passwords, so its users arrive without
-credentials. That is all an OAuth or email-link app has. An app that also uses
-the Credentials provider stores passwords wherever it chose to, which the export
-does not read, even a password column on the user table: migrate those
-separately, or have those users reset their password.
+NextAuth table, whose `created_at` is kept too when it has one. Auth.js's own
+schemas record no creation time. Auth.js core stores no passwords, so its users
+arrive without credentials. That is all an OAuth or email-link app has. An app
+that also uses the Credentials provider stores passwords wherever it chose to,
+which the export does not read, even a password column on the user table:
+migrate those separately, or have those users reset their password.
 
 **`betterauth` reads its schema before it queries.** It finds the tables
 (`user` and `account`, or `users` and `accounts` under `usePlural: true`), how
@@ -1253,7 +1254,8 @@ unconfirmed address there would silently promote it.
   read as false, not as a non-empty string. `TRUE`, `FALSE`, `t` and `f` read
   too, as a spreadsheet or psql writes them.
 - **Timestamp** (`authjs`, `supabase`): a nullable confirmation time. Any real value
-  means verified; `""`, `null` and `\N` do not.
+  means verified; `""`, `null` and `\N` do not. For `authjs`, neither does `0`
+  (the epoch) or a value that isn't a date.
 
 A Clerk export keeps an unverified primary email or phone unverified.
 

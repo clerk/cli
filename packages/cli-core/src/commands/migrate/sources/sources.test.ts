@@ -299,10 +299,23 @@ describe("authjs", () => {
     expect(user?.unverifiedEmailAddresses).toBeUndefined();
   });
 
-  test.each([[null], [""], [undefined]])("treats email_verified=%p as unverified", (value) => {
-    const user = one("authjs", { ...base, email_verified: value });
-    expect(user?.unverifiedEmailAddresses).toBe("a@x.dev");
-  });
+  test.each([[null], [""], [undefined], [0], ["0"], ["not-a-date"]])(
+    "treats email_verified=%p as unverified",
+    (value) => {
+      const user = one("authjs", { ...base, email_verified: value });
+      expect(user?.unverifiedEmailAddresses).toBe("a@x.dev");
+    },
+  );
+
+  // A SQLite integer column exports as digits, and Postgres or MySQL as a
+  // date string: each is a real verification.
+  test.each([[1700000000000], ["1700000000000"], ["2024-06-29 20:25:06+00"]])(
+    "treats email_verified=%p as verified",
+    (value) => {
+      const user = one("authjs", { ...base, email_verified: value });
+      expect(user?.email).toBe("a@x.dev");
+    },
+  );
 
   test.each([
     ["Jane Doe", "Jane", "Doe"],

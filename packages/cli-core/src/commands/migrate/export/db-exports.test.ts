@@ -260,6 +260,28 @@ describe("authjs export", () => {
     expect(rows.map((row) => row.email_verified)).toEqual([null, "2024-01-15"]);
   });
 
+  // Auth.js's own schemas have no creation time; a legacy NextAuth table does.
+  test("keeps a legacy NextAuth table's created_at, and reads one without it", async () => {
+    const withCreated = makeDb((db) => {
+      db.run(
+        `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, email_verified TEXT, created_at TEXT)`,
+      );
+      db.run(`INSERT INTO users VALUES (?,?,?,?,?)`, ["n1", "N", "n@x.dev", null, "2021-03-04"]);
+    });
+    const { rows } = await withClient(withCreated, fetchAuthJsUsers);
+    expect(buildAuthJsExport(rows).users[0]).toMatchObject({ created_at: "2021-03-04" });
+
+    const without = makeDb((db) => {
+      db.run(
+        `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, email_verified TEXT)`,
+      );
+      db.run(`INSERT INTO users VALUES (?,?,?,?)`, ["n1", "N", "n@x.dev", null]);
+    });
+    const plain = await withClient(without, fetchAuthJsUsers);
+    expect(plain.rows).toHaveLength(1);
+    expect("created_at" in (buildAuthJsExport(plain.rows).users[0] ?? {})).toBe(false);
+  });
+
   // Postgres keeps a quoted "User" apart from "user"; SQLite does not, so the
   // plural table stands in for the later candidate here.
   test("passes over a candidate table without the columns for a later one", async () => {
