@@ -791,14 +791,13 @@ function rejectSummary(checks: ImportChecks, json = false): string {
 }
 
 /**
- * The earlier import run, of this source into this instance, that created the
+ * The earlier import run into this instance, of any source, that created the
  * users the checks reject as already there: how many of them, and whether it
  * ran this same file. Fixing a skipped row changes the file, and the changed
  * file's run meets them; so does the same file run with `--new-run`.
  */
 function earlierRunHolding(
   runsDir: string,
-  source: string,
   instanceId: string,
   checks: ImportChecks,
   sha256: string,
@@ -808,7 +807,8 @@ function earlierRunHolding(
   );
   if (already.size === 0) return undefined;
   for (const record of listRuns(runsDir)) {
-    if (record.kind !== "import" || record.source !== source) continue;
+    // Any source: findResume and the import lock match on file and instance.
+    if (record.kind !== "import") continue;
     if (record.target.instanceId !== instanceId || runState(runsDir, record) === "undone") continue;
     let count = 0;
     for (const line of latestUserLines(runsDir, record.id).values()) {
@@ -1229,7 +1229,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
 
       if (refused) {
         if (options.json) preview({ refused: true });
-        const earlier = earlierRunHolding(runsDir, source, target.instanceId, checks, sha256);
+        const earlier = earlierRunHolding(runsDir, target.instanceId, checks, sha256);
         const undoEarlier = earlier ? undoCommand(earlier.id, carry) : undefined;
         const earlierRun =
           options.newRun && earlier
