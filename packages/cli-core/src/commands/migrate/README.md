@@ -215,7 +215,7 @@ Gets users **out** of a source platform, so there is something to feed
 clerk migrate export                                    # pick a platform
 clerk migrate export clerk --output users.json
 clerk migrate export auth0 --domain my-tenant.us.auth0.com \
-  --client-id … --client-secret …
+  --client-id …                         # asks for the secret, masked
 clerk migrate export supabase --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
 clerk migrate export firebase --service-account ./service-account.json
 ```
@@ -512,9 +512,11 @@ a free or development tenant allows only a few Management API requests a
 second.
 
 A credential the platform rejects (400, 401 or 403) is asked for again at a
-terminal, and so is an Auth0 token granted without `read:users`. An outage, a
-refused connection, or a `429` that outlasts its retries is not: another
-credential would not fix it, and it exits 1.
+terminal, and so is an Auth0 token whose granted scopes leave out `read:users`.
+When Auth0's token response lists no scopes, the first users request finds the
+missing permission instead, and exits. An outage, a refused connection, or a
+`429` that outlasts its retries is not asked for again: another credential would
+not fix it, and it exits 1.
 
 ### `clerk migrate import`
 
