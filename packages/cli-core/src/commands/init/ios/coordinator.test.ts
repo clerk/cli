@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -339,4 +339,53 @@ test.each([
   expect(entitlements.includes("webcredentials:")).toBe(domain);
   expect(entitlements).toContain("com.apple.security.network.client");
   expect(captured.out.includes("a Personal Team can't sign a macOS app")).toBe(!domain);
+});
+
+describe("a deferred run for an app on a Personal Team", () => {
+  async function personalApp(platform: "ios" | "macos") {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-public-init-")));
+    roots.push(root);
+    const f = await capabilityFixture(root, platform);
+    // Apple is enabled in Clerk; setup would follow it if it didn't know about the team.
+    f.state.apple = { ...f.state.apple, enabled: true, bundle_id: "com.example.MyApp" };
+    const run = f.dependencies.run;
+    const dependencies = {
+      ...f.dependencies,
+      xcodeTeams: [{ id: "PERSONAL01", name: "Sean Perez", personal: true }],
+      run: async (...args: Parameters<typeof run>) => {
+        const rows = JSON.parse(await run(...args));
+        rows[0].buildSettings.DEVELOPMENT_TEAM = "PERSONAL01";
+        return JSON.stringify(rows);
+      },
+    };
+    return { root, f, dependencies };
+  }
+
+  test.each(["ios", "macos"] as const)(
+    "on %s leaves Sign in with Apple out even though Clerk enables it",
+    async (platform) => {
+      const { root, f, dependencies } = await personalApp(platform);
+      // What an agent runs after choosing an application: no --starter, no Apple flag.
+      await runAppleInit(
+        { root, agent: true, json: true, appIdPrefix: "PERSONAL01" },
+        "app_test",
+        dependencies,
+      );
+      const entitlements = await readFile(join(root, "MyApp/MyApp.entitlements"), "utf8");
+      expect(entitlements).not.toContain("com.apple.developer.applesignin");
+      expect(entitlements.includes("webcredentials:")).toBe(platform === "ios");
+      expect(f.state.events).not.toContain("apple-apply");
+    },
+  );
+
+  test("rejects an explicit --sign-in-with-apple", async () => {
+    const { root, dependencies } = await personalApp("ios");
+    await expect(
+      runAppleInit(
+        { root, agent: true, json: true, appIdPrefix: "PERSONAL01", signInWithApple: true },
+        "app_test",
+        dependencies,
+      ),
+    ).rejects.toThrow("Sign in with Apple needs a paid Apple Developer Program team");
+  });
 });

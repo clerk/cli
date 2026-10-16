@@ -91,22 +91,31 @@ export function readXcodeDefaults(): XcodeDefaults {
 export const PERSONAL_MAC_TEAM_DOMAIN_NOTE =
   "Associated Domains were left out: a Personal Team can't sign a macOS app that uses them. Sign-in with email codes and passwords works; passkeys and password AutoFill need a paid Apple Developer Program team. After switching to one, run clerk init again to add them.";
 
+/** Why setup leaves Sign in with Apple out for an app signed by a Personal Team, even when Clerk enables it. */
+export const PERSONAL_TEAM_APPLE_NOTE =
+  "Sign in with Apple is enabled for this Clerk instance, but a Personal Team can't use it, so its capability was left out and Apple sign-in won't work in this app. It needs a paid Apple Developer Program team; after switching to one, run clerk init again.";
+
 /**
- * The Personal Team signing a macOS app, if that's what Xcode's account list says it is. A
- * macOS app has no simulator to fall back to, so it has to be signed with a provisioning
- * profile, and a Personal Team can't provision Associated Domains. iOS keeps them: simulator
- * builds sign locally.
+ * The Personal Team signing this app, if that's what Xcode's account list says it is. A Personal
+ * Team can't use Sign in with Apple on any platform. A macOS app also can't keep Associated
+ * Domains: it has no simulator to fall back to, so it's signed with a provisioning profile, and a
+ * Personal Team can't provision them. iOS keeps them, since simulator builds sign locally.
  */
-export function personalMacTeam(
+export function personalSigningTeam(
   inspection: Inspection,
   teams?: AppleTeam[],
 ): AppleTeam | undefined {
-  if (!inspection.contexts.every((context) => context.selection.sdk === "macosx")) return undefined;
   const ids = new Set(
     inspection.contexts.map((context) => context.settings.DEVELOPMENT_TEAM ?? ""),
   );
   if (ids.size !== 1) return undefined;
   const [id] = ids;
-  // Read Xcode's account list only for a macOS app.
+  // No team, nothing to look up in Xcode's settings.
+  if (!id) return undefined;
   return (teams ?? readXcodeDefaults().teams).find((team) => team.id === id && team.personal);
+}
+
+/** An entitlements file still holds capabilities its Personal Team can't sign. */
+export function personalTeamConflictNote(path: string, conflicts: string[]): string {
+  return `${path} still has ${conflicts.join(" and ")}, which a Personal Team can't sign. Remove ${conflicts.length > 1 ? "them" : "it"} in Xcode's Signing & Capabilities, or switch to a paid Apple Developer Program team.`;
 }
