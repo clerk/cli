@@ -329,8 +329,12 @@ describe("run", () => {
       reason: "no password (--require-password)",
     });
     expect(record?.status).toBe("partial");
-    // So `runs <id>` suggests a continue that still leaves them out.
+    // So a continue would still leave them out.
     expect(importFlags(record?.flags ?? {})).toEqual(["--require-password"]);
+    // ...which is why none is offered: following it would print it again.
+    const err = Bun.stripANSI(captured.err);
+    expect(err).not.toContain("to retry them");
+    expect(err).toContain("to see what happened to each user");
   });
 
   // They never reach the checks, so the preview has to count them itself.

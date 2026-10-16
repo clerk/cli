@@ -80,7 +80,7 @@ export const NEXT_STEPS = {
     `Run \`${runsCommand}\` to see what happened to each user`,
     `Run \`${undoCommand}\` to delete the users it created`,
   ],
-  MIGRATE_DONE_WITH_ERRORS: (runsCommand: string, retryCommand: string, undoCommand: string) => [
+  MIGRATE_PARTIAL: (runsCommand: string, retryCommand: string, undoCommand: string) => [
     `Run \`${runsCommand}\` to see every user that didn't finish, and why`,
     `Run \`${retryCommand}\` to retry them, in the same run`,
     `Run \`${undoCommand}\` to delete the users it created`,

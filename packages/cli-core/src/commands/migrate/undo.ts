@@ -30,7 +30,6 @@ import { resolveLimits } from "./lib/instance.ts";
 import { retryOn429 } from "./lib/retry.ts";
 import {
   continueRun,
-  countLines,
   latestUserLines,
   lockRun,
   patchRun,
@@ -41,10 +40,12 @@ import {
   startRun,
   type Run,
   type RunRecord,
+  type RunState,
   openUndoOf,
   inUseMessage,
   noRunMessage,
   withAttempt,
+  withLiveCounts,
 } from "./lib/run-store.ts";
 import { withProgress, type ProgressUpdate } from "./lib/progress.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
@@ -310,13 +311,16 @@ function printPreview(record: RunRecord, preview: UndoPreview): void {
  * What the JSON adds to the preview: why undo stopped before deleting, or,
  * once it did, its run and result. One of these, never two.
  */
+/** The undo run a stop left on disk, as `runs` shows an unfinished run. */
+type StoppedRun = RunRecord & { state: RunState };
+
 type UndoOutcome =
   | { dryRun: true }
   | { consent: "required" }
   | { changed: true; signedInSincePreview?: number }
   | { recheckFailed: true }
-  | { writeFailed: true; run: RunRecord | null }
-  | { stopped: true; run: RunRecord | null }
+  | { writeFailed: true; run: StoppedRun | null }
+  | { stopped: true; run: StoppedRun | null }
   | {
       run: RunRecord;
       result: { deleted: number; failed: number; errors: { error: string; count: number }[] };
@@ -459,12 +463,10 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   try {
     await deleteAfterPreview();
   } catch (error) {
-    // Counted from its lines, as `runs` counts an unfinished run: the record
-    // still holds the counts it opened with.
-    const written = run
+    // As `runs` shows it: the record still holds the counts it opened with.
+    const written: StoppedRun | null = run
       ? {
-          ...run.record,
-          counts: countLines(latestUserLines(runsDir, run.record.id).values()),
+          ...withLiveCounts(runsDir, run.record),
           state: runState(runsDir, run.record),
         }
       : null;

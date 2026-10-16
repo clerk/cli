@@ -252,7 +252,9 @@ times before the user is recorded as failed. The command exits 1 if any user
 failed.
 
 `--require-password` records each user it leaves out as `skipped`, so the run
-ends `partial`.
+ends `partial`. A continue carries the flag and leaves them out again, so when
+they are all that's left, neither the import nor `runs <id>` suggests one. To
+import them, run the file again with `--new-run` and without the flag.
 
 `--json` returns `{ target, run, resume, checks, result }`. When a run stops
 before importing, it carries one of `dryRun: true`, `refused: true`,
@@ -485,16 +487,17 @@ to run next: for an interrupted or partial import, the import that continues it,
 with the flags it ran with, then the undo. The continue is left out when
 importing the file again might not reach this run: a newer run of the same file
 and source that may be for the same instance (one recorded under a key's
-stand-in ID may be any), a file changed since, or any undo of it. Both carry
-what reaches the run's instance again, from the key its latest attempt used:
-`--secret-key <key>` for a key passed with `--secret-key` or exported (as
-`CLERK_SECRET_KEY`, or a framework's own variable such as
-`NUXT_CLERK_SECRET_KEY`), and `--app` and `--instance` for `--app` or a linked
-profile (`--secret-key <key>` when the run is under a stand-in ID: no
-`--instance` resolves one, and a bare `--app` resolves development). A key file
-(`.env`, or a keyless app's) gets no target flags: it refuses `--instance`, and
-run from the same project it names the key itself. The import's own next steps,
-and a partial undo's, carry the same. An unknown ID exits 2.
+stand-in ID may be any), a file changed since, or any undo of it. It is also
+left out when only `--require-password` skips are left. Both carry what reaches
+the run's instance again, from the key its latest attempt used: `--secret-key
+<key>` for a key passed with `--secret-key` or exported (as `CLERK_SECRET_KEY`,
+or a framework's own variable such as `NUXT_CLERK_SECRET_KEY`), and `--app` and
+`--instance` for `--app` or a linked profile (`--secret-key <key>` when the run
+is under a stand-in ID: no `--instance` resolves one, and a bare `--app`
+resolves development). A key file (`.env`, or a keyless app's) gets no target
+flags: it refuses `--instance`, and run from the same project it names the key
+itself. The import's own next steps, and a partial undo's, carry the same. An
+unknown ID exits 2.
 
 ### `clerk migrate undo`
 

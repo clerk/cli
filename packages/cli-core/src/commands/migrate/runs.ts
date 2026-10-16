@@ -13,7 +13,7 @@ import { quoteArg } from "../../lib/json-body.ts";
 import { log } from "../../lib/log.ts";
 import { tallyError } from "./lib/failures.ts";
 import {
-  countLines,
+  continueFinishes,
   latestUserLines,
   listRuns,
   importsOfFile,
@@ -29,6 +29,7 @@ import {
   type UserLine,
   USERS_FILE,
   noRunMessage,
+  withLiveCounts,
 } from "./lib/run-store.ts";
 import { carryFlags, importFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
 import { plural } from "./lib/plural.ts";
@@ -166,7 +167,10 @@ function nextCommands(
   if (record.kind === "import" && state !== "undone") {
     const undo = `Run \`${undoCommand(record.id, carry)}\` to delete the users it created`;
     const again = continueCommand(record, carry);
-    if (!again || state === "complete" || !continuesThisRun(runsDir, record)) return [undo];
+    const finishes = state === "interrupted" || continueFinishes(runsDir, record);
+    if (!again || state === "complete" || !finishes || !continuesThisRun(runsDir, record)) {
+      return [undo];
+    }
     // Continuing is what a stopped run is for: the same file, source and
     // target pick it up where it left off.
     const why = state === "interrupted" ? "continue it" : "retry the users it didn't finish";
@@ -283,15 +287,6 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
   log.blank();
   log.info(dim(`Every outcome: ${usersFile}`));
   for (const step of view.next) log.info(`  → ${step}`);
-}
-
-/**
- * Counts are written when a run finishes, so an interrupted one still holds
- * its start's zeros. Those are counted from its user lines instead.
- */
-function withLiveCounts(runsDir: string, record: RunRecord): RunRecord {
-  if (record.finishedAt) return record;
-  return { ...record, counts: countLines(latestUserLines(runsDir, record.id).values()) };
 }
 
 export async function runs(id: string | undefined, options: RunsOptions = {}): Promise<void> {

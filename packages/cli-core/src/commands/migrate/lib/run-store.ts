@@ -316,6 +316,32 @@ export function runState(runsDir: string, record: RunRecord): RunState {
 }
 
 /**
+ * Counts are written when a run finishes, so an interrupted one still holds
+ * its start's zeros. Those are counted from its user lines instead.
+ */
+export function withLiveCounts(runsDir: string, record: RunRecord): RunRecord {
+  if (record.finishedAt) return record;
+  return { ...record, counts: countLines(latestUserLines(runsDir, record.id).values()) };
+}
+
+/** Why `--require-password` leaves a user out. */
+export const NO_PASSWORD_REASON = "no password (--require-password)";
+
+/**
+ * Whether continuing a run could finish anything: a user never sent, or one a
+ * continue retries. Not a `--require-password` skip: the continue carries the
+ * flag, so it leaves that user out again, and suggesting it would loop.
+ */
+export function continueFinishes(runsDir: string, record: RunRecord): boolean {
+  if ((record.counts.notSent ?? 0) > 0) return true;
+  return [...latestUserLines(runsDir, record.id).values()].some((line) =>
+    line.status === "skipped"
+      ? line.reason !== NO_PASSWORD_REASON
+      : line.status !== "created" || (line.pending?.length ?? 0) > 0,
+  );
+}
+
+/**
  * The imports of this file with this source, newest first: the runs a
  * re-import of it chooses among, before it looks at the instance.
  */

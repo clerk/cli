@@ -497,7 +497,7 @@ describe("stopped part-way", () => {
 
     const undoRun = listRuns(runsDir).find((r) => r.kind === "undo");
     // As it stands on disk, not as it opened: counted from its lines.
-    const printed = JSON.parse(captured.out) as { run: RunRecord & { state: string } };
+    const printed = JSON.parse(captured.out) as { run: RunRecord };
     expect(printed).toMatchObject({
       stopped: true,
       run: { id: undoRun?.id, state: "interrupted" },

@@ -254,6 +254,27 @@ describe("runs <id>", () => {
     expect(next[0]).toContain("--source clerk --require-password --runs-dir");
   });
 
+  // The continue carries --require-password, so it would leave them out again.
+  test("offers no continue when only --require-password skips are left", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+      flags: { requirePassword: true },
+    });
+    run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    run.append({ sourceId: "d", status: "skipped", reason: "no password (--require-password)" });
+    const record = run.finish();
+
+    await runs(record.id, { runsDir, json: true });
+
+    const { run: shown, next } = JSON.parse(captured.out) as { run: RunRecord; next: string[] };
+    expect(shown.status).toBe("partial");
+    expect(next).toEqual([expect.stringContaining(`clerk migrate undo ${record.id}`)]);
+  });
+
   // Each of these would start another run, or refuse, rather than continue it.
   describe("offers only the undo when importing the file again would not continue the run", () => {
     const onlyUndo = async (id: string) => {

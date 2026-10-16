@@ -48,6 +48,7 @@ import { ALREADY_IMPORTED, checkImport, type ImportChecks } from "./lib/checks.t
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
 import {
+  continueFinishes,
   continueRun,
   latestUserLines,
   listRuns,
@@ -60,6 +61,7 @@ import {
   type Run,
   type RunRecord,
   type UserLine,
+  NO_PASSWORD_REASON,
   unfinishedUndoMessage,
   inUseMessage,
   openUndoOf,
@@ -889,7 +891,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         run.append({
           sourceId: user.userId,
           status: "skipped",
-          reason: "no password (--require-password)",
+          reason: NO_PASSWORD_REASON,
         });
       }
 
@@ -981,10 +983,11 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const later = laterCarry(options.runsDir, record.target);
       const undo = undoCommand(record.id, later);
       // A partial run continues, as `runs <id>` says: a skip fixed since (a
-      // setting the checks named) imports then, and one that isn't is skipped again.
+      // setting the checks named) imports then. Not when only `--require-password`
+      // skips are left: the continue would leave them out again.
       const steps =
-        record.status === "partial"
-          ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(
+        record.status === "partial" && continueFinishes(runsDir, record)
+          ? NEXT_STEPS.MIGRATE_PARTIAL(
               runsStep,
               // The same import again continues this run; --new-run would not.
               commandFor({ ...options, newRun: false }, options.yes ? ["--yes"] : [], later),
