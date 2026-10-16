@@ -90,20 +90,19 @@ back at `clerk init`:
 | Production publishable key: Release   | Release passes the production instance's publishable key to `Clerk.configure`                                                                                                                             |
 
 The publishable key is read without building, and only when the argument to
-`Clerk.configure` can be followed to it: a string literal, an Info.plist read
-(`Bundle.main.object(forInfoDictionaryKey:)` or `infoDictionary[…]`, whose
+`Clerk.configure` is a string literal or an Info.plist read
+(`Bundle.main.object(forInfoDictionaryKey:)` or `infoDictionary[…]`) whose
 entry is a literal or a `$(BUILD_SETTING)`, so xcconfig values per
-configuration count), or a constant declared once as one of those. Only the
-selected target's Swift files count (its compile-sources files and
-synchronized folders less their membership exceptions, or its
-`target-membership` entries in a `.xcproj`), less the configuration's
-`EXCLUDED_SOURCE_FILE_NAMES`. `#if` blocks are evaluated against each
-configuration's `SWIFT_ACTIVE_COMPILATION_CONDITIONS` and `-D` flags. A
-fallback (`?? "pk_…"`), the environment, a bundled file, a build script, or
-CI is reported as "Not verified" with the reason. Keys are compared, never printed. The suggested setup keeps the development key
+configuration count. Only the selected target's Swift files count (its
+compile-sources files and synchronized folders less their membership
+exceptions, or its `target-membership` entries in a `.xcproj`), less the
+configuration's `EXCLUDED_SOURCE_FILE_NAMES`. Anything else is reported as
+"Not verified" with the reason: a constant, a call inside `#if`, a fallback
+(`?? "pk_…"`), the environment, a bundled file, a build script, or CI. Keys are compared, never printed. The suggested setup keeps the development key
 in Debug: a `CLERK_PUBLISHABLE_KEY` build setting per configuration, exposed as
-`ClerkPublishableKey = $(CLERK_PUBLISHABLE_KEY)` in Info.plist and read with
-`Bundle.main.object(forInfoDictionaryKey:)`.
+`ClerkPublishableKey = $(CLERK_PUBLISHABLE_KEY)` in Info.plist, and passed
+straight to `Clerk.configure` as
+`Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") as! String`.
 
 Without a production instance these become one passing note, since production
 is optional (the Instances check already mentions it). Selecting only Debug with

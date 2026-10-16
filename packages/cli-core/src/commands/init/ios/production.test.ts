@@ -41,7 +41,7 @@ beforeEach(async () => {
     nativeEnabled: true,
     registrations: [registration("com.example.MyApp")],
     release: {},
-    swift: `#if DEBUG\nClerk.configure(publishableKey: "${DEV}")\n#else\nClerk.configure(publishableKey: "${LIVE}")\n#endif\n`,
+    swift: `Clerk.configure(publishableKey: "${LIVE}")`,
   };
 });
 afterEach(async () => {

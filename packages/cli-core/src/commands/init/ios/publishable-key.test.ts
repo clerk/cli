@@ -79,8 +79,6 @@ async function resolveKey(configuration: string, settings?: Entries) {
   return configuredPublishableKey(selected.contexts[0]!, await scanSwiftSources(selected));
 }
 
-const DEBUG_FLAGS = { SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG" };
-
 describe("resolved keys", () => {
   test.each([
     {
@@ -98,48 +96,8 @@ describe("resolved keys", () => {
       source: "a string literal in MyApp/App.swift",
     },
     {
-      name: "the Release branch of #if DEBUG",
-      swift: `#if DEBUG\nClerk.configure(publishableKey: "${DEV}")\n#else\nClerk.configure(publishableKey: "${LIVE}")\n#endif`,
-      configuration: "Release",
-      key: LIVE,
-      source: "a string literal in MyApp/App.swift",
-    },
-    {
-      name: "the Debug branch of #if DEBUG",
-      swift: `#if DEBUG\nClerk.configure(publishableKey: "${DEV}")\n#else\nClerk.configure(publishableKey: "${LIVE}")\n#endif`,
-      configuration: "Debug",
-      settings: DEBUG_FLAGS,
-      key: DEV,
-      source: "a string literal in MyApp/App.swift",
-    },
-    {
-      name: "a constant chosen with #if !DEBUG",
-      swift: `enum Keys {\n#if !DEBUG\n  static let clerk = "${LIVE}"\n#else\n  static let clerk = "${DEV}"\n#endif\n}\nClerk.configure(publishableKey: Keys.clerk)`,
-      configuration: "Release",
-      key: LIVE,
-      source: "a string literal in MyApp/App.swift",
-    },
-    {
-      name: "a flag from OTHER_SWIFT_FLAGS",
-      swift: `#if STAGING || DEBUG\nClerk.configure(publishableKey: "${DEV}")\n#else\nClerk.configure(publishableKey: "${LIVE}")\n#endif`,
-      configuration: "Staging",
-      settings: { OTHER_SWIFT_FLAGS: "$(inherited) -D STAGING" },
-      key: DEV,
-      source: "a string literal in MyApp/App.swift",
-    },
-    {
       name: "an Info.plist entry set by a build setting",
       swift: `Clerk.configure(publishableKey: Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") as! String)`,
-      plist: PLIST("<key>ClerkPublishableKey</key><string>$(CLERK_PUBLISHABLE_KEY)</string>"),
-      configuration: "Release",
-      settings: { INFOPLIST_FILE: "MyApp/Info.plist", CLERK_PUBLISHABLE_KEY: LIVE },
-      key: LIVE,
-      source:
-        "the Info.plist entry ClerkPublishableKey, set by the CLERK_PUBLISHABLE_KEY build setting",
-    },
-    {
-      name: "a constant read from Info.plist",
-      swift: `let key = Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") as! String\nClerk.configure(publishableKey: key)`,
       plist: PLIST("<key>ClerkPublishableKey</key><string>$(CLERK_PUBLISHABLE_KEY)</string>"),
       configuration: "Release",
       settings: { INFOPLIST_FILE: "MyApp/Info.plist", CLERK_PUBLISHABLE_KEY: LIVE },
@@ -177,24 +135,40 @@ describe("unresolved keys", () => {
       reason: "no Clerk.configure(publishableKey:) call was found",
     },
     {
-      name: "a call only in the Debug branch",
-      files: { "MyApp/App.swift": `#if DEBUG\nClerk.configure(publishableKey: "${DEV}")\n#endif` },
-      reason: "no Clerk.configure call is compiled into Release",
+      name: "two calls compiled into Release",
+      files: {
+        "MyApp/App.swift": `Clerk.configure(publishableKey: "${LIVE}")`,
+        "MyApp/Other.swift": `Clerk.configure(publishableKey: "${DEV}")`,
+      },
+      reason: "the target's Swift sources have 2 Clerk.configure calls",
+    },
+    {
+      name: "the branches of #if DEBUG",
+      files: {
+        "MyApp/App.swift": `#if DEBUG\nClerk.configure(publishableKey: "${DEV}")\n#else\nClerk.configure(publishableKey: "${LIVE}")\n#endif`,
+      },
+      reason: "Clerk.configure is inside an #if block",
     },
     {
       name: "a platform condition",
       files: {
         "MyApp/App.swift": `#if os(iOS)\nClerk.configure(publishableKey: "${LIVE}")\n#endif`,
       },
-      reason: "compilation condition that depends on more than build flags",
+      reason: "Clerk.configure is inside an #if block",
     },
     {
-      name: "two calls compiled into Release",
+      name: "a constant",
+      files: { "MyApp/App.swift": `let key = "${LIVE}"\nClerk.configure(publishableKey: key)` },
+      reason: "gets its key from code the CLI doesn't read",
+    },
+    {
+      name: "a constant read from Info.plist",
       files: {
-        "MyApp/App.swift": `Clerk.configure(publishableKey: "${LIVE}")`,
-        "MyApp/Other.swift": `Clerk.configure(publishableKey: "${DEV}")`,
+        "MyApp/App.swift": `let key = Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") as! String\nClerk.configure(publishableKey: key)`,
+        "MyApp/Info.plist": PLIST(`<key>ClerkPublishableKey</key><string>${LIVE}</string>`),
       },
-      reason: "2 Clerk.configure calls are compiled into Release",
+      settings: { INFOPLIST_FILE: "MyApp/Info.plist" },
+      reason: "gets its key from code the CLI doesn't read",
     },
     {
       name: "a placeholder string",
@@ -204,14 +178,14 @@ describe("unresolved keys", () => {
     {
       name: "an interpolated string",
       files: { "MyApp/App.swift": `Clerk.configure(publishableKey: "pk_live_\\(suffix)")` },
-      reason: "gets its key from code the CLI can't follow",
+      reason: "gets its key from code the CLI doesn't read",
     },
     {
       name: "the process environment",
       files: {
         "MyApp/App.swift": `Clerk.configure(publishableKey: ProcessInfo.processInfo.environment["CLERK_PUBLISHABLE_KEY"] ?? "")`,
       },
-      reason: "gets its key from code the CLI can't follow",
+      reason: "gets its key from code the CLI doesn't read",
     },
     {
       name: "a bundled secrets file",
@@ -221,7 +195,7 @@ describe("unresolved keys", () => {
           `<key>CLERK_PUBLISHABLE_KEY</key><string>${LIVE}</string>`,
         ),
       },
-      reason: "gets its key from code the CLI can't follow",
+      reason: "gets its key from code the CLI doesn't read",
     },
     {
       name: "an Info.plist read with a key fallback",
@@ -230,36 +204,21 @@ describe("unresolved keys", () => {
         "MyApp/Info.plist": PLIST(`<key>ClerkPublishableKey</key><string>${LIVE}</string>`),
       },
       settings: { INFOPLIST_FILE: "MyApp/Info.plist" },
-      reason: "gets its key from code the CLI can't follow",
+      reason: "gets its key from code the CLI doesn't read",
     },
     {
       name: "an environment override with a production fallback",
       files: {
         "MyApp/App.swift": `Clerk.configure(publishableKey: ProcessInfo.processInfo.environment["KEY"] ?? "${LIVE}")`,
       },
-      reason: "gets its key from code the CLI can't follow",
+      reason: "gets its key from code the CLI doesn't read",
     },
     {
       name: "a constant with an environment override",
       files: {
         "MyApp/App.swift": `let key = ProcessInfo.processInfo.environment["KEY"] ?? "${LIVE}"\nClerk.configure(publishableKey: key)`,
       },
-      reason: "gets its key from code the CLI can't follow",
-    },
-    {
-      name: "a computed property",
-      files: {
-        "MyApp/App.swift": `var key: String { "${LIVE}" }\nClerk.configure(publishableKey: key)`,
-      },
-      reason: "key isn't a constant the CLI can read",
-    },
-    {
-      name: "a name declared twice",
-      files: {
-        "MyApp/App.swift": `let key = "${LIVE}"\nClerk.configure(publishableKey: key)`,
-        "MyApp/Other.swift": `func preview() { let key = "${DEV}" }`,
-      },
-      reason: "key is declared more than once",
+      reason: "gets its key from code the CLI doesn't read",
     },
     {
       name: "an Info.plist entry missing from the file",

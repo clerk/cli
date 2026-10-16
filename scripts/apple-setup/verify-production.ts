@@ -1,8 +1,9 @@
 /**
  * Real Xcode resolves what `clerk doctor`'s production checks read: a
- * per-configuration xcconfig key surfaced through an Info.plist entry,
- * `#if DEBUG` literals under each configuration's compilation conditions, and a
- * Release-only entitlements file. Uses a fake Clerk API and disposable fixtures.
+ * per-configuration xcconfig key surfaced through an Info.plist entry and a
+ * Release-only entitlements file. `#if DEBUG` literals, which doctor doesn't
+ * evaluate, report the key as not verified. Uses a fake Clerk API and
+ * disposable fixtures.
  *
  * Usage:
  *   bun scripts/apple-setup/verify-production.ts
@@ -78,33 +79,46 @@ interface ProbeCase {
   swift: string;
   releaseEntitlements: boolean;
   expected: { registration: string; domain: string; key: string };
+  /** Whether Debug's key resolves to the development key, or is reported unresolved. */
+  debugKey: "development" | "unresolved";
 }
 
 const cases: ProbeCase[] = [
   {
     name: "xcconfig key per configuration through Info.plist; Release-only entitlements with $(CLERK_FAPI_HOST)",
     xcconfig: `CLERK_PUBLISHABLE_KEY = ${DEV}\nCLERK_PUBLISHABLE_KEY[config=Release] = ${LIVE}\nCLERK_FAPI_HOST = clerk.example.test\nCLERK_FAPI_HOST[config=Release] = clerk.example.com\n`,
-    swift: `import ClerkKit\nlet key = Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") as! String\nfunc start() { Clerk.configure(publishableKey: key) }\n`,
+    swift: `import ClerkKit\nfunc start() { Clerk.configure(publishableKey: Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") as! String) }\n`,
     releaseEntitlements: true,
     expected: { registration: "pass", domain: "pass", key: "pass" },
+    debugKey: "development",
   },
   {
-    name: "#if DEBUG literals, entitlements shared with Debug, another app target using the dev key",
+    name: "#if DEBUG literals (not verified), entitlements shared with Debug, another app target using the dev key",
     secondTarget: `import ClerkKit\nfunc start() { Clerk.configure(publishableKey: "${DEV}") }\n`,
     swift: `import ClerkKit\nfunc start() {\n#if DEBUG\n  Clerk.configure(publishableKey: "${DEV}")\n#else\n  Clerk.configure(publishableKey: "${LIVE}")\n#endif\n}\n`,
     releaseEntitlements: false,
-    expected: { registration: "pass", domain: "warn", key: "pass" },
+    expected: { registration: "pass", domain: "warn", key: "warn" },
+    debugKey: "unresolved",
   },
   {
-    name: "Xcode 27 JSON project, #if DEBUG literals in a target-membership folder",
+    name: "Xcode 27 JSON project, #if DEBUG literals (not verified) in a target-membership folder",
     format: "xcproj",
     swift: `import ClerkKit\nfunc start() {\n#if DEBUG\n  Clerk.configure(publishableKey: "${DEV}")\n#else\n  Clerk.configure(publishableKey: "${LIVE}")\n#endif\n}\n`,
     releaseEntitlements: false,
-    expected: { registration: "pass", domain: "warn", key: "pass" },
+    expected: { registration: "pass", domain: "warn", key: "warn" },
+    debugKey: "unresolved",
   },
 ];
 
-for (const { name, xcconfig, swift, releaseEntitlements, expected, ...options } of cases) {
+for (const {
+  name,
+  xcconfig,
+  swift,
+  releaseEntitlements,
+  expected,
+  debugKey: debugExpected,
+  ...options
+} of cases) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-production-probe-")));
   try {
     await createIOSFixture(root, {
@@ -173,8 +187,14 @@ for (const { name, xcconfig, swift, releaseEntitlements, expected, ...options } 
       (context) => context.selection.configuration === "Debug",
     )!;
     const debugKey = await configuredPublishableKey(debug, scan);
-    if (debugKey.status !== "resolved" || debugKey.key !== DEV)
-      throw new Error(`${name}: Debug should resolve to the development key.`);
+    if (
+      debugExpected === "development"
+        ? debugKey.status !== "resolved" || debugKey.key !== DEV
+        : debugKey.status !== "unresolved"
+    )
+      throw new Error(
+        `${name}: Debug's key should be ${debugExpected}, got ${JSON.stringify(debugKey)}.`,
+      );
 
     const checks = await auditProduction(inspection, { applicationId: "app_probe" }, api);
     const status = (prefix: string) =>

@@ -6,11 +6,11 @@ import type { Inspection } from "./xcode.ts";
 
 /**
  * Finds the publishable key one build configuration passes to `Clerk.configure`,
- * when the argument can be followed to it without building the app: a Swift
- * string literal, an Info.plist read (literal or `$(BUILD_SETTING)`), or a
- * constant declared as one of those. Only the selected target's sources count,
- * less the configuration's excluded files. A fallback (`?? "pk_…"`), the
- * environment, a bundled file, or anything else is reported as unresolved with
+ * when the argument is one the CLI can read without building the app: a Swift
+ * string literal, or an Info.plist read whose entry is a literal or a
+ * `$(BUILD_SETTING)`. Only the selected target's sources count, less the
+ * configuration's excluded files. Anything else (a constant, a call inside `#if`,
+ * a fallback, the environment, a bundled file) is reported as unresolved with
  * the reason, never guessed.
  */
 
@@ -22,19 +22,6 @@ export type ConfiguredKey =
 
 const PUBLISHABLE_KEY = /^pk_(?:test|live)_[A-Za-z0-9+/]+={0,2}$/;
 const MAX_FILE_SIZE = 1_000_000;
-
-interface Literal {
-  start: number;
-  end: number;
-  /** Undefined when the literal is interpolated, escaped, or multi-line. */
-  value: string | undefined;
-}
-
-/** One `#if` chain open at a position: the conditions of its earlier branches and of the current one (null for `#else`). */
-interface Frame {
-  prior: string[];
-  current: string | null;
-}
 
 interface SwiftFile {
   /** Relative to the project root, for messages. */
@@ -53,10 +40,9 @@ export interface SwiftScan {
   incomplete?: string;
 }
 
-/** Replaces comments and string literals with spaces (keeping newlines) and records each literal. */
-function lex(source: string): { code: string; literals: Literal[] } {
+/** Replaces comments and string literals with spaces, keeping newlines, so only code is searched. */
+function lex(source: string): string {
   const code = source.split("");
-  const literals: Literal[] = [];
   const blank = (from: number, to: number) => {
     for (let i = from; i < to; i++) if (code[i] !== "\n") code[i] = " ";
   };
@@ -94,139 +80,16 @@ function lex(source: string): { code: string; literals: Literal[] } {
         else if (!multiline && source[j] === "\n") break;
         j++;
       }
-      const content = source.slice(contentStart, j);
       const end = Math.min(source.length, j + delimiter.length);
-      const escaped = hashes ? content.includes(`\\${"#".repeat(hashes)}`) : content.includes("\\");
-      literals.push({ start: i, end, value: multiline || escaped ? undefined : content });
       blank(i, end);
       i = end;
     } else i++;
   }
-  return { code: code.join(""), literals };
+  return code.join("");
 }
 
-/** The `#if` chains open at each requested position, in source order. */
-function framesAt(code: string, positions: number[]): Frame[][] {
-  const directives = [...code.matchAll(/^[ \t]*#(if|elseif|else|endif)\b([^\n]*)/gm)];
-  const stack: Frame[] = [];
-  const result: Frame[][] = [];
-  let next = 0;
-  const order = positions.map((position, index) => ({ position, index }));
-  order.sort((a, b) => a.position - b.position);
-  for (const { position, index } of order) {
-    while (next < directives.length && directives[next]!.index! < position) {
-      const [, kind, rest] = directives[next++]!;
-      const condition = rest!.trim();
-      const top = stack.at(-1);
-      if (kind === "if") stack.push({ prior: [], current: condition });
-      else if (kind === "endif") stack.pop();
-      else if (top) {
-        if (top.current !== null) top.prior.push(top.current);
-        top.current = kind === "else" ? null : condition;
-      }
-    }
-    result[index] = stack.map((frame) => ({ prior: [...frame.prior], current: frame.current }));
-  }
-  return result;
-}
-
-/** Three-valued evaluation of a compilation condition; undefined when it depends on more than flags. */
-function evaluate(condition: string, flags: Set<string>): boolean | undefined {
-  const tokens = condition.match(/&&|\|\||[!()]|[A-Za-z_][A-Za-z0-9_]*|\S/g) ?? [];
-  let position = 0;
-  const or = (): boolean | undefined => {
-    let value = and();
-    while (tokens[position] === "||") {
-      position++;
-      const right = and();
-      value =
-        value === true || right === true
-          ? true
-          : value === false && right === false
-            ? false
-            : undefined;
-    }
-    return value;
-  };
-  const and = (): boolean | undefined => {
-    let value = unary();
-    while (tokens[position] === "&&") {
-      position++;
-      const right = unary();
-      value =
-        value === false || right === false
-          ? false
-          : value === true && right === true
-            ? true
-            : undefined;
-    }
-    return value;
-  };
-  const unary = (): boolean | undefined => {
-    if (tokens[position] === "!") {
-      position++;
-      const value = unary();
-      return value === undefined ? undefined : !value;
-    }
-    const token = tokens[position++];
-    if (token === "(") {
-      const value = or();
-      if (tokens[position++] !== ")") throw new Error("Unbalanced condition.");
-      return value;
-    }
-    if (!token || !/^[A-Za-z_]/.test(token)) throw new Error("Unexpected condition token.");
-    // os(iOS), canImport(X), swift(>=6): not decidable from build settings.
-    if (tokens[position] === "(") {
-      let depth = 0;
-      do {
-        if (tokens[position] === "(") depth++;
-        else if (tokens[position] === ")") depth--;
-        position++;
-      } while (depth && position < tokens.length);
-      return undefined;
-    }
-    if (token === "true") return true;
-    if (token === "false") return false;
-    return flags.has(token);
-  };
-  try {
-    const value = or();
-    return position === tokens.length ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** Whether code under these `#if` chains is compiled with these flags; undefined when unknown. */
-function active(frames: Frame[], flags: Set<string>): boolean | undefined {
-  let result: boolean | undefined = true;
-  for (const frame of frames) {
-    for (const prior of frame.prior) {
-      const value = evaluate(prior, flags);
-      if (value === true) return false;
-      if (value === undefined) result = undefined;
-    }
-    if (frame.current !== null) {
-      const value = evaluate(frame.current, flags);
-      if (value === false) return false;
-      if (value === undefined) result = undefined;
-    }
-  }
-  return result;
-}
-
-/** Swift compilation flags for a configuration: SWIFT_ACTIVE_COMPILATION_CONDITIONS plus `-D` flags. */
-function compilationFlags(settings: Record<string, string>): Set<string> {
-  const flags = new Set(
-    (settings.SWIFT_ACTIVE_COMPILATION_CONDITIONS ?? "").split(/\s+/).filter(Boolean),
-  );
-  for (const match of (settings.OTHER_SWIFT_FLAGS ?? "").matchAll(/(?:^|\s)-D\s*([A-Za-z_]\w*)/g))
-    flags.add(match[1]!);
-  return flags;
-}
-
-/** Where an expression starting at `start` ends: the first `,` or unmatched closer at depth zero, or the line's end. */
-function expressionEnd(code: string, start: number, stopAtLine: boolean): number {
+/** Where an expression starting at `start` ends: the first `,`, `;`, or unmatched closer at depth zero. */
+function expressionEnd(code: string, start: number): number {
   let depth = 0;
   for (let i = start; i < code.length; i++) {
     const char = code[i]!;
@@ -234,17 +97,17 @@ function expressionEnd(code: string, start: number, stopAtLine: boolean): number
     else if (")]}".includes(char)) {
       if (!depth) return i;
       depth--;
-    } else if (!depth && (char === "," || char === ";" || (stopAtLine && char === "\n"))) return i;
+    } else if (!depth && (char === "," || char === ";")) return i;
   }
   return code.length;
 }
 
 function scanFile(path: string, absolute: string, source: string): SwiftFile {
-  const { code } = lex(source);
+  const code = lex(source);
   const calls = [...code.matchAll(/\bClerk\s*\.\s*configure\s*\(\s*publishableKey\s*:/g)].map(
     (match) => {
       const start = match.index! + match[0].length;
-      return { position: match.index!, start, end: expressionEnd(code, start, false) };
+      return { position: match.index!, start, end: expressionEnd(code, start) };
     },
   );
   return { path, absolute, source, code, calls };
@@ -320,78 +183,28 @@ async function plistValue(
   return { value: setting ? settings[setting] : raw, setting };
 }
 
-type Trace =
-  | { kind: "literal"; value: string; path: string }
-  | { kind: "plist"; name: string }
-  | { kind: "unresolved"; reason: string };
-
 const LITERAL = /^(#*)"([^"\\\n]*)"\1$/;
 // An Info.plist read whose only fallback, if any, is an empty string (not a key).
 const PLIST_READ =
   /^Bundle\s*\.\s*main\s*\.\s*(?:object\s*\(\s*forInfoDictionaryKey\s*:\s*"([^"\\]+)"\s*\)|infoDictionary\s*[?!]?\s*\[\s*"([^"\\]+)"\s*\])\s*(?:as!\s*String|as\?\s*String\s*(?:\?\?\s*""|!)|!)?$/;
-const IDENTIFIER = /^(?:[A-Za-z_]\w*\s*\.\s*)*([A-Za-z_]\w*)$/;
 
 function unwrap(text: string): string {
   let value = text.trim();
   while (
     value.startsWith("(") &&
     value.endsWith(")") &&
-    expressionEnd(value, 1, false) === value.length - 1
+    expressionEnd(value, 1) === value.length - 1
   )
     value = value.slice(1, -1).trim();
   return value;
 }
 
-/**
- * Follows an expression to where its value comes from: a literal, an Info.plist read, or a
- * constant (exactly one declaration compiled into this configuration) declared as one of those.
- */
-function trace(
-  text: string,
-  path: string,
-  files: SwiftFile[],
-  flags: Set<string>,
-  depth = 0,
-): Trace {
-  const expression = unwrap(text);
-  const literal = LITERAL.exec(expression);
-  if (literal) return { kind: "literal", value: literal[2]!, path };
-  const plist = PLIST_READ.exec(expression);
-  if (plist) return { kind: "plist", name: (plist[1] ?? plist[2])! };
-  const identifier = IDENTIFIER.exec(expression);
-  if (!identifier || depth > 4)
-    return {
-      kind: "unresolved",
-      reason: `Clerk.configure in ${path} gets its key from code the CLI can't follow without building the app (for example a fallback, the environment, a bundled file, or a build script)`,
-    };
-  const name = identifier[1]!;
-  const declarations = files.flatMap((file) =>
-    [
-      ...file.code.matchAll(new RegExp(`\\b(?:let|var)\\s+${name}\\s*(?::\\s*String\\s*)?=`, "g")),
-    ].map((match) => {
-      const start = match.index! + match[0].length;
-      return {
-        file,
-        active: active(framesAt(file.code, [match.index!])[0]!, flags),
-        text: file.source.slice(start, expressionEnd(file.code, start, true)),
-      };
-    }),
-  );
-  if (declarations.some((declaration) => declaration.active === undefined))
-    return {
-      kind: "unresolved",
-      reason: `${name} is declared inside a compilation condition that depends on more than build flags`,
-    };
-  const compiled = declarations.filter((declaration) => declaration.active);
-  if (compiled.length !== 1)
-    return {
-      kind: "unresolved",
-      reason: compiled.length
-        ? `${name} is declared more than once, so which value reaches Clerk.configure is unclear`
-        : `${name} isn't a constant the CLI can read (it's computed, or declared outside the target)`,
-    };
-  const [declaration] = compiled;
-  return trace(declaration!.text, declaration!.file.path, files, flags, depth + 1);
+/** Whether a position in lexed code sits inside an `#if` block. */
+function conditional(code: string, position: number): boolean {
+  let depth = 0;
+  for (const [, kind] of code.slice(0, position).matchAll(/^[ \t]*#(if|endif)\b/gm))
+    depth += kind === "if" ? 1 : -1;
+  return depth > 0;
 }
 
 export async function configuredPublishableKey(
@@ -400,65 +213,56 @@ export async function configuredPublishableKey(
 ): Promise<ConfiguredKey> {
   const configuration = context.selection.configuration;
   if (scan.incomplete) return { status: "unresolved", reason: scan.incomplete };
-  const flags = compilationFlags(context.settings);
   const files = scan.files.filter(
     (file) => !excludedFromConfiguration(file.absolute, context.settings),
   );
-  const calls = files.flatMap((file) =>
-    file.calls.map((call) => ({
-      ...call,
-      file,
-      active: active(framesAt(file.code, [call.position])[0]!, flags),
-    })),
-  );
-  if (calls.some((call) => call.active === undefined))
+  const calls = files.flatMap((file) => file.calls.map((call) => ({ ...call, file })));
+  if (!calls.length)
     return {
       status: "unresolved",
-      reason:
-        "Clerk.configure is inside a compilation condition that depends on more than build flags",
+      reason: "no Clerk.configure(publishableKey:) call was found in the target's Swift sources",
     };
-  const compiled = calls.filter((call) => call.active);
-  if (!compiled.length)
+  if (calls.some((call) => conditional(call.file.code, call.position)))
     return {
       status: "unresolved",
-      reason: calls.length
-        ? `no Clerk.configure call is compiled into ${configuration}`
-        : "no Clerk.configure(publishableKey:) call was found in the target's Swift sources",
+      reason: `Clerk.configure is inside an #if block, and which branch ${configuration} compiles isn't read without building`,
     };
-  if (compiled.length > 1)
+  if (calls.length > 1)
     return {
       status: "unresolved",
-      reason: `${compiled.length} Clerk.configure calls are compiled into ${configuration}`,
+      reason: `the target's Swift sources have ${calls.length} Clerk.configure calls`,
     };
-  const [call] = compiled;
-  const found = trace(
-    call!.file.source.slice(call!.start, call!.end),
-    call!.file.path,
-    files,
-    flags,
-  );
-  if (found.kind === "unresolved") return { status: "unresolved", reason: found.reason };
-  if (found.kind === "literal")
-    return PUBLISHABLE_KEY.test(found.value)
-      ? { status: "resolved", key: found.value, source: `a string literal in ${found.path}` }
+  const [call] = calls;
+  const argument = unwrap(call!.file.source.slice(call!.start, call!.end));
+  const literal = LITERAL.exec(argument);
+  if (literal)
+    return PUBLISHABLE_KEY.test(literal[2]!)
+      ? { status: "resolved", key: literal[2]!, source: `a string literal in ${call!.file.path}` }
       : {
           status: "unresolved",
           reason: `Clerk.configure in ${call!.file.path} is passed a string that isn't a publishable key`,
         };
-  const entry = await plistValue(context, found.name);
+  const plist = PLIST_READ.exec(argument);
+  if (!plist)
+    return {
+      status: "unresolved",
+      reason: `Clerk.configure in ${call!.file.path} gets its key from code the CLI doesn't read without building the app (for example a constant, a fallback, the environment, or a bundled file)`,
+    };
+  const name = (plist[1] ?? plist[2])!;
+  const entry = await plistValue(context, name);
   if (entry.reason) return { status: "unresolved", reason: entry.reason };
   if (!entry.value || !PUBLISHABLE_KEY.test(entry.value))
     return {
       status: "unresolved",
       reason: entry.setting
-        ? `the Info.plist entry ${found.name} reads the ${entry.setting} build setting, which isn't a publishable key in ${configuration}`
-        : `the Info.plist entry ${found.name} isn't a publishable key`,
+        ? `the Info.plist entry ${name} reads the ${entry.setting} build setting, which isn't a publishable key in ${configuration}`
+        : `the Info.plist entry ${name} isn't a publishable key`,
     };
   return {
     status: "resolved",
     key: entry.value,
     source: entry.setting
-      ? `the Info.plist entry ${found.name}, set by the ${entry.setting} build setting`
-      : `the Info.plist entry ${found.name}`,
+      ? `the Info.plist entry ${name}, set by the ${entry.setting} build setting`
+      : `the Info.plist entry ${name}`,
   };
 }

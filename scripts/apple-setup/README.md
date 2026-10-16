@@ -31,5 +31,5 @@ chains, and CocoaPods-style files).
 
 The production probe checks that Xcode's resolved settings carry what doctor's
 production checks read: a per-configuration xcconfig key surfaced through an
-Info.plist entry, `#if DEBUG` literals under each configuration's compilation
-conditions, and a Release-only entitlements file.
+Info.plist entry and a Release-only entitlements file, and that `#if DEBUG`
+literals, which doctor doesn't evaluate, report the key as not verified.
