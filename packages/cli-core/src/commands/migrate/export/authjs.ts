@@ -44,6 +44,7 @@ type AuthJsRow = Record<string, unknown> & {
   name?: string | null;
   email?: string | null;
   email_verified?: unknown;
+  created_at?: unknown;
 };
 
 /**
@@ -51,6 +52,16 @@ type AuthJsRow = Record<string, unknown> & {
  * then the legacy NextAuth `users` table's.
  */
 const VERIFIED_COLUMNS = ["emailVerified", "email_verified"] as const;
+
+/**
+ * What each attempt reads, in order. Only the legacy table has a
+ * `created_at`, and it may be gone: the second attempt drops it.
+ */
+const ATTEMPTS = [
+  { verifiedColumn: "emailVerified", createdAt: false },
+  { verifiedColumn: "email_verified", createdAt: true },
+  { verifiedColumn: "email_verified", createdAt: false },
+] as const;
 
 /**
  * Every column is qualified with the table alias: SQLite reads an unqualified
@@ -62,13 +73,15 @@ export function buildAuthJsQuery(
   client: DbClient,
   table: string,
   verifiedColumn: (typeof VERIFIED_COLUMNS)[number] = "emailVerified",
+  createdAt = false,
 ): string {
   const q = (identifier: string) => client.quote(identifier);
   // `next_auth.users` is a schema and a table, each quoted on its own.
   const from = table.split(".").map(q).join(".");
   return (
-    `SELECT u.${q("id")}, u.${q("name")}, u.${q("email")}, u.${q(verifiedColumn)} AS ${q("email_verified")} ` +
-    `FROM ${from} u ORDER BY u.${q("id")} ASC`
+    `SELECT u.${q("id")}, u.${q("name")}, u.${q("email")}, u.${q(verifiedColumn)} AS ${q("email_verified")}` +
+    (createdAt ? `, u.${q("created_at")}` : "") +
+    ` FROM ${from} u ORDER BY u.${q("id")} ASC`
   );
 }
 
@@ -102,12 +115,14 @@ export async function fetchAuthJsUsers(
 
   const candidates = tableCandidates(client);
   for (const table of candidates) {
-    for (const column of VERIFIED_COLUMNS) {
+    for (const { verifiedColumn, createdAt } of ATTEMPTS) {
       try {
-        const rows = await client.query<AuthJsRow>(buildAuthJsQuery(client, table, column));
+        const rows = await client.query<AuthJsRow>(
+          buildAuthJsQuery(client, table, verifiedColumn, createdAt),
+        );
         return { rows, table };
       } catch (error) {
-        // The table is there: try the other name for the verified column.
+        // The table is there: try the next shape of it.
         if (isMissingColumn(error)) {
           columnError ??= error;
           continue;
@@ -148,6 +163,9 @@ export function buildAuthJsExport(rows: AuthJsRow[], record: (line: UserLine) =>
       user.email_verified = verified;
       counts.emailVerified++;
     }
+    // Only a legacy NextAuth table has one: Auth.js's own schemas don't.
+    const created = row.created_at ? exportValue(row.created_at) : undefined;
+    if (created !== undefined) user.created_at = created;
 
     users.push(user);
     record({ sourceId: userId, status: "exported" });
