@@ -1,6 +1,7 @@
 import { buildDashboardUrl } from "../../../lib/environment.ts";
 import { errorMessage } from "../../../lib/errors.ts";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
+import { quoteArg } from "../../../lib/json-body.ts";
 import { hasCapabilities, readEntitlements } from "./capabilities.ts";
 import { discoverRemote } from "./identity.ts";
 import { configuredPublishableKey, scanSwiftSources, type SwiftScan } from "./publishable-key.ts";
@@ -66,7 +67,7 @@ export async function auditProduction(
           name: "Production instance",
           status: "warn",
           message: `Nothing was checked against production: only Debug was inspected, and the target's other configurations are ${others.join(", ")}.`,
-          remedy: `Run clerk doctor --xcode-configuration ${others[0]} to check it against production.`,
+          remedy: `Run clerk doctor --xcode-configuration ${quoteArg(others[0]!)} to check it against production.`,
         },
       ];
     return [

@@ -168,6 +168,13 @@ test.each([
     text: "Run clerk doctor --xcode-configuration Production",
   },
   {
+    name: "a release configuration with a space in its name",
+    unchecked: ["App Store"],
+    selected: false,
+    status: "warn",
+    text: "Run clerk doctor --xcode-configuration 'App Store'",
+  },
+  {
     name: "an explicit --xcode-configuration Debug",
     unchecked: ["Release"],
     selected: true,
