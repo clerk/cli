@@ -203,6 +203,27 @@ describe("production associated domain", () => {
     expect((await audit())["Production associated domain: Release"]?.status).toBe("pass");
   });
 
+  test.each([
+    {
+      name: "expands a build setting to the production host",
+      host: "clerk.example.com",
+      status: "pass",
+    },
+    {
+      name: "still warns when the setting resolves elsewhere",
+      host: "clerk.example.test",
+      status: "warn",
+    },
+    { name: "still warns when the setting is unset", host: undefined, status: "warn" },
+  ])("$name", async ({ host, status }) => {
+    await writeFile(
+      join(root, "MyApp/MyApp.entitlements"),
+      ENTITLEMENTS(["webcredentials:$(CLERK_FAPI_HOST)"]),
+    );
+    if (host) state.release = { CLERK_FAPI_HOST: host };
+    expect((await audit())["Production associated domain: Release"]?.status).toBe(status);
+  });
+
   test("warns when Release signs without entitlements", async () => {
     state.release = { CODE_SIGN_ENTITLEMENTS: "" };
     expect((await audit())["Production associated domain: Release"]?.message).toBe(
@@ -227,7 +248,7 @@ describe("production publishable key", () => {
     {
       name: "a key loaded at runtime",
       swift: `Clerk.configure(publishableKey: ProcessInfo.processInfo.environment["KEY"] ?? "")`,
-      message: "Not verified: Clerk.configure in MyApp/MyAppApp.swift loads its key",
+      message: "Not verified: Clerk.configure in MyApp/MyAppApp.swift gets its key from code",
     },
   ])("warns about $name without printing keys", async ({ swift, message }) => {
     state.swift = swift;

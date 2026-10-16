@@ -8,6 +8,19 @@ import { remoteActions, type NativeAPI } from "./remote.ts";
 import type { Check } from "./sdk-health.ts";
 import type { Inspection } from "./xcode.ts";
 
+/** Entitlements as Xcode signs them: `$(SETTING)` and `${SETTING}` take the configuration's values. */
+function expandSettings(source: string, settings: Record<string, string>): string {
+  return source.replace(
+    /\$(?:\(([A-Za-z_]\w*)\)|\{([A-Za-z_]\w*)\})/g,
+    (match, paren: string | undefined, brace: string | undefined) => {
+      const value = settings[(paren ?? brace)!];
+      return value === undefined
+        ? match
+        : value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    },
+  );
+}
+
 /**
  * Read-only checks that the app's non-Debug configurations are ready for the
  * production instance: its native registration, the Associated Domain in the
@@ -132,7 +145,7 @@ export async function auditProduction(
               status: "warn",
               message: `${configuration} signs without an entitlements file, so it lacks ${domain}.`,
             }
-          : hasCapabilities(source, domain)
+          : hasCapabilities(expandSettings(source, context.settings), domain)
             ? { status: "pass", message: `${configuration} entitlements include ${domain}.` }
             : {
                 status: "warn",

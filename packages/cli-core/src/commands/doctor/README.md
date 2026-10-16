@@ -83,21 +83,24 @@ non-Debug configurations it inspected (Release by default) against the
 production instance. Each warning carries its own remedy rather than pointing
 back at `clerk init`:
 
-| Check                                 | Passes when                                                                                                                                        |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Production native registration        | Release's Bundle ID is registered on production with the app's App ID Prefix, and Native API is enabled there                                      |
-| Production associated domain: Release | The entitlements file Release signs with (resolved by Xcode, including `[sdk=…]` conditions) lists `webcredentials:<production Frontend API host>` |
-| Production publishable key: Release   | Release passes the production instance's publishable key to `Clerk.configure`                                                                      |
+| Check                                 | Passes when                                                                                                                                                                                               |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Production native registration        | Release's Bundle ID is registered on production with the app's App ID Prefix, and Native API is enabled there                                                                                             |
+| Production associated domain: Release | The entitlements file Release signs with (resolved by Xcode, including `[sdk=…]` conditions) lists `webcredentials:<production Frontend API host>`, with `$(…)` build settings expanded as Xcode signs it |
+| Production publishable key: Release   | Release passes the production instance's publishable key to `Clerk.configure`                                                                                                                             |
 
-The publishable key is read without building, and only when the app loads it
-in a standard way: a string literal in `Clerk.configure`, an Info.plist entry
-the Swift sources name (literal or `$(BUILD_SETTING)`, so xcconfig values per
-configuration count), or the one key literal compiled into that configuration.
-`#if` blocks are evaluated against each configuration's
-`SWIFT_ACTIVE_COMPILATION_CONDITIONS` and `-D` flags. Test bundles and build
-products are not scanned. A key loaded any other way (a bundled file, the
-environment, a build script, CI) is reported as "Not verified" with the reason.
-Keys are compared, never printed. The suggested setup keeps the development key
+The publishable key is read without building, and only when the argument to
+`Clerk.configure` can be followed to it: a string literal, an Info.plist read
+(`Bundle.main.object(forInfoDictionaryKey:)` or `infoDictionary[…]`, whose
+entry is a literal or a `$(BUILD_SETTING)`, so xcconfig values per
+configuration count), or a constant declared once as one of those. Only the
+selected target's Swift files count (its compile-sources files and
+synchronized folders less their membership exceptions, or its
+`target-membership` entries in a `.xcproj`), less the configuration's
+`EXCLUDED_SOURCE_FILE_NAMES`. `#if` blocks are evaluated against each
+configuration's `SWIFT_ACTIVE_COMPILATION_CONDITIONS` and `-D` flags. A
+fallback (`?? "pk_…"`), the environment, a bundled file, a build script, or
+CI is reported as "Not verified" with the reason. Keys are compared, never printed. The suggested setup keeps the development key
 in Debug: a `CLERK_PUBLISHABLE_KEY` build setting per configuration, exposed as
 `ClerkPublishableKey = $(CLERK_PUBLISHABLE_KEY)` in Info.plist and read with
 `Bundle.main.object(forInfoDictionaryKey:)`.

@@ -33,18 +33,40 @@ async function write(files: Entries) {
   }
 }
 
+// Two app targets, each compiling its own synchronized folder; MyApp leaves Excluded.swift out.
+const PROJECT = `// !$*UTF8*$!
+{
+  archiveVersion = 1;
+  classes = {};
+  objectVersion = 77;
+  objects = {
+    AAAAAAAAAAAAAAAAAAAAAAAA = { isa = PBXProject; mainGroup = BBBBBBBBBBBBBBBBBBBBBBBB; targets = ( 111111111111111111111111, 222222222222222222222222 ); };
+    BBBBBBBBBBBBBBBBBBBBBBBB = { isa = PBXGroup; children = ( CCCCCCCCCCCCCCCCCCCCCCCC, DDDDDDDDDDDDDDDDDDDDDDDD ); sourceTree = "<group>"; };
+    CCCCCCCCCCCCCCCCCCCCCCCC = { isa = PBXFileSystemSynchronizedRootGroup; exceptions = ( EEEEEEEEEEEEEEEEEEEEEEEE ); path = MyApp; sourceTree = "<group>"; };
+    EEEEEEEEEEEEEEEEEEEEEEEE = { isa = PBXFileSystemSynchronizedBuildFileExceptionSet; membershipExceptions = ( Excluded.swift ); target = 111111111111111111111111; };
+    DDDDDDDDDDDDDDDDDDDDDDDD = { isa = PBXFileSystemSynchronizedRootGroup; path = AdminApp; sourceTree = "<group>"; };
+    111111111111111111111111 = { isa = PBXNativeTarget; buildPhases = ( ); fileSystemSynchronizedGroups = ( CCCCCCCCCCCCCCCCCCCCCCCC ); name = MyApp; };
+    222222222222222222222222 = { isa = PBXNativeTarget; buildPhases = ( ); fileSystemSynchronizedGroups = ( DDDDDDDDDDDDDDDDDDDDDDDD ); name = AdminApp; };
+  };
+  rootObject = AAAAAAAAAAAAAAAAAAAAAAAA;
+}
+`;
+
 function inspection(configuration: string, settings: Record<string, string> = {}): Inspection {
+  const selection = {
+    root,
+    project: "MyApp.xcodeproj",
+    targetId: "111111111111111111111111",
+    targetName: "MyApp",
+    configuration,
+    sdk: "iphoneos",
+  };
   return {
+    document: { path: "MyApp.xcodeproj/project.pbxproj", source: PROJECT },
+    input: { selection, projectFormat: "pbxproj" },
     contexts: [
       {
-        selection: {
-          root,
-          project: "MyApp.xcodeproj",
-          targetId: "T",
-          targetName: "MyApp",
-          configuration,
-          sdk: "iphoneos",
-        },
+        selection,
         settingsJSON: "[]",
         settings: { SRCROOT: root, CONFIGURATION: configuration, ...settings },
       },
@@ -107,6 +129,16 @@ describe("resolved keys", () => {
     },
     {
       name: "an Info.plist entry set by a build setting",
+      swift: `Clerk.configure(publishableKey: Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") as! String)`,
+      plist: PLIST("<key>ClerkPublishableKey</key><string>$(CLERK_PUBLISHABLE_KEY)</string>"),
+      configuration: "Release",
+      settings: { INFOPLIST_FILE: "MyApp/Info.plist", CLERK_PUBLISHABLE_KEY: LIVE },
+      key: LIVE,
+      source:
+        "the Info.plist entry ClerkPublishableKey, set by the CLERK_PUBLISHABLE_KEY build setting",
+    },
+    {
+      name: "a constant read from Info.plist",
       swift: `let key = Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") as! String\nClerk.configure(publishableKey: key)`,
       plist: PLIST("<key>ClerkPublishableKey</key><string>$(CLERK_PUBLISHABLE_KEY)</string>"),
       configuration: "Release",
@@ -172,14 +204,14 @@ describe("unresolved keys", () => {
     {
       name: "an interpolated string",
       files: { "MyApp/App.swift": `Clerk.configure(publishableKey: "pk_live_\\(suffix)")` },
-      reason: "loads its key in a way the CLI can't read without building",
+      reason: "gets its key from code the CLI can't follow",
     },
     {
       name: "the process environment",
       files: {
         "MyApp/App.swift": `Clerk.configure(publishableKey: ProcessInfo.processInfo.environment["CLERK_PUBLISHABLE_KEY"] ?? "")`,
       },
-      reason: "loads its key in a way the CLI can't read without building",
+      reason: "gets its key from code the CLI can't follow",
     },
     {
       name: "a bundled secrets file",
@@ -189,16 +221,54 @@ describe("unresolved keys", () => {
           `<key>CLERK_PUBLISHABLE_KEY</key><string>${LIVE}</string>`,
         ),
       },
-      reason: "loads its key in a way the CLI can't read without building",
+      reason: "gets its key from code the CLI can't follow",
     },
     {
-      name: "an Info.plist entry and a key literal both in reach",
+      name: "an Info.plist read with a key fallback",
       files: {
         "MyApp/App.swift": `let fallback = "${DEV}"\nClerk.configure(publishableKey: Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") as? String ?? fallback)`,
         "MyApp/Info.plist": PLIST(`<key>ClerkPublishableKey</key><string>${LIVE}</string>`),
       },
       settings: { INFOPLIST_FILE: "MyApp/Info.plist" },
-      reason: "more than one publishable key could reach Clerk.configure in Release",
+      reason: "gets its key from code the CLI can't follow",
+    },
+    {
+      name: "an environment override with a production fallback",
+      files: {
+        "MyApp/App.swift": `Clerk.configure(publishableKey: ProcessInfo.processInfo.environment["KEY"] ?? "${LIVE}")`,
+      },
+      reason: "gets its key from code the CLI can't follow",
+    },
+    {
+      name: "a constant with an environment override",
+      files: {
+        "MyApp/App.swift": `let key = ProcessInfo.processInfo.environment["KEY"] ?? "${LIVE}"\nClerk.configure(publishableKey: key)`,
+      },
+      reason: "gets its key from code the CLI can't follow",
+    },
+    {
+      name: "a computed property",
+      files: {
+        "MyApp/App.swift": `var key: String { "${LIVE}" }\nClerk.configure(publishableKey: key)`,
+      },
+      reason: "key isn't a constant the CLI can read",
+    },
+    {
+      name: "a name declared twice",
+      files: {
+        "MyApp/App.swift": `let key = "${LIVE}"\nClerk.configure(publishableKey: key)`,
+        "MyApp/Other.swift": `func preview() { let key = "${DEV}" }`,
+      },
+      reason: "key is declared more than once",
+    },
+    {
+      name: "an Info.plist entry missing from the file",
+      files: {
+        "MyApp/App.swift": `Clerk.configure(publishableKey: Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") as! String)`,
+        "MyApp/Info.plist": PLIST("<key>Other</key><string>value</string>"),
+      },
+      settings: { INFOPLIST_FILE: "MyApp/Info.plist" },
+      reason: "the Info.plist has no ClerkPublishableKey string entry",
     },
     {
       name: "a preprocessed Info.plist",
@@ -217,12 +287,28 @@ describe("unresolved keys", () => {
   });
 });
 
-test("test bundles and build products are not scanned", async () => {
-  await write({
-    "MyApp/App.swift": `Clerk.configure(publishableKey: "${LIVE}")`,
-    "MyAppTests/Setup.swift": `Clerk.configure(publishableKey: "${DEV}")`,
-    "build/Generated.swift": `Clerk.configure(publishableKey: "${DEV}")`,
-    ".build/checkouts/Other.swift": `Clerk.configure(publishableKey: "${DEV}")`,
-  });
-  expect(await resolveKey("Release")).toMatchObject({ status: "resolved", key: LIVE });
+test.each([
+  {
+    name: "another target's sources",
+    files: { "AdminApp/AdminApp.swift": `Clerk.configure(publishableKey: "${DEV}")` },
+  },
+  {
+    name: "a file the target excludes from its synchronized folder",
+    files: { "MyApp/Excluded.swift": `Clerk.configure(publishableKey: "${DEV}")` },
+  },
+  {
+    name: "a file the configuration excludes",
+    files: { "MyApp/Debug/DebugKey.swift": `Clerk.configure(publishableKey: "${DEV}")` },
+    settings: { EXCLUDED_SOURCE_FILE_NAMES: "*/Debug/*" },
+  },
+  {
+    name: "files outside the project",
+    files: {
+      "MyAppTests/Setup.swift": `Clerk.configure(publishableKey: "${DEV}")`,
+      "build/Generated.swift": `Clerk.configure(publishableKey: "${DEV}")`,
+    },
+  },
+])("ignores $name", async ({ files, settings }) => {
+  await write({ "MyApp/App.swift": `Clerk.configure(publishableKey: "${LIVE}")`, ...files });
+  expect(await resolveKey("Release", settings)).toMatchObject({ status: "resolved", key: LIVE });
 });

@@ -1,15 +1,17 @@
-import { lstat, readdir } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { DOMParser } from "@xmldom/xmldom";
 import { snapshotFile } from "./files.ts";
+import { excludedFromConfiguration, targetSwiftSources } from "./target-sources.ts";
 import type { Inspection } from "./xcode.ts";
 
 /**
  * Finds the publishable key one build configuration passes to `Clerk.configure`,
- * when the app loads it in a standard way that can be read without building:
- * a Swift string literal, an Info.plist entry (literal or `$(BUILD_SETTING)`),
- * or the one key literal compiled into that configuration. Anything else is
- * reported as unresolved with the reason, never guessed.
+ * when the argument can be followed to it without building the app: a Swift
+ * string literal, an Info.plist read (literal or `$(BUILD_SETTING)`), or a
+ * constant declared as one of those. Only the selected target's sources count,
+ * less the configuration's excluded files. A fallback (`?? "pk_…"`), the
+ * environment, a bundled file, or anything else is reported as unresolved with
+ * the reason, never guessed.
  */
 
 type Context = Inspection["contexts"][number];
@@ -19,10 +21,6 @@ export type ConfiguredKey =
   | { status: "unresolved"; reason: string };
 
 const PUBLISHABLE_KEY = /^pk_(?:test|live)_[A-Za-z0-9+/]+={0,2}$/;
-// Build products, dependencies, and test bundles, which may configure Clerk with their own keys.
-const SKIPPED_DIRECTORIES =
-  /^(?:\..*|build|DerivedData|Pods|Carthage|SourcePackages|node_modules|.*\.(?:xcodeproj|xcworkspace|app|framework|xcframework)|.*Tests)$/;
-const MAX_FILES = 2000;
 const MAX_FILE_SIZE = 1_000_000;
 
 interface Literal {
@@ -39,9 +37,14 @@ interface Frame {
 }
 
 interface SwiftFile {
+  /** Relative to the project root, for messages. */
   path: string;
-  literals: (Literal & { frames: Frame[] })[];
-  calls: { frames: Frame[]; literal?: string; expression: boolean }[];
+  absolute: string;
+  source: string;
+  /** The source with comments and string literals blanked, for finding structure. */
+  code: string;
+  /** Each `Clerk.configure(publishableKey:)` call and where its argument starts and ends. */
+  calls: { position: number; start: number; end: number }[];
 }
 
 export interface SwiftScan {
@@ -222,66 +225,46 @@ function compilationFlags(settings: Record<string, string>): Set<string> {
   return flags;
 }
 
-function scanFile(path: string, source: string): SwiftFile {
-  const { code, literals } = lex(source);
-  const calls: { position: number; literal?: string; expression: boolean }[] = [];
-  for (const match of code.matchAll(/\bClerk\s*\.\s*configure\s*\(\s*publishableKey\s*:/g)) {
-    // Literals are blanked in `code`, so find the argument's start in the source.
-    const colon = match.index! + match[0].length;
-    const start = colon + Math.max(0, source.slice(colon).search(/\S/));
-    const literal = literals.find((item) => item.start === start && item.value !== undefined);
-    const whole = literal && /^\s*[,)]/.test(code.slice(literal.end));
-    calls.push({
-      position: match.index!,
-      literal: whole ? literal.value : undefined,
-      expression: !whole,
-    });
+/** Where an expression starting at `start` ends: the first `,` or unmatched closer at depth zero, or the line's end. */
+function expressionEnd(code: string, start: number, stopAtLine: boolean): number {
+  let depth = 0;
+  for (let i = start; i < code.length; i++) {
+    const char = code[i]!;
+    if ("([{".includes(char)) depth++;
+    else if (")]}".includes(char)) {
+      if (!depth) return i;
+      depth--;
+    } else if (!depth && (char === "," || char === ";" || (stopAtLine && char === "\n"))) return i;
   }
-  const frames = framesAt(code, [
-    ...calls.map((call) => call.position),
-    ...literals.map((literal) => literal.start),
-  ]);
-  return {
-    path,
-    calls: calls.map((call, index) => ({
-      frames: frames[index]!,
-      literal: call.literal,
-      expression: call.expression,
-    })),
-    literals: literals.map((literal, index) => ({
-      ...literal,
-      frames: frames[calls.length + index]!,
-    })),
-  };
+  return code.length;
 }
 
-/** Reads the project's Swift sources once; every configuration is evaluated against the same scan. */
+function scanFile(path: string, absolute: string, source: string): SwiftFile {
+  const { code } = lex(source);
+  const calls = [...code.matchAll(/\bClerk\s*\.\s*configure\s*\(\s*publishableKey\s*:/g)].map(
+    (match) => {
+      const start = match.index! + match[0].length;
+      return { position: match.index!, start, end: expressionEnd(code, start, false) };
+    },
+  );
+  return { path, absolute, source, code, calls };
+}
+
+/** Reads the target's Swift sources once; every configuration is evaluated against the same scan. */
 export async function scanSwiftSources(inspection: Inspection): Promise<SwiftScan> {
-  const { selection, settings } = inspection.contexts[0]!;
-  const sourceRoot = settings.SRCROOT ?? resolve(selection.root, dirname(selection.project));
+  const sources = await targetSwiftSources(inspection);
+  if ("reason" in sources) return { files: [], incomplete: sources.reason };
+  const root = inspection.contexts[0]!.selection.root;
   const files: SwiftFile[] = [];
-  let count = 0;
-  const walk = async (directory: string): Promise<string | undefined> => {
-    const entries = await readdir(directory, { withFileTypes: true });
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (SKIPPED_DIRECTORIES.test(entry.name)) continue;
-        const stopped = await walk(path);
-        if (stopped) return stopped;
-      } else if (entry.isFile() && entry.name.endsWith(".swift")) {
-        if (++count > MAX_FILES) return `the project has more than ${MAX_FILES} Swift files`;
-        if ((await lstat(path)).size > MAX_FILE_SIZE) continue;
-        files.push(scanFile(relative(selection.root, path), await Bun.file(path).text()));
-      }
-    }
-    return undefined;
-  };
   try {
-    const incomplete = await walk(sourceRoot);
-    return { files, incomplete };
+    for (const absolute of sources.files) {
+      const file = Bun.file(absolute);
+      if (file.size > MAX_FILE_SIZE) continue;
+      files.push(scanFile(relative(root, absolute), absolute, await file.text()));
+    }
+    return { files };
   } catch {
-    return { files, incomplete: "the Swift sources could not be read" };
+    return { files, incomplete: "the target's Swift sources could not be read" };
   }
 }
 
@@ -313,13 +296,15 @@ function plistStrings(source: string): Map<string, string> | undefined {
   }
 }
 
-/** Info.plist entries that hold a publishable key in this configuration, directly or through a build setting. */
-async function plistKeys(context: Context) {
+/** The value an Info.plist entry has in this configuration, through a `$(BUILD_SETTING)` when it names one. */
+async function plistValue(
+  context: Context,
+  name: string,
+): Promise<{ value?: string; setting?: string; reason?: string }> {
   const { settings, selection } = context;
   const path = settings.INFOPLIST_FILE;
-  if (!path) return { entries: [] };
-  if (settings.INFOPLIST_PREPROCESS === "YES")
-    return { entries: [], reason: "the Info.plist is preprocessed" };
+  if (!path) return { reason: `the target has no Info.plist file for its ${name} entry` };
+  if (settings.INFOPLIST_PREPROCESS === "YES") return { reason: "the Info.plist is preprocessed" };
   let strings: Map<string, string> | undefined;
   try {
     const sourceRoot = settings.SRCROOT ?? resolve(selection.root, dirname(selection.project));
@@ -327,15 +312,86 @@ async function plistKeys(context: Context) {
   } catch {
     strings = undefined;
   }
-  if (!strings) return { entries: [], reason: "the Info.plist could not be read" };
-  const entries: { name: string; key: string; setting?: string }[] = [];
-  for (const [name, raw] of strings) {
-    const reference = /^\$(?:\(([A-Za-z_]\w*)\)|\{([A-Za-z_]\w*)\})$/.exec(raw.trim());
-    const setting = reference ? (reference[1] ?? reference[2]) : undefined;
-    const value = setting ? settings[setting] : raw.trim();
-    if (value && PUBLISHABLE_KEY.test(value)) entries.push({ name, key: value, setting });
-  }
-  return { entries };
+  if (!strings) return { reason: "the Info.plist could not be read" };
+  const raw = strings.get(name)?.trim();
+  if (raw === undefined) return { reason: `the Info.plist has no ${name} string entry` };
+  const reference = /^\$(?:\(([A-Za-z_]\w*)\)|\{([A-Za-z_]\w*)\})$/.exec(raw);
+  const setting = reference ? (reference[1] ?? reference[2]) : undefined;
+  return { value: setting ? settings[setting] : raw, setting };
+}
+
+type Trace =
+  | { kind: "literal"; value: string; path: string }
+  | { kind: "plist"; name: string }
+  | { kind: "unresolved"; reason: string };
+
+const LITERAL = /^(#*)"([^"\\\n]*)"\1$/;
+// An Info.plist read whose only fallback, if any, is an empty string (not a key).
+const PLIST_READ =
+  /^Bundle\s*\.\s*main\s*\.\s*(?:object\s*\(\s*forInfoDictionaryKey\s*:\s*"([^"\\]+)"\s*\)|infoDictionary\s*[?!]?\s*\[\s*"([^"\\]+)"\s*\])\s*(?:as!\s*String|as\?\s*String\s*(?:\?\?\s*""|!)|!)?$/;
+const IDENTIFIER = /^(?:[A-Za-z_]\w*\s*\.\s*)*([A-Za-z_]\w*)$/;
+
+function unwrap(text: string): string {
+  let value = text.trim();
+  while (
+    value.startsWith("(") &&
+    value.endsWith(")") &&
+    expressionEnd(value, 1, false) === value.length - 1
+  )
+    value = value.slice(1, -1).trim();
+  return value;
+}
+
+/**
+ * Follows an expression to where its value comes from: a literal, an Info.plist read, or a
+ * constant (exactly one declaration compiled into this configuration) declared as one of those.
+ */
+function trace(
+  text: string,
+  path: string,
+  files: SwiftFile[],
+  flags: Set<string>,
+  depth = 0,
+): Trace {
+  const expression = unwrap(text);
+  const literal = LITERAL.exec(expression);
+  if (literal) return { kind: "literal", value: literal[2]!, path };
+  const plist = PLIST_READ.exec(expression);
+  if (plist) return { kind: "plist", name: (plist[1] ?? plist[2])! };
+  const identifier = IDENTIFIER.exec(expression);
+  if (!identifier || depth > 4)
+    return {
+      kind: "unresolved",
+      reason: `Clerk.configure in ${path} gets its key from code the CLI can't follow without building the app (for example a fallback, the environment, a bundled file, or a build script)`,
+    };
+  const name = identifier[1]!;
+  const declarations = files.flatMap((file) =>
+    [
+      ...file.code.matchAll(new RegExp(`\\b(?:let|var)\\s+${name}\\s*(?::\\s*String\\s*)?=`, "g")),
+    ].map((match) => {
+      const start = match.index! + match[0].length;
+      return {
+        file,
+        active: active(framesAt(file.code, [match.index!])[0]!, flags),
+        text: file.source.slice(start, expressionEnd(file.code, start, true)),
+      };
+    }),
+  );
+  if (declarations.some((declaration) => declaration.active === undefined))
+    return {
+      kind: "unresolved",
+      reason: `${name} is declared inside a compilation condition that depends on more than build flags`,
+    };
+  const compiled = declarations.filter((declaration) => declaration.active);
+  if (compiled.length !== 1)
+    return {
+      kind: "unresolved",
+      reason: compiled.length
+        ? `${name} is declared more than once, so which value reaches Clerk.configure is unclear`
+        : `${name} isn't a constant the CLI can read (it's computed, or declared outside the target)`,
+    };
+  const [declaration] = compiled;
+  return trace(declaration!.text, declaration!.file.path, files, flags, depth + 1);
 }
 
 export async function configuredPublishableKey(
@@ -343,10 +399,17 @@ export async function configuredPublishableKey(
   scan: SwiftScan,
 ): Promise<ConfiguredKey> {
   const configuration = context.selection.configuration;
-  if (scan.incomplete) return { status: "unresolved", reason: `${scan.incomplete}` };
+  if (scan.incomplete) return { status: "unresolved", reason: scan.incomplete };
   const flags = compilationFlags(context.settings);
-  const calls = scan.files.flatMap((file) =>
-    file.calls.map((call) => ({ ...call, path: file.path, active: active(call.frames, flags) })),
+  const files = scan.files.filter(
+    (file) => !excludedFromConfiguration(file.absolute, context.settings),
+  );
+  const calls = files.flatMap((file) =>
+    file.calls.map((call) => ({
+      ...call,
+      file,
+      active: active(framesAt(file.code, [call.position])[0]!, flags),
+    })),
   );
   if (calls.some((call) => call.active === undefined))
     return {
@@ -360,7 +423,7 @@ export async function configuredPublishableKey(
       status: "unresolved",
       reason: calls.length
         ? `no Clerk.configure call is compiled into ${configuration}`
-        : "no Clerk.configure(publishableKey:) call was found in the project's Swift sources",
+        : "no Clerk.configure(publishableKey:) call was found in the target's Swift sources",
     };
   if (compiled.length > 1)
     return {
@@ -368,57 +431,34 @@ export async function configuredPublishableKey(
       reason: `${compiled.length} Clerk.configure calls are compiled into ${configuration}`,
     };
   const [call] = compiled;
-  if (!call!.expression) {
-    if (!PUBLISHABLE_KEY.test(call!.literal ?? ""))
-      return {
-        status: "unresolved",
-        reason: `Clerk.configure in ${call!.path} is passed a string that isn't a publishable key`,
-      };
-    return { status: "resolved", key: call!.literal!, source: `a string literal in ${call!.path}` };
-  }
-  // The key comes from an expression: follow it only to an Info.plist entry the
-  // Swift sources name, or to the one key literal compiled into this configuration.
-  const literals = scan.files.flatMap((file) =>
-    file.literals
-      .filter((literal) => literal.value !== undefined && active(literal.frames, flags) !== false)
-      .map((literal) => ({ ...literal, path: file.path, active: active(literal.frames, flags) })),
+  const found = trace(
+    call!.file.source.slice(call!.start, call!.end),
+    call!.file.path,
+    files,
+    flags,
   );
-  const names = new Set(literals.map((literal) => literal.value));
-  const plist = await plistKeys(context);
-  const entries = plist.entries.filter((entry) => names.has(entry.name));
-  const keys = literals.filter((literal) => PUBLISHABLE_KEY.test(literal.value!));
-  if (keys.some((literal) => literal.active === undefined))
+  if (found.kind === "unresolved") return { status: "unresolved", reason: found.reason };
+  if (found.kind === "literal")
+    return PUBLISHABLE_KEY.test(found.value)
+      ? { status: "resolved", key: found.value, source: `a string literal in ${found.path}` }
+      : {
+          status: "unresolved",
+          reason: `Clerk.configure in ${call!.file.path} is passed a string that isn't a publishable key`,
+        };
+  const entry = await plistValue(context, found.name);
+  if (entry.reason) return { status: "unresolved", reason: entry.reason };
+  if (!entry.value || !PUBLISHABLE_KEY.test(entry.value))
     return {
       status: "unresolved",
-      reason:
-        "a publishable key literal is inside a compilation condition that depends on more than build flags",
-    };
-  const distinctKeys = [...new Set(keys.map((literal) => literal.value!))];
-  if (entries.length === 1 && !distinctKeys.length) {
-    const [entry] = entries;
-    return {
-      status: "resolved",
-      key: entry!.key,
-      source: entry!.setting
-        ? `the Info.plist entry ${entry!.name}, set by the ${entry!.setting} build setting`
-        : `the Info.plist entry ${entry!.name}`,
-    };
-  }
-  if (!entries.length && distinctKeys.length === 1)
-    return {
-      status: "resolved",
-      key: distinctKeys[0]!,
-      source: `a string literal in ${keys.find((literal) => literal.value === distinctKeys[0])!.path}`,
-    };
-  if (entries.length || distinctKeys.length)
-    return {
-      status: "unresolved",
-      reason: `more than one publishable key could reach Clerk.configure in ${configuration}`,
+      reason: entry.setting
+        ? `the Info.plist entry ${found.name} reads the ${entry.setting} build setting, which isn't a publishable key in ${configuration}`
+        : `the Info.plist entry ${found.name} isn't a publishable key`,
     };
   return {
-    status: "unresolved",
-    reason:
-      plist.reason ??
-      `Clerk.configure in ${call!.path} loads its key in a way the CLI can't read without building the app (for example a bundled file, the environment, or a build script)`,
+    status: "resolved",
+    key: entry.value,
+    source: entry.setting
+      ? `the Info.plist entry ${found.name}, set by the ${entry.setting} build setting`
+      : `the Info.plist entry ${found.name}`,
   };
 }

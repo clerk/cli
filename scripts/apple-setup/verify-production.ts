@@ -22,6 +22,8 @@ import {
 } from "../../packages/cli-core/src/commands/init/ios/publishable-key.ts";
 import type { NativeAPI } from "../../packages/cli-core/src/commands/init/ios/remote.ts";
 import { inspectSelectedProject } from "../../packages/cli-core/src/commands/init/ios/xcode.ts";
+import { convertFixtureToXCProj } from "../../packages/cli-core/src/commands/init/ios/setup-test-helpers.ts";
+import { applyXCProjValue } from "../../packages/cli-core/src/commands/init/ios/xcproj.ts";
 
 const DEV = `pk_test_${btoa("clerk.example.test$")}`;
 const LIVE = `pk_live_${btoa("clerk.example.com$")}`;
@@ -67,58 +69,97 @@ const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 </dict></plist>
 `;
 
-const cases = [
+interface ProbeCase {
+  name: string;
+  format?: "xcproj";
+  xcconfig?: string;
+  /** Swift for a second app target that configures Clerk its own way. */
+  secondTarget?: string;
+  swift: string;
+  releaseEntitlements: boolean;
+  expected: { registration: string; domain: string; key: string };
+}
+
+const cases: ProbeCase[] = [
   {
-    name: "xcconfig key per configuration, read through Info.plist, Release-only entitlements",
-    xcconfig: `CLERK_PUBLISHABLE_KEY = ${DEV}\nCLERK_PUBLISHABLE_KEY[config=Release] = ${LIVE}\n`,
+    name: "xcconfig key per configuration through Info.plist; Release-only entitlements with $(CLERK_FAPI_HOST)",
+    xcconfig: `CLERK_PUBLISHABLE_KEY = ${DEV}\nCLERK_PUBLISHABLE_KEY[config=Release] = ${LIVE}\nCLERK_FAPI_HOST = clerk.example.test\nCLERK_FAPI_HOST[config=Release] = clerk.example.com\n`,
     swift: `import ClerkKit\nlet key = Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") as! String\nfunc start() { Clerk.configure(publishableKey: key) }\n`,
     releaseEntitlements: true,
     expected: { registration: "pass", domain: "pass", key: "pass" },
   },
   {
-    name: "#if DEBUG literals, entitlements shared with Debug",
+    name: "#if DEBUG literals, entitlements shared with Debug, another app target using the dev key",
+    secondTarget: `import ClerkKit\nfunc start() { Clerk.configure(publishableKey: "${DEV}") }\n`,
+    swift: `import ClerkKit\nfunc start() {\n#if DEBUG\n  Clerk.configure(publishableKey: "${DEV}")\n#else\n  Clerk.configure(publishableKey: "${LIVE}")\n#endif\n}\n`,
+    releaseEntitlements: false,
+    expected: { registration: "pass", domain: "warn", key: "pass" },
+  },
+  {
+    name: "Xcode 27 JSON project, #if DEBUG literals in a target-membership folder",
+    format: "xcproj",
     swift: `import ClerkKit\nfunc start() {\n#if DEBUG\n  Clerk.configure(publishableKey: "${DEV}")\n#else\n  Clerk.configure(publishableKey: "${LIVE}")\n#endif\n}\n`,
     releaseEntitlements: false,
     expected: { registration: "pass", domain: "warn", key: "pass" },
   },
 ];
 
-for (const { name, xcconfig, swift, releaseEntitlements, expected } of cases) {
+for (const { name, xcconfig, swift, releaseEntitlements, expected, ...options } of cases) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-production-probe-")));
   try {
-    await createIOSFixture(root, { clerkSDK: false, includeKey: false });
+    await createIOSFixture(root, {
+      clerkSDK: false,
+      includeKey: false,
+      secondTarget: options.secondTarget !== undefined,
+    });
     await writeFile(join(root, "MyApp/MyAppApp.swift"), swift);
-    const path = join(root, "MyApp.xcodeproj/project.pbxproj");
-    const document = parse(await readFile(path, "utf8"));
-    const objects = document.objects as Record<string, any>;
-    // Xcode's own template condition: DEBUG in Debug only.
-    objects[ids.targetDebug].buildSettings.SWIFT_ACTIVE_COMPILATION_CONDITIONS =
-      "DEBUG $(inherited)";
-    if (xcconfig) {
-      await mkdir(join(root, "Config"), { recursive: true });
-      await writeFile(join(root, "Config/Keys.xcconfig"), xcconfig);
-      await writeFile(join(root, "MyApp/Info.plist"), INFO_PLIST);
-      objects.KEYSXCCONFIG000000000000 = {
-        isa: "PBXFileReference",
-        lastKnownFileType: "text.xcconfig",
-        path: "Config/Keys.xcconfig",
-        sourceTree: "<group>",
-      };
-      objects[ids.mainGroup].children.push("KEYSXCCONFIG000000000000");
-      for (const id of [ids.targetDebug, ids.targetRelease]) {
-        objects[id].baseConfigurationReference = "KEYSXCCONFIG000000000000";
-        objects[id].buildSettings.INFOPLIST_FILE = "MyApp/Info.plist";
-      }
-    }
-    if (releaseEntitlements) {
+    if (options.secondTarget !== undefined)
+      await writeFile(join(root, "AdminApp/AdminAppApp.swift"), options.secondTarget);
+    if (options.format) {
+      await convertFixtureToXCProj(root, "ios");
+      const path = join(root, "MyApp.xcodeproj/project.xcproj");
       await writeFile(
-        join(root, "MyApp/Release.entitlements"),
-        `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>\n\t<key>com.apple.developer.associated-domains</key>\n\t<array><string>webcredentials:clerk.example.com</string></array>\n</dict></plist>\n`,
+        path,
+        applyXCProjValue(
+          await readFile(path, "utf8"),
+          ["targets", 0, "build-settings", "SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Debug]"],
+          "DEBUG $(inherited)",
+        ),
       );
-      objects[ids.targetRelease].buildSettings.CODE_SIGN_ENTITLEMENTS =
-        "MyApp/Release.entitlements";
     }
-    await writeFile(path, build(document));
+    const path = join(root, "MyApp.xcodeproj/project.pbxproj");
+    const document = options.format ? undefined : parse(await readFile(path, "utf8"));
+    const objects = (document?.objects ?? {}) as Record<string, any>;
+    if (document) {
+      // Xcode's own template condition: DEBUG in Debug only.
+      objects[ids.targetDebug].buildSettings.SWIFT_ACTIVE_COMPILATION_CONDITIONS =
+        "DEBUG $(inherited)";
+      if (xcconfig) {
+        await mkdir(join(root, "Config"), { recursive: true });
+        await writeFile(join(root, "Config/Keys.xcconfig"), xcconfig);
+        await writeFile(join(root, "MyApp/Info.plist"), INFO_PLIST);
+        objects.KEYSXCCONFIG000000000000 = {
+          isa: "PBXFileReference",
+          lastKnownFileType: "text.xcconfig",
+          path: "Config/Keys.xcconfig",
+          sourceTree: "<group>",
+        };
+        objects[ids.mainGroup].children.push("KEYSXCCONFIG000000000000");
+        for (const id of [ids.targetDebug, ids.targetRelease]) {
+          objects[id].baseConfigurationReference = "KEYSXCCONFIG000000000000";
+          objects[id].buildSettings.INFOPLIST_FILE = "MyApp/Info.plist";
+        }
+      }
+      if (releaseEntitlements) {
+        await writeFile(
+          join(root, "MyApp/Release.entitlements"),
+          `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>\n\t<key>com.apple.developer.associated-domains</key>\n\t<array><string>webcredentials:$(CLERK_FAPI_HOST)</string></array>\n</dict></plist>\n`,
+        );
+        objects[ids.targetRelease].buildSettings.CODE_SIGN_ENTITLEMENTS =
+          "MyApp/Release.entitlements";
+      }
+      await writeFile(path, build(document));
+    }
 
     const inspection = await inspectSelectedProject({
       root,
