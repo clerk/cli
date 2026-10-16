@@ -221,6 +221,7 @@ describe("refusals, all exit 2 and delete nothing", () => {
 
     expect(error.message).toContain(`marks run ${record.id} undone and needs consent`);
     expect(error.message).not.toContain("0 users");
+    expect(error.examples?.[0]?.description).toBe(`Mark run ${record.id} undone`);
   });
 
   // Another process continues the import while the undo previews it.
@@ -495,7 +496,14 @@ describe("stopped part-way", () => {
     }
 
     const undoRun = listRuns(runsDir).find((r) => r.kind === "undo");
-    expect(JSON.parse(captured.out)).toMatchObject({ stopped: true, run: { id: undoRun?.id } });
+    // As it stands on disk, not as it opened: counted from its lines.
+    const printed = JSON.parse(captured.out) as { run: RunRecord & { state: string } };
+    expect(printed).toMatchObject({
+      stopped: true,
+      run: { id: undoRun?.id, state: "interrupted" },
+    });
+    expect(printed.run.counts.deleted).toBe(latestUserLines(runsDir, undoRun!.id).size);
+    expect(printed.run.counts.deleted).toBeGreaterThan(0);
   });
 });
 

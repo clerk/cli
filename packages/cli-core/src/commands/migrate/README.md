@@ -589,6 +589,10 @@ before that, the object says why:
 - `"writeFailed": true`: the file system refused a write to the runs folder.
 - `"stopped": true`: anything else stopped it, such as a Ctrl-C.
 
+With `writeFailed` or `stopped`, `run` is the undo run as it stands on disk,
+once one was written: its counts come from its lines, and `state` says how it
+stopped, as in `clerk migrate runs`.
+
 ### `clerk migrate help`
 
 `clerk migrate help` and `clerk migrate <command> --help` print the help for the

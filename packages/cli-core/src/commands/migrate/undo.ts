@@ -30,6 +30,7 @@ import { resolveLimits } from "./lib/instance.ts";
 import { retryOn429 } from "./lib/retry.ts";
 import {
   continueRun,
+  countLines,
   latestUserLines,
   lockRun,
   patchRun,
@@ -413,7 +414,15 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
         `\`clerk migrate undo\` ${what} and needs consent. Pass --yes to confirm.`,
         undefined,
         undefined,
-        [{ command, description: "Delete the users this import created" }],
+        [
+          {
+            command,
+            description:
+              present.length > 0
+                ? "Delete the users this import created"
+                : `Mark run ${record.id} undone`,
+          },
+        ],
       );
     }
     const proceed = await confirm({
@@ -445,12 +454,20 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     throwUsageError(message);
   };
 
-  // Set once the undo run is on disk, so a stop still names it.
-  let undoRun: Run | undefined;
+  // The undo's own run, once it is on disk: a stop still names it.
+  let run: Run | undefined;
   try {
     await deleteAfterPreview();
   } catch (error) {
-    const written = undoRun?.record ?? null;
+    // Counted from its lines, as `runs` counts an unfinished run: the record
+    // still holds the counts it opened with.
+    const written = run
+      ? {
+          ...run.record,
+          counts: countLines(latestUserLines(runsDir, run.record.id).values()),
+          state: runState(runsDir, run.record),
+        }
+      : null;
     printJson(
       isFileSystemError(error)
         ? { writeFailed: true, run: written }
@@ -472,7 +489,6 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       if (error instanceof CliError) refuseChanged(error.message);
       throw error;
     }
-    let run: Run;
     let summary: UndoSummary;
     let undoRecord: RunRecord;
     let importRecord = record;
@@ -530,7 +546,6 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       run = openUndo
         ? continueRun(runsDir, withAttempt(openUndo, target))
         : startRun(runsDir, { kind: "undo", target, undoes: record.id, source: record.source });
-      undoRun = run;
 
       // Users the import created that are no longer there: the undo's goal for
       // them is already met, so they count as deleted without another request.
@@ -541,7 +556,8 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       summary =
         present.length > 0
           ? await withProgress({ total: present.length, verb: "deleted" }, async (progress) =>
-              deleteUsers({ users: present, secretKey, schedule, run, progress }),
+              // Set above; a callback doesn't keep the narrowing of an outer `let`.
+              deleteUsers({ users: present, secretKey, schedule, run: run!, progress }),
             )
           : { deleted: 0, failed: 0, errorBreakdown: new Map<string, number>() };
 

@@ -4,7 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { quoteArg } from "../../lib/json-body.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
-import { type RunRecord, sha256File, startRun, type StartRunInit } from "./lib/run-store.ts";
+import {
+  continueRun,
+  type RunRecord,
+  sha256File,
+  startRun,
+  type StartRunInit,
+} from "./lib/run-store.ts";
 import { runs } from "./runs.ts";
 
 const captured = useCaptureLog();
@@ -157,6 +163,24 @@ describe("runs <id>", () => {
     expect(err).toContain("1 created, 1 left to attach, 1 not confirmed");
     expect(err).toContain("Not confirmed (Clerk may have created them; a continue checks) (1)");
     expect(err).toContain("1 user: bad gateway (a re-run checks)");
+  });
+
+  // An unfinished run is counted from its lines, `pending` included.
+  test("counts identifiers left to attach on a run that never finished", async () => {
+    const record = partialImport();
+    const run = continueRun(runsDir, record);
+    run.append({
+      sourceId: "e",
+      status: "created",
+      clerkId: "user_e",
+      pending: [{ kind: "email", value: "e2@x.dev", verified: true }],
+    });
+    run.release();
+
+    await runs(record.id, { runsDir });
+
+    expect(Bun.stripANSI(captured.err)).toContain("interrupted");
+    expect(Bun.stripANSI(captured.err)).toContain("2 created, 1 left to attach");
   });
 
   // The record says where the key came from, and which instance to reach

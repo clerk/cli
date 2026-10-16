@@ -315,7 +315,7 @@ type ResumeCase =
  *
  * - none, or undone: a new run
  * - interrupted: continue it, skipping the users it created
- * - partial: continue it, retrying the users that failed or were skipped
+ * - partial: continue it, retrying the users it didn't finish
  * - complete: nothing; the file is already in
  *
  * @throws UsageError when that run is still running in another process, or
@@ -980,11 +980,10 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       // Run later, maybe without the key exported: from the run's target.
       const later = laterCarry(options.runsDir, record.target);
       const undo = undoCommand(record.id, later);
-      // Anything a continue can finish. Not skips alone: the same file and
-      // flags skip them again.
-      const unfinished = summary.failed + summary.notSent + (record.counts.pending ?? 0);
+      // A partial run continues, as `runs <id>` says: a skip fixed since (a
+      // setting the checks named) imports then, and one that isn't is skipped again.
       const steps =
-        unfinished > 0
+        record.status === "partial"
           ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(
               runsStep,
               // The same import again continues this run; --new-run would not.

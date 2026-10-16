@@ -39,7 +39,7 @@ export type RunsOptions = {
   runsDir?: string;
 };
 
-/** How many failed or skipped users `runs <id>` prints before pointing at the file. */
+/** How many users of each list `runs <id>` prints before pointing at the file. */
 const USER_LIST_LIMIT = 20;
 
 function formatDate(iso: string): string {

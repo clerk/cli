@@ -398,12 +398,18 @@ function writeRecord(runsDir: string, record: RunRecord): void {
   fs.renameSync(temp, file);
 }
 
-/** Totals by each source ID's latest status. */
+/**
+ * Totals by each source ID's latest status, and `pending`: the created users
+ * whose extra identifiers never attached, left for a continue.
+ */
 export function countLines(latest: Iterable<UserLine>): RunCounts {
   const counts: RunCounts = { total: 0 };
   for (const line of latest) {
     counts.total++;
     counts[line.status] = (counts[line.status] ?? 0) + 1;
+    if (line.status === "created" && (line.pending?.length ?? 0) > 0) {
+      counts.pending = (counts.pending ?? 0) + 1;
+    }
   }
   return counts;
 }
@@ -451,20 +457,14 @@ function openRun(runsDir: string, record: RunRecord): Run {
       writeRecord(runsDir, run.record);
     },
     finish(options) {
-      const lines = [...latestUserLines(runsDir, run.record.id).values()];
-      const counts = countLines(lines);
+      const counts = countLines(latestUserLines(runsDir, run.record.id).values());
       if (options?.notSent) counts.notSent = options.notSent;
-      // A created user whose extra identifiers never attached is left for a continue.
-      const pending = lines.filter(
-        (line) => line.status === "created" && (line.pending?.length ?? 0) > 0,
-      ).length;
-      if (pending) counts.pending = pending;
       const unfinished =
         (counts.failed ?? 0) +
         (counts.skipped ?? 0) +
         (counts.creating ?? 0) +
         (counts.notSent ?? 0) +
-        pending;
+        (counts.pending ?? 0);
       run.update({
         counts,
         status: unfinished > 0 ? "partial" : "complete",

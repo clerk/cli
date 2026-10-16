@@ -965,6 +965,34 @@ describe("run", () => {
       expect(err).toContain("--secret-key <key> --yes` to retry them");
     });
 
+    // A skip the checks named a fix for imports once the setting changes: the
+    // import offers the same continue `runs <id>` does, and it finishes the run.
+    test("a run left partial only by skips offers the continue, which finishes it", async () => {
+      const settings = (required: boolean) => ({
+        attributes: { email_address: { enabled: true, required } },
+        enterprise_sso: { enabled: true },
+      });
+      stubClerk({ settings: settings(true) });
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", unverified_email_addresses: "b@x.dev" },
+        ]),
+      );
+      await run({ ...baseOptions, allowPartial: true });
+      const [first] = listRuns(runsDir());
+      expect(first).toMatchObject({ status: "partial", counts: { created: 1, skipped: 1 } });
+      expect(Bun.stripANSI(captured.err)).toContain("--secret-key <key> --yes` to retry them");
+
+      requests = [];
+      stubClerk({ settings: settings(false) });
+      await run({ ...baseOptions, allowPartial: true });
+
+      expect(created()).toEqual(["u2"]);
+      expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
+    });
+
     test("a partial run retries only the users that did not make it, in the same run", async () => {
       stubClerk({ failing: new Set(["u2"]) });
       await run(baseOptions);
