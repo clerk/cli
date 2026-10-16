@@ -139,8 +139,11 @@ export function setActiveCapture(captured: CapturedLogs | null): void {
   activeCapture = captured;
 }
 
-/** Our styling (color.ts, highlight(), formatTag(), the gutter) is all SGR. */
-const SGR = new RegExp(String.raw`\x1b\[[0-9;]*m`, "g");
+/**
+ * Our styling (color.ts, highlight(), formatTag(), the gutter) is all SGR.
+ * `:` too: a truecolor or underline-style SGR may separate its parameters so.
+ */
+const SGR = new RegExp(String.raw`\x1b\[[0-9:;]*m`, "g");
 
 /**
  * Drops our styling for agents and NO_COLOR. Only SGR is removed: a broader

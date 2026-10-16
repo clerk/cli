@@ -219,6 +219,12 @@ describe("agent mode", () => {
     expect(captured.stdout).toEqual([payload]);
   });
 
+  test("strips SGR with colon-separated parameters too", () => {
+    setMode("agent");
+    log.info("\x1b[38:2::255:0:0mred\x1b[0m and \x1b[4:3mcurly\x1b[0m");
+    expect(captured.stderr).toEqual(["red and curly"]);
+  });
+
   test("keeps user text that contains C1 bytes or a lone ESC", () => {
     setMode("agent");
     log.warn("Skipped (Eve\x90): taken\nSkipped (Bob): taken");
