@@ -552,9 +552,10 @@ becomes 1,010 for a thousand users. Nothing it returns can be imported —
 `POST /v1/users` has no external-accounts field — so it buys a provider
 breakdown in the coverage report, and an `identities` array kept in the export
 file for whoever runs the migration. The interactive path asks once, after the
-user count is known, defaulting to no; agent mode takes the flag's answer and
-asks nothing. So does `-y`, which takes the prompt's default, no: pass
-`--with-identities` to fetch them without being asked.
+user count is known and only if it isn't zero, defaulting to no; agent mode
+takes the flag's answer and asks nothing. So does `-y`, which takes the
+prompt's default, no: pass `--with-identities` to fetch them without being
+asked.
 
 The breakdown prints as its own **OAuth providers** block under the coverage
 table, not as extra coverage rows:
@@ -1066,6 +1067,8 @@ there would take away an edit the user had. Metadata only the source's backend
 can set — Auth0's `app_metadata`, WorkOS's `metadata` — goes to
 `private_metadata`, which the client cannot read either. Apps often trust these
 for a plan or a role, and `unsafe_metadata` would let the user change them. A
+WorkOS user's `id` becomes Clerk's `external_id`, and its own `external_id`, if
+it has one, is kept as `private_metadata.workosExternalId`. A
 key an app put in its tokens (an Auth0 Action claim, a WorkOS JWT template)
 belongs in `public_metadata`, and in the Clerk session token: move it after the
 import. A Clerk Dashboard CSV carries no metadata.
