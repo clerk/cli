@@ -1,0 +1,94 @@
+name: Sign Windows Binaries
+
+on:
+  workflow_call:
+    inputs:
+      artifact-prefix:
+        required: true
+        type: string
+        description: "Prefix for artifact names (e.g. 'clerk', 'clerk-canary', 'clerk-snapshot')"
+    secrets:
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+      AZURE_SIGNING_ENDPOINT:
+        required: true
+      AZURE_SIGNING_ACCOUNT:
+        required: true
+      AZURE_SIGNING_CERT_PROFILE:
+        required: true
+
+permissions:
+  contents: read
+  # Azure Artifact Signing authenticates via OIDC federated credentials; the
+  # calling job must grant id-token: write or azure/login cannot mint a token.
+  id-token: write
+
+jobs:
+  sign:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: win32-arm64
+          - target: win32-x64
+    # Azure Artifact Signing ships a Windows-only signing engine (it drives
+    # signtool under the hood), so this cannot share the Linux build runner.
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      # No checkout: unlike sign-macos.ts there is no local script to run --
+      # the action owns credential handling, batching, and signtool invocation.
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact-prefix }}-${{ matrix.target }}
+          path: dist/artifacts/${{ matrix.target }}
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_CERT_PROFILE }}
+          files: ${{ github.workspace }}\dist\artifacts\${{ matrix.target }}\clerk.exe
+          file-digest: SHA256
+          # Artifact Signing leaf certificates are valid for ~72 hours. The
+          # RFC-3161 countersignature is what keeps a released binary trusted
+          # after the leaf expires, so an untimestamped signature is a bug.
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify signature
+        shell: pwsh
+        run: |
+          $path = "dist\artifacts\${{ matrix.target }}\clerk.exe"
+          $sig = Get-AuthenticodeSignature -FilePath $path
+
+          Write-Host "Status:    $($sig.Status)"
+          Write-Host "Signer:    $($sig.SignerCertificate.Subject)"
+          Write-Host "Timestamp: $($sig.TimeStamperCertificate.Subject)"
+
+          if ($sig.Status -ne 'Valid') {
+            throw "Authenticode verification failed ($($sig.Status)): $($sig.StatusMessage)"
+          }
+          if ($null -eq $sig.TimeStamperCertificate) {
+            throw "Signature is not timestamped; it would stop validating once the leaf certificate expires."
+          }
+
+      - name: Re-upload signed artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-prefix }}-${{ matrix.target }}
+          path: dist/artifacts/${{ matrix.target }}/clerk.exe
+          overwrite: true
+          retention-days: 1
