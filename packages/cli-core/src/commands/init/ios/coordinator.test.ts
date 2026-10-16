@@ -293,3 +293,50 @@ test("installed core products and a compatible resolved SDK are preserved withou
   });
   expect(process.exitCode).toBe(0);
 });
+
+test.each([
+  { name: "a new macOS starter on a Personal Team", starter: true, personal: true, domain: false },
+  {
+    name: "an existing macOS app Xcode lists on a Personal Team",
+    starter: false,
+    personal: true,
+    domain: false,
+  },
+  { name: "a macOS app on a paid team", starter: false, personal: false, domain: true },
+])("$name: Associated Domain added is $domain", async ({ starter, personal, domain }) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-public-init-")));
+  roots.push(root);
+  const f = await capabilityFixture(root, "macos");
+  const run = f.dependencies.run;
+  const dependencies = {
+    ...f.dependencies,
+    // Signed by PERSONAL01, which Xcode lists as a Personal Team only in the personal cases.
+    xcodeTeams: [{ id: "PERSONAL01", name: "Sean Perez", personal }],
+    run: async (...args: Parameters<typeof run>) => {
+      const rows = JSON.parse(await run(...args));
+      rows[0].buildSettings.DEVELOPMENT_TEAM = "PERSONAL01";
+      return JSON.stringify(rows);
+    },
+  };
+  await runAppleInit(
+    {
+      root,
+      agent: true,
+      json: true,
+      appIdPrefix: "PERSONAL01",
+      ...(starter && {
+        starterProject: {
+          projectName: "MyApp",
+          platform: "macos" as const,
+          personalTeam: personal,
+        },
+      }),
+    },
+    "app_test",
+    dependencies,
+  );
+  const entitlements = await readFile(join(root, "MyApp/MyApp.entitlements"), "utf8");
+  expect(entitlements.includes("webcredentials:")).toBe(domain);
+  expect(entitlements).toContain("com.apple.security.network.client");
+  expect(captured.out.includes("a Personal Team can't sign a macOS app")).toBe(!domain);
+});

@@ -17,6 +17,7 @@ import {
 } from "./files.ts";
 import { planStarter } from "./starter.ts";
 import { planAllCapabilities } from "./capabilities.ts";
+import { PERSONAL_MAC_TEAM_DOMAIN_NOTE, type AppleTeam } from "./teams.ts";
 import { sdkHealth, resolvedSDKHealth } from "./sdk-health.ts";
 import { integrationHandoff } from "./handoff.ts";
 import {
@@ -62,6 +63,8 @@ export interface SetupOptions extends InspectOptions {
   starter?: boolean;
   inspectOnly?: boolean;
   checkAppleConnection?: boolean;
+  /** False to leave the Associated Domain out, for a macOS app signed by a Personal Team. */
+  associatedDomain?: boolean;
   /** An inspection of the same project taken earlier (say, before prompting), to avoid a second xcodebuild pass. */
   inspection?: Inspection;
 }
@@ -70,6 +73,8 @@ export interface Dependencies {
   api?: NativeAPI;
   appleAPI?: IOSNativeAppleAPI;
   promptIdentity?: IdentityPrompt;
+  /** Xcode's signed-in teams, instead of reading them from Xcode's settings. */
+  xcodeTeams?: AppleTeam[];
 }
 export interface SetupPreview {
   inspection: Inspection;
@@ -87,6 +92,8 @@ export interface SetupPreview {
   appleWarning?: string;
   signInUIRequested: boolean;
   starter?: Awaited<ReturnType<typeof planStarter>>;
+  /** Why the Associated Domain was left out, when it was. */
+  associatedDomainNote?: string;
 }
 
 export async function prepareSetup(
@@ -162,6 +169,7 @@ export async function prepareSetup(
           originalAction.type === "modify" ? originalAction.content : inspection.document.source,
           remote?.context.frontendHost,
           appleEnabled,
+          options.associatedDomain !== false,
         )
       : undefined;
   if (capabilities) {
@@ -236,6 +244,9 @@ export async function prepareSetup(
       `Capability scope: ${capabilities.scope}. Only the listed contexts were inspected.`,
     );
   } else if (capabilities?.reason) local.postInstructions.push(capabilities.reason);
+  const associatedDomainNote =
+    capabilities && options.associatedDomain === false ? PERSONAL_MAC_TEAM_DOMAIN_NOTE : undefined;
+  if (associatedDomainNote) local.postInstructions.push(associatedDomainNote);
   options.signal?.throwIfAborted();
   return {
     inspection,
@@ -253,6 +264,7 @@ export async function prepareSetup(
     sdk: originalAction,
     sdkCheck,
     dirtyFiles,
+    associatedDomainNote,
   };
 }
 
@@ -302,6 +314,7 @@ export function describePreview(preview: SetupPreview) {
           scope: preview.capabilities.scope,
           reason: preview.capabilities.reason,
           contexts: preview.capabilities.contexts,
+          ...(preview.associatedDomainNote ? { note: preview.associatedDomainNote } : {}),
         }
       : "Manual Xcode setup",
     apple: preview.apple

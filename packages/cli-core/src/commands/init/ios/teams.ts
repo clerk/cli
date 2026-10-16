@@ -1,5 +1,6 @@
 import { log } from "../../../lib/log.ts";
 import { TEAM_ID } from "./starter-project.ts";
+import type { Inspection } from "./xcode.ts";
 
 export interface AppleTeam {
   id: string;
@@ -84,4 +85,28 @@ export function readXcodeDefaults(): XcodeDefaults {
     log.debug(`Could not read Xcode settings: ${String(error)}`);
     return { teams: [] };
   }
+}
+
+/** Why setup leaves Associated Domains out for a macOS app signed by a Personal Team. */
+export const PERSONAL_MAC_TEAM_DOMAIN_NOTE =
+  "Associated Domains were left out: a Personal Team can't sign a macOS app that uses them. Sign-in with email codes and passwords works; passkeys and password AutoFill need a paid Apple Developer Program team. After switching to one, run clerk init again to add them.";
+
+/**
+ * The Personal Team signing a macOS app, if that's what Xcode's account list says it is. A
+ * macOS app has no simulator to fall back to, so it has to be signed with a provisioning
+ * profile, and a Personal Team can't provision Associated Domains. iOS keeps them: simulator
+ * builds sign locally.
+ */
+export function personalMacTeam(
+  inspection: Inspection,
+  teams?: AppleTeam[],
+): AppleTeam | undefined {
+  if (!inspection.contexts.every((context) => context.selection.sdk === "macosx")) return undefined;
+  const ids = new Set(
+    inspection.contexts.map((context) => context.settings.DEVELOPMENT_TEAM ?? ""),
+  );
+  if (ids.size !== 1) return undefined;
+  const [id] = ids;
+  // Read Xcode's account list only for a macOS app.
+  return (teams ?? readXcodeDefaults().teams).find((team) => team.id === id && team.personal);
 }

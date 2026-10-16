@@ -38,8 +38,12 @@ export interface AppleStarterOptions {
 }
 
 const DEFAULT_NAME = "MyClerkApp";
-const PERSONAL_TEAM_NOTE =
-  "A Personal Team runs the app in the simulator. A real device, Associated Domains, and Sign in with Apple need a paid Apple Developer Program team.";
+const PERSONAL_TEAM_NOTE: Record<ApplePlatform, string> = {
+  ios: "A Personal Team runs the app in the simulator. A real device, Associated Domains, and Sign in with Apple need a paid Apple Developer Program team.",
+  // A Mac app has no simulator, so it's signed for real; setup leaves Associated Domains out.
+  macos:
+    "A Personal Team runs the app on this Mac without Associated Domains, so passkeys and password AutoFill stay off. They and Sign in with Apple need a paid Apple Developer Program team.",
+};
 
 function nameProblem(name: string): string | undefined {
   if (!SWIFT_TARGET_NAME.test(name))
@@ -98,29 +102,33 @@ async function chooseBundleIdentifier(
     if (problem) throwUsageError(`Invalid --bundle-id "${options.bundleId}": ${problem}`);
     return options.bundleId;
   }
-  const suggested = defaults.bundleIdentifierPrefix
-    ? `${defaults.bundleIdentifierPrefix}.${name}`
+  // A Bundle ID allows letters, digits, hyphens, and periods; like Xcode, turn a name's underscores into hyphens.
+  const component = name.replace(/_/g, "-");
+  const prefixed = defaults.bundleIdentifierPrefix
+    ? `${defaults.bundleIdentifierPrefix}.${component}`
     : undefined;
+  const suggested = prefixed && !bundleProblem(prefixed) ? prefixed : undefined;
   if (options.skipConfirm) {
     if (suggested) return suggested;
     throwUsageError(
-      `--bundle-id is required for a new app when Xcode has no Organization Identifier. Example: --bundle-id com.example.${name}`,
+      `--bundle-id is required for a new app when Xcode has no usable Organization Identifier. Example: --bundle-id com.example.${component}`,
     );
   }
   const value = await text({
     message: "Bundle ID:",
     default: suggested,
-    placeholder: suggested ? undefined : `com.example.${name}`,
+    placeholder: suggested ? undefined : `com.example.${component}`,
     validate: (input) => bundleProblem(input?.trim() ?? ""),
   });
   return value.trim();
 }
 
-function teamLabel(team: AppleTeam): string {
+function teamLabel(team: AppleTeam, platform: ApplePlatform): string {
   // Xcode already names a free team like "Sean Perez (Personal Team)".
   const name =
     team.personal && !/personal team/i.test(team.name) ? `${team.name} (Personal Team)` : team.name;
-  return `${name} · ${team.id}${team.personal ? " · simulator only" : ""}`;
+  const limit = platform === "ios" ? " · simulator only" : " · no passkeys or AutoFill";
+  return `${name} · ${team.id}${team.personal ? limit : ""}`;
 }
 
 async function enterTeamId(): Promise<string> {
@@ -138,7 +146,11 @@ async function enterTeamId(): Promise<string> {
 const NO_TEAM =
   "No Apple Developer team found in Xcode. Sign in to Xcode with your Apple Account (Xcode › Settings › Accounts), or pass --team-id.";
 
-async function chooseTeam(options: AppleStarterOptions, teams: AppleTeam[]): Promise<AppleTeam> {
+async function chooseTeam(
+  options: AppleStarterOptions,
+  teams: AppleTeam[],
+  platform: ApplePlatform,
+): Promise<AppleTeam> {
   if (options.teamId) {
     const id = options.teamId.trim();
     if (!TEAM_ID.test(id))
@@ -153,7 +165,7 @@ async function chooseTeam(options: AppleStarterOptions, teams: AppleTeam[]): Pro
     if (candidates.length === 1) return candidates[0]!;
     throwUsageError(
       candidates.length
-        ? `Choose the Apple Developer team with --team-id: ${candidates.map(teamLabel).join(", ")}.`
+        ? `Choose the Apple Developer team with --team-id: ${candidates.map((team) => teamLabel(team, platform)).join(", ")}.`
         : NO_TEAM,
     );
   }
@@ -165,7 +177,7 @@ async function chooseTeam(options: AppleStarterOptions, teams: AppleTeam[]): Pro
   const choice = await select<AppleTeam | "enter">({
     message: "Apple Developer team:",
     choices: [
-      ...teams.map((team) => ({ name: teamLabel(team), value: team })),
+      ...teams.map((team) => ({ name: teamLabel(team, platform), value: team })),
       { name: "Enter a Team ID", value: "enter" as const },
     ],
   });
@@ -197,13 +209,13 @@ export async function promptAppleStarter(
       { code: ERROR_CODE.PROJECT_DIR_EXISTS },
     );
   const bundleIdentifier = await chooseBundleIdentifier(name, options, defaults);
-  const team = await chooseTeam(options, defaults.teams);
+  const team = await chooseTeam(options, defaults.teams, platform);
   if (team.personal) {
     if (options.signInWithApple)
       throwUsageError(
         "Sign in with Apple needs a paid Apple Developer Program team. Choose a paid team with --team-id, or drop --sign-in-with-apple.",
       );
-    log.info(PERSONAL_TEAM_NOTE);
+    log.info(PERSONAL_TEAM_NOTE[platform]);
   }
 
   log.blank();

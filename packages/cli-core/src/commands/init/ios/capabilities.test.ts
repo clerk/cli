@@ -592,3 +592,59 @@ for (const signInUI of [false, true])
       (await prepareSetup({ ...f.options, signInUI }, f.dependencies)).starter?.actions,
     ).toEqual([]);
   });
+
+// A macOS app is signed for real, and a Personal Team can't provision Associated Domains.
+const PERSONAL_TEAM = { id: "PERSONAL01", name: "Sean Perez (Personal Team)", personal: true };
+function signWith(f: Awaited<ReturnType<typeof fixture>>, team: string) {
+  const run = f.dependencies.run;
+  f.dependencies.run = async (command, root, signal) => {
+    const rows = JSON.parse(await run(command, root, signal));
+    rows[0].buildSettings.DEVELOPMENT_TEAM = team;
+    return JSON.stringify(rows);
+  };
+}
+
+test("a macOS app on a Personal Team gets network access but no Associated Domain", async () => {
+  const f = await fixture("macos");
+  f.options.signInWithApple = false;
+  signWith(f, PERSONAL_TEAM.id);
+  const dependencies = { ...f.dependencies, xcodeTeams: [PERSONAL_TEAM] };
+  const preview = await prepareSetup({ ...f.options, associatedDomain: false }, dependencies);
+  expect(preview.associatedDomainNote).toContain("a Personal Team can't sign a macOS app");
+  expect(describePreview(preview).capabilities).toMatchObject({
+    note: expect.stringContaining("Personal Team"),
+  });
+  await applySetup(preview, dependencies);
+  const entitlements = await readFile(join(f.root, "MyApp/MyApp.entitlements"), "utf8");
+  expect(entitlements).toContain("com.apple.security.network.client");
+  expect(entitlements).not.toContain("webcredentials:");
+  // Doctor follows the same rule instead of asking for the domain back.
+  const report = await doctor({ ...f.options, signInWithApple: false }, dependencies);
+  const capabilities = report.checks.filter((check) => check.name.startsWith("Capabilities:"));
+  expect(capabilities.map((check) => check.status)).toEqual(["pass", "pass"]);
+  expect(capabilities[0]?.message).toContain("Personal Team");
+});
+
+test.each([
+  { platform: "macos" as const, team: PERSONAL_TEAM.id, domain: false },
+  { platform: "macos" as const, team: "ABCDE12345", domain: true },
+  { platform: "ios" as const, team: PERSONAL_TEAM.id, domain: true },
+])(
+  "doctor expects the Associated Domain on $platform signed by $team: $domain",
+  async ({ platform, team, domain }) => {
+    const f = await fixture(platform);
+    f.options.signInWithApple = false;
+    signWith(f, team);
+    const dependencies = { ...f.dependencies, xcodeTeams: [PERSONAL_TEAM] };
+    const preview = await prepareSetup({ ...f.options, associatedDomain: domain }, dependencies);
+    await applySetup(preview, dependencies);
+    const report = await doctor({ ...f.options, signInWithApple: false }, dependencies);
+    expect(
+      report.checks
+        .filter((check) => check.name.startsWith("Capabilities:"))
+        .map((check) => check.status),
+    ).toEqual(["pass", "pass"]);
+    const entitlements = await readFile(join(f.root, "MyApp/MyApp.entitlements"), "utf8");
+    expect(entitlements.includes("webcredentials:fixture.clerk.accounts.dev")).toBe(domain);
+  },
+);

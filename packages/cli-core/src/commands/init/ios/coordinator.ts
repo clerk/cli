@@ -11,6 +11,7 @@ import { isUnchangedStarter } from "./starter.ts";
 import { planAppleSetup } from "./plan.ts";
 import { sdkLinked } from "./sdk.ts";
 import { inspectSelectedProject } from "./xcode.ts";
+import { personalMacTeam } from "./teams.ts";
 import { nonDefaultXcodeNote } from "./xcode-tools.ts";
 import { SelectionNeeded } from "./discovery.ts";
 import { IdentityRequired, describeIdentity } from "./identity.ts";
@@ -60,7 +61,9 @@ export function setupNextSteps(result: ApplyResult, starter?: StarterProjectSumm
         : "Press Run, then test your sign-in flow.",
       ...(starter.personalTeam
         ? [
-            "To run on a real device or enable Sign in with Apple, join the Apple Developer Program and choose that team in Xcode.",
+            starter.platform === "ios"
+              ? "To run on a real device or enable Sign in with Apple, join the Apple Developer Program and choose that team in Xcode."
+              : "To use passkeys, password AutoFill, or Sign in with Apple, join the Apple Developer Program, choose that team in Xcode, and run clerk init again.",
           ]
         : []),
       `Quickstart: ${SWIFT_QUICKSTART}`,
@@ -99,6 +102,7 @@ export function printSetupPreview(preview: SetupPreview): void {
   if (preview.dirtyFiles.length) log.info("  Existing edits will be preserved in backups.");
   if (preview.capabilities?.status === "manual")
     log.warn(preview.capabilities.reason ?? "Some capabilities need manual setup.");
+  if (preview.associatedDomainNote) log.warn(preview.associatedDomainNote);
   if (preview.inspection.uncheckedConfigurations.length)
     log.warn(
       `Other configurations need review: ${preview.inspection.uncheckedConfigurations.join(", ")}`,
@@ -126,14 +130,17 @@ export function printSetupResult(result: ApplyResult, starter?: StarterProjectSu
   for (const step of setupNextSteps(result, starter)) log.info(`  • ${step}`);
 }
 
-/** What an agent needs to do before native setup can run: choose a Clerk application. */
-export function applicationRequired() {
+/**
+ * What an agent needs to do before native setup can run: choose a Clerk application, then run
+ * `command`, which carries this run's setup options.
+ */
+export function applicationRequired(command = "clerk init --app <app_id> --json") {
   return {
     status: "application-required",
     appIntegrationComplete: false,
     next: [
       'Run `clerk apps list --json` and ask the user which application to use, or create one with `clerk apps create "<name>" --json`. If listing fails because you are not signed in, run `clerk auth login` first.',
-      "Then run `clerk init --app <app_id> --json` to link it, configure the Xcode project, and register the app with Clerk.",
+      `Then run \`${command}\` to link it, configure the Xcode project, and register the app with Clerk.`,
     ],
   };
 }
@@ -239,6 +246,10 @@ export async function runAppleInit(
     );
     stopNativeProgress();
     setup.inspection = inspection;
+    // A new starter already knows its team; any other macOS app asks Xcode's account list.
+    setup.associatedDomain = !(options.starterProject
+      ? options.starterProject.platform === "macos" && options.starterProject.personalTeam
+      : personalMacTeam(inspection, dependencies.xcodeTeams));
     const starter = await isUnchangedStarter(inspection);
     let installedProducts: "core" | "ui" | undefined;
     if (!options.appleSdk && !options.prebuiltAuthUi) {

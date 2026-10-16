@@ -12,6 +12,7 @@ import {
   scaffoldMod,
 } from "../../test/lib/init-harness.ts";
 import * as apple from "./ios/coordinator.ts";
+import { ios } from "./frameworks/ios.ts";
 import { init } from "./index.ts";
 
 const iosFramework = frameworkMod.lookupFramework("ios")!;
@@ -87,6 +88,16 @@ describe("clerk init for native Apple projects", () => {
         expect.stringContaining("clerk init --app"),
       ],
     });
+  });
+
+  test("an agent's JSON continuation keeps its Xcode selection and setup options", async () => {
+    iosProject({ isAgent: true });
+
+    await init({ json: true, xcodeProject: "My App.xcodeproj", appleSdk: "core" });
+
+    expect(JSON.parse(captured.out).next[1]).toContain(
+      "`clerk init --app <app_id> --json --xcode-project 'My App.xcodeproj' --apple-sdk core`",
+    );
   });
 
   test("a dry run inspects without signing in", async () => {
@@ -301,6 +312,51 @@ describe("clerk init for native Apple projects", () => {
       expect(run).not.toHaveBeenCalled();
       expect(captured.err).toContain("cd MyApp");
       expect(captured.err).toContain("clerk init --app <app_id> --json");
+    });
+
+    function agentStarter(apple: Partial<typeof STARTER.apple> = {}) {
+      const run = starter(apple, { isAgent: true });
+      spyOn(config, "resolveProfile").mockResolvedValue(undefined);
+      spyOn(context, "gatherContext").mockResolvedValue({
+        ...FAKE_CTX,
+        cwd: STARTER.projectDir,
+        deps: {},
+        existingClerk: false,
+        framework: iosFramework,
+      });
+      // The real iOS plan, so its continuation line is the one checked.
+      spyOn(scaffoldMod, "scaffold").mockImplementation(async (ctx) => ios.scaffold(ctx));
+      return run;
+    }
+
+    test.each([
+      {
+        name: "explicit options",
+        options: { appleSdk: "core" as const, appIdPrefix: "LEGACY0001", signInWithApple: true },
+        command:
+          "clerk init --app <app_id> --json --apple-sdk core --app-id-prefix LEGACY0001 --sign-in-with-apple",
+      },
+      {
+        name: "the starter's team as the App ID Prefix",
+        options: { prebuiltAuthUi: true },
+        command: "clerk init --app <app_id> --json --app-id-prefix COMPANY001 --prebuilt-auth-ui",
+      },
+      {
+        name: "no Bundle ID or team, which the new project already holds",
+        options: { bundleId: "com.example.MyApp", teamId: "COMPANY001" },
+        command: "clerk init --app <app_id> --json --app-id-prefix COMPANY001",
+      },
+    ])("an agent's continuation carries $name", async ({ options, command }) => {
+      const run = agentStarter();
+
+      await init({ starter: true, framework: "ios", ...options });
+
+      expect(run).not.toHaveBeenCalled();
+      // Every place that names the next command names the same one.
+      const plain = Bun.stripANSI(captured.err);
+      expect(plain).toContain("cd MyApp");
+      expect(plain).toContain(`Then run \`${command}\``);
+      expect(plain.match(/clerk init --app <app_id>[^\n`]*/g)).toEqual([command, command, command]);
     });
 
     test("--team-id needs --starter", async () => {

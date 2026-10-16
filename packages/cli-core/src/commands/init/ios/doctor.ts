@@ -2,6 +2,7 @@ import { dirname, resolve } from "node:path";
 import { auditIOSNativeAppleHealth } from "./native-apple.ts";
 import { capabilityXML, planAllCapabilities } from "./capabilities.ts";
 import { snapshotFile } from "./files.ts";
+import { PERSONAL_MAC_TEAM_DOMAIN_NOTE, personalMacTeam } from "./teams.ts";
 import { sdkLinked } from "./sdk.ts";
 import { discoverRemote, describeIdentity } from "./identity.ts";
 import { auditRemote, nativeAPI } from "./remote.ts";
@@ -66,10 +67,14 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
           `Bundle ID from ${discovery.bundleSource}; App ID Prefix from ${discovery.prefixSource}.`,
       },
     );
+  // Same rule as setup: a Personal Team can't sign a macOS app with Associated Domains.
+  const personalTeam = personalMacTeam(preview.inspection, dependencies.xcodeTeams);
   const capabilities = await planAllCapabilities(
     preview.inspection,
     preview.inspection.document.source,
     discovery?.instance.frontendHost,
+    false,
+    !personalTeam,
   );
   for (const context of capabilities.contexts)
     checks.push({
@@ -77,6 +82,9 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
       status: context.status === "satisfied" ? "pass" : "warn",
       message:
         context.reason ??
+        (context.status === "satisfied" && personalTeam
+          ? `${context.configuration} capability settings are present. ${PERSONAL_MAC_TEAM_DOMAIN_NOTE}`
+          : undefined) ??
         (context.status === "planned"
           ? `Local capability changes are still needed for ${context.configuration}.`
           : `${context.configuration} capability settings are present; signing remains unverified.`),

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as listage from "../../../lib/listage.ts";
+import { log } from "../../../lib/log.ts";
 import * as coordinator from "./coordinator.ts";
 import * as teams from "./teams.ts";
 import { promptAppleStarter, type AppleStarterOptions } from "./starter-bootstrap.ts";
@@ -59,6 +60,35 @@ describe("promptAppleStarter", () => {
     const result = await run({});
     expect(result.projectName).toBe("MyClerkApp");
     expect(result.apple.bundleIdentifier).toBe("com.acme.MyClerkApp");
+  });
+
+  test("turns underscores in --name into hyphens for the default Bundle ID", async () => {
+    xcode({ teams: [PAID], bundleIdentifierPrefix: "com.acme" });
+    const result = await run({ name: "My_App" });
+    expect(result.apple.bundleIdentifier).toBe("com.acme.My-App");
+    expect(readFileSync(join(tmp, "My_App/My_App.xcodeproj/project.pbxproj"), "utf8")).toContain(
+      'PRODUCT_BUNDLE_IDENTIFIER = "com.acme.My-App";',
+    );
+  });
+
+  test("asks for --bundle-id when Xcode's Organization Identifier isn't a valid prefix", async () => {
+    xcode({ teams: [PAID], bundleIdentifierPrefix: "com.acme." });
+    await expect(run({ name: "MyApp" })).rejects.toMatchObject({
+      exitCode: 2,
+      message: expect.stringContaining("--bundle-id is required"),
+    });
+    expect(existsSync(join(tmp, "MyApp"))).toBe(false);
+  });
+
+  test.each([
+    ["ios", "runs the app in the simulator"],
+    ["macos", "runs the app on this Mac without Associated Domains"],
+  ] as const)("explains what a Personal Team allows on %s", async (platform, note) => {
+    xcode({ teams: [PERSONAL] });
+    const info = spyOn(log, "info");
+    spies.push(info);
+    await run({ bundleId: "com.example.MyApp" }, platform);
+    expect(info.mock.calls.flat().join("\n")).toContain(note);
   });
 
   test("skips a default name that's taken", async () => {

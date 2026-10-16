@@ -145,6 +145,7 @@ async function planCapabilities(
   frontendHost?: string,
   apple = false,
   overlay: Map<string, FileAction> = new Map(),
+  associatedDomain = true,
 ): Promise<CapabilityPlan> {
   const { selection, managedBy, projectFormat } = inspection.input;
   const scope = `${selection.targetName}, ${selection.configuration}, ${selection.sdk}; an existing entitlement file also affects every context that uses that file`;
@@ -166,8 +167,8 @@ async function planCapabilities(
       inspection.settings.SRCROOT ?? resolve(selection.root, dirname(selection.project));
     const mac = selection.sdk === "macosx";
     // Passkeys and credential AutoFill need the web-credentials domain on macOS too.
-    const domain = frontendHost ? `webcredentials:${frontendHost}` : undefined;
-    if (!frontendHost)
+    const domain = frontendHost && associatedDomain ? `webcredentials:${frontendHost}` : undefined;
+    if (!frontendHost && associatedDomain)
       return manual("Link the intended Clerk instance before adding its Associated Domain.");
     let changedProject = false;
     // Xcode's native setting adds the outgoing-network entitlement during signing.
@@ -288,6 +289,8 @@ export async function planAllCapabilities(
   projectSource: string,
   frontendHost?: string,
   apple = false,
+  /** False when the signing team can't provision Associated Domains (see `personalMacTeam`). */
+  associatedDomain = true,
 ) {
   const actions = new Map<string, FileAction>();
   const snapshots = new Map<string, FileSnapshot>();
@@ -310,6 +313,7 @@ export async function planAllCapabilities(
       frontendHost,
       apple,
       actions,
+      associatedDomain,
     );
     source = plan.projectSource;
     for (const action of plan.actions) actions.set(action.path, action);

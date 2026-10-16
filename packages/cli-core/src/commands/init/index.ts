@@ -21,6 +21,7 @@ import {
 import { resolveProfile } from "../../lib/config.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
+import { quoteArg } from "../../lib/json-body.ts";
 import { setTelemetryStage } from "../../lib/telemetry.ts";
 import { confirm } from "../../lib/prompts.ts";
 import {
@@ -158,6 +159,8 @@ export async function init(options: InitOptions = {}) {
   }
 
   assertFrameworkFlags(options, ctx.framework);
+  if (ctx.framework.dep === "ios")
+    ctx.nativeContinuation = appleContinuation(options, bootstrap?.apple);
   const appleOptions: AppleInitOptions = {
     ...options,
     root: ctx.cwd,
@@ -226,7 +229,7 @@ export async function init(options: InitOptions = {}) {
   }
   // An agent that asked for JSON gets the usual "choose an app" guidance as data.
   if (ctx.framework.dep === "ios" && strategy === "manual" && options.json) {
-    log.data(JSON.stringify(applicationRequired(), null, 2));
+    log.data(JSON.stringify(applicationRequired(ctx.nativeContinuation), null, 2));
     setTelemetryStage("done");
     return;
   }
@@ -242,7 +245,7 @@ export async function init(options: InitOptions = {}) {
     setTelemetryStage("already_set_up");
     log.success("\nClerk is already set up in this project.");
     if (agent && strategy === "manual") {
-      printBootstrapManualSetupInfo(ctx.framework);
+      printBootstrapManualSetupInfo(ctx);
     }
     await outro("Done");
     return;
@@ -266,7 +269,7 @@ export async function init(options: InitOptions = {}) {
   // Next steps print last so they stay on screen as the final thing the user sees.
   if (bootstrap) {
     bar();
-    printBootstrapNextSteps(bootstrap, strategy === "keyless");
+    printBootstrapNextSteps(bootstrap, strategy === "keyless", options);
   }
 
   setTelemetryStage("done");
@@ -364,6 +367,27 @@ function starterAppleOptions(
     signInWithApple: apple.personalTeam ? false : options.signInWithApple,
     starterProject: { projectName, platform: apple.platform, personalTeam: apple.personalTeam },
   };
+}
+
+/**
+ * The `clerk init` an agent runs once it has chosen an application, carrying this run's native
+ * setup options so the next run doesn't fall back to defaults. After a new starter it runs inside
+ * the new app: the project already holds the Bundle ID and team, so their flags and any Xcode
+ * selection (relative to this directory) are dropped, and the starter's own decisions are carried.
+ */
+function appleContinuation(options: InitOptions, starter?: AppleStarter): string {
+  const values: Partial<InitOptions> = {
+    ...options,
+    ...(starter && starterAppleOptions(options, "", starter)),
+  };
+  const parts = ["clerk init --app <app_id> --json"];
+  for (const [key, flag] of APPLE_FLAGS) {
+    if (key === "teamId" || (starter && (key === "bundleId" || key.startsWith("xcode")))) continue;
+    const value = values[key];
+    if (value === true) parts.push(flag);
+    else if (typeof value === "string" && value) parts.push(flag, quoteArg(value));
+  }
+  return parts.join(" ");
 }
 
 /** Rejects flags the detected (or requested) framework can't honour. */
@@ -551,11 +575,18 @@ function devCommand(pm: string): string {
   return pm === "npm" ? "npm run dev" : `${pm} dev`;
 }
 
-function printBootstrapNextSteps(bootstrap: BootstrapResult, accountless: boolean): void {
+function printBootstrapNextSteps(
+  bootstrap: BootstrapResult,
+  accountless: boolean,
+  options: InitOptions,
+): void {
   // Reached for a native starter only when an agent hasn't chosen a Clerk application yet. The
   // agent must finish setup from inside the new app, so it gets the steps too.
   if (bootstrap.apple) {
-    const steps = [`cd ${bootstrap.projectName}`, "clerk init --app <app_id> --json"];
+    const steps = [
+      `cd ${quoteArg(bootstrap.projectName)}`,
+      appleContinuation(options, bootstrap.apple),
+    ];
     printNextSteps(steps);
     printAgentNextSteps(steps);
     return;
@@ -568,13 +599,15 @@ function printBootstrapNextSteps(bootstrap: BootstrapResult, accountless: boolea
   printNextSteps(steps);
 }
 
-function printBootstrapManualSetupInfo(framework: FrameworkInfo): void {
+function printBootstrapManualSetupInfo(ctx: ProjectContext): void {
+  const { framework } = ctx;
   // Only reachable for frameworks without accountless support: capable ones resolve to
   // the "keyless" or "authenticate" strategy in agent mode instead.
+  const native = framework.dep === "ios" && canSetUpXcode() && ctx.nativeContinuation;
   const lines = [
     `\n  Set up Clerk for ${framework.name}:`,
     `    ${framework.name} requires API keys — set them up manually:`,
-    "    clerk init --app <app_id>",
+    `    ${native || "clerk init --app <app_id>"}`,
     // Swift apps configure the key in source; there's no env file to pull into.
     ...(framework.dep === "ios" && canSetUpXcode() ? [] : ["    clerk env pull"]),
   ];
@@ -640,7 +673,7 @@ async function runStrategy(
 ): Promise<void> {
   switch (strategy) {
     case "manual":
-      printBootstrapManualSetupInfo(ctx.framework);
+      printBootstrapManualSetupInfo(ctx);
       return;
     case "authenticate":
       await pull({ file: ctx.envFile, cwd: ctx.cwd });
