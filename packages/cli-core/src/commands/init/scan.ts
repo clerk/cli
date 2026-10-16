@@ -125,6 +125,12 @@ const CODE_SCANS: CodeScan[] = [
     message: "Passport import still in use",
   },
   {
+    // AuthKit through the general Node SDK, which the package scan leaves out.
+    pattern: "\\bworkos\\.userManagement\\b",
+    message: "WorkOS AuthKit usage still in use",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/overview",
+  },
+  {
     pattern: "getServerSession\\s*\\(",
     message: "NextAuth getServerSession() call still in use",
     frameworks: ["next"],
