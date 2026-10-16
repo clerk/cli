@@ -307,13 +307,13 @@ function printPreview(record: RunRecord, preview: UndoPreview): void {
   }
 }
 
+/** The undo run a stop left on disk, as `runs` shows an unfinished run. */
+type StoppedRun = RunRecord & { state: RunState };
+
 /**
  * What the JSON adds to the preview: why undo stopped before deleting, or,
  * once it did, its run and result. One of these, never two.
  */
-/** The undo run a stop left on disk, as `runs` shows an unfinished run. */
-type StoppedRun = RunRecord & { state: RunState };
-
 type UndoOutcome =
   | { dryRun: true }
   | { consent: "required" }

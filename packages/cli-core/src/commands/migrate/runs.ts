@@ -13,7 +13,7 @@ import { quoteArg } from "../../lib/json-body.ts";
 import { log } from "../../lib/log.ts";
 import { tallyError } from "./lib/failures.ts";
 import {
-  continueFinishes,
+  hasRetryableUsers,
   latestUserLines,
   listRuns,
   importsOfFile,
@@ -162,15 +162,14 @@ function nextCommands(
   record: RunRecord,
   state: RunState,
   carry: string[],
+  latest: UserLine[],
 ): string[] {
   if (state === "running") return [];
   if (record.kind === "import" && state !== "undone") {
     const undo = `Run \`${undoCommand(record.id, carry)}\` to delete the users it created`;
     const again = continueCommand(record, carry);
-    const finishes = state === "interrupted" || continueFinishes(runsDir, record);
-    if (!again || state === "complete" || !finishes || !continuesThisRun(runsDir, record)) {
-      return [undo];
-    }
+    if (!again || state === "complete" || !continuesThisRun(runsDir, record)) return [undo];
+    if (state === "partial" && !hasRetryableUsers(record, latest)) return [undo];
     // Continuing is what a stopped run is for: the same file, source and
     // target pick it up where it left off.
     const why = state === "interrupted" ? "continue it" : "retry the users it didn't finish";
@@ -222,7 +221,7 @@ function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   return {
     runsDir,
     run: { ...record, state },
-    next: nextCommands(runsDir, record, state, carry),
+    next: nextCommands(runsDir, record, state, carry, lines),
     errors: errorBreakdown(lines),
     failed: lines.filter((line) => line.status === "failed"),
     skipped: lines.filter((line) => line.status === "skipped"),

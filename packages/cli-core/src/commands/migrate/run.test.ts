@@ -327,6 +327,7 @@ describe("run", () => {
     expect(latestUserLines(runsDir(), record!.id).get("u2")).toMatchObject({
       status: "skipped",
       reason: "no password (--require-password)",
+      code: "no_password",
     });
     expect(record?.status).toBe("partial");
     // So a continue would still leave them out.
@@ -335,6 +336,34 @@ describe("run", () => {
     const err = Bun.stripANSI(captured.err);
     expect(err).not.toContain("to retry them");
     expect(err).toContain("to see what happened to each user");
+  });
+
+  // The README's way to import them: the same import without the flag.
+  test("the same import without --require-password continues the run and creates them", async () => {
+    await run({ ...baseOptions, requirePassword: true });
+    const [first] = listRuns(runsDir());
+    requests = [];
+
+    await run(baseOptions);
+
+    expect(created()).toEqual(["u2"]);
+    expect(listRuns(runsDir())).toHaveLength(1);
+    expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
+  });
+
+  // --new-run refuses the users the run created; it names the same file as such.
+  test("--new-run on the same file names it as this file, not an earlier version", async () => {
+    await run({ ...baseOptions, requirePassword: true });
+    const [first] = listRuns(runsDir());
+    captured.clear();
+    stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+    expect(error.message).toContain(`created by run ${first!.id}, from this file.`);
   });
 
   // They never reach the checks, so the preview has to count them itself.
@@ -1292,7 +1321,9 @@ describe("run", () => {
       const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
 
       expect(error.exitCode).toBe(EXIT_CODE.USAGE);
-      expect(error.message).toContain(`1 of them was created by run ${first!.id}`);
+      expect(error.message).toContain(
+        `1 of them was created by run ${first!.id}, from an earlier version of this file.`,
+      );
       expect(error.examples?.map((example) => example.command)).toContain(
         `clerk migrate undo ${first!.id} --secret-key <key>`,
       );

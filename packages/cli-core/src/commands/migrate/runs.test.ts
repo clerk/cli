@@ -42,7 +42,12 @@ function partialImport(init: Partial<StartRunInit> = {}) {
   run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
   run.append({ sourceId: "b", status: "failed", error: "That email address is taken." });
   run.append({ sourceId: "c", status: "failed", error: "That email address is taken." });
-  run.append({ sourceId: "d", status: "skipped", reason: "no password (--require-password)" });
+  run.append({
+    sourceId: "d",
+    status: "skipped",
+    reason: "no password (--require-password)",
+    code: "no_password",
+  });
   return run.finish();
 }
 
@@ -265,7 +270,12 @@ describe("runs <id>", () => {
       flags: { requirePassword: true },
     });
     run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
-    run.append({ sourceId: "d", status: "skipped", reason: "no password (--require-password)" });
+    run.append({
+      sourceId: "d",
+      status: "skipped",
+      reason: "no password (--require-password)",
+      code: "no_password",
+    });
     const record = run.finish();
 
     await runs(record.id, { runsDir, json: true });

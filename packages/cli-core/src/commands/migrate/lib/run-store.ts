@@ -324,19 +324,22 @@ export function withLiveCounts(runsDir: string, record: RunRecord): RunRecord {
   return { ...record, counts: countLines(latestUserLines(runsDir, record.id).values()) };
 }
 
-/** Why `--require-password` leaves a user out. */
-export const NO_PASSWORD_REASON = "no password (--require-password)";
+/**
+ * The `code` on a user `--require-password` left out. Matched rather than its
+ * `reason`, which is display text a later version may reword.
+ */
+export const NO_PASSWORD_CODE = "no_password";
 
 /**
- * Whether continuing a run could finish anything: a user never sent, or one a
- * continue retries. Not a `--require-password` skip: the continue carries the
- * flag, so it leaves that user out again, and suggesting it would loop.
+ * Whether a continue has users to retry: one never sent, or a latest line it
+ * retries. Not a `--require-password` skip: the continue carries the flag, so
+ * it leaves that user out again, and suggesting it would loop.
  */
-export function continueFinishes(runsDir: string, record: RunRecord): boolean {
+export function hasRetryableUsers(record: RunRecord, latest: Iterable<UserLine>): boolean {
   if ((record.counts.notSent ?? 0) > 0) return true;
-  return [...latestUserLines(runsDir, record.id).values()].some((line) =>
+  return [...latest].some((line) =>
     line.status === "skipped"
-      ? line.reason !== NO_PASSWORD_REASON
+      ? line.code !== NO_PASSWORD_CODE
       : line.status !== "created" || (line.pending?.length ?? 0) > 0,
   );
 }

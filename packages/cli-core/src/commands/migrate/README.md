@@ -251,10 +251,11 @@ honouring `Retry-After` when the response carries it — and retries up to 5
 times before the user is recorded as failed. The command exits 1 if any user
 failed.
 
-`--require-password` records each user it leaves out as `skipped`, so the run
-ends `partial`. A continue carries the flag and leaves them out again, so when
-they are all that's left, neither the import nor `runs <id>` suggests one. To
-import them, run the file again with `--new-run` and without the flag.
+`--require-password` records each user it leaves out as `skipped`, with
+`code: "no_password"`, so the run ends `partial`. A continue carries the flag
+and leaves them out again, so when they are all that's left, neither the import
+nor `runs <id>` suggests one. To import them, run the same import again without
+the flag: it continues this run and creates them.
 
 `--json` returns `{ target, run, resume, checks, result }`. When a run stops
 before importing, it carries one of `dryRun: true`, `refused: true`,

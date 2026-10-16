@@ -48,7 +48,6 @@ import { ALREADY_IMPORTED, checkImport, type ImportChecks } from "./lib/checks.t
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
 import {
-  continueFinishes,
   continueRun,
   latestUserLines,
   listRuns,
@@ -61,7 +60,8 @@ import {
   type Run,
   type RunRecord,
   type UserLine,
-  NO_PASSWORD_REASON,
+  hasRetryableUsers,
+  NO_PASSWORD_CODE,
   unfinishedUndoMessage,
   inUseMessage,
   openUndoOf,
@@ -549,7 +549,8 @@ function earlierRunHolding(
   source: string,
   instanceId: string,
   checks: ImportChecks,
-): { id: string; count: number } | undefined {
+  sha256: string,
+): { id: string; count: number; sameFile: boolean } | undefined {
   const already = new Set(
     checks.rejects.filter((reject) => reject.reason === ALREADY_IMPORTED).map((r) => r.sourceId),
   );
@@ -561,7 +562,7 @@ function earlierRunHolding(
     for (const line of latestUserLines(runsDir, record.id).values()) {
       if (line.status === "created" && already.has(line.sourceId)) count++;
     }
-    if (count > 0) return { id: record.id, count };
+    if (count > 0) return { id: record.id, count, sameFile: record.file?.sha256 === sha256 };
   }
   return undefined;
 }
@@ -796,13 +797,13 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       if (refused) {
         if (options.json) preview({ refused: true });
-        const earlier = earlierRunHolding(runsDir, source, target.instanceId, checks);
+        const earlier = earlierRunHolding(runsDir, source, target.instanceId, checks, sha256);
         const undoEarlier = earlier ? undoCommand(earlier.id, carry) : undefined;
         throwUsageError(
           `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported.` +
             `${rejectSummary(checks, options.json)} ` +
             (earlier
-              ? `${earlier.count} of them ${earlier.count === 1 ? "was" : "were"} created by run ${earlier.id}, from an earlier version of this file. ` +
+              ? `${earlier.count} of them ${earlier.count === 1 ? "was" : "were"} created by run ${earlier.id}, from ${earlier.sameFile ? "this file" : "an earlier version of this file"}. ` +
                 `Pass --allow-partial to import the rest into a new run, or undo run ${earlier.id} first (\`${undoEarlier}\`) to import the whole file again.`
               : "Fix them, or pass --allow-partial to import the rest and record them as skipped."),
           undefined,
@@ -891,7 +892,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         run.append({
           sourceId: user.userId,
           status: "skipped",
-          reason: NO_PASSWORD_REASON,
+          reason: "no password (--require-password)",
+          code: NO_PASSWORD_CODE,
         });
       }
 
@@ -986,7 +988,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       // setting the checks named) imports then. Not when only `--require-password`
       // skips are left: the continue would leave them out again.
       const steps =
-        record.status === "partial" && continueFinishes(runsDir, record)
+        record.status === "partial" &&
+        hasRetryableUsers(record, latestUserLines(runsDir, record.id).values())
           ? NEXT_STEPS.MIGRATE_PARTIAL(
               runsStep,
               // The same import again continues this run; --new-run would not.
