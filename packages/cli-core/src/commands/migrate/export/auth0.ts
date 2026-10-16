@@ -89,10 +89,13 @@ export async function resolveAuth0Credentials(
   options: ExportAuth0Options,
   env: Record<string, string | undefined> = process.env,
 ): Promise<Auth0Credentials> {
+  // Trimmed before the fallback: a blank flag must not hide a set variable.
+  const pick = (flag: string | undefined, variable: string | undefined) =>
+    flag?.trim() || variable?.trim();
   const resolved = {
-    domain: options.domain ?? env.AUTH0_DOMAIN,
-    clientId: options.clientId ?? env.AUTH0_CLIENT_ID,
-    clientSecret: options.clientSecret ?? env.AUTH0_CLIENT_SECRET,
+    domain: pick(options.domain, env.AUTH0_DOMAIN),
+    clientId: pick(options.clientId, env.AUTH0_CLIENT_ID),
+    clientSecret: pick(options.clientSecret, env.AUTH0_CLIENT_SECRET),
   };
 
   if (resolved.domain && !isAuth0Domain(resolved.domain)) {
