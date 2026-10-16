@@ -1070,17 +1070,27 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       ) {
         // Settled, so a continued run is finished rather than left interrupted,
         // and the JSON reports it as finished, as run.json now does.
+        // Continued by export run ID, the run records the export it now reads.
         const finished = continued
-          ? continueRun(
-              runsDir,
-              withAttempt(continued, target, pickImportFlags(options)),
-              plannedLines,
-              carry,
+          ? continueWithExport(
+              continueRun(
+                runsDir,
+                withAttempt(continued, target, pickImportFlags(options)),
+                plannedLines,
+                carry,
+              ),
+              input.fromExport,
             ).finish()
           : undefined;
         if (options.json)
           preview({ nothingToImport: true, ...(finished ? { run: finished } : {}) });
-        else log.warn("No users left to import.");
+        else {
+          log.warn("No users left to import.");
+          if (finished?.status === "complete") {
+            log.blank();
+            for (const line of cleanupLines(runsDir, finished)) log.info(line);
+          }
+        }
         return;
       }
 

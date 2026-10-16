@@ -950,7 +950,6 @@ stamping every user with today's.
 | `GET`    | `/v1/users?external_id=…`                               | `migrate undo` — finds users whose create was in flight when the import stopped                                                |
 | `GET`    | `/v1/users?user_id=…`                                   | `migrate undo` — reads the imported users back, 100 a call                                                                     |
 | `DELETE` | `/v1/users/{user_id}`                                   | `migrate undo` — deletes one user                                                                                              |
-| `GET`    | `/v1/instance`                                          | `migrate import`, `undo` — names the instance behind the key                                                                   |
 | `GET`    | `/v1/instance`                                          | `migrate import`, `undo`, `export clerk` — names the instance behind the key                                                   |
 | `GET`    | `/v1/domains`                                           | `migrate import` checks — resolves the Frontend API host                                                                       |
 
