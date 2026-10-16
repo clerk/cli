@@ -133,6 +133,14 @@ describe("resolveAuth0Credentials", () => {
     expect(resolved.domain).toBe("flag.auth0.com");
   });
 
+  test("a blank flag falls back to the environment, trimmed", async () => {
+    const resolved = await resolveAuth0Credentials(
+      { domain: " ", clientId: "  ", clientSecret: "" },
+      { AUTH0_DOMAIN: "env.auth0.com ", AUTH0_CLIENT_ID: "c", AUTH0_CLIENT_SECRET: " s" },
+    );
+    expect(resolved).toMatchObject({ domain: "env.auth0.com", clientId: "c", clientSecret: "s" });
+  });
+
   test("falls back to the environment", async () => {
     const resolved = await resolveAuth0Credentials(
       {},
