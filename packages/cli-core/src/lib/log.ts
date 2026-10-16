@@ -1,5 +1,5 @@
 import { isHuman } from "../mode.ts";
-import { dim, green, red, yellow } from "./color.ts";
+import { colorDisabled, dim, green, red, yellow } from "./color.ts";
 
 // ── Log level ────────────────────────────────────────────────────────────
 
@@ -139,13 +139,21 @@ export function setActiveCapture(captured: CapturedLogs | null): void {
   activeCapture = captured;
 }
 
-/** Agents read output as text; color.ts, highlight() and the gutter style it for a terminal. */
-function plain(msg: string): string {
-  return isHuman() ? msg : Bun.stripANSI(msg);
+/** Our styling (color.ts, highlight(), formatTag(), the gutter) is all SGR. */
+const SGR = new RegExp(String.raw`\x1b\[[0-9;]*m`, "g");
+
+/**
+ * Drops our styling for agents and NO_COLOR. Only SGR is removed: a broader
+ * strip would treat C1 bytes in user data (e.g. a name) as escape starts and
+ * swallow the rest of the message.
+ */
+export function plain(msg: string): string {
+  return isHuman() && !colorDisabled() ? msg : msg.replace(SGR, "");
 }
 
 function writeln(stream: NodeJS.WriteStream, channel: "stdout" | "stderr", msg: string) {
-  const text = plain(msg);
+  // stdout carries data (JSON, raw API bodies) that must reach the reader unaltered.
+  const text = channel === "stderr" ? plain(msg) : msg;
   if (activeCapture) {
     activeCapture[channel].push(text);
     return;

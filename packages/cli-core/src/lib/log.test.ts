@@ -181,4 +181,35 @@ describe("agent mode", () => {
     styledCalls();
     expect(captured.stderr.every((line) => line.includes("\x1b["))).toBe(true);
   });
+
+  test("NO_COLOR gives humans plain output", () => {
+    setMode("human");
+    const saved = process.env.NO_COLOR;
+    process.env.NO_COLOR = "1";
+    try {
+      styledCalls();
+    } finally {
+      if (saved === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = saved;
+    }
+    expect(captured.stderr).toEqual(["x", "use `clerk`", "w", "[api] tagged", "│  in gutter", "│"]);
+  });
+
+  test("data passes through unaltered", () => {
+    setMode("agent");
+    const payload = JSON.stringify(
+      [{ first_name: "Eve\x10\x90\x9b\x9d" }, { first_name: "Bob" }],
+      null,
+      2,
+    );
+    log.data(payload);
+    expect(captured.stdout).toEqual([payload]);
+  });
+
+  test("keeps user text that contains C1 bytes or a lone ESC", () => {
+    setMode("agent");
+    log.warn("Skipped (Eve\x90): taken\nSkipped (Bob): taken");
+    log.info("\x1b and");
+    expect(captured.stderr).toEqual(["Skipped (Eve\x90): taken\nSkipped (Bob): taken", "\x1b and"]);
+  });
 });
