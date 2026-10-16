@@ -460,6 +460,8 @@ describe("unverified identifiers", () => {
     await run(importOptions);
 
     expect(confirmMessages.some((message) => message.includes("never verified"))).toBe(true);
+    // Recorded, so a later `-y` continue reserves the rest as this one did.
+    expect(listRuns(runsDir())[0]?.reserveUnverified).toBe(true);
   });
 
   test("a no keeps them unverified, attached after the user exists", async () => {
