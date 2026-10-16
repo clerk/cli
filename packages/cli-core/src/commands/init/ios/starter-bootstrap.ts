@@ -226,7 +226,6 @@ export async function promptAppleStarter(
     teamId: team.id,
     platform,
   });
-  log.blank();
   return {
     projectDir,
     projectName: name,
