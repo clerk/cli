@@ -776,8 +776,10 @@ function findDisabledProviderRejects(input: CheckInput): Map<string, string> {
   const canSignInOtherwise = (id: string) => {
     const user = usersById.get(id);
     if (!user) return false;
-    // An email Clerk refuses is stripped before the create, so it is no way in.
-    const { emails, phones } = sentIdentifiers(dropRefusedEmails(user).user, reserves(user));
+    // An email Clerk refuses, or a phone not in E.164 form with numeric
+    // usernames on, is stripped before the create, so it is no way in.
+    const sent = dropLoosePhones(dropRefusedEmails(user).user, input.settings).user;
+    const { emails, phones } = sentIdentifiers(sent, reserves(user));
     return (
       (emails.length > 0 && (strategies.has("email_code") || strategies.has("email_link"))) ||
       (phones.length > 0 && strategies.has("phone_code"))

@@ -1456,7 +1456,13 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       const flags = pickImportFlags(options);
       const run = continued
         ? continueWithExport(
-            continueRun(runsDir, withAttempt(continued, target, flags), plannedLines, carry),
+            // The answer is recorded, so a later `-y` continue keeps it.
+            continueRun(
+              runsDir,
+              { ...withAttempt(continued, target, flags), reserveUnverified },
+              plannedLines,
+              carry,
+            ),
             input.fromExport,
           )
         : startRun(runsDir, {

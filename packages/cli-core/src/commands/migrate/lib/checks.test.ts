@@ -482,6 +482,26 @@ describe("rejects", () => {
     ).toEqual({ u: "only signs in with Discord, which is not enabled in Clerk" });
   });
 
+  test("a phone not in E.164 form is no way in for a supabase user on a disabled provider", async () => {
+    expect(
+      await reasonsOf({
+        settings: {
+          ...settings({
+            phone_number: {
+              enabled: true,
+              used_for_first_factor: true,
+              first_factors: ["phone_code"],
+            },
+            username: { enabled: true },
+          }),
+          username_settings: { min_length: 4, max_length: 64, allow_numeric_usernames: true },
+        } as unknown as UserSettingsJSON,
+        supabaseRows: [{ id: "u", raw_app_meta_data: { providers: ["discord"] } }],
+        users: [user("u", { email: undefined, username: "12345", phone: "(555) 123-4567" })],
+      }),
+    ).toEqual({ u: "only signs in with Discord, which is not enabled in Clerk" });
+  });
+
   test("an unverified email is no way in for a supabase user on a disabled provider", async () => {
     expect(
       await reasonsOf({
