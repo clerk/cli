@@ -852,26 +852,40 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
               ["--yes"],
             )
           : undefined;
+        // With every user rejected, --allow-partial would start a run that
+        // imports nobody, so it isn't offered.
+        const nonePass = checks.importable.length === 0 && attachOnly.length === 0;
+        const ways = earlier
+          ? [
+              ...(nonePass ? [] : ["pass --allow-partial to import the rest into a new run"]),
+              `undo run ${earlier.id} first (\`${undoEarlier}\`) to import the whole file again`,
+            ].join(", or ")
+          : "";
         throwUsageError(
           `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported.` +
             `${rejectSummary(checks, options.json)} ` +
             (earlier
               ? `${earlier.count} of them ${earlier.count === 1 ? "was" : "were"} created by run ${earlier.id}, from ${earlier.sameFile ? "this file" : "an earlier version of this file"}. ` +
                 (continueEarlier
-                  ? `Drop --new-run to continue run ${earlier.id}. Or pass`
-                  : "Pass") +
-                ` --allow-partial to import the rest into a new run, or undo run ${earlier.id} first (\`${undoEarlier}\`) to import the whole file again.`
-              : "Fix them, or pass --allow-partial to import the rest and record them as skipped."),
+                  ? `Drop --new-run to continue run ${earlier.id}. Or ${ways}.`
+                  : `${ways[0]!.toUpperCase()}${ways.slice(1)}.`)
+              : nonePass
+                ? "Fix them: with every user rejected, --allow-partial would import nobody."
+                : "Fix them, or pass --allow-partial to import the rest and record them as skipped."),
           undefined,
           undefined,
           [
             ...(continueEarlier
               ? [{ command: continueEarlier, description: `Continue run ${earlier!.id}` }]
               : []),
-            {
-              command: commandFor(options, ["--allow-partial", "--yes"]),
-              description: "Import the users that pass",
-            },
+            ...(nonePass
+              ? []
+              : [
+                  {
+                    command: commandFor(options, ["--allow-partial", "--yes"]),
+                    description: "Import the users that pass",
+                  },
+                ]),
             ...(undoEarlier
               ? [{ command: undoEarlier, description: `Undo run ${earlier!.id} first` }]
               : []),

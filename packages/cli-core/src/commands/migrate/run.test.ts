@@ -508,6 +508,48 @@ describe("run", () => {
     expect(error.examples?.[0]?.command).not.toContain("--new-run");
   });
 
+  // --allow-partial would start a run that imports nobody.
+  test("--new-run with every user rejected offers the undo, not --allow-partial", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify([...export2, { id: "u3", primary_email_address: "not-an-email" }]),
+    );
+    await run({ ...baseOptions, allowPartial: true });
+    const [first] = listRuns(runsDir());
+    captured.clear();
+    stubClerk({
+      existing: [
+        { id: "user_u1", external_id: "u1" },
+        { id: "user_u2", external_id: "u2" },
+      ],
+    });
+
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain(`Undo run ${first!.id} first (`);
+    expect(error.message).not.toContain("import the rest into a new run");
+    expect(error.examples?.map((example) => example.description)).toEqual([
+      `Undo run ${first!.id} first`,
+    ]);
+  });
+
+  test("a refusal of a file where no user passes doesn't offer --allow-partial", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify([{ id: "u3", primary_email_address: "not-an-email" }]),
+    );
+
+    const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
+
+    expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+    expect(error.message).toContain(
+      "with every user rejected, --allow-partial would import nobody",
+    );
+    expect(error.examples ?? []).toEqual([]);
+  });
+
   // The continue would carry --require-password and leave the same users out.
   test("--new-run --require-password doesn't offer a continue that imports nobody", async () => {
     await run({ ...baseOptions, requirePassword: true });
