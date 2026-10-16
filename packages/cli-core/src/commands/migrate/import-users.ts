@@ -402,7 +402,9 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   // Attach-only users count towards the bar too: a continue with only those
   // left would otherwise sit at 0/0.
   let attachedUsers = 0;
-  const progress = () => report?.({ done: processed + attachedUsers, ok: successful, failed });
+  // An attach-only user was created by this run's earlier attempt, as an adopted one was.
+  const progress = () =>
+    report?.({ done: processed + attachedUsers, ok: successful + attachedUsers, failed });
 
   const recordFailure = (
     userId: string,
@@ -530,7 +532,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
 
   progress();
   const attachOnlyUser = async (line: UserLine) => {
-    await finishUser(line, line.pending ?? [], []);
+    // Its earlier error names identifiers Clerk refused; the new line keeps it.
+    await finishUser(line, line.pending ?? [], line.error ? [line.error] : []);
     attachedUsers++;
     progress();
   };

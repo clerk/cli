@@ -880,15 +880,18 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
 
       // Rule 1: nothing is written without consent — `--yes`, or a yes at a
       // prompt. An agent, a non-TTY run and `--json` never prompt. With users
-      // skipped, the question names them: "Import 0 users?" hides the skips.
+      // skipped or attaches left, the question names them: "Import 0 users?"
+      // hides both.
       const toCreate = plural(checks.importable.length, "user");
+      const attaches =
+        attachOnly.length > 0 ? `, attach identifiers to ${plural(attachOnly.length, "user")}` : "";
       const skipping = checks.rejects.length + withoutPassword.length;
       const skips = skipping > 0 ? ` and skip ${plural(skipping, "user")}` : "";
       if (!options.yes) {
         if (!canPrompt(options)) {
           if (options.json) preview({ consent: "required" });
           throwUsageError(
-            `\`clerk migrate import\` will create ${toCreate}${skips}. Pass --yes to confirm.`,
+            `\`clerk migrate import\` will create ${toCreate}${attaches}${skips}. Pass --yes to confirm.`,
             undefined,
             undefined,
             [
@@ -901,7 +904,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         }
         log.blank();
         const proceed = await confirm({
-          message: skips ? `Create ${toCreate}${skips}?` : `Import ${toCreate}?`,
+          message:
+            skips || attaches ? `Create ${toCreate}${attaches}${skips}?` : `Import ${toCreate}?`,
           default: false,
         });
         if (!proceed) throwUserAbort();

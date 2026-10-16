@@ -491,8 +491,8 @@ create (`unconfirmed` in `--json`), with the path to the full record, then what
 to run next: for an interrupted or partial import, the import that continues it,
 with the flags it ran with, then the undo. The continue is left out when
 importing the file again might not reach this run: a newer run of the same file
-and source that may be for the same instance (one recorded under a key's
-stand-in ID may be any), a file changed since, or any undo of it. It is also
+and source that may be for the same instance (a run under a key's stand-in ID
+could be for any instance), a file changed since, or any undo of it. It is also
 left out when only `--require-password` skips are left. Both carry what reaches
 the run's instance again, from the key its latest attempt used: `--secret-key
 <key>` for a key passed with `--secret-key` or exported (as `CLERK_SECRET_KEY`,
@@ -589,13 +589,17 @@ is written, as an import's is. Once the deletes run, `run` is the undo run, and
 before that, the object says why:
 
 - `"dryRun": true`: a dry run.
-- `"consent": "required"`: refused for consent.
+- `"consent": "required"`: refused for consent. When
+  `"includeSignedIn": "required"` is beside it, `--yes` was given, but users
+  who signed in since the import also need `--include-signed-in`.
 - `"changed": true`: refused because the run changed while the preview waited,
   or another process holds it.
 - `"recheckFailed": true`: the second look at sign-ins, right before the
   deletes, failed.
 - `"writeFailed": true`: the file system refused a write to the runs folder.
-- `"stopped": true`: anything else stopped it, such as a Ctrl-C.
+- `"stopped": true`: anything else stopped it. A Ctrl-C may exit before the
+  object is printed: `clerk migrate runs` then lists the undo run, and
+  `runs <id>` shows how far it got.
 
 With `writeFailed` or `stopped`, `run` is the undo run as it stands on disk,
 once one was written: its counts come from its lines, and `state` says how it

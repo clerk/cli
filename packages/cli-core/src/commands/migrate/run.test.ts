@@ -1101,6 +1101,13 @@ describe("run", () => {
       const err = Bun.stripANSI(captured.err);
       expect(err).toContain("Identifiers left to attach: 1 user");
       expect(err).toContain("--secret-key <key> --yes` to retry them");
+
+      // Without --yes, the consent names the attach, not just "0 users".
+      globalThis.fetch = clerk;
+      const error = (await run({ ...baseOptions, yes: false }).catch(
+        (caught: unknown) => caught,
+      )) as CliError;
+      expect(error.message).toContain("will create 0 users, attach identifiers to 1 user.");
     });
 
     // A skip the checks named a fix for imports once the setting changes: the

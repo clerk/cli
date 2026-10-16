@@ -119,7 +119,7 @@ function continueCommand(record: RunRecord, carry: string[]): string | undefined
   if (!input) return undefined;
   const parts = ["clerk migrate import", quoteArg(input)];
   if (!record.fromExport && record.source) parts.push("--source", quoteArg(record.source));
-  return withFlags(parts.join(" "), [...importFlags(record.flags ?? {}), ...carry]);
+  return withFlags(parts.join(" "), [...importFlags(record.flags ?? {}), ...carry, "--yes"]);
 }
 
 /**

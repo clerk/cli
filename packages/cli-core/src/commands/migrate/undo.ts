@@ -316,7 +316,7 @@ type StoppedRun = RunRecord & { state: RunState };
  */
 type UndoOutcome =
   | { dryRun: true }
-  | { consent: "required" }
+  | { consent: "required"; includeSignedIn?: "required" }
   | { changed: true; signedInSincePreview?: number }
   | { recheckFailed: true }
   | { writeFailed: true; run: StoppedRun | null }
@@ -443,7 +443,8 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   // people have used since. That takes its own flag; a human at the prompt has
   // the warning above.
   if (options.yes && preview.signedInSince > 0 && !options.includeSignedIn) {
-    printJson({ consent: "required" });
+    // Its own marker: a script that retries with --yes would loop on exit 2.
+    printJson({ consent: "required", includeSignedIn: "required" });
     throwUsageError(
       `${plural(preview.signedInSince, "user")} the import created ${preview.signedInSince === 1 ? "has" : "have"} signed in since, and --yes alone does not delete them. ` +
         "Pass --include-signed-in to delete them too. Nothing was deleted.",

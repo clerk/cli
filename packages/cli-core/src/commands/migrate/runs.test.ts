@@ -247,6 +247,8 @@ describe("runs <id>", () => {
       `clerk migrate import ${quoteArg(usersFile())} --source clerk --runs-dir ${quoteArg(runsDir)}`,
     );
     expect(next[0]).toContain("to retry the users it didn't finish");
+    // Run as printed, it goes ahead rather than asking for consent.
+    expect(next[0]).toContain(`--runs-dir ${quoteArg(runsDir)} --yes\``);
   });
 
   // Left out, the continue creates the users --require-password held back.

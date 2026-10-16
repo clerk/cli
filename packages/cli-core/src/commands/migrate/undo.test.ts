@@ -240,7 +240,8 @@ describe("refusals, all exit 2 and delete nothing", () => {
 
     // The run's own folder takes the lock, but the undo run can't be created
     // beside it. `--runs-dir` is never written to by resolveRunsDir.
-    test.skipIf(process.platform === "win32")(
+    // Root writes through 0o555, so the undo run would be created.
+    test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       "--json prints the preview, marked writeFailed, when the runs folder can't be written",
       async () => {
         const record = importRun();
@@ -537,6 +538,20 @@ describe("users who signed in since the import", () => {
     expect(error.message).toContain("1 user the import created has signed in since");
     expect(error.examples?.[0]?.command).toContain("--yes --include-signed-in");
     expect(deletes()).toHaveLength(0);
+  });
+
+  // `consent` alone would tell a script to retry with --yes, which it gave.
+  test("--yes --json marks the refusal as needing --include-signed-in", async () => {
+    const record = importRun();
+
+    await expect(
+      undo(record.id, withDir({ yes: true, json: true, includeSignedIn: false })),
+    ).rejects.toThrow("--include-signed-in");
+
+    expect(JSON.parse(captured.out)).toMatchObject({
+      consent: "required",
+      includeSignedIn: "required",
+    });
   });
 
   // Without them the suggested command looks in the default runs folder, or
