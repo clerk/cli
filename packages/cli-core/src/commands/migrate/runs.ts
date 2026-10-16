@@ -182,7 +182,11 @@ function nextCommands(
     // Continuing is what a stopped run is for: the same file, source and
     // target pick it up where it left off.
     const why = state === "interrupted" ? "continue it" : "retry the users it didn't finish";
-    return [`Run \`${again}\` to ${why}`, undo];
+    // The record knows a source you wrote only by its hash.
+    const placeholder = record.sourceHash
+      ? ", with SOURCE_FILE replaced by the path to the source you wrote"
+      : "";
+    return [`Run \`${again}\` to ${why}${placeholder}`, undo];
   }
   if (record.kind === "undo" && state !== "complete" && record.undoes) {
     return [`Run \`${undoCommand(record.undoes, carry)}\` to retry the users that failed`];
