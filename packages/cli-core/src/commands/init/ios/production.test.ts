@@ -25,8 +25,11 @@ interface Fixture {
   nativeEnabled: boolean;
   registrations: IOSApplication[];
   release: Record<string, string>;
-  swift: string;
+  /** Release's CLERK_PUBLISHABLE_KEY, read through the Info.plist entry; undefined for no Info.plist. */
+  releaseKey: string | undefined;
 }
+
+const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>ClerkPublishableKey</key><string>$(CLERK_PUBLISHABLE_KEY)</string></dict></plist>\n`;
 
 const xcode = spyOn(coordinator, "canSetUpXcode").mockReturnValue(true);
 afterAll(() => xcode.mockRestore());
@@ -41,8 +44,9 @@ beforeEach(async () => {
     nativeEnabled: true,
     registrations: [registration("com.example.MyApp")],
     release: {},
-    swift: `Clerk.configure(publishableKey: "${LIVE}")`,
+    releaseKey: LIVE,
   };
+  await writeFile(join(root, "MyApp/Info.plist"), INFO_PLIST);
 });
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
@@ -105,14 +109,20 @@ const run: CommandRunner = async (command) => {
         IPHONEOS_DEPLOYMENT_TARGET: "17.0",
         CODE_SIGN_ENTITLEMENTS: "MyApp/MyApp.entitlements",
         ...(configuration === "Debug" ? { SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG" } : {}),
-        ...(configuration === "Release" ? state.release : {}),
+        ...(configuration === "Release"
+          ? {
+              ...(state.releaseKey
+                ? { INFOPLIST_FILE: "MyApp/Info.plist", CLERK_PUBLISHABLE_KEY: state.releaseKey }
+                : {}),
+              ...state.release,
+            }
+          : {}),
       },
     },
   ]);
 };
 
 async function audit() {
-  await writeFile(join(root, "MyApp/MyAppApp.swift"), state.swift);
   const inspection = await inspectSelectedProject(
     { root, products: "core", minimumVersion: "1.0.0" },
     run,
@@ -138,7 +148,7 @@ test("a Release build ready for production passes every check", async () => {
   ]);
   expect(Object.values(checks).map((check) => check.status)).toEqual(["pass", "pass", "pass"]);
   expect(checks["Production publishable key: Release"]?.message).toBe(
-    "Release uses the production instance's publishable key (from a string literal in MyApp/MyAppApp.swift).",
+    "Release uses the production instance's publishable key (from the Info.plist entry ClerkPublishableKey, set by the CLERK_PUBLISHABLE_KEY build setting).",
   );
 });
 
@@ -236,46 +246,31 @@ describe("production publishable key", () => {
   test.each([
     {
       name: "the development key",
-      swift: `Clerk.configure(publishableKey: "${DEV}")`,
+      releaseKey: DEV,
       message:
-        "Release uses a development publishable key (from a string literal in MyApp/MyAppApp.swift)",
+        "Release uses a development publishable key (from the Info.plist entry ClerkPublishableKey",
     },
     {
       name: "another instance's production key",
-      swift: `Clerk.configure(publishableKey: "${OTHER_LIVE}")`,
+      releaseKey: OTHER_LIVE,
       message: "the production publishable key of a different instance (clerk.other.com",
     },
     {
-      name: "a key loaded at runtime",
-      swift: `Clerk.configure(publishableKey: ProcessInfo.processInfo.environment["KEY"] ?? "")`,
-      message: "Not verified: Clerk.configure in MyApp/MyAppApp.swift gets its key from code",
+      name: "a key without the Info.plist entry",
+      releaseKey: undefined,
+      message: "Not verified: the target has no Info.plist file for its ClerkPublishableKey entry",
     },
-  ])("warns about $name without printing keys", async ({ swift, message }) => {
-    state.swift = swift;
+  ])("warns about $name without printing keys", async ({ releaseKey, message }) => {
+    state.releaseKey = releaseKey;
     const check = (await audit())["Production publishable key: Release"];
     expect(check?.status).toBe("warn");
     expect(check?.message).toContain(message);
     expect(check?.remedy).toContain("CLERK_PUBLISHABLE_KEY build setting");
     expect(JSON.stringify(check)).not.toMatch(/pk_(test|live)_[A-Za-z0-9]/);
   });
-
-  test("follows an Info.plist entry to Release's build setting", async () => {
-    await writeFile(
-      join(root, "MyApp/Info.plist"),
-      `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>ClerkPublishableKey</key><string>$(CLERK_PUBLISHABLE_KEY)</string></dict></plist>\n`,
-    );
-    state.swift = `Clerk.configure(publishableKey: Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") as! String)`;
-    state.release = { INFOPLIST_FILE: "MyApp/Info.plist", CLERK_PUBLISHABLE_KEY: LIVE };
-    expect((await audit())["Production publishable key: Release"]).toMatchObject({
-      status: "pass",
-      message:
-        "Release uses the production instance's publishable key (from the Info.plist entry ClerkPublishableKey, set by the CLERK_PUBLISHABLE_KEY build setting).",
-    });
-  });
 });
 
 test("doctor appends the production checks after the development ones", async () => {
-  await writeFile(join(root, "MyApp/MyAppApp.swift"), state.swift);
   const report = await doctor(
     {
       root,
@@ -296,7 +291,6 @@ test("doctor appends the production checks after the development ones", async ()
 });
 
 test("clerk doctor shows each production check's own remedy, not clerk init's", async () => {
-  await writeFile(join(root, "MyApp/MyAppApp.swift"), state.swift);
   const ctx = {
     getProfile: async () => ({ profile: { appId: "app_test" } }),
   } as unknown as DoctorContext;

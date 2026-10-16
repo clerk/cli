@@ -3,7 +3,7 @@ import { errorMessage } from "../../../lib/errors.ts";
 import { decodePublishableKey } from "../../../lib/fapi.ts";
 import { hasCapabilities, readEntitlements } from "./capabilities.ts";
 import { discoverRemote } from "./identity.ts";
-import { configuredPublishableKey, scanSwiftSources, type SwiftScan } from "./publishable-key.ts";
+import { configuredPublishableKey } from "./publishable-key.ts";
 import { remoteActions, type NativeAPI } from "./remote.ts";
 import type { Check } from "./sdk-health.ts";
 import type { Inspection } from "./xcode.ts";
@@ -164,11 +164,9 @@ export async function auditProduction(
     });
   }
 
-  let scan: SwiftScan | undefined;
   for (const context of contexts) {
     const configuration = context.selection.configuration;
-    scan ??= await scanSwiftSources(inspection);
-    const configured = await configuredPublishableKey(context, scan);
+    const configured = await configuredPublishableKey(context);
     const name = `Production publishable key: ${configuration}`;
     const remedy = `Build ${configuration} with the production publishable key from ${dashboard("api-keys")}. To keep the development key in Debug, set a CLERK_PUBLISHABLE_KEY build setting per configuration, add ClerkPublishableKey = $(CLERK_PUBLISHABLE_KEY) to Info.plist, and pass Bundle.main.object(forInfoDictionaryKey: "ClerkPublishableKey") to Clerk.configure.`;
     if (configured.status === "unresolved") {
