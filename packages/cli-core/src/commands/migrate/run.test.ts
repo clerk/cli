@@ -1108,6 +1108,11 @@ describe("run", () => {
         (caught: unknown) => caught,
       )) as CliError;
       expect(error.message).toContain("will create 0 users, attach identifiers to 1 user.");
+
+      // The --json refusal counts them too, as it counts --require-password's.
+      captured.clear();
+      await run({ ...baseOptions, yes: false, json: true }).catch(() => undefined);
+      expect(JSON.parse(captured.out)).toMatchObject({ consent: "required", attachOnly: 1 });
     });
 
     // A skip the checks named a fix for imports once the setting changes: the

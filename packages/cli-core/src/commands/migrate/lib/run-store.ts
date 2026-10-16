@@ -85,6 +85,8 @@ export type RunRecord = {
   /**
    * The flags an import's latest attempt ran with, as values: a record
    * outlives the CLI that wrote it, and `importFlags` spells them for this one.
+   * An earlier build wrote a `string[]`, or none; `runs <id>` offers no
+   * continue for those.
    */
   flags?: ImportFlags;
   /** The import run an undo reverses. */

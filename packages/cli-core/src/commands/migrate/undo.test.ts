@@ -224,6 +224,19 @@ describe("refusals, all exit 2 and delete nothing", () => {
     expect(error.examples?.[0]?.description).toBe(`Mark run ${record.id} undone`);
   });
 
+  // The preview and the dry run say the same, rather than "Will delete 0 users".
+  test("a dry run with every user already gone names the mark, not 0 deletes", async () => {
+    instanceUsers.clear();
+    const record = importRun();
+
+    await undo(record.id, withDir({ dryRun: true }));
+
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain(`Will mark import run ${record.id} undone: nothing is left to delete.`);
+    expect(err).toContain("to mark it undone.");
+    expect(err).not.toContain("Will delete 0");
+  });
+
   // Another process continues the import while the undo previews it.
   describe("the run changing during the preview", () => {
     const duringPreview = (act: () => void) => {

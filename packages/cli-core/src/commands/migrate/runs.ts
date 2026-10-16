@@ -60,6 +60,7 @@ function colorState(state: RunState): string {
 const COUNT_LABELS: Partial<Record<keyof RunCounts, string>> = {
   creating: "not confirmed",
   pending: "left to attach",
+  notSent: "not sent",
 };
 
 /** The counts that matter for a run's kind, in the order they are read. */
@@ -70,7 +71,7 @@ function formatCounts(record: RunRecord): string {
       ? (["exported", "skipped"] as const)
       : record.kind === "undo"
         ? (["deleted", "failed"] as const)
-        : (["created", "pending", "creating", "failed", "skipped"] as const);
+        : (["created", "pending", "creating", "failed", "notSent", "skipped"] as const);
   const parts = order
     .filter((status) => (counts[status] ?? 0) > 0 || status === order[0])
     .map((status) => `${counts[status] ?? 0} ${COUNT_LABELS[status] ?? status}`);
@@ -112,7 +113,8 @@ function errorBreakdown(lines: UserLine[]): { error: string; count: number }[] {
 
 /**
  * The import that continues this run: its file (or export run) and source,
- * with the flags that reach the same runs folder and instance.
+ * with the flags that reach the same runs folder and instance, ending in
+ * `--yes`. None when the run has no file, or flags this build can't read.
  */
 function continueCommand(record: RunRecord, carry: string[]): string | undefined {
   // Every import records its flags. None, or the string[] an earlier build
@@ -123,7 +125,7 @@ function continueCommand(record: RunRecord, carry: string[]): string | undefined
   if (!input) return undefined;
   const parts = ["clerk migrate import", quoteArg(input)];
   if (!record.fromExport && record.source) parts.push("--source", quoteArg(record.source));
-  return withFlags(parts.join(" "), [...importFlags(record.flags ?? {}), ...carry, "--yes"]);
+  return withFlags(parts.join(" "), [...importFlags(record.flags), ...carry, "--yes"]);
 }
 
 /**

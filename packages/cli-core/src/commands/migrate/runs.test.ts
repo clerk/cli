@@ -172,6 +172,27 @@ describe("runs <id>", () => {
     expect(err).toContain("1 user: bad gateway (a re-run checks)");
   });
 
+  // A stopped import's unsent users have no lines: only the count says so.
+  test("shows the users a stopped import never sent, in the list and the run", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+      flags: {},
+    });
+    run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    const record = run.finish({ notSent: 9000 });
+
+    await runs(undefined, { runsDir });
+    expect(Bun.stripANSI(captured.err)).toContain("1 created, 9000 not sent");
+
+    captured.clear();
+    await runs(record.id, { runsDir });
+    expect(Bun.stripANSI(captured.err)).toContain("1 created, 9000 not sent");
+  });
+
   // An unfinished run is counted from its lines, `pending` included.
   test("counts identifiers left to attach on a run that never finished", async () => {
     const record = partialImport();

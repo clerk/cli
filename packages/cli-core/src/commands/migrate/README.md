@@ -266,7 +266,9 @@ before importing, it carries one of `dryRun: true`, `refused: true`,
 `consent: "required"` or `nothingToImport: true` in place of `result`, and a
 file already imported in full returns `alreadyImported: true`. With
 `--require-password`, `withoutPassword` counts the users it left out before the
-checks, so `checks.total` plus it is the file's size.
+checks, so `checks.total` plus it is the file's size. A continue with
+identifiers left to attach carries `attachOnly`: the users it attaches them to,
+which skip the checks too.
 
 #### Re-running
 
@@ -493,7 +495,8 @@ with the flags it ran with, then the undo. The continue is left out when
 importing the file again might not reach this run: a newer run of the same file
 and source that may be for the same instance (a run under a key's stand-in ID
 could be for any instance), a file changed since, or any undo of it. It is also
-left out when only `--require-password` skips are left. Both carry what reaches
+left out when only `--require-password` skips are left, or for a run from an
+earlier build, whose flags can't be read. Both carry what reaches
 the run's instance again, from the key its latest attempt used: `--secret-key
 <key>` for a key passed with `--secret-key` or exported (as `CLERK_SECRET_KEY`,
 or a framework's own variable such as `NUXT_CLERK_SECRET_KEY`), and `--app` and

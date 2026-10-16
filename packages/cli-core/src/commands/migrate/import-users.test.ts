@@ -493,7 +493,7 @@ describe("importUsers", () => {
     stub(() => ok("idn_1"));
     const reported: { done: number; ok: number }[] = [];
 
-    await importUsers({
+    const summary = await importUsers({
       users: [],
       attachOnly: [
         {
@@ -509,8 +509,9 @@ describe("importUsers", () => {
       progress: ({ done, ok }) => reported.push({ done, ok }),
     });
 
-    // Created by the run's earlier attempt, so the counts under the bar add up.
+    // Created by the run's earlier attempt: the bar and the summary agree.
     expect(reported.at(-1)).toEqual({ done: 1, ok: 1 });
+    expect(summary.successful).toBe(1);
   });
 
   // The pending phone attaches now, but the email Clerk refused stays refused.

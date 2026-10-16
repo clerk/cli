@@ -789,7 +789,11 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const refused = checks.rejects.length > 0 && !options.allowPartial;
       // The users --require-password left out never reach the checks, so the
       // JSON says how many, or `checks.total` would not add up to the file.
-      const leftOut = withoutPassword.length > 0 ? { withoutPassword: withoutPassword.length } : {};
+      // Attach-only users skip them too, and a consent refusal names them.
+      const leftOut = {
+        ...(withoutPassword.length > 0 ? { withoutPassword: withoutPassword.length } : {}),
+        ...(attachOnly.length > 0 ? { attachOnly: attachOnly.length } : {}),
+      };
       const preview = (extra: Record<string, unknown>) =>
         log.data(
           JSON.stringify(

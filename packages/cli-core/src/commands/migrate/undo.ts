@@ -283,8 +283,11 @@ async function deleteUsers(options: {
 
 function printPreview(record: RunRecord, preview: UndoPreview): void {
   log.blank();
+  // Every user already gone: the undo only records the import as undone.
   log.info(
-    `${bold(`Will delete ${plural(preview.toDelete, "user")}`)} created by import run ${record.id}.`,
+    preview.toDelete > 0
+      ? `${bold(`Will delete ${plural(preview.toDelete, "user")}`)} created by import run ${record.id}.`
+      : `${bold(`Will mark import run ${record.id} undone`)}: nothing is left to delete.`,
   );
   if (preview.signedInSince > 0) {
     const who =
@@ -399,7 +402,8 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     printJson({ dryRun: true });
     if (!options.json) {
       log.blank();
-      log.info(dim(`Dry run: nothing was deleted. Run \`${command}\` to delete them.`));
+      const then = present.length > 0 ? "to delete them" : "to mark it undone";
+      log.info(dim(`Dry run: nothing was deleted. Run \`${command}\` ${then}.`));
     }
     return;
   }

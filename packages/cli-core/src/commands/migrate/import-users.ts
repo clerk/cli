@@ -402,9 +402,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   // Attach-only users count towards the bar too: a continue with only those
   // left would otherwise sit at 0/0.
   let attachedUsers = 0;
-  // An attach-only user was created by this run's earlier attempt, as an adopted one was.
-  const progress = () =>
-    report?.({ done: processed + attachedUsers, ok: successful + attachedUsers, failed });
+  const progress = () => report?.({ done: processed + attachedUsers, ok: successful, failed });
 
   const recordFailure = (
     userId: string,
@@ -488,10 +486,6 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         );
         return;
       }
-      if (error instanceof RateLimitExceededError) {
-        recordFailure(user.userId, error.message, "429", retries, false);
-        return;
-      }
       const apiError = error as BapiError;
       if (apiError.code === "user_quota_exceeded" && !ctx.quota.signal.aborted) {
         ctx.quota.abort();
@@ -534,6 +528,9 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   const attachOnlyUser = async (line: UserLine) => {
     // Its earlier error names identifiers Clerk refused; the new line keeps it.
     await finishUser(line, line.pending ?? [], line.error ? [line.error] : []);
+    // Created by this run's earlier attempt, as an adopted user was: the bar,
+    // the summary and `result.created` all count it.
+    successful++;
     attachedUsers++;
     progress();
   };
