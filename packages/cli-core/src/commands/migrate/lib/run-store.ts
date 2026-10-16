@@ -62,7 +62,12 @@ export type RunTarget = {
 export type RunFile = { path: string; sha256: string };
 
 /** `notSent`: users a stopped import never sent, so they have no line. */
-export type RunCounts = Partial<Record<UserStatus, number>> & { total: number; notSent?: number };
+export type RunCounts = Partial<Record<UserStatus, number>> & {
+  total: number;
+  notSent?: number;
+  /** Created users with extra identifiers left to attach. */
+  pending?: number;
+};
 
 export type RunRecord = {
   id: string;
@@ -217,6 +222,7 @@ export function lockFile(runsDir: string, id: string): string {
 }
 
 const isExists = (error: unknown) => (error as NodeJS.ErrnoException).code === "EEXIST";
+const isMissing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
 
 /**
  * Takes the run's lock. Created exclusively (`wx`), so two processes can't
@@ -252,18 +258,24 @@ function acquireLock(runsDir: string, id: string): void {
   }
 }
 
+function releaseLock(runsDir: string, id: string): void {
+  log.debug(`migrate: released run ${id}`);
+  fs.rmSync(lockFile(runsDir, id), { force: true });
+}
+
 // --- Reading ---------------------------------------------------------------
 
 /** One run's record, or `undefined` when the folder holds no readable run. */
 export function readRun(runsDir: string, id: string): RunRecord | undefined {
+  const file = path.join(runDir(runsDir, id), RUN_FILE);
   try {
-    const parsed = JSON.parse(
-      fs.readFileSync(path.join(runDir(runsDir, id), RUN_FILE), "utf-8"),
-    ) as RunRecord;
-    return parsed && typeof parsed === "object" && parsed.id === id ? parsed : undefined;
-  } catch {
-    return undefined;
+    const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as RunRecord;
+    if (parsed && typeof parsed === "object" && parsed.id === id) return parsed;
+    log.debug(`migrate: ${file} is not run ${id}'s record`);
+  } catch (error) {
+    if (!isMissing(error)) log.debug(`migrate: could not read ${file}: ${String(error)}`);
   }
+  return undefined;
 }
 
 /** Every line of a run's `users.ndjson`, in the order written. */
@@ -365,7 +377,8 @@ export function listRuns(runsDir: string): RunRecord[] {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(runsDir, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    if (!isMissing(error)) log.debug(`migrate: could not read ${runsDir}: ${String(error)}`);
     return [];
   }
   return entries
@@ -442,15 +455,16 @@ function openRun(runsDir: string, record: RunRecord): Run {
       const counts = countLines(lines);
       if (options?.notSent) counts.notSent = options.notSent;
       // A created user whose extra identifiers never attached is left for a continue.
-      const pendingAttaches = lines.filter(
+      const pending = lines.filter(
         (line) => line.status === "created" && (line.pending?.length ?? 0) > 0,
       ).length;
+      if (pending) counts.pending = pending;
       const unfinished =
         (counts.failed ?? 0) +
         (counts.skipped ?? 0) +
         (counts.creating ?? 0) +
         (counts.notSent ?? 0) +
-        pendingAttaches;
+        pending;
       run.update({
         counts,
         status: unfinished > 0 ? "partial" : "complete",
@@ -460,7 +474,7 @@ function openRun(runsDir: string, record: RunRecord): Run {
       return run.record;
     },
     release() {
-      fs.rmSync(path.join(dir, LOCK_FILE), { force: true });
+      releaseLock(runsDir, record.id);
     },
   };
   return run;
@@ -499,12 +513,17 @@ export function startRun(runsDir: string, init: StartRunInit): Run {
 }
 
 /**
- * A run's record with the key this attempt used, which its later commands
- * repeat. The instance ID stays: `findResume` and `undo` key on it.
+ * A run's record with what this attempt ran with, which its later commands
+ * repeat: where its key came from (never the key), and an import's flags. The
+ * instance ID stays: `findResume` and `undo` key on it.
  */
-export function withLiveKey(record: RunRecord, live: RunTarget): RunRecord {
+export function withAttempt(record: RunRecord, live: RunTarget, flags?: ImportFlags): RunRecord {
   const { keySource, appId, appLabel } = live;
-  return { ...record, target: { ...record.target, keySource, appId, appLabel } };
+  return {
+    ...record,
+    target: { ...record.target, keySource, appId, appLabel },
+    ...(flags ? { flags } : {}),
+  };
 }
 
 /**
@@ -533,7 +552,7 @@ export function continueRun(
       fresh.undoneBy !== record.undoneBy ||
       readUserLines(runsDir, record.id).length !== plannedLines;
     if (changed) {
-      fs.rmSync(lockFile(runsDir, record.id), { force: true });
+      releaseLock(runsDir, record.id);
       throwUsageError(
         `Run ${record.id} changed while this import was waiting, so its plan is out of date. ` +
           "Nothing was imported. Run the command again.",
@@ -545,7 +564,7 @@ export function continueRun(
   // import's status and lines as they were.
   const undoRun = record.kind === "import" ? openUndoOf(runsDir, record.id) : undefined;
   if (undoRun) {
-    fs.rmSync(lockFile(runsDir, record.id), { force: true });
+    releaseLock(runsDir, record.id);
     throwUsageError(unfinishedUndoMessage(record.id, undoRun.id, carry));
   }
   // A crash mid-write leaves a torn last line; end it so the next append
@@ -569,10 +588,7 @@ export function continueRun(
  */
 export function lockRun(runsDir: string, id: string): () => void {
   acquireLock(runsDir, id);
-  return () => {
-    log.debug(`migrate: released run ${id}`);
-    fs.rmSync(lockFile(runsDir, id), { force: true });
-  };
+  return () => releaseLock(runsDir, id);
 }
 
 /**

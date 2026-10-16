@@ -212,6 +212,17 @@ describe("refusals, all exit 2 and delete nothing", () => {
     expect(deletes()).toHaveLength(0);
   });
 
+  // Nothing is left to delete, but the import is still marked undone.
+  test("no consent with every user already gone names the mark, not 0 deletes", async () => {
+    instanceUsers.clear();
+    const record = importRun();
+
+    const error = (await undo(record.id, withDir()).catch((caught: unknown) => caught)) as CliError;
+
+    expect(error.message).toContain(`marks run ${record.id} undone and needs consent`);
+    expect(error.message).not.toContain("0 users");
+  });
+
   // Another process continues the import while the undo previews it.
   describe("the run changing during the preview", () => {
     const duringPreview = (act: () => void) => {
@@ -462,6 +473,29 @@ describe("stopped part-way", () => {
     expect(undoRun?.finishedAt).toBeUndefined();
     expect(fs.existsSync(path.join(runsDir, undoRun?.id ?? "", "lock"))).toBe(false);
     expect(readRun(runsDir, record.id)?.status).not.toBe("undone");
+  });
+
+  // A script reads `run` to find the undo's folder.
+  test("--json names the undo run a Ctrl-C left on disk", async () => {
+    const record = importRun();
+    const clerk = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const response = await clerk(input, init);
+      if (init?.method === "DELETE") {
+        beginInterrupt();
+        abortInFlight();
+      }
+      return response;
+    }) as typeof fetch;
+    try {
+      await expect(undo(record.id, withDir({ yes: true, json: true }))).rejects.toThrow();
+    } finally {
+      _resetInterruptState();
+      globalThis.fetch = clerk;
+    }
+
+    const undoRun = listRuns(runsDir).find((r) => r.kind === "undo");
+    expect(JSON.parse(captured.out)).toMatchObject({ stopped: true, run: { id: undoRun?.id } });
   });
 });
 

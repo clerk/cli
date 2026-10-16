@@ -146,19 +146,22 @@ for each `sourceId` wins. A `429` retry, an extra email or phone that did not
 attach, a first phone Clerk refused (which the summary also counts), and a
 validation failure all land in the line's `error` field.
 
-`creating` is written as a user's `POST /v1/users` goes out. It stays the
-latest line when no answer says whether the create landed: an abort, a
-network error, or a 5xx. A `created` line with `pending` lists the extra emails
-and phones not yet attached.
+`creating` is written as a user's `POST /v1/users` goes out. It stays the latest
+status when no answer says whether the create landed: an abort, a network error,
+or a 5xx. The import counts a network error or a 5xx as failed, and a second
+`creating` line records its `error`. A `created` line with `pending` lists the
+extra emails and phones not yet attached, and `counts.pending` (`result.pending`
+in the import's `--json`) counts those users.
 
-A run is `partial` when any user failed, was skipped, is still `creating` or
-was never sent (`counts.notSent`), and `complete` otherwise. A run whose process
-died, or that never recorded a finish time, lists as `interrupted`. A Ctrl-C
-leaves a run that way. Its run ID and folder are printed as the run starts, so
-they are on screen however it ends. A lock held by another live process refuses
-a second writer with exit 2, and names the lock file to delete if that process
-is not a migrate run. A lock holding this process's own PID is stale: in a
-container the CLI often gets the same PID every run.
+A run is `partial` when any user failed, was skipped, is still `creating`, has
+identifiers still `pending`, or was never sent (`counts.notSent`), and
+`complete` otherwise. A run whose process died, or that never recorded a finish
+time, lists as `interrupted`. A Ctrl-C leaves a run that way. Its run ID and
+folder are printed as the run starts, so they are on screen however it ends. A
+lock held by another live process refuses a second writer with exit 2, and names
+the lock file to delete if that process is not a migrate run. A lock holding
+this process's own PID is stale: in a container the CLI often gets the same PID
+every run.
 
 Run folders are created owner-only (`0700`), because they hold user data.
 
@@ -268,7 +271,7 @@ decides what happens:
 | ----------------------------------------- | ---------------------------------------------------------------------- |
 | none                                      | a new run                                                              |
 | interrupted (dead lock or no finish time) | continues the same run, skipping the users it created                  |
-| `partial`                                 | continues the same run, retrying the users that failed or were skipped |
+| `partial`                                 | continues the same run, retrying the users that did not finish earlier |
 | `complete`                                | nothing: prints "Already imported in run …" and exits 0                |
 | `undone`                                  | a new run                                                              |
 | has an undo that did not finish           | exits 2, naming the `clerk migrate undo` that finishes it              |
@@ -476,22 +479,22 @@ clerk migrate runs --json
 
 It prints the runs folder first. The listing shows each run's ID, date, kind,
 status, target, file and counts. `runs <id>` adds the error breakdown and the
-users that failed or were skipped, with the path to the full record, then what
-to run next: for an interrupted or partial import, the import that continues
-it, with the flags it ran with, then the undo. The continue is left out when
-importing the file again might not reach this run: a newer run of the same
-file and source that may be for the same instance (one recorded under a key's
+users that failed, were skipped, or are `creating` with no answer to confirm the
+create (`unconfirmed` in `--json`), with the path to the full record, then what
+to run next: for an interrupted or partial import, the import that continues it,
+with the flags it ran with, then the undo. The continue is left out when
+importing the file again might not reach this run: a newer run of the same file
+and source that may be for the same instance (one recorded under a key's
 stand-in ID may be any), a file changed since, or any undo of it. Both carry
 what reaches the run's instance again, from the key its latest attempt used:
 `--secret-key <key>` for a key passed with `--secret-key` or exported (as
 `CLERK_SECRET_KEY`, or a framework's own variable such as
 `NUXT_CLERK_SECRET_KEY`), and `--app` and `--instance` for `--app` or a linked
 profile (`--secret-key <key>` when the run is under a stand-in ID: no
-`--instance` resolves one, and a bare `--app` resolves development). A key
-file (`.env`, or a keyless app's) gets no target flags: it refuses
-`--instance`, and run from the same project it names the key itself.
-The import's own next steps, and a partial undo's, carry the same. An unknown
-ID exits 2.
+`--instance` resolves one, and a bare `--app` resolves development). A key file
+(`.env`, or a keyless app's) gets no target flags: it refuses `--instance`, and
+run from the same project it names the key itself. The import's own next steps,
+and a partial undo's, carry the same. An unknown ID exits 2.
 
 ### `clerk migrate undo`
 
@@ -716,6 +719,7 @@ stamping every user with today's.
 | `POST`   | `/v1/phone_numbers`       | `migrate import` — attaches additional phones                                   |
 | `GET`    | `/v1/users/count`         | `migrate import` — headroom against a development instance's user limit         |
 | `GET`    | `/v1/users?external_id=…` | `migrate import` — checks for users already in the instance, 100 values a call  |
+| `GET`    | `/v1/users?external_id=…` | `migrate import` — a continue looks up users whose create was in flight         |
 | `GET`    | `/v1/users?external_id=…` | `migrate undo` — finds users whose create was in flight when the import stopped |
 | `GET`    | `/v1/users?user_id=…`     | `migrate undo` — reads the imported users back, 100 a call                      |
 | `DELETE` | `/v1/users/{user_id}`     | `migrate undo` — deletes one user                                               |

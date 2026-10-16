@@ -23,6 +23,7 @@ import {
   runDir,
   runState,
   sha256File,
+  type RunCounts,
   type RunRecord,
   type RunState,
   type UserLine,
@@ -54,6 +55,12 @@ function colorState(state: RunState): string {
   return state;
 }
 
+// `creating`: a create no answer confirmed. Clerk may hold the user.
+const COUNT_LABELS: Partial<Record<keyof RunCounts, string>> = {
+  creating: "not confirmed",
+  pending: "left to attach",
+};
+
 /** The counts that matter for a run's kind, in the order they are read. */
 function formatCounts(record: RunRecord): string {
   const counts = record.counts;
@@ -62,10 +69,10 @@ function formatCounts(record: RunRecord): string {
       ? (["exported", "skipped"] as const)
       : record.kind === "undo"
         ? (["deleted", "failed"] as const)
-        : (["created", "failed", "skipped"] as const);
+        : (["created", "pending", "creating", "failed", "skipped"] as const);
   const parts = order
     .filter((status) => (counts[status] ?? 0) > 0 || status === order[0])
-    .map((status) => `${counts[status] ?? 0} ${status}`);
+    .map((status) => `${counts[status] ?? 0} ${COUNT_LABELS[status] ?? status}`);
   return parts.join(", ");
 }
 
@@ -95,7 +102,9 @@ function pad(rows: string[][]): string[] {
 function errorBreakdown(lines: UserLine[]): { error: string; count: number }[] {
   const counts = new Map<string, number>();
   for (const line of lines) {
-    if (line.status === "failed" && line.error) tallyError(counts, line.error);
+    if ((line.status === "failed" || line.status === "creating") && line.error) {
+      tallyError(counts, line.error);
+    }
   }
   return [...counts].map(([error, count]) => ({ error, count })).sort((a, b) => b.count - a.count);
 }
@@ -160,8 +169,7 @@ function nextCommands(
     if (!again || state === "complete" || !continuesThisRun(runsDir, record)) return [undo];
     // Continuing is what a stopped run is for: the same file, source and
     // target pick it up where it left off.
-    const why =
-      state === "interrupted" ? "continue it" : "retry the users that failed or were skipped";
+    const why = state === "interrupted" ? "continue it" : "retry the users it didn't finish";
     return [`Run \`${again}\` to ${why}`, undo];
   }
   if (record.kind === "undo" && state !== "complete" && record.undoes) {
@@ -203,6 +211,7 @@ function printList(runsDir: string, records: RunRecord[]): void {
   log.info(dim(plural(records.length, "run")));
 }
 
+/** One run in full: `--json` prints it, and `printRun` renders it. */
 function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   const lines = [...latestUserLines(runsDir, record.id).values()];
   const state = runState(runsDir, record);
@@ -213,6 +222,7 @@ function showJson(runsDir: string, record: RunRecord, carry: string[]) {
     errors: errorBreakdown(lines),
     failed: lines.filter((line) => line.status === "failed"),
     skipped: lines.filter((line) => line.status === "skipped"),
+    unconfirmed: lines.filter((line) => line.status === "creating"),
   };
 }
 
@@ -230,17 +240,15 @@ function printUsers(title: string, lines: UserLine[], usersFile: string): void {
 }
 
 function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
-  const state = runState(runsDir, record);
-  const dir = runDir(runsDir, record.id);
-  const usersFile = path.join(dir, USERS_FILE);
-  const lines = [...latestUserLines(runsDir, record.id).values()];
+  const view = showJson(runsDir, record, carry);
+  const usersFile = path.join(runDir(runsDir, record.id), USERS_FILE);
 
   log.info(`Runs folder: ${runsDir}`);
   log.blank();
   const header: [string, string | undefined][] = [
     ["Run", record.id],
     ["Kind", record.kind],
-    ["Status", colorState(state)],
+    ["Status", colorState(view.run.state)],
     ["Started", formatDate(record.startedAt)],
     ["Finished", record.finishedAt ? formatDate(record.finishedAt) : undefined],
     ["Target", describeTarget(record.target)],
@@ -256,29 +264,25 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
   const width = Math.max(...shown.map(([label]) => label.length)) + 2;
   for (const [label, value] of shown) log.info(`${bold(label.padEnd(width))}${value}`);
 
-  const errors = errorBreakdown(lines);
-  if (errors.length > 0) {
+  if (view.errors.length > 0) {
     log.blank();
     log.info(bold("Error breakdown"));
-    for (const { error, count } of errors) {
+    for (const { error, count } of view.errors) {
       log.info(`  ${red(String(count))} ${count === 1 ? "user" : "users"}: ${error}`);
     }
   }
 
+  printUsers("Failed", view.failed, usersFile);
   printUsers(
-    "Failed",
-    lines.filter((line) => line.status === "failed"),
+    "Not confirmed (Clerk may have created them; a continue checks)",
+    view.unconfirmed,
     usersFile,
   );
-  printUsers(
-    "Skipped",
-    lines.filter((line) => line.status === "skipped"),
-    usersFile,
-  );
+  printUsers("Skipped", view.skipped, usersFile);
 
   log.blank();
   log.info(dim(`Every outcome: ${usersFile}`));
-  for (const step of nextCommands(runsDir, record, state, carry)) log.info(`  → ${step}`);
+  for (const step of view.next) log.info(`  → ${step}`);
 }
 
 /**

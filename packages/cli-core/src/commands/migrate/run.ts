@@ -65,7 +65,7 @@ import {
   openUndoOf,
   importsOfFile,
   undosOf,
-  withLiveKey,
+  withAttempt,
 } from "./lib/run-store.ts";
 import { withProgress } from "./lib/progress.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
@@ -455,6 +455,10 @@ function formatSummary(
   if (skipped > 0) lines.push(`${yellow("Skipped:")} ${skipped}`);
   // The user quota stopped the run: these go out on a re-run.
   if (summary.notSent > 0) lines.push(`${yellow("Not sent:")} ${summary.notSent}`);
+  // Created, but an email or phone did not attach: a re-run attaches it.
+  const pending = record.counts.pending ?? 0;
+  if (pending > 0)
+    lines.push(`${yellow("Identifiers left to attach:")} ${plural(pending, "user")}`);
   // Printed here, after the progress bar, which would redraw over it mid-run.
   if (summary.stopReason) {
     lines.push(
@@ -822,7 +826,12 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         // Settled, so a continued run is finished rather than left interrupted,
         // and the JSON reports it as finished, as run.json now does.
         const finished = continued
-          ? continueRun(runsDir, withLiveKey(continued, target), plannedLines, carry).finish()
+          ? continueRun(
+              runsDir,
+              withAttempt(continued, target, pickImportFlags(options)),
+              plannedLines,
+              carry,
+            ).finish()
           : undefined;
         if (options.json)
           preview({ nothingToImport: true, ...(finished ? { run: finished } : {}) });
@@ -863,7 +872,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       await resolveRunsDir(options.runsDir, { write: true });
       const flags = pickImportFlags(options);
       const run = continued
-        ? continueRun(runsDir, withLiveKey(continued, target), plannedLines, carry)
+        ? continueRun(runsDir, withAttempt(continued, target, flags), plannedLines, carry)
         : startRun(runsDir, {
             kind: "import",
             target,
@@ -871,8 +880,6 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             file: { path: filePath, sha256 },
             flags,
           });
-      // The flags this attempt ran with, which the run's later commands repeat.
-      if (continued) run.update({ flags });
       // Printed now, not on the way out: on a Ctrl-C the signal handler exits
       // before the import returns, and the folder is the only record of who
       // was created.
@@ -936,6 +943,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
                 created: summary.successful,
                 failed: summary.failed,
                 notSent: summary.notSent,
+                pending: record.counts.pending ?? 0,
                 ...(summary.stopReason ? { stopReason: summary.stopReason } : {}),
                 skipped: checks.rejects.length + withoutPassword.length,
                 errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
@@ -972,8 +980,11 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       // Run later, maybe without the key exported: from the run's target.
       const later = laterCarry(options.runsDir, record.target);
       const undo = undoCommand(record.id, later);
+      // Anything a continue can finish. Not skips alone: the same file and
+      // flags skip them again.
+      const unfinished = summary.failed + summary.notSent + (record.counts.pending ?? 0);
       const steps =
-        summary.failed > 0
+        unfinished > 0
           ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(
               runsStep,
               // The same import again continues this run; --new-run would not.

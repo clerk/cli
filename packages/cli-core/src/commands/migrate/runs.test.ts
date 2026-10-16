@@ -124,6 +124,41 @@ describe("runs <id>", () => {
     });
   });
 
+  // The import counted these as failed, so `runs` lists them and why: a
+  // create no answer confirmed, and a user with an email left to attach.
+  test("shows creates no answer confirmed, and identifiers left to attach", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    });
+    run.append({ sourceId: "a", status: "creating" });
+    run.append({ sourceId: "a", status: "creating", error: "bad gateway (a re-run checks)" });
+    run.append({
+      sourceId: "b",
+      status: "created",
+      clerkId: "user_b",
+      pending: [{ kind: "email", value: "b2@x.dev", verified: true }],
+    });
+    const record = run.finish();
+
+    await runs(record.id, { runsDir, json: true });
+    expect(JSON.parse(captured.out)).toMatchObject({
+      run: { state: "partial", counts: { creating: 1, pending: 1 } },
+      errors: [{ error: "bad gateway (a re-run checks)", count: 1 }],
+      unconfirmed: [{ sourceId: "a" }],
+    });
+
+    captured.clear();
+    await runs(record.id, { runsDir });
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain("1 created, 1 left to attach, 1 not confirmed");
+    expect(err).toContain("Not confirmed (Clerk may have created them; a continue checks) (1)");
+    expect(err).toContain("1 user: bad gateway (a re-run checks)");
+  });
+
   // The record says where the key came from, and which instance to reach
   // again. One row per key source, so none is left to drop its target.
   test.each([
@@ -182,7 +217,7 @@ describe("runs <id>", () => {
     expect(next[0]).toContain(
       `clerk migrate import ${quoteArg(usersFile())} --source clerk --runs-dir ${quoteArg(runsDir)}`,
     );
-    expect(next[0]).toContain("to retry the users that failed or were skipped");
+    expect(next[0]).toContain("to retry the users it didn't finish");
   });
 
   // Left out, the continue creates the users --require-password held back.
@@ -249,7 +284,7 @@ describe("runs <id>", () => {
 
     const { next } = JSON.parse(captured.out) as { next: string[] };
     expect(next).toHaveLength(2);
-    expect(next[0]).toContain("to retry the users that failed or were skipped");
+    expect(next[0]).toContain("to retry the users it didn't finish");
   });
 
   test("an unknown ID is a usage error", async () => {

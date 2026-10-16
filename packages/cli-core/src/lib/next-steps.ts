@@ -81,7 +81,7 @@ export const NEXT_STEPS = {
     `Run \`${undoCommand}\` to delete the users it created`,
   ],
   MIGRATE_DONE_WITH_ERRORS: (runsCommand: string, retryCommand: string, undoCommand: string) => [
-    `Run \`${runsCommand}\` to see every user that failed and why`,
+    `Run \`${runsCommand}\` to see every user that didn't finish, and why`,
     `Run \`${retryCommand}\` to retry them, in the same run`,
     `Run \`${undoCommand}\` to delete the users it created`,
   ],
@@ -105,8 +105,8 @@ export function printNextSteps(steps: readonly string[]): void {
  *
  * Opt-in rather than folded into `printNextSteps`, because most steps are a
  * nudge towards a command someone might like to run next. The migrate ones are
- * not: they name the log file holding the per-user record of what landed, and
- * the command that undoes the run. An agent that imported 10,000 users and lost
+ * not: they name the command that shows each user's outcome, and the one that
+ * undoes the run. An agent that imported 10,000 users and lost
  * 300 of them needs both, and has no gutter to read them from.
  */
 export function printAgentNextSteps(steps: readonly string[]): void {

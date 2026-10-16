@@ -942,6 +942,29 @@ describe("run", () => {
       }
     });
 
+    // Created, but its second email never attached: the run is partial, and
+    // the import says so and offers the continue that attaches it.
+    test("an attach with no answer is reported, with the continue", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev", unverified_email_addresses: "b@x.dev" },
+        ]),
+      );
+      const clerk = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
+        new URL(input.toString()).pathname === "/v1/email_addresses"
+          ? new Response("boom", { status: 503 })
+          : clerk(input, init)) as typeof fetch;
+
+      await run(baseOptions);
+
+      expect(listRuns(runsDir())[0]).toMatchObject({ status: "partial", counts: { pending: 1 } });
+      const err = Bun.stripANSI(captured.err);
+      expect(err).toContain("Identifiers left to attach: 1 user");
+      expect(err).toContain("--secret-key <key> --yes` to retry them");
+    });
+
     test("a partial run retries only the users that did not make it, in the same run", async () => {
       stubClerk({ failing: new Set(["u2"]) });
       await run(baseOptions);

@@ -711,7 +711,9 @@ describe("importUsers", () => {
     });
 
     expect(summary.failed).toBe(1);
-    expect(allLines.map((line) => line.status)).toEqual(["creating"]);
+    // A second `creating` line, so `runs <id>` can say why.
+    expect(allLines.map((line) => line.status)).toEqual(["creating", "creating"]);
+    expect(allLines[1]?.error).toContain("a re-run checks");
     expect([...summary.errorBreakdown.keys()][0]).toContain("a re-run checks");
   });
 
@@ -726,7 +728,15 @@ describe("importUsers", () => {
     });
 
     expect(summary).toMatchObject({ successful: 0, failed: 1 });
-    expect(allLines).toEqual([{ sourceId: "u1", status: "creating" }]);
+    expect(allLines).toEqual([
+      { sourceId: "u1", status: "creating" },
+      {
+        sourceId: "u1",
+        status: "creating",
+        error: expect.stringContaining("without a user ID"),
+        code: "unknown",
+      },
+    ]);
   });
 
   // Every create after the first refusal would be refused too, so none is

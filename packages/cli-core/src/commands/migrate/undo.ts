@@ -43,7 +43,7 @@ import {
   openUndoOf,
   inUseMessage,
   noRunMessage,
-  withLiveKey,
+  withAttempt,
 } from "./lib/run-store.ts";
 import { withProgress, type ProgressUpdate } from "./lib/progress.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
@@ -314,8 +314,8 @@ type UndoOutcome =
   | { consent: "required" }
   | { changed: true; signedInSincePreview?: number }
   | { recheckFailed: true }
-  | { writeFailed: true }
-  | { stopped: true }
+  | { writeFailed: true; run: RunRecord | null }
+  | { stopped: true; run: RunRecord | null }
   | {
       run: RunRecord;
       result: { deleted: number; failed: number; errors: { error: string; count: number }[] };
@@ -402,17 +402,25 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   // Rule 1: nothing is deleted without consent — `--yes`, or a yes at a
   // prompt. `--json` never prompts.
   if (!nothingLeft && !options.yes) {
+    // Every user already gone: the undo only records the import as undone.
+    const what =
+      present.length > 0
+        ? `permanently deletes ${plural(present.length, "user")}`
+        : `marks run ${record.id} undone`;
     if (!canPrompt(options)) {
       printJson({ consent: "required" });
       throwUsageError(
-        `\`clerk migrate undo\` permanently deletes ${plural(present.length, "user")} and needs consent. Pass --yes to confirm.`,
+        `\`clerk migrate undo\` ${what} and needs consent. Pass --yes to confirm.`,
         undefined,
         undefined,
         [{ command, description: "Delete the users this import created" }],
       );
     }
     const proceed = await confirm({
-      message: `Permanently delete ${plural(present.length, "user")}?`,
+      message:
+        present.length > 0
+          ? `Permanently delete ${plural(present.length, "user")}?`
+          : `Mark run ${record.id} undone? Its users are already gone.`,
       default: false,
     });
     if (!proceed) throwUserAbort();
@@ -437,10 +445,17 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     throwUsageError(message);
   };
 
+  // Set once the undo run is on disk, so a stop still names it.
+  let undoRun: Run | undefined;
   try {
     await deleteAfterPreview();
   } catch (error) {
-    printJson(isFileSystemError(error) ? { writeFailed: true } : { stopped: true });
+    const written = undoRun?.record ?? null;
+    printJson(
+      isFileSystemError(error)
+        ? { writeFailed: true, run: written }
+        : { stopped: true, run: written },
+    );
     throw error;
   }
 
@@ -513,8 +528,9 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       }
 
       run = openUndo
-        ? continueRun(runsDir, withLiveKey(openUndo, target))
+        ? continueRun(runsDir, withAttempt(openUndo, target))
         : startRun(runsDir, { kind: "undo", target, undoes: record.id, source: record.source });
+      undoRun = run;
 
       // Users the import created that are no longer there: the undo's goal for
       // them is already met, so they count as deleted without another request.

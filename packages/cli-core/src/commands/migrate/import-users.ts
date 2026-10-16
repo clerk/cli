@@ -414,11 +414,14 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     failed++;
     processed++;
     tallyError(errorBreakdown, message);
-    // With no answer, the `creating` line stays the latest: Clerk may hold
-    // the user, and a re-run looks it up before creating it again.
-    if (!unknown) {
-      record({ sourceId: userId, status: "failed", error: [message, ...notes].join("; "), code });
-    }
+    // With no answer, the user stays `creating`: Clerk may hold it, and a
+    // re-run looks it up before creating it again. The line still says why.
+    record({
+      sourceId: userId,
+      status: unknown ? "creating" : "failed",
+      error: [message, ...notes].join("; "),
+      code,
+    });
     progress();
   };
 
