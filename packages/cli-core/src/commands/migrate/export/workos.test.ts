@@ -106,6 +106,12 @@ describe("resolveWorkOsApiKey", () => {
     expect(await resolveWorkOsApiKey({}, { WORKOS_API_KEY: "sk_env" })).toBe("sk_env");
   });
 
+  test("a blank flag falls back to the environment", async () => {
+    expect(await resolveWorkOsApiKey({ apiKey: "  " }, { WORKOS_API_KEY: "sk_env" })).toBe(
+      "sk_env",
+    );
+  });
+
   // Tests run non-TTY, the same signal an agent gives.
   test("names the flag and the variable when neither supplied one", async () => {
     await expect(resolveWorkOsApiKey({}, {})).rejects.toThrow(

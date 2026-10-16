@@ -88,9 +88,10 @@ export async function resolveWorkOsApiKey(
   options: ExportWorkOsOptions,
   env: Record<string, string | undefined> = process.env,
 ): Promise<string> {
-  const resolved = options.apiKey ?? env.WORKOS_API_KEY;
+  // Trimmed before the fallback: a blank flag must not hide a set variable.
+  const resolved = options.apiKey?.trim() || env.WORKOS_API_KEY?.trim();
 
-  if (resolved) return resolved.trim();
+  if (resolved) return resolved;
 
   if (options.json || isAssumeYes() || isAgent() || !isHuman()) {
     throwUsageError(
