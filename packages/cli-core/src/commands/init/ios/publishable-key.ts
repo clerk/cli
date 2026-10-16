@@ -122,7 +122,9 @@ export async function scanSwiftSources(inspection: Inspection): Promise<SwiftSca
   try {
     for (const absolute of sources.files) {
       const file = Bun.file(absolute);
-      if (file.size > MAX_FILE_SIZE) continue;
+      // A file left unread could hold the call, so the key is reported as not verified.
+      if (file.size > MAX_FILE_SIZE)
+        return { files, incomplete: `${relative(root, absolute)} is too large to scan` };
       files.push(scanFile(relative(root, absolute), absolute, await file.text()));
     }
     return { files };

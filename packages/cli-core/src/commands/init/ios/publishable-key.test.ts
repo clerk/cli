@@ -171,6 +171,14 @@ describe("unresolved keys", () => {
       reason: "gets its key from code the CLI doesn't read",
     },
     {
+      name: "a source file too large to scan",
+      files: {
+        "MyApp/App.swift": `Clerk.configure(publishableKey: "${LIVE}")`,
+        "MyApp/Generated.swift": `// ${"x".repeat(1_000_001)}`,
+      },
+      reason: "MyApp/Generated.swift is too large to scan",
+    },
+    {
       name: "a placeholder string",
       files: { "MyApp/App.swift": `Clerk.configure(publishableKey: "YOUR_KEY")` },
       reason: "is passed a string that isn't a publishable key",
