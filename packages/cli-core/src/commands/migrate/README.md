@@ -538,7 +538,8 @@ not fix it, and it exits 1.
 
 Needs a secret API key — the one starting `sk_`, from the WorkOS dashboard
 under API Keys. Resolved from `--api-key`, then `WORKOS_API_KEY`, then a
-prompt; agent mode exits naming both instead.
+prompt at an interactive terminal; `--json`, `-y` and agent mode exit naming
+both instead.
 
 There is no `--db-url` sibling because there is no database to point it at.
 WorkOS is API-only: apps commonly mirror users into their own store through
