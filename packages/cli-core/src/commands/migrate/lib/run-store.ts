@@ -499,6 +499,15 @@ export function startRun(runsDir: string, init: StartRunInit): Run {
 }
 
 /**
+ * A run's record with the key this attempt used, which its later commands
+ * repeat. The instance ID stays: `findResume` and `undo` key on it.
+ */
+export function withLiveKey(record: RunRecord, live: RunTarget): RunRecord {
+  const { keySource, appId, appLabel } = live;
+  return { ...record, target: { ...record.target, keySource, appId, appLabel } };
+}
+
+/**
  * Reopens a finished or interrupted run to keep working on it.
  *
  * @throws UsageError when another live process holds its lock.

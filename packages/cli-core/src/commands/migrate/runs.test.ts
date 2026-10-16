@@ -139,8 +139,15 @@ describe("runs <id>", () => {
     // Both refuse `--instance`, and the file names the key.
     [{ keySource: ".env" }, "--runs-dir"],
     [{ keySource: "accountless app (.clerk/.tmp/keyless.json)" }, "--runs-dir"],
-    // No `--instance` resolves a stand-in.
-    [{ keySource: "--app", appId: "app_1", instanceId: "key_abc" }, "--app app_1 --runs-dir"],
+    // No `--instance` resolves a stand-in, and a bare `--app` resolves development: the key.
+    [
+      { keySource: "--app", appId: "app_1", instanceId: "key_abc" },
+      "--secret-key <key> --runs-dir",
+    ],
+    [
+      { keySource: "linked profile", appId: "app_1", instanceId: "key_abc" },
+      "--secret-key <key> --runs-dir",
+    ],
   ])("the next command keeps the import's target from %o", async (target, expected) => {
     const record = partialImport();
     const file = path.join(runsDir, record.id, "run.json");

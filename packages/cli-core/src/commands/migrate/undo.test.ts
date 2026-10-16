@@ -696,6 +696,21 @@ describe("deleting", () => {
     expect(readRun(runsDir, record.id)?.status).toBe("undone");
   });
 
+  // `runs <undo-id>` builds the undo's retry from its record: the key this
+  // attempt used, not the first one's `.env`, which may not be there.
+  test("a continued undo records its own key source", async () => {
+    failing.add("user_b");
+    const record = importRun();
+    await undo(record.id, withDir({ yes: true }));
+    const [partial] = listRuns(runsDir).filter((candidate) => candidate.kind === "undo");
+    patchRun(runsDir, partial!.id, { target: { ...partial!.target, keySource: ".env" } });
+
+    process.exitCode = 0;
+    await undo(record.id, withDir({ yes: true }));
+
+    expect(readRun(runsDir, partial!.id)?.target.keySource).toBe("--secret-key");
+  });
+
   test("--json --yes returns the undo run and the result", async () => {
     const record = importRun();
 

@@ -486,8 +486,10 @@ what reaches the run's instance again, from the key its latest attempt used:
 `--secret-key <key>` for a key passed with `--secret-key` or exported (as
 `CLERK_SECRET_KEY`, or a framework's own variable such as
 `NUXT_CLERK_SECRET_KEY`), and `--app` and `--instance` for `--app` or a linked
-profile. A key file (`.env`, or a keyless app's) gets no target flags: it
-refuses `--instance`, and run from the same project it names the key itself.
+profile (`--secret-key <key>` when the run is under a stand-in ID: no
+`--instance` resolves one, and a bare `--app` resolves development). A key
+file (`.env`, or a keyless app's) gets no target flags: it refuses
+`--instance`, and run from the same project it names the key itself.
 The import's own next steps, and a partial undo's, carry the same. An unknown
 ID exits 2.
 

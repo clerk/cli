@@ -65,6 +65,7 @@ import {
   openUndoOf,
   importsOfFile,
   undosOf,
+  withLiveKey,
 } from "./lib/run-store.ts";
 import { withProgress } from "./lib/progress.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
@@ -73,9 +74,9 @@ import {
   isClerkInstanceId,
   isStandInInstanceId,
   keyInstanceId,
+  laterCarry,
   printTarget,
   resolveClerkTarget,
-  laterCarry,
 } from "./lib/target.ts";
 import { findInFlight } from "./lib/user-lookup.ts";
 import {
@@ -821,7 +822,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         // Settled, so a continued run is finished rather than left interrupted,
         // and the JSON reports it as finished, as run.json now does.
         const finished = continued
-          ? continueRun(runsDir, continued, plannedLines, carry).finish()
+          ? continueRun(runsDir, withLiveKey(continued, target), plannedLines, carry).finish()
           : undefined;
         if (options.json)
           preview({ nothingToImport: true, ...(finished ? { run: finished } : {}) });
@@ -862,7 +863,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       await resolveRunsDir(options.runsDir, { write: true });
       const flags = pickImportFlags(options);
       const run = continued
-        ? continueRun(runsDir, continued, plannedLines, carry)
+        ? continueRun(runsDir, withLiveKey(continued, target), plannedLines, carry)
         : startRun(runsDir, {
             kind: "import",
             target,
@@ -870,19 +871,8 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             file: { path: filePath, sha256 },
             flags,
           });
-      // The flags and key this attempt ran with, which the run's later commands
-      // repeat. The instance ID stays: `findResume` and `undo` key on it.
-      if (continued) {
-        run.update({
-          flags,
-          target: {
-            ...run.record.target,
-            keySource: target.keySource,
-            appId: target.appId,
-            appLabel: target.appLabel,
-          },
-        });
-      }
+      // The flags this attempt ran with, which the run's later commands repeat.
+      if (continued) run.update({ flags });
       // Printed now, not on the way out: on a Ctrl-C the signal handler exits
       // before the import returns, and the folder is the only record of who
       // was created.

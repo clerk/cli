@@ -43,6 +43,7 @@ import {
   openUndoOf,
   inUseMessage,
   noRunMessage,
+  withLiveKey,
 } from "./lib/run-store.ts";
 import { withProgress, type ProgressUpdate } from "./lib/progress.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
@@ -51,9 +52,9 @@ import {
   describeTarget,
   isStandInInstanceId,
   keyInstanceId,
+  laterCarry,
   printTarget,
   resolveClerkTarget,
-  laterCarry,
 } from "./lib/target.ts";
 import { plural } from "./lib/plural.ts";
 import { findInFlight, lookupUsers, type SourceUser } from "./lib/user-lookup.ts";
@@ -512,7 +513,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       }
 
       run = openUndo
-        ? continueRun(runsDir, openUndo)
+        ? continueRun(runsDir, withLiveKey(openUndo, target))
         : startRun(runsDir, { kind: "undo", target, undoes: record.id, source: record.source });
 
       // Users the import created that are no longer there: the undo's goal for

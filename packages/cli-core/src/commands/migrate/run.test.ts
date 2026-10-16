@@ -1,9 +1,20 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _setConfigDir } from "../../lib/config.ts";
 import { type CliError, EXIT_CODE } from "../../lib/errors.ts";
+import * as plapi from "../../lib/plapi.ts";
 import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 
 // Every test below names its own `--secret-key`, which short-circuits the
@@ -893,6 +904,44 @@ describe("run", () => {
       expect(Bun.stripANSI(captured.err)).toContain("--secret-key <key> --yes` to retry them");
     });
 
+    // The run stays under the first attempt's stand-in, which no `--instance`
+    // resolves, and a bare `--app` resolves development: the key reaches it.
+    test("a stand-in run continued with --app carries the key, not a bare --app", async () => {
+      const application = spyOn(plapi, "fetchApplication").mockResolvedValue({
+        application_id: "app_1",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", secret_key: "sk_test_dev" },
+          { instance_id: "ins_1", environment_type: "production", secret_key: "sk_live_x" },
+        ],
+      } as never);
+      process.env.CLERK_PLATFORM_API_KEY = "ak_x";
+      try {
+        stubClerk({ failing: new Set(["u2"]), instanceDown: true });
+        await run({ ...baseOptions, secretKey: "sk_live_x" });
+        const [first] = listRuns(runsDir());
+
+        process.exitCode = 0;
+        captured.clear();
+        stubClerk({ failing: new Set(["u2"]) });
+        await run({
+          source: "clerk",
+          input: "export.json",
+          yes: true,
+          app: "app_1",
+          instance: "prod",
+        });
+
+        expect(listRuns(runsDir())).toHaveLength(1);
+        expect(readRun(runsDir(), first!.id)?.target.keySource).toBe("--app");
+        const err = Bun.stripANSI(captured.err);
+        expect(err).toContain("--secret-key <key> --yes` to retry them");
+        expect(err).not.toContain("--app app_1");
+      } finally {
+        application.mockRestore();
+        delete process.env.CLERK_PLATFORM_API_KEY;
+      }
+    });
+
     test("a partial run retries only the users that did not make it, in the same run", async () => {
       stubClerk({ failing: new Set(["u2"]) });
       await run(baseOptions);
@@ -1058,6 +1107,18 @@ describe("run", () => {
       expect(captured.err).toContain("No users left to import");
       expect(readRun(runsDir(), first!.id)).toMatchObject({ status: "complete" });
       expect(readRun(runsDir(), first!.id)?.finishedAt).toBeDefined();
+    });
+
+    // `runs <id>`'s undo is built from the key the settling attempt used.
+    test("a continued run with nothing left to do records its own key source", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      interrupt(first!.id);
+      patchRun(runsDir(), first!.id, { target: { ...first!.target, keySource: ".env" } });
+
+      await run(baseOptions);
+
+      expect(readRun(runsDir(), first!.id)?.target.keySource).toBe("--secret-key");
     });
 
     // Automation reads the status from the JSON, not run.json.
