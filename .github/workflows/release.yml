@@ -118,6 +118,24 @@ jobs:
           ARTIFACTS_DIR: ${{ github.workspace }}/dist/artifacts
           GH_TOKEN: ${{ github.token }}
 
+  dispatch-add-auth-eval:
+    needs: [versioning, publish-npm]
+    if: needs.versioning.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - name: Wait for npm latest and notify clerk-evals
+        run: bun scripts/dispatch-evals.ts
+        env:
+          CLERK_CLI_VERSION: ${{ needs.versioning.outputs.version }}
+          CLERK_EVALS_DISPATCH_TOKEN: ${{ secrets.CLERK_EVALS_DISPATCH_TOKEN }}
+
   publish-github:
     needs: [versioning, build, sign-macos, smoke-test, publish-npm]
     runs-on: ubuntu-latest
@@ -175,7 +193,7 @@ jobs:
       always() &&
       needs.versioning.outputs.release_created == 'true' &&
       contains(needs.*.result, 'failure')
-    needs: [versioning, build, sign-macos, smoke-test, publish-npm, publish-github, homebrew]
+    needs: [versioning, build, sign-macos, smoke-test, publish-npm, publish-github, homebrew, dispatch-add-auth-eval]
     uses: ./.github/workflows/notify-failure.yml
     with:
       workflow-name: Stable release

@@ -178,12 +178,15 @@ The releaser accepts these flags:
 
 All publishes are idempotent -- the script checks the registry before publishing and skips already-published versions, and a publish that npm rejects because the version already exists counts as done. The check reads the per-version document (`registry.npmjs.org/<name>/<version>`), which the registry CDN does not cache, but npm can still take several minutes to serve a new version back. Before publishing the `clerk` wrapper, the script waits up to two minutes for every platform package to be readable; if one is still unreadable after that, it logs a warning and publishes the wrapper anyway, because npm already accepted every platform publish. If one platform publish fails, the others still run to completion before the job exits, so a re-run only has to publish what is actually missing.
 
+After a stable npm publish succeeds, `dispatch-add-auth-eval` waits until the published version is visible as `clerk@latest`, then sends `clerk_cli_released` with that version to `clerk/clerk-evals`. Canary and snapshot releases do not send this event. The job uses `CLERK_EVALS_DISPATCH_TOKEN`, a dedicated Actions secret with Contents: read and write on only `clerk/clerk-evals`; the default `GITHUB_TOKEN` stays read-only. If the version never becomes `latest` or the dispatch fails, the stable-release failure notification includes this job. The eval receiver pins a `clerk/skills` SHA, rejects a mismatched npm version, and records both versions with its results.
+
 #### Environment Variables
 
 The releaser script and publish workflow steps use these environment variables:
 
 - `ARTIFACTS_DIR` -- path to directory containing compiled binaries from the build job (defaults to `./dist/artifacts`)
 - `GH_TOKEN` -- GitHub token used by the releaser to create tags and releases (stable only)
+- `CLERK_EVALS_DISPATCH_TOKEN` -- dedicated token for the stable release's `clerk/clerk-evals` repository dispatch (not used by npm publishing)
 
 #### npm Authentication
 
