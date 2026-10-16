@@ -976,14 +976,18 @@ clerk migrate import users.json --source firebase -y \
   --firebase-rounds 8 --firebase-mem-cost 14
 ```
 
+A project with no salt separator passes `--firebase-salt-separator ""` (or
+`CLERK_FIREBASE_SALT_SEPARATOR=""`).
+
 All four are **required as a set** — supplying some but not all is a usage error
-naming what is missing. A partial set produces a well-formed digest that
-verifies against nothing, so users would import successfully and then be unable
-to sign in.
+naming what is missing. Rejecting a partial set prevents importing a digest that
+cannot verify: users would import successfully and then be unable to sign in.
 
 The flags are read first, then the export file's envelope, which carries the
 parameters when `clerk migrate export firebase` could read them from the
-project. The flags win, so a rotated key can be passed without re-exporting.
+project, then the `CLERK_FIREBASE_*` variables, and last a prompt at a terminal.
+The flags win, for an export file with no parameters or the wrong ones. They
+must be the parameters that produced the exported hashes.
 The envelope sits in the gitignored run folder, since the signer key is a
 Firebase secret.
 
@@ -1095,7 +1099,9 @@ instance settings: the checks print the `clerk config patch` to run instead.
 | `GET`  | `…/admin/v2/projects/{project_id}/config`      | `export firebase` — reads the scrypt hash parameters |
 
 The two Identity Toolkit paths are on `identitytoolkit.googleapis.com`, or on
-`FIREBASE_AUTH_EMULATOR_HOST` when that is set.
+`FIREBASE_AUTH_EMULATOR_HOST` when that is set. The emulator needs no token, so
+the export skips that request, and it may not carry the hash parameters: pass
+them to the import.
 
 ## Notes
 
