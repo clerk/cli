@@ -532,6 +532,23 @@ describe("run", () => {
       expect(captured.err).toContain(`The export in run ${record.id} holds your users' data`);
     });
 
+    // Finished by path, the run is complete: re-run by export run ID, it is
+    // already imported, but still links the export and names it for cleanup.
+    test("a complete run re-run by export run ID links the run to the export", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      await run({ ...noSource, input: file });
+      const imported = listRuns(runsDir()).find((c) => c.kind === "import")!;
+      expect(imported).toMatchObject({ status: "complete" });
+      expect(imported.fromExport).toBeUndefined();
+      captured.clear();
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).toContain(`Already imported in run ${imported.id}`);
+      expect(readRun(runsDir(), imported.id)?.fromExport).toBe(record.id);
+      expect(captured.err).toContain(`The export in run ${record.id} holds your users' data`);
+    });
+
     test("imports an envelope file with no source named", async () => {
       const { file } = exportRun("clerk", export2);
 

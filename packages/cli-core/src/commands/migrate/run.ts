@@ -71,6 +71,7 @@ import {
   unfinishedUndoMessage,
   inUseMessage,
   openUndoOf,
+  patchRun,
   importsOfFile,
   undosOf,
   withAttempt,
@@ -813,12 +814,19 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         : findResume(runsDir, match, carry);
 
       if (resume.kind === "complete") {
+        // Imported by path and named now by its export run ID: the record
+        // links the export, so the cleanup names the folder holding the data.
+        const record =
+          input.fromExport && resume.record.fromExport !== input.fromExport
+            ? (patchRun(runsDir, resume.record.id, { fromExport: input.fromExport }) ??
+              resume.record)
+            : resume.record;
         if (options.json) {
-          log.data(JSON.stringify({ target, run: resume.record, alreadyImported: true }, null, 2));
+          log.data(JSON.stringify({ target, run: record, alreadyImported: true }, null, 2));
         } else {
-          log.success(
-            `Already imported in run ${resume.record.id}. Pass --new-run to import it again.`,
-          );
+          log.success(`Already imported in run ${record.id}. Pass --new-run to import it again.`);
+          log.blank();
+          for (const line of cleanupLines(runsDir, record)) log.info(line);
         }
         return;
       }
