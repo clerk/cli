@@ -9,8 +9,9 @@ import { routeByVerification, splitName } from "./shared.ts";
  * A different schema means editing the mapping below or supplying a custom
  * transformer file.
  *
- * `email_verified` is a nullable timestamp rather than a boolean — any value
- * means verified.
+ * `email_verified` is a nullable timestamp rather than a boolean: any real
+ * date means verified. `0` (the epoch) and a value that isn't a date don't,
+ * as the export reads them; digits alone are a stored integer timestamp.
  *
  * No password default: Auth.js core stores no passwords, so users arrive
  * without a digest and are imported with `skip_password_requirement`. An app
@@ -38,9 +39,18 @@ const authjsSource = {
     email_verified: "emailVerified",
     name: "name",
     created_at: "createdAt",
-    updated_at: "updatedAt",
   },
   postTransform: (user) => {
+    const verified = user.emailVerified;
+    if (
+      verified === 0 ||
+      (typeof verified === "string" &&
+        (/^\d+$/.test(verified.trim())
+          ? Number(verified) === 0
+          : Number.isNaN(Date.parse(verified))))
+    ) {
+      user.emailVerified = null;
+    }
     routeByVerification(user, "email", "emailVerified", "timestamp");
     splitName(user);
   },
