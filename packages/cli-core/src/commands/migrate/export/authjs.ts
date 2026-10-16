@@ -157,8 +157,9 @@ export function buildAuthJsExport(rows: AuthJsRow[], record: (line: UserLine) =>
       counts.email++;
     }
     // A nullable timestamp, not a boolean: the transformer reads presence.
-    // A zero date is no verification.
-    const verified = row.email_verified ? exportValue(row.email_verified) : undefined;
+    // A zero date is no verification, as a number or as a driver's Date.
+    const zeroDate = row.email_verified instanceof Date && row.email_verified.getTime() === 0;
+    const verified = row.email_verified && !zeroDate ? exportValue(row.email_verified) : undefined;
     if (verified !== undefined) {
       user.email_verified = verified;
       counts.emailVerified++;
