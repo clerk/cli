@@ -30,7 +30,12 @@ function expandSettings(source: string, settings: Record<string, string>): strin
  */
 export async function auditProduction(
   inspection: Inspection,
-  remote: { applicationId: string; appIdPrefix?: string },
+  remote: {
+    applicationId: string;
+    appIdPrefix?: string;
+    /** The user picked the inspected configurations with `--xcode-configuration`. */
+    configurationSelected?: boolean;
+  },
   api: NativeAPI,
   signal?: AbortSignal,
 ): Promise<Check[]> {
@@ -51,15 +56,29 @@ export async function auditProduction(
   const contexts = inspection.contexts.filter(
     (context) => context.selection.configuration !== "Debug",
   );
-  if (!contexts.length)
+  if (!contexts.length) {
+    // Without --xcode-configuration only Debug and Release are inspected, so a release
+    // configuration with another name (Production, AppStore) would otherwise pass unchecked.
+    const others = inspection.uncheckedConfigurations.filter((name) => name !== "Debug");
+    if (!remote.configurationSelected && others.length)
+      return [
+        {
+          name: "Production instance",
+          status: "warn",
+          message: `Nothing was checked against production: only Debug was inspected, and the target's other configurations are ${others.join(", ")}.`,
+          remedy: `Run clerk doctor --xcode-configuration ${others[0]} to check it against production.`,
+        },
+      ];
     return [
       {
         name: "Production instance",
         status: "pass",
-        message:
-          "Production checks cover non-Debug configurations. Rerun without --xcode-configuration, or with --xcode-configuration Release.",
+        message: remote.configurationSelected
+          ? "Production checks cover non-Debug configurations. Rerun without --xcode-configuration, or with a release configuration."
+          : "The target has only a Debug configuration, so there's nothing to check against production.",
       },
     ];
+  }
   let host: string;
   try {
     host = decodePublishableKey(production.publishable_key).fapiHost;
@@ -69,6 +88,8 @@ export async function auditProduction(
         name: "Production instance",
         status: "warn",
         message: `The production instance's publishable key could not be read: ${errorMessage(error)}`,
+        remedy:
+          "Check the production instance's API keys in the Clerk Dashboard, then rerun clerk doctor.",
       },
     ];
   }

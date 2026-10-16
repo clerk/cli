@@ -153,7 +153,11 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
       checks.push(
         ...(await auditProduction(
           preview.inspection,
-          { applicationId: options.remote.applicationId, appIdPrefix: confirmedPrefix },
+          {
+            applicationId: options.remote.applicationId,
+            appIdPrefix: confirmedPrefix,
+            configurationSelected: options.configuration != null,
+          },
           dependencies.api ?? nativeAPI,
           options.signal,
         )),
@@ -164,6 +168,8 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
         name: "Production instance",
         status: "warn",
         message: `Production readiness could not be checked: ${errorMessage(error)}`,
+        remedy:
+          "Rerun clerk doctor. If it keeps failing, check the production instance in the Clerk Dashboard.",
       });
     }
   return {

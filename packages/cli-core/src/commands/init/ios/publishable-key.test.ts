@@ -279,3 +279,27 @@ test.each([
   await write({ "MyApp/App.swift": `Clerk.configure(publishableKey: "${LIVE}")`, ...files });
   expect(await resolveKey("Release", settings)).toMatchObject({ status: "resolved", key: LIVE });
 });
+
+// Xcode 16 records a file shared from another target's synchronized folder as an exception set
+// on that folder naming this target; its `membershipExceptions` then lists included files.
+test("a file shared in from another target's synchronized folder reports the key as unresolved", async () => {
+  await write({
+    "MyApp/App.swift": `Clerk.configure(publishableKey: "${LIVE}")`,
+    "AdminApp/Shared.swift": `Clerk.configure(publishableKey: "${DEV}")`,
+  });
+  const shared = PROJECT.replace(
+    "DDDDDDDDDDDDDDDDDDDDDDDD = { isa = PBXFileSystemSynchronizedRootGroup; path = AdminApp;",
+    "FFFFFFFFFFFFFFFFFFFFFFFF = { isa = PBXFileSystemSynchronizedBuildFileExceptionSet; membershipExceptions = ( Shared.swift ); target = 111111111111111111111111; };\n    DDDDDDDDDDDDDDDDDDDDDDDD = { isa = PBXFileSystemSynchronizedRootGroup; exceptions = ( FFFFFFFFFFFFFFFFFFFFFFFF ); path = AdminApp;",
+  );
+  expect(shared).not.toBe(PROJECT);
+  const selected = inspection("Release");
+  selected.document.source = shared;
+  const result = await configuredPublishableKey(
+    selected.contexts[0]!,
+    await scanSwiftSources(selected),
+  );
+  expect(result.status).toBe("unresolved");
+  expect(result.status === "unresolved" && result.reason).toContain(
+    "shares files into the target from another target's synchronized folder",
+  );
+});

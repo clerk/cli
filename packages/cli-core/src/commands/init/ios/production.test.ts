@@ -7,6 +7,7 @@ import { runIOSDoctorChecks } from "../../doctor/ios.ts";
 import type { DoctorContext } from "../../doctor/types.ts";
 import * as coordinator from "./coordinator.ts";
 import { doctor } from "./doctor.ts";
+import * as production from "./production.ts";
 import { auditProduction } from "./production.ts";
 import type { NativeAPI } from "./remote.ts";
 import { createIOSFixture } from "./test-helpers.ts";
@@ -149,6 +150,96 @@ test("without a production instance, one passing note replaces the checks", asyn
     expect.objectContaining({ name: "Production instance", status: "pass" }),
   ]);
   expect(checks[0]?.message).toContain("clerk deploy");
+});
+
+// Only the fields the early return reads: which configurations were and weren't inspected.
+const inspectedOnlyDebug = (unchecked: readonly string[]) =>
+  ({
+    contexts: [{ selection: { configuration: "Debug" }, settings: {} }],
+    uncheckedConfigurations: [...unchecked],
+  }) as unknown as Parameters<typeof auditProduction>[0];
+
+test.each([
+  {
+    name: "a release configuration named Production",
+    unchecked: ["Production"],
+    selected: false,
+    status: "warn",
+    text: "Run clerk doctor --xcode-configuration Production",
+  },
+  {
+    name: "an explicit --xcode-configuration Debug",
+    unchecked: ["Release"],
+    selected: true,
+    status: "pass",
+    text: "Production checks cover non-Debug configurations",
+  },
+  {
+    name: "a target with only Debug",
+    unchecked: [],
+    selected: false,
+    status: "pass",
+    text: "only a Debug configuration",
+  },
+])("with only Debug inspected, $name is $status", async ({ unchecked, selected, status, text }) => {
+  const [check, ...rest] = await auditProduction(
+    inspectedOnlyDebug(unchecked),
+    { applicationId: "app_test", configurationSelected: selected },
+    api,
+  );
+  expect(rest).toEqual([]);
+  expect(check).toMatchObject({ name: "Production instance", status });
+  expect(`${check?.message} ${check?.remedy ?? ""}`).toContain(text);
+});
+
+test("an unreadable production key has its own remedy", async () => {
+  const releaseOnly = {
+    contexts: [{ selection: { configuration: "Release" }, settings: {} }],
+    uncheckedConfigurations: [],
+  } as unknown as Parameters<typeof auditProduction>[0];
+  const [check, ...rest] = await auditProduction(
+    releaseOnly,
+    { applicationId: "app_test" },
+    {
+      ...api,
+      async fetchApplication(id) {
+        return {
+          application_id: id,
+          instances: [
+            {
+              instance_id: "ins_prod",
+              environment_type: "production",
+              publishable_key: "pk_live_x",
+            },
+          ],
+        };
+      },
+    },
+  );
+  expect(rest).toEqual([]);
+  expect(check).toMatchObject({ name: "Production instance", status: "warn" });
+  expect(check?.remedy).toContain("API keys in the Clerk Dashboard");
+});
+
+test("a failed production check points at retrying, not clerk init", async () => {
+  const audit = spyOn(production, "auditProduction").mockRejectedValue(new Error("offline"));
+  try {
+    const report = await doctor(
+      {
+        root,
+        products: "core",
+        minimumVersion: "1.0.0",
+        inspectOnly: true,
+        remote: { applicationId: "app_test" },
+      },
+      { api, run },
+    );
+    const check = report.checks.find((item) => item.name === "Production instance");
+    expect(check).toMatchObject({ status: "warn" });
+    expect(check?.remedy).toContain("Rerun clerk doctor");
+  } finally {
+    audit.mockRestore();
+  }
 });
 
 describe("production native registration", () => {

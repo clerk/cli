@@ -69,6 +69,19 @@ async function pbxprojSources(inspection: Inspection, sourceRoot: string): Promi
       files.push(path);
     }
   }
+  // Another target's synchronized folder can share files into this one: its exception set names
+  // this target, and there `membershipExceptions` lists files included, not excluded.
+  const owned = new Set<string>(target.fileSystemSynchronizedGroups ?? []);
+  for (const [id, object] of Object.entries(objects))
+    if (
+      object?.isa === "PBXFileSystemSynchronizedRootGroup" &&
+      !owned.has(id) &&
+      (object.exceptions ?? []).some(
+        (exceptionId: string) =>
+          objects[exceptionId]?.target === inspection.input.selection.targetId,
+      )
+    )
+      return unknown("shares files into the target from another target's synchronized folder");
   for (const groupId of target.fileSystemSynchronizedGroups ?? []) {
     const folder = location(groupId);
     if (!folder)

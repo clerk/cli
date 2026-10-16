@@ -102,7 +102,7 @@ configuration's `EXCLUDED_SOURCE_FILE_NAMES`. Anything else is reported as
 
 Without a production instance these become one passing note, since production
 is optional (the Instances check already mentions it). Selecting only Debug with
-`--xcode-configuration Debug` skips them the same way.
+`--xcode-configuration Debug` skips them the same way. Without the flag, doctor inspects only configurations named Debug and Release, so when a target's release configuration has another name (such as Production), it warns that nothing was checked and names the configuration to pass.
 
 ## Auto-Fix (`--fix`)
 
