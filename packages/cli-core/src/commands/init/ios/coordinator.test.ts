@@ -342,7 +342,7 @@ test.each([
 });
 
 describe("a deferred run for an app on a Personal Team", () => {
-  async function personalApp(platform: "ios" | "macos") {
+  async function personalApp(platform: "ios" | "macos", releaseTeam = "PERSONAL01") {
     const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-public-init-")));
     roots.push(root);
     const f = await capabilityFixture(root, platform);
@@ -354,7 +354,9 @@ describe("a deferred run for an app on a Personal Team", () => {
       xcodeTeams: [{ id: "PERSONAL01", name: "Sean Perez", personal: true }],
       run: async (...args: Parameters<typeof run>) => {
         const rows = JSON.parse(await run(...args));
-        rows[0].buildSettings.DEVELOPMENT_TEAM = "PERSONAL01";
+        const [command] = args;
+        rows[0].buildSettings.DEVELOPMENT_TEAM =
+          command[command.indexOf("-configuration") + 1] === "Release" ? releaseTeam : "PERSONAL01";
         return JSON.stringify(rows);
       },
     };
@@ -378,6 +380,46 @@ describe("a deferred run for an app on a Personal Team", () => {
     },
   );
 
+  test("applies the limits to the whole app when only Debug uses the Personal Team", async () => {
+    const { root, dependencies } = await personalApp("macos", "PAIDTEAM01");
+    // Debug's shared entitlements already ask for Sign in with Apple.
+    const path = join(root, "MyApp/MyApp.entitlements");
+    await writeFile(
+      path,
+      (await readFile(path, "utf8")).replace(
+        "</dict>",
+        "<key>com.apple.developer.applesignin</key><array><string>Default</string></array></dict>",
+      ),
+    );
+    await runAppleInit(
+      { root, agent: true, json: true, appIdPrefix: "PAIDTEAM01" },
+      "app_test",
+      dependencies,
+    );
+    const entitlements = await readFile(path, "utf8");
+    expect(entitlements).not.toContain("webcredentials:");
+    expect(JSON.parse(captured.out).instructions).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Debug is signed by a Personal Team and other configurations"),
+        expect.stringContaining("MyApp/MyApp.entitlements still has Sign in with Apple"),
+      ]),
+    );
+    captured.clear();
+    const ctx = {
+      getProfile: async () => ({ profile: { appId: "app_test" } }),
+    } as unknown as DoctorContext;
+    spies.push(spyOn(coordinator, "canSetUpXcode").mockReturnValue(true));
+    const results = await runIOSDoctorChecks(ctx, { root }, dependencies);
+    expect(results.find((result) => result.name === "Personal Team")?.status).toBe("warn");
+    // Only the configuration the Personal Team signs is checked for what it can't sign.
+    expect(
+      results
+        .filter((result) => result.name.startsWith("Personal Team entitlements:"))
+        .map((result) => [result.name, result.status]),
+    ).toEqual([["Personal Team entitlements: Debug", "warn"]]);
+    expect(results.some((result) => result.name.startsWith("Apple entitlement:"))).toBe(false);
+  });
+
   test("rejects an explicit --sign-in-with-apple", async () => {
     const { root, dependencies } = await personalApp("ios");
     await expect(
@@ -388,4 +430,39 @@ describe("a deferred run for an app on a Personal Team", () => {
       ),
     ).rejects.toThrow("Sign in with Apple needs a paid Apple Developer Program team");
   });
+});
+
+test.each([
+  { name: "takes the starter's sign-in screen default", options: {}, authView: true },
+  {
+    name: "keeps an explicit ClerkKit-only choice",
+    options: { appleSdk: "core" as const },
+    authView: false,
+  },
+  { name: "keeps --prebuilt-auth-ui off", options: { prebuiltAuthUi: false }, authView: false },
+  {
+    name: "leaves an agent's UI to the user",
+    options: { agent: true, json: true },
+    authView: false,
+  },
+])("a new starter with --yes $name", async ({ options, authView }) => {
+  const f = await fixture(true);
+  const p = promptsFor(true);
+  spies.push(spyOn(spinner, "outro").mockResolvedValue(undefined));
+  await runAppleInit(
+    {
+      root: f.root,
+      agent: false,
+      yes: true,
+      starterProject: { projectName: "MyApp", platform: "ios", personalTeam: false },
+      ...options,
+    },
+    "app_test",
+    f.dependencies,
+  );
+  expect(p.confirm).not.toHaveBeenCalled();
+  expect(await readFile(join(f.root, "MyApp/MyAppApp.swift"), "utf8")).toContain("Clerk.configure");
+  expect(
+    (await readFile(join(f.root, "MyApp/ContentView.swift"), "utf8")).includes("AuthView()"),
+  ).toBe(authView);
 });

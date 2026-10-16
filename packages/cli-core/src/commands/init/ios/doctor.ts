@@ -10,6 +10,7 @@ import {
   PERSONAL_TEAM_APPLE_NOTE,
   personalSigningTeam,
   personalTeamConflictNote,
+  personalTeamScopeNote,
 } from "./teams.ts";
 import { sdkLinked } from "./sdk.ts";
 import { discoverRemote, describeIdentity } from "./identity.ts";
@@ -99,8 +100,11 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
           : `${context.configuration} capability settings are present; signing remains unverified.`),
     });
   // Setup never removes entitlements, so one the team can't sign can still be there.
+  const scope = personalTeam && personalTeamScopeNote(personalTeam);
+  if (scope) checks.push({ name: "Personal Team", status: "warn", message: scope });
   if (personalTeam)
     for (const context of preview.inspection.contexts) {
+      if (!personalTeam.configurations.includes(context.selection.configuration)) continue;
       const name = `Personal Team entitlements: ${context.selection.configuration}`;
       try {
         const source = await readEntitlements(context);

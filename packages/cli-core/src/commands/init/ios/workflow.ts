@@ -16,12 +16,14 @@ import {
   type AppliedFile,
 } from "./files.ts";
 import { planStarter } from "./starter.ts";
-import { planAllCapabilities, personalTeamConflicts } from "./capabilities.ts";
+import { planAllCapabilities, personalTeamConflicts, readEntitlements } from "./capabilities.ts";
 import {
   PERSONAL_MAC_TEAM_DOMAIN_NOTE,
   PERSONAL_TEAM_APPLE_NOTE,
   personalTeamConflictNote,
+  personalTeamScopeNote,
   type AppleTeam,
+  type PersonalSigning,
 } from "./teams.ts";
 import { sdkHealth, resolvedSDKHealth } from "./sdk-health.ts";
 import { integrationHandoff } from "./handoff.ts";
@@ -69,7 +71,7 @@ export interface SetupOptions extends InspectOptions {
   inspectOnly?: boolean;
   checkAppleConnection?: boolean;
   /** The app is signed by a Personal Team: no Sign in with Apple, and no Associated Domain on macOS. */
-  personalTeam?: boolean;
+  personalTeam?: PersonalSigning;
   /** An inspection of the same project taken earlier (say, before prompting), to avoid a second xcodebuild pass. */
   inspection?: Inspection;
 }
@@ -258,17 +260,24 @@ export async function prepareSetup(
   } else if (capabilities?.reason) local.postInstructions.push(capabilities.reason);
   const personalTeamNotes: string[] = [];
   if (capabilities && options.personalTeam) {
+    const scope = personalTeamScopeNote(options.personalTeam);
+    if (scope) personalTeamNotes.push(scope);
     if (mac) personalTeamNotes.push(PERSONAL_MAC_TEAM_DOMAIN_NOTE);
     // Setup never removes entitlements, so say which ones will still block signing.
-    for (const snapshot of capabilities.snapshots) {
+    const seen = new Set<string>();
+    for (const context of inspection.contexts) {
+      if (!options.personalTeam.configurations.includes(context.selection.configuration)) continue;
+      const path = context.settings.CODE_SIGN_ENTITLEMENTS?.trim();
+      if (!path || seen.has(path)) continue;
+      seen.add(path);
       let conflicts: string[];
       try {
-        conflicts = personalTeamConflicts(snapshot.source, mac);
+        const source = await readEntitlements(context);
+        conflicts = source === undefined ? [] : personalTeamConflicts(source, mac);
       } catch {
         continue;
       }
-      if (conflicts.length)
-        personalTeamNotes.push(personalTeamConflictNote(snapshot.path, conflicts));
+      if (conflicts.length) personalTeamNotes.push(personalTeamConflictNote(path, conflicts));
     }
   }
   local.postInstructions.push(...personalTeamNotes);

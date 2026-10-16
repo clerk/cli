@@ -248,16 +248,20 @@ export async function runAppleInit(
     setup.inspection = inspection;
     // A new starter already knows its team; any other app asks Xcode's account list. This holds
     // for a deferred run too, which no longer knows it started as a starter.
-    if (
-      options.starterProject
-        ? options.starterProject.personalTeam
-        : personalSigningTeam(inspection, dependencies.xcodeTeams)
-    ) {
+    const personalTeam = options.starterProject
+      ? options.starterProject.personalTeam
+        ? {
+            configurations: inspection.contexts.map((context) => context.selection.configuration),
+            mixed: false,
+          }
+        : undefined
+      : personalSigningTeam(inspection, dependencies.xcodeTeams);
+    if (personalTeam) {
       if (options.signInWithApple)
         throwUsageError(
           "Sign in with Apple needs a paid Apple Developer Program team, and this app is signed by a Personal Team. Drop --sign-in-with-apple, or choose a paid team in Xcode.",
         );
-      setup.personalTeam = true;
+      setup.personalTeam = personalTeam;
       setup.signInWithApple = false;
     }
     const starter = await isUnchangedStarter(inspection);
@@ -272,6 +276,18 @@ export async function runAppleInit(
         }
       }
     }
+    // A new starter has no screens of its own yet, so its sign-in screen defaults to on: --yes
+    // takes that default as the prompt below offers it. ClerkKit alone has no sign-in screen, and
+    // an agent still needs the user to ask for UI changes (see the handoff).
+    if (
+      options.starterProject &&
+      starter &&
+      !interactive &&
+      !options.agent &&
+      options.prebuiltAuthUi == null &&
+      setup.products === "ui"
+    )
+      setup.signInUI = true;
     if (interactive) {
       log.success(
         `Found ${inspection.input.selection.sdk === "macosx" ? "macOS" : "iOS"} app: ${inspection.input.selection.targetName}`,

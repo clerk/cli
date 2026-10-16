@@ -595,6 +595,7 @@ for (const signInUI of [false, true])
 
 // A Personal Team can't use Sign in with Apple, and can't sign a macOS app with Associated Domains.
 const PERSONAL_TEAM = { id: "PERSONAL01", name: "Sean Perez (Personal Team)", personal: true };
+const EVERY_CONFIGURATION = { configurations: ["Debug", "Release"], mixed: false };
 async function personalFixture(platform: "ios" | "macos", team = PERSONAL_TEAM.id) {
   const f = await fixture(platform);
   f.options.signInWithApple = undefined;
@@ -611,7 +612,10 @@ const statuses = (report: Awaited<ReturnType<typeof doctor>>, prefix: string) =>
 
 test("a macOS app on a Personal Team gets network access but no Associated Domain", async () => {
   const f = await personalFixture("macos");
-  const preview = await prepareSetup({ ...f.options, personalTeam: true }, f.dependencies);
+  const preview = await prepareSetup(
+    { ...f.options, personalTeam: EVERY_CONFIGURATION },
+    f.dependencies,
+  );
   expect(preview.personalTeamNotes).toEqual([
     expect.stringContaining("a Personal Team can't sign a macOS app"),
   ]);
@@ -636,7 +640,7 @@ test.each([
   "the Associated Domain on $platform signed by $team is expected: $domain",
   async ({ platform, team, domain }) => {
     const f = await personalFixture(platform, team);
-    const personalTeam = team === PERSONAL_TEAM.id;
+    const personalTeam = team === PERSONAL_TEAM.id ? EVERY_CONFIGURATION : undefined;
     await applySetup(
       await prepareSetup({ ...f.options, personalTeam }, f.dependencies),
       f.dependencies,
@@ -655,7 +659,7 @@ test.each(["ios", "macos"] as const)(
     f.state.apple = { ...f.state.apple, enabled: true, bundle_id: "com.example.MyApp" };
     // As `clerk init` runs it, following Clerk's Apple setting when it isn't asked.
     const preview = await prepareSetup(
-      { ...f.options, personalTeam: true, checkAppleConnection: true },
+      { ...f.options, personalTeam: EVERY_CONFIGURATION, checkAppleConnection: true },
       f.dependencies,
     );
     expect(preview.appleWarning).toContain("a Personal Team can't use it");
@@ -677,7 +681,10 @@ test.each(["ios", "macos"] as const)(
 test("an explicit Sign in with Apple request on a Personal Team stops setup", async () => {
   const f = await personalFixture("ios");
   await expect(
-    prepareSetup({ ...f.options, personalTeam: true, signInWithApple: true }, f.dependencies),
+    prepareSetup(
+      { ...f.options, personalTeam: EVERY_CONFIGURATION, signInWithApple: true },
+      f.dependencies,
+    ),
   ).rejects.toThrow("needs a paid Apple Developer Program team");
 });
 
@@ -702,7 +709,10 @@ test.each([
       join(f.root, "MyApp/MyApp.entitlements"),
       `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>\n\t<key>com.apple.security.app-sandbox</key><true/>\n\t<key>com.apple.security.network.client</key><true/>\n\t${entitlements}\n</dict></plist>\n`,
     );
-    const preview = await prepareSetup({ ...f.options, personalTeam: true }, f.dependencies);
+    const preview = await prepareSetup(
+      { ...f.options, personalTeam: EVERY_CONFIGURATION },
+      f.dependencies,
+    );
     expect(preview.personalTeamNotes).toContainEqual(
       `MyApp/MyApp.entitlements still has ${conflict}, which a Personal Team can't sign. Remove it in Xcode's Signing & Capabilities, or switch to a paid Apple Developer Program team.`,
     );
