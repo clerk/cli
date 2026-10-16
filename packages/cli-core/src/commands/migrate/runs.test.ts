@@ -31,6 +31,8 @@ function partialImport(init: Partial<StartRunInit> = {}) {
     target: TARGET,
     source: "clerk",
     file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    // What an import with none of the behaviour flags records.
+    flags: {},
     ...init,
   });
   run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
@@ -173,6 +175,20 @@ describe("runs <id>", () => {
       `clerk migrate import ${quoteArg(usersFile())} --source clerk --runs-dir ${quoteArg(runsDir)}`,
     );
     expect(next[0]).toContain("to retry the users that failed or were skipped");
+  });
+
+  // An earlier build of this branch wrote none, or a string[]: a continue
+  // without them would create the users --require-password held back.
+  test.each([
+    ["no flags", undefined],
+    ["flags as a string[]", ["--require-password"]],
+  ])("offers no continue for a run with %s", async (_, flags) => {
+    const record = partialImport({ flags: flags as StartRunInit["flags"] });
+
+    await runs(record.id, { runsDir, json: true });
+
+    const { next } = JSON.parse(captured.out) as { next: string[] };
+    expect(next).toEqual([expect.stringContaining(`clerk migrate undo ${record.id}`)]);
   });
 
   // Left out, the continue creates the users --require-password held back.

@@ -105,6 +105,10 @@ function errorBreakdown(lines: UserLine[]): { error: string; count: number }[] {
  * with the flags that reach the same runs folder and instance.
  */
 function continueCommand(record: RunRecord, carry: string[]): string | undefined {
+  // Every import records its flags. None, or the string[] an earlier build
+  // wrote, can't be read back, and a continue without them would create the
+  // users --require-password held back.
+  if (!record.flags || Array.isArray(record.flags)) return undefined;
   const input = record.fromExport ?? record.file?.path;
   if (!input) return undefined;
   const parts = ["clerk migrate import", quoteArg(input)];
