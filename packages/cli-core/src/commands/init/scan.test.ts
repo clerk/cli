@@ -197,6 +197,19 @@ describe("scanForIssues", () => {
     expect(findings.some((f) => f.message.includes("Passport"))).toBe(true);
   });
 
+  // `@workos-inc/node` alone also serves SSO and Directory Sync, so the code
+  // names AuthKit, not the package.
+  test("detects AuthKit through the WorkOS Node SDK", async () => {
+    await mkdir(join(tempDir, "src"), { recursive: true });
+    await Bun.write(
+      join(tempDir, "src/auth.ts"),
+      "const user = await workos.userManagement.authenticateWithCode({ code });\n",
+    );
+
+    const findings = await scanForIssues(tempDir, "next");
+    expect(findings.some((f) => f.message.includes("WorkOS AuthKit"))).toBe(true);
+  });
+
   test("returns correct line number", async () => {
     await mkdir(join(tempDir, "src"), { recursive: true });
     await Bun.write(
