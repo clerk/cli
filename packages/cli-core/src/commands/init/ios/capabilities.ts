@@ -129,40 +129,6 @@ export function capabilityXML(source: string, domain?: string, apple = false, ma
   );
 }
 
-/** The entitlements file one configuration signs with, or undefined when it has none. Throws when it can't be read. */
-export async function readEntitlements(
-  context: Inspection["contexts"][number],
-): Promise<string | undefined> {
-  const path = context.settings.CODE_SIGN_ENTITLEMENTS?.trim();
-  if (!path) return undefined;
-  const sourceRoot =
-    context.settings.SRCROOT ?? resolve(context.selection.root, dirname(context.selection.project));
-  return (await snapshotFile(context.selection.root, resolve(sourceRoot, path))).source;
-}
-
-/**
- * Capabilities already in an entitlements file that a Personal Team can't sign: Sign in with
- * Apple anywhere, and Associated Domains on macOS. Setup never removes entitlements, so these
- * stay until someone removes them in Xcode. Throws on XML it can't read.
- */
-export function personalTeamConflicts(source: string, mac: boolean): string[] {
-  const document = new DOMParser({
-    errorHandler: () => {
-      throw new Error("Invalid entitlements XML.");
-    },
-  }).parseFromString(source, "text/xml");
-  const [dictionary] = elements(document.documentElement);
-  const keys = new Set(
-    (dictionary ? elements(dictionary) : [])
-      .filter((node) => node.tagName === "key")
-      .map((node) => node.textContent ?? ""),
-  );
-  return [
-    ...(keys.has(APPLE) ? ["Sign in with Apple"] : []),
-    ...(mac && keys.has(DOMAIN) ? ["Associated Domains"] : []),
-  ];
-}
-
 interface CapabilityPlan {
   status: "planned" | "satisfied" | "manual";
   scope: string;
@@ -323,7 +289,7 @@ export async function planAllCapabilities(
   projectSource: string,
   frontendHost?: string,
   apple = false,
-  /** False when the signing team can't provision Associated Domains (see `personalMacTeam`). */
+  /** False to leave the web-credentials domain out, for a signing team that can't provision it. */
   associatedDomain = true,
 ) {
   const actions = new Map<string, FileAction>();

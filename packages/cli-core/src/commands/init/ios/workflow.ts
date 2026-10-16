@@ -16,15 +16,7 @@ import {
   type AppliedFile,
 } from "./files.ts";
 import { planStarter } from "./starter.ts";
-import { planAllCapabilities, personalTeamConflicts, readEntitlements } from "./capabilities.ts";
-import {
-  PERSONAL_MAC_TEAM_DOMAIN_NOTE,
-  PERSONAL_TEAM_APPLE_NOTE,
-  personalTeamConflictNote,
-  personalTeamScopeNote,
-  type AppleTeam,
-  type PersonalSigning,
-} from "./teams.ts";
+import { planAllCapabilities } from "./capabilities.ts";
 import { sdkHealth, resolvedSDKHealth } from "./sdk-health.ts";
 import { integrationHandoff } from "./handoff.ts";
 import {
@@ -70,8 +62,8 @@ export interface SetupOptions extends InspectOptions {
   starter?: boolean;
   inspectOnly?: boolean;
   checkAppleConnection?: boolean;
-  /** The app is signed by a Personal Team: no Sign in with Apple, and no Associated Domain on macOS. */
-  personalTeam?: PersonalSigning;
+  /** False when the signing team can't provision Associated Domains (a new macOS starter on a Personal Team). */
+  associatedDomain?: boolean;
   /** An inspection of the same project taken earlier (say, before prompting), to avoid a second xcodebuild pass. */
   inspection?: Inspection;
 }
@@ -80,8 +72,6 @@ export interface Dependencies {
   api?: NativeAPI;
   appleAPI?: IOSNativeAppleAPI;
   promptIdentity?: IdentityPrompt;
-  /** Xcode's signed-in teams, instead of reading them from Xcode's settings. */
-  xcodeTeams?: AppleTeam[];
 }
 export interface SetupPreview {
   inspection: Inspection;
@@ -99,8 +89,6 @@ export interface SetupPreview {
   appleWarning?: string;
   signInUIRequested: boolean;
   starter?: Awaited<ReturnType<typeof planStarter>>;
-  /** What a Personal Team changed or still blocks, for the person to read. */
-  personalTeamNotes: string[];
 }
 
 export async function prepareSetup(
@@ -138,11 +126,6 @@ export async function prepareSetup(
     throw setupError(
       "Native Apple sign-in requires an explicitly selected Clerk application and confirmed native identity.",
     );
-  if (options.personalTeam && options.signInWithApple)
-    throw setupError(
-      "Sign in with Apple needs a paid Apple Developer Program team, and this app is signed by a Personal Team.",
-    );
-  const mac = inspection.input.selection.sdk === "macosx";
   const originalAction = local.actions[0]!;
   let appleEnabled = options.signInWithApple === true;
   let appleWarning: string | undefined;
@@ -158,10 +141,8 @@ export async function prepareSetup(
       const enabledInClerk = health.runtime.current?.enabled === true;
       // Follow Clerk's setting only when the user wasn't asked; an explicit
       // "no" must not add the Sign in with Apple entitlement.
-      if (options.signInWithApple === undefined)
-        appleEnabled = enabledInClerk && !options.personalTeam;
-      if (enabledInClerk && options.personalTeam) appleWarning = PERSONAL_TEAM_APPLE_NOTE;
-      else if (enabledInClerk && options.signInWithApple === false)
+      if (options.signInWithApple === undefined) appleEnabled = enabledInClerk;
+      if (enabledInClerk && options.signInWithApple === false)
         appleWarning =
           "Sign in with Apple is enabled for this Clerk instance, but its capability was not added. Apple sign-in fails on device until you add it, or rerun with --sign-in-with-apple.";
       else if (
@@ -183,7 +164,7 @@ export async function prepareSetup(
           originalAction.type === "modify" ? originalAction.content : inspection.document.source,
           remote?.context.frontendHost,
           appleEnabled,
-          !(options.personalTeam && mac),
+          options.associatedDomain !== false,
         )
       : undefined;
   if (capabilities) {
@@ -258,29 +239,6 @@ export async function prepareSetup(
       `Capability scope: ${capabilities.scope}. Only the listed contexts were inspected.`,
     );
   } else if (capabilities?.reason) local.postInstructions.push(capabilities.reason);
-  const personalTeamNotes: string[] = [];
-  if (capabilities && options.personalTeam) {
-    const scope = personalTeamScopeNote(options.personalTeam);
-    if (scope) personalTeamNotes.push(scope);
-    if (mac) personalTeamNotes.push(PERSONAL_MAC_TEAM_DOMAIN_NOTE);
-    // Setup never removes entitlements, so say which ones will still block signing.
-    const seen = new Set<string>();
-    for (const context of inspection.contexts) {
-      if (!options.personalTeam.configurations.includes(context.selection.configuration)) continue;
-      const path = context.settings.CODE_SIGN_ENTITLEMENTS?.trim();
-      if (!path || seen.has(path)) continue;
-      seen.add(path);
-      let conflicts: string[];
-      try {
-        const source = await readEntitlements(context);
-        conflicts = source === undefined ? [] : personalTeamConflicts(source, mac);
-      } catch {
-        continue;
-      }
-      if (conflicts.length) personalTeamNotes.push(personalTeamConflictNote(path, conflicts));
-    }
-  }
-  local.postInstructions.push(...personalTeamNotes);
   options.signal?.throwIfAborted();
   return {
     inspection,
@@ -298,7 +256,6 @@ export async function prepareSetup(
     sdk: originalAction,
     sdkCheck,
     dirtyFiles,
-    personalTeamNotes,
   };
 }
 
@@ -348,7 +305,6 @@ export function describePreview(preview: SetupPreview) {
           scope: preview.capabilities.scope,
           reason: preview.capabilities.reason,
           contexts: preview.capabilities.contexts,
-          ...(preview.personalTeamNotes.length ? { notes: preview.personalTeamNotes } : {}),
         }
       : "Manual Xcode setup",
     apple: preview.apple

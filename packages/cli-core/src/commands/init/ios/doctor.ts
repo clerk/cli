@@ -1,17 +1,7 @@
+import { dirname, resolve } from "node:path";
 import { auditIOSNativeAppleHealth } from "./native-apple.ts";
-import {
-  capabilityXML,
-  personalTeamConflicts,
-  planAllCapabilities,
-  readEntitlements,
-} from "./capabilities.ts";
-import {
-  PERSONAL_MAC_TEAM_DOMAIN_NOTE,
-  PERSONAL_TEAM_APPLE_NOTE,
-  personalSigningTeam,
-  personalTeamConflictNote,
-  personalTeamScopeNote,
-} from "./teams.ts";
+import { capabilityXML, planAllCapabilities } from "./capabilities.ts";
+import { snapshotFile } from "./files.ts";
 import { sdkLinked } from "./sdk.ts";
 import { discoverRemote, describeIdentity } from "./identity.ts";
 import { auditRemote, nativeAPI } from "./remote.ts";
@@ -76,15 +66,10 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
           `Bundle ID from ${discovery.bundleSource}; App ID Prefix from ${discovery.prefixSource}.`,
       },
     );
-  // Same rule as setup: a Personal Team gets no Sign in with Apple, and no Associated Domain on macOS.
-  const personalTeam = personalSigningTeam(preview.inspection, dependencies.xcodeTeams);
-  const mac = preview.inspection.input.selection.sdk === "macosx";
   const capabilities = await planAllCapabilities(
     preview.inspection,
     preview.inspection.document.source,
     discovery?.instance.frontendHost,
-    false,
-    !(personalTeam && mac),
   );
   for (const context of capabilities.contexts)
     checks.push({
@@ -92,47 +77,10 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
       status: context.status === "satisfied" ? "pass" : "warn",
       message:
         context.reason ??
-        (context.status === "satisfied" && personalTeam && mac
-          ? `${context.configuration} capability settings are present. ${PERSONAL_MAC_TEAM_DOMAIN_NOTE}`
-          : undefined) ??
         (context.status === "planned"
           ? `Local capability changes are still needed for ${context.configuration}.`
           : `${context.configuration} capability settings are present; signing remains unverified.`),
     });
-  // Setup never removes entitlements, so one the team can't sign can still be there.
-  const scope = personalTeam && personalTeamScopeNote(personalTeam);
-  if (scope) checks.push({ name: "Personal Team", status: "warn", message: scope });
-  if (personalTeam)
-    for (const context of preview.inspection.contexts) {
-      if (!personalTeam.configurations.includes(context.selection.configuration)) continue;
-      const name = `Personal Team entitlements: ${context.selection.configuration}`;
-      try {
-        const source = await readEntitlements(context);
-        const conflicts = source === undefined ? [] : personalTeamConflicts(source, mac);
-        checks.push(
-          conflicts.length
-            ? {
-                name,
-                status: "warn",
-                message: personalTeamConflictNote(
-                  context.settings.CODE_SIGN_ENTITLEMENTS!,
-                  conflicts,
-                ),
-              }
-            : {
-                name,
-                status: "pass",
-                message: `${context.selection.configuration} has no capabilities its Personal Team can't sign.`,
-              },
-        );
-      } catch {
-        checks.push({
-          name,
-          status: "warn",
-          message: `The ${context.selection.configuration} entitlements file could not be read; check it for capabilities a Personal Team can't sign.`,
-        });
-      }
-    }
   if (discovery?.bundleIdentifier) {
     try {
       const health = await auditIOSNativeAppleHealth(
@@ -143,44 +91,45 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
         },
         dependencies.appleAPI,
       );
-      const enabledInClerk = health.runtime.current?.enabled === true;
-      // A Personal Team can't carry the entitlement, so doctor doesn't ask for it.
-      const required = !personalTeam && (options.signInWithApple || enabledInClerk);
-      if (personalTeam && enabledInClerk)
-        checks.push({
-          name: "Native Apple connection",
-          status: "warn",
-          message: PERSONAL_TEAM_APPLE_NOTE,
-        });
-      else
-        checks.push({
-          name: "Native Apple connection",
-          status:
-            health.runtime.status === "satisfied" ||
-            (health.runtime.current?.enabled === false && !required)
-              ? "pass"
-              : "warn",
-          message:
-            health.runtime.status === "satisfied"
-              ? "Native Apple sign-in is enabled for the confirmed Bundle ID."
-              : health.runtime.current?.enabled === false && !required
-                ? "Apple sign-in is disabled; no Apple entitlement is required by this connection."
-                : health.runtime.blockers.map((blocker) => blocker.message).join("; ") ||
-                  "Native Apple sign-in still needs configuration in Clerk.",
-        });
+      const required = options.signInWithApple || health.runtime.current?.enabled;
+      checks.push({
+        name: "Native Apple connection",
+        status:
+          health.runtime.status === "satisfied" ||
+          (health.runtime.current?.enabled === false && !required)
+            ? "pass"
+            : "warn",
+        message:
+          health.runtime.status === "satisfied"
+            ? "Native Apple sign-in is enabled for the confirmed Bundle ID."
+            : health.runtime.current?.enabled === false && !required
+              ? "Apple sign-in is disabled; no Apple entitlement is required by this connection."
+              : health.runtime.blockers.map((blocker) => blocker.message).join("; ") ||
+                "Native Apple sign-in still needs configuration in Clerk.",
+      });
       if (required)
         for (const context of preview.inspection.contexts) {
           let status: Check["status"] = "fail";
           let message = `Apple sign-in is requested or enabled in Clerk, but ${context.selection.configuration} has no Apple entitlement.`;
-          try {
-            const source = await readEntitlements(context);
-            if (source !== undefined && capabilityXML(source, undefined, true) === source) {
-              status = "pass";
-              message = `${context.selection.configuration} has the Apple entitlement. Provisioning and sign-in remain unverified.`;
+          const path = context.settings.CODE_SIGN_ENTITLEMENTS;
+          if (path) {
+            try {
+              const snapshot = await snapshotFile(
+                context.selection.root,
+                resolve(
+                  context.settings.SRCROOT ??
+                    resolve(context.selection.root, dirname(context.selection.project)),
+                  path,
+                ),
+              );
+              if (capabilityXML(snapshot.source, undefined, true) === snapshot.source) {
+                status = "pass";
+                message = `${context.selection.configuration} has the Apple entitlement. Provisioning and sign-in remain unverified.`;
+              }
+            } catch {
+              status = "warn";
+              message = `The ${context.selection.configuration} Apple entitlement file could not be verified; inspect it in Xcode.`;
             }
-          } catch {
-            status = "warn";
-            message = `The ${context.selection.configuration} Apple entitlement file could not be verified; inspect it in Xcode.`;
           }
           checks.push({
             name: `Apple entitlement: ${context.selection.configuration}`,

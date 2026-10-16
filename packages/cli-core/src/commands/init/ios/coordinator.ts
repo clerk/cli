@@ -2,7 +2,7 @@ import { readdirSync } from "node:fs";
 import { confirm, text } from "../../../lib/prompts.ts";
 import { select } from "../../../lib/listage.ts";
 import { log } from "../../../lib/log.ts";
-import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUserAbort } from "../../../lib/errors.ts";
 import { setTelemetryStage } from "../../../lib/telemetry.ts";
 import { interruptSignal } from "../../../lib/signals.ts";
 import { outro } from "../../../lib/spinner.ts";
@@ -11,7 +11,6 @@ import { isUnchangedStarter } from "./starter.ts";
 import { planAppleSetup } from "./plan.ts";
 import { sdkLinked } from "./sdk.ts";
 import { inspectSelectedProject } from "./xcode.ts";
-import { personalSigningTeam } from "./teams.ts";
 import { nonDefaultXcodeNote } from "./xcode-tools.ts";
 import { SelectionNeeded } from "./discovery.ts";
 import { IdentityRequired, describeIdentity } from "./identity.ts";
@@ -102,7 +101,6 @@ export function printSetupPreview(preview: SetupPreview): void {
   if (preview.dirtyFiles.length) log.info("  Existing edits will be preserved in backups.");
   if (preview.capabilities?.status === "manual")
     log.warn(preview.capabilities.reason ?? "Some capabilities need manual setup.");
-  for (const note of preview.personalTeamNotes) log.warn(note);
   if (preview.inspection.uncheckedConfigurations.length)
     log.warn(
       `Other configurations need review: ${preview.inspection.uncheckedConfigurations.join(", ")}`,
@@ -246,24 +244,11 @@ export async function runAppleInit(
     );
     stopNativeProgress();
     setup.inspection = inspection;
-    // A new starter already knows its team; any other app asks Xcode's account list. This holds
-    // for a deferred run too, which no longer knows it started as a starter.
-    const personalTeam = options.starterProject
-      ? options.starterProject.personalTeam
-        ? {
-            configurations: inspection.contexts.map((context) => context.selection.configuration),
-            mixed: false,
-          }
-        : undefined
-      : personalSigningTeam(inspection, dependencies.xcodeTeams);
-    if (personalTeam) {
-      if (options.signInWithApple)
-        throwUsageError(
-          "Sign in with Apple needs a paid Apple Developer Program team, and this app is signed by a Personal Team. Drop --sign-in-with-apple, or choose a paid team in Xcode.",
-        );
-      setup.personalTeam = personalTeam;
-      setup.signInWithApple = false;
-    }
+    // A Mac app has no simulator to fall back to, so it's signed with a provisioning profile,
+    // which a Personal Team can't get with Associated Domains. Only a new starter knows its team
+    // this way; Sign in with Apple is already off for it (see `starterAppleOptions`).
+    if (options.starterProject?.personalTeam && inspection.input.selection.sdk === "macosx")
+      setup.associatedDomain = false;
     const starter = await isUnchangedStarter(inspection);
     let installedProducts: "core" | "ui" | undefined;
     if (!options.appleSdk && !options.prebuiltAuthUi) {
