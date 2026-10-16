@@ -534,7 +534,8 @@ function findResume(
   const latest = importsOfFile(runs, match).find(
     (record) => sameFileAndInstance(record, match) && record.sourceHash === match.sourceHash,
   );
-  if (!latest) {
+  // An undone exact match starts a new run, so it checks the others too.
+  if (!latest || undoneInFull(runsDir, latest)) {
     // Another source's run of this file, or an earlier version of this one,
     // sent the same users: starting over beside it would reject every user it
     // created and leave it unfinished, so that takes --new-run. Any such run
@@ -545,9 +546,11 @@ function findResume(
     );
     if (earlier) {
       const how =
-        earlier.source === match.source
-          ? "with an earlier version of this source"
-          : `with the \`${earlier.source}\` source`;
+        earlier.source !== match.source
+          ? `with the \`${earlier.source}\` source`
+          : earlier.sourceHash !== match.sourceHash
+            ? "with an earlier version of this source"
+            : "too, and was not undone";
       throwUsageError(
         `Run ${earlier.id} imported this file into this instance ${how}, so the users it created would come back as conflicts. Nothing was imported.\n` +
           `Pass --new-run to start a new run beside it, or undo it first with \`${undoCommand(earlier.id, carry)}\`.`,

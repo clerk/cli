@@ -271,8 +271,10 @@ function acquireLockFile(
   // as `wx` does, but the lock never exists without its PID, which a second
   // process would read as stale and remove.
   const take = () => {
-    const whole = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(whole, String(process.pid), { mode: 0o600 });
+    // Random and exclusive: a name no one can plant a link at, and a crashed
+    // run's leftover (same PID, in a container) never reads as a held lock.
+    const whole = `${file}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+    fs.writeFileSync(whole, String(process.pid), { flag: "wx", mode: 0o600 });
     try {
       fs.linkSync(whole, file);
     } catch (error) {

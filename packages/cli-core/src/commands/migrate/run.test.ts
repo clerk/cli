@@ -2513,6 +2513,41 @@ describe("run", () => {
       expect(created()).toHaveLength(0);
     });
 
+    // The newer, undone run is of this same version: undone, it starts a new
+    // run, so the older interrupted one has to be checked too.
+    test("refuses while an earlier version's run is unfinished behind an undone run of this version", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      const older = interruptOnly();
+      const second = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, second), `${CUSTOM}\n// second`);
+      await run({
+        input: "export.json",
+        source: second,
+        yes: true,
+        secretKey: "sk_test_x",
+        newRun: true,
+      });
+      const newer = listRuns(runsDir()).find((record) => record.id !== older)!;
+      fs.writeFileSync(
+        path.join(runsDir(), newer.id, "run.json"),
+        JSON.stringify({ ...readRun(runsDir(), newer.id), status: "undone" }),
+      );
+      requests = [];
+
+      const error = (await run({
+        input: "export.json",
+        source: second,
+        yes: true,
+        secretKey: "sk_test_x",
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain(
+        `Run ${older} imported this file into this instance with an earlier version`,
+      );
+      expect(created()).toHaveLength(0);
+    });
+
     test("an edited source with --new-run starts a new run beside the earlier one", async () => {
       await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
       interruptOnly();

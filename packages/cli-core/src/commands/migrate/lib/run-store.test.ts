@@ -206,6 +206,22 @@ describe("locks and interruptions", () => {
     expect(() => continueRun(runsDir, run.record)).not.toThrow();
   });
 
+  // A predictable name in a shared /tmp could be a planted symlink, and a
+  // crashed run's leftover under the same PID would read as a held lock.
+  test("the lock's temporary file has a random name and is created exclusively", () => {
+    const identity = { sha256: "b".repeat(64), instanceId: "ins_tmp" };
+    const write = spyOn(fs, "writeFileSync");
+    try {
+      const release = lockImport(identity);
+      const tmp = write.mock.calls.find(([target]) => String(target).endsWith(".tmp"));
+      expect(tmp?.[2]).toMatchObject({ flag: "wx" });
+      expect(String(tmp?.[0])).toMatch(new RegExp(`\\.${process.pid}\\.[0-9a-f]{16}\\.tmp$`));
+      release();
+    } finally {
+      write.mockRestore();
+    }
+  });
+
   // A lock created empty and written after reads as stale to a second
   // process in between, which would remove it and import beside the first.
   test("a lock is linked into place with its PID already written", () => {

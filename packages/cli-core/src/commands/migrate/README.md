@@ -1146,13 +1146,14 @@ clerk migrate sources --json
 | `[source]` | A built-in key, or the path to a source you wrote, to show fully |
 | `--json`   | The same data, on stdout                                         |
 
-`sources` alone prints the table under [Sources](#sources). `sources <source>` shows one source in
-full: its export command, what it carries with a note for each, where each
-field lands (`encrypted_password → password`), its fixed defaults, and any
-caveats. An unknown key exits 2 and lists the valid ones. There is no
-intro/outro gutter. `sources` alone, or with a built-in key, reads a static
-registry and runs nothing. With a path, it loads and runs that file, as
-`--source` does, to check it and show what it maps.
+`sources` alone prints the table under [Sources](#sources). `sources <source>`
+shows one source in full: its export command (when `clerk migrate export` has
+one for it), what it carries with a note for each, where each field lands
+(`encrypted_password → password`), its fixed defaults, and any caveats. An
+unknown key exits 2 and lists the valid ones. There is no intro/outro gutter.
+`sources` alone, or with a built-in key, reads a static registry and runs
+nothing. With a path, it loads and runs that file, as `--source` does, to check
+it and show what it maps.
 
 ### `clerk migrate help`
 
@@ -1244,8 +1245,9 @@ and won't start a new one beside it unasked either: while that run isn't
 undone, it refuses with exit 2 and names it, since the users it created would
 come back as conflicts. Pass `--new-run` to start
 a new run anyway, or undo the earlier one first. The hash covers that file
-only: a local helper it imports is not part of it, so after editing one, pass
-`--new-run` rather than continue a run made with the old helper.
+only: a local helper it imports is not part of it, so after editing one, or
+when running a copy of the file beside different helpers, pass `--new-run`
+rather than continue a run made with the old ones.
 
 #### Validation
 
