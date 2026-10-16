@@ -50,8 +50,21 @@ export function canSetUpXcode(): boolean {
 export const CLERK_SWIFT_MINIMUM_VERSION = "1.5.8";
 export const SWIFT_QUICKSTART = "https://clerk.com/docs/ios/getting-started/quickstart";
 
-export function setupNextSteps(result: ApplyResult): string[] {
+export function setupNextSteps(result: ApplyResult, starter?: StarterProjectSummary): string[] {
   const initialized = result.handoff.completed.some((item) => item.id === "initialize-clerk");
+  if (starter && initialized)
+    return [
+      `Open ${starter.projectName}/${starter.projectName}.xcodeproj in Xcode.`,
+      starter.platform === "ios"
+        ? "Choose an iPhone simulator and press Run, then test your sign-in flow."
+        : "Press Run, then test your sign-in flow.",
+      ...(starter.personalTeam
+        ? [
+            "To run on a real device or enable Sign in with Apple, join the Apple Developer Program and choose that team in Xcode.",
+          ]
+        : []),
+      `Quickstart: ${SWIFT_QUICKSTART}`,
+    ];
   return [
     initialized
       ? "Build your app and test your sign-in flow."
@@ -94,7 +107,7 @@ export function printSetupPreview(preview: SetupPreview): void {
     log.info("  Swift integration remains: initialize Clerk and connect your sign-in flow.");
 }
 
-export function printSetupResult(result: ApplyResult): void {
+export function printSetupResult(result: ApplyResult, starter?: StarterProjectSummary): void {
   if (result.message) log.warn(result.message);
   const completed = result.handoff.completed;
   const summary = [
@@ -110,7 +123,7 @@ export function printSetupResult(result: ApplyResult): void {
   if (result.recovery?.needsReview.length)
     log.warn(`Review interrupted edits: ${result.recovery.needsReview.join(", ")}`);
   log.info("\nNext steps:");
-  for (const step of setupNextSteps(result)) log.info(`  • ${step}`);
+  for (const step of setupNextSteps(result, starter)) log.info(`  • ${step}`);
 }
 
 /** What an agent needs to do before native setup can run: choose a Clerk application. */
@@ -140,6 +153,14 @@ export interface AppleInitOptions {
   appIdPrefix?: string;
   signInWithApple?: boolean;
   prebuiltAuthUi?: boolean;
+  /** The app `clerk init --starter` just created, which needs no confirmation before setup. */
+  starterProject?: StarterProjectSummary;
+}
+
+export interface StarterProjectSummary {
+  projectName: string;
+  platform: "ios" | "macos";
+  personalTeam: boolean;
 }
 
 /**
@@ -245,7 +266,8 @@ export async function runAppleInit(
       if (options.prebuiltAuthUi == null && starter && setup.products === "ui")
         setup.signInUI = await confirm({
           message: "Add Clerk’s prebuilt sign-in screen?",
-          default: false,
+          // A new starter has no screens of its own yet.
+          default: options.starterProject != null,
         });
       if (options.signInWithApple == null)
         setup.signInWithApple = await confirm({
@@ -294,13 +316,17 @@ export async function runAppleInit(
     });
     stopNativeProgress();
     if (!json) printSetupPreview(preview);
-    if (interactive && !(await confirm({ message: "Apply this setup?", default: true })))
+    if (
+      interactive &&
+      !options.starterProject &&
+      !(await confirm({ message: "Apply this setup?", default: true }))
+    )
       throwUserAbort();
     setTelemetryStage("ios_apply");
     const result = await applySetup(preview, dependencies, signal);
     stopNativeProgress();
     if (json) log.data(JSON.stringify(result, null, 2));
-    else printSetupResult(result);
+    else printSetupResult(result, options.starterProject);
     if (result.status === "incomplete")
       throw new CliError(
         result.message ??

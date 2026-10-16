@@ -1,8 +1,11 @@
-import { test, expect, describe, spyOn, afterAll } from "bun:test";
+import { test, expect, describe, spyOn, afterAll, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BOOTSTRAP_REGISTRY } from "./bootstrap-registry.ts";
+import * as listage from "../../lib/listage.ts";
+import * as coordinator from "./ios/coordinator.ts";
+import * as appleStarter from "./ios/starter-bootstrap.ts";
 import {
   findAvailableProjectName,
   promptAndBootstrap,
@@ -249,5 +252,107 @@ describe("promptAndBootstrap", () => {
       exitCode: 2,
       message: expect.stringContaining("--framework"),
     });
+  });
+});
+
+describe("promptAndBootstrap for native Apple starters", () => {
+  const spies: { mockRestore(): void }[] = [];
+  afterEach(() => {
+    for (const spy of spies.splice(0)) spy.mockRestore();
+  });
+  const IOS = { name: "iOS (Swift)", dep: "ios" } as never;
+  const APPLE_RESULT = {
+    projectDir: "/tmp/MyApp",
+    projectName: "MyApp",
+    apple: {
+      platform: "ios" as const,
+      bundleIdentifier: "com.example.MyApp",
+      teamId: "COMPANY001",
+      personalTeam: false,
+    },
+  };
+
+  test("--framework ios creates the Apple starter with the Apple answers", async () => {
+    const starter = spyOn(appleStarter, "promptAppleStarter").mockResolvedValue(APPLE_RESULT);
+    spies.push(starter);
+
+    const result = await promptAndBootstrap("/tmp", IOS, {
+      skipConfirm: true,
+      nameOverride: "MyApp",
+      apple: { platform: "macos", bundleId: "com.example.MyApp", teamId: "COMPANY001", flags: [] },
+    });
+
+    expect(result).toBe(APPLE_RESULT);
+    expect(starter).toHaveBeenCalledWith("/tmp", "macos", {
+      skipConfirm: true,
+      name: "MyApp",
+      bundleId: "com.example.MyApp",
+      teamId: "COMPANY001",
+      signInWithApple: undefined,
+    });
+  });
+
+  // Swift names start uppercase, which the web starters' name check rejects.
+  test("--name follows the Swift rules for an Apple starter", async () => {
+    spies.push(spyOn(appleStarter, "promptAppleStarter").mockResolvedValue(APPLE_RESULT));
+
+    await expect(
+      promptAndBootstrap("/tmp", IOS, { skipConfirm: true, nameOverride: "MyApp" }),
+    ).resolves.toBe(APPLE_RESULT);
+  });
+
+  test.each([
+    [true, ["iOS (SwiftUI)", "macOS (SwiftUI)"]],
+    [false, []],
+  ] as const)("with Xcode %p, the framework list adds %p", async (xcode, added) => {
+    spies.push(spyOn(coordinator, "canSetUpXcode").mockReturnValue(xcode));
+    let names: string[] = [];
+    spies.push(
+      spyOn(listage, "search").mockImplementation(async (config) => {
+        const choices = await config.source(undefined, { signal: new AbortController().signal });
+        names = choices.map((choice) => (choice as { name: string }).name);
+        throw new Error("stop");
+      }),
+    );
+
+    await expect(
+      promptAndBootstrap("/tmp", undefined, { skipConfirm: false, implicitBootstrap: true }),
+    ).rejects.toThrow("stop");
+
+    expect(names).toEqual([...BOOTSTRAP_REGISTRY.map((entry) => entry.label), ...added]);
+  });
+
+  test("choosing iOS in the list creates the Apple starter", async () => {
+    spies.push(spyOn(coordinator, "canSetUpXcode").mockReturnValue(true));
+    spies.push(spyOn(listage, "search").mockResolvedValue("ios"));
+    const starter = spyOn(appleStarter, "promptAppleStarter").mockResolvedValue(APPLE_RESULT);
+    spies.push(starter);
+
+    await promptAndBootstrap("/tmp", undefined, { skipConfirm: false, implicitBootstrap: true });
+
+    expect(starter).toHaveBeenCalledWith(
+      "/tmp",
+      "ios",
+      expect.objectContaining({ skipConfirm: false }),
+    );
+  });
+
+  test("Apple flags stop a web starter before anything is generated", async () => {
+    spies.push(spyOn(coordinator, "canSetUpXcode").mockReturnValue(true));
+    spies.push(spyOn(listage, "search").mockResolvedValue("next"));
+    const spawn = spyOn(Bun, "spawn");
+    spies.push(spawn);
+
+    await expect(
+      promptAndBootstrap("/tmp", undefined, {
+        skipConfirm: false,
+        implicitBootstrap: true,
+        apple: { flags: ["--bundle-id"] },
+      }),
+    ).rejects.toMatchObject({
+      exitCode: 2,
+      message: expect.stringContaining("--bundle-id applies only to iOS and macOS apps"),
+    });
+    expect(spawn).not.toHaveBeenCalled();
   });
 });

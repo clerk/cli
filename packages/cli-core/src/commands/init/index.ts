@@ -34,7 +34,7 @@ import {
 } from "../../lib/keyless.js";
 import { readSdkKeylessApp } from "../../lib/keyless-target.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
-import { printNextSteps } from "../../lib/next-steps.js";
+import { printAgentNextSteps, printNextSteps } from "../../lib/next-steps.js";
 import { gatherContext, hasPackageJson } from "./context.js";
 import { scaffold, enrichProjectContext } from "./scaffold.js";
 import { previewPlan, previewAndConfirm } from "./preview.js";
@@ -68,6 +68,7 @@ import {
   type AppleInitOptions,
 } from "./ios/coordinator.js";
 import { withNativeProgress } from "./ios/progress.js";
+import type { AppleStarter } from "./ios/starter-bootstrap.js";
 
 type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
   /** Framework to set up (skips auto-detection). */
@@ -79,6 +80,8 @@ type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
   skills?: boolean;
   /** Create a new project from a starter template. */
   starter?: boolean;
+  /** Apple Developer Team ID for a new iOS or macOS starter. */
+  teamId?: string;
   /** Link to a specific Clerk application by ID (skips the interactive picker). */
   app?: string;
   /** Force accountless setup (auto-generated dev keys, no login). */
@@ -104,30 +107,41 @@ export async function init(options: InitOptions = {}) {
   }
   await assertUsableFlags(options, agent, optsAccountless);
 
+  // macOS apps use the iOS (Swift) setup; the value only picks which starter to create.
   const frameworkOverride = options.framework
-    ? (lookupFramework(options.framework) ?? undefined)
+    ? (lookupFramework(options.framework === MACOS ? "ios" : options.framework) ?? undefined)
     : options.xcodeProject
       ? (lookupFramework("ios") ?? undefined)
       : undefined;
   // Before any bootstrap, so an unsupported flag never leaves a new project behind.
   if (frameworkOverride) assertFrameworkFlags(options, frameworkOverride);
 
+  const appleFlags = APPLE_FLAGS.filter(([key]) => options[key] != null).map(([, flag]) => flag);
   // In agent mode, implicitly enable --yes to skip all confirmation prompts.
   const overrides: BootstrapOverrides = {
     skipConfirm: options.yes || agent,
     pmOverride: options.pm,
     nameOverride: options.name,
+    ...((appleFlags.length || options.framework === MACOS) && {
+      apple: {
+        platform: options.framework === MACOS ? "macos" : undefined,
+        bundleId: options.bundleId,
+        teamId: options.teamId,
+        signInWithApple: options.signInWithApple,
+        flags: appleFlags,
+      },
+    }),
   };
 
   intro("Setting up Clerk");
 
   setTelemetryStage("detect");
-  // Only an existing native Apple project supports these, and init never bootstraps one,
-  // so they skip project creation instead of being rejected after it.
+  // Only an existing native Apple project supports these outside a new starter, so they
+  // skip project creation instead of being rejected after it.
   const existingProjectFlags = [
     options.dryRun && "--dry-run",
     options.json && "--json",
-    ...APPLE_FLAGS.filter(([key]) => options[key] != null).map(([, flag]) => flag),
+    ...(options.starter ? [] : appleFlags),
   ].filter((flag): flag is string => Boolean(flag));
   const resolved = existingProjectFlags.length
     ? await resolveExistingProjectContext(cwd, frameworkOverride, overrides, existingProjectFlags)
@@ -144,7 +158,12 @@ export async function init(options: InitOptions = {}) {
   }
 
   assertFrameworkFlags(options, ctx.framework);
-  const appleOptions = { ...options, root: ctx.cwd, agent };
+  const appleOptions: AppleInitOptions = {
+    ...options,
+    root: ctx.cwd,
+    agent,
+    ...(bootstrap?.apple && starterAppleOptions(options, bootstrap.projectName, bootstrap.apple)),
+  };
   // Only native Apple supports a dry run today; it inspects without signing in.
   if (options.dryRun) return withNativeProgress(async () => runAppleInit(appleOptions, undefined));
 
@@ -291,6 +310,11 @@ async function assertUsableFlags(
       "--dry-run never signs in or changes your Clerk application; drop --app, --login, and --accountless.",
     );
   }
+  if (options.teamId != null && !options.starter) {
+    throwUsageError(
+      "--team-id applies to a new app with --starter. For an existing app, set the team in Xcode, or pass --app-id-prefix.",
+    );
+  }
   if (options.appIdPrefix != null && !/^[A-Z0-9]{10}$/.test(options.appIdPrefix.trim())) {
     throwUsageError("--app-id-prefix must be the 10-character App ID Prefix from Apple Developer.");
   }
@@ -314,9 +338,33 @@ const APPLE_FLAGS = [
   ["appleSdk", "--apple-sdk"],
   ["bundleId", "--bundle-id"],
   ["appIdPrefix", "--app-id-prefix"],
+  ["teamId", "--team-id"],
   ["signInWithApple", "--sign-in-with-apple"],
   ["prebuiltAuthUi", "--prebuilt-auth-ui"],
 ] as const;
+
+/** `--framework macos` creates a macOS starter; for an existing app it means the iOS (Swift) setup. */
+const MACOS = "macos";
+
+/**
+ * A new starter already settled its identity: setup reads the Bundle ID back from the project it
+ * wrote, registers it with the starter's team as the App ID Prefix instead of asking again, and
+ * skips the confirmation that protects existing projects.
+ */
+function starterAppleOptions(
+  options: InitOptions,
+  projectName: string,
+  apple: AppleStarter,
+): Partial<AppleInitOptions> {
+  return {
+    // The project already carries `--bundle-id`; passing it again would mask what Xcode reports.
+    bundleId: undefined,
+    appIdPrefix: options.appIdPrefix ?? apple.teamId,
+    // A Personal Team can't use Sign in with Apple, so setup doesn't offer it.
+    signInWithApple: apple.personalTeam ? false : options.signInWithApple,
+    starterProject: { projectName, platform: apple.platform, personalTeam: apple.personalTeam },
+  };
+}
 
 /** Rejects flags the detected (or requested) framework can't honour. */
 function assertFrameworkFlags(options: InitOptions, framework: FrameworkInfo): void {
@@ -503,10 +551,16 @@ function devCommand(pm: string): string {
   return pm === "npm" ? "npm run dev" : `${pm} dev`;
 }
 
-function printBootstrapNextSteps(
-  { projectName, packageManager }: BootstrapResult,
-  accountless: boolean,
-): void {
+function printBootstrapNextSteps(bootstrap: BootstrapResult, accountless: boolean): void {
+  // Reached for a native starter only when an agent hasn't chosen a Clerk application yet. The
+  // agent must finish setup from inside the new app, so it gets the steps too.
+  if (bootstrap.apple) {
+    const steps = [`cd ${bootstrap.projectName}`, "clerk init --app <app_id> --json"];
+    printNextSteps(steps);
+    printAgentNextSteps(steps);
+    return;
+  }
+  const { projectName, packageManager } = bootstrap;
   const steps = [`cd ${projectName}`, devCommand(packageManager)];
   if (accountless) {
     steps.push("clerk auth login  (when you're ready to connect your Clerk account)");
@@ -792,9 +846,10 @@ export function registerInit(program: Program): void {
     .command("init")
     .description("Initialize Clerk in your project")
     .addOption(
-      createOption("--framework <name>", "Framework to set up (skips auto-detection)").choices(
-        FRAMEWORK_NAMES,
-      ),
+      createOption("--framework <name>", "Framework to set up (skips auto-detection)").choices([
+        ...FRAMEWORK_NAMES,
+        MACOS,
+      ]),
     )
     .addOption(
       createOption(
@@ -838,8 +893,15 @@ export function registerInit(program: Program): void {
         "Clerk SDK products: core (ClerkKit) or ui (ClerkKit + ClerkKitUI)",
       ).choices(["core", "ui"]),
     )
-    .option("--bundle-id <id>", "Bundle ID to register when Xcode's is ambiguous")
+    .option(
+      "--bundle-id <id>",
+      "Bundle ID for a new iOS or macOS app with --starter, or to register when Xcode's is ambiguous",
+    )
     .option("--app-id-prefix <prefix>", "10-character Apple App ID Prefix for a new registration")
+    .option(
+      "--team-id <id>",
+      "Apple Developer Team ID for a new iOS or macOS app with --starter (skips the team prompt)",
+    )
     .option("--sign-in-with-apple", "Enable native Sign in with Apple")
     .option(
       "--prebuilt-auth-ui",
@@ -865,6 +927,10 @@ export function registerInit(program: Program): void {
       {
         command: "clerk init --starter --framework next --accountless",
         description: "Bootstrap with temporary dev keys, even when logged in",
+      },
+      {
+        command: "clerk init --starter --framework ios",
+        description: "Create a SwiftUI iOS app in Xcode and set up Clerk",
       },
       {
         command: "clerk init --login",

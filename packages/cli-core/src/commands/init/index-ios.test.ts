@@ -188,4 +188,128 @@ describe("clerk init for native Apple projects", () => {
     );
     expect(run).not.toHaveBeenCalled();
   });
+
+  describe("--starter", () => {
+    const STARTER = {
+      projectDir: "/tmp/test/MyApp",
+      projectName: "MyApp",
+      apple: {
+        platform: "ios" as "ios" | "macos",
+        bundleIdentifier: "com.example.MyApp",
+        teamId: "COMPANY001",
+        personalTeam: false,
+      },
+    };
+
+    function starter(
+      apple: Partial<typeof STARTER.apple> = {},
+      overrides: { isAgent?: boolean } = {},
+    ) {
+      const run = iosProject(overrides);
+      spyOn(frameworkMod, "lookupFramework").mockImplementation((name) =>
+        name === "ios" ? iosFramework : null,
+      );
+      spyOn(bootstrapMod, "promptAndBootstrap").mockResolvedValue({
+        ...STARTER,
+        apple: { ...STARTER.apple, ...apple },
+      });
+      spyOn(config, "resolveProfile").mockResolvedValue({
+        profile: { appId: "app_test" },
+      } as never);
+      return run;
+    }
+
+    test("sets up the new app with its team, reading the Bundle ID back from Xcode", async () => {
+      const run = starter();
+
+      await init({ starter: true, framework: "ios" });
+
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bundleId: undefined,
+          appIdPrefix: "COMPANY001",
+          starterProject: { projectName: "MyApp", platform: "ios", personalTeam: false },
+        }),
+        "app_test",
+      );
+    });
+
+    test("keeps an explicit --app-id-prefix over the team", async () => {
+      const run = starter();
+
+      await init({ starter: true, framework: "ios", appIdPrefix: "LEGACY0001" });
+
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({ appIdPrefix: "LEGACY0001" }),
+        "app_test",
+      );
+    });
+
+    test("doesn't offer Sign in with Apple on a Personal Team", async () => {
+      const run = starter({ personalTeam: true });
+
+      await init({ starter: true, framework: "ios" });
+
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({ signInWithApple: false }),
+        "app_test",
+      );
+    });
+
+    test("passes Apple answers and the macOS platform to the starter", async () => {
+      starter({ platform: "macos" });
+
+      await init({
+        starter: true,
+        framework: "macos",
+        bundleId: "com.example.MyApp",
+        teamId: "COMPANY001",
+      });
+
+      expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(
+        expect.any(String),
+        iosFramework,
+        expect.objectContaining({
+          apple: expect.objectContaining({
+            platform: "macos",
+            bundleId: "com.example.MyApp",
+            teamId: "COMPANY001",
+            flags: ["--bundle-id", "--team-id"],
+          }),
+        }),
+      );
+    });
+
+    test("an agent without an app is told to finish setup inside the new app", async () => {
+      const run = starter({}, { isAgent: true });
+      spyOn(config, "resolveProfile").mockResolvedValue(undefined);
+      // A new starter has no Clerk package yet.
+      spyOn(context, "gatherContext").mockResolvedValue({
+        ...FAKE_CTX,
+        cwd: STARTER.projectDir,
+        deps: {},
+        existingClerk: false,
+        framework: iosFramework,
+      });
+      spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+        actions: [],
+        postInstructions: ["Then run `clerk init --app <app_id> --json`."],
+      } as never);
+
+      await init({ starter: true, framework: "ios" });
+
+      expect(run).not.toHaveBeenCalled();
+      expect(captured.err).toContain("cd MyApp");
+      expect(captured.err).toContain("clerk init --app <app_id> --json");
+    });
+
+    test("--team-id needs --starter", async () => {
+      setup();
+
+      await expect(init({ teamId: "COMPANY001" })).rejects.toThrow(
+        "--team-id applies to a new app with --starter",
+      );
+      expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    });
+  });
 });
