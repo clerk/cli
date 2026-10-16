@@ -2356,6 +2356,36 @@ describe("run", () => {
       );
     });
 
+    // The checks reject the users a run under another source created, so the
+    // refusal names that run, as it does for one of the same source.
+    test("a refusal names the earlier run of another source that holds the users", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      const [first] = listRuns(runsDir());
+      const other = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(
+        path.join(workDir, other),
+        CUSTOM.replace('key: "myplatform"', 'key: "otherplatform"'),
+      );
+      stubClerk({
+        existing: [
+          { id: "user_1", external_id: "mp_1" },
+          { id: "user_2", external_id: "mp_2" },
+        ],
+      });
+
+      const error = (await run({
+        input: "export.json",
+        source: other,
+        newRun: true,
+        secretKey: "sk_test_x",
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.message).toContain(`2 of them were created by run ${first!.id}`);
+      expect(error.examples?.map((example) => example.description)).toContain(
+        `Undo run ${first!.id} first`,
+      );
+    });
+
     test("imports through a user-authored source", async () => {
       await run({
         input: "export.json",
