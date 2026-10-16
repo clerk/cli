@@ -5,14 +5,27 @@ import { _resetMode, setMode } from "../mode.ts";
 import { useCaptureLog } from "../test/lib/stubs.ts";
 
 let savedLevel: LogLevel;
+// A developer's own NO_COLOR or FORCE_COLOR would decide what these tests see.
+const COLOR_VARS = ["NO_COLOR", "FORCE_COLOR"] as const;
+let savedColor: Partial<Record<(typeof COLOR_VARS)[number], string>>;
 
 beforeEach(() => {
   savedLevel = getLogLevel();
+  savedColor = {};
+  for (const key of COLOR_VARS) {
+    if (process.env[key] !== undefined) savedColor[key] = process.env[key];
+    delete process.env[key];
+  }
 });
 
 afterEach(() => {
   setLogLevel(savedLevel);
   _resetMode();
+  for (const key of COLOR_VARS) {
+    const saved = savedColor[key];
+    if (saved === undefined) delete process.env[key];
+    else process.env[key] = saved;
+  }
 });
 
 describe("log levels", () => {
