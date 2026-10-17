@@ -5,6 +5,7 @@ import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
 import clerkSource from "../sources/clerk.ts";
 import type { SourceEntry } from "../types.ts";
+import { __resetCustomSourcesForTesting, registerCustomSource } from "../sources/registry.ts";
 import {
   consolidateClerkIdentifiers,
   flattenObjectSelectively,
@@ -295,6 +296,27 @@ describe("loadUsersFromFile", () => {
       expect(users[0]?.passwordHasher).toBe("argon2id");
     } finally {
       delete source.defaults;
+    }
+  });
+
+  test("a custom preTransform's rows win over a CSV file", async () => {
+    registerCustomSource({
+      ...clerkSource,
+      key: "rows-from-pretransform",
+      preTransform: (filePath) => ({
+        filePath,
+        data: [{ id: "from-pretransform", primary_email_address: "p@x.dev" }],
+      }),
+    });
+    try {
+      fs.writeFileSync(
+        path.join(workDir, "ignored.csv"),
+        "id,primary_email_address\nfile,f@x.dev\n",
+      );
+      const { users } = await loadUsersFromFile("ignored.csv", "rows-from-pretransform");
+      expect(users.map((user) => user.userId)).toEqual(["from-pretransform"]);
+    } finally {
+      __resetCustomSourcesForTesting();
     }
   });
 
