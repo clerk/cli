@@ -70,6 +70,20 @@ describe("detectAuthLibraries", () => {
     expect(output).toContain("Kinde");
   });
 
+  test.each(["@workos-inc/authkit-nextjs", "@workos-inc/authkit-react"])(
+    "detects WorkOS via %s",
+    (pkg) => {
+      runDetectAuthLibraries({ [pkg]: "1.0.0" });
+      expect(captured.out).toContain("WorkOS");
+    },
+  );
+
+  // The Node SDK also serves WorkOS SSO and Directory Sync alone.
+  test("does not call @workos-inc/node alone WorkOS auth", () => {
+    runDetectAuthLibraries({ "@workos-inc/node": "7.0.0" });
+    expect(captured.out).not.toContain("WorkOS");
+  });
+
   test("detects multiple auth libraries", () => {
     runDetectAuthLibraries({ "next-auth": "5.0.0", firebase: "11.0.0" });
     const output = captured.out;
@@ -181,6 +195,30 @@ describe("scanForIssues", () => {
 
     const findings = await scanForIssues(tempDir, "next");
     expect(findings.some((f) => f.message.includes("Passport"))).toBe(true);
+  });
+
+  // `@workos-inc/node` alone also serves SSO and Directory Sync, so the code
+  // names User Management, not the package.
+  test("detects User Management through the WorkOS Node SDK", async () => {
+    await mkdir(join(tempDir, "src"), { recursive: true });
+    await Bun.write(
+      join(tempDir, "src/auth.ts"),
+      "const user = await workos.userManagement.authenticateWithCode({ code });\n",
+    );
+
+    const findings = await scanForIssues(tempDir, "next");
+    expect(findings.map((f) => f.message)).toContain("WorkOS User Management usage still in use");
+  });
+
+  test("does not flag WorkOS SSO alone", async () => {
+    await mkdir(join(tempDir, "src"), { recursive: true });
+    await Bun.write(
+      join(tempDir, "src/auth.ts"),
+      "const { profile } = await workos.sso.getProfileAndToken({ code, clientId });\n",
+    );
+
+    const findings = await scanForIssues(tempDir, "next");
+    expect(findings.some((f) => f.message.includes("WorkOS"))).toBe(false);
   });
 
   test("returns correct line number", async () => {
