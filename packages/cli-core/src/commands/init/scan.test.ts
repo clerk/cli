@@ -198,8 +198,8 @@ describe("scanForIssues", () => {
   });
 
   // `@workos-inc/node` alone also serves SSO and Directory Sync, so the code
-  // names AuthKit, not the package.
-  test("detects AuthKit through the WorkOS Node SDK", async () => {
+  // names User Management, not the package.
+  test("detects User Management through the WorkOS Node SDK", async () => {
     await mkdir(join(tempDir, "src"), { recursive: true });
     await Bun.write(
       join(tempDir, "src/auth.ts"),
@@ -207,7 +207,18 @@ describe("scanForIssues", () => {
     );
 
     const findings = await scanForIssues(tempDir, "next");
-    expect(findings.some((f) => f.message.includes("WorkOS AuthKit"))).toBe(true);
+    expect(findings.map((f) => f.message)).toContain("WorkOS User Management usage still in use");
+  });
+
+  test("does not flag WorkOS SSO alone", async () => {
+    await mkdir(join(tempDir, "src"), { recursive: true });
+    await Bun.write(
+      join(tempDir, "src/auth.ts"),
+      "const { profile } = await workos.sso.getProfileAndToken({ code, clientId });\n",
+    );
+
+    const findings = await scanForIssues(tempDir, "next");
+    expect(findings.some((f) => f.message.includes("WorkOS"))).toBe(false);
   });
 
   test("returns correct line number", async () => {
