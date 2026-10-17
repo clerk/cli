@@ -125,9 +125,10 @@ const CODE_SCANS: CodeScan[] = [
     message: "Passport import still in use",
   },
   {
-    // AuthKit through the general Node SDK, which the package scan leaves out.
+    // WorkOS users through the general Node SDK, which the package scan leaves
+    // out. The `sso` and `directorySync` modules alone hold no users.
     pattern: "\\bworkos\\.userManagement\\b",
-    message: "WorkOS AuthKit usage still in use",
+    message: "WorkOS User Management usage still in use",
     docsUrl: "https://clerk.com/docs/guides/development/migrating/overview",
   },
   {
