@@ -217,6 +217,7 @@ clerk migrate export clerk --output users.json
 clerk migrate export auth0 --domain my-tenant.us.auth0.com \
   --client-id …                         # asks for the secret, masked
 clerk migrate export supabase --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
+clerk migrate export authjs --db-url "mysql://user:...@127.0.0.1:3306/authjs"
 clerk migrate export betterauth --db-url "./db.sqlite"
 clerk migrate export firebase --service-account ./service-account.json
 clerk migrate export workos --api-key sk_…
@@ -244,6 +245,7 @@ told not to.
 | `clerk`      | Clerk Backend API                | `--source clerk`      |
 | `auth0`      | Auth0 Management API             | `--source auth0`      |
 | `supabase`   | Supabase Postgres (`auth.users`) | `--source supabase`   |
+| `authjs`     | Auth.js database                 | `--source authjs`     |
 | `betterauth` | Better Auth database             | `--source betterauth` |
 | `firebase`   | Firebase Identity Toolkit        | `--source firebase`   |
 | `workos`     | WorkOS User Management API       | `--source workos`     |
@@ -276,20 +278,20 @@ skipped, coverage, next }` — and never prompts, so a missing credential exits 
 naming the flag to pass. `next`, and the commands printed after a human run,
 keep `--runs-dir`: the import looks the run ID up there.
 
-| Flag                       | Platforms                | Description                                                       |
-| -------------------------- | ------------------------ | ----------------------------------------------------------------- |
-| `-o, --output <path>`      | all                      | Write the export here instead of the run folder                   |
-| `-y, --yes`                | all                      | Do not prompt: fail on a bad credential                           |
-| `--json`                   | all                      | Print the result as JSON; never prompts                           |
-| `--runs-dir <path>`        | all                      | Where runs are kept (see [the run store](#the-run-store))         |
-| `--db-url <url>`           | `supabase`, `betterauth` | Connection string (Postgres only for `supabase`)                  |
-| `--service-account <path>` | `firebase`               | Path to a service account key JSON file                           |
-| `--domain <domain>`        | `auth0`                  | Tenant domain, e.g. `my-tenant.us.auth0.com`, not a custom domain |
-| `--client-id <id>`         | `auth0`                  | Machine-to-machine application client ID                          |
-| `--client-secret <secret>` | `auth0`                  | Machine-to-machine application client secret                      |
-| `--api-key <key>`          | `workos`                 | WorkOS secret API key, the one starting `sk_`                     |
-| `--with-identities`        | `workos`                 | Also record each user's OAuth providers                           |
-| `--no-with-identities`     | `workos`                 | Skip the OAuth provider fan-out without being asked               |
+| Flag                       | Platforms                          | Description                                                       |
+| -------------------------- | ---------------------------------- | ----------------------------------------------------------------- |
+| `-o, --output <path>`      | all                                | Write the export here instead of the run folder                   |
+| `-y, --yes`                | all                                | Do not prompt: fail on a bad credential                           |
+| `--json`                   | all                                | Print the result as JSON; never prompts                           |
+| `--runs-dir <path>`        | all                                | Where runs are kept (see [the run store](#the-run-store))         |
+| `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Connection string (Postgres only for `supabase`)                  |
+| `--service-account <path>` | `firebase`                         | Path to a service account key JSON file                           |
+| `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com`, not a custom domain |
+| `--client-id <id>`         | `auth0`                            | Machine-to-machine application client ID                          |
+| `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret                      |
+| `--api-key <key>`          | `workos`                           | WorkOS secret API key, the one starting `sk_`                     |
+| `--with-identities`        | `workos`                           | Also record each user's OAuth providers                           |
+| `--no-with-identities`     | `workos`                           | Skip the OAuth provider fan-out without being asked               |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
 so it resolves a key the same way `clerk migrate import` does, with one extra
@@ -363,7 +365,7 @@ profile in that order.
 The export run has one line per exported user, so `clerk migrate runs` lists it
 alongside imports.
 
-#### Three platforms export no passwords
+#### Platforms that export no passwords
 
 - **Clerk** never returns password digests, TOTP secrets or backup codes over
   the API — only the `*_enabled` booleans. Migrated users must reset their
@@ -374,18 +376,23 @@ alongside imports.
 - **WorkOS** returns neither password hashes nor TOTP secrets, and has no
   support-request escape hatch: hashes go in on import and never come back, and
   `totp.secret` is returned on enrol only. There is nothing to add to the file.
+- **Auth.js** core stores no passwords. An app that also uses the Credentials
+  provider stores them wherever it chose to, which the export does not read,
+  even a password column on the user table: migrate those separately, or have
+  those users reset their password.
 
-All three print a warning whenever they export anyone. `clerk`'s and `workos`'s
+Each prints a warning whenever it exports anyone. `clerk`'s and `workos`'s
 coverage also counts users who _have_ a password, so the size of the gap is
 visible up front — `workos` prints that row at zero unconditionally, because
 zero is the only value it can take.
 
-#### Database-backed exports (`supabase`, `betterauth`)
+#### Database-backed exports (`supabase`, `authjs`, `betterauth`)
 
-These two read the database directly, over **`--db-url`**:
+These read the database directly, over **`--db-url`**:
 
 ```sh
 clerk migrate export supabase   --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
+clerk migrate export authjs     --db-url "mysql://user:...@127.0.0.1:3306/authjs"
 clerk migrate export betterauth --db-url "./db.sqlite"
 clerk migrate export betterauth --db-url "libsql://app-org.turso.io?authToken=..."   # or set TURSO_AUTH_TOKEN
 ```
@@ -395,8 +402,8 @@ connecting. Postgres and MySQL go through `Bun.sql`; SQLite through `bun:sqlite`
 `libsql://` (Turso) over the server's HTTP pipeline endpoint, since `bun:sqlite`
 only opens local files and `@libsql/client` ships native optional dependencies.
 Nothing native ships in the binary — that is the whole reason the `engines.bun`
-floor exists. Resolution is `--db-url`, then `SUPABASE_DB_URL` /
-`BETTERAUTH_DB_URL`, then a masked prompt, since a connection string carries the password inline. A password
+floor exists. Resolution is `--db-url`, then `SUPABASE_DB_URL` / `AUTHJS_DB_URL`
+/ `BETTERAUTH_DB_URL`, then a masked prompt, since a connection string carries the password inline. A password
 pasted unencoded (`#`, `@`, `/` and the like) is percent-encoded for you.
 
 **Connection strings are redacted everywhere.** Errors show
@@ -419,6 +426,20 @@ unreachable host and a closed port as "Connection closed", so:
 user to reset their password; this one carries the bcrypt digests across. It
 also keeps `raw_app_meta_data`, which is what the import's
 [checks](#checks) read for each user's providers.
+
+**`authjs` tries `User`, then `user`, then `users`.** Auth.js has no single
+schema — Prisma capitalizes the table, Drizzle does not, and Postgres treats
+the difference as significant once quoted. On Postgres it tries
+`next_auth.users` first: `@auth/supabase-adapter` keeps its tables in the
+`next_auth` schema, off the default `search_path`, and an app's own
+`public.users` must not answer for it. The run reports which one it found.
+The verified column is read as `emailVerified`, or `email_verified` on a legacy
+NextAuth table, whose `created_at` is kept too when it has one. Auth.js's own
+schemas record no creation time. Auth.js core stores no passwords, so its users
+arrive without credentials. That is all an OAuth or email-link app has. An app
+that also uses the Credentials provider stores passwords wherever it chose to,
+which the export does not read, even a password column on the user table:
+migrate those separately, or have those users reset their password.
 
 **`betterauth` reads its schema before it queries.** It finds the tables
 (`user` and `account`, or `users` and `accounts` under `usePlural: true`), how
@@ -1058,14 +1079,15 @@ A source maps one platform's export onto Clerk's user schema, and says what it
 brings across. Adding a platform is one file in `sources/` plus one line in
 `sources/registry.ts`; `--source`'s tab-completion reads from that array.
 
-| Key          | Reads                        | Passwords | MFA     | Metadata |
-| ------------ | ---------------------------- | --------- | ------- | -------- |
-| `clerk`      | Clerk Dashboard export       | partial   | partial | partial  |
-| `auth0`      | Auth0 Management API         | partial   | no      | yes      |
-| `betterauth` | Better Auth export           | yes       | no      | no       |
-| `firebase`   | `firebase auth:export`       | yes       | no      | no       |
-| `supabase`   | Supabase `auth.users` export | yes       | no      | partial  |
-| `workos`     | WorkOS User Management API   | no        | no      | yes      |
+| Key          | Reads                         | Passwords | MFA     | Metadata |
+| ------------ | ----------------------------- | --------- | ------- | -------- |
+| `clerk`      | Clerk Dashboard export        | partial   | partial | partial  |
+| `auth0`      | Auth0 Management API          | partial   | no      | yes      |
+| `authjs`     | Auth.js / NextAuth user table | no        | no      | no       |
+| `betterauth` | Better Auth export            | yes       | no      | no       |
+| `firebase`   | `firebase auth:export`        | yes       | no      | no       |
+| `supabase`   | Supabase `auth.users` export  | yes       | no      | partial  |
+| `workos`     | WorkOS User Management API    | no        | no      | yes      |
 
 An unknown `--source` exits 2 with the list of valid keys.
 
@@ -1131,8 +1153,9 @@ unconfirmed address there would silently promote it.
 - **Boolean** (`auth0`, `betterauth`, `firebase`, `workos`): `true`/`false`. A CSV export stringifies these, so `"false"` is
   read as false, not as a non-empty string. `TRUE`, `FALSE`, `t` and `f` read
   too, as a spreadsheet or psql writes them.
-- **Timestamp** (`supabase`): a nullable confirmation time. Any real value
-  means verified; `""`, `null` and `\N` do not.
+- **Timestamp** (`authjs`, `supabase`): a nullable confirmation time. Any real value
+  means verified; `""`, `null` and `\N` do not. For `authjs`, neither does `0`
+  (the epoch) or a value that isn't a date.
 
 A Clerk export keeps an unverified primary email or phone unverified.
 
@@ -1280,9 +1303,10 @@ The two Identity Toolkit paths are on `identitytoolkit.googleapis.com`, or on
 the export skips that request, and it may not carry the hash parameters: pass
 them to the import. The two WorkOS paths are on `api.workos.com`.
 
-The database exports (`supabase`, `betterauth`) connect over `--db-url`.
-Better Auth also accepts a `libsql://` URL, which goes over HTTP: it posts to
-the server's pipeline endpoint. Supabase takes Postgres only.
+The three database exports (`supabase`, `authjs`, `betterauth`) connect over
+`--db-url`. Auth.js and Better Auth also accept a `libsql://` URL, which goes
+over HTTP: it posts to the server's pipeline endpoint. Supabase takes Postgres
+only.
 
 ## Notes
 

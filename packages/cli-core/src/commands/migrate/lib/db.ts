@@ -21,6 +21,16 @@ import { CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
 
 export type DbType = "postgres" | "mysql" | "sqlite";
 
+/**
+ * A driver value as the export file carries it: a `Date` as ISO 8601, and
+ * one that holds no real date as absent. A MySQL zero date may come back as an
+ * Invalid Date, whose `toISOString()` throws.
+ */
+export function exportValue(value: unknown): unknown {
+  if (!(value instanceof Date)) return value;
+  return Number.isNaN(value.getTime()) ? undefined : value.toISOString();
+}
+
 export interface DbClient {
   dbType: DbType;
   query<T extends Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
@@ -323,7 +333,7 @@ export async function createDbClient(
   }
 }
 
-export type DbPlatform = "supabase" | "betterauth";
+export type DbPlatform = "supabase" | "betterauth" | "authjs";
 
 /**
  * Turns a driver error into something a user can act on.
@@ -372,7 +382,18 @@ export function describeDbError(error: unknown, platform?: DbPlatform): string {
 
   // Before the table check: Postgres words a missing column "does not exist" too.
   if (/no such column|column .* does not exist|unknown column/i.test(message)) {
-    return "The user table is missing a column the export reads. Check the schema matches the platform's default.";
+    const needs: Partial<Record<DbPlatform, string>> = {
+      authjs:
+        "The Auth.js export reads `id`, `name`, `email` and `emailVerified` (or `email_verified`). " +
+        'For a schema that renames another column (Prisma `@map("full_name")` on `name`, for one), ' +
+        "export the users with your own query that aliases it back, " +
+        '`SELECT id, full_name AS name, email, "emailVerified" AS email_verified FROM "User"` on Postgres ' +
+        "(MySQL quotes with backticks), and import that file with the authjs source.",
+    };
+    return (
+      needs[platform as DbPlatform] ??
+      "The user table is missing a column the export reads. Check the schema matches the platform's default."
+    );
   }
 
   // MySQL says "doesn't exist" and "Unknown table" where Postgres says "does not exist".

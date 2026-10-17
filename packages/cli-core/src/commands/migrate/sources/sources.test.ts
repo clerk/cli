@@ -45,10 +45,11 @@ const one = (key: string, record: Record<string, unknown>, context = {}) =>
     | undefined;
 
 describe("registry", () => {
-  test("registers the built-in platforms", () => {
+  test("registers all seven platforms", () => {
     expect(sourceKeys()).toEqual([
       "clerk",
       "auth0",
+      "authjs",
       "betterauth",
       "firebase",
       "supabase",
@@ -198,6 +199,12 @@ describe("auth0", () => {
     const user = one("auth0", { ...base, name: "a@x.dev" });
     expect(user?.firstName).toBeUndefined();
   });
+
+  // Only the user's own address is a placeholder.
+  test("keeps a one-word name with an @ that is not the user's email", () => {
+    const user = one("auth0", { ...base, name: "ada@work" });
+    expect(user?.firstName).toBe("ada@work");
+  });
 });
 
 describe("workos", () => {
@@ -259,6 +266,65 @@ describe("workos", () => {
     ]);
     expect(users[0]?.userId).toBe("user_01ABC");
     expect("identities" in (users[0] ?? {})).toBe(false);
+  });
+});
+
+describe("authjs", () => {
+  const base = { id: "cuid1", email: "a@x.dev" };
+
+  // Auth.js lets `name` be any string; only the user's own email is dropped.
+  test.each([
+    ["jane@acme", "jane@acme"],
+    ["a@x.dev", undefined],
+  ])("name %p becomes first name %p", (name, firstName) => {
+    expect(one("authjs", { ...base, name })?.firstName).toBe(firstName);
+  });
+
+  test("treats a confirmation timestamp as verified", () => {
+    const user = one("authjs", { ...base, email_verified: "2024-01-15T10:30:00.000Z" });
+    expect(user?.email).toBe("a@x.dev");
+    expect(user?.unverifiedEmailAddresses).toBeUndefined();
+  });
+
+  test.each([[null], [""], [undefined], [0], ["0"], ["not-a-date"]])(
+    "treats email_verified=%p as unverified",
+    (value) => {
+      const user = one("authjs", { ...base, email_verified: value });
+      expect(user?.unverifiedEmailAddresses).toBe("a@x.dev");
+    },
+  );
+
+  // A SQLite integer column exports as digits, and Postgres or MySQL as a
+  // date string: each is a real verification.
+  test.each([[1700000000000], ["1700000000000"], ["2024-06-29 20:25:06+00"]])(
+    "treats email_verified=%p as verified",
+    (value) => {
+      const user = one("authjs", { ...base, email_verified: value });
+      expect(user?.email).toBe("a@x.dev");
+    },
+  );
+
+  test.each([
+    ["Jane Doe", "Jane", "Doe"],
+    ["Mary Jane Watson", "Mary", "Jane Watson"],
+    ["  Ada   Lovelace  ", "Ada", "Lovelace"],
+  ])("splits %p into %p / %p", (name, firstName, lastName) => {
+    const user = one("authjs", { ...base, name });
+    expect(user?.firstName).toBe(firstName);
+    expect(user?.lastName).toBe(lastName);
+  });
+
+  test("keeps a single-word name as the first name, without inventing a last name", () => {
+    const user = one("authjs", { ...base, name: "Prince" });
+    expect(user?.firstName).toBe("Prince");
+    expect(user?.lastName).toBeUndefined();
+    expect("name" in (user ?? {})).toBe(false);
+  });
+
+  test("imports without a password, since Auth.js core is passwordless", async () => {
+    const { users } = await load("authjs", [{ ...base, email_verified: "2024-01-01" }]);
+    expect(users[0]?.password).toBeUndefined();
+    expect(users[0]?.passwordHasher).toBeUndefined();
   });
 });
 
@@ -830,6 +896,7 @@ describe("fields the CLI's own export adds", () => {
 describe("invalid records", () => {
   const INVALID: [string, Record<string, unknown>][] = [
     ["auth0", { user_id: "a1" }],
+    ["authjs", { id: "a2" }],
     ["betterauth", { user_id: "a3" }],
     ["firebase", { localId: "a4" }],
     ["supabase", { id: "a5" }],
@@ -854,6 +921,7 @@ describe("invalid records", () => {
 /** The per-platform source field that becomes a Clerk identifier. */
 function identifierFor(key: string, email = "ok@x.dev"): Record<string, unknown> {
   if (key === "auth0") return { email, email_verified: true };
+  if (key === "authjs") return { email, email_verified: "2024-01-01" };
   if (key === "betterauth") return { email, email_verified: true };
   if (key === "firebase") return { email, emailVerified: true };
   return { email, email_confirmed_at: "2024-01-01 00:00:00+00" };
