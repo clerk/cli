@@ -98,6 +98,11 @@ export type RunRecord = {
    * with others is refused.
    */
   firebaseHash?: string;
+  /**
+   * Whether an import created unverified emails and phones reserved. A
+   * continue reuses it, so every user of one run is created the same way.
+   */
+  reserveUnverified?: boolean;
   /** The import run an undo reverses. */
   undoes?: string;
   /** The undo run that reversed this one. */
@@ -123,6 +128,11 @@ export type UserLine = {
   /** Failed: the HTTP status, or "unknown". Skipped: a machine reason, NO_PASSWORD_CODE or IN_FILE_CODE. */
   code?: string;
   passwordDropped?: boolean;
+  /**
+   * On a `creating` line: the create sent this user's unverified identifiers
+   * reserved. A continued run that adopts the user attaches none of them.
+   */
+  reserved?: boolean;
 };
 
 /** What `runs` shows for a run: its stored status, or how it stopped. */

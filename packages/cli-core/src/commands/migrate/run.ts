@@ -45,7 +45,7 @@ import { NEXT_STEPS, printAgentNextSteps } from "../../lib/next-steps.ts";
 import { confirm } from "../../lib/prompts.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
-import { importUsers } from "./import-users.ts";
+import { importUsers, splitIdentifiers } from "./import-users.ts";
 import { ALREADY_IMPORTED, checkImport, type ImportChecks } from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
@@ -127,6 +127,12 @@ export type MigrateRunOptions = {
    * Without it, a prompt asks; where nobody can be asked, they are rejected.
    */
   skipLegalChecks?: boolean;
+  /**
+   * Create the emails and phones the source never verified as reserved, not
+   * unverified. Without it, a prompt asks; where nobody can be asked, they
+   * stay unverified.
+   */
+  reserveUnverified?: boolean;
   /** Check against the instance, report, and write nothing. */
   dryRun?: boolean;
   /** Import the users that pass, and record the rest as skipped. */
@@ -765,6 +771,7 @@ function commandFor(
   if ((!fromExport || options.envelopeSource) && source) parts.push("--source", quoteArg(source));
   if (options.newRun) parts.push("--new-run");
   parts.push(...importFlags(options));
+  if (options.reserveUnverified) parts.push("--reserve-unverified");
   // Names, not `<…>`: pasted as is, a shell reads `<key>` as a redirect.
   if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "SIGNER_KEY");
   if (options.firebaseSaltSeparator !== undefined)
@@ -1057,15 +1064,38 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       // checked or sent again. Those whose extra identifiers never attached
       // get just the attaches.
       const continued = resume.kind === "continue" ? resume.record : undefined;
+      // The users this run created were made in its reserve mode, so the rest
+      // are too: a continue reuses the mode rather than asking, and refuses a
+      // flag that asks for the other. A run from before this was recorded has
+      // none, and continues as it did.
+      const recordedReserve = continued?.reserveUnverified;
+      if (recordedReserve !== undefined) {
+        if (options.reserveUnverified && !recordedReserve) {
+          throwUsageError(
+            `Run ${continued!.id} created its users' unverified emails and phones unverified, so --reserve-unverified would create the rest differently. Nothing was imported.\n` +
+              "Continue it without --reserve-unverified, or pass --new-run to start a new run.",
+          );
+        }
+        options = { ...options, reserveUnverified: recordedReserve };
+      }
       // What the plan below is built from; checked again once the run's lock
       // is held, since a prompt can wait while an undo or a continue writes.
       const plannedLines = continued ? readUserLines(runsDir, continued.id).length : undefined;
       const done = new Map<string, string>();
       const attachOnly: UserLine[] = [];
       const inFlight: string[] = [];
+      const inFlightReserved = new Set<string>();
+      const inFlightPending = new Map<string, string[]>();
       if (continued) {
         for (const line of latestUserLines(runsDir, continued.id).values()) {
           if (line.status === "creating") inFlight.push(line.sourceId);
+          if (line.status === "creating" && line.reserved) inFlightReserved.add(line.sourceId);
+          if (line.status === "creating" && line.pending?.length) {
+            inFlightPending.set(
+              line.sourceId,
+              line.pending.filter((entry) => entry.kind === "phone").map((entry) => entry.value),
+            );
+          }
           if (line.status !== "created" || !line.clerkId) continue;
           done.set(line.sourceId, line.clerkId);
           if (line.pending?.length) attachOnly.push(line);
@@ -1171,10 +1201,36 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         options = { ...options, skipLegalChecks };
       }
 
+      // Unverified stays the default: reserved makes an address the source never
+      // confirmed usable for sign-in, which is the operator's call to make.
+      let reserveUnverified = options.reserveUnverified ?? false;
+      const withUnverified = users.filter((user) => {
+        const { unverifiedEmails, unverifiedPhones } = splitIdentifiers(user);
+        return unverifiedEmails.length > 0 || unverifiedPhones.length > 0;
+      }).length;
+      // `-y` is consent to write, not a yes to this, so it does not ask.
+      if (
+        !reserveUnverified &&
+        recordedReserve === undefined &&
+        withUnverified > 0 &&
+        !options.dryRun &&
+        !options.yes &&
+        canPrompt(options)
+      ) {
+        reserveUnverified = await confirm({
+          message: `${plural(withUnverified, "user")} ${withUnverified === 1 ? "has" : "have"} an email or phone the source never verified. Create them reserved (usable for sign-in, locked to the user) instead of unverified? A reserved one another user already holds rejects its user, not just that address.`,
+          default: false,
+        });
+      }
+      // The answers carry into every command printed from here on, so a
+      // suggested re-run does not quietly drop what the operator chose.
+      options = { ...options, skipLegalChecks, reserveUnverified };
+
       const checks = await withSpinner("Checking users against the instance...", async (spinner) =>
         checkImport({
           users,
           skipLegalChecks,
+          reserveUnverified,
           failures,
           unknownFields: loaded.unknownFields,
           ...(supabaseRows ? { supabaseRows } : {}),
@@ -1186,6 +1242,8 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
           schedule,
           adoptedClerkIds: new Set(adopted.values()),
           adoptedSourceIds: new Set(adopted.keys()),
+          // Their `creating` line says how the create ran, not this run's flag.
+          reservedSourceIds: new Set([...adopted.keys()].filter((id) => inFlightReserved.has(id))),
           spinner,
         }),
       );
@@ -1246,6 +1304,9 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                 newRun: false,
                 allowPartial: options.allowPartial || recorded.allowPartial,
                 skipLegalChecks: options.skipLegalChecks || recorded.skipLegalChecks,
+                // Its own mode: a continue refuses --reserve-unverified on a run
+                // that kept them unverified.
+                reserveUnverified: earlierRun.reserveUnverified ?? options.reserveUnverified,
               },
               input.fromExport,
               ["--yes"],
@@ -1362,7 +1423,13 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       const flags = pickImportFlags(options);
       const run = continued
         ? continueWithExport(
-            continueRun(runsDir, withAttempt(continued, target, flags), plannedLines, carry),
+            // The answer is recorded, so a later `-y` continue keeps it.
+            continueRun(
+              runsDir,
+              { ...withAttempt(continued, target, flags), reserveUnverified },
+              plannedLines,
+              carry,
+            ),
             input.fromExport,
           )
         : startRun(runsDir, {
@@ -1374,6 +1441,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
             ...(input.fromExport ? { fromExport: input.fromExport } : {}),
             ...(options.envelopeSource ? { envelopeSource: options.envelopeSource } : {}),
             ...(firebaseHash ? { firebaseHash } : {}),
+            reserveUnverified,
             flags,
           });
       // Printed now, not on the way out: on a Ctrl-C the signal handler exits
@@ -1403,7 +1471,10 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                   runId: run.record.id,
                   attachOnly,
                   adopted,
+                  adoptedReserved: inFlightReserved,
+                  adoptedPending: inFlightPending,
                   skipPasswordRequirement: !options.requirePassword,
+                  reserveUnverified,
                   progress,
                 }),
             )
