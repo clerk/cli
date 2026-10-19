@@ -389,6 +389,7 @@ This milestone is small. It makes two harness changes; no integration test refer
 **Definition of done.**
 
 - Unit tests in `link/index.test.ts`, which already mocks the credential store, login, autolink, and the API. Each "signed in" test names its credential.
+  - The file mocks `lib/open.ts` with `mock.module` at file top, as `commands/auth/login.test.ts:92` does, and clears the mock's call history between tests. The integration harness's browser stub (milestone 1) doesn't reach unit tests. A spy scoped to one test isn't enough: the tests where no browser should open (the agent stop, the "no usable claim link" stop, a failed app list) would launch a real one if a bug called `openBrowser` there.
   - Signed in with a token claims before autolink and before the picker, in both modes, once with a stored session only and once with an API key only.
   - A signed-out person with a token signs in with the claim skipped, then `link` claims. A managed-workspace refusal and a server error (500) on that claim never reach `pickOrCreateApp` or `createApplication`.
   - Each claim result maps as listed, including "unchanged" continuing to detection.

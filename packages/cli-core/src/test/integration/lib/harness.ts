@@ -542,6 +542,12 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
     // with it. Each `clerk()` call stands in for one process, so the code ends
     // with the run and the next run starts at 0. Bun ignores assigning
     // `undefined`; only a number resets it.
+    //
+    // The code is deliberately not cleared before the run. A code a test sets
+    // before calling `clerk()` is visible to that run: test-only injection
+    // (a fresh process never inherits one) that the telemetry soft-failure
+    // test uses to stand in for a command that sets the code without
+    // declaring what it meant.
     exitCode ??= Number(process.exitCode ?? 0);
     process.exitCode = 0;
   }

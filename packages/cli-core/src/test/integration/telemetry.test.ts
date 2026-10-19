@@ -223,20 +223,17 @@ test("maps a soft failure (process.exitCode set without throwing) to outcome err
   process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
   http.mock({ "test-telemetry.clerk.com": {} });
 
-  try {
-    // Simulates commands that report failure via process.exitCode instead of throwing.
-    process.exitCode = 1;
-    await clerk.raw("webhooks", "token", "--json");
+  // Simulates commands that report failure via process.exitCode instead of
+  // throwing. The harness lets a code set before the run reach it, and resets
+  // it afterwards.
+  process.exitCode = 1;
+  await clerk.raw("webhooks", "token", "--json");
 
-    const bodies = telemetryEvents();
-    expect(bodies).toHaveLength(1);
-    const event = bodies[0]!.events[0]!;
-    expect(event.payload.outcome).toBe("error");
-    expect(event.payload.exit_code).toBe(1);
-  } finally {
-    // Bun ignores `process.exitCode = undefined`; only a number resets it.
-    process.exitCode = 0;
-  }
+  const bodies = telemetryEvents();
+  expect(bodies).toHaveLength(1);
+  const event = bodies[0]!.events[0]!;
+  expect(event.payload.outcome).toBe("error");
+  expect(event.payload.exit_code).toBe(1);
 });
 
 test("an invalid --mode value still produces an error event", async () => {
