@@ -420,6 +420,9 @@ async function reconcileExistingDeploy(ctx: DeployContext, options: DeployOption
     // a create said one exists and the refresh could not find it. The run knows
     // nothing then, so it records nothing.
     if (ctx.productionInstanceId) recordDeployStage("domain_provisioning");
+    // Same as agent mode: nothing to check --domain against, so it is refused
+    // rather than reported as if it had been applied.
+    if (options.domain && ctx.productionInstanceId) throw uncheckedDomainError(options.domain);
     log.blank();
     log.info("A production instance exists, but Clerk did not return a production domain yet.");
     log.info("Run `clerk deploy` again after the domain is available from the API.");

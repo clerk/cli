@@ -957,6 +957,30 @@ describe("deploy", () => {
       expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
     });
 
+    // Same rule as agent mode: with no domain from Clerk there is nothing to
+    // check --domain against, so the wizard refuses it rather than exiting 0
+    // as if it had been applied. The same domain can't be told apart either.
+    test.each(["other.com", "example.com"])(
+      "--domain %s fails on an existing instance whose domain is still provisioning",
+      async (domain) => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockLiveProduction({ domain: "example.com" });
+        mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+
+        const error = await runDeploy({ domain }).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(CliError);
+        expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_UNCHECKED);
+        expect((error as CliError).message).toContain(
+          `so --domain ${domain} could not be checked against it.`,
+        );
+        expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      },
+    );
+
     test("does not print deploy prompt", async () => {
       await linkedProject();
       mockHumanFlow();
