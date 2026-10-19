@@ -329,6 +329,23 @@ describe("resolveDeployState", () => {
       expect(report.nextAction).not.toContain("oauth.setup");
     });
 
+    // A Bundle ID with no web credentials reads as native-only, but the app may
+    // also offer Apple sign-in on the web, which development serves with
+    // Clerk's shared credentials. #509's wizard asks; the report says it.
+    test("says web Sign in with Apple still needs web credentials", async () => {
+      mockProductionApple({ enabled: true, authenticatable: true }, nativeConnection);
+
+      const report = buildDeployStatusReport(
+        await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" }),
+        null,
+      );
+
+      expect(report.nextAction).toContain(
+        "If the app also offers Sign in with Apple on the web, production needs Apple web " +
+          "credentials too; the user can add them with `clerk deploy` in a terminal.",
+      );
+    });
+
     test("leaves native-only Apple out of oauth.setup while the domain is pending", async () => {
       mockProductionApple({ enabled: true, authenticatable: true }, nativeConnection);
       mockGetApplicationDomainStatus.mockResolvedValue({

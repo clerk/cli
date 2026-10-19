@@ -780,9 +780,15 @@ export function agentNextAction(step: DeployNextStep): string {
       `file from its path.`
     );
   };
+  // Only a Bundle ID reads as native-only (production first, development as
+  // the fallback), yet the app may also offer Apple sign-in on the web, which
+  // development serves with Clerk's shared credentials. #509's wizard asks
+  // about web credentials here; the agent has no prompt, so the report says it.
   const nativeApple =
     "nativeAppleReadinessIssue" in step && step.nativeAppleReadinessIssue
-      ? ` ${nativeAppleGuidance(step.nativeAppleReadinessIssue)}`
+      ? ` ${nativeAppleGuidance(step.nativeAppleReadinessIssue)}` +
+        " If the app also offers Sign in with Apple on the web, production needs Apple web " +
+        "credentials too; the user can add them with `clerk deploy` in a terminal."
       : "";
 
   switch (step.kind) {
