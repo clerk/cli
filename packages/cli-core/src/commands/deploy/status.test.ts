@@ -1035,12 +1035,100 @@ describe("buildDeployStatusReport", () => {
 
     expect(report.nextAction).toContain("put the production keys on the host without reading them");
     expect(report.nextAction).toContain(
-      "`clerk env pull --instance ins_prod --print | while IFS='=' read -r key value; do " +
-        `printf '%s' "$value" | vercel env add "$key" production; done\``,
+      "`( set -o pipefail; keys=$(clerk env pull --instance ins_prod --print) || exit 1; " +
+        `printf '%s\\n' "$keys" | while IFS='=' read -r key value; do ` +
+        `printf '%s' "$value" | vercel env add "$key" production --force || exit 1; done )\``,
     );
+    expect(report.nextAction).toContain("redeploy only after it exits 0");
     // A host without a CLI needs a person to paste the values, not the agent.
     expect(report.nextAction).toContain(
       "For a host without a CLI, ask the user to run `clerk env pull --instance ins_prod --print`",
+    );
+  });
+
+  // The command an agent copies from the `complete` report, run as written in
+  // the shells agents use, against stub `clerk` and `vercel` commands. Its exit
+  // status is what tells the agent whether it may redeploy, so every failure
+  // has to show up there, and no key may reach the agent's output.
+  describe.each(["bash", "zsh"])("the key-copying command in %s", (shell) => {
+    const installed = Bun.which(shell) !== null;
+    const stubs = `
+clerk() {
+  case "$SCENARIO" in
+    pull_fails) echo "error: not signed in" >&2; return 1 ;;
+    pull_prints_then_fails) printf '%s\n' 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_FAKE'; return 1 ;;
+    *) printf '%s\n' 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_FAKE' 'CLERK_SECRET_KEY=sk_live_FAKE=with=equals' ;;
+  esac
+}
+vercel() {
+  value=$(cat)
+  if [ "$SCENARIO" = first_upload_fails ] && [ "$3" = NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ]; then
+    echo "Error: upload failed" >&2
+    return 1
+  fi
+  printf '%s|%s\n' "$*" "$value" >> "$RECEIVED"
+}
+`;
+
+    function keyCopyCommand(): string {
+      const report = buildDeployStatusReport(
+        {
+          kind: "active",
+          snapshot: { ...activeSnapshot, completedOAuthProviders: ["google", "github"] },
+        },
+        { verified: true, status: { dns: true, ssl: true, mail: true } },
+      );
+      const match = /For Vercel[^`]*`([^`]+)`/.exec(report.nextAction);
+      if (!match) throw new Error(`No key-copying command in: ${report.nextAction}`);
+      return match[1]!;
+    }
+
+    async function run(
+      scenario: string,
+    ): Promise<{ exitCode: number; output: string; uploads: string[] }> {
+      const dir = await mkdtemp(join(tmpdir(), "clerk-key-copy-"));
+      const received = join(dir, "received");
+      try {
+        // `-f` keeps zsh from reading the developer's startup files.
+        const args = shell === "zsh" ? ["zsh", "-f", "-c"] : ["bash", "-c"];
+        const proc = Bun.spawn([...args, `${stubs}\n${keyCopyCommand()}`], {
+          env: { PATH: process.env.PATH ?? "", SCENARIO: scenario, RECEIVED: received },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]);
+        const file = Bun.file(received);
+        const uploads = (await file.exists()) ? (await file.text()).trim().split("\n") : [];
+        return { exitCode, output: stdout + stderr, uploads };
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+
+    test.skipIf(!installed)("replaces both production keys and exits 0", async () => {
+      const result = await run("ok");
+
+      expect(result.exitCode).toBe(0);
+      expect(result.uploads).toEqual([
+        "env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production --force|pk_live_FAKE",
+        "env add CLERK_SECRET_KEY production --force|sk_live_FAKE=with=equals",
+      ]);
+      expect(result.output).not.toContain("FAKE");
+    });
+
+    test.skipIf(!installed).each(["pull_fails", "pull_prints_then_fails", "first_upload_fails"])(
+      "exits non-zero and uploads nothing more when %s",
+      async (scenario) => {
+        const result = await run(scenario);
+
+        expect(result.exitCode).not.toBe(0);
+        expect(result.uploads).toEqual([]);
+        expect(result.output).not.toContain("FAKE");
+      },
     );
   });
 

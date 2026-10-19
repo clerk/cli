@@ -798,11 +798,18 @@ export function agentNextAction(step: DeployNextStep): string {
       // The id rather than `prod` for the same reason as `oauth.setup`. A
       // pipe the agent never reads: `--print` output holds the secret key,
       // and an agent that reads it puts it in its own transcript.
+      // The Vercel command reads the keys into a variable first so a failed
+      // pull stops it, stops at the first failed upload, and uses `--force`
+      // because the production values it replaces are usually development's.
+      // The parentheses keep `pipefail` and `exit` out of the agent's shell.
       return (
         `Clerk's production setup for https://${step.domain} is verified. If you haven't already: ` +
         `put the production keys on the host without reading them, by piping them to the host's CLI. ` +
-        `For Vercel: \`${pull} | while IFS='=' read -r key value; do ` +
-        `printf '%s' "$value" | vercel env add "$key" production; done\`. ` +
+        `For Vercel, in bash or zsh: \`( set -o pipefail; keys=$(${pull}) || exit 1; ` +
+        `printf '%s\\n' "$keys" | while IFS='=' read -r key value; do ` +
+        `printf '%s' "$value" | vercel env add "$key" production --force || exit 1; done )\`. ` +
+        `It replaces any existing production values and exits non-zero if the pull or any upload fails; ` +
+        `redeploy only after it exits 0. ` +
         `For a host without a CLI, ask the user to run \`${pull}\` and add each line as a production ` +
         `environment variable. Set them alongside the other Clerk variables from your env file, ` +
         `redeploy, then sign up at https://${step.domain} to confirm.` +
