@@ -1022,8 +1022,8 @@ describe("buildDeployStatusReport", () => {
 
       expect(report.nextAction).toContain(
         "Apple's entry takes a file's contents (a private key), which is easy to break when pasted " +
-          "into JSON, so for Apple send the user to `clerk deploy` in a terminal first: " +
-          "the wizard reads the file from its path.",
+          "into JSON. Save the other `oauth.setup` entries first, then send the user to " +
+          "`clerk deploy` in a terminal for Apple: the wizard reads the key from its file.",
       );
     });
   });

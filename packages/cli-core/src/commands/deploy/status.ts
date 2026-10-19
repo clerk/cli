@@ -768,16 +768,17 @@ export function agentNextAction(step: DeployNextStep): string {
     "placeholders included, and ask the user to replace each `<placeholder>` with the real value. " +
     "Don't ask for the values or read the file. Then run its `command` on that file and delete the file.";
   // A private key pasted into JSON needs its newlines escaped, and a mistake
-  // only shows when someone signs in. The wizard reads the file by path.
+  // only shows when someone signs in. The wizard reads the file by path, and
+  // skips providers already saved, so the others go first.
   const setupFromFile = (labels: readonly string[] = []): string => {
     if (labels.length === 0) return "";
     const names = labels.join(", ");
     const subject =
       labels.length === 1 ? `${names}'s entry takes` : `The entries for ${names} take`;
     return (
-      ` ${subject} a file's contents (a private key), which is easy to break when pasted into JSON, ` +
-      `so for ${names} send the user to \`clerk deploy\` in a terminal first: the wizard reads the ` +
-      `file from its path.`
+      ` ${subject} a file's contents (a private key), which is easy to break when pasted into JSON. ` +
+      `Save the other \`oauth.setup\` entries first, then send the user to \`clerk deploy\` in a ` +
+      `terminal for ${names}: the wizard reads the key from its file.`
     );
   };
   // Only a Bundle ID reads as native-only (production first, development as
