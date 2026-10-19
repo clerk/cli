@@ -1125,8 +1125,15 @@ describe("buildDeployStatusReport", () => {
     expect(report.nextAction).toContain("put the production keys on the host without reading them");
     expect(report.nextAction).toContain(
       "`( set -o pipefail; keys=$(clerk env pull --instance ins_prod --print) || exit 1; " +
-        `printf '%s\\n' "$keys" | while IFS='=' read -r key value; do ` +
-        `printf '%s' "$value" | vercel env add "$key" production --force || exit 1; done )\``,
+        "vars=$(vercel env ls 2>&1) || exit 1; ",
+    );
+    // Whether `--force` on production rewrites a variable Vercel shares with
+    // preview and development is unverified, so a shared one needs a person.
+    expect(report.nextAction).toContain(
+      "If a key is already set as a variable that also targets Preview or Development, it stops " +
+        "with exit 3 and names it: ask the user before replacing it, because `--force` may rewrite " +
+        "that shared variable and put the production secret key in preview deployments. " +
+        "If they agree, run `export CLERK_ALLOW_SHARED=1` and then the command again.",
     );
     expect(report.nextAction).toContain("redeploy only after it exits 0");
     // A host without a CLI needs a person to paste the values, not the agent.
@@ -1150,6 +1157,15 @@ clerk() {
   esac
 }
 vercel() {
+  if [ "$1 $2" = "env ls" ]; then
+    echo "  name                 value      environments                       created"
+    case "$SCENARIO" in
+      ls_fails) echo "Error: no linked project" >&2; return 1 ;;
+      production_only) echo "  CLERK_SECRET_KEY     Encrypted  Production                         1d ago" ;;
+      shared*) echo "  CLERK_SECRET_KEY     Encrypted  Production, Preview, Development   1d ago" ;;
+    esac
+    return 0
+  fi
   value=$(cat)
   if [ "$SCENARIO" = first_upload_fails ] && [ "$3" = NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ]; then
     echo "Error: upload failed" >&2
@@ -1174,6 +1190,7 @@ vercel() {
 
     async function run(
       scenario: string,
+      extraEnv: Record<string, string> = {},
     ): Promise<{ exitCode: number; output: string; uploads: string[] }> {
       const dir = await mkdtemp(join(tmpdir(), "clerk-key-copy-"));
       const received = join(dir, "received");
@@ -1181,7 +1198,12 @@ vercel() {
         // `-f` keeps zsh from reading the developer's startup files.
         const args = shell === "zsh" ? ["zsh", "-f", "-c"] : ["bash", "-c"];
         const proc = Bun.spawn([...args, `${stubs}\n${keyCopyCommand()}`], {
-          env: { PATH: process.env.PATH ?? "", SCENARIO: scenario, RECEIVED: received },
+          env: {
+            PATH: process.env.PATH ?? "",
+            SCENARIO: scenario,
+            RECEIVED: received,
+            ...extraEnv,
+          },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -1198,18 +1220,45 @@ vercel() {
       }
     }
 
-    test.skipIf(!installed)("replaces both production keys and exits 0", async () => {
-      const result = await run("ok");
+    const bothUploaded = [
+      "env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production --force|pk_live_FAKE",
+      "env add CLERK_SECRET_KEY production --force|sk_live_FAKE=with=equals",
+    ];
+
+    test.skipIf(!installed).each(["ok", "production_only"])(
+      "replaces both production keys and exits 0 when %s",
+      async (scenario) => {
+        const result = await run(scenario);
+
+        expect(result.exitCode).toBe(0);
+        expect(result.uploads).toEqual(bothUploaded);
+        expect(result.output).not.toContain("FAKE");
+      },
+    );
+
+    test.skipIf(!installed)(
+      "stops with exit 3 before uploading when a key is shared with Preview or Development",
+      async () => {
+        const result = await run("shared");
+
+        expect(result.exitCode).toBe(3);
+        expect(result.uploads).toEqual([]);
+        expect(result.output).toContain("Also set for Preview or Development: CLERK_SECRET_KEY");
+        expect(result.output).not.toContain("FAKE");
+      },
+    );
+
+    test.skipIf(!installed)("replaces a shared key once the user has agreed", async () => {
+      const result = await run("shared_allowed", { CLERK_ALLOW_SHARED: "1" });
 
       expect(result.exitCode).toBe(0);
-      expect(result.uploads).toEqual([
-        "env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production --force|pk_live_FAKE",
-        "env add CLERK_SECRET_KEY production --force|sk_live_FAKE=with=equals",
-      ]);
+      expect(result.uploads).toEqual(bothUploaded);
       expect(result.output).not.toContain("FAKE");
     });
 
-    test.skipIf(!installed).each(["pull_fails", "pull_prints_then_fails", "first_upload_fails"])(
+    test
+      .skipIf(!installed)
+      .each(["pull_fails", "pull_prints_then_fails", "ls_fails", "first_upload_fails"])(
       "exits non-zero and uploads nothing more when %s",
       async (scenario) => {
         const result = await run(scenario);
