@@ -85,6 +85,8 @@ type PlatformApi = {
   domainStatus: () => Response;
   /** Answers `clerk deploy status`'s DNS check. */
   dnsCheck: () => Response;
+  /** Production's config. By default Google is enabled with no credentials. */
+  productionConfig: Record<string, unknown>;
 };
 
 function stubPlatformApi(overrides: Partial<PlatformApi> = {}): PlatformApi {
@@ -98,6 +100,7 @@ function stubPlatformApi(overrides: Partial<PlatformApi> = {}): PlatformApi {
     },
     domainStatus: () => json(domainIncomplete),
     dnsCheck: () => json({ ...domainIncomplete, domain_id: "dmn_1", last_run_at: null }),
+    productionConfig: { connection_oauth_google: { enabled: true } },
     ...overrides,
   };
   let applicationReads = 0;
@@ -133,8 +136,10 @@ function stubPlatformApi(overrides: Partial<PlatformApi> = {}): PlatformApi {
         },
       });
     }
-    // Google is enabled in development and has no production credentials yet.
-    if (method === "GET" && path.endsWith("/config")) {
+    if (method === "GET" && path === `${APP}/instances/ins_prod/config`) {
+      return json(api.productionConfig);
+    }
+    if (method === "GET" && path === `${APP}/instances/ins_dev/config`) {
       return json({ connection_oauth_google: { enabled: true } });
     }
     throw new Error(`unmocked ${method} ${url}`);
@@ -270,6 +275,43 @@ describe("creating or resuming production", () => {
     expect(result.exitCode).toBe(1);
     expect(agentError(result).code).toBe("deploy_instance_unresolved");
     expect(result.stdout).toBe("");
+  });
+});
+
+describe("a deploy that is complete on Clerk's side", () => {
+  // The report is read by the agent, so neither Clerk key (MOCK_APP carries
+  // both instances' secret keys) nor a saved OAuth secret may appear in it.
+  test("prints no secret and names the production instance for the key copy", async () => {
+    await linkDevelopmentOnly();
+    stubPlatformApi({
+      production: true,
+      domain: "example.com",
+      domainStatus: () =>
+        json({
+          status: "complete",
+          dns: { status: "complete", required: true },
+          ssl: { status: "complete", required: true },
+          mail: { status: "complete", required: true },
+        }),
+      productionConfig: {
+        connection_oauth_google: {
+          enabled: true,
+          client_id: "client.apps.googleusercontent.com",
+          client_secret: "FAKE_GOOGLE_CLIENT_SECRET",
+        },
+      },
+    });
+
+    const result = await deploy("--domain", "example.com");
+
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report.state).toBe("complete");
+    expect(report.nextAction).toContain("clerk env pull --instance ins_prod --print");
+    const output = result.stdout + result.stderr;
+    expect(output).not.toContain("sk_live_");
+    expect(output).not.toContain("sk_test_");
+    expect(output).not.toContain("FAKE_GOOGLE_CLIENT_SECRET");
   });
 });
 
