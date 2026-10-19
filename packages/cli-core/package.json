@@ -17,20 +17,25 @@
     "test": "bun test src/ --parallel"
   },
   "dependencies": {
-    "@clack/prompts": "^1.7.0",
+    "@bacons/xcode": "1.0.0-alpha.33",
+    "@clack/prompts": "^1.8.1",
     "@clerk/cli-extras": "workspace:*",
     "@commander-js/extra-typings": "^15.0.0",
-    "@napi-rs/keyring": "^1.3.0",
+    "@napi-rs/keyring": "^2.1.1",
+    "@xmldom/xmldom": "0.8.15",
     "commander": "^15.0.0",
+    "csv-parser": "^3.2.1",
     "env-paths": "^4.0.0",
     "external-editor": "^3.1.0",
+    "jsonc-parser": "^3.3.1",
     "magicast": "^0.5.5",
     "semver": "^7.8.5",
-    "yaml": "^2.9.1"
+    "yaml": "^2.9.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@clerk/shared": "^4.36.0",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@clerk/shared": "^4.40.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@types/semver": "^7.8.0"
   }
 }

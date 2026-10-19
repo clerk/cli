@@ -96,6 +96,7 @@ mock.module(
       getGitRepoIdentifier: async () => mockState.gitRepoIdentifier,
       getGitNormalizedRemote: async () => mockState.gitNormalizedRemote,
       normalizeGitRemoteUrl: (url: string) => url,
+      ensureGitignoreEntry: async () => {},
     }) satisfies typeof import("../../../lib/git.ts"),
 );
 
@@ -119,7 +120,7 @@ mock.module(
 
 // ── Prompt queue (drives lib/prompts.ts and lib/listage.ts mocks) ────────────
 
-type PromptType = "select" | "search" | "input" | "confirm" | "password" | "editor";
+type PromptType = "select" | "search" | "input" | "confirm" | "password" | "editor" | "multiselect";
 
 const promptQueues: Record<PromptType, unknown[]> = {
   select: [],
@@ -128,6 +129,7 @@ const promptQueues: Record<PromptType, unknown[]> = {
   confirm: [],
   password: [],
   editor: [],
+  multiselect: [],
 };
 
 function dequeuePrompt(name: PromptType) {
@@ -168,6 +170,7 @@ export const mockPrompts = {
   input: (...responses: string[]) => promptQueues.input.push(...responses),
   password: (...responses: string[]) => promptQueues.password.push(...responses),
   editor: (...responses: string[]) => promptQueues.editor.push(...responses),
+  multiselect: (...responses: unknown[][]) => promptQueues.multiselect.push(...responses),
 };
 
 function resetPromptQueues() {
@@ -207,9 +210,30 @@ mock.module("../../../lib/listage.ts", () => ({
   },
 }));
 
+const dequeueInput = dequeuePrompt("input");
+
+/**
+ * An abortable `text()` with nothing queued behaves like a real prompt nobody
+ * has typed into: it waits until aborted. That is the login paste-back prompt,
+ * which races the (mocked, instantly resolving) loopback callback.
+ */
+async function textPrompt(config?: { signal?: AbortSignal }) {
+  const signal = config?.signal;
+  if (!signal || promptQueues.input.length > 0) return dequeueInput();
+  return new Promise<never>((_resolve, reject) => {
+    const abort = () => reject(new Error("User aborted"));
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
+// Every export of the real module must appear here: a missing one is a module
+// link error at import time, not a failed prompt, so it takes down every test
+// in the file the moment any command imports it.
 mock.module("../../../lib/prompts.ts", () => ({
   confirm: dequeuePrompt("confirm"),
-  text: dequeuePrompt("input"),
+  multiselect: dequeuePrompt("multiselect"),
+  text: textPrompt,
   password: dequeuePrompt("password"),
   editor: dequeuePrompt("editor"),
 }));
@@ -247,6 +271,7 @@ mock.module(
         waitForCallback: async () => ({ code: "mock_code" }),
         stop: () => {},
       }),
+      parseCallback: () => ({ ok: true as const, code: "mock_code" }),
     }) satisfies typeof import("../../../lib/auth-server.ts"),
 );
 

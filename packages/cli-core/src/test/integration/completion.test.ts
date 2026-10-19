@@ -220,6 +220,23 @@ describe("generateCompletions", () => {
       expect(names).toContain("DELETE");
     });
 
+    test("completes --source with the built-in migrate sources", () => {
+      const saved = process.env.CLERK_EXPERIMENTAL;
+      process.env.CLERK_EXPERIMENTAL = "migrate";
+      try {
+        const names = generateCompletions(createProgram(), [
+          "migrate",
+          "import",
+          "--source",
+          "",
+        ]).completions.map((c) => c.name);
+        expect(names).toEqual(["clerk", "supabase"]);
+      } finally {
+        if (saved === undefined) delete process.env.CLERK_EXPERIMENTAL;
+        else process.env.CLERK_EXPERIMENTAL = saved;
+      }
+    });
+
     test("returns empty for options with unknown values (file paths)", () => {
       const result = complete("config", "pull", "--output", "");
       expect(result.completions).toEqual([]);

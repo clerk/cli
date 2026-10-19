@@ -5,7 +5,7 @@ import { interruptedExitCode } from "../../lib/signals.ts";
 import { sleep } from "../../lib/sleep.ts";
 import { withSpinner } from "../../lib/spinner.ts";
 import { declareSoftExitOutcome } from "../../lib/telemetry.ts";
-import { deployComponentLabels, dnsRecords } from "./copy.ts";
+import { deployComponentLabels, dnsRecords, nativeAppleGuidance } from "./copy.ts";
 import {
   buildDeployStatusReport,
   buildInterruptedDeployStatusReport,
@@ -225,6 +225,10 @@ export function renderHuman(report: DeployStatusReport): void {
 export function humanNextAction(step: DeployNextStep): string {
   const domains = (url: string | null): string =>
     url ? ` Visit the Clerk Dashboard domains page to monitor its status there: ${url}` : "";
+  const nativeApple =
+    "nativeAppleReadinessIssue" in step && step.nativeAppleReadinessIssue
+      ? ` ${nativeAppleGuidance(step.nativeAppleReadinessIssue)}`
+      : "";
 
   switch (step.kind) {
     case "not_started":
@@ -253,6 +257,14 @@ export function humanNextAction(step: DeployNextStep): string {
           : "")
       );
     case "oauth_pending":
+      if (step.nativeAppleReadinessIssue) {
+        const hostedPending = step.oauthPending.filter((provider) => provider !== "apple");
+        const hostedAction =
+          hostedPending.length > 0
+            ? ` These OAuth providers are also missing production credentials: ${hostedPending.join(", ")}. Run \`clerk deploy\` to configure them.`
+            : "";
+        return `Domain verified, but setup is incomplete.${nativeApple}` + hostedAction;
+      }
       return (
         `Domain verified, but these OAuth providers are missing production credentials: ` +
         `${step.oauthPending.join(", ")}. Run \`clerk deploy\` to finish setup.`
@@ -263,25 +275,29 @@ export function humanNextAction(step: DeployNextStep): string {
       return (
         `${step.records} records not found yet for ${step.domain}. ` +
         `Once they're added, run \`clerk deploy\` again to resume. Propagation usually takes minutes.` +
-        domains(step.domainsUrl)
+        domains(step.domainsUrl) +
+        nativeApple
       );
     case "records_unavailable":
       return (
         `${step.records} records not found yet for ${step.domain}, but Clerk didn't return the list of records to add. ` +
         `Find them on the Domains page in the Clerk Dashboard, add them, then run \`clerk deploy\` again to resume.` +
-        domains(step.domainsUrl)
+        domains(step.domainsUrl) +
+        nativeApple
       );
     case "ssl_pending":
       return (
         `SSL certificate still pending for ${step.domain}. Clerk issues it automatically now that ` +
         `DNS is verified; re-run \`clerk deploy status\` in a few minutes.` +
-        domains(step.domainsUrl)
+        domains(step.domainsUrl) +
+        nativeApple
       );
     case "finalizing":
       return (
         `Production setup for ${step.domain} is still finalizing on Clerk's side. ` +
         `Re-run \`clerk deploy status\` in a few minutes.` +
-        domains(step.domainsUrl)
+        domains(step.domainsUrl) +
+        nativeApple
       );
   }
 }

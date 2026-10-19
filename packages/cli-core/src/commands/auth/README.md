@@ -8,11 +8,13 @@ Manage authentication with Clerk.
 
 Authenticates the user via an OAuth 2.0 PKCE flow. After a successful login (or when an existing session is detected in agent mode), the command attempts to automatically claim any accountless application previously created by `clerk init`.
 
+Before signing in, the command prints a banner: the Clerk logo beside a link to the Clerk docs and the CLI version, plus the active environment (e.g. `staging`) when it isn't production. It's drawn by `lib/banner.ts`, and only from this command's action, so `init`, `link`, and `doctor`, which call `login()` mid-flow, don't print it. The banner is skipped in agent mode, when stderr isn't a terminal, in CI, and when `CLERK_NO_BANNER` is set. `NO_COLOR` prints it without color.
+
 1. Checks for an existing valid token — if found, prompts to re-authenticate (in agent mode, skips and runs autoclaim immediately)
 2. Generates PKCE parameters (code verifier, challenge, state)
 3. Starts a local HTTP callback server on `127.0.0.1`
 4. Prints the Clerk OAuth authorization URL and opens the browser to it. The URL is always printed as a manual fallback for environments where browser launch is unreliable (WSL2, SSH, headless shells). In WSL, the Windows host browser is reached via `wslview` or, when that is not installed, the always-present `powershell.exe` interop binary (`Start-Process`).
-5. Waits for the redirect callback with an authorization code
+5. Waits for the authorization code. In an interactive terminal (human mode with a TTY stdin), it also shows a paste prompt alongside the loopback wait, and whichever delivers a code first wins. The prompt is for machines without a browser: sign in on another device, where the redirect to `127.0.0.1` fails to load, then paste that URL from the address bar. Only the full redirect URL is accepted. It passes the same checks as the loopback redirect, including `state`, so a code from someone else's sign-in is refused. The code is useless without the PKCE verifier, which never leaves the process. Agents, pipes, and CI wait on the loopback only
 6. Exchanges the code for an access token
 7. Stores the token and user info in local config
 8. If this was a re-authentication over an existing session, revokes the previous grant. The outgoing session is read once the authorization code arrives and just before the token exchange replaces it, and revoked only after the replacement is stored — so an abandoned browser flow leaves the original session intact, and a concurrent refresh has the smallest possible window to rotate the token out from under the revocation. A failure here warns rather than failing the login

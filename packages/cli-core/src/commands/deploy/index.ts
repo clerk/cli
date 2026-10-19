@@ -16,6 +16,7 @@ import { interruptedExitCode } from "../../lib/signals.ts";
 import { setProfile } from "../../lib/config.ts";
 import {
   createProductionInstance as apiCreateProductionInstance,
+  fetchInstanceConfig,
   patchInstanceConfig,
   type CnameTarget,
   type ProductionInstanceResponse,
@@ -38,6 +39,8 @@ import {
   dnsRecords,
   domainsDashboardUrl,
   instanceDashboardUrl,
+  nativeAppleGuidance,
+  nativeApplicationsDashboardUrl,
   nextStepsBody,
   pendingCnameTargets,
   pausedOperationNotice,
@@ -49,6 +52,7 @@ import {
   providerLabel,
   providerSetupIntro,
   showOAuthWalkthrough,
+  type NativeAppleConfiguration,
   type OAuthProvider,
   type OAuthProviderDescriptor,
 } from "./providers.ts";
@@ -60,6 +64,7 @@ import {
   collectCustomDomain,
   collectOAuthCredentials,
   confirmCreateProductionInstance,
+  confirmAppleWebCredentials,
   confirmExportBindZone,
   confirmProceed,
 } from "./prompts.ts";
@@ -76,6 +81,7 @@ import {
   resolveDeployState,
   resolveLiveApplicationContext,
   resolveLiveDeploySnapshot,
+  resolveNativeAppleConfiguration,
   waitForDeployStatus,
   type DeployProgressHandlers,
   type DeployStatusOutcome,
@@ -422,6 +428,7 @@ async function reconcileExistingDeploy(ctx: DeployContext, options: DeployOption
         },
       },
       snapshot.oauthProviderDescriptors,
+      snapshot.nativeApple ?? null,
     );
     snapshot.completedOAuthProviders = completed;
   }
@@ -711,6 +718,8 @@ async function runOAuthSetup(
   ctx: DeployContext,
   state: DeployOperationState,
   descriptors: readonly OAuthProviderDescriptor[],
+  /** Undefined when unknown (a fresh deploy); null when Apple is not native-only. */
+  nativeApple?: NativeAppleConfiguration | null,
 ): Promise<OAuthProvider[]> {
   const completed = new Set(state.completedOAuthProviders as OAuthProvider[]);
   const oauthProviders = descriptors.map((descriptor) => descriptor.provider);
@@ -739,6 +748,7 @@ async function runOAuthSetup(
         state.domain,
         productionInstanceId,
         state.frontendApiUrl,
+        nativeApple,
       );
       if (!saved) {
         throwDeployPaused(
@@ -786,7 +796,38 @@ async function collectAndSaveOAuthCredentials(
   domain: string,
   productionInstanceId: string,
   frontendApiUrl?: string,
+  nativeApple?: NativeAppleConfiguration | null,
 ): Promise<boolean> {
+  if (descriptor.provider === "apple") {
+    const native =
+      nativeApple !== undefined
+        ? nativeApple
+        : await withSpinner("Checking production Sign in with Apple configuration...", async () =>
+            resolveNativeAppleConfiguration(
+              ctx.appId,
+              productionInstanceId,
+              await fetchInstanceConfig(ctx.appId, productionInstanceId),
+              [descriptor],
+            ),
+          );
+    if (native?.status === "ready") {
+      log.success(
+        `Native Sign in with Apple is ready for ${native.bundleId}; Apple web credentials are not required`,
+      );
+      return true;
+    }
+    if (native && !(await confirmAppleWebCredentials(native.bundleId))) {
+      log.warn(
+        nativeAppleGuidance({
+          bundleId: native.bundleId,
+          reason: native.status,
+          dashboardUrl: nativeApplicationsDashboardUrl(ctx.appId, productionInstanceId),
+        }),
+      );
+      return false;
+    }
+  }
+
   for (const line of providerSetupIntro(descriptor)) log.info(line);
   log.blank();
 

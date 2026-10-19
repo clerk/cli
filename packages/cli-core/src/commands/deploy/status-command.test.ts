@@ -1117,6 +1117,29 @@ async function routePlapiFetch(
 }
 
 describe("humanNextAction", () => {
+  test.each(["records_available", "records_unavailable", "ssl_pending", "finalizing"] as const)(
+    "%s preserves domain guidance and adds the native Apple blocker",
+    (kind) => {
+      const step = {
+        kind,
+        domain: "example.com",
+        records: "DNS",
+        domainsUrl: "https://dashboard.clerk.com/domains",
+      };
+      const domainGuidance = humanNextAction(step);
+      const line = humanNextAction({
+        ...step,
+        nativeAppleReadinessIssue: {
+          bundleId: "com.example.app",
+          reason: "native-api-disabled",
+          dashboardUrl: "https://dashboard.clerk.com/native-applications",
+        },
+      });
+      expect(line).toStartWith(domainGuidance);
+      expect(line).toContain("Native API is disabled");
+      expect(line).toContain("https://dashboard.clerk.com/native-applications");
+    },
+  );
   // These are the three things that used to leak from the agent sentence into
   // the human one. Now that each audience has its own renderer, this pins the
   // human side for every state rather than trusting seven replace rules.

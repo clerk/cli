@@ -93,6 +93,9 @@ export type TelemetryStage =
   | "already_set_up"
   | "keys"
   | "skills"
+  | "ios_inspect"
+  | "ios_plan"
+  | "ios_apply"
   // `clerk auth login`
   | "session_check"
   | "awaiting_callback"

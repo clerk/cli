@@ -88,6 +88,8 @@ export const ERROR_CODE = {
   MCP_CLIENT_CLI_NOT_FOUND: "mcp_client_cli_not_found",
   /** The target client's own CLI exited non-zero or timed out while registering/removing the entry. */
   MCP_CLIENT_CLI_FAILED: "mcp_client_cli_failed",
+  /** An editor launched the `clerk mcp run` bridge, removed in clerk 4.0; `clerk mcp install` replaces the entry. */
+  MCP_BRIDGE_REMOVED: "mcp_bridge_removed",
   /** No supported framework could be detected in the target directory. */
   FRAMEWORK_UNDETECTED: "framework_undetected",
   /** The detected framework has no `clerk init` bootstrap generator. */
@@ -104,6 +106,8 @@ export const ERROR_CODE = {
   INSTALLER_NOT_FOUND: "installer_not_found",
   /** The npm registry was unreachable. */
   REGISTRY_UNREACHABLE: "registry_unreachable",
+  /** The command is experimental and its `CLERK_EXPERIMENTAL` name isn't set. */
+  EXPERIMENT_DISABLED: "experiment_disabled",
   /** Production instance was created but came back without a domain. */
   DEPLOY_DOMAIN_MISSING: "deploy_domain_missing",
   /**
@@ -139,6 +143,19 @@ export const ERROR_CODE = {
   OAUTH_NO_CODE: "oauth_no_code",
   /** The loopback callback server could not bind a local port. */
   CALLBACK_BIND_FAILED: "callback_bind_failed",
+
+  /** The inspected iOS project has a known condition that prevents safe automatic setup. */
+  IOS_SETUP_BLOCKED: "ios_setup_blocked",
+  /** The iOS project or Clerk application changed after the approved setup was planned. */
+  IOS_SETUP_STALE: "ios_setup_stale",
+  /** An internally inconsistent or incomplete iOS setup plan reached the apply boundary. */
+  IOS_SETUP_PLAN_INVALID: "ios_setup_plan_invalid",
+  /** An approved Clerk native configuration change could not be applied or confirmed. */
+  IOS_REMOTE_APPLY_FAILED: "ios_remote_apply_failed",
+  /** Clerk native configuration was readable after apply but did not match the approved state. */
+  IOS_REMOTE_VERIFY_FAILED: "ios_remote_verify_failed",
+  /** Platform API returned a successful response with missing or contradictory data. */
+  PLAPI_UNEXPECTED_RESPONSE: "plapi_unexpected_response",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE];

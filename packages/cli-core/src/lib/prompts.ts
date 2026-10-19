@@ -7,6 +7,7 @@
 import {
   confirm as clackConfirm,
   isCancel,
+  type CANCEL_SYMBOL,
   text as clackText,
   password as clackPassword,
   multiselect as clackMultiselect,
@@ -22,7 +23,7 @@ type ValidationResult = string | Error | true | undefined;
 type Validate = (value: string | undefined) => ValidationResult | Promise<ValidationResult>;
 type SyncValidate = (value: string | undefined) => string | Error | undefined;
 
-function unwrap<T>(value: T | symbol): T {
+function unwrap<T>(value: T | typeof CANCEL_SYMBOL): T {
   if (isCancel(value)) throwUserAbort();
   return value as T;
 }
@@ -107,12 +108,16 @@ export async function multiselect<T>(config: {
   }
 }
 
-/** Single-line text input. */
+/**
+ * Single-line text input. Aborting `signal` closes the prompt and rejects with
+ * `UserAbortError`, the same as the user cancelling it.
+ */
 export async function text(config: {
   message: string;
   default?: string;
   placeholder?: string;
   validate?: Validate;
+  signal?: AbortSignal;
 }): Promise<string> {
   const validator = createValidator(config.validate);
 
@@ -125,6 +130,7 @@ export async function text(config: {
         placeholder: config.placeholder,
         validate: validator?.sync,
         input: tty?.input,
+        signal: config.signal,
       });
       const value = unwrap(result);
       const error = await validator?.final(value);

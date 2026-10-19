@@ -8,6 +8,7 @@ import {
   listageStubs,
 } from "../../test/lib/stubs.ts";
 import { PlapiError } from "../../lib/errors.ts";
+import { NEXT_STEPS } from "../../lib/next-steps.ts";
 
 const mockIsAgent = mock();
 let _modeOverride: string | undefined;
@@ -77,6 +78,7 @@ mock.module("../../lib/git.ts", () => ({
 }));
 
 const mockSearch = mock();
+const mockOutro = mock();
 const mockConfirm = mock();
 const mockInput = mock();
 mock.module("../../lib/prompts.ts", () => ({
@@ -93,7 +95,7 @@ mock.module("../../lib/listage.ts", () => ({
 
 mock.module("../../lib/spinner.ts", () => ({
   intro: () => {},
-  outro: () => {},
+  outro: (...args: unknown[]) => mockOutro(...args),
   pausedOutro: () => {},
   bar: () => {},
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
@@ -148,6 +150,7 @@ describe("link", () => {
     mockGetGitNormalizedRemote.mockReset();
     mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
     mockSearch.mockReset();
+    mockOutro.mockReset();
     mockConfirm.mockReset();
     mockInput.mockReset();
     consoleSpy?.mockRestore();
@@ -737,6 +740,18 @@ describe("link", () => {
       await runLink({ app: "app_123" });
 
       expect(captured.err).toContain("Linked to");
+      expect(mockOutro).toHaveBeenCalledWith(NEXT_STEPS.LINK);
+    });
+
+    test("skips its next steps when the caller continues setup", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockFetchApplication.mockResolvedValue(mockApp);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await runLink({ app: "app_123", showNextSteps: false });
+
+      expect(mockOutro).toHaveBeenCalledWith(undefined);
     });
   });
 

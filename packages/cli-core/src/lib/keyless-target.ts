@@ -48,6 +48,12 @@ const ENV_FILES = [".env", ".env.local"];
 const SDK_KEYLESS_FILE = [".clerk", ".tmp", "keyless.json"];
 
 /**
+ * The `source` a key found in the SDK's own keyless file carries. Exported so
+ * a caller can tell that source apart without restating the path.
+ */
+export const SDK_KEYLESS_SOURCE = SDK_KEYLESS_FILE.join("/");
+
+/**
  * Reads the SDK's own keyless file, ignoring a partially-written one.
  * Exported for `init`, whose keep-the-existing-app guard must recognise an
  * application the SDK minted for itself just as readily as one `clerk init`
@@ -130,7 +136,7 @@ export async function findLocalSecretKey(cwd: string): Promise<KeylessTarget | u
 async function sdkKeylessTarget(cwd: string): Promise<KeylessTarget | undefined> {
   const sdkApp = await readSdkKeylessApp(cwd);
   if (!sdkApp?.secretKey) return undefined;
-  return { secretKey: sdkApp.secretKey, source: SDK_KEYLESS_FILE.join("/") };
+  return { secretKey: sdkApp.secretKey, source: SDK_KEYLESS_SOURCE };
 }
 
 /** The publishable key a keyless project holds locally, when one can be found. */
