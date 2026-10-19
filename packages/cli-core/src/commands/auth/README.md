@@ -10,7 +10,7 @@ Authenticates the user via an OAuth 2.0 PKCE flow. After a successful login (or 
 
 Before signing in, the command prints a banner: the Clerk logo beside a link to the Clerk docs and the CLI version, plus the active environment (e.g. `staging`) when it isn't production. It's drawn by `lib/banner.ts`, and only from this command's action, so `init`, `link`, and `doctor`, which call `login()` mid-flow, don't print it. The banner is skipped in agent mode, when stderr isn't a terminal, in CI, and when `CLERK_NO_BANNER` is set. `NO_COLOR` prints it without color.
 
-1. Checks for an existing valid token — if found, prompts to re-authenticate (in agent mode, skips and runs autoclaim immediately). When the folder has an init token, a person gets the claim question below instead
+1. Checks for an existing valid token — if found, prompts to re-authenticate (in agent mode, skips and runs autoclaim immediately). When the folder has an init token, a person gets the claim question below instead, unless `-y` is passed
 2. Generates PKCE parameters (code verifier, challenge, state)
 3. Starts a local HTTP callback server on `127.0.0.1`
 4. Prints the Clerk OAuth authorization URL and opens the browser to it. The URL is always printed as a manual fallback for environments where browser launch is unreliable (WSL2, SSH, headless shells). In WSL, the Windows host browser is reached via `wslview` or, when that is not installed, the always-present `powershell.exe` interop binary (`Start-Process`).
@@ -31,7 +31,14 @@ A person is asked one question before any claim, naming where the claim will put
 | API key only        | Before any browser step        | Claims with the key; no browser sign-in             | Signs in in the browser without claiming, and says the key decides where claims go                            |
 | Signed out          | After the browser sign-in      | Claims                                              | The sign-in stands                                                                                            |
 
-A No after a sign-in has happened keeps that sign-in, so the login exits 0. The output says the app is still unclaimed and its claim token stays in the folder; the next step is to run `clerk auth login` again, which asks again. A folder without an init token gets "Re-authenticate?" as before. `-y` signs in again and then claims, without asking. Agents can't answer a question, so they claim without one. Commands that sign in on their way to linking can pass `claim: false` to `login()`, which skips both the question and the claim and leaves the token on disk.
+The init token is read once, at the start of the login, and only that token is claimed. A token that appears during the browser sign-in (say, a signed-out `clerk init` in another terminal), or replaces the one asked about while the question is open, waits for the next login; this holds for agents and `-y` too. A malformed token file is warned about and deleted at that first read.
+
+A No after a sign-in has happened keeps that sign-in, so the login exits 0. The output says the app is still unclaimed and its claim token stays in the folder; the next step is to run `clerk auth login` again, which asks again. A folder without an init token gets "Re-authenticate?" as before. `-y` signs in again and then claims, without asking. Agents can't answer a question, so they claim without one. Commands that sign in on their way to linking can pass `claim: false` to `login()`, which skips both the question and the claim and doesn't read the token file at all.
+
+Known limitations:
+
+- The question names the account signed in when it's asked. Signing in as someone else in another terminal before answering changes where Yes claims to.
+- The email names the person, not the workspace. A claim made with a signed-in session lands in the workspace that sign-in used, so for someone in both a personal and a company workspace it can land in either.
 
 #### Accountless autoclaim breadcrumb lifecycle
 
@@ -40,7 +47,7 @@ When `clerk init` runs in accountless mode it writes `.clerk/keyless.json` conta
 - **404** — claim token expired or application already deleted; breadcrumb is cleared and a warning is shown.
 - **403** — authenticated account has no active organization; breadcrumb is cleared and a warning is shown.
 - **Any other error** — treated as transient; breadcrumb is preserved so the next login retries.
-- **Success** — application is claimed and the breadcrumb is deleted. The command prints the Dashboard URL of the claimed app's development instance, since this is the first time the app has a home in an account. What happens to the folder depends on what it already holds:
+- **Success** — application is claimed and the breadcrumb is deleted, unless it now holds a different token (written since the login read it), which is kept for the next login. The command prints the Dashboard URL of the claimed app's development instance, since this is the first time the app has a home in an account. What happens to the folder depends on what it already holds:
   - **No Clerk keys, or only keys that belong to the claimed app** — the folder is linked to it and its keys are written via `clerk env pull`, into the same folder.
   - **Linked to a different app** — the link and env files are left alone. The warning names the linked app and the command to switch: `clerk link --app <claimed app id>`.
   - **A key that isn't the claimed app's** — the link and env files are left alone. The warning names the variable and where it came from (never its value), preferring the key the app loads, and says only what the CLI established:
