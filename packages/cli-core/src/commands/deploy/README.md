@@ -43,8 +43,9 @@ With `--domain`, agent mode first creates the production instance (cloning devel
 
 1. Add the records in `pendingDnsRecords` at the DNS provider.
 2. For each `oauth.setup` entry, fill in its `payload` and run its `command` (`clerk config patch --instance <id> --file <file> --yes`). The entries are present while the domain is still pending, so this can overlap with DNS propagation.
-3. Gate on `clerk deploy status --wait`.
-4. Pipe the keys to the host's CLI with `clerk env pull --instance <id> --print`, without reading the output: it holds the secret key.
+3. If `nativeAppleReadinessIssue` is present (an iOS app using native-only Sign in with Apple), follow the guidance in `nextAction`: depending on `reason`, set the production Apple connection's Bundle ID, register the iOS app or enable Native API at `dashboardUrl`, or retry later. Apple has no `oauth.setup` entry in that case.
+4. Gate on `clerk deploy status --wait`.
+5. Pipe the keys to the host's CLI with `clerk env pull --instance <id> --print`, without reading the output: it holds the secret key.
 
 The report's commands name the production instance by id rather than `prod`: that alias reads the local profile, which has no production instance when it was created in the Dashboard or on another machine.
 
@@ -235,7 +236,7 @@ The CLI keeps small local overrides for provider setup details that schema does 
 | Google   | Optional Google Cloud Console JSON import, OAuth consent screen warning, and a tip that the consent-screen name is what users see, so choose the name you want them to see |
 | Apple    | `.p8` file import, production-required `team_id` and `key_id`, native-only field omissions                                                                                 |
 
-Apple configured with only a `bundle_id` (no `client_id`, `client_secret`, `team_id`, or `key_id`, matching the backend's rule) is native-only. It counts as configured once Apple is enabled for authentication, the Bundle ID has exactly one production iOS registration, and Native API is enabled. Until then the wizard offers to add Apple web credentials; declining prints the fix with a link to the production Native Applications page and pauses the deploy, as skipping any provider does.
+Apple configured with only a `bundle_id` (no `client_id`, `client_secret`, `team_id`, or `key_id`, matching the backend's rule) is native-only. It counts as configured once Apple is enabled for authentication, the Bundle ID has exactly one production iOS registration, and Native API is enabled. Until then the wizard offers to add Apple web credentials; declining prints the fix with a link to the production Native Applications page and pauses the deploy, as skipping any provider does. In agent mode the report carries the same fix in `nativeAppleReadinessIssue` and `nextAction`, and leaves Apple out of `oauth.setup`, whose entries ask for web credentials.
 
 For Google, the wizard can load `client_id` and `client_secret` from the top-level `web` object in a Google Cloud Console OAuth client JSON file, or from `installed` for desktop-style client downloads. The file contents are used in memory and are not written to CLI config.
 
