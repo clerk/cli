@@ -926,6 +926,26 @@ describe("deploy", () => {
       mockPassword.mockResolvedValueOnce("fake-secret");
     }
 
+    // A create that loses a race to another one but whose refresh can't find
+    // that instance knows nothing about it, so it can't report success or
+    // check --domain against it.
+    test("a create conflict whose refresh finds no instance fails as unresolved", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockCreateProductionInstance.mockRejectedValue(
+        new PlapiError(
+          409,
+          JSON.stringify({ errors: [{ code: "production_instance_exists" }] }),
+          "https://x",
+        ),
+      );
+
+      const error = await runDeploy({ domain: "other.com", yes: true }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(CliError);
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+    });
+
     test("--domain and --yes skip the domain prompt and both confirmations", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
@@ -3503,7 +3523,10 @@ describe("deploy", () => {
 
         const { payload } = await deployTelemetry(async () => runDeploy({}));
 
-        expect(payload.outcome).toBe("success");
+        // Clerk said an instance exists but didn't return it, so the run
+        // fails as unresolved rather than ending as a success.
+        expect(payload.outcome).toBe("error");
+        expect(payload.error_code).toBe("deploy_instance_unresolved");
         expect(payload.stage).toBeNull();
       });
 

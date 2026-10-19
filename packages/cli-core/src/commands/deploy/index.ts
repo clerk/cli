@@ -329,10 +329,16 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
     const refreshed = await withSpinner("Refreshing application state...", async () =>
       resolveLiveApplicationContext(ctx.profile),
     );
-    ctx.productionInstanceId = refreshed.productionInstanceId;
-    if (refreshed.productionInstanceId) {
-      await persistProductionInstance(ctx, refreshed.productionInstanceId);
+    // Clerk said an instance exists but didn't return it: nothing to resume
+    // or to check --domain against, so this run can't report success.
+    if (!refreshed.productionInstanceId) {
+      throw new CliError(
+        "The production instance exists, but Clerk did not return it yet. Run `clerk deploy status` to check it.",
+        { code: ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED },
+      );
     }
+    ctx.productionInstanceId = refreshed.productionInstanceId;
+    await persistProductionInstance(ctx, refreshed.productionInstanceId);
     await reconcileExistingDeploy(ctx, options);
     return;
   }
