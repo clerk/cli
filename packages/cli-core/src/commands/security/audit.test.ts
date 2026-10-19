@@ -9,9 +9,12 @@ import type { AuditOptions, AuditReport } from "./types.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
+let outroSteps: readonly string[] = [];
 mock.module("../../lib/spinner.ts", () => ({
   intro: () => {},
-  outro: () => {},
+  outro: (steps: readonly string[]) => {
+    outroSteps = steps;
+  },
   pausedOutro: () => {},
   bar: () => {},
   withGutter: async (
@@ -153,6 +156,12 @@ describe("security audit", () => {
     expect(recommended.indexOf("recommended:blocked")).toBeGreaterThan(
       recommended.lastIndexOf("recommended:unmet"),
     );
+  });
+
+  test("the --all hint names the decision checks it leaves out", async () => {
+    await link();
+    await run();
+    expect(outroSteps[0]).toContain("add `--factors` and `--strategy` to include `mfa` and");
   });
 
   test("renders a grouped human report", async () => {

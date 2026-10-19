@@ -279,14 +279,15 @@ function translatePlanError(
     {
       code: ERROR_CODE.PLAN_INSUFFICIENT,
       docsUrl: "https://clerk.com/pricing",
-      examples: rest.length
-        ? [
-            {
-              command: fixCommand(rest, ref, decisions),
-              description: "Apply the rest without the plan-gated checks",
-            },
-          ]
-        : undefined,
+      examples:
+        rest.length && rest.length < checks.length
+          ? [
+              {
+                command: fixCommand(rest, ref, decisions),
+                description: "Apply the rest without the plan-gated checks",
+              },
+            ]
+          : undefined,
     },
   );
 }

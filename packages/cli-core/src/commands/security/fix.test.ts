@@ -704,11 +704,10 @@ describe("security fix", () => {
         factors: ["authenticator"],
         yes: true,
       }).catch((e) => (error = e));
-      const e = error as { message: string; examples: Array<{ command: string }> };
+      const e = error as { message: string; examples?: unknown };
       expect(e.message).toBe("This change needs a plan that includes app:mfa_backup_code.");
-      expect(e.examples[0]!.command).toBe(
-        "clerk security fix user-lockout mfa mfa-required --factors authenticator --app app_1 --instance ins_dev",
-      );
+      // Nothing was dropped, so the retry would be the same failing command.
+      expect(e.examples).toBeUndefined();
     });
 
     test("no example when every selected check is gated", async () => {
