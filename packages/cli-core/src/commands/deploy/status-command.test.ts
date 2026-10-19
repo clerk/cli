@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EXIT_CODE, PlapiError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, EXIT_CODE, PlapiError } from "../../lib/errors.ts";
 import {
   captureTelemetryPayload,
   fakeTelemetryCommand,
@@ -387,6 +387,57 @@ describe("deploy status", () => {
 
     expect(captured.out).toBe("");
     expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledWith("app_1", "dmn_1");
+  });
+
+  // A 404 from the domain's own endpoints means its status isn't readable yet.
+  // The application was read moments earlier, so "re-link" would be wrong.
+  const domainNotFound = () =>
+    new PlapiError(404, JSON.stringify({ errors: [{ code: "resource_not_found" }] }), "https://x");
+  const domainStatusUnreadable =
+    "The production instance exists, but Clerk couldn't read its domain status yet. " +
+    "Run `clerk deploy status` again shortly.";
+
+  test("a 404 on the domain status says the instance exists, not to re-link", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(completeDomainStatus());
+    mockGetApplicationDomainStatus.mockRejectedValue(domainNotFound());
+
+    const error = await deployStatus().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+    expect((error as CliError).message).toBe(domainStatusUnreadable);
+    expect(captured.out).toBe("");
+  });
+
+  test("a 404 on the DNS check says the instance exists, not to re-link", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockRejectedValue(domainNotFound());
+
+    const error = await deployStatus().catch((e: unknown) => e);
+
+    expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+    expect((error as CliError).message).toBe(domainStatusUnreadable);
+    expect(mockGetApplicationDomainStatus).not.toHaveBeenCalled();
+  });
+
+  test("a 404 while waiting on DNS says the instance exists, not to re-link", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+    mockGetApplicationDomainStatus
+      .mockResolvedValueOnce(pendingDnsDomainStatus())
+      .mockRejectedValue(domainNotFound());
+
+    const error = await deployStatus({ wait: true }).catch((e: unknown) => e);
+
+    expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+    expect((error as CliError).message).toBe(domainStatusUnreadable);
   });
 
   test("human mode shows a spinner while waiting for the DNS check to process", async () => {

@@ -122,7 +122,10 @@ export const ERROR_CODE = {
   DEPLOY_CANCELLED: "deploy_cancelled",
   /** Every DNS component verified; Clerk had not finished provisioning yet. Nobody is waiting on the user. */
   DEPLOY_FINALIZING: "deploy_finalizing",
-  /** `clerk deploy` could not resolve the production instance it was about to write to. */
+  /**
+   * The production instance exists, but `clerk deploy` could not resolve it, or
+   * Clerk could not return its domain's status yet (a 404 on the domain).
+   */
   DEPLOY_INSTANCE_UNRESOLVED: "deploy_instance_unresolved",
   /** Local publishable key and secret key address different applications. */
   KEY_PAIR_MISMATCH: "key_pair_mismatch",

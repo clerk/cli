@@ -778,6 +778,19 @@ describe("deploy", () => {
       expect(captured.out).toBe("");
     });
 
+    // The create request is about the application itself, so its 404 keeps
+    // the default reading: the application is gone.
+    test("a 404 on the create still says to re-link", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockCreateProductionInstance.mockRejectedValue(domainStatusNotFound());
+
+      const error = await runDeploy({ domain: "example.com" }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.NOT_LINKED);
+      expect(captured.out).toBe("");
+    });
+
     test("a plan that cannot cover development's features fails without a report", async () => {
       mockIsAgent.mockReturnValue(true);
       await linkedProject();

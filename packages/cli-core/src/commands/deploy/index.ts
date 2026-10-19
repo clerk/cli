@@ -192,12 +192,13 @@ async function runAgentDeploy(domain: string | undefined): Promise<void> {
 }
 
 /**
- * The deploy error mapping reads a 404 as the application being gone and says
- * to re-link. After {@link ensureProductionInstance} that is never true: the
- * application was just read and the instance exists.
+ * Only this run knows whether it created the instance, so it restates the
+ * domain-status error for a caller about to decide whether to create again.
  */
 function instanceReadError(error: unknown, created: boolean): unknown {
-  if (!(error instanceof CliError) || error.code !== ERROR_CODE.NOT_LINKED) return error;
+  if (!(error instanceof CliError) || error.code !== ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED) {
+    return error;
+  }
   return new CliError(
     `The production instance ${created ? "was created" : "exists"}, but its status couldn't be read yet. ` +
       "Run `clerk deploy status` to check it.",

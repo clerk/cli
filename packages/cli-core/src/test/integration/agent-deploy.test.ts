@@ -83,6 +83,8 @@ type PlatformApi = {
   /** Answers application reads after the first, when set. */
   laterApplicationRead?: () => Response;
   domainStatus: () => Response;
+  /** Answers `clerk deploy status`'s DNS check. */
+  dnsCheck: () => Response;
 };
 
 function stubPlatformApi(overrides: Partial<PlatformApi> = {}): PlatformApi {
@@ -95,6 +97,7 @@ function stubPlatformApi(overrides: Partial<PlatformApi> = {}): PlatformApi {
       return json(createdInstance(domain));
     },
     domainStatus: () => json(domainIncomplete),
+    dnsCheck: () => json({ ...domainIncomplete, domain_id: "dmn_1", last_run_at: null }),
     ...overrides,
   };
   let applicationReads = 0;
@@ -115,6 +118,7 @@ function stubPlatformApi(overrides: Partial<PlatformApi> = {}): PlatformApi {
       return json({ data, total_count: data.length });
     }
     if (method === "GET" && path === `${APP}/domains/dmn_1/status`) return api.domainStatus();
+    if (method === "POST" && path === `${APP}/domains/dmn_1/dns_check`) return api.dnsCheck();
     if (method === "GET" && path === `${APP}/instances/ins_dev/config/schema`) {
       return json({
         properties: {
@@ -330,6 +334,9 @@ describe("when the read after the instance exists fails", () => {
     const result = await deploy("--domain", "example.com");
 
     expect(result.exitCode).toBe(1);
+    // Clerk's own code, not one of the CLI's: only a 404 on the domain's
+    // status is translated.
+    expect(agentError(result).code).toBe("internal_clerk_error");
     expect(agentError(result).message).toStartWith(
       "The production instance exists, but its status could not be read; run `clerk deploy status` to retry",
     );
@@ -337,7 +344,8 @@ describe("when the read after the instance exists fails", () => {
     expect(await savedProductionInstance()).toBe("ins_prod");
   });
 
-  // The deploy error mapping reads any 404 as the application being gone.
+  // A 404 on the domain's status means it isn't readable yet; the application
+  // was read moments earlier.
   test.each([
     { run: "created", production: false, domain: null, verb: "was created" },
     { run: "found", production: true, domain: "example.com", verb: "exists" },
@@ -364,6 +372,28 @@ describe("when the read after the instance exists fails", () => {
       expect(await savedProductionInstance()).toBe("ins_prod");
     },
   );
+});
+
+describe("clerk deploy status", () => {
+  test("a 404 on the DNS check says the instance exists, not to re-link", async () => {
+    await linkDevelopmentOnly();
+    stubPlatformApi({
+      production: true,
+      domain: "example.com",
+      dnsCheck: () => apiError(404, "resource_not_found", "not found"),
+    });
+
+    const result = await clerk.raw("--mode", "agent", "deploy", "status");
+
+    expect(result.exitCode).toBe(1);
+    expect(agentError(result)).toEqual({
+      code: "deploy_instance_unresolved",
+      message:
+        "The production instance exists, but Clerk couldn't read its domain status yet. " +
+        "Run `clerk deploy status` again shortly.",
+    });
+    expect(result.stdout).toBe("");
+  });
 });
 
 describe("when the create is refused", () => {
