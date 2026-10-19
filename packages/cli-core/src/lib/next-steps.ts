@@ -40,14 +40,12 @@ export const NEXT_STEPS = {
   ],
   AUTOCLAIM_MIXED_KEYS: [
     "Make this folder's Clerk keys belong to one application",
-    "Run `clerk link` to link that application",
+    "Run `clerk link` to choose that application",
   ],
   AUTOCLAIM_UNMATCHED_PUBLISHABLE_KEY: [
-    "Run `clerk link` to look in your account for the application this folder's publishable key belongs to",
+    "Run `clerk link` to try matching this folder's publishable key to an application in your account",
   ],
-  AUTOCLAIM_UNMATCHED_SECRET_KEY: [
-    "Run `clerk link` and choose the application this folder's secret key belongs to",
-  ],
+  AUTOCLAIM_CHOOSE_APP: ["Run `clerk link` and choose the application this folder should use"],
   AUTOCLAIM_UNVERIFIED: (claimedAppId: string) => [
     "Run `clerk link` to choose the application this folder uses",
     `Run \`clerk link --app ${claimedAppId}\` to use the claimed application instead`,

@@ -5,6 +5,7 @@
 
 import { join } from "node:path";
 import { readdir } from "node:fs/promises";
+import type { PreferredEnvFile } from "./dotenv.ts";
 import { log } from "./log.ts";
 
 /** Where the framework's Clerk SDK is published. Drives how `clerk init`
@@ -26,7 +27,7 @@ export interface FrameworkInfo {
   /** Preferred env file for secrets when the project has none yet. Frameworks
    *  with a `.env.local` convention use it (always gitignored, per-machine
    *  overrides); frameworks without that convention fall back to `.env`. */
-  envFile: ".env" | ".env.local";
+  envFile: PreferredEnvFile;
   /** When true, the framework's Clerk SDK supports keyless mode (auto-generated
    *  temporary dev keys). Frameworks without keyless support require API keys
    *  and must authenticate during `clerk init`. */
@@ -189,6 +190,23 @@ export const FRAMEWORK_NAMES = ALL_FRAMEWORKS.map((fw) => {
 const FALLBACK_KEY = "CLERK_PUBLISHABLE_KEY";
 const FALLBACK_SECRET_KEY = "CLERK_SECRET_KEY";
 
+/**
+ * Every variable name a supported Clerk SDK reads its keys from, plus the
+ * generic fallbacks. For checks that must see every key in a folder whatever
+ * framework is detected. Taken from the framework tables rather than a name
+ * pattern: the shell is shared by every folder on the machine, so a variable
+ * no SDK reads (a `STAGING_CLERK_SECRET_KEY`, say) isn't a folder's key.
+ */
+export const CLERK_KEY_NAMES: { publishable: readonly string[]; secret: readonly string[] } = {
+  publishable: [...new Set([...ALL_FRAMEWORKS.map((fw) => fw.envVar), FALLBACK_KEY])],
+  secret: [
+    ...new Set([
+      ...ALL_FRAMEWORKS.flatMap((fw) => (fw.secretKeyEnvVar ? [fw.secretKeyEnvVar] : [])),
+      FALLBACK_SECRET_KEY,
+    ]),
+  ],
+};
+
 export async function readDeps(cwd: string): Promise<Record<string, string> | null> {
   const file = Bun.file(join(cwd, "package.json"));
   if (!(await file.exists())) return null;
@@ -264,7 +282,7 @@ export async function detectSecretKeyName(cwd: string): Promise<string> {
 
 const FALLBACK_ENV_FILE = ".env.local";
 
-export async function detectEnvFile(cwd: string): Promise<".env" | ".env.local"> {
+export async function detectEnvFile(cwd: string): Promise<PreferredEnvFile> {
   const fw = await detectFramework(cwd);
   return fw?.envFile ?? FALLBACK_ENV_FILE;
 }

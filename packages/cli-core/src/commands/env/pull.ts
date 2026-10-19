@@ -1,7 +1,13 @@
 import { resolve, join, basename } from "node:path";
 import { resolveAppContext, type AppContextOptions } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
-import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
+import {
+  parseEnvFile,
+  mergeEnvVars,
+  serializeEnvFile,
+  type EnvFileName,
+  type PreferredEnvFile,
+} from "../../lib/dotenv.ts";
 import {
   detectPublishableKeyName,
   detectSecretKeyName,
@@ -19,7 +25,7 @@ import {
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
-const DEV_LOCAL_ENV_FILE = ".env.development.local";
+const DEV_LOCAL_ENV_FILE: EnvFileName = ".env.development.local";
 
 interface EnvPullOptions extends AppContextOptions {
   file?: string;
@@ -36,23 +42,32 @@ async function hasClerkKeys(path: string): Promise<boolean> {
 async function resolveTargetFile(
   cwd: string,
   flag?: string,
-  fallbackFile: string = ".env.local",
+  fallbackFile: PreferredEnvFile = ".env.local",
 ): Promise<string> {
   // resolve (not join) so absolute --file paths aren't nested under cwd.
   if (flag) return resolve(cwd, flag);
+  return join(cwd, await defaultTargetFile(cwd, fallbackFile));
+}
 
-  const devLocal = join(cwd, DEV_LOCAL_ENV_FILE);
-  if (await Bun.file(devLocal).exists()) return devLocal;
+/**
+ * The env file `env pull` writes when no `--file` is given. Typed as an
+ * `EnvFileName` so it can only be a file the claim check also reads
+ * (`ENV_FILE_CANDIDATES`); exported for the test that pins that down.
+ */
+export async function defaultTargetFile(
+  cwd: string,
+  fallbackFile: PreferredEnvFile,
+): Promise<EnvFileName> {
+  if (await Bun.file(join(cwd, DEV_LOCAL_ENV_FILE)).exists()) return DEV_LOCAL_ENV_FILE;
 
-  const fallback = join(cwd, fallbackFile);
-  if (await Bun.file(fallback).exists()) return fallback;
+  if (await Bun.file(join(cwd, fallbackFile)).exists()) return fallbackFile;
 
   // Backwards compat: if the non-fallback file already has Clerk keys,
   // keep writing there so we don't leave stale keys behind.
-  const other = fallbackFile === ".env" ? ".env.local" : ".env";
-  if (await hasClerkKeys(join(cwd, other))) return join(cwd, other);
+  const other: PreferredEnvFile = fallbackFile === ".env" ? ".env.local" : ".env";
+  if (await hasClerkKeys(join(cwd, other))) return other;
 
-  return fallback;
+  return fallbackFile;
 }
 
 export async function pull(options: EnvPullOptions): Promise<void> {

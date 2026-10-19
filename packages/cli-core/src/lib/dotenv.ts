@@ -18,10 +18,24 @@ export const ENV_FILE_CANDIDATES = [
 ] as const;
 
 /**
+ * An env file the CLI may read keys from or write keys to. Every default write
+ * target (`clerk init`, `clerk env pull`) is typed as one of these, and the
+ * claim check reads keys from all of them, so a write can never land in a file
+ * the check didn't read: a new target outside this list fails the type check.
+ */
+export type EnvFileName = (typeof ENV_FILE_CANDIDATES)[number];
+
+/** A framework's preferred env file for keys when the project has none yet. */
+export type PreferredEnvFile = Extract<EnvFileName, ".env" | ".env.local">;
+
+/**
  * Returns the first candidate from ENV_FILE_CANDIDATES that exists on disk,
  * or `fallback` if none do.
  */
-export async function findExistingEnvFile(cwd: string, fallback: string): Promise<string> {
+export async function findExistingEnvFile(
+  cwd: string,
+  fallback: PreferredEnvFile,
+): Promise<EnvFileName> {
   for (const candidate of ENV_FILE_CANDIDATES) {
     if (await Bun.file(join(cwd, candidate)).exists()) return candidate;
   }

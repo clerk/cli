@@ -2,49 +2,42 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readAllFolderKeys, readFolderKeys, readSdkKeylessApp } from "./local-keys.ts";
+import { useCleanClerkKeyEnv, useSyntheticShellClerkKeys } from "../test/lib/clerk-key-env.ts";
+import {
+  findKeyInProject,
+  readAllFolderKeys,
+  readFolderKeys,
+  readSdkKeylessApp,
+} from "./local-keys.ts";
 
-// Every name the reader consults with no framework detected. Cleared before
-// each test, not only after, so a value exported in the developer's or CI's
-// shell can't decide the first test.
-const KEY_ENV_NAMES = [
-  "CLERK_PUBLISHABLE_KEY",
-  "CLERK_SECRET_KEY",
-  "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-];
+// The shell exports a synthetic key under every Clerk name for the whole file,
+// and every test starts with them cleared. A block that skipped the clearing
+// would fail on a synthetic value, never print a real one.
+useSyntheticShellClerkKeys();
+useCleanClerkKeyEnv();
+
+let dir: string;
+
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), "clerk-local-keys-"));
+});
+
+afterEach(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
+
+async function write(relativePath: string, content: string): Promise<void> {
+  await Bun.write(join(dir, relativePath), content);
+}
+
+async function writeSdkKeylessFile(keys: { publishableKey?: string; secretKey?: string }) {
+  await write(
+    ".clerk/.tmp/keyless.json",
+    JSON.stringify({ ...keys, claimUrl: "https://dashboard.clerk.com/apps/claim?token=t" }),
+  );
+}
 
 describe("readFolderKeys", () => {
-  let dir: string;
-  const savedEnv = new Map<string, string | undefined>();
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "clerk-local-keys-"));
-    for (const name of KEY_ENV_NAMES) {
-      savedEnv.set(name, process.env[name]);
-      delete process.env[name];
-    }
-  });
-
-  afterEach(async () => {
-    for (const [name, value] of savedEnv) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-    savedEnv.clear();
-    await rm(dir, { recursive: true, force: true });
-  });
-
-  async function write(relativePath: string, content: string): Promise<void> {
-    await Bun.write(join(dir, relativePath), content);
-  }
-
-  async function writeSdkKeylessFile(keys: { publishableKey?: string; secretKey?: string }) {
-    await write(
-      ".clerk/.tmp/keyless.json",
-      JSON.stringify({ ...keys, claimUrl: "https://dashboard.clerk.com/apps/claim?token=t" }),
-    );
-  }
-
   test(".env.local wins over .env when they hold different keys", async () => {
     await write(
       ".env",
@@ -56,8 +49,12 @@ describe("readFolderKeys", () => {
     );
 
     expect(await readFolderKeys(dir)).toEqual({
-      publishableKey: { value: "pk_test_from_local", source: ".env.local" },
-      secretKey: { value: "sk_test_from_local", source: ".env.local" },
+      publishableKey: {
+        value: "pk_test_from_local",
+        name: "CLERK_PUBLISHABLE_KEY",
+        source: ".env.local",
+      },
+      secretKey: { value: "sk_test_from_local", name: "CLERK_SECRET_KEY", source: ".env.local" },
     });
   });
 
@@ -68,6 +65,7 @@ describe("readFolderKeys", () => {
 
     expect((await readFolderKeys(dir)).publishableKey).toEqual({
       value: "pk_test_from_shell",
+      name: "CLERK_PUBLISHABLE_KEY",
       source: "CLERK_PUBLISHABLE_KEY env var",
     });
   });
@@ -79,6 +77,7 @@ describe("readFolderKeys", () => {
 
     expect((await readFolderKeys(dir)).publishableKey).toEqual({
       value: "pk_test_framework",
+      name: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
       source: ".env",
     });
   });
@@ -89,7 +88,7 @@ describe("readFolderKeys", () => {
 
     expect(await readFolderKeys(dir)).toEqual({
       publishableKey: undefined,
-      secretKey: { value: "sk_test_plain", source: ".env" },
+      secretKey: { value: "sk_test_plain", name: "CLERK_SECRET_KEY", source: ".env" },
     });
   });
 
@@ -97,8 +96,12 @@ describe("readFolderKeys", () => {
     await writeSdkKeylessFile({ publishableKey: "pk_test_sdk", secretKey: "sk_test_sdk" });
 
     expect(await readFolderKeys(dir)).toEqual({
-      publishableKey: { value: "pk_test_sdk", source: ".clerk/.tmp/keyless.json" },
-      secretKey: { value: "sk_test_sdk", source: ".clerk/.tmp/keyless.json" },
+      publishableKey: {
+        value: "pk_test_sdk",
+        name: "publishableKey",
+        source: ".clerk/.tmp/keyless.json",
+      },
+      secretKey: { value: "sk_test_sdk", name: "secretKey", source: ".clerk/.tmp/keyless.json" },
       sdkFile: { state: "parsed", publishableKey: "pk_test_sdk", secretKey: "sk_test_sdk" },
     });
   });
@@ -108,7 +111,7 @@ describe("readFolderKeys", () => {
 
     expect(await readFolderKeys(dir)).toEqual({
       publishableKey: undefined,
-      secretKey: { value: "sk_test_sdk", source: ".clerk/.tmp/keyless.json" },
+      secretKey: { value: "sk_test_sdk", name: "secretKey", source: ".clerk/.tmp/keyless.json" },
       sdkFile: { state: "parsed", publishableKey: undefined, secretKey: "sk_test_sdk" },
     });
   });
@@ -128,7 +131,21 @@ describe("readFolderKeys", () => {
 
     expect((await readFolderKeys(dir)).publishableKey).toEqual({
       value: "not-a-clerk-key",
+      name: "CLERK_PUBLISHABLE_KEY",
       source: ".env",
+    });
+  });
+
+  // Otherwise milestone 4 would treat a folder whose plain key it can't read
+  // as one holding only the SDK's keys.
+  test("reports a Clerk line it can't parse, and then doesn't fall back to the SDK keyless file", async () => {
+    await write(".env", "  CLERK_SECRET_KEY=sk_test_indented\n");
+    await writeSdkKeylessFile({ publishableKey: "pk_test_sdk", secretKey: "sk_test_sdk" });
+
+    expect(await readFolderKeys(dir)).toEqual({
+      publishableKey: undefined,
+      secretKey: undefined,
+      unreadableLines: [{ kind: "secret", name: "CLERK_SECRET_KEY", source: ".env" }],
     });
   });
 });
@@ -136,21 +153,11 @@ describe("readFolderKeys", () => {
 // The SDK keyless file's state is data, not an error: the claim check reads an
 // unusable file as "couldn't tell", while `clerk link` has its own stop for it.
 describe("the SDK keyless file's state", () => {
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "clerk-local-keys-sdk-"));
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-
   test.each([
     { name: "can't be parsed", content: "{ half-written" },
     { name: "isn't a JSON object", content: "null" },
   ])("is reported as unreadable, without throwing, when the file $name", async ({ content }) => {
-    await Bun.write(join(dir, ".clerk", ".tmp", "keyless.json"), content);
+    await write(".clerk/.tmp/keyless.json", content);
 
     expect(await readFolderKeys(dir)).toEqual({
       publishableKey: undefined,
@@ -162,8 +169,8 @@ describe("the SDK keyless file's state", () => {
   });
 
   test("is reported as parsed with no keys when the file holds none", async () => {
-    await Bun.write(
-      join(dir, ".clerk", ".tmp", "keyless.json"),
+    await write(
+      ".clerk/.tmp/keyless.json",
       JSON.stringify({ claimUrl: "https://example.com/claim" }),
     );
 
@@ -175,8 +182,8 @@ describe("the SDK keyless file's state", () => {
   });
 
   test("isn't consulted when the folder has a plain key", async () => {
-    await Bun.write(join(dir, ".env"), "CLERK_SECRET_KEY=sk_test_plain\n");
-    await Bun.write(join(dir, ".clerk", ".tmp", "keyless.json"), "{ half-written");
+    await write(".env", "CLERK_SECRET_KEY=sk_test_plain\n");
+    await write(".clerk/.tmp/keyless.json", "{ half-written");
 
     expect((await readFolderKeys(dir)).sdkFile).toBeUndefined();
     expect((await readAllFolderKeys(dir)).sdkFile).toBeUndefined();
@@ -184,72 +191,156 @@ describe("the SDK keyless file's state", () => {
 });
 
 describe("readAllFolderKeys", () => {
-  let dir: string;
-  const savedEnv = new Map<string, string | undefined>();
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "clerk-all-keys-"));
-    for (const name of KEY_ENV_NAMES) {
-      savedEnv.set(name, process.env[name]);
-      delete process.env[name];
-    }
-  });
-
-  afterEach(async () => {
-    for (const [name, value] of savedEnv) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-    savedEnv.clear();
-    await rm(dir, { recursive: true, force: true });
-  });
-
   test("returns every key from the shell and all four env files, each with its source", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_shell";
-    await Bun.write(join(dir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_test_env\n");
-    await Bun.write(join(dir, ".env.development"), "CLERK_SECRET_KEY=sk_test_development\n");
-    await Bun.write(join(dir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_test_local\n");
-    await Bun.write(join(dir, ".env.development.local"), "CLERK_SECRET_KEY=sk_test_dev_local\n");
+    await write(".env", "CLERK_PUBLISHABLE_KEY=pk_test_env\n");
+    await write(".env.development", "CLERK_SECRET_KEY=sk_test_development\n");
+    await write(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_local\n");
+    await write(".env.development.local", "CLERK_SECRET_KEY=sk_test_dev_local\n");
 
-    expect(await readAllFolderKeys(dir)).toEqual({
-      publishableKeys: [
-        { value: "pk_test_shell", source: "CLERK_PUBLISHABLE_KEY env var" },
-        { value: "pk_test_env", source: ".env" },
-        { value: "pk_test_local", source: ".env.local" },
-      ],
-      secretKeys: [
-        { value: "sk_test_development", source: ".env.development" },
-        { value: "sk_test_dev_local", source: ".env.development.local" },
-      ],
-    });
+    const keys = await readAllFolderKeys(dir);
+
+    expect(keys.publishableKeys).toEqual([
+      {
+        value: "pk_test_shell",
+        name: "CLERK_PUBLISHABLE_KEY",
+        source: "CLERK_PUBLISHABLE_KEY env var",
+      },
+      // Files in `ENV_FILE_CANDIDATES` order; order doesn't matter to the check.
+      { value: "pk_test_local", name: "CLERK_PUBLISHABLE_KEY", source: ".env.local" },
+      { value: "pk_test_env", name: "CLERK_PUBLISHABLE_KEY", source: ".env" },
+    ]);
+    expect(keys.secretKeys).toEqual([
+      { value: "sk_test_dev_local", name: "CLERK_SECRET_KEY", source: ".env.development.local" },
+      { value: "sk_test_development", name: "CLERK_SECRET_KEY", source: ".env.development" },
+    ]);
   });
 
   test("returns keys under the framework's own name and the generic one", async () => {
-    await Bun.write(
-      join(dir, "package.json"),
-      JSON.stringify({ dependencies: { next: "15.0.0" } }),
-    );
-    await Bun.write(
-      join(dir, ".env.local"),
+    await write("package.json", JSON.stringify({ dependencies: { next: "15.0.0" } }));
+    await write(
+      ".env.local",
       "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_framework\nCLERK_PUBLISHABLE_KEY=pk_test_generic\n",
     );
 
     expect((await readAllFolderKeys(dir)).publishableKeys).toEqual([
-      { value: "pk_test_framework", source: ".env.local" },
-      { value: "pk_test_generic", source: ".env.local" },
+      {
+        value: "pk_test_framework",
+        name: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+        source: ".env.local",
+      },
+      { value: "pk_test_generic", name: "CLERK_PUBLISHABLE_KEY", source: ".env.local" },
     ]);
   });
 
-  test("with no plain key, returns the SDK keyless file's keys and its state", async () => {
-    await Bun.write(
-      join(dir, ".clerk", ".tmp", "keyless.json"),
-      JSON.stringify({ publishableKey: "pk_test_sdk", secretKey: "sk_test_sdk" }),
+  // A workspace package whose framework is declared at the workspace root
+  // isn't detected, but its app still reads its framework's names.
+  test("returns keys under every supported framework's names when none is detected", async () => {
+    await write(
+      ".env",
+      "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_nuxt\nNUXT_CLERK_SECRET_KEY=sk_test_nuxt\nVITE_CLERK_PUBLISHABLE_KEY=pk_test_vite\n",
     );
+    process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_expo_shell";
+
+    const keys = await readAllFolderKeys(dir);
+
+    expect(keys.publishableKeys.map(({ name, source }) => `${name} from ${source}`)).toEqual([
+      "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY from EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY env var",
+      "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY from .env",
+      "VITE_CLERK_PUBLISHABLE_KEY from .env",
+    ]);
+    expect(keys.secretKeys.map(({ name }) => name)).toEqual(["NUXT_CLERK_SECRET_KEY"]);
+  });
+
+  test("ignores a shell variable no Clerk SDK reads", async () => {
+    process.env.STAGING_CLERK_SECRET_KEY = "sk_test_staging";
+    try {
+      expect(await readAllFolderKeys(dir)).toEqual({
+        publishableKeys: [],
+        secretKeys: [],
+        sdkFile: { state: "absent" },
+      });
+    } finally {
+      delete process.env.STAGING_CLERK_SECRET_KEY;
+    }
+  });
+
+  test.each([
+    { name: "spaces around =", line: "CLERK_SECRET_KEY = sk_test_spaced" },
+    { name: "an indented line", line: "  CLERK_SECRET_KEY=sk_test_indented" },
+    { name: "a colon separator", line: "CLERK_SECRET_KEY: sk_test_colon" },
+  ])("reports a Clerk line written with $name as unreadable", async ({ line }) => {
+    await write(".env", `${line}\n`);
 
     expect(await readAllFolderKeys(dir)).toEqual({
-      publishableKeys: [{ value: "pk_test_sdk", source: ".clerk/.tmp/keyless.json" }],
-      secretKeys: [{ value: "sk_test_sdk", source: ".clerk/.tmp/keyless.json" }],
-      sdkFile: { state: "parsed", publishableKey: "pk_test_sdk", secretKey: "sk_test_sdk" },
+      publishableKeys: [],
+      secretKeys: [],
+      unreadableLines: [{ kind: "secret", name: "CLERK_SECRET_KEY", source: ".env" }],
+    });
+  });
+
+  test("names the most specific Clerk variable an unreadable line mentions", async () => {
+    await write(".env", "  NUXT_CLERK_SECRET_KEY=sk_test_indented\n");
+
+    expect((await readAllFolderKeys(dir)).unreadableLines).toEqual([
+      { kind: "secret", name: "NUXT_CLERK_SECRET_KEY", source: ".env" },
+    ]);
+  });
+
+  test("ignores a commented-out key line, which env loaders skip too", async () => {
+    await write(".env", "# CLERK_SECRET_KEY=sk_test_old\n  # CLERK_PUBLISHABLE_KEY=pk_test_old\n");
+
+    expect((await readAllFolderKeys(dir)).unreadableLines).toBeUndefined();
+  });
+
+  test("with no plain key, returns the SDK keyless file's keys and its state", async () => {
+    await writeSdkKeylessFile({ publishableKey: "pk_test_sdk", secretKey: "sk_test_sdk" });
+
+    const keys = await readAllFolderKeys(dir);
+
+    expect(keys.publishableKeys).toEqual([
+      { value: "pk_test_sdk", name: "publishableKey", source: ".clerk/.tmp/keyless.json" },
+    ]);
+    expect(keys.secretKeys).toEqual([
+      { value: "sk_test_sdk", name: "secretKey", source: ".clerk/.tmp/keyless.json" },
+    ]);
+    expect(keys.sdkFile).toEqual({
+      state: "parsed",
+      publishableKey: "pk_test_sdk",
+      secretKey: "sk_test_sdk",
+    });
+  });
+});
+
+describe("findKeyInProject", () => {
+  const originalFile = Bun.file;
+
+  afterEach(() => {
+    (Bun as unknown as { file: typeof Bun.file }).file = originalFile;
+  });
+
+  // `whoami` and `env pull` find a folder's key through here. An exported key
+  // is what the app loads, so the env files must not be read at all: a file
+  // that can't be read mustn't break a command that doesn't need it.
+  test("returns an exported key without reading the env files", async () => {
+    process.env.CLERK_SECRET_KEY = "sk_test_exported";
+    const envPath = join(dir, ".env");
+    // A regular file whose read fails. (A directory won't do: Bun reports a
+    // directory as not existing, so it would be skipped either way.)
+    (Bun as unknown as { file: (path: string) => unknown }).file = (path: string) =>
+      path === envPath
+        ? {
+            exists: async () => true,
+            text: async () => {
+              throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+            },
+          }
+        : originalFile(path);
+
+    expect(await findKeyInProject(dir, ["CLERK_SECRET_KEY"])).toEqual({
+      value: "sk_test_exported",
+      name: "CLERK_SECRET_KEY",
+      source: "CLERK_SECRET_KEY env var",
     });
   });
 });

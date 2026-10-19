@@ -9,7 +9,13 @@ import { PlapiError, errorMessage } from "./errors.ts";
 import { linkApp } from "./autolink.ts";
 import { resolveProfile } from "./config.ts";
 import { decodePublishableKey } from "./fapi.ts";
-import { readAllFolderKeys, type AllFolderKeys, type LocatedKey } from "./local-keys.ts";
+import {
+  readAllFolderKeys,
+  readFolderKeys,
+  type AllFolderKeys,
+  type FolderKeys,
+  type LocatedKey,
+} from "./local-keys.ts";
 import { deriveProjectName } from "./project-name.ts";
 import { pull } from "../commands/env/pull.ts";
 import { log } from "./log.ts";
@@ -30,12 +36,25 @@ export type FolderUnchanged =
   | {
       kind: "unchanged";
       reason: "different_keys";
-      /** A publishable key when any mismatched, so the advice can say how `clerk link` finds the app. */
+      /**
+       * The mismatched key to name: the one the app loads when it's among the
+       * mismatches, otherwise a publishable key, otherwise the first.
+       */
       key: "publishable" | "secret";
+      /** The variable it's stored under. */
+      name: string;
       /** Where that key came from, for display. Never the key itself. */
       source: string;
       /** Another key in the folder is the claimed app's, so the folder mixes two apps' keys. */
       mixed: boolean;
+      /**
+       * Plain `clerk link` can try to match this key by itself: the folder
+       * isn't linked, its keys don't mix apps, and this is the publishable key
+       * the app loads, as `readFolderKeys` (the reader `clerk link` matches
+       * with) picks it. It only says `clerk link` will try: the app may be in
+       * another workspace. When false, advice names `clerk link --app`.
+       */
+      linkCanTryKey: boolean;
     }
   | { kind: "unchanged"; reason: "unverified" };
 
@@ -187,7 +206,12 @@ async function checkFolder(
   // Linking needs the instances whatever the folder holds.
   if (!hasInstances(app)) await fetchOnce();
 
-  if (folderKeys.publishableKeys.length === 0 && folderKeys.secretKeys.length === 0) {
+  const unreadableLines = folderKeys.unreadableLines ?? [];
+  if (
+    folderKeys.publishableKeys.length === 0 &&
+    folderKeys.secretKeys.length === 0 &&
+    unreadableLines.length === 0
+  ) {
     if (folderKeys.sdkFile && folderKeys.sdkFile.state !== "absent") {
       // The SDK keyless file is there but names no app, so whatever the folder
       // runs on, the CLI can't tell, and can't risk replacing it.
@@ -200,28 +224,41 @@ async function checkFolder(
   }
 
   let checks = checkFolderKeys(folderKeys, app.instances);
-  if (!checks.some(isMismatch) && checks.some(isUnknown) && (await fetchOnce())) {
+  // Only an incomplete claim response is worth a fetch; a folder value the
+  // CLI can't read stays unreadable whatever the app looks like.
+  if (!checks.some(isMismatch) && checks.some(fetchMayHelp) && (await fetchOnce())) {
     checks = checkFolderKeys(folderKeys, app.instances);
   }
 
   // A key known to belong to another app settles it, even if another key
-  // couldn't be compared. Report a publishable key when one mismatched: it is
-  // the key `clerk link` can look the app up by.
+  // couldn't be compared or read.
   const mismatches = checks.filter(isMismatch);
-  const mismatch = mismatches.find((check) => check.key === "publishable") ?? mismatches[0];
-  if (mismatch) {
-    log.debug(`autoclaim: ${mismatch.key} key from ${mismatch.source} isn't the claimed app's`);
+  if (mismatches.length > 0) {
+    const effective = await effectiveKeys(cwd);
+    const loaded = mismatches.find((check) => isEffective(check, effective));
+    const mismatch =
+      loaded ?? mismatches.find((check) => check.key === "publishable") ?? mismatches[0]!;
+    const mixed = checks.some((check) => check.result === "match");
+    log.debug(`autoclaim: ${mismatch.name} from ${mismatch.source} isn't the claimed app's`);
     return leave({
       kind: "unchanged",
       reason: "different_keys",
       key: mismatch.key,
+      name: mismatch.name,
       source: mismatch.source,
-      mixed: checks.some((check) => check.result === "match"),
+      mixed,
+      linkCanTryKey:
+        !linked &&
+        !mixed &&
+        mismatch.key === "publishable" &&
+        effective !== undefined &&
+        effective.unreadableLines === undefined &&
+        isEffective(mismatch, effective),
     });
   }
-  const unknown = checks.find(isUnknown);
+  const unknown = checks.find((check) => check.result !== "match");
   if (unknown) {
-    log.debug(`autoclaim: couldn't compare the ${unknown.key} key from ${unknown.source}`);
+    log.debug(`autoclaim: couldn't compare ${unknown.name} from ${unknown.source}`);
     return leave(UNVERIFIED);
   }
   log.debug(`autoclaim: every key in the folder is ${claimed.application_id}'s; setting it up`);
@@ -233,16 +270,64 @@ function hasInstances(app: Application): boolean {
   return Array.isArray(app.instances) && app.instances.length > 0;
 }
 
-type KeyComparison = "match" | "mismatch" | "unknown";
+/**
+ * - `unknown`: the claimed app's data lacked a comparable key; a fetch may settle it.
+ * - `unreadable`: the folder's own value can't be read as a key (an unparseable
+ *   line, a trailing comment, a `${VAR}` reference); nothing settles it.
+ */
+type KeyComparison = "match" | "mismatch" | "unknown" | "unreadable";
 
 interface KeyCheck {
   key: "publishable" | "secret";
+  name: string;
   source: string;
   result: KeyComparison;
 }
 
 const isMismatch = (check: KeyCheck) => check.result === "mismatch";
-const isUnknown = (check: KeyCheck) => check.result === "unknown";
+const fetchMayHelp = (check: KeyCheck) => check.result === "unknown";
+
+/**
+ * The keys `clerk link` would match with. `undefined` when they can't be
+ * read, which only withholds the plain `clerk link` advice.
+ */
+async function effectiveKeys(cwd: string): Promise<FolderKeys | undefined> {
+  try {
+    return await readFolderKeys(cwd);
+  } catch (error) {
+    log.debug(`autoclaim: couldn't read the keys the app loads — ${errorMessage(error)}`);
+    return undefined;
+  }
+}
+
+function isEffective(check: KeyCheck, effective: FolderKeys | undefined): boolean {
+  const key = check.key === "publishable" ? effective?.publishableKey : effective?.secretKey;
+  return key !== undefined && key.name === check.name && key.source === check.source;
+}
+
+/**
+ * Whether a folder value is shaped like a Clerk key at all. Anything else
+ * (a value with a trailing `# comment` the CLI's parser kept, a `${VAR}`
+ * reference, a placeholder) needs interpretation the CLI doesn't do, so it is
+ * unreadable rather than another app's key.
+ *
+ * Covers the modern `pk_`/`sk_` formats only. A legacy `test_`/`live_` key
+ * still matches when it is identical to one of the claimed app's keys, which
+ * is checked first; otherwise it fails safe as "couldn't tell".
+ */
+const KEY_SHAPE = /^(?:pk|sk)_(?:test|live)_[A-Za-z0-9+/=_-]+$/;
+
+/** Whether `value` is exactly one of the claimed app's keys of that kind, in any format. */
+function isOneOfTheAppsKeys(
+  key: KeyCheck["key"],
+  value: string,
+  instances: readonly ApplicationInstance[],
+): boolean {
+  return instances.some(
+    (instance) =>
+      (key === "publishable" ? instance.publishable_key : instance.secret_key) === value,
+  );
+}
 
 /** Compares every key the folder holds with the claimed app's instances. */
 function checkFolderKeys(
@@ -254,14 +339,29 @@ function checkFolderKeys(
   const list = Array.isArray(instances) ? instances : [];
   const check = (
     key: KeyCheck["key"],
-    { value, source }: LocatedKey,
+    { value, name, source }: LocatedKey,
     compare: (local: string, instances: readonly ApplicationInstance[]) => KeyComparison,
-  ): KeyCheck => ({ key, source, result: compare(value, list) });
+  ): KeyCheck => ({
+    key,
+    name,
+    source,
+    result: isOneOfTheAppsKeys(key, value, list)
+      ? "match"
+      : KEY_SHAPE.test(value)
+        ? compare(value, list)
+        : "unreadable",
+  });
   return [
     ...folderKeys.publishableKeys.map((located) =>
       check("publishable", located, comparePublishableKey),
     ),
     ...folderKeys.secretKeys.map((located) => check("secret", located, compareSecretKey)),
+    ...(folderKeys.unreadableLines ?? []).map(({ kind, name, source }): KeyCheck => ({
+      key: kind,
+      name,
+      source,
+      result: "unreadable",
+    })),
   ];
 }
 

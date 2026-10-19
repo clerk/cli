@@ -785,20 +785,40 @@ describe("login", () => {
         ],
       },
       {
-        name: "a publishable key that isn't the claimed app's",
+        name: "another app's publishable key that plain `clerk link` can try to match",
         local: {
           kind: "unchanged",
           reason: "different_keys",
           key: "publishable",
+          name: "CLERK_PUBLISHABLE_KEY",
           source: ".env",
           mixed: false,
+          linkCanTryKey: true,
         },
         warning:
-          "The publishable key from .env isn't `bad-agent`'s, so this folder's link and keys were left alone. " +
-          "Run `clerk link`; it looks in your account for the application that key belongs to.",
+          "`CLERK_PUBLISHABLE_KEY` in .env isn't `bad-agent`'s, so this folder's link and keys were left alone. " +
+          "Run `clerk link`; it tries to match that key to an application in your account.",
         nextSteps: [
-          "Run `clerk link` to look in your account for the application this folder's publishable key belongs to",
+          "Run `clerk link` to try matching this folder's publishable key to an application in your account",
         ],
+      },
+      {
+        // For example, the folder is already linked to the claimed app, so plain
+        // `clerk link` would keep that link instead of matching keys.
+        name: "another app's publishable key that plain `clerk link` can't try",
+        local: {
+          kind: "unchanged",
+          reason: "different_keys",
+          key: "publishable",
+          name: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+          source: ".env.local",
+          mixed: false,
+          linkCanTryKey: false,
+        },
+        warning:
+          "`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in .env.local isn't `bad-agent`'s, so this folder's link and keys were left alone. " +
+          "Choose the application this folder should use: `clerk apps list --json` lists your applications' IDs, then run `clerk link --app <app_id>`.",
+        nextSteps: ["Run `clerk link` and choose the application this folder should use"],
       },
       {
         name: "only a secret key, which isn't the claimed app's",
@@ -806,15 +826,15 @@ describe("login", () => {
           kind: "unchanged",
           reason: "different_keys",
           key: "secret",
+          name: "CLERK_SECRET_KEY",
           source: "CLERK_SECRET_KEY env var",
           mixed: false,
+          linkCanTryKey: false,
         },
         warning:
-          "The secret key from CLERK_SECRET_KEY env var isn't `bad-agent`'s, so this folder's link and keys were left alone. " +
-          "To link the application it belongs to: find its ID with `clerk apps list --json`, then run `clerk link --app <app_id>`.",
-        nextSteps: [
-          "Run `clerk link` and choose the application this folder's secret key belongs to",
-        ],
+          "The `CLERK_SECRET_KEY` env var isn't `bad-agent`'s, so this folder's link and keys were left alone. " +
+          "Choose the application this folder should use: `clerk apps list --json` lists your applications' IDs, then run `clerk link --app <app_id>`.",
+        nextSteps: ["Run `clerk link` and choose the application this folder should use"],
       },
       {
         name: "keys from the claimed app and another app",
@@ -822,15 +842,17 @@ describe("login", () => {
           kind: "unchanged",
           reason: "different_keys",
           key: "secret",
+          name: "CLERK_SECRET_KEY",
           source: ".env.development.local",
           mixed: true,
+          linkCanTryKey: false,
         },
         warning:
-          "This folder holds keys for `bad-agent` and a secret key from .env.development.local that isn't `bad-agent`'s, so its link and keys were left alone. " +
-          "Make the folder's Clerk keys belong to one application, then run `clerk link`.",
+          "This folder holds keys for `bad-agent` and `CLERK_SECRET_KEY` in .env.development.local, which isn't `bad-agent`'s, so its link and keys were left alone. " +
+          "Make the folder's Clerk keys belong to one application, then link it. Choose the application this folder should use: `clerk apps list --json` lists your applications' IDs, then run `clerk link --app <app_id>`.",
         nextSteps: [
           "Make this folder's Clerk keys belong to one application",
-          "Run `clerk link` to link that application",
+          "Run `clerk link` to choose that application",
         ],
       },
       {
@@ -838,8 +860,7 @@ describe("login", () => {
         local: { kind: "unchanged", reason: "unverified" },
         warning:
           "Couldn't confirm this folder's Clerk keys belong to `bad-agent`, so this folder's link and keys were left alone. " +
-          "To link the application this folder uses: find its ID with `clerk apps list --json`, then run `clerk link --app <app_id>`. " +
-          "To use `bad-agent` instead, run `clerk link --app app_claimed`.",
+          "Choose the application this folder should use: `clerk apps list --json` lists your applications' IDs, then run `clerk link --app <app_id>`, or run `clerk link --app app_claimed` to use `bad-agent`.",
         nextSteps: [
           "Run `clerk link` to choose the application this folder uses",
           "Run `clerk link --app app_claimed` to use the claimed application instead",

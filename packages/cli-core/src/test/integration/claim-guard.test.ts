@@ -10,7 +10,7 @@
  * claim and every other Platform API call use the session.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import type { Application } from "../../lib/plapi.ts";
 import {
@@ -21,6 +21,7 @@ import {
   setProfile,
   useIntegrationTestHarness,
 } from "./lib/harness.ts";
+import { useCleanClerkKeyEnv, useSyntheticShellClerkKeys } from "../lib/clerk-key-env.ts";
 
 const h = useIntegrationTestHarness();
 
@@ -68,33 +69,17 @@ const PASTED_ENV = [
   "",
 ].join("\n");
 
-// The env var outranks the folder's files as a source of its keys, so a value
-// exported in the developer's or CI's shell would change what the folder holds.
-const SHELL_KEY_NAMES = [
-  "CLERK_PUBLISHABLE_KEY",
-  "CLERK_SECRET_KEY",
-  "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-  "NUXT_CLERK_SECRET_KEY",
-] as const;
-const shellKeys = new Map<string, string | undefined>();
-
-afterEach(() => {
-  for (const [name, value] of shellKeys) {
-    if (value === undefined) delete process.env[name];
-    else process.env[name] = value;
-  }
-  shellKeys.clear();
-});
+// The shell outranks the folder's files as a source of its keys. A synthetic
+// key under every Clerk name stands in for a developer's or CI's shell, and
+// every test starts with them cleared.
+useSyntheticShellClerkKeys();
+useCleanClerkKeyEnv();
 
 /** What the claim endpoint answers; a test can swap in an incomplete app. */
 let claimResponse: unknown;
 
 beforeEach(async () => {
   claimResponse = APP_A;
-  for (const name of SHELL_KEY_NAMES) {
-    shellKeys.set(name, process.env[name]);
-    delete process.env[name];
-  }
   delete process.env.CLERK_PLATFORM_API_KEY;
   // `clerk auth login` treats the folder as signed in only when the config
   // records who signed in, on top of a stored session (`getExistingSession`).
@@ -111,6 +96,12 @@ beforeEach(async () => {
     if (url.includes(`/v1/platform/applications/${APP_A.application_id}`)) {
       return Response.json(APP_A);
     }
+    // App B is already in the account: `clerk link --app app_B` fetches it,
+    // and the app list `clerk link` matches keys against holds it.
+    if (url.includes(`/v1/platform/applications/${APP_B.application_id}`)) {
+      return Response.json(APP_B);
+    }
+    if (new URL(url).pathname === "/v1/platform/applications") return Response.json([APP_B]);
     return Response.json({ errors: [{ message: `unexpected ${url}` }] }, { status: 404 });
   });
 });
@@ -163,10 +154,8 @@ test("Dashboard keys pasted into .env stay in place after a leftover token is cl
   expect((await readConfig()).profiles[PROFILE_KEY]).toBeUndefined();
   expect(await tokenFileExists()).toBe(false);
   expect(result.stderr).toContain("Claimed application: `init-app`");
-  expect(result.stderr).toContain("The publishable key from .env isn't `init-app`'s");
-  expect(result.stderr).toContain(
-    "it looks in your account for the application that key belongs to",
-  );
+  expect(result.stderr).toContain("`CLERK_PUBLISHABLE_KEY` in .env isn't `init-app`'s");
+  expect(result.stderr).toContain("it tries to match that key to an application in your account");
 });
 
 // Control: the guard must not block the case the claim exists for.
@@ -301,5 +290,120 @@ describe("a claim response without instances", () => {
       `CLERK_SECRET_KEY=${APP_A.instances[0]!.secret_key}`,
     );
     expect(result.stderr).toContain("Claimed and linked application: `init-app`");
+  });
+});
+
+// Frameworks load env files with dotenv or Node's parser, which accept lines
+// the CLI's own parser skips. A Clerk key the check can't read must make it
+// answer "couldn't tell", never "no keys" or "a different app's key".
+describe("key lines the CLI's env parser can't read", () => {
+  const dev = (app: Application) => app.instances[0]!;
+
+  test.each([
+    {
+      name: "spaces around =",
+      env: (app: Application) =>
+        `CLERK_PUBLISHABLE_KEY = ${dev(app).publishable_key}\nCLERK_SECRET_KEY = ${dev(app).secret_key}\n`,
+    },
+    {
+      name: "indented lines",
+      env: (app: Application) =>
+        `  CLERK_PUBLISHABLE_KEY=${dev(app).publishable_key}\n  CLERK_SECRET_KEY=${dev(app).secret_key}\n`,
+    },
+  ])("another app's keys written with $name keep the folder unlinked", async ({ env }) => {
+    const before = env(APP_B);
+    await Bun.write(join(h.tempDir, ".env"), before);
+
+    const result = await clerk("--mode", "agent", "auth", "login");
+
+    expect(await profile()).toBeUndefined();
+    expect(await readEnv()).toBe(before);
+    expect(await Bun.file(join(h.tempDir, ".env.local")).exists()).toBe(false);
+    expect(result.stderr).toContain("Couldn't confirm");
+  });
+
+  test("the claimed app's own key followed by a comment is 'couldn't tell', not another app's key", async () => {
+    // dotenv strips the comment, so the app loads A's key; the CLI can't tell.
+    await Bun.write(
+      join(h.tempDir, ".env"),
+      `CLERK_PUBLISHABLE_KEY=${dev(APP_A).publishable_key}\nCLERK_SECRET_KEY=${dev(APP_A).secret_key} # from clerk init\n`,
+    );
+
+    const result = await clerk("--mode", "agent", "auth", "login");
+
+    expect(await profile()).toBeUndefined();
+    expect(result.stderr).toContain("Couldn't confirm");
+    expect(result.stderr).not.toContain("isn't `init-app`'s");
+  });
+});
+
+// The check must read the names every supported Clerk SDK uses, not only the
+// detected framework's: detection fails in a workspace package whose framework
+// is declared at the workspace root.
+test("another app's keys under Nuxt's names keep the folder unlinked when no framework is detected", async () => {
+  const before = [
+    `NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${APP_B.instances[0]!.publishable_key}`,
+    `NUXT_CLERK_SECRET_KEY=${APP_B.instances[0]!.secret_key}`,
+    `CLERK_PUBLISHABLE_KEY=${APP_A.instances[0]!.publishable_key}`,
+    `CLERK_SECRET_KEY=${APP_A.instances[0]!.secret_key}`,
+    "",
+  ].join("\n");
+  await Bun.write(join(h.tempDir, ".env"), before);
+
+  const result = await clerk("--mode", "agent", "auth", "login");
+
+  expect(await profile()).toBeUndefined();
+  expect(await readEnv()).toBe(before);
+  expect(result.stderr).toContain("NUXT_");
+  expect(result.stderr).toContain("left alone");
+});
+
+// Advice is tested by following it (the plan's shared rule 4): run the command
+// the warning names and check where the folder ends up.
+describe("following the left-alone advice", () => {
+  test("another app's publishable key, folder not linked: `clerk link` links the app that key belongs to", async () => {
+    await Bun.write(join(h.tempDir, ".env"), envFileFor(APP_B));
+    const claim = await clerk("--mode", "agent", "auth", "login");
+    expect(claim.stderr).toContain("Run `clerk link`; it tries to match that key");
+
+    await clerk("--mode", "agent", "link");
+
+    expect((await profile())?.appId).toBe(APP_B.application_id);
+  });
+
+  test("another app's publishable key, folder linked to the claimed app: `clerk link --app` switches it", async () => {
+    await setProfile(PROFILE_KEY, {
+      workspaceId: "",
+      appId: APP_A.application_id,
+      appName: APP_A.name,
+      instances: { development: "ins_dev_a" },
+    });
+    await Bun.write(
+      join(h.tempDir, ".env"),
+      `CLERK_PUBLISHABLE_KEY=${APP_B.instances[0]!.publishable_key}\n`,
+    );
+    const claim = await clerk("--mode", "agent", "auth", "login");
+    // Plain `clerk link` would keep the link to A, so it isn't offered.
+    expect(claim.stderr).not.toContain("Run `clerk link`;");
+    expect(claim.stderr).toContain("`clerk apps list --json`");
+
+    await clerk("--mode", "agent", "link", "--app", APP_B.application_id);
+
+    expect((await profile())?.appId).toBe(APP_B.application_id);
+  });
+
+  test("secret keys from the claimed app and another app, no publishable key: the advice never relies on plain `clerk link`", async () => {
+    process.env.CLERK_SECRET_KEY = APP_A.instances[0]!.secret_key!;
+    await Bun.write(
+      join(h.tempDir, ".env"),
+      `CLERK_SECRET_KEY=${APP_B.instances[0]!.secret_key}\n`,
+    );
+    const claim = await clerk("--mode", "agent", "auth", "login");
+    expect(claim.stderr).toContain("Make the folder's Clerk keys belong to one application");
+    expect(claim.stderr).not.toContain("Run `clerk link`;");
+
+    await clerk("--mode", "agent", "link", "--app", APP_B.application_id);
+
+    expect((await profile())?.appId).toBe(APP_B.application_id);
   });
 });

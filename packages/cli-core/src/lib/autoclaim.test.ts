@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { stubFetch, useCaptureLog } from "../test/lib/stubs.ts";
+import { useCleanClerkKeyEnv, useSyntheticShellClerkKeys } from "../test/lib/clerk-key-env.ts";
 
 import * as autolinkMod from "./autolink.ts";
 import * as configMod from "./config.ts";
@@ -34,7 +35,12 @@ const MANAGED_WORKSPACE_BODY = JSON.stringify({
   ],
 });
 
+// A synthetic key under every Clerk name for the whole file, cleared before
+// each test: a test that read the shell would fail on a synthetic value.
+useSyntheticShellClerkKeys();
+
 describe("attemptAutoclaim", () => {
+  useCleanClerkKeyEnv();
   const originalFetch = globalThis.fetch;
   let tempDir: string;
   useCaptureLog();
@@ -43,15 +49,8 @@ describe("attemptAutoclaim", () => {
   let clearBreadcrumbSpy: ReturnType<typeof spyOn>;
   let pullSpy: ReturnType<typeof spyOn>;
   let resolveProfileSpy: ReturnType<typeof spyOn>;
-  // The folder's keys are read from the environment before its files, so a
-  // value exported in the developer's or CI's shell would change the folder.
-  const savedKeyEnv = new Map<string, string | undefined>();
 
   beforeEach(async () => {
-    for (const name of ["CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"]) {
-      savedKeyEnv.set(name, process.env[name]);
-      delete process.env[name];
-    }
     tempDir = await mkdtemp(join(tmpdir(), "clerk-autoclaim-test-"));
     process.env.CLERK_PLATFORM_API_KEY = "ak_test_key";
     process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
@@ -74,11 +73,6 @@ describe("attemptAutoclaim", () => {
     clearBreadcrumbSpy.mockRestore();
     pullSpy.mockRestore();
     resolveProfileSpy.mockRestore();
-    for (const [name, value] of savedKeyEnv) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-    savedKeyEnv.clear();
     setLogLevel("info");
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -364,43 +358,57 @@ describe("attemptAutoclaim", () => {
         name: "a different publishable key next to the claimed app's secret key",
         env: [`CLERK_PUBLISHABLE_KEY=${OTHER_PK}`, `CLERK_SECRET_KEY=${CLAIMED_SK}`],
         key: "publishable",
+        variable: "CLERK_PUBLISHABLE_KEY",
         mixed: true,
+        linkCanTryKey: false,
       },
       {
         name: "a different secret key next to the claimed app's publishable key",
         env: [`CLERK_PUBLISHABLE_KEY=${CLAIMED_PK}`, `CLERK_SECRET_KEY=${OTHER_SK}`],
         key: "secret",
+        variable: "CLERK_SECRET_KEY",
         mixed: true,
+        linkCanTryKey: false,
       },
       {
-        // Both differ; the publishable key is reported, since `clerk link` can look it up.
+        // Both differ; the publishable key the app loads is reported, and plain
+        // `clerk link` can try to match it.
         name: "two keys, neither the claimed app's",
         env: [`CLERK_SECRET_KEY=${OTHER_SK}`, `CLERK_PUBLISHABLE_KEY=${OTHER_PK}`],
         key: "publishable",
+        variable: "CLERK_PUBLISHABLE_KEY",
         mixed: false,
+        linkCanTryKey: true,
       },
       {
         name: "only a secret key, which isn't the claimed app's",
         env: [`CLERK_SECRET_KEY=${OTHER_SK}`],
         key: "secret",
+        variable: "CLERK_SECRET_KEY",
         mixed: false,
+        linkCanTryKey: false,
       },
-    ] as const)("is left alone when it holds $name", async ({ env, key, mixed }) => {
-      stubPlatform(CLAIMED_APP);
-      const before = await writeEnv([...env]);
+    ] as const)(
+      "is left alone when it holds $name",
+      async ({ env, key, variable, mixed, linkCanTryKey }) => {
+        stubPlatform(CLAIMED_APP);
+        const before = await writeEnv([...env]);
 
-      const result = await runClaim();
+        const result = await runClaim();
 
-      expect(result.local).toEqual({
-        kind: "unchanged",
-        reason: "different_keys",
-        key,
-        source: ".env",
-        mixed,
-      });
-      expectLeftAlone();
-      expect(await Bun.file(join(tempDir, ".env")).text()).toBe(before);
-    });
+        expect(result.local).toEqual({
+          kind: "unchanged",
+          reason: "different_keys",
+          key,
+          name: variable,
+          source: ".env",
+          mixed,
+          linkCanTryKey,
+        });
+        expectLeftAlone();
+        expect(await Bun.file(join(tempDir, ".env")).text()).toBe(before);
+      },
+    );
 
     test("is linked when it holds only a secret key, which is the claimed app's", async () => {
       stubPlatform(CLAIMED_APP);
@@ -426,8 +434,10 @@ describe("attemptAutoclaim", () => {
         kind: "unchanged",
         reason: "different_keys",
         key: "secret",
+        name: "CLERK_SECRET_KEY",
         source: ".env",
         mixed: false,
+        linkCanTryKey: false,
       });
       expectLeftAlone();
       expect(await Bun.file(join(tempDir, ".env")).text()).toBe(before);
@@ -453,8 +463,10 @@ describe("attemptAutoclaim", () => {
         kind: "unchanged",
         reason: "different_keys",
         key: "secret",
+        name: "CLERK_SECRET_KEY",
         source: ".env",
         mixed: false,
+        linkCanTryKey: false,
       });
       expectLeftAlone();
     });
@@ -624,8 +636,10 @@ describe("attemptAutoclaim", () => {
         kind: "unchanged",
         reason: "different_keys",
         key: "secret",
+        name: "CLERK_SECRET_KEY",
         source: file,
         mixed: true,
+        linkCanTryKey: false,
       });
       expectLeftAlone();
       expect(await Bun.file(join(tempDir, file)).text()).toBe(before);
@@ -642,8 +656,10 @@ describe("attemptAutoclaim", () => {
         kind: "unchanged",
         reason: "different_keys",
         key: "publishable",
+        name: "CLERK_PUBLISHABLE_KEY",
         source: ".env",
         mixed: true,
+        linkCanTryKey: false,
       });
       expectLeftAlone();
     });
@@ -686,8 +702,11 @@ describe("attemptAutoclaim", () => {
           kind: "unchanged",
           reason: "different_keys",
           key: "publishable",
+          name: "publishableKey",
           source: ".clerk/.tmp/keyless.json",
           mixed: false,
+          // An SDK-only folder: `clerk link` matches the SDK file's key.
+          linkCanTryKey: true,
         });
         expectLeftAlone();
       });
@@ -707,6 +726,140 @@ describe("attemptAutoclaim", () => {
 
         expect(result.local).toEqual({ kind: "unchanged", reason: "unverified" });
         expectLeftAlone();
+      });
+    });
+
+    describe("with keys the CLI can't read or that sit under other names", () => {
+      test.each([
+        { name: "spaces around =", line: `CLERK_SECRET_KEY = ${OTHER_SK}` },
+        { name: "an indented line", line: `  CLERK_SECRET_KEY=${OTHER_SK}` },
+      ])("is left alone, as couldn't tell, when a key line has $name", async ({ line }) => {
+        const appFetches = stubPlatform(CLAIMED_APP);
+        await writeEnv([line]);
+
+        const result = await runClaim();
+
+        expect(result.local).toEqual({ kind: "unchanged", reason: "unverified" });
+        expectLeftAlone();
+        // The claim response was complete; a fetch can't read the folder's line.
+        expect(appFetches).toHaveLength(0);
+      });
+
+      test.each([
+        { name: "a trailing comment", value: `${CLAIMED_SK} # from clerk init` },
+        { name: "a variable reference", value: "${SHARED_CLERK_SECRET}" },
+        { name: "a placeholder", value: "your-secret-key-here" },
+      ])("is left alone, as couldn't tell, when a key's value holds $name", async ({ value }) => {
+        const appFetches = stubPlatform(CLAIMED_APP);
+        await writeEnv([`CLERK_PUBLISHABLE_KEY=${CLAIMED_PK}`, `CLERK_SECRET_KEY=${value}`]);
+
+        const result = await runClaim();
+
+        expect(result.local).toEqual({ kind: "unchanged", reason: "unverified" });
+        expectLeftAlone();
+        expect(appFetches).toHaveLength(0);
+      });
+
+      test("reports another app's readable key even when another line can't be read", async () => {
+        stubPlatform(CLAIMED_APP);
+        await writeEnv([`  CLERK_SECRET_KEY=${CLAIMED_SK}`, `CLERK_PUBLISHABLE_KEY=${OTHER_PK}`]);
+
+        const result = await runClaim();
+
+        expect(result.local).toMatchObject({
+          kind: "unchanged",
+          reason: "different_keys",
+          name: "CLERK_PUBLISHABLE_KEY",
+          // The unreadable line leaves `clerk link` unsure which key the app loads.
+          linkCanTryKey: false,
+        });
+        expectLeftAlone();
+      });
+
+      test("is left alone when another app's keys sit under a framework's names the CLI didn't detect", async () => {
+        stubPlatform(CLAIMED_APP);
+        await writeEnv([
+          `NUXT_CLERK_SECRET_KEY=${OTHER_SK}`,
+          `CLERK_PUBLISHABLE_KEY=${CLAIMED_PK}`,
+          `CLERK_SECRET_KEY=${CLAIMED_SK}`,
+        ]);
+
+        const result = await runClaim();
+
+        expect(result.local).toEqual({
+          kind: "unchanged",
+          reason: "different_keys",
+          key: "secret",
+          name: "NUXT_CLERK_SECRET_KEY",
+          source: ".env",
+          mixed: true,
+          linkCanTryKey: false,
+        });
+        expectLeftAlone();
+      });
+    });
+
+    // The key-shape filter covers modern `pk_`/`sk_` keys; an identical key of
+    // any format is still the claimed app's.
+    test("is linked when it holds a legacy-format secret key identical to the claimed app's", async () => {
+      const legacy = {
+        ...CLAIMED_APP,
+        instances: [{ ...CLAIMED_APP.instances[0]!, secret_key: "test_legacysecret0123" }],
+      };
+      stubPlatform(legacy);
+      await writeEnv([
+        `CLERK_PUBLISHABLE_KEY=${CLAIMED_PK}`,
+        "CLERK_SECRET_KEY=test_legacysecret0123",
+      ]);
+
+      const result = await runClaim();
+
+      expect(result.local).toEqual({ kind: "linked", envPulled: true });
+    });
+
+    test("is left alone, as couldn't tell, when it holds a different legacy-format key", async () => {
+      stubPlatform(CLAIMED_APP);
+      await writeEnv([
+        `CLERK_PUBLISHABLE_KEY=${CLAIMED_PK}`,
+        "CLERK_SECRET_KEY=test_someotherlegacykey",
+      ]);
+
+      const result = await runClaim();
+
+      expect(result.local).toEqual({ kind: "unchanged", reason: "unverified" });
+      expectLeftAlone();
+    });
+
+    describe("which mismatched key the warning names", () => {
+      test("names the publishable key the app loads, not the first one found", async () => {
+        stubPlatform(CLAIMED_APP);
+        const SECOND_OTHER_PK = publishableKeyFor("third-app.clerk.accounts.dev");
+        await writeEnv([`CLERK_PUBLISHABLE_KEY=${OTHER_PK}`]);
+        await Bun.write(join(tempDir, ".env.local"), `CLERK_PUBLISHABLE_KEY=${SECOND_OTHER_PK}\n`);
+
+        const result = await runClaim();
+
+        // `.env.local` overrides `.env`, so that's the key `clerk link` will try.
+        expect(result.local).toMatchObject({
+          reason: "different_keys",
+          source: ".env.local",
+          linkCanTryKey: true,
+        });
+      });
+
+      test("doesn't offer plain `clerk link` when the folder is already linked to the claimed app", async () => {
+        stubPlatform(CLAIMED_APP);
+        resolveProfileSpy.mockResolvedValue({
+          path: "github.com/test/project",
+          profile: { workspaceId: "", appId: "app_claimed", instances: { development: "ins_dev" } },
+          resolvedVia: "remote",
+        });
+        await writeEnv([`CLERK_PUBLISHABLE_KEY=${OTHER_PK}`]);
+
+        const result = await runClaim();
+
+        // `clerk link` in a linked folder keeps the link instead of matching keys.
+        expect(result.local).toMatchObject({ reason: "different_keys", linkCanTryKey: false });
       });
     });
 
