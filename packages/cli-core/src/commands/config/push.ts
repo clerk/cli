@@ -9,6 +9,7 @@ import { keylessCopy } from "../../lib/copy.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 import { resolveInstanceTarget } from "../../lib/keyless-target.ts";
 import type { KeylessWriteVerification } from "./keyless.ts";
+import { redactSecrets } from "./redact.ts";
 import {
   assertPayloadWritable,
   LOCAL_DRY_RUN_MESSAGE,
@@ -118,7 +119,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
         failureContext: "Failed to push config",
       }),
     );
-    log.data(JSON.stringify(result.body, null, 2));
+    log.data(JSON.stringify(redactSecrets(result.body), null, 2));
     if (options.dryRun) {
       log.success("[dry-run] Validation passed — no changes applied");
       printNextSteps(
@@ -307,30 +308,15 @@ export function printDiff(
       const useColor = isHuman();
       const leaf = path.split(".").pop() || key;
       if (oldVal !== undefined) {
-        const line = `${indent}- ${JSON.stringify(redactSecrets(leaf, oldVal))}`;
+        const line = `${indent}- ${JSON.stringify(redactSecrets(oldVal, leaf))}`;
         log.raw(useColor ? dim(red(line)) : line);
       }
       if (newVal !== undefined) {
-        const line = `${indent}+ ${JSON.stringify(redactSecrets(leaf, newVal))}`;
+        const line = `${indent}+ ${JSON.stringify(redactSecrets(newVal, leaf))}`;
         log.raw(useColor ? bold(green(line)) : line);
       }
     }
   }
-}
-
-/**
- * The diff goes to the terminal and to whatever captures an agent's or CI
- * job's stderr, so a client secret or private key is shown as changed, not
- * shown. Matched by key name because the diff has no schema to consult.
- */
-function redactSecrets(key: string, value: unknown): unknown {
-  if (typeof value === "string") {
-    return value && /secret|private_key/i.test(key) ? "[REDACTED]" : value;
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([childKey, child]) => [childKey, redactSecrets(childKey, child)]),
-  );
 }
 
 /**

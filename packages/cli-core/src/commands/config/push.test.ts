@@ -251,6 +251,42 @@ describe("config push", () => {
     expect(captured.out).toContain(JSON.stringify(mockResponse, null, 2));
   });
 
+  // The response goes to stdout, which an agent reads. If Clerk echoes a
+  // saved credential back, it must not land there, dry run or not.
+  test.each([{ dryRun: false }, { dryRun: true }])(
+    "patch redacts secrets in the response it prints (dryRun: $dryRun)",
+    async ({ dryRun }) => {
+      stubFetch(async (_input, init) => {
+        const isGet = !init?.method || init.method === "GET";
+        const echoed = {
+          connection_oauth_google: {
+            enabled: true,
+            client_id: "client.apps.googleusercontent.com",
+            client_secret: "FAKE_OAUTH_SECRET",
+          },
+        };
+        return new Response(JSON.stringify(isGet ? currentConfig : echoed), { status: 200 });
+      });
+      await setProfile(process.cwd(), {
+        workspaceId: "org_1",
+        appId: "app_1",
+        instances: { development: "ins_dev" },
+      });
+
+      await runConfigPatch({
+        json: JSON.stringify({
+          connection_oauth_google: { enabled: true, client_secret: "FAKE_OAUTH_SECRET" },
+        }),
+        yes: true,
+        dryRun,
+      });
+
+      expect(captured.out).toContain('"client_secret": "[REDACTED]"');
+      expect(captured.out).toContain('"client_id": "client.apps.googleusercontent.com"');
+      expect(captured.out + captured.err).not.toContain("FAKE_OAUTH_SECRET");
+    },
+  );
+
   test("patch shows 'Updating' label", async () => {
     await setProfile(process.cwd(), {
       workspaceId: "org_1",

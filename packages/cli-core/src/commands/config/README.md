@@ -91,7 +91,7 @@ Partially updates instance configuration using a PATCH request. Only the fields 
 
 Input can be provided via `--json` (inline), `--file` (path to a JSON file), or piped to stdin. When running interactively, the command shows the payload and prompts for confirmation before sending.
 
-The diff printed before a `patch` or `put` shows string values under keys named like a secret (`*secret*`, `*private_key*`) as `[REDACTED]`, so credentials do not end up in terminal scrollback or captured stderr.
+The diff printed before a `patch` or `put`, the response it prints to stdout afterwards (including a server-side `--dry-run`'s), and that response in the `--verbose` log of the config writer the `orgs` and `billing` commands use all show string values under keys named like a secret (`*secret*`, `*private_key*`) as `[REDACTED]`, so credentials do not end up in terminal scrollback or captured output. `--verbose` still logs the raw body of a failed request (the shared request logger), so `--verbose` output is not guaranteed free of secrets.
 
 ```sh
 clerk config patch --json '{"session":{"lifetime":3600}}'
