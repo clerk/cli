@@ -830,14 +830,16 @@ export function agentNextAction(step: DeployNextStep): string {
       // pull stops it, stops at the first failed upload, and uses `--force`
       // because the production values it replaces are usually development's.
       // Whether `--force` on production rewrites a variable Vercel shares
-      // with preview and development is unverified, so a production variable
-      // that also targets either stops the command (exit 3) until the user
-      // agrees. The consent is the command's own `allow_shared=0`, changed
+      // with other environments is unverified, so a production variable that
+      // also targets any other environment (Production in a comma-separated
+      // list) stops the command (exit 3) until the user agrees. The consent is the command's own `allow_shared=0`, changed
       // for that one run, so it can't carry over to later runs or another
       // project. `vercel env ls` runs with color off (Vercel's color check
       // honors `--no-color` and `FORCE_COLOR=0`), escape codes are stripped
       // anyway, and output that is neither its table nor its "No Environment
       // Variables found" line stops it (exit 1) rather than reading as empty.
+      // `>/dev/null` rather than `grep -q`: an early exit would close the pipe
+      // on a long listing, and `pipefail` would turn that into a failure.
       // The parentheses keep `pipefail`, `exit`, and `allow_shared` out of the
       // agent's shell. `${name}` has braces because zsh reads `$name[` as an
       // array subscript.
@@ -846,19 +848,19 @@ export function agentNextAction(step: DeployNextStep): string {
         `put the production keys on the host without reading them, by piping them to the host's CLI. ` +
         `For Vercel, in bash or zsh: \`( allow_shared=0; set -o pipefail; keys=$(${pull}) || exit 1; ` +
         `e=$(printf '\\033'); vars=$(FORCE_COLOR=0 vercel env ls --no-color 2>&1 | sed "s/$e\\[[0-9;]*m//g") || exit 1; ` +
-        `printf '%s\\n' "$vars" | grep -qiE "^[[:space:]]*name[[:space:]].*environments|No Environment Variables found" || ` +
+        `printf '%s\\n' "$vars" | grep -iE "^[[:space:]]*name[[:space:]].*environments|No Environment Variables found" >/dev/null || ` +
         `{ echo "Couldn't read the variable list from vercel env ls; check the project's variables before replacing any." >&2; exit 1; }; ` +
         `shared=$(printf '%s\\n' "$keys" | cut -d= -f1 | while read -r name; do ` +
-        `printf '%s\\n' "$vars" | grep -E "^[[:space:]]*\${name}[[:space:]]" | grep -i production | grep -qiE "preview|development" && echo "$name"; done); ` +
+        `printf '%s\\n' "$vars" | grep -E "^[[:space:]]*\${name}[[:space:]]" | grep -iE "production[[:space:]]*,|,[[:space:]]*production" >/dev/null && echo "$name"; done); ` +
         `if [ -n "$shared" ] && [ "$allow_shared" != 1 ]; then ` +
-        `echo "Also set for Preview or Development: $shared" >&2; exit 3; fi; ` +
+        `echo "Also set for an environment other than Production: $shared" >&2; exit 3; fi; ` +
         `printf '%s\\n' "$keys" | while IFS='=' read -r key value; do ` +
         `printf '%s' "$value" | vercel env add "$key" production --force || exit 1; done )\`. ` +
         `It reads the keys and the variable list (\`vercel env ls\`) before changing anything, and it stops ` +
         `with exit 1 if it can't read that list. If a key is already set as a production variable that also ` +
-        `targets Preview or Development, it stops with exit 3 and names it: ask the user before replacing it, ` +
-        `because \`--force\` may rewrite that shared variable and put the production secret key in preview ` +
-        `deployments. If they agree, run the command again with its leading \`allow_shared=0\` changed to ` +
+        `targets another environment (Preview, Development, or a custom one), it stops with exit 3 and names ` +
+        `it: ask the user before replacing it, because \`--force\` may rewrite that shared variable and put ` +
+        `the production secret key in those deployments. If they agree, run the command again with its leading \`allow_shared=0\` changed to ` +
         `\`allow_shared=1\`. Otherwise it replaces the production values and exits non-zero if the pull or ` +
         `any upload fails; redeploy only after it exits 0. ` +
         `For a host without a CLI, ask the user to run \`${pull}\` and add each line as a production ` +

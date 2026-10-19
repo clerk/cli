@@ -1131,9 +1131,10 @@ describe("buildDeployStatusReport", () => {
     // preview and development is unverified, so a shared one needs a person,
     // and the consent stays in the one command they approved.
     expect(report.nextAction).toContain(
-      "If a key is already set as a production variable that also targets Preview or Development, " +
-        "it stops with exit 3 and names it: ask the user before replacing it, because `--force` may " +
-        "rewrite that shared variable and put the production secret key in preview deployments. " +
+      "If a key is already set as a production variable that also targets another environment " +
+        "(Preview, Development, or a custom one), it stops with exit 3 and names it: ask the user " +
+        "before replacing it, because `--force` may rewrite that shared variable and put the " +
+        "production secret key in those deployments. " +
         "If they agree, run the command again with its leading `allow_shared=0` changed to " +
         "`allow_shared=1`.",
     );
@@ -1177,6 +1178,14 @@ vercel() {
           production_only) echo " CLERK_SECRET_KEY    Encrypted  Sensitive  Production                          1d ago" ;;
           preview_dev_only) echo " CLERK_SECRET_KEY    Encrypted  Sensitive  Preview, Development                1d ago" ;;
           shared) echo " CLERK_SECRET_KEY    Encrypted  Sensitive  Production, Preview, Development    1d ago" ;;
+          custom_env) echo " CLERK_SECRET_KEY    Encrypted  Sensitive  Production, staging                 1d ago" ;;
+          large)
+            i=0
+            while [ $i -lt 1000 ]; do
+              echo " OTHER_VAR_$i    Encrypted  Sensitive  Production, Preview, Development    1d ago"
+              i=$((i + 1))
+            done
+            ;;
           colored_shared) printf ' \\033[1mCLERK_SECRET_KEY\\033[22m    \\033[90mEncrypted\\033[39m  Sensitive  \\033[1mProduction\\033[22m, \\033[1mPreview\\033[22m, \\033[1mDevelopment\\033[22m    1d ago\\n' ;;
         esac
         ;;
@@ -1251,7 +1260,9 @@ vercel() {
 
     // A Preview or Development-only variable has no production target for
     // `--force` to rewrite, so it doesn't need the user.
-    test.skipIf(!installed).each(["none", "unrelated", "production_only", "preview_dev_only"])(
+    test
+      .skipIf(!installed)
+      .each(["none", "unrelated", "production_only", "preview_dev_only", "large"])(
       "replaces both production keys and exits 0 when %s",
       async (scenario) => {
         const result = await run(scenario);
@@ -1268,14 +1279,17 @@ vercel() {
       expect(result.listings).toEqual(["FORCE_COLOR=0 env ls --no-color"]);
     });
 
-    test.skipIf(!installed).each(["shared", "colored_shared"])(
+    // Any environment besides Production on the variable's line, custom ones included.
+    test.skipIf(!installed).each(["shared", "colored_shared", "custom_env"])(
       "stops with exit 3 before uploading when %s",
       async (scenario) => {
         const result = await run(scenario);
 
         expect(result.exitCode).toBe(3);
         expect(result.uploads).toEqual([]);
-        expect(result.output).toContain("Also set for Preview or Development: CLERK_SECRET_KEY");
+        expect(result.output).toContain(
+          "Also set for an environment other than Production: CLERK_SECRET_KEY",
+        );
         expect(result.output).not.toContain("FAKE");
       },
     );
