@@ -109,7 +109,8 @@ describe("attemptAutoclaim", () => {
       expect(result.local).toEqual({ kind: "linked", envPulled: true });
     }
     expect(linkAppSpy).toHaveBeenCalledWith(MOCK_APP, tempDir);
-    expect(pullSpy).toHaveBeenCalledWith({});
+    // The folder the check read, not the process's working directory.
+    expect(pullSpy).toHaveBeenCalledWith({ cwd: tempDir });
   });
 
   test("reports the folder linked but its keys not pulled when pull fails", async () => {
@@ -360,21 +361,31 @@ describe("attemptAutoclaim", () => {
 
     test.each([
       {
-        name: "a different publishable key",
+        name: "a different publishable key next to the claimed app's secret key",
         env: [`CLERK_PUBLISHABLE_KEY=${OTHER_PK}`, `CLERK_SECRET_KEY=${CLAIMED_SK}`],
         key: "publishable",
+        mixed: true,
       },
       {
-        name: "a different secret key",
+        name: "a different secret key next to the claimed app's publishable key",
         env: [`CLERK_PUBLISHABLE_KEY=${CLAIMED_PK}`, `CLERK_SECRET_KEY=${OTHER_SK}`],
         key: "secret",
+        mixed: true,
+      },
+      {
+        // Both differ; the publishable key is reported, since `clerk link` can look it up.
+        name: "two keys, neither the claimed app's",
+        env: [`CLERK_SECRET_KEY=${OTHER_SK}`, `CLERK_PUBLISHABLE_KEY=${OTHER_PK}`],
+        key: "publishable",
+        mixed: false,
       },
       {
         name: "only a secret key, which isn't the claimed app's",
         env: [`CLERK_SECRET_KEY=${OTHER_SK}`],
         key: "secret",
+        mixed: false,
       },
-    ] as const)("is left alone when it holds $name", async ({ env, key }) => {
+    ] as const)("is left alone when it holds $name", async ({ env, key, mixed }) => {
       stubPlatform(CLAIMED_APP);
       const before = await writeEnv([...env]);
 
@@ -385,6 +396,7 @@ describe("attemptAutoclaim", () => {
         reason: "different_keys",
         key,
         source: ".env",
+        mixed,
       });
       expectLeftAlone();
       expect(await Bun.file(join(tempDir, ".env")).text()).toBe(before);
@@ -415,6 +427,7 @@ describe("attemptAutoclaim", () => {
         reason: "different_keys",
         key: "secret",
         source: ".env",
+        mixed: false,
       });
       expectLeftAlone();
       expect(await Bun.file(join(tempDir, ".env")).text()).toBe(before);
@@ -441,6 +454,7 @@ describe("attemptAutoclaim", () => {
         reason: "different_keys",
         key: "secret",
         source: ".env",
+        mixed: false,
       });
       expectLeftAlone();
     });
@@ -470,9 +484,13 @@ describe("attemptAutoclaim", () => {
       expect(appFetches).toHaveLength(0);
     });
 
-    test("is left alone when its link can't be read", async () => {
+    // An exception during the lookup, such as a permission error. A corrupt
+    // config doesn't land here: the config reader turns it into an empty one,
+    // and `clerk link`'s own already-linked check reads that same empty config
+    // before any claim runs, so no claim check could see such a link.
+    test("is left alone when looking up its link throws", async () => {
       stubPlatform(CLAIMED_APP);
-      resolveProfileSpy.mockRejectedValue(new Error("config file is not valid JSON"));
+      resolveProfileSpy.mockRejectedValue(new Error("EACCES: permission denied"));
 
       const result = await runClaim();
 
@@ -489,6 +507,49 @@ describe("attemptAutoclaim", () => {
       expect(appFetches).toHaveLength(1);
       expect(appFetches[0]).toContain("include_secret_keys=true");
       expect(result.local).toEqual({ kind: "linked", envPulled: true });
+      // The link and the reported app use the fetched copy, which lists the instances.
+      expect(linkAppSpy).toHaveBeenCalledWith(CLAIMED_APP, tempDir);
+      expect(result.app).toEqual(CLAIMED_APP);
+    });
+
+    test("is linked after one fetch when the claim response has no instances and the folder has no keys", async () => {
+      const appFetches = stubPlatform({ application_id: "app_claimed", name: "My Claimed App" });
+
+      const result = await runClaim();
+
+      expect(appFetches).toHaveLength(1);
+      expect(result.local).toEqual({ kind: "linked", envPulled: true });
+      expect(linkAppSpy).toHaveBeenCalledWith(CLAIMED_APP, tempDir);
+    });
+
+    test("reports a failed link when the claim response has no instances, the folder has no keys, and the fetch fails", async () => {
+      stubPlatform(
+        { application_id: "app_claimed", name: "My Claimed App" },
+        new Response(JSON.stringify({ errors: [{ message: "boom" }] }), { status: 500 }),
+      );
+
+      const result = await runClaim();
+
+      expect(result.local).toEqual({
+        kind: "link_failed",
+        reason: "the claim response listed no environments and fetching the application failed",
+      });
+      expect(linkAppSpy).not.toHaveBeenCalled();
+      expect(pullSpy).not.toHaveBeenCalled();
+    });
+
+    test("is left alone when the claim response has no instances, the folder holds keys, and the fetch fails", async () => {
+      const appFetches = stubPlatform(
+        { application_id: "app_claimed", name: "My Claimed App" },
+        new Response(JSON.stringify({ errors: [{ message: "boom" }] }), { status: 500 }),
+      );
+      await writeEnv([`CLERK_PUBLISHABLE_KEY=${CLAIMED_PK}`]);
+
+      const result = await runClaim();
+
+      expect(appFetches).toHaveLength(1);
+      expect(result.local).toEqual({ kind: "unchanged", reason: "unverified" });
+      expectLeftAlone();
     });
 
     test.each([
@@ -527,7 +588,10 @@ describe("attemptAutoclaim", () => {
 
       const result = await runClaim();
 
-      expect(result.local).toEqual({ kind: "link_failed" });
+      expect(result.local).toEqual({
+        kind: "link_failed",
+        reason: "the application has no development instance",
+      });
       expect(pullSpy).not.toHaveBeenCalled();
     });
 
@@ -537,8 +601,113 @@ describe("attemptAutoclaim", () => {
 
       const result = await runClaim();
 
-      expect(result.local).toEqual({ kind: "link_failed" });
+      expect(result.local).toEqual({
+        kind: "link_failed",
+        reason: "config directory is read-only",
+      });
       expect(pullSpy).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      { file: ".env.development.local", note: "the file `clerk env pull` writes first" },
+      { file: ".env.development", note: "a file Next.js and Vite load in development" },
+      { file: ".env.local", note: "the generic local file" },
+    ])("is left alone when another app's key sits in $file, $note", async ({ file }) => {
+      stubPlatform(CLAIMED_APP);
+      await writeEnv([`CLERK_PUBLISHABLE_KEY=${CLAIMED_PK}`, `CLERK_SECRET_KEY=${CLAIMED_SK}`]);
+      const before = `CLERK_SECRET_KEY=${OTHER_SK}\n`;
+      await Bun.write(join(tempDir, file), before);
+
+      const result = await runClaim();
+
+      expect(result.local).toEqual({
+        kind: "unchanged",
+        reason: "different_keys",
+        key: "secret",
+        source: file,
+        mixed: true,
+      });
+      expectLeftAlone();
+      expect(await Bun.file(join(tempDir, file)).text()).toBe(before);
+    });
+
+    test("is left alone when the shell exports the claimed app's key but .env holds another app's", async () => {
+      stubPlatform(CLAIMED_APP);
+      process.env.CLERK_PUBLISHABLE_KEY = CLAIMED_PK;
+      await writeEnv([`CLERK_PUBLISHABLE_KEY=${OTHER_PK}`]);
+
+      const result = await runClaim();
+
+      expect(result.local).toEqual({
+        kind: "unchanged",
+        reason: "different_keys",
+        key: "publishable",
+        source: ".env",
+        mixed: true,
+      });
+      expectLeftAlone();
+    });
+
+    test("is linked when every file holds the claimed app's keys", async () => {
+      stubPlatform(CLAIMED_APP);
+      await writeEnv([`CLERK_PUBLISHABLE_KEY=${CLAIMED_PK}`]);
+      await Bun.write(join(tempDir, ".env.development.local"), `CLERK_SECRET_KEY=${CLAIMED_SK}\n`);
+
+      const result = await runClaim();
+
+      expect(result.local).toEqual({ kind: "linked", envPulled: true });
+    });
+
+    describe("with only an SDK keyless file", () => {
+      async function writeSdkKeylessFile(content: string) {
+        await Bun.write(join(tempDir, ".clerk", ".tmp", "keyless.json"), content);
+      }
+
+      test("is linked when the file holds the claimed app's keys", async () => {
+        stubPlatform(CLAIMED_APP);
+        await writeSdkKeylessFile(
+          JSON.stringify({ publishableKey: CLAIMED_PK, secretKey: CLAIMED_SK }),
+        );
+
+        const result = await runClaim();
+
+        expect(result.local).toEqual({ kind: "linked", envPulled: true });
+      });
+
+      test("is left alone when the file holds another app's keys", async () => {
+        stubPlatform(CLAIMED_APP);
+        await writeSdkKeylessFile(
+          JSON.stringify({ publishableKey: OTHER_PK, secretKey: OTHER_SK }),
+        );
+
+        const result = await runClaim();
+
+        expect(result.local).toEqual({
+          kind: "unchanged",
+          reason: "different_keys",
+          key: "publishable",
+          source: ".clerk/.tmp/keyless.json",
+          mixed: false,
+        });
+        expectLeftAlone();
+      });
+
+      test.each([
+        { name: "can't be parsed", content: "{ half-written" },
+        { name: "isn't a JSON object", content: "null" },
+        {
+          name: "holds no key",
+          content: JSON.stringify({ claimUrl: "https://example.com/claim" }),
+        },
+      ])("is left alone, as couldn't tell, when the file $name", async ({ content }) => {
+        stubPlatform(CLAIMED_APP);
+        await writeSdkKeylessFile(content);
+
+        const result = await runClaim();
+
+        expect(result.local).toEqual({ kind: "unchanged", reason: "unverified" });
+        expectLeftAlone();
+      });
     });
 
     describe("with verbose logging on", () => {

@@ -28,12 +28,16 @@ When `clerk init` runs in accountless mode it writes `.clerk/keyless.json` conta
 - **403** — authenticated account has no active organization; breadcrumb is cleared and a warning is shown.
 - **Any other error** — treated as transient; breadcrumb is preserved so the next login retries.
 - **Success** — application is claimed and the breadcrumb is deleted. The command prints the Dashboard URL of the claimed app's development instance, since this is the first time the app has a home in an account. What happens to the folder depends on what it already holds:
-  - **No Clerk keys, or keys that belong to the claimed app** — the folder is linked to it and `.env` is updated via `clerk env pull`.
+  - **No Clerk keys, or only keys that belong to the claimed app** — the folder is linked to it and its keys are written via `clerk env pull`, into the same folder.
   - **Linked to a different app** — the link and env files are left alone. The warning names the linked app and the command to switch: `clerk link --app <claimed app id>`.
-  - **A key that belongs to a different app** — the link and env files are left alone. The warning names which key and where it came from (never its value), and says to run `clerk link`, which links the app those keys belong to.
-  - **Can't tell** (a key that can't be decoded, an unreadable env or config file, or an app whose keys can't be fetched) — the link and env files are left alone. The warning offers both `clerk link` and `clerk link --app <claimed app id>`.
+  - **A key that isn't the claimed app's** — the link and env files are left alone. The warning names the key's kind and where it came from (never its value) and only what the CLI established:
+    - a publishable key: run `clerk link`, which looks in your account for the app that key belongs to;
+    - only secret keys: find the app's ID with `clerk apps list --json`, then run `clerk link --app <app_id>`;
+    - keys from the claimed app and another app: make the folder's keys belong to one app, then run `clerk link`.
+  - **Can't tell** (a key that can't be decoded, an env file that can't be read, an error looking up the folder's link, an SDK keyless file that can't be read or holds no key, or an app whose keys can't be fetched) — the link and env files are left alone. The warning offers `clerk apps list --json` with `clerk link --app <app_id>`, or `clerk link --app <claimed app id>`.
+  - **Linking fails** — printed after the claim line, with the reason.
 
-  The folder's keys are the ones its app loads: the env var, then `.env.local`, then `.env`, and the SDK's `.clerk/.tmp/keyless.json` only when there's no plain key of either kind. A publishable key matches when it is one of the claimed app's keys or decodes to the same Frontend API host; a secret key matches only when it is identical, and is compared in memory, never logged. The check runs after the claim because the breadcrumb holds only a token, with no app identity; a mismatched app still lands in the account, which is harmless. When the claim response lacks keys to compare, the app is fetched once (`GET /v1/platform/applications/{id}`). The warnings name the next command themselves, because agents never see the closing next steps.
+  Every Clerk key the folder holds is compared, not just the one its app loads: keys in the shell and in `.env`, `.env.development`, `.env.local`, and `.env.development.local`, under the framework's variable names and the generic ones. `clerk env pull` picks its own file to write (`.env.development.local` first), so a key left uncompared could be the one it replaces. The SDK's `.clerk/.tmp/keyless.json` counts only when there's no plain key of either kind. A publishable key matches when it is one of the claimed app's keys or decodes to the same Frontend API host; a secret key matches only when it is identical, and is compared in memory, never logged. The check runs after the claim because the breadcrumb holds only a token, with no app identity; a mismatched app still lands in the account, which is harmless. When the claim response lacks the app's instances or the keys to compare, the app is fetched once (`GET /v1/platform/applications/{id}`) and that copy is used throughout. The warnings name the next command themselves, because agents never see the closing next steps.
 
 #### API Endpoints
 
@@ -46,7 +50,7 @@ OAuth requests are made against the Clerk OAuth system instance (default `https:
 | User info      | `GET`  | `/oauth/userinfo`                             | Fetches `sub` (user ID) and `email` using the access token                        |
 | Revoke         | `POST` | `/oauth/token/revoke`                         | Revokes the superseded refresh token on re-authentication (RFC 7009)              |
 | Autoclaim      | `POST` | `/v1/platform/accountless_applications/claim` | Claims an accountless application by token; returns the full `Application` object |
-| Claimed app    | `GET`  | `/v1/platform/applications/{id}`              | Only when the claim response lacks the keys needed to compare with the folder's   |
+| Claimed app    | `GET`  | `/v1/platform/applications/{id}`              | Only when the claim response lacks the app's instances or the keys to compare     |
 
 ### `clerk auth logout` (aliases: `signout`, `sign-out`)
 

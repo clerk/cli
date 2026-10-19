@@ -325,7 +325,11 @@ function reportClaimed({ app, local }: ClaimedResult): void {
     log.info("Your app now lives in your Clerk account:");
     log.info(`  ${buildDashboardUrl(app.application_id, development.instance_id)}`);
   }
-  // `link_failed` already warned where the link failed.
+  // After the claim line, so the output says what was claimed before what
+  // happened to the folder.
+  if (local.kind === "link_failed") {
+    log.warn(`Linking this folder failed: ${local.reason}. Run \`clerk link\` to finish setup.`);
+  }
   if (local.kind === "unchanged") {
     log.warn(folderLeftAloneWarning(local, { id: app.application_id, label }));
   }
@@ -333,12 +337,21 @@ function reportClaimed({ app, local }: ClaimedResult): void {
 
 /**
  * Names the next command in the warning itself, not only in the outro's next
- * steps: agents see warnings but never the outro.
+ * steps: agents see warnings but never the outro. So the commands here must
+ * work without a prompt: where `clerk link` can't find the app by a
+ * publishable key, they name `clerk link --app` and how to find the ID, and
+ * the person's next steps add the interactive picker.
+ *
+ * Each sentence says only what the comparison established: that a key isn't
+ * the claimed app's, never which app it does belong to.
  */
 function folderLeftAloneWarning(
   local: FolderUnchanged,
   claimed: { id: string; label: string },
 ): string {
+  const leftAlone = "so this folder's link and keys were left alone.";
+  const findById =
+    "find its ID with `clerk apps list --json`, then run `clerk link --app <app_id>`";
   switch (local.reason) {
     case "linked_elsewhere": {
       const linkedLabel = local.linkedTo.appName
@@ -350,14 +363,27 @@ function folderLeftAloneWarning(
       );
     }
     case "different_keys":
+      if (local.mixed) {
+        return (
+          `This folder holds keys for \`${claimed.label}\` and a ${local.key} key from ${local.source} that isn't \`${claimed.label}\`'s, so its link and keys were left alone. ` +
+          "Make the folder's Clerk keys belong to one application, then run `clerk link`."
+        );
+      }
+      if (local.key === "publishable") {
+        return (
+          `The publishable key from ${local.source} isn't \`${claimed.label}\`'s, ${leftAlone} ` +
+          "Run `clerk link`; it looks in your account for the application that key belongs to."
+        );
+      }
       return (
-        `The ${local.key} key from ${local.source} belongs to a different application, so this folder's link and keys were left alone. ` +
-        "Run `clerk link` to link the application those keys belong to."
+        `The secret key from ${local.source} isn't \`${claimed.label}\`'s, ${leftAlone} ` +
+        `To link the application it belongs to: ${findById}.`
       );
     case "unverified":
       return (
-        `Couldn't confirm this folder's Clerk keys belong to \`${claimed.label}\`, so its link and keys were left alone. ` +
-        `Run \`clerk link\` to link the application the keys belong to, or \`clerk link --app ${claimed.id}\` to use \`${claimed.label}\`.`
+        `Couldn't confirm this folder's Clerk keys belong to \`${claimed.label}\`, ${leftAlone} ` +
+        `To link the application this folder uses: ${findById}. ` +
+        `To use \`${claimed.label}\` instead, run \`clerk link --app ${claimed.id}\`.`
       );
   }
 }
@@ -391,7 +417,10 @@ function claimedNextSteps({ app, local }: ClaimedResult): readonly string[] {
         case "linked_elsewhere":
           return NEXT_STEPS.AUTOCLAIM_LINKED_ELSEWHERE(app.application_id);
         case "different_keys":
-          return NEXT_STEPS.AUTOCLAIM_DIFFERENT_KEYS;
+          if (local.mixed) return NEXT_STEPS.AUTOCLAIM_MIXED_KEYS;
+          return local.key === "publishable"
+            ? NEXT_STEPS.AUTOCLAIM_UNMATCHED_PUBLISHABLE_KEY
+            : NEXT_STEPS.AUTOCLAIM_UNMATCHED_SECRET_KEY;
         case "unverified":
           return NEXT_STEPS.AUTOCLAIM_UNVERIFIED(app.application_id);
       }

@@ -10,7 +10,7 @@
  * claim and every other Platform API call use the session.
  */
 
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import type { Application } from "../../lib/plapi.ts";
 import {
@@ -70,7 +70,12 @@ const PASTED_ENV = [
 
 // The env var outranks the folder's files as a source of its keys, so a value
 // exported in the developer's or CI's shell would change what the folder holds.
-const SHELL_KEY_NAMES = ["CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"] as const;
+const SHELL_KEY_NAMES = [
+  "CLERK_PUBLISHABLE_KEY",
+  "CLERK_SECRET_KEY",
+  "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+  "NUXT_CLERK_SECRET_KEY",
+] as const;
 const shellKeys = new Map<string, string | undefined>();
 
 afterEach(() => {
@@ -81,7 +86,11 @@ afterEach(() => {
   shellKeys.clear();
 });
 
+/** What the claim endpoint answers; a test can swap in an incomplete app. */
+let claimResponse: unknown;
+
 beforeEach(async () => {
+  claimResponse = APP_A;
   for (const name of SHELL_KEY_NAMES) {
     shellKeys.set(name, process.env[name]);
     delete process.env[name];
@@ -98,7 +107,7 @@ beforeEach(async () => {
   // A stub rather than route mocks: an unchanged folder makes no app fetch,
   // and the same file must also run against code that does.
   http.stub(async (url, init) => {
-    if (url.endsWith(CLAIM_PATH) && init?.method === "POST") return Response.json(APP_A);
+    if (url.endsWith(CLAIM_PATH) && init?.method === "POST") return Response.json(claimResponse);
     if (url.includes(`/v1/platform/applications/${APP_A.application_id}`)) {
       return Response.json(APP_A);
     }
@@ -114,8 +123,12 @@ async function tokenFileExists(): Promise<boolean> {
   return Bun.file(join(h.tempDir, ".clerk", "keyless.json")).exists();
 }
 
-async function readEnv(): Promise<string> {
-  return Bun.file(join(h.tempDir, ".env")).text();
+async function readEnv(file = ".env"): Promise<string> {
+  return Bun.file(join(h.tempDir, file)).text();
+}
+
+async function profile() {
+  return (await readConfig()).profiles[PROFILE_KEY];
 }
 
 test("a folder linked to another app keeps its link and keys after a leftover token is claimed", async () => {
@@ -150,7 +163,10 @@ test("Dashboard keys pasted into .env stay in place after a leftover token is cl
   expect((await readConfig()).profiles[PROFILE_KEY]).toBeUndefined();
   expect(await tokenFileExists()).toBe(false);
   expect(result.stderr).toContain("Claimed application: `init-app`");
-  expect(result.stderr).toContain("belongs to a different application");
+  expect(result.stderr).toContain("The publishable key from .env isn't `init-app`'s");
+  expect(result.stderr).toContain(
+    "it looks in your account for the application that key belongs to",
+  );
 });
 
 // Control: the guard must not block the case the claim exists for.
@@ -164,4 +180,126 @@ test("a folder holding the keys `clerk init` wrote is linked to the claimed app"
   expect(await readEnv()).toContain(`CLERK_SECRET_KEY=${APP_A.instances[0]!.secret_key}`);
   expect(await tokenFileExists()).toBe(false);
   expect(result.stderr).toContain("Claimed and linked application: `init-app`");
+});
+
+// The folder's keys can live in any file the app loads, and `env pull` writes
+// to whichever of them it picks (`.env.development.local` first, in any
+// framework). Every key there must belong to the claimed app before the claim
+// is allowed to link the folder and write keys.
+describe("keys in more than one place", () => {
+  test("another app's keys only in .env.development.local stay in place", async () => {
+    const before = envFileFor(APP_B);
+    await Bun.write(join(h.tempDir, ".env.development.local"), before);
+
+    const result = await clerk("--mode", "agent", "auth", "login");
+
+    expect(claimRequests()).toHaveLength(1);
+    expect(await readEnv(".env.development.local")).toBe(before);
+    expect(await profile()).toBeUndefined();
+    expect(await tokenFileExists()).toBe(false);
+    expect(result.stderr).toContain("left alone");
+  });
+
+  test("another app's keys in .env.development.local stay in place when .env.local holds the claimed app's", async () => {
+    const devLocalBefore = envFileFor(APP_B);
+    const localBefore = envFileFor(APP_A);
+    await Bun.write(join(h.tempDir, ".env.development.local"), devLocalBefore);
+    await Bun.write(join(h.tempDir, ".env.local"), localBefore);
+
+    const result = await clerk("--mode", "agent", "auth", "login");
+
+    expect(await readEnv(".env.development.local")).toBe(devLocalBefore);
+    expect(await readEnv(".env.local")).toBe(localBefore);
+    expect(await profile()).toBeUndefined();
+    expect(result.stderr).toContain("left alone");
+  });
+
+  test("another app's keys in .env stay in place when the shell exports the claimed app's", async () => {
+    const dev = APP_A.instances[0]!;
+    process.env.CLERK_PUBLISHABLE_KEY = dev.publishable_key;
+    process.env.CLERK_SECRET_KEY = dev.secret_key;
+    const before = envFileFor(APP_B);
+    await Bun.write(join(h.tempDir, ".env"), before);
+
+    const result = await clerk("--mode", "agent", "auth", "login");
+
+    expect(await readEnv()).toBe(before);
+    expect(await profile()).toBeUndefined();
+    expect(result.stderr).toContain("left alone");
+  });
+
+  test("a Nuxt folder's .env keeps another app's keys when .env.local holds the claimed app's", async () => {
+    // Nuxt loads only .env by default, and `env pull` writes Nuxt's keys there.
+    await Bun.write(
+      join(h.tempDir, "package.json"),
+      JSON.stringify({ name: "nuxt-app", dependencies: { nuxt: "^3.0.0" } }),
+    );
+    const nuxtEnv = (app: Application) => {
+      const dev = app.instances[0]!;
+      return `NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${dev.publishable_key}\nNUXT_CLERK_SECRET_KEY=${dev.secret_key}\n`;
+    };
+    const envBefore = nuxtEnv(APP_B);
+    await Bun.write(join(h.tempDir, ".env"), envBefore);
+    await Bun.write(join(h.tempDir, ".env.local"), nuxtEnv(APP_A));
+
+    const result = await clerk("--mode", "agent", "auth", "login");
+
+    expect(await readEnv()).toBe(envBefore);
+    expect(await profile()).toBeUndefined();
+    expect(result.stderr).toContain("left alone");
+  });
+});
+
+// `.clerk/.tmp/keyless.json` is where a Clerk SDK keeps the keys of an app it
+// created for itself. When it's there but unusable, the CLI can't tell which
+// app the folder runs on, so the claim must not set the folder up.
+describe("an unusable SDK keyless file", () => {
+  test.each([
+    { name: "can't be parsed", content: "{ half-written" },
+    {
+      name: "holds no key",
+      content: JSON.stringify({ claimUrl: "https://dashboard.clerk.com/apps/claim?token=t" }),
+    },
+  ])("that $name leaves the folder alone", async ({ content }) => {
+    await Bun.write(join(h.tempDir, ".clerk", ".tmp", "keyless.json"), content);
+
+    const result = await clerk("--mode", "agent", "auth", "login");
+
+    expect(claimRequests()).toHaveLength(1);
+    expect(await profile()).toBeUndefined();
+    expect(await Bun.file(join(h.tempDir, ".env.local")).exists()).toBe(false);
+    expect(await Bun.file(join(h.tempDir, ".env")).exists()).toBe(false);
+    expect(result.stderr).toContain("left alone");
+  });
+});
+
+// The claim response normally lists the app's instances (its development and
+// production environments). Linking needs them, so when they're missing the
+// CLI fetches the app once and uses that copy for the check, the link, and the
+// Dashboard link it prints.
+describe("a claim response without instances", () => {
+  beforeEach(() => {
+    claimResponse = { application_id: APP_A.application_id, name: APP_A.name };
+  });
+
+  test("links a folder holding the claimed app's keys", async () => {
+    await Bun.write(join(h.tempDir, ".env"), envFileFor(APP_A));
+
+    const result = await clerk("--mode", "agent", "auth", "login");
+
+    expect((await profile())?.appId).toBe(APP_A.application_id);
+    expect(await readEnv()).toContain(`CLERK_SECRET_KEY=${APP_A.instances[0]!.secret_key}`);
+    expect(result.stderr).toContain("Claimed and linked application: `init-app`");
+    expect(result.stderr).toContain("/apps/app_A/instances/ins_dev_a");
+  });
+
+  test("links a folder with no keys and writes the claimed app's", async () => {
+    const result = await clerk("--mode", "agent", "auth", "login");
+
+    expect((await profile())?.appId).toBe(APP_A.application_id);
+    expect(await readEnv(".env.local")).toContain(
+      `CLERK_SECRET_KEY=${APP_A.instances[0]!.secret_key}`,
+    );
+    expect(result.stderr).toContain("Claimed and linked application: `init-app`");
+  });
 });

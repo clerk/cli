@@ -49,6 +49,7 @@ No decisions are open. Everything below is decided.
   - **A person in an SDK-only folder after `link` opened the claim page** (the "claim it, then rerun me" run): no thrown error, so no `error:` line and no JSON error. Exit 1, set through `process.exitCode` the way `clerk deploy status` reports an unfinished deploy (`deploy/status-command.ts`, `lib/telemetry.ts:295-317`). Telemetry records outcome `incomplete` with `error_code: not_linked`. Exit 1 because nothing was linked: `clerk link && clerk deploy` must stop there, since `deploy` would only fail with `not_linked`. It isn't a usage error (exit 2), because the person invoked the command correctly and it did its part. Agents never take this path, and nothing is printed on stdout, so a script sees only exit 1 and the text on stderr.
   - **A person who declines the claim prompt:** a user abort (exit 0, telemetry `abort`) via `throwUserAbort`. The reason for exit 1 above applies here too, since nothing was linked, but the CLI-wide convention wins: every declined prompt in the CLI exits 0 as a user abort, and this one shouldn't be the exception.
 - **`clerk link` matches on the key the app actually loads, everywhere:** the shell env var, then `.env.local`, then `.env` (shared rule 2). This is a deliberate behavior change for existing folders with different keys in `.env` and `.env.local`. Tradeoff accepted: such a folder whose `.env` key is in the account but whose `.env.local` key isn't stops auto-linking. Its app runs on `.env.local`, so the old auto-link targeted the wrong app. It also prevents a sequence PR 1 would otherwise create: `.env` holds app A's key, `.env.local` holds app B's, the folder has an init token for A, the claim moves A into the account, the guard rejects A, and the old matcher then links A from `.env`.
+  - **Refined on 2026-10-19 after review:** "the key the app loads" follows each framework's documented order (Next.js, the Vite family, Nuxt), and is "couldn't tell" when another framework's files disagree. The list above was an approximation. Details under shared rule 2.
 - **SDK-only folder, when its key matches no app in the account:**
   - **A person's `clerk link`** opens the Dashboard claim page in the browser, using the claim URL from the SDK keyless file. It reuses `clerk open`'s reader, which accepts only https URLs (`commands/open/keyless-claim.ts:37-99`). It prints that the app isn't in an account yet, and to claim it into the account the rerun will search and then rerun `clerk link`. It never prints the URL.
   - **An agent's `clerk link`** stops and says to run `clerk open`.
@@ -154,8 +155,14 @@ Four shared rules come first. Each fixes a class of defect the plan review found
 1. **Every check has three outcomes: yes, no, or couldn't tell.** "Couldn't tell" covers missing data, a failed API call, a key that can't be decoded, and an app list that came back empty because of a server error. "Couldn't tell" never relinks a folder, never overwrites keys, and never tells someone the app isn't in their account. Each check in milestones 2, 4, and 5 states what it does on "couldn't tell".
 2. **One reader for the folder's keys, by source.** Milestone 2 adds it; milestones 4 and 5 reuse it.
    - It returns the folder's publishable key and secret key separately, each with where it came from.
-   - Plain keys come in the order the app itself loads them: the env var first, then `.env.local` over `.env`, framework-specific names over generic ones. This is the order `findKeyInProject` in `lib/keyless-target.ts:85-117` already uses.
-   - The SDK keyless file counts only when the folder has no plain key of either kind. Then both keys come from that file. The reader never pairs a plain key with a key from the SDK file.
+   - Plain keys come in the order the app itself loads them, which depends on the framework. Decided on 2026-10-19 after review; built as the first step of milestone 4, because nothing reads the order before then. Until then `readFolderKeys` keeps the old order (the env var, then `.env.local` over `.env`).
+     - **Next.js** (development): the env var, then `.env.development.local`, `.env.local`, `.env.development`, `.env` ([Next.js docs, load order](https://nextjs.org/docs/app/guides/environment-variables#environment-variable-load-order)).
+     - **Vite and frameworks built on it** (Astro, Vue, React Router, TanStack Start, plain Vite): the env var, then `.env.development.local`, `.env.development`, `.env.local`, `.env` ([Vite docs, env files](https://vite.dev/guide/env-and-mode#env-files)). The docs state that existing environment variables win and that mode files beat generic ones. That `.env.development.local` beats `.env.development` is inferred from the `.local` convention; the docs don't state it.
+     - **Nuxt:** the env var, then `.env` only. Other files load only with `--dotenv` ([Nuxt docs source](https://github.com/nuxt/nuxt/blob/main/docs/2.directory-structure/2.env.md)).
+     - **Any other framework, or none detected:** when the files hold different keys, the reader answers "couldn't tell" (shared rule 1) instead of picking one.
+     - Framework-specific names beat generic ones, as `findKeyInProject` (now in `lib/local-keys.ts`) already does.
+   - The SDK keyless file counts only when the folder has no plain key of either kind. Then both keys come from that file. The reader never pairs a plain key with a key from the SDK file. A present but unreadable SDK file, or one holding no key, is reported as data (`sdkFile` state), never thrown, so each caller decides what it means.
+   - A second reader, `readAllFolderKeys`, returns every key in the shell and in `.env`, `.env.development`, `.env.local`, and `.env.development.local`, each with its source. Checks that guard a write use it (milestone 2), because the file a write replaces needn't be the one the app loads. Both readers share one collection routine, so their coverage can't drift.
    - It lives in a leaf module that doesn't import `lib/config.ts`, directly or through `lib/keyless-target.ts`, because milestone 8 calls it from `lib/config.ts`. Moving the existing local-key helpers there and re-exporting them from `keyless-target.ts` keeps existing importers unchanged.
    - `clerk link`'s key matcher uses this reader for every folder (decided by Shane; see "What's decided").
 3. **The list of message sites comes from a search, not by hand.** PR 2's definition of done reruns these three searches from the repo root and accounts for every hit: fixed, or listed with the reason it's out of scope (see "PR 2 wrap-up").
@@ -277,13 +284,24 @@ This milestone is small. It makes two harness changes; no integration test refer
 - **A key the reader takes from an env var** set by a parent shell counts as the folder's key. That matches how the rest of the CLI resolves keys, so leave it.
 - **The fetch for a response without keys is a new network call** on the claim path. It runs only after a successful claim, so it adds no call on error paths.
 
-**Changed during implementation, with reason** (approved by Shane on 2026-10-19). None of these changes what a person is promised.
+**Changed during implementation, with reason.** Items 1 to 5 were approved by Shane on 2026-10-19; items 6 to 11 came from review round 1 and were decided the same day. None of these changes what a person is promised; items 6 to 9 are what make the promise hold.
 
 1. **The folder's keys are read before deciding whether to fetch the app.** The outline above lists the fetch first. Reading first means a folder with no keys makes no extra call, and the fetch runs only when the claim response can't settle a key kind the folder actually holds, which is what "the key kind needed" asks for.
 2. **An identical publishable key matches before any decoding.** Then the Frontend API host comparison applies. An identical key can only belong to the same app, and checking it first keeps a key that is the app's own but can't be decoded out of "couldn't tell".
-3. **A fourth folder outcome, `link_failed`,** next to `linked` and the three `unchanged` reasons. Writing the link can fail after a claim (`tryLinkApp` already warned about that), and an app with no development instance made `linkApp` return nothing while the result still said linked. "Linked" is now reported only when a link was written. Milestone 4 maps `link_failed` like `unchanged`: print the claim notice, then continue to key detection.
-4. **The shared key reader (`lib/local-keys.ts`, `readFolderKeys`) can throw on a filesystem error**, such as an unreadable `.env`. It never throws because of a key's content, since it doesn't validate keys. The guard treats a throw as "couldn't tell", because "no keys" would let the claim overwrite them. **Milestone 5's classifier must catch these errors itself**, since it must never throw.
-5. **The left-alone warnings name the next command themselves.** `outro` prints nothing outside person mode (`lib/spinner.ts`), so agents never see the closing next steps. The new `NEXT_STEPS` entries still exist for people. PR 2 should assume the same: a next step meant for agents has to be in a warning or an error, not only in `NEXT_STEPS`.
+3. **A fourth folder outcome, `link_failed`,** next to `linked` and the three `unchanged` reasons. Writing the link can fail after a claim (`tryLinkApp` already warned about that), and an app with no development instance made `linkApp` return nothing while the result still said linked. "Linked" is now reported only when a link was written. `link_failed` carries the reason, which login prints after the "Claimed application" line, not before it. Milestone 4 maps `link_failed` like `unchanged`: print the claim notice, then continue to key detection.
+4. **The shared key readers (`lib/local-keys.ts`) can throw on a filesystem error reading an env file**, such as an unreadable `.env`. They never throw because of a file's content: they don't validate keys, and an unusable SDK keyless file is reported as data (item 8). The guard treats a throw as "couldn't tell", because "no keys" would let the claim overwrite them. **Milestone 5's classifier must catch these errors itself**, since it must never throw.
+5. **The left-alone warnings name the next command themselves.** `outro` prints nothing outside person mode (`lib/spinner.ts`), so agents never see the closing next steps. The new `NEXT_STEPS` entries still exist for people, who therefore see each command twice. PR 2 should assume the same: a next step meant for agents has to be in a warning or an error, not only in `NEXT_STEPS`.
+6. **The guard compares every Clerk key the folder holds, not only the one the app loads** (`readAllFolderKeys`, shared rule 2). `clerk env pull` picks its own file (`.env.development.local` first, then the framework's preferred file, then whichever holds Clerk keys), and which key the app loads depends on the framework. Review reproduced four folders where the precedence-only check let a claim replace another app's keys: keys only in `.env.development.local`; the claimed app's keys in `.env.local` with another app's in `.env.development.local`; the claimed app's keys exported in the shell with another app's in `.env`; a Nuxt `.env` holding another app's keys. The folder is set up only when every key belongs to the claimed app. Tradeoff: a leftover key from another app, in a file the app ignores, blocks automatic setup, and the person runs `clerk link`.
+7. **The key write uses the folder the check read** (`pull({ cwd })`), not the process's working directory. They differ from milestone 4 on, because `clerk init` passes its own project folder to `link`.
+8. **An SDK keyless file that is present but unreadable, or holds no key, is "couldn't tell".** Before, it read as "no keys", so a claim linked the folder and wrote keys that took over from the SDK's own app. The reader reports the file's state as data rather than throwing, because milestone 4 must turn a keyless SDK file into its "no usable claim link" stop, and departure 4 promises the reader never throws because of content. `readSdkKeylessApp` keeps its tolerance for `init` and `whoami`.
+9. **The app is fetched once whenever the claim response lacks its instances, and the fetched copy is used for the comparison, the link, and the printed Dashboard URL.** Before, a confirmed match still ended in "link failed" with a raw JavaScript error, because linking used the incomplete response; a folder with no keys never fetched at all. A failed fetch while keys need checking is "couldn't tell"; a failed fetch needed only to finish linking is `link_failed` with the reason. The folder-linked-elsewhere check still runs first, with no fetch.
+10. **The left-alone warnings say only what the comparison established, and name commands an agent can run.** The plan's "Run `clerk link` to link the app this folder's keys belong to" was false for a secret-key-only folder (`link` can't match a secret key) and for a folder pairing the claimed app's publishable key with another app's secret key (`link` would link the claimed app). The wording now:
+    - **A publishable key that isn't the claimed app's:** "Run `clerk link`; it looks in your account for the application that key belongs to."
+    - **Only secret keys:** find the ID with `clerk apps list --json`, then `clerk link --app <app_id>`. People's next steps add `clerk link` to pick from a list.
+    - **Keys from the claimed app and another app** (`mixed`): says so, names the other key's file, and says to make the keys belong to one application before `clerk link`.
+    - **Couldn't tell:** the same `clerk apps list --json` and `clerk link --app <app_id>` path, or `clerk link --app <claimed id>` to use the claimed app.
+    - When several keys differ, the warning reports a publishable key if one differs, since that's the key `clerk link` can look up.
+11. **A corrupt CLI config stays out of scope.** `readConfig` turns a corrupt config into an empty one, so no claim check can see a link recorded there. That holds from milestone 4 too: `clerk link`'s own already-linked check reads the same empty config before any claim runs. The unit test that simulates a thrown lookup error is named for that, not for corrupt config.
 
 ### Milestone 3: `clerk auth login` asks before claiming with the current session, and callers can sign in without claiming
 
@@ -348,7 +366,7 @@ This milestone is small. It makes two harness changes; no integration test refer
   - **Refused (managed workspace, no organization):** stop with the claim warning, never the picker: `not_linked`, exit 1.
   - **Failed temporarily:** stop with the original error, unchanged.
   - **Stale token (claim returns not found):** continue normally, because the app may already be in the account and detection finds it.
-- **Key matching** (decided by Shane): detection matches only the folder's own publishable key from the shared reader, in every folder. That's the key the app loads: the shell env var, then `.env.local`, then `.env`. The matcher no longer tries `.env` after `.env.local` fails to match.
+- **Key matching** (decided by Shane): detection matches only the folder's own publishable key from the shared reader, in every folder. That's the key the app loads, in the framework's documented order (shared rule 2, built first in this milestone). The matcher no longer falls back to another file's key after the loaded one fails to match.
 - **SDK-only folder** (decided by Shane). Detection uses the SDK keyless file's publishable key, and only in this case. One test decides "SDK-only" here and in the classifier (milestone 5): no init token, no plain key, and a publishable key in the SDK keyless file.
   - **A match after a successful app list:** links, as for any detected key. This is also what happens when the person reruns `clerk link` after claiming.
   - **No match after a successful app list, person:** `link` opens the Dashboard claim page in the browser, using the claim URL from the SDK keyless file. It prints:
@@ -373,6 +391,8 @@ This milestone is small. It makes two harness changes; no integration test refer
 - **`--app` given or folder already linked:** no claim, no SDK check. Explicit targets win.
 
 **Implementation outline.**
+
+**First, the per-framework key order** (shared rule 2, decided 2026-10-19). Give `readFolderKeys` each framework's documented load order, with "couldn't tell" when the files disagree for any other framework, and test each order, including the inferred Vite position. Then map the reader's SDK keyless file state for `link`: unreadable, or no publishable key, goes to the "no usable claim link" stop below.
 
 1. **Auto-link reports why it didn't link.** `autolink()` returns `undefined` today for no keys, a failed app list, and no match alike, and swallows the list error (`lib/autolink.ts:107-147`). Return a result that tells these apart, carrying the list error when there is one. The person path needs the same distinction: `fetchAppsTolerantly` turns a server error into an empty list. This is shared rule 1 applied to detection. PR 2's wording (milestone 6) reads the same result.
 2. **Claim-first position.** In `link()` (`commands/link/index.ts:33-111`), right after the existing-profile handling and before the `autolink` call at lines 50-53, add the claim step. It runs when there's no profile, no `options.app`, and an init token is present.
@@ -654,6 +674,14 @@ This milestone is small. It makes two harness changes; no integration test refer
 
 - **Missed callers of the changed `copy.ts` functions.** `bun run typecheck` catches them, because the signatures change.
 
+### Milestone 10: `whoami`, `env pull`'s keyless path, and `resolveKeylessTarget` read keys through the shared reader
+
+**Goal and outcome.** Every command agrees on which key a folder uses. After milestone 4, `clerk link` reads keys with the framework's load order, while `findLocalSecretKey` and `findLocalPublishableKey` in `lib/keyless-target.ts` still read only the env var, `.env.local`, and `.env`, and search each key separately. In a folder with keys in `.env.development.local`, `clerk link` matches one key while `whoami` reports another. Those two helpers can also pair a plain key with the SDK keyless file's other key, which shared rule 2 forbids.
+
+**Implementation outline.** Move `findLocalSecretKey`, `findLocalPublishableKey`, and through them `whoami`, `env pull`'s keyless path (`pullKeylessKeys`), and `resolveKeylessTarget` onto `readFolderKeys`. Keep their sources in messages. A folder whose files disagree ("couldn't tell") keeps today's not-linked advice from the classifier.
+
+**Definition of done.** Tests for `whoami` and `env pull` with keys only in `.env.development.local`, and with a plain secret key next to an SDK keyless file (no pairing). Search for every remaining caller of the two helpers and account for each.
+
 ### PR 2 wrap-up
 
 - **Changeset:** a user-facing fix, created with `/changesets create`.
@@ -739,7 +767,7 @@ Reproduced through the CLI's integration harness at `2133e7ea3` (mocked credenti
 - **`clerk link`** claims first when the folder has an init token, whether the person started signed in or not, after asking the same question. Declining, a refused claim, or a failed claim stops instead of falling through to the picker. Agents claim without a prompt.
 - **`clerk init` and `clerk migrate`** sign in without claiming on their way to `link`, so `link` applies the same policy.
 - **`clerk link` also matches the SDK keyless file's key** against the account, but only when the folder has no plain keys. When nothing matches after a successful app list, a person's `clerk link` opens the Dashboard claim page without printing its link and says to rerun `clerk link` after claiming; an agent's says to run `clerk open`. Neither shows the picker. A failed app list stops with its own advice.
-- **`clerk link` matches only on the key the app loads:** the shell env var, then `.env.local`, then `.env`. This deliberately changes behavior for folders with different keys in `.env` and `.env.local`.
+- **`clerk link` matches only on the key the app loads,** in each framework's documented env-file order (Next.js, the Vite family, Nuxt), and doesn't guess when another framework's files disagree. This deliberately changes behavior for folders with different keys in `.env` and `.env.local`.
 
 **Tests:** integration tests that reproduce each case above, failing on `main` before the fix.
 
@@ -748,6 +776,31 @@ Reproduced through the CLI's integration harness at `2133e7ea3` (mocked credenti
 - Message wording for unlinked folders (GROW-1249).
 - `clerk init --app <id>` in a folder with an init token (an explicit choice).
 - The picker for plain keys that match no account app.
+
+### `clerk env pull` names the app whose keys it writes (separate ticket)
+
+Decided 2026-10-19 as its own ticket: it happens in linked folders, outside PR 2's unlinked-folder advice. Needs Shane's approval to create.
+
+**Title:** `clerk env pull` replaces a folder's keys without naming the app they come from
+
+**Body:**
+
+`clerk env pull` writes the linked app's keys into the folder's env file, replacing any Clerk keys already there. Its output names only the instance and the file ("Pulling env vars from development instance...", "Environment variables written to .env.local"). It doesn't name the app, and it doesn't say when the keys it replaced belonged to another app.
+
+For example: a folder's `.env.local` holds app B's keys. The person switches apps with `clerk link --app app_A`, then runs `clerk env pull`, as `link`'s next steps suggest. B's keys are replaced by A's, and nothing in the output says which app's keys were written or that B's are gone. Every app switch works this way today. It came up in review of the GROW-1285 fix, whose new warnings offer `clerk link --app <claimed app id>`.
+
+**Fix:**
+
+- Name the app in `env pull`'s output, next to the instance and the file.
+- When the target file holds a Clerk key that isn't the linked app's, say so as it's replaced, naming the key's kind and file, never its value. Reuse the comparison GROW-1285 added in `lib/autoclaim.ts`: an identical key or the same Frontend API host for a publishable key, an exact match for a secret key.
+- Keep replacing the keys. `env pull` is an explicit command, so it informs rather than refuses.
+
+**Tests:** a folder whose `.env.local` holds another app's keys; assert the output names the linked app and the replaced key's file, and that the keys are replaced.
+
+**Not in this ticket:**
+
+- Advice for folders with no link (GROW-1249).
+- Refusing to replace keys.
 
 ### GROW-1249, rewritten
 

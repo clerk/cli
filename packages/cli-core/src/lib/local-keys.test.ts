@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readFolderKeys } from "./local-keys.ts";
+import { readAllFolderKeys, readFolderKeys, readSdkKeylessApp } from "./local-keys.ts";
 
 // Every name the reader consults with no framework detected. Cleared before
 // each test, not only after, so a value exported in the developer's or CI's
@@ -99,6 +99,7 @@ describe("readFolderKeys", () => {
     expect(await readFolderKeys(dir)).toEqual({
       publishableKey: { value: "pk_test_sdk", source: ".clerk/.tmp/keyless.json" },
       secretKey: { value: "sk_test_sdk", source: ".clerk/.tmp/keyless.json" },
+      sdkFile: { state: "parsed", publishableKey: "pk_test_sdk", secretKey: "sk_test_sdk" },
     });
   });
 
@@ -108,13 +109,18 @@ describe("readFolderKeys", () => {
     expect(await readFolderKeys(dir)).toEqual({
       publishableKey: undefined,
       secretKey: { value: "sk_test_sdk", source: ".clerk/.tmp/keyless.json" },
+      sdkFile: { state: "parsed", publishableKey: undefined, secretKey: "sk_test_sdk" },
     });
   });
 
   test("a folder with no Clerk keys returns neither", async () => {
     await write(".env", "DATABASE_URL=postgres://localhost/db\n");
 
-    expect(await readFolderKeys(dir)).toEqual({ publishableKey: undefined, secretKey: undefined });
+    expect(await readFolderKeys(dir)).toEqual({
+      publishableKey: undefined,
+      secretKey: undefined,
+      sdkFile: { state: "absent" },
+    });
   });
 
   test("a malformed key is returned as found, without throwing", async () => {
@@ -123,6 +129,127 @@ describe("readFolderKeys", () => {
     expect((await readFolderKeys(dir)).publishableKey).toEqual({
       value: "not-a-clerk-key",
       source: ".env",
+    });
+  });
+});
+
+// The SDK keyless file's state is data, not an error: the claim check reads an
+// unusable file as "couldn't tell", while `clerk link` has its own stop for it.
+describe("the SDK keyless file's state", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clerk-local-keys-sdk-"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test.each([
+    { name: "can't be parsed", content: "{ half-written" },
+    { name: "isn't a JSON object", content: "null" },
+  ])("is reported as unreadable, without throwing, when the file $name", async ({ content }) => {
+    await Bun.write(join(dir, ".clerk", ".tmp", "keyless.json"), content);
+
+    expect(await readFolderKeys(dir)).toEqual({
+      publishableKey: undefined,
+      secretKey: undefined,
+      sdkFile: { state: "unreadable" },
+    });
+    // Existing callers keep tolerating it, as before.
+    expect(await readSdkKeylessApp(dir)).toBeUndefined();
+  });
+
+  test("is reported as parsed with no keys when the file holds none", async () => {
+    await Bun.write(
+      join(dir, ".clerk", ".tmp", "keyless.json"),
+      JSON.stringify({ claimUrl: "https://example.com/claim" }),
+    );
+
+    expect((await readFolderKeys(dir)).sdkFile).toEqual({
+      state: "parsed",
+      publishableKey: undefined,
+      secretKey: undefined,
+    });
+  });
+
+  test("isn't consulted when the folder has a plain key", async () => {
+    await Bun.write(join(dir, ".env"), "CLERK_SECRET_KEY=sk_test_plain\n");
+    await Bun.write(join(dir, ".clerk", ".tmp", "keyless.json"), "{ half-written");
+
+    expect((await readFolderKeys(dir)).sdkFile).toBeUndefined();
+    expect((await readAllFolderKeys(dir)).sdkFile).toBeUndefined();
+  });
+});
+
+describe("readAllFolderKeys", () => {
+  let dir: string;
+  const savedEnv = new Map<string, string | undefined>();
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clerk-all-keys-"));
+    for (const name of KEY_ENV_NAMES) {
+      savedEnv.set(name, process.env[name]);
+      delete process.env[name];
+    }
+  });
+
+  afterEach(async () => {
+    for (const [name, value] of savedEnv) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    savedEnv.clear();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("returns every key from the shell and all four env files, each with its source", async () => {
+    process.env.CLERK_PUBLISHABLE_KEY = "pk_test_shell";
+    await Bun.write(join(dir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_test_env\n");
+    await Bun.write(join(dir, ".env.development"), "CLERK_SECRET_KEY=sk_test_development\n");
+    await Bun.write(join(dir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_test_local\n");
+    await Bun.write(join(dir, ".env.development.local"), "CLERK_SECRET_KEY=sk_test_dev_local\n");
+
+    expect(await readAllFolderKeys(dir)).toEqual({
+      publishableKeys: [
+        { value: "pk_test_shell", source: "CLERK_PUBLISHABLE_KEY env var" },
+        { value: "pk_test_env", source: ".env" },
+        { value: "pk_test_local", source: ".env.local" },
+      ],
+      secretKeys: [
+        { value: "sk_test_development", source: ".env.development" },
+        { value: "sk_test_dev_local", source: ".env.development.local" },
+      ],
+    });
+  });
+
+  test("returns keys under the framework's own name and the generic one", async () => {
+    await Bun.write(
+      join(dir, "package.json"),
+      JSON.stringify({ dependencies: { next: "15.0.0" } }),
+    );
+    await Bun.write(
+      join(dir, ".env.local"),
+      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_framework\nCLERK_PUBLISHABLE_KEY=pk_test_generic\n",
+    );
+
+    expect((await readAllFolderKeys(dir)).publishableKeys).toEqual([
+      { value: "pk_test_framework", source: ".env.local" },
+      { value: "pk_test_generic", source: ".env.local" },
+    ]);
+  });
+
+  test("with no plain key, returns the SDK keyless file's keys and its state", async () => {
+    await Bun.write(
+      join(dir, ".clerk", ".tmp", "keyless.json"),
+      JSON.stringify({ publishableKey: "pk_test_sdk", secretKey: "sk_test_sdk" }),
+    );
+
+    expect(await readAllFolderKeys(dir)).toEqual({
+      publishableKeys: [{ value: "pk_test_sdk", source: ".clerk/.tmp/keyless.json" }],
+      secretKeys: [{ value: "sk_test_sdk", source: ".clerk/.tmp/keyless.json" }],
+      sdkFile: { state: "parsed", publishableKey: "pk_test_sdk", secretKey: "sk_test_sdk" },
     });
   });
 });

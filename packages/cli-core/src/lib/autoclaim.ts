@@ -9,7 +9,7 @@ import { PlapiError, errorMessage } from "./errors.ts";
 import { linkApp } from "./autolink.ts";
 import { resolveProfile } from "./config.ts";
 import { decodePublishableKey } from "./fapi.ts";
-import { readFolderKeys, type FolderKeys } from "./local-keys.ts";
+import { readAllFolderKeys, type AllFolderKeys, type LocatedKey } from "./local-keys.ts";
 import { deriveProjectName } from "./project-name.ts";
 import { pull } from "../commands/env/pull.ts";
 import { log } from "./log.ts";
@@ -17,7 +17,7 @@ import { log } from "./log.ts";
 /**
  * Why a successful claim left the folder's link and env files as they were.
  * - `linked_elsewhere`: the folder is already linked to a different app.
- * - `different_keys`: a key the folder holds belongs to a different app.
+ * - `different_keys`: a key the folder holds isn't the claimed app's.
  * - `unverified`: the CLI couldn't tell whether the folder's keys belong to the
  *   claimed app, so it didn't risk overwriting them.
  */
@@ -30,22 +30,27 @@ export type FolderUnchanged =
   | {
       kind: "unchanged";
       reason: "different_keys";
+      /** A publishable key when any mismatched, so the advice can say how `clerk link` finds the app. */
       key: "publishable" | "secret";
-      /** Where the mismatched key came from, for display. Never the key itself. */
+      /** Where that key came from, for display. Never the key itself. */
       source: string;
+      /** Another key in the folder is the claimed app's, so the folder mixes two apps' keys. */
+      mixed: boolean;
     }
   | { kind: "unchanged"; reason: "unverified" };
 
 /**
  * What a successful claim did to the folder it ran in.
  * - `linked`: the folder now uses the claimed app; `envPulled` says whether its keys were written too.
- * - `link_failed`: the folder should have been linked, but writing the link failed.
+ * - `link_failed`: the folder should have been linked, but writing the link failed. `reason`
+ *   says why, for display; it never contains a key.
  */
 export type FolderSetup =
   | { kind: "linked"; envPulled: boolean }
-  | { kind: "link_failed" }
+  | { kind: "link_failed"; reason: string }
   | FolderUnchanged;
 
+/** `app` is the claimed app, completed by one fetch when the claim response lacked its instances. */
 type Claimed = { status: "claimed"; app: Application; local: FolderSetup };
 /** The claim can never succeed with this token; the breadcrumb is cleared. */
 type Terminal = { status: "not_found" | "no_organization" };
@@ -84,18 +89,31 @@ export async function attemptAutoclaim(cwd: string): Promise<AutoclaimResult> {
   await clearKeylessBreadcrumb(cwd);
 
   if (result.status === "claimed") {
-    return { ...result, local: await setUpFolder(result.app, cwd) };
+    return { status: "claimed", ...(await setUpFolder(result.app, cwd)) };
   }
 
   return result;
 }
 
-async function setUpFolder(app: Application, cwd: string): Promise<FolderSetup> {
-  const unchanged = await reasonToLeaveFolder(app, cwd);
-  if (unchanged) return unchanged;
+async function setUpFolder(
+  claimed: Application,
+  cwd: string,
+): Promise<{ app: Application; local: FolderSetup }> {
+  const { app, leave } = await checkFolder(claimed, cwd);
+  if (leave) return { app, local: leave };
 
-  if (!(await tryLinkApp(app, cwd))) return { kind: "link_failed" };
-  return { kind: "linked", envPulled: await tryPullEnv() };
+  if (!hasInstances(app)) {
+    return {
+      app,
+      local: {
+        kind: "link_failed",
+        reason: "the claim response listed no environments and fetching the application failed",
+      },
+    };
+  }
+  const linkError = await tryLinkApp(app, cwd);
+  if (linkError) return { app, local: { kind: "link_failed", reason: linkError } };
+  return { app, local: { kind: "linked", envPulled: await tryPullEnv(cwd) } };
 }
 
 const UNVERIFIED: FolderUnchanged = { kind: "unchanged", reason: "unverified" };
@@ -103,7 +121,7 @@ const UNVERIFIED: FolderUnchanged = { kind: "unchanged", reason: "unverified" };
 /**
  * Decides whether linking the claimed app and pulling its keys would set this
  * folder up, or point it at an app it doesn't run on. Returns why to leave the
- * folder alone, or `undefined` to go ahead.
+ * folder alone, if it should be, and the claimed app as completed.
  *
  * Runs after the claim, not before: the init token file holds only the token,
  * with no app identity, so nothing names the app until the claim response
@@ -111,77 +129,108 @@ const UNVERIFIED: FolderUnchanged = { kind: "unchanged", reason: "unverified" };
  * every token already on disk. A mismatched app still lands in the account,
  * which is harmless: it's the person's app.
  *
- * Every check answers yes, no, or couldn't tell, and "couldn't tell" never
- * relinks the folder or overwrites its keys.
+ * Every Clerk key the folder holds is compared, not just the one the app
+ * loads: which key that is depends on the framework, and `clerk env pull`
+ * picks its own file to write, so any key left uncompared could be the one it
+ * replaces. Every check answers yes, no, or couldn't tell, and "couldn't tell"
+ * never relinks the folder or overwrites its keys.
  */
-async function reasonToLeaveFolder(
+async function checkFolder(
   claimed: Application,
   cwd: string,
-): Promise<FolderUnchanged | undefined> {
+): Promise<{ app: Application; leave?: FolderUnchanged }> {
+  // The claim response normally carries the app's instances (its development
+  // and production environments) with their keys. When it can't settle what
+  // the folder needs, the app is fetched once, and the fetched copy is used
+  // from then on, so the link and the printed Dashboard URL use the same
+  // complete app the comparison did.
+  let app = claimed;
+  let fetchSucceeded: boolean | undefined;
+  const fetchOnce = async (): Promise<boolean> => {
+    if (fetchSucceeded !== undefined) return fetchSucceeded;
+    log.debug(`autoclaim: fetching ${claimed.application_id}; the claim response is incomplete`);
+    try {
+      app = await fetchApplication(claimed.application_id);
+      fetchSucceeded = true;
+    } catch (error) {
+      log.debug(`autoclaim: fetching the claimed app failed — ${errorMessage(error)}`);
+      fetchSucceeded = false;
+    }
+    return fetchSucceeded;
+  };
+  const leave = (reason: FolderUnchanged) => ({ app, leave: reason });
+
   let linked: Awaited<ReturnType<typeof resolveProfile>>;
   try {
     linked = await resolveProfile(cwd);
   } catch (error) {
     log.debug(`autoclaim: couldn't read this folder's link — ${errorMessage(error)}`);
-    return UNVERIFIED;
+    return leave(UNVERIFIED);
   }
   if (linked && linked.profile.appId !== claimed.application_id) {
     log.debug(`autoclaim: folder is linked to ${linked.profile.appId}; leaving it alone`);
-    return {
+    return leave({
       kind: "unchanged",
       reason: "linked_elsewhere",
       linkedTo: { appId: linked.profile.appId, appName: linked.profile.appName },
-    };
+    });
   }
 
-  let folderKeys: FolderKeys;
+  let folderKeys: AllFolderKeys;
   try {
-    folderKeys = await readFolderKeys(cwd);
+    folderKeys = await readAllFolderKeys(cwd);
   } catch (error) {
     log.debug(`autoclaim: couldn't read this folder's keys — ${errorMessage(error)}`);
-    return UNVERIFIED;
-  }
-  // A folder with no keys is what a claim should set up.
-  if (!folderKeys.publishableKey && !folderKeys.secretKey) {
-    log.debug("autoclaim: folder holds no Clerk keys; setting it up for the claimed app");
-    return undefined;
+    return leave(UNVERIFIED);
   }
 
-  let checks = checkFolderKeys(folderKeys, claimed.instances);
-  if (!checks.some(isMismatch) && checks.some(isUnknown)) {
-    // The claim response normally carries every instance's keys. When it
-    // doesn't, one fetch of the app can settle what the response couldn't.
-    log.debug(`autoclaim: claim response can't settle the folder's keys; fetching the app once`);
-    try {
-      checks = checkFolderKeys(
-        folderKeys,
-        (await fetchApplication(claimed.application_id)).instances,
-      );
-    } catch (error) {
-      log.debug(`autoclaim: fetching the claimed app failed — ${errorMessage(error)}`);
-      return UNVERIFIED;
+  // Linking needs the instances whatever the folder holds.
+  if (!hasInstances(app)) await fetchOnce();
+
+  if (folderKeys.publishableKeys.length === 0 && folderKeys.secretKeys.length === 0) {
+    if (folderKeys.sdkFile && folderKeys.sdkFile.state !== "absent") {
+      // The SDK keyless file is there but names no app, so whatever the folder
+      // runs on, the CLI can't tell, and can't risk replacing it.
+      log.debug("autoclaim: the SDK keyless file is unreadable or holds no key");
+      return leave(UNVERIFIED);
     }
+    // A folder with no keys is what a claim should set up.
+    log.debug("autoclaim: folder holds no Clerk keys; setting it up for the claimed app");
+    return { app };
+  }
+
+  let checks = checkFolderKeys(folderKeys, app.instances);
+  if (!checks.some(isMismatch) && checks.some(isUnknown) && (await fetchOnce())) {
+    checks = checkFolderKeys(folderKeys, app.instances);
   }
 
   // A key known to belong to another app settles it, even if another key
-  // couldn't be compared.
-  const mismatch = checks.find(isMismatch);
+  // couldn't be compared. Report a publishable key when one mismatched: it is
+  // the key `clerk link` can look the app up by.
+  const mismatches = checks.filter(isMismatch);
+  const mismatch = mismatches.find((check) => check.key === "publishable") ?? mismatches[0];
   if (mismatch) {
-    log.debug(`autoclaim: ${mismatch.key} key from ${mismatch.source} belongs to another app`);
-    return {
+    log.debug(`autoclaim: ${mismatch.key} key from ${mismatch.source} isn't the claimed app's`);
+    return leave({
       kind: "unchanged",
       reason: "different_keys",
       key: mismatch.key,
       source: mismatch.source,
-    };
+      mixed: checks.some((check) => check.result === "match"),
+    });
   }
   const unknown = checks.find(isUnknown);
   if (unknown) {
     log.debug(`autoclaim: couldn't compare the ${unknown.key} key from ${unknown.source}`);
-    return UNVERIFIED;
+    return leave(UNVERIFIED);
   }
-  log.debug(`autoclaim: folder's keys belong to ${claimed.application_id}; setting it up`);
-  return undefined;
+  log.debug(`autoclaim: every key in the folder is ${claimed.application_id}'s; setting it up`);
+  return { app };
+}
+
+function hasInstances(app: Application): boolean {
+  // Deserialized API JSON: the array can be missing despite the type.
+  return Array.isArray(app.instances) && app.instances.length > 0;
 }
 
 type KeyComparison = "match" | "mismatch" | "unknown";
@@ -197,28 +246,23 @@ const isUnknown = (check: KeyCheck) => check.result === "unknown";
 
 /** Compares every key the folder holds with the claimed app's instances. */
 function checkFolderKeys(
-  folderKeys: FolderKeys,
+  folderKeys: AllFolderKeys,
   instances: readonly ApplicationInstance[] | undefined,
 ): KeyCheck[] {
   // Deserialized API JSON: a missing array means there is nothing to compare
   // against, not a crash.
   const list = Array.isArray(instances) ? instances : [];
-  const checks: KeyCheck[] = [];
-  if (folderKeys.publishableKey) {
-    checks.push({
-      key: "publishable",
-      source: folderKeys.publishableKey.source,
-      result: comparePublishableKey(folderKeys.publishableKey.value, list),
-    });
-  }
-  if (folderKeys.secretKey) {
-    checks.push({
-      key: "secret",
-      source: folderKeys.secretKey.source,
-      result: compareSecretKey(folderKeys.secretKey.value, list),
-    });
-  }
-  return checks;
+  const check = (
+    key: KeyCheck["key"],
+    { value, source }: LocatedKey,
+    compare: (local: string, instances: readonly ApplicationInstance[]) => KeyComparison,
+  ): KeyCheck => ({ key, source, result: compare(value, list) });
+  return [
+    ...folderKeys.publishableKeys.map((located) =>
+      check("publishable", located, comparePublishableKey),
+    ),
+    ...folderKeys.secretKeys.map((located) => check("secret", located, compareSecretKey)),
+  ];
 }
 
 /**
@@ -287,24 +331,25 @@ async function tryClaim(claimToken: string, name: string): Promise<ClaimAttempt>
   }
 }
 
-// Preserves the orchestrator's never-throws contract. Claim has already
-// succeeded on the server and the breadcrumb is cleared — a local link
-// failure must not surface as a failed login.
-async function tryLinkApp(app: Application, cwd: string): Promise<boolean> {
+/**
+ * Returns why linking failed, or `undefined` when it worked. Preserves the
+ * orchestrator's never-throws contract: the claim already succeeded on the
+ * server and the breadcrumb is cleared, so a local link failure must not
+ * surface as a failed login. The caller prints the reason after the claim.
+ */
+async function tryLinkApp(app: Application, cwd: string): Promise<string | undefined> {
   try {
-    if (await linkApp(app, cwd)) return true;
-    throw new Error("the application has no development instance");
+    if (await linkApp(app, cwd)) return undefined;
+    return "the application has no development instance";
   } catch (error) {
-    log.warn(
-      `Claim succeeded but linking the project locally failed: ${errorMessage(error)}. Run \`clerk link\` to finish setup.`,
-    );
-    return false;
+    return errorMessage(error);
   }
 }
 
-async function tryPullEnv(): Promise<boolean> {
+/** Writes the linked app's keys into the folder the check read, not the process's working directory. */
+async function tryPullEnv(cwd: string): Promise<boolean> {
   try {
-    await pull({});
+    await pull({ cwd });
     return true;
   } catch (error) {
     log.debug(`Auto env pull failed: ${errorMessage(error)}`);

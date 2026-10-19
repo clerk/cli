@@ -785,21 +785,63 @@ describe("login", () => {
         ],
       },
       {
-        name: "different keys",
-        local: { kind: "unchanged", reason: "different_keys", key: "publishable", source: ".env" },
+        name: "a publishable key that isn't the claimed app's",
+        local: {
+          kind: "unchanged",
+          reason: "different_keys",
+          key: "publishable",
+          source: ".env",
+          mixed: false,
+        },
         warning:
-          "The publishable key from .env belongs to a different application, so this folder's link and keys were left alone. " +
-          "Run `clerk link` to link the application those keys belong to.",
-        nextSteps: ["Run `clerk link` to link the application this folder's keys belong to"],
+          "The publishable key from .env isn't `bad-agent`'s, so this folder's link and keys were left alone. " +
+          "Run `clerk link`; it looks in your account for the application that key belongs to.",
+        nextSteps: [
+          "Run `clerk link` to look in your account for the application this folder's publishable key belongs to",
+        ],
+      },
+      {
+        name: "only a secret key, which isn't the claimed app's",
+        local: {
+          kind: "unchanged",
+          reason: "different_keys",
+          key: "secret",
+          source: "CLERK_SECRET_KEY env var",
+          mixed: false,
+        },
+        warning:
+          "The secret key from CLERK_SECRET_KEY env var isn't `bad-agent`'s, so this folder's link and keys were left alone. " +
+          "To link the application it belongs to: find its ID with `clerk apps list --json`, then run `clerk link --app <app_id>`.",
+        nextSteps: [
+          "Run `clerk link` and choose the application this folder's secret key belongs to",
+        ],
+      },
+      {
+        name: "keys from the claimed app and another app",
+        local: {
+          kind: "unchanged",
+          reason: "different_keys",
+          key: "secret",
+          source: ".env.development.local",
+          mixed: true,
+        },
+        warning:
+          "This folder holds keys for `bad-agent` and a secret key from .env.development.local that isn't `bad-agent`'s, so its link and keys were left alone. " +
+          "Make the folder's Clerk keys belong to one application, then run `clerk link`.",
+        nextSteps: [
+          "Make this folder's Clerk keys belong to one application",
+          "Run `clerk link` to link that application",
+        ],
       },
       {
         name: "couldn't tell",
         local: { kind: "unchanged", reason: "unverified" },
         warning:
-          "Couldn't confirm this folder's Clerk keys belong to `bad-agent`, so its link and keys were left alone. " +
-          "Run `clerk link` to link the application the keys belong to, or `clerk link --app app_claimed` to use `bad-agent`.",
+          "Couldn't confirm this folder's Clerk keys belong to `bad-agent`, so this folder's link and keys were left alone. " +
+          "To link the application this folder uses: find its ID with `clerk apps list --json`, then run `clerk link --app <app_id>`. " +
+          "To use `bad-agent` instead, run `clerk link --app app_claimed`.",
         nextSteps: [
-          "Run `clerk link` to link the application this folder's keys belong to",
+          "Run `clerk link` to choose the application this folder uses",
           "Run `clerk link --app app_claimed` to use the claimed application instead",
         ],
       },
@@ -828,20 +870,17 @@ describe("login", () => {
       },
     );
 
-    test("different keys: offers no `--app` switch, which would point the folder away from its keys", async () => {
-      await loginClaiming(
-        {
-          kind: "unchanged",
-          reason: "different_keys",
-          key: "secret",
-          source: "CLERK_SECRET_KEY env var",
-        },
-        "human",
-      );
+    // Switching to the claimed app would point the folder away from the app its
+    // keys belong to; only the folder-linked-elsewhere and couldn't-tell
+    // warnings, where switching is a reasonable choice, offer it.
+    test.each(LEFT_ALONE.filter(({ local }) => local.reason === "different_keys"))(
+      "$name: never offers to switch the folder to the claimed app",
+      async ({ local }) => {
+        await loginClaiming(local, "human");
 
-      expect(captured.err).toContain("The secret key from CLERK_SECRET_KEY env var");
-      expect(captured.err).not.toContain("clerk link --app");
-    });
+        expect(captured.err).not.toContain("clerk link --app app_claimed");
+      },
+    );
 
     test.each([
       {
@@ -856,7 +895,7 @@ describe("login", () => {
       },
       {
         name: "link failed",
-        local: { kind: "link_failed" },
+        local: { kind: "link_failed", reason: "config directory is read-only" },
         nextStep: "Run `clerk link` to connect your Clerk application",
       },
     ] satisfies Array<{ name: string; local: FolderSetup; nextStep: string }>)(
@@ -874,6 +913,17 @@ describe("login", () => {
         expect(captured.err).toContain(nextStep);
       },
     );
+
+    test("link failed: says what was claimed before saying the link failed, and why", async () => {
+      await loginClaiming({ kind: "link_failed", reason: "config directory is read-only" });
+
+      const claimedAt = captured.err.indexOf("Claimed application: `bad-agent`");
+      const failedAt = captured.err.indexOf(
+        "Linking this folder failed: config directory is read-only. Run `clerk link` to finish setup.",
+      );
+      expect(claimedAt).toBeGreaterThanOrEqual(0);
+      expect(failedAt).toBeGreaterThan(claimedAt);
+    });
   });
 
   test("shows default next steps when not linked", async () => {

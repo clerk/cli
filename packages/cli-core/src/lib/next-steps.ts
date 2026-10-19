@@ -33,15 +33,23 @@ export const NEXT_STEPS = {
     "Run `clerk auth login` again to retry auto-claim",
     "Run `clerk link` to connect your application manually",
   ],
-  // The claim succeeded but left the folder's link and keys alone.
+  // The claim succeeded but left the folder's link and keys alone. People get
+  // the interactive picker here; the warning above names the agent-safe path.
   AUTOCLAIM_LINKED_ELSEWHERE: (claimedAppId: string) => [
     `Run \`clerk link --app ${claimedAppId}\` to switch this folder to the claimed application`,
   ],
-  AUTOCLAIM_DIFFERENT_KEYS: [
-    "Run `clerk link` to link the application this folder's keys belong to",
+  AUTOCLAIM_MIXED_KEYS: [
+    "Make this folder's Clerk keys belong to one application",
+    "Run `clerk link` to link that application",
+  ],
+  AUTOCLAIM_UNMATCHED_PUBLISHABLE_KEY: [
+    "Run `clerk link` to look in your account for the application this folder's publishable key belongs to",
+  ],
+  AUTOCLAIM_UNMATCHED_SECRET_KEY: [
+    "Run `clerk link` and choose the application this folder's secret key belongs to",
   ],
   AUTOCLAIM_UNVERIFIED: (claimedAppId: string) => [
-    "Run `clerk link` to link the application this folder's keys belong to",
+    "Run `clerk link` to choose the application this folder uses",
     `Run \`clerk link --app ${claimedAppId}\` to use the claimed application instead`,
   ],
   AUTOCLAIM_SWITCH_WORKSPACE: [
