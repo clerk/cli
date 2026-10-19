@@ -422,8 +422,11 @@ describe("deploy", () => {
     const developmentConfig = options.developmentConfig ?? {
       connection_oauth_google: { enabled: true },
     };
+    // What creating production left for Google, a provider with no
+    // credentials yet: enabled, with empty fields (observed for Google on one
+    // clone, against the Platform API on 2026-10-19).
     const productionConfig = options.productionConfig ?? {
-      connection_oauth_google: { enabled: false, client_id: "", client_secret: "" },
+      connection_oauth_google: { enabled: true, client_id: "", client_secret: "" },
     };
     const cnameTargets = options.cnameTargets ?? [
       { host: `clerk.${domain}`, value: "frontend-api.clerk.services", required: true },
