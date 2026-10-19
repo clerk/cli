@@ -939,6 +939,78 @@ describe("buildDeployStatusReport", () => {
     expect(report.nextAction).toContain("For each entry in `oauth.setup`");
   });
 
+  // A client secret pasted into chat ends up in the agent's transcript, so the
+  // person types the values into the file and the agent never reads them.
+  describe("who fills in OAuth credentials", () => {
+    const descriptor = (
+      provider: string,
+      label: string,
+      fileField: boolean,
+    ): LiveDeploySnapshot["oauthProviderDescriptors"][number] => ({
+      provider,
+      configKey: `connection_oauth_${provider}`,
+      label,
+      docsUrl: "",
+      credentialLabel: "",
+      redirectLabel: "",
+      setupCopy: "",
+      gotcha: null,
+      fields: [
+        { key: "client_id", label: "Client ID", type: "text", secret: false, filePath: false },
+        {
+          key: "client_secret",
+          label: fileField ? "Private key - path to .p8 file" : "Client secret",
+          type: "password",
+          secret: true,
+          filePath: fileField,
+        },
+      ],
+      requiredCredentialKeys: ["client_id", "client_secret"],
+      credentialSources: ["manual"],
+    });
+    const oauthPendingReport = (
+      descriptors: LiveDeploySnapshot["oauthProviderDescriptors"],
+    ): ReturnType<typeof buildDeployStatusReport> =>
+      buildDeployStatusReport(
+        {
+          kind: "active",
+          snapshot: {
+            ...activeSnapshot,
+            oauthProviders: descriptors.map((entry) => entry.provider),
+            oauthProviderDescriptors: descriptors,
+            completedOAuthProviders: [],
+          },
+        },
+        { verified: true, status: { dns: true, ssl: true, mail: true } },
+      );
+
+    test("the agent writes the placeholders and the user replaces them", () => {
+      const report = oauthPendingReport([descriptor("github", "GitHub", false)]);
+
+      expect(report.state).toBe("oauth_pending");
+      expect(report.nextAction).toContain(
+        "Write its `payload` to a temporary JSON file as it is, placeholders included, " +
+          "and ask the user to replace each `<placeholder>` with the real value. " +
+          "Don't ask for the values or read the file.",
+      );
+      expect(report.nextAction).not.toContain("with the real values to a JSON file");
+      expect(report.nextAction).not.toContain("in a terminal first");
+    });
+
+    test("an entry holding a file's contents sends the user to the wizard first", () => {
+      const report = oauthPendingReport([
+        descriptor("github", "GitHub", false),
+        descriptor("apple", "Apple", true),
+      ]);
+
+      expect(report.nextAction).toContain(
+        "Apple's entry takes a file's contents (a private key), which is easy to break when pasted " +
+          "into JSON, so for Apple send the user to `clerk deploy` in a terminal first: " +
+          "the wizard reads the file from its path.",
+      );
+    });
+  });
+
   test("setup entries are there while the domain is still pending", () => {
     const report = buildDeployStatusReport(
       {

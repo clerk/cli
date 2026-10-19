@@ -182,6 +182,8 @@ export type DeployNextStep =
       oauthPending: readonly string[];
       oauthUnsupported: readonly string[];
       nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
+      /** Labels of `oauth.setup` entries with a field that takes a file's contents. */
+      setupFromFile?: readonly string[];
     }
   | {
       kind: "records_available" | "records_unavailable" | "ssl_pending" | "finalizing";
@@ -718,6 +720,9 @@ export function deployNextStep(report: DeployStatusFacts): DeployNextStep {
         oauthPending: report.oauth.pending,
         oauthUnsupported: report.oauth.unsupported,
         nativeAppleReadinessIssue: report.nativeAppleReadinessIssue,
+        setupFromFile: report.oauth.setup
+          .filter((entry) => entry.fields.some((field) => field.fileContents))
+          .map((entry) => entry.label),
       };
     case "domain_pending": {
       // DNS and email DNS are records someone has to add at the registrar;
@@ -755,10 +760,26 @@ export function agentNextAction(step: DeployNextStep): string {
     url
       ? ` Ask the user to visit the Clerk Dashboard domains page, or offer to open it: ${url}`
       : "";
+  // The person types the secrets into the file: pasted into chat, they end up
+  // in the agent's transcript.
   const oauthSetupSteps =
     "For each entry in `oauth.setup`: have the user create the provider's OAuth app with its " +
-    "`redirectUri` and `authorizedOrigins`, save its `payload` with the real values to a JSON file, " +
-    "run its `command` on that file, then delete the file.";
+    "`redirectUri` and `authorizedOrigins`. Write its `payload` to a temporary JSON file as it is, " +
+    "placeholders included, and ask the user to replace each `<placeholder>` with the real value. " +
+    "Don't ask for the values or read the file. Then run its `command` on that file and delete the file.";
+  // A private key pasted into JSON needs its newlines escaped, and a mistake
+  // only shows when someone signs in. The wizard reads the file by path.
+  const setupFromFile = (labels: readonly string[] = []): string => {
+    if (labels.length === 0) return "";
+    const names = labels.join(", ");
+    const subject =
+      labels.length === 1 ? `${names}'s entry takes` : `The entries for ${names} take`;
+    return (
+      ` ${subject} a file's contents (a private key), which is easy to break when pasted into JSON, ` +
+      `so for ${names} send the user to \`clerk deploy\` in a terminal first: the wizard reads the ` +
+      `file from its path.`
+    );
+  };
   const nativeApple =
     "nativeAppleReadinessIssue" in step && step.nativeAppleReadinessIssue
       ? ` ${nativeAppleGuidance(step.nativeAppleReadinessIssue)}`
@@ -828,7 +849,8 @@ export function agentNextAction(step: DeployNextStep): string {
         const hostedAction =
           hostedPending.length > 0
             ? ` These OAuth providers are also missing production credentials: ${hostedPending.join(", ")}. ` +
-              oauthSetupSteps
+              oauthSetupSteps +
+              setupFromFile(step.setupFromFile)
             : "";
         return (
           `Domain verified, but setup is incomplete.${nativeApple}` +
@@ -841,7 +863,7 @@ export function agentNextAction(step: DeployNextStep): string {
       // page.
       return (
         `Domain verified, but these OAuth providers are missing production credentials: ` +
-        `${step.oauthPending.join(", ")}. ${oauthSetupSteps} ` +
+        `${step.oauthPending.join(", ")}. ${oauthSetupSteps}${setupFromFile(step.setupFromFile)} ` +
         `Or the user can run \`clerk deploy\` in a terminal to enter them interactively. ` +
         `Then run \`clerk deploy status\`.` +
         unsupported(step.oauthUnsupported)
