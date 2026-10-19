@@ -1164,7 +1164,9 @@ describe("buildDeployStatusReport", () => {
   // has to show up there, and no key may reach the agent's output. The
   // `vercel env ls` output follows Vercel's own formatting (env/ls.ts).
   describe.each(["bash", "zsh"])("the key-copying command in %s", (shell) => {
-    const installed = Bun.which(shell) !== null;
+    // Skipped only off CI: the CI workflow installs zsh, so a missing shell
+    // there fails these tests instead of silently skipping them.
+    const installed = Bun.which(shell) !== null || Boolean(process.env.CI);
     const stubs = `
 clerk() {
   case "$SCENARIO" in
