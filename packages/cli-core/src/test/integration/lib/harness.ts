@@ -7,7 +7,7 @@
  *
  * WARNING: Do NOT add static imports of modules that transitively import any
  * mocked module (credential-store, git, mode, prompts/listage, token-exchange,
- * auth-server, pkce). Bun's `mock.module()` must be registered before any
+ * auth-server, pkce, open). Bun's `mock.module()` must be registered before any
  * consumer loads the real module. All consuming imports must use dynamic
  * `await import(...)` AFTER the mock.module() calls below.
  */
@@ -20,10 +20,13 @@ import { capturedOutput } from "../../lib/stubs.ts";
 import { setActiveCapture } from "../../../lib/log.ts";
 import { http } from "../../lib/http.ts";
 import type { Application, ApplicationInstance } from "../../../lib/plapi.ts";
+import type { OpenResult } from "../../../lib/open.ts";
 
 export { capturedOutput, http };
 
 // ── Controllable mock state ──────────────────────────────────────────────────
+
+const BROWSER_OPENED: OpenResult = { ok: true, launcher: "test-browser" };
 
 /**
  * Mutable state shared across module mocks. Tests can modify these values
@@ -36,7 +39,18 @@ export const mockState = {
   gitNormalizedRemote: "github.com/test/project" as string | undefined,
   gitRepoRoot: "/repo" as string | undefined,
   gitRepoIdentifier: "/repo/.git" as string | undefined,
+  /**
+   * What the stubbed browser launcher reports. Set `{ ok: false, reason: "no-launcher" }`
+   * to simulate a machine with no browser.
+   */
+  openBrowserResult: BROWSER_OPENED as OpenResult,
 };
+
+/**
+ * URLs the CLI asked the browser launcher to open, in order. Cleared in
+ * {@link setupTest}.
+ */
+export const openedUrls: string[] = [];
 
 // ── Module mocks (executed at import time) ───────────────────────────────────
 
@@ -285,6 +299,20 @@ mock.module(
     }) satisfies typeof import("../../../lib/pkce.ts"),
 );
 
+// The real launcher spawns the developer's browser (`open` on macOS), so a test
+// that signs in or opens a claim page would open real pages on their screen.
+// Record the URL instead and report whatever the test asked for.
+mock.module(
+  "../../../lib/open.ts",
+  () =>
+    ({
+      openBrowser: async (url: string) => {
+        openedUrls.push(url);
+        return mockState.openBrowserResult;
+      },
+    }) satisfies typeof import("../../../lib/open.ts"),
+);
+
 // ── Real config module ───────────────────────────────────────────────────────
 
 type ConfigModule = typeof import("../../../lib/config.ts");
@@ -495,7 +523,7 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
   // early before telemetry, and the failure would read as a signals bug.
   _resetInterruptState();
 
-  let exitCode = 0;
+  let exitCode: number | undefined;
 
   try {
     await runProgram(program, args, { from: "user" });
@@ -508,6 +536,14 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
     } else {
       throw error;
     }
+  } finally {
+    // A command can report failure by setting process.exitCode and returning
+    // (`clerk deploy status` on an unfinished deploy); a real process exits
+    // with it. Each `clerk()` call stands in for one process, so the code ends
+    // with the run and the next run starts at 0. Bun ignores assigning
+    // `undefined`; only a number resets it.
+    exitCode ??= Number(process.exitCode ?? 0);
+    process.exitCode = 0;
   }
 
   // Merge output from both console spies (non-migrated code) and scoped log capture.
@@ -587,9 +623,14 @@ export async function setupTest(): Promise<TestHarness> {
   mockState.gitNormalizedRemote = "github.com/test/project";
   mockState.gitRepoRoot = "/repo";
   mockState.gitRepoIdentifier = "/repo/.git";
+  mockState.openBrowserResult = BROWSER_OPENED;
+  openedUrls.length = 0;
   resetPromptQueues();
   http.reset();
   process.stdin.isTTY = true;
+  // A soft exit code left by earlier code in the file would otherwise read as
+  // this test's first run failing.
+  process.exitCode = 0;
 
   const logSpy = spyOn(console, "log").mockImplementation(() => {});
   const errorSpy = spyOn(console, "error").mockImplementation(() => {});
@@ -628,6 +669,9 @@ export async function teardownTest(harness: TestHarness): Promise<void> {
   envMutations = new Map();
   globalThis.fetch = originalFetch;
   process.stdin.isTTY = originalStdinIsTTY;
+  // A test that set process.exitCode outside `clerk()` would otherwise fail the
+  // whole `bun test` run after every test passed.
+  process.exitCode = 0;
   harness.logSpy.mockRestore();
   harness.errorSpy.mockRestore();
   harness.exitSpy.mockRestore();
