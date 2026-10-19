@@ -33,6 +33,17 @@ export const NEXT_STEPS = {
     "Run `clerk auth login` again to retry auto-claim",
     "Run `clerk link` to connect your application manually",
   ],
+  // The claim succeeded but left the folder's link and keys alone.
+  AUTOCLAIM_LINKED_ELSEWHERE: (claimedAppId: string) => [
+    `Run \`clerk link --app ${claimedAppId}\` to switch this folder to the claimed application`,
+  ],
+  AUTOCLAIM_DIFFERENT_KEYS: [
+    "Run `clerk link` to link the application this folder's keys belong to",
+  ],
+  AUTOCLAIM_UNVERIFIED: (claimedAppId: string) => [
+    "Run `clerk link` to link the application this folder's keys belong to",
+    `Run \`clerk link --app ${claimedAppId}\` to use the claimed application instead`,
+  ],
   AUTOCLAIM_SWITCH_WORKSPACE: [
     "Select a different workspace in the Clerk Dashboard",
     "Run `clerk auth login` again to proceed",

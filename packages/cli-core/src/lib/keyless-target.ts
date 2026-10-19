@@ -7,15 +7,17 @@
  * are decided once, the same way, everywhere.
  */
 
-import { join } from "node:path";
 import { bapiRequest } from "./bapi.ts";
 import { resolveAppContext, resolveProfile } from "./config.ts";
 import { getStoredSession, hasAccountCredentials, type OAuthSession } from "./credential-store.ts";
-import { parseEnvFile } from "./dotenv.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "./errors.ts";
 import { decodePublishableKey } from "./fapi.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "./framework.ts";
+import { findKeyInProject, readSdkKeylessApp, SDK_KEYLESS_SOURCE } from "./local-keys.ts";
 import { log } from "./log.ts";
+
+// Moved to the leaf module `local-keys.ts`; re-exported so importers are unchanged.
+export { readSdkKeylessApp, SDK_KEYLESS_SOURCE };
 
 export interface KeylessTarget {
   secretKey: string;
@@ -37,84 +39,6 @@ export interface AccountContext {
 export type InstanceTarget =
   | { kind: "account"; ctx: AccountContext; label: string }
   | { kind: "keyless"; keyless: KeylessTarget; label: string };
-
-const ENV_FILES = [".env", ".env.local"];
-
-/**
- * Where the Clerk SDKs park the keys for a keyless app they created themselves
- * (running `next dev` with no keys configured). Shape:
- * `{ publishableKey, secretKey, claimUrl, apiKeysUrl }`.
- */
-const SDK_KEYLESS_FILE = [".clerk", ".tmp", "keyless.json"];
-
-/**
- * The `source` a key found in the SDK's own keyless file carries. Exported so
- * a caller can tell that source apart without restating the path.
- */
-export const SDK_KEYLESS_SOURCE = SDK_KEYLESS_FILE.join("/");
-
-/**
- * Reads the SDK's own keyless file, ignoring a partially-written one.
- * Exported for `init`, whose keep-the-existing-app guard must recognise an
- * application the SDK minted for itself just as readily as one `clerk init`
- * minted — the two files describe the same kind of unclaimed app.
- */
-export async function readSdkKeylessApp(
-  cwd: string,
-): Promise<{ secretKey?: string; publishableKey?: string } | undefined> {
-  const file = Bun.file(join(cwd, ...SDK_KEYLESS_FILE));
-  if (!(await file.exists())) return undefined;
-
-  try {
-    const parsed = (await file.json()) as { secretKey?: unknown; publishableKey?: unknown };
-    return {
-      secretKey: typeof parsed.secretKey === "string" ? parsed.secretKey : undefined,
-      publishableKey: typeof parsed.publishableKey === "string" ? parsed.publishableKey : undefined,
-    };
-  } catch {
-    // A half-written file during an SDK refresh isn't worth failing over.
-    return undefined;
-  }
-}
-
-interface LocatedKey {
-  value: string;
-  source: string;
-}
-
-/**
- * Looks for a key under any of `names`, in the order the app itself would
- * resolve one: the environment first, then env files with a later file
- * overriding an earlier one.
- */
-async function findKeyInProject(cwd: string, names: string[]): Promise<LocatedKey | undefined> {
-  for (const name of new Set(names)) {
-    const value = process.env[name];
-    if (value) return { value, source: `${name} env var` };
-  }
-
-  // Priority is by name, not by position: the framework-specific name beats
-  // the generic fallback even when the generic one appears later in the same
-  // file. Within one name, a later file still overrides an earlier one.
-  const foundByName = new Map<string, LocatedKey>();
-  for (const envFile of ENV_FILES) {
-    const file = Bun.file(join(cwd, envFile));
-    if (!(await file.exists())) continue;
-
-    for (const line of parseEnvFile(await file.text())) {
-      if (line.type !== "entry" || !line.value) continue;
-      if (names.includes(line.key)) {
-        foundByName.set(line.key, { value: line.value, source: envFile });
-      }
-    }
-  }
-
-  for (const name of names) {
-    const located = foundByName.get(name);
-    if (located) return located;
-  }
-  return undefined;
-}
 
 /**
  * The instance secret key a keyless project keeps locally. Falls back to the

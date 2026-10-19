@@ -21,7 +21,11 @@ import { isHuman } from "../../mode.ts";
 import { ERROR_CODE, errorMessage, throwUserAbort } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
-import { attemptAutoclaim, type AutoclaimResult } from "../../lib/autoclaim.ts";
+import {
+  attemptAutoclaim,
+  type AutoclaimResult,
+  type FolderUnchanged,
+} from "../../lib/autoclaim.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { cyan, dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
@@ -293,21 +297,7 @@ function claimWarning(result: AutoclaimResult): string | undefined {
 async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
   const result = await attemptAutoclaim(cwd);
 
-  if (result.status === "claimed") {
-    const label = result.app.name || result.app.application_id;
-    log.success(`Claimed and linked application: \`${label}\``);
-    // First time this app has a home in an account; say where it is.
-    // Deserialized API JSON; a missing array must not fail a claim that
-    // already succeeded server-side.
-    const development = result.app.instances?.find(
-      (instance) => instance.environment_type === "development",
-    );
-    if (development) {
-      // URL on its own line: with it, the sentence is wider than the frame.
-      log.info("Your app now lives in your Clerk account:");
-      log.info(`  ${buildDashboardUrl(result.app.application_id, development.instance_id)}`);
-    }
-  }
+  if (result.status === "claimed") reportClaimed(result);
 
   const warning = claimWarning(result);
   if (warning) log.warn(warning);
@@ -315,10 +305,65 @@ async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
   return result;
 }
 
-async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[]> {
-  if (result.status === "claimed") {
-    return result.envPulled ? NEXT_STEPS.AUTOCLAIMED : NEXT_STEPS.AUTOCLAIMED_NO_ENV;
+type ClaimedResult = Extract<AutoclaimResult, { status: "claimed" }>;
+
+function reportClaimed({ app, local }: ClaimedResult): void {
+  const label = app.name || app.application_id;
+  log.success(
+    local.kind === "linked"
+      ? `Claimed and linked application: \`${label}\``
+      : `Claimed application: \`${label}\``,
+  );
+  // First time this app has a home in an account; say where it is.
+  // Deserialized API JSON; a missing array must not fail a claim that
+  // already succeeded server-side.
+  const development = app.instances?.find(
+    (instance) => instance.environment_type === "development",
+  );
+  if (development) {
+    // URL on its own line: with it, the sentence is wider than the frame.
+    log.info("Your app now lives in your Clerk account:");
+    log.info(`  ${buildDashboardUrl(app.application_id, development.instance_id)}`);
   }
+  // `link_failed` already warned where the link failed.
+  if (local.kind === "unchanged") {
+    log.warn(folderLeftAloneWarning(local, { id: app.application_id, label }));
+  }
+}
+
+/**
+ * Names the next command in the warning itself, not only in the outro's next
+ * steps: agents see warnings but never the outro.
+ */
+function folderLeftAloneWarning(
+  local: FolderUnchanged,
+  claimed: { id: string; label: string },
+): string {
+  switch (local.reason) {
+    case "linked_elsewhere": {
+      const linkedLabel = local.linkedTo.appName
+        ? `${local.linkedTo.appName} (${local.linkedTo.appId})`
+        : local.linkedTo.appId;
+      return (
+        `This folder stays linked to \`${linkedLabel}\`, so its link and keys were left alone. ` +
+        `Run \`clerk link --app ${claimed.id}\` to switch it to \`${claimed.label}\`.`
+      );
+    }
+    case "different_keys":
+      return (
+        `The ${local.key} key from ${local.source} belongs to a different application, so this folder's link and keys were left alone. ` +
+        "Run `clerk link` to link the application those keys belong to."
+      );
+    case "unverified":
+      return (
+        `Couldn't confirm this folder's Clerk keys belong to \`${claimed.label}\`, so its link and keys were left alone. ` +
+        `Run \`clerk link\` to link the application the keys belong to, or \`clerk link --app ${claimed.id}\` to use \`${claimed.label}\`.`
+      );
+  }
+}
+
+async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[]> {
+  if (result.status === "claimed") return claimedNextSteps(result);
   if (result.status === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
   if (result.status === "managed_workspace") return NEXT_STEPS.AUTOCLAIM_SWITCH_WORKSPACE;
   if (result.status === "not_found" || result.status === "no_organization") {
@@ -333,4 +378,22 @@ async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[
     : `\`${linked.profile.appId}\``;
   log.success(`Linked to ${appLabel}`);
   return NEXT_STEPS.LOGIN_LINKED;
+}
+
+function claimedNextSteps({ app, local }: ClaimedResult): readonly string[] {
+  switch (local.kind) {
+    case "linked":
+      return local.envPulled ? NEXT_STEPS.AUTOCLAIMED : NEXT_STEPS.AUTOCLAIMED_NO_ENV;
+    case "link_failed":
+      return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
+    case "unchanged":
+      switch (local.reason) {
+        case "linked_elsewhere":
+          return NEXT_STEPS.AUTOCLAIM_LINKED_ELSEWHERE(app.application_id);
+        case "different_keys":
+          return NEXT_STEPS.AUTOCLAIM_DIFFERENT_KEYS;
+        case "unverified":
+          return NEXT_STEPS.AUTOCLAIM_UNVERIFIED(app.application_id);
+      }
+  }
 }

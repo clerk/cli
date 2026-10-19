@@ -277,6 +277,14 @@ This milestone is small. It makes two harness changes; no integration test refer
 - **A key the reader takes from an env var** set by a parent shell counts as the folder's key. That matches how the rest of the CLI resolves keys, so leave it.
 - **The fetch for a response without keys is a new network call** on the claim path. It runs only after a successful claim, so it adds no call on error paths.
 
+**Changed during implementation, with reason** (approved by Shane on 2026-10-19). None of these changes what a person is promised.
+
+1. **The folder's keys are read before deciding whether to fetch the app.** The outline above lists the fetch first. Reading first means a folder with no keys makes no extra call, and the fetch runs only when the claim response can't settle a key kind the folder actually holds, which is what "the key kind needed" asks for.
+2. **An identical publishable key matches before any decoding.** Then the Frontend API host comparison applies. An identical key can only belong to the same app, and checking it first keeps a key that is the app's own but can't be decoded out of "couldn't tell".
+3. **A fourth folder outcome, `link_failed`,** next to `linked` and the three `unchanged` reasons. Writing the link can fail after a claim (`tryLinkApp` already warned about that), and an app with no development instance made `linkApp` return nothing while the result still said linked. "Linked" is now reported only when a link was written. Milestone 4 maps `link_failed` like `unchanged`: print the claim notice, then continue to key detection.
+4. **The shared key reader (`lib/local-keys.ts`, `readFolderKeys`) can throw on a filesystem error**, such as an unreadable `.env`. It never throws because of a key's content, since it doesn't validate keys. The guard treats a throw as "couldn't tell", because "no keys" would let the claim overwrite them. **Milestone 5's classifier must catch these errors itself**, since it must never throw.
+5. **The left-alone warnings name the next command themselves.** `outro` prints nothing outside person mode (`lib/spinner.ts`), so agents never see the closing next steps. The new `NEXT_STEPS` entries still exist for people. PR 2 should assume the same: a next step meant for agents has to be in a warning or an error, not only in `NEXT_STEPS`.
+
 ### Milestone 3: `clerk auth login` asks before claiming with the current session, and callers can sign in without claiming
 
 **Goal and outcome.** A person whose folder has an init token is asked before `clerk auth login` claims anything, and the question names where the app will go. A signed-in person can claim without signing in again. Commands that sign in on their way to `link` (`init`, `migrate`, and `link` itself) can sign in without the claim, so `link` alone applies the claim policy (milestone 4).

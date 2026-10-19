@@ -18,7 +18,7 @@ Before signing in, the command prints a banner: the Clerk logo beside a link to 
 6. Exchanges the code for an access token
 7. Stores the token and user info in local config
 8. If this was a re-authentication over an existing session, revokes the previous grant. The outgoing session is read once the authorization code arrives and just before the token exchange replaces it, and revoked only after the replacement is stored — so an abandoned browser flow leaves the original session intact, and a concurrent refresh has the smallest possible window to rotate the token out from under the revocation. A failure here warns rather than failing the login
-9. **Autoclaim**: if `.clerk/keyless.json` exists in the current directory, claims the temporary application, links it to the project, and pulls environment variables
+9. **Autoclaim**: if `.clerk/keyless.json` exists in the current directory, claims the temporary application. It then links it to the project and pulls environment variables only when the folder's keys belong to that application, or the folder has no Clerk keys (see below)
 
 #### Accountless autoclaim breadcrumb lifecycle
 
@@ -27,7 +27,13 @@ When `clerk init` runs in accountless mode it writes `.clerk/keyless.json` conta
 - **404** — claim token expired or application already deleted; breadcrumb is cleared and a warning is shown.
 - **403** — authenticated account has no active organization; breadcrumb is cleared and a warning is shown.
 - **Any other error** — treated as transient; breadcrumb is preserved so the next login retries.
-- **Success** — application is claimed and linked, `.env` is updated via `clerk env pull`, breadcrumb is deleted. The command prints the Dashboard URL of the claimed app's development instance, since this is the first time the app has a home in an account.
+- **Success** — application is claimed and the breadcrumb is deleted. The command prints the Dashboard URL of the claimed app's development instance, since this is the first time the app has a home in an account. What happens to the folder depends on what it already holds:
+  - **No Clerk keys, or keys that belong to the claimed app** — the folder is linked to it and `.env` is updated via `clerk env pull`.
+  - **Linked to a different app** — the link and env files are left alone. The warning names the linked app and the command to switch: `clerk link --app <claimed app id>`.
+  - **A key that belongs to a different app** — the link and env files are left alone. The warning names which key and where it came from (never its value), and says to run `clerk link`, which links the app those keys belong to.
+  - **Can't tell** (a key that can't be decoded, an unreadable env or config file, or an app whose keys can't be fetched) — the link and env files are left alone. The warning offers both `clerk link` and `clerk link --app <claimed app id>`.
+
+  The folder's keys are the ones its app loads: the env var, then `.env.local`, then `.env`, and the SDK's `.clerk/.tmp/keyless.json` only when there's no plain key of either kind. A publishable key matches when it is one of the claimed app's keys or decodes to the same Frontend API host; a secret key matches only when it is identical, and is compared in memory, never logged. The check runs after the claim because the breadcrumb holds only a token, with no app identity; a mismatched app still lands in the account, which is harmless. When the claim response lacks keys to compare, the app is fetched once (`GET /v1/platform/applications/{id}`). The warnings name the next command themselves, because agents never see the closing next steps.
 
 #### API Endpoints
 
@@ -40,6 +46,7 @@ OAuth requests are made against the Clerk OAuth system instance (default `https:
 | User info      | `GET`  | `/oauth/userinfo`                             | Fetches `sub` (user ID) and `email` using the access token                        |
 | Revoke         | `POST` | `/oauth/token/revoke`                         | Revokes the superseded refresh token on re-authentication (RFC 7009)              |
 | Autoclaim      | `POST` | `/v1/platform/accountless_applications/claim` | Claims an accountless application by token; returns the full `Application` object |
+| Claimed app    | `GET`  | `/v1/platform/applications/{id}`              | Only when the claim response lacks the keys needed to compare with the folder's   |
 
 ### `clerk auth logout` (aliases: `signout`, `sign-out`)
 

@@ -359,6 +359,19 @@ export function getInstance(app: Application, env: string): ApplicationInstance 
   return matches[0]!;
 }
 
+/**
+ * A publishable key in the real format: the Frontend API host plus `$`, base64
+ * encoded behind `pk_test_` or `pk_live_`. `MOCK_APP`'s keys predate code that
+ * decodes keys; use this wherever a key's host is compared.
+ */
+export function publishableKeyFor(
+  frontendApiHost: string,
+  environment: "development" | "production" = "development",
+): string {
+  const prefix = environment === "development" ? "pk_test_" : "pk_live_";
+  return `${prefix}${btoa(`${frontendApiHost}$`)}`;
+}
+
 export const MOCK_APP: Application = {
   application_id: "app_1",
   name: "My SaaS App",

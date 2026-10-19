@@ -1,7 +1,7 @@
 import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import { AuthError, ERROR_CODE, UserAbortError } from "../../lib/errors.ts";
 import { useCaptureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
-import type { AutoclaimResult } from "../../lib/autoclaim.ts";
+import type { AutoclaimResult, FolderSetup } from "../../lib/autoclaim.ts";
 import type { Application } from "../../lib/plapi.ts";
 
 const actualConstants = await import("../../lib/constants.ts");
@@ -670,7 +670,7 @@ describe("login", () => {
     mockResolveProfile.mockResolvedValue(undefined);
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
-      envPulled: true,
+      local: { kind: "linked", envPulled: true },
       app: {
         application_id: "app_claimed",
         name: "bad-agent",
@@ -699,7 +699,7 @@ describe("login", () => {
     mockResolveProfile.mockResolvedValue(undefined);
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
-      envPulled: true,
+      local: { kind: "linked", envPulled: true },
       app: {
         application_id: "app_claimed",
         name: "bad-agent",
@@ -734,7 +734,7 @@ describe("login", () => {
     mockResolveProfile.mockResolvedValue(undefined);
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
-      envPulled: true,
+      local: { kind: "linked", envPulled: true },
       // Deliberately shaped like API JSON that dropped the array.
       app: { application_id: "app_claimed", name: "bad-agent" } as Application,
     });
@@ -743,6 +743,137 @@ describe("login", () => {
 
     expect(captured.err).toContain("Claimed and linked application: `bad-agent`");
     expect(captured.err).not.toContain("Your app now lives");
+  });
+
+  describe("a claim that sets up the folder or leaves it alone", () => {
+    const CLAIMED_APP: Application = {
+      application_id: "app_claimed",
+      name: "bad-agent",
+      instances: [
+        {
+          instance_id: "ins_dev_claimed",
+          environment_type: "development",
+          publishable_key: "pk_test_claimed",
+        },
+      ],
+    };
+
+    // Signed out, so the browser flow runs and no re-auth prompt appears. Only
+    // person mode prints the outro's next steps.
+    async function loginClaiming(local: FolderSetup, mode: "human" | "agent" = "agent") {
+      mockIsHuman.mockReturnValue(mode === "human");
+      mockGetValidToken.mockResolvedValue(null);
+      mockOAuthSuccess();
+      mockResolveProfile.mockResolvedValue(undefined);
+      mockAttemptAutoclaim.mockResolvedValue({ status: "claimed", app: CLAIMED_APP, local });
+      await runLogin();
+    }
+
+    const LEFT_ALONE = [
+      {
+        name: "linked to another app",
+        local: {
+          kind: "unchanged",
+          reason: "linked_elsewhere",
+          linkedTo: { appId: "app_B", appName: "Other App" },
+        },
+        warning:
+          "This folder stays linked to `Other App (app_B)`, so its link and keys were left alone. " +
+          "Run `clerk link --app app_claimed` to switch it to `bad-agent`.",
+        nextSteps: [
+          "Run `clerk link --app app_claimed` to switch this folder to the claimed application",
+        ],
+      },
+      {
+        name: "different keys",
+        local: { kind: "unchanged", reason: "different_keys", key: "publishable", source: ".env" },
+        warning:
+          "The publishable key from .env belongs to a different application, so this folder's link and keys were left alone. " +
+          "Run `clerk link` to link the application those keys belong to.",
+        nextSteps: ["Run `clerk link` to link the application this folder's keys belong to"],
+      },
+      {
+        name: "couldn't tell",
+        local: { kind: "unchanged", reason: "unverified" },
+        warning:
+          "Couldn't confirm this folder's Clerk keys belong to `bad-agent`, so its link and keys were left alone. " +
+          "Run `clerk link` to link the application the keys belong to, or `clerk link --app app_claimed` to use `bad-agent`.",
+        nextSteps: [
+          "Run `clerk link` to link the application this folder's keys belong to",
+          "Run `clerk link --app app_claimed` to use the claimed application instead",
+        ],
+      },
+    ] satisfies Array<{ name: string; local: FolderSetup; warning: string; nextSteps: string[] }>;
+
+    test.each(LEFT_ALONE)(
+      "$name: says the app was claimed, where it lives, why the folder was left alone, and the command to run",
+      async ({ local, warning }) => {
+        await loginClaiming(local);
+
+        expect(captured.err).toContain("Claimed application: `bad-agent`");
+        expect(captured.err).not.toContain("Claimed and linked");
+        expect(captured.err).toContain(
+          "https://dashboard.clerk.com/apps/app_claimed/instances/ins_dev_claimed",
+        );
+        expect(captured.err).toContain(warning);
+      },
+    );
+
+    test.each(LEFT_ALONE)(
+      "$name: a person also gets matching next steps",
+      async ({ local, nextSteps }) => {
+        await loginClaiming(local, "human");
+
+        expect(nextSteps.filter((step) => !captured.err.includes(step))).toEqual([]);
+      },
+    );
+
+    test("different keys: offers no `--app` switch, which would point the folder away from its keys", async () => {
+      await loginClaiming(
+        {
+          kind: "unchanged",
+          reason: "different_keys",
+          key: "secret",
+          source: "CLERK_SECRET_KEY env var",
+        },
+        "human",
+      );
+
+      expect(captured.err).toContain("The secret key from CLERK_SECRET_KEY env var");
+      expect(captured.err).not.toContain("clerk link --app");
+    });
+
+    test.each([
+      {
+        name: "linked, keys pulled",
+        local: { kind: "linked", envPulled: true },
+        nextStep: "Run `clerk doctor` to verify your setup",
+      },
+      {
+        name: "linked, keys not pulled",
+        local: { kind: "linked", envPulled: false },
+        nextStep: "Run `clerk env pull` to refresh your environment variables",
+      },
+      {
+        name: "link failed",
+        local: { kind: "link_failed" },
+        nextStep: "Run `clerk link` to connect your Clerk application",
+      },
+    ] satisfies Array<{ name: string; local: FolderSetup; nextStep: string }>)(
+      "$name: says whether the folder was linked, with the matching next step",
+      async ({ local, nextStep }) => {
+        await loginClaiming(local, "human");
+
+        const linked = local.kind === "linked";
+        expect(captured.err).toContain(
+          linked
+            ? "Claimed and linked application: `bad-agent`"
+            : "Claimed application: `bad-agent`",
+        );
+        expect(captured.err).not.toContain("left alone");
+        expect(captured.err).toContain(nextStep);
+      },
+    );
   });
 
   test("shows default next steps when not linked", async () => {
