@@ -1124,17 +1124,21 @@ describe("buildDeployStatusReport", () => {
 
     expect(report.nextAction).toContain("put the production keys on the host without reading them");
     expect(report.nextAction).toContain(
-      "`( set -o pipefail; keys=$(clerk env pull --instance ins_prod --print) || exit 1; " +
-        "vars=$(vercel env ls 2>&1) || exit 1; ",
+      "`( allow_shared=0; set -o pipefail; keys=$(clerk env pull --instance ins_prod --print) || exit 1; ",
     );
+    expect(report.nextAction).toContain("FORCE_COLOR=0 vercel env ls --no-color");
     // Whether `--force` on production rewrites a variable Vercel shares with
-    // preview and development is unverified, so a shared one needs a person.
+    // preview and development is unverified, so a shared one needs a person,
+    // and the consent stays in the one command they approved.
     expect(report.nextAction).toContain(
-      "If a key is already set as a variable that also targets Preview or Development, it stops " +
-        "with exit 3 and names it: ask the user before replacing it, because `--force` may rewrite " +
-        "that shared variable and put the production secret key in preview deployments. " +
-        "If they agree, run `export CLERK_ALLOW_SHARED=1` and then the command again.",
+      "If a key is already set as a production variable that also targets Preview or Development, " +
+        "it stops with exit 3 and names it: ask the user before replacing it, because `--force` may " +
+        "rewrite that shared variable and put the production secret key in preview deployments. " +
+        "If they agree, run the command again with its leading `allow_shared=0` changed to " +
+        "`allow_shared=1`.",
     );
+    expect(report.nextAction).toContain("it stops with exit 1 if it can't read that list");
+    expect(report.nextAction).not.toContain("export");
     expect(report.nextAction).toContain("redeploy only after it exits 0");
     // A host without a CLI needs a person to paste the values, not the agent.
     expect(report.nextAction).toContain(
@@ -1145,7 +1149,8 @@ describe("buildDeployStatusReport", () => {
   // The command an agent copies from the `complete` report, run as written in
   // the shells agents use, against stub `clerk` and `vercel` commands. Its exit
   // status is what tells the agent whether it may redeploy, so every failure
-  // has to show up there, and no key may reach the agent's output.
+  // has to show up there, and no key may reach the agent's output. The
+  // `vercel env ls` output follows Vercel's own formatting (env/ls.ts).
   describe.each(["bash", "zsh"])("the key-copying command in %s", (shell) => {
     const installed = Bun.which(shell) !== null;
     const stubs = `
@@ -1158,11 +1163,23 @@ clerk() {
 }
 vercel() {
   if [ "$1 $2" = "env ls" ]; then
-    echo "  name                 value      environments                       created"
+    echo "FORCE_COLOR=$FORCE_COLOR $*" >> "$RECEIVED.ls"
     case "$SCENARIO" in
       ls_fails) echo "Error: no linked project" >&2; return 1 ;;
-      production_only) echo "  CLERK_SECRET_KEY     Encrypted  Production                         1d ago" ;;
-      shared*) echo "  CLERK_SECRET_KEY     Encrypted  Production, Preview, Development   1d ago" ;;
+      unrecognized) echo "Vercel CLI 99.0.0"; echo "Something we have never seen" ;;
+      none) echo "> No Environment Variables found for team/project [120ms]" >&2 ;;
+      *)
+        echo "> Environment Variables found for team/project [120ms]" >&2
+        echo ""
+        echo " name                value      type       environments                        created"
+        case "$SCENARIO" in
+          unrelated) echo " OTHER_VAR           Encrypted  Sensitive  Production, Preview, Development    1d ago" ;;
+          production_only) echo " CLERK_SECRET_KEY    Encrypted  Sensitive  Production                          1d ago" ;;
+          preview_dev_only) echo " CLERK_SECRET_KEY    Encrypted  Sensitive  Preview, Development                1d ago" ;;
+          shared) echo " CLERK_SECRET_KEY    Encrypted  Sensitive  Production, Preview, Development    1d ago" ;;
+          colored_shared) printf ' \\033[1mCLERK_SECRET_KEY\\033[22m    \\033[90mEncrypted\\033[39m  Sensitive  \\033[1mProduction\\033[22m, \\033[1mPreview\\033[22m, \\033[1mDevelopment\\033[22m    1d ago\\n' ;;
+        esac
+        ;;
     esac
     return 0
   fi
@@ -1190,19 +1207,23 @@ vercel() {
 
     async function run(
       scenario: string,
-      extraEnv: Record<string, string> = {},
-    ): Promise<{ exitCode: number; output: string; uploads: string[] }> {
+      options: { command?: string; env?: Record<string, string> } = {},
+    ): Promise<{ exitCode: number; output: string; uploads: string[]; listings: string[] }> {
       const dir = await mkdtemp(join(tmpdir(), "clerk-key-copy-"));
       const received = join(dir, "received");
+      const lines = async (path: string): Promise<string[]> => {
+        const file = Bun.file(path);
+        return (await file.exists()) ? (await file.text()).trim().split("\n") : [];
+      };
       try {
         // `-f` keeps zsh from reading the developer's startup files.
         const args = shell === "zsh" ? ["zsh", "-f", "-c"] : ["bash", "-c"];
-        const proc = Bun.spawn([...args, `${stubs}\n${keyCopyCommand()}`], {
+        const proc = Bun.spawn([...args, `${stubs}\n${options.command ?? keyCopyCommand()}`], {
           env: {
             PATH: process.env.PATH ?? "",
             SCENARIO: scenario,
             RECEIVED: received,
-            ...extraEnv,
+            ...options.env,
           },
           stdout: "pipe",
           stderr: "pipe",
@@ -1212,9 +1233,12 @@ vercel() {
           new Response(proc.stderr).text(),
           proc.exited,
         ]);
-        const file = Bun.file(received);
-        const uploads = (await file.exists()) ? (await file.text()).trim().split("\n") : [];
-        return { exitCode, output: stdout + stderr, uploads };
+        return {
+          exitCode,
+          output: stdout + stderr,
+          uploads: await lines(received),
+          listings: await lines(`${received}.ls`),
+        };
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
@@ -1225,7 +1249,9 @@ vercel() {
       "env add CLERK_SECRET_KEY production --force|sk_live_FAKE=with=equals",
     ];
 
-    test.skipIf(!installed).each(["ok", "production_only"])(
+    // A Preview or Development-only variable has no production target for
+    // `--force` to rewrite, so it doesn't need the user.
+    test.skipIf(!installed).each(["none", "unrelated", "production_only", "preview_dev_only"])(
       "replaces both production keys and exits 0 when %s",
       async (scenario) => {
         const result = await run(scenario);
@@ -1236,10 +1262,16 @@ vercel() {
       },
     );
 
-    test.skipIf(!installed)(
-      "stops with exit 3 before uploading when a key is shared with Preview or Development",
-      async () => {
-        const result = await run("shared");
+    test.skipIf(!installed)("lists the variables with color turned off", async () => {
+      const result = await run("none");
+
+      expect(result.listings).toEqual(["FORCE_COLOR=0 env ls --no-color"]);
+    });
+
+    test.skipIf(!installed).each(["shared", "colored_shared"])(
+      "stops with exit 3 before uploading when %s",
+      async (scenario) => {
+        const result = await run(scenario);
 
         expect(result.exitCode).toBe(3);
         expect(result.uploads).toEqual([]);
@@ -1248,12 +1280,44 @@ vercel() {
       },
     );
 
-    test.skipIf(!installed)("replaces a shared key once the user has agreed", async () => {
-      const result = await run("shared_allowed", { CLERK_ALLOW_SHARED: "1" });
+    test.skipIf(!installed)("stops with exit 1 when it can't read the variable list", async () => {
+      const result = await run("unrecognized");
+
+      expect(result.exitCode).toBe(1);
+      expect(result.uploads).toEqual([]);
+      expect(result.output).toContain("Couldn't read the variable list from vercel env ls");
+    });
+
+    // Consent lives in the command the user sees, for that one run.
+    test.skipIf(!installed)("replaces a shared key when rerun with allow_shared=1", async () => {
+      const command = keyCopyCommand();
+      expect(command).toStartWith("( allow_shared=0; ");
+
+      const result = await run("shared", {
+        command: command.replace("allow_shared=0", "allow_shared=1"),
+      });
 
       expect(result.exitCode).toBe(0);
       expect(result.uploads).toEqual(bothUploaded);
       expect(result.output).not.toContain("FAKE");
+    });
+
+    test.skipIf(!installed).each([
+      {
+        label: "allow_shared=1 exported in the environment",
+        value: "0",
+        env: { allow_shared: "1" },
+      },
+      { label: "allow_shared=yes", value: "yes", env: {} },
+      { label: "allow_shared=2", value: "2", env: {} },
+    ])("still stops with $label", async ({ value, env }) => {
+      const result = await run("shared", {
+        command: keyCopyCommand().replace("allow_shared=0", `allow_shared=${value}`),
+        env: env as Record<string, string>,
+      });
+
+      expect(result.exitCode).toBe(3);
+      expect(result.uploads).toEqual([]);
     });
 
     test

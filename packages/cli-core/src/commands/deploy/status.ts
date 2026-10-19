@@ -830,27 +830,37 @@ export function agentNextAction(step: DeployNextStep): string {
       // pull stops it, stops at the first failed upload, and uses `--force`
       // because the production values it replaces are usually development's.
       // Whether `--force` on production rewrites a variable Vercel shares
-      // with preview and development is unverified, so a key set that way
-      // stops the command (exit 3) until the user agrees. The parentheses
-      // keep `pipefail` and `exit` out of the agent's shell. `${name}` has
-      // braces because zsh reads `$name[` as an array subscript.
+      // with preview and development is unverified, so a production variable
+      // that also targets either stops the command (exit 3) until the user
+      // agrees. The consent is the command's own `allow_shared=0`, changed
+      // for that one run, so it can't carry over to later runs or another
+      // project. `vercel env ls` runs with color off (Vercel's color check
+      // honors `--no-color` and `FORCE_COLOR=0`), escape codes are stripped
+      // anyway, and output that is neither its table nor its "No Environment
+      // Variables found" line stops it (exit 1) rather than reading as empty.
+      // The parentheses keep `pipefail`, `exit`, and `allow_shared` out of the
+      // agent's shell. `${name}` has braces because zsh reads `$name[` as an
+      // array subscript.
       return (
         `Clerk's production setup for https://${step.domain} is verified. If you haven't already: ` +
         `put the production keys on the host without reading them, by piping them to the host's CLI. ` +
-        `For Vercel, in bash or zsh: \`( set -o pipefail; keys=$(${pull}) || exit 1; ` +
-        `vars=$(vercel env ls 2>&1) || exit 1; ` +
+        `For Vercel, in bash or zsh: \`( allow_shared=0; set -o pipefail; keys=$(${pull}) || exit 1; ` +
+        `e=$(printf '\\033'); vars=$(FORCE_COLOR=0 vercel env ls --no-color 2>&1 | sed "s/$e\\[[0-9;]*m//g") || exit 1; ` +
+        `printf '%s\\n' "$vars" | grep -qiE "^[[:space:]]*name[[:space:]].*environments|No Environment Variables found" || ` +
+        `{ echo "Couldn't read the variable list from vercel env ls; check the project's variables before replacing any." >&2; exit 1; }; ` +
         `shared=$(printf '%s\\n' "$keys" | cut -d= -f1 | while read -r name; do ` +
-        `printf '%s\\n' "$vars" | grep -qiE "^[[:space:]]*\${name}[[:space:]].*(preview|development)" && echo "$name"; done); ` +
-        `if [ -n "$shared" ] && [ -z "$CLERK_ALLOW_SHARED" ]; then ` +
+        `printf '%s\\n' "$vars" | grep -E "^[[:space:]]*\${name}[[:space:]]" | grep -i production | grep -qiE "preview|development" && echo "$name"; done); ` +
+        `if [ -n "$shared" ] && [ "$allow_shared" != 1 ]; then ` +
         `echo "Also set for Preview or Development: $shared" >&2; exit 3; fi; ` +
         `printf '%s\\n' "$keys" | while IFS='=' read -r key value; do ` +
         `printf '%s' "$value" | vercel env add "$key" production --force || exit 1; done )\`. ` +
-        `It reads the keys and \`vercel env ls\` before changing anything. If a key is already set as a ` +
-        `variable that also targets Preview or Development, it stops with exit 3 and names it: ask the ` +
-        `user before replacing it, because \`--force\` may rewrite that shared variable and put the ` +
-        `production secret key in preview deployments. If they agree, run \`export CLERK_ALLOW_SHARED=1\` ` +
-        `and then the command again. Otherwise it replaces the production values and exits non-zero if ` +
-        `the pull or any upload fails; redeploy only after it exits 0. ` +
+        `It reads the keys and the variable list (\`vercel env ls\`) before changing anything, and it stops ` +
+        `with exit 1 if it can't read that list. If a key is already set as a production variable that also ` +
+        `targets Preview or Development, it stops with exit 3 and names it: ask the user before replacing it, ` +
+        `because \`--force\` may rewrite that shared variable and put the production secret key in preview ` +
+        `deployments. If they agree, run the command again with its leading \`allow_shared=0\` changed to ` +
+        `\`allow_shared=1\`. Otherwise it replaces the production values and exits non-zero if the pull or ` +
+        `any upload fails; redeploy only after it exits 0. ` +
         `For a host without a CLI, ask the user to run \`${pull}\` and add each line as a production ` +
         `environment variable. Set them alongside the other Clerk variables from your env file, ` +
         `redeploy, then sign up at https://${step.domain} to confirm.` +
