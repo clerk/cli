@@ -100,9 +100,10 @@ Commands:
 ## Telemetry
 
 The Clerk CLI collects usage telemetry: command name, flag names, duration, outcome,
-environment signals (OS, install method, terminal), a random machine identifier — and
-your workspace and app IDs when a project is linked. It never collects command
-arguments, option values, file paths, or personal data. The first run only shows a
+environment signals (OS, install method, terminal), whether an account is signed in (a
+local check for stored credentials; nothing is sent to verify them), a random machine
+identifier — and your workspace and app IDs when a project is linked. It never collects
+command arguments, option values, file paths, or personal data. The first run only shows a
 disclosure notice and sends nothing (CI environments send from the first run), and
 `clerk --verbose` prints every event before it is sent. Shell completion (`clerk
 completion <shell>` and the `__complete` helper behind Tab) sends nothing at all.

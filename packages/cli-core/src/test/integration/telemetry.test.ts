@@ -10,6 +10,7 @@ import {
   getInstance,
   http,
   MOCK_APP_DEV_ONLY,
+  mockState,
   setProfile,
   useIntegrationTestHarness,
 } from "./lib/harness.ts";
@@ -68,6 +69,23 @@ test("sends one event for a successful command", async () => {
   // Env-dependent fields are strings, values depend on the host machine.
   expect(typeof event.payload.ai_agent).toBe("string");
   expect(typeof event.payload.install_method).toBe("string");
+  // The harness stores a mock token, so the end-of-run presence check finds it.
+  expect(event.payload.authenticated).toBe(true);
+});
+
+test("the event reports no account credentials when nothing is stored", async () => {
+  await markNoticeAlreadyShown();
+  process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+  http.mock({ "test-telemetry.clerk.com": {} });
+  // The harness sets both; the presence check is true on either.
+  mockState.storedToken = null;
+  delete process.env.CLERK_PLATFORM_API_KEY;
+
+  await clerk("webhooks", "token", "--json");
+
+  const bodies = telemetryEvents();
+  expect(bodies).toHaveLength(1);
+  expect(bodies[0]!.events[0]!.payload.authenticated).toBe(false);
 });
 
 // `eval "$(clerk completion zsh)"` in an rc file re-runs the command on every

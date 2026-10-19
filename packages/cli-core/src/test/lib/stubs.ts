@@ -218,6 +218,9 @@ export const credentialStoreStubs = {
   getStoredSession: async () => null,
   hasStoredCredentials: async () => false,
   hasAccountCredentials: async () => Boolean(process.env.CLERK_PLATFORM_API_KEY),
+  probeAccountCredentials: async () => Boolean(process.env.CLERK_PLATFORM_API_KEY),
+  _setTokenOverride: () => {},
+  _resetKeychainService: () => {},
   storeToken: async () => {},
   deleteToken: async () => {},
   revokeAndDeleteToken: async () => "nothing_to_revoke" as const,
@@ -311,6 +314,13 @@ type CaptureTelemetryOptions = {
    * Without this a throw from `run` is a broken test and propagates.
    */
   captureError?: boolean;
+  /**
+   * Let the event's `authenticated` field read the credential store instead
+   * of pinning it to "nothing stored". Only for a file that has isolated the
+   * store itself (a mocked keyring and `CLERK_CONFIG_DIR` in a temp dir, or
+   * an override it set itself).
+   */
+  realCredentialStore?: boolean;
 };
 
 /**
@@ -334,13 +344,20 @@ type CaptureTelemetryOptions = {
  * resetting it, so it is cleared before `run` and restored after — otherwise
  * the soft-exit classification would read a leaked value. `fetch` and every
  * env var touched are restored in the same `finally`.
+ *
+ * The event's `authenticated` field reads the credential store at the end of
+ * the run, which in a test file that does not mock the store would be the
+ * developer's real keychain. The store is pinned to "nothing stored" after
+ * `run` and before the event is built, so the field reads `false` here and
+ * the command under test still sees whatever credentials the test gave it.
+ * A test of the field itself passes `realCredentialStore`.
  */
 export async function captureTelemetryPayload(
   command: string,
   run: () => void | Promise<void>,
   options: CaptureTelemetryOptions = {},
 ): Promise<{ payload: Record<string, unknown>; error: unknown }> {
-  const { result, captureError = false } = options;
+  const { result, captureError = false, realCredentialStore = false } = options;
   if (result !== undefined && captureError) {
     throw new Error(
       "captureTelemetryPayload: `result` overrides classification, so `captureError` would do nothing",
@@ -357,6 +374,9 @@ export async function captureTelemetryPayload(
     telemetryResultForSoftExit,
   } = await import("../../lib/telemetry.ts");
   const { EXIT_CODE } = await import("../../lib/errors.ts");
+  // Optional call: a file that mocks the store with a fixed export list has
+  // no real store to pin, and nothing there can reach the keychain.
+  const { _setTokenOverride } = await import("../../lib/credential-store.ts");
 
   const savedEnv = {
     CLERK_TELEMETRY_URL: process.env.CLERK_TELEMETRY_URL,
@@ -400,6 +420,7 @@ export async function captureTelemetryPayload(
     }
 
     const resolved = typeof result === "function" ? result() : result;
+    if (!realCredentialStore) _setTokenOverride?.(null);
     await finalizeAndSendTelemetry(
       resolved ??
         (threw
@@ -419,6 +440,7 @@ export async function captureTelemetryPayload(
     return { payload: parsed.events[0]!.payload, error };
   } finally {
     globalThis.fetch = savedFetch;
+    if (!realCredentialStore) _setTokenOverride?.(undefined);
     process.exitCode = savedExitCode ?? EXIT_CODE.SUCCESS;
     for (const [key, value] of Object.entries(savedEnv)) {
       if (value === undefined) delete process.env[key];

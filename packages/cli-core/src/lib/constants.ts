@@ -55,3 +55,5 @@ export const NPM_REGISTRY_URL = "https://registry.npmjs.org/";
 /** Event ingestion endpoint (telemetry-service worker → BigQuery). */
 export const DEFAULT_TELEMETRY_ENDPOINT = "https://clerk-telemetry.com/v1/event";
 export const TELEMETRY_TIMEOUT_MS = 1000;
+/** Budget for the credential check behind `authenticated`; see `probeAccountCredentials`. */
+export const TELEMETRY_CREDENTIAL_CHECK_MS = 300;

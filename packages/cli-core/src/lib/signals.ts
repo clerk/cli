@@ -62,6 +62,17 @@ export function interruptSignal(): AbortSignal {
 }
 
 /**
+ * Resolves when `signal` aborts (at once if it already has). For racing work
+ * that cannot observe a signal itself against a deadline that can.
+ */
+export async function resolveOnAbort(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
+
+/**
  * Wrap a stretch of time the CLI spends doing nothing but waiting on a human —
  * the browser sign-in round-trip and the `$EDITOR` round-trip. Ctrl-C during
  * one of these exits 0; everything not wrapped is work, and exits 130.

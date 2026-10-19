@@ -10,9 +10,16 @@
  *
  * Telemetry must never affect the command: every entry point swallows its
  * own failures to log.debug and the send is capped at TELEMETRY_TIMEOUT_MS.
+ * That includes the end-of-run credential presence check behind the
+ * `authenticated` field, which runs quietly (no blocking keychain call, no
+ * sandbox warning, no directory probe) and yields `null` when it cannot finish.
  */
 
-import { DEFAULT_TELEMETRY_ENDPOINT, TELEMETRY_TIMEOUT_MS } from "./constants.ts";
+import {
+  DEFAULT_TELEMETRY_ENDPOINT,
+  TELEMETRY_CREDENTIAL_CHECK_MS,
+  TELEMETRY_TIMEOUT_MS,
+} from "./constants.ts";
 import {
   ensureMachineUuid,
   getTelemetryDisabled,
@@ -29,9 +36,11 @@ import {
   type EnvLike,
   type OptOutEnvVar,
 } from "./env-signals.ts";
+import { probeAccountCredentials } from "./credential-store.ts";
 import { getCurrentEnvName } from "./environment.ts";
 import { ApiError, CliError, EXIT_CODE, UserAbortError } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
+import { resolveOnAbort } from "./signals.ts";
 import { log } from "./log.ts";
 import { getMode } from "../mode.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
@@ -399,17 +408,34 @@ export async function finalizeAndSendTelemetry(
         // report the interrupt that most likely caused this.
         log.debug(`telemetry: send failed: ${error}`);
       });
-    await Promise.race([work, abortedToResolved(controller.signal)]);
+    await Promise.race([work, resolveOnAbort(controller.signal)]);
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function abortedToResolved(signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) return resolve();
-    signal.addEventListener("abort", () => resolve(), { once: true });
-  });
+/**
+ * The `authenticated` value: the quiet credential presence check under
+ * TELEMETRY_CREDENTIAL_CHECK_MS on top of the event deadline. This is the one
+ * owner of that budget; the check honours the signal but starts no timer. The
+ * race is what keeps the event sending even if the check ever stops honouring
+ * its signal. A throw or a timeout is `null`, never a dropped event.
+ */
+async function readAuthenticated(deadline: AbortSignal): Promise<boolean | null> {
+  const budget = new AbortController();
+  const timer = setTimeout(() => budget.abort(), TELEMETRY_CREDENTIAL_CHECK_MS);
+  const signal = AbortSignal.any([deadline, budget.signal]);
+  try {
+    return await Promise.race([
+      probeAccountCredentials(signal).catch((error: unknown) => {
+        log.debug(`telemetry: credential presence check failed: ${error}`);
+        return null;
+      }),
+      resolveOnAbort(signal).then(() => null),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function buildAndSend(
@@ -425,8 +451,12 @@ async function buildAndSend(
   // The notice tells the user "Nothing has been sent during this run" — honor it.
   if (await maybeShowTelemetryNotice()) return;
 
-  const machineUuid = await ensureMachineUuid();
-  const resolved = await resolveProfile(process.cwd()).catch(() => undefined);
+  // Three independent reads under one deadline.
+  const [machineUuid, resolved, authenticated] = await Promise.all([
+    ensureMachineUuid(),
+    resolveProfile(process.cwd()).catch(() => undefined),
+    readAuthenticated(signal),
+  ]);
 
   const event = {
     sdk: "clerk-cli",
@@ -456,6 +486,13 @@ async function buildAndSend(
       env: getCurrentEnvName(),
       workspace_id: resolved?.profile.workspaceId ?? null,
       app_id: resolved?.profile.appId ?? null,
+      // Whether the machine had Clerk account credentials at the end of the
+      // run: `true` when found, `false` on a confirmed absence, `null` when the
+      // check could not complete. Presence, not validity; never read `null` as
+      // `false`. The canonical meaning, including the Linux case where `false`
+      // can also be an unreadable keyring with no credentials file, is the doc
+      // of probeAccountCredentials in credential-store.ts.
+      authenticated,
     },
   };
 

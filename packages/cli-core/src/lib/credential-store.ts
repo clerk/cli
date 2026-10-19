@@ -19,6 +19,7 @@ import {
   withKeychainAccess,
 } from "./host-execution.ts";
 import { log } from "./log.ts";
+import { resolveOnAbort } from "./signals.ts";
 import {
   refreshAccessToken,
   revokeToken,
@@ -89,6 +90,25 @@ export function isReleaseSignedMacosBinary(
   );
 }
 
+/** The macOS keychain namespace a `codesign -dvvv` run of this binary maps to. */
+function keychainServiceForCodesign(exitCode: number | null, codesignOutput: string): string {
+  if (exitCode === 0 && isReleaseSignedMacosBinary(CURRENT_VERSION, codesignOutput)) {
+    return KEYCHAIN_SERVICE;
+  }
+  log.debug(
+    `credentials: using local macOS keychain namespace (service=${LOCAL_DEV_KEYCHAIN_SERVICE}, execPath=${process.execPath})`,
+  );
+  return LOCAL_DEV_KEYCHAIN_SERVICE;
+}
+
+const CODESIGN_COMMAND = ["codesign", "-dvvv", process.execPath];
+/**
+ * `env` given explicitly: Bun then resolves the executable against the live
+ * PATH rather than the one captured at startup. The child's environment is the
+ * same either way; the lookup is what a test's fake `codesign` depends on.
+ */
+const CODESIGN_ENV = process.env;
+
 async function resolveKeychainService(): Promise<string> {
   if (process.platform !== "darwin") return KEYCHAIN_SERVICE;
   if (keychainServicePromise) return keychainServicePromise;
@@ -101,22 +121,51 @@ async function resolveKeychainService(): Promise<string> {
       return LOCAL_DEV_KEYCHAIN_SERVICE;
     }
 
-    const proc = Bun.spawnSync(["codesign", "-dvvv", process.execPath], {
+    const proc = Bun.spawnSync(CODESIGN_COMMAND, {
       stdio: ["ignore", "pipe", "pipe"],
+      env: CODESIGN_ENV,
     });
-    const codesignOutput = `${proc.stdout.toString()}${proc.stderr.toString()}`;
-
-    if (proc.exitCode === 0 && isReleaseSignedMacosBinary(CURRENT_VERSION, codesignOutput)) {
-      return KEYCHAIN_SERVICE;
-    }
-
-    log.debug(
-      `credentials: using local macOS keychain namespace (service=${LOCAL_DEV_KEYCHAIN_SERVICE}, execPath=${process.execPath})`,
+    return keychainServiceForCodesign(
+      proc.exitCode,
+      `${proc.stdout.toString()}${proc.stderr.toString()}`,
     );
-    return LOCAL_DEV_KEYCHAIN_SERVICE;
   })();
 
   return keychainServicePromise;
+}
+
+/**
+ * The namespace resolution for the quiet path: the same answer as
+ * {@link resolveKeychainService}, but `codesign` runs asynchronously and is
+ * killed when `signal` aborts, so it can be cut short at a budget. Resolves
+ * `null` only when cut short. A completed answer is memoized for the loud
+ * path, so a later keychain read in this process does not run `codesign` again.
+ */
+async function resolveKeychainServiceQuietly(signal: AbortSignal): Promise<string | null> {
+  if (process.platform !== "darwin") return KEYCHAIN_SERVICE;
+  if (keychainServicePromise || IS_DEV_BUILD) return resolveKeychainService();
+
+  try {
+    const proc = Bun.spawn(CODESIGN_COMMAND, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: CODESIGN_ENV,
+      signal,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    if (signal.aborted) return null;
+    const service = keychainServiceForCodesign(exitCode, `${stdout}${stderr}`);
+    keychainServicePromise = Promise.resolve(service);
+    return service;
+  } catch (error) {
+    // Aborted at the budget, or `codesign` could not be spawned at all. Nothing
+    // is memoized: the loud path reports its own failure if it ever runs.
+    log.debug(`credentials: quiet codesign check did not complete: ${errorMessage(error)}`);
+    return null;
+  }
 }
 
 async function keyringStore(value: string): Promise<boolean> {
@@ -460,6 +509,14 @@ export function _setTokenOverride(value: string | null | undefined): void {
   tokenOverride = value;
 }
 
+/**
+ * Test-only: forget the memoized macOS keychain namespace, so one test file
+ * can exercise the release-signed and unsigned `codesign` outcomes in turn.
+ */
+export function _resetKeychainService(): void {
+  keychainServicePromise = undefined;
+}
+
 export async function getToken(): Promise<string | null> {
   const value = await readStoredValue();
   if (!value) return null;
@@ -481,10 +538,129 @@ export async function hasStoredCredentials(): Promise<boolean> {
  * OAuth session or a platform API key. This is a presence check only: it does
  * not hit the network, so an expired token or an API outage won't demote a
  * logged-in user into an unauthenticated code path.
+ *
+ * Blocking, and may print the agent-mode sandbox warning: for commands. The
+ * non-blocking tri-state form telemetry uses is {@link probeAccountCredentials}.
  */
 export async function hasAccountCredentials(): Promise<boolean> {
   if (process.env.CLERK_PLATFORM_API_KEY) return true;
   return hasStoredCredentials();
+}
+
+/**
+ * The check behind the `authenticated` telemetry field: whether this machine
+ * has Clerk account credentials, read quietly at the end of the run. The
+ * canonical statement of what the field means; the event comment in
+ * telemetry.ts and the warehouse column description point here.
+ *
+ * - **Presence, not validity.** `true` when `CLERK_PLATFORM_API_KEY` is set or
+ *   a stored OAuth session is found; nothing is sent to verify it, and an
+ *   expired session reads `true`.
+ * - **Read at the end of the run, always afresh.** A sign-in reports `true`;
+ *   a sign-out reports what the store holds after the delete: `false` when
+ *   the credentials are gone, `true` when a failed delete left them in place
+ *   (`keyringDelete` returns `false` on failure and `deleteToken` ignores it;
+ *   `fileDelete` swallows unlink errors). Nothing is cached across the run: a
+ *   remembered answer would report the state at the command's start, which a
+ *   sign-out from another process during a long command, or a future command
+ *   that switches environment after reading, would make untrue; the read it
+ *   saves costs a few milliseconds.
+ * - **`false` on a confirmed absence**: the store was read and holds nothing
+ *   (no keyring module means the credentials file is the whole store, so an
+ *   absent file is a confirmed absence), plus the one Linux case below.
+ * - **`null` when the check could not complete**: it timed out, or the store
+ *   was unreadable. An unreadable keychain on a signed-in machine never counts
+ *   as signed out, except on Linux, below.
+ * - **A keyring error splits by platform.** The keyring library reports "no
+ *   keyring installed" and "keyring locked" as the same rejected read, so the
+ *   two cannot be told apart. On macOS and Windows a backend always exists, so
+ *   a rejected read (a locked store, or a sandbox denying access) means
+ *   unreadable: the credentials file is read next, `true` if it holds a
+ *   session, otherwise `null`. On Linux a rejected read is where "no keyring
+ *   backend" lives, so it falls through to the credentials file and reports
+ *   what it finds: on Linux a locked keyring that holds a session reads
+ *   `false`; accepted so that machines with no keyring at all read `false`
+ *   rather than `null`.
+ * - **Budget: 300 ms**, `TELEMETRY_CREDENTIAL_CHECK_MS`, owned by the caller
+ *   and passed as `signal`; this function starts no timer of its own. Running
+ *   out of it yields `null`. Telemetry composes it with the 1,000 ms event
+ *   deadline, so the config, profile and POST that share that deadline keep
+ *   700 ms. The Ctrl-C shutdown flush has 250 ms in total, so its abort event
+ *   may carry `null`, or be dropped with the rest of that flush; accepted
+ *   rather than a second budget.
+ *
+ * Quiet: it never blocks the process, never prints the agent-mode sandbox
+ * warning, and never probes the credentials directory. It skips the
+ * `withKeychainAccess` / `withHomeFsAccess` wrappers and never reports to
+ * `observeHostCapabilityFailure`, logging failures at debug level instead.
+ * Telemetry runs on commands that never touched the keychain before (`clerk
+ * doctor`, `clerk api ls`, `clerk telemetry status`), and a sandboxed agent
+ * must not see a new warning because of bookkeeping. The loud check cannot be
+ * reused as is because both calls it depends on block the process: on macOS
+ * the first keychain access runs `codesign` via `Bun.spawnSync`, and
+ * `Entry.getPassword()` is synchronous, so no timer can cut either short. This
+ * path uses `Bun.spawn` killed on abort and `AsyncEntry.getPassword(signal)`.
+ *
+ * Rejected alternative: "send `null` whenever the keychain namespace is not
+ * already resolved." Simpler, but it leaves exactly the commands the field
+ * exists to measure unmeasured, since those are the ones that never resolved
+ * it.
+ *
+ * Resolves `null` as soon as `signal` aborts even though the credentials file
+ * read cannot observe it; never rejects.
+ */
+export async function probeAccountCredentials(signal: AbortSignal): Promise<boolean | null> {
+  if (process.env.CLERK_PLATFORM_API_KEY) return true;
+  if (tokenOverride !== undefined) return tokenOverride !== null;
+
+  const presence = await Promise.race([
+    readPresenceQuietly(signal),
+    resolveOnAbort(signal).then(() => null),
+  ]);
+  log.debug(`credentials: quiet presence check → ${presence}`);
+  return presence;
+}
+
+/** Never rejects: every failure is `null`, logged at debug level. */
+async function readPresenceQuietly(signal: AbortSignal): Promise<boolean | null> {
+  const keyring = await keyringPresenceQuietly(signal);
+  if (keyring === "found") return true;
+  if (signal.aborted) return null;
+
+  const file = await filePresenceQuietly();
+  if (file !== false) return file;
+  if (keyring === "absent") return false;
+  // The keyring read failed and the file is absent: the platform split.
+  return process.platform === "linux" ? false : null;
+}
+
+async function keyringPresenceQuietly(signal: AbortSignal): Promise<"found" | "absent" | "failed"> {
+  const mod = await getKeyring();
+  // No keyring module: the credentials file is the whole store, as on the loud path.
+  if (!mod) return "absent";
+  const service = await resolveKeychainServiceQuietly(signal);
+  if (service === null) return "failed";
+  const account = keychainAccount();
+  try {
+    const value = await new mod.AsyncEntry(service, account).getPassword(signal);
+    return value ? "found" : "absent";
+  } catch (error) {
+    log.debug(`credentials: quiet keyring lookup failed: ${errorMessage(error)}`);
+    return "failed";
+  }
+}
+
+/** `null` when the file could not be read, which is not the same as absent. */
+async function filePresenceQuietly(): Promise<boolean | null> {
+  const path = credentialsFile();
+  try {
+    const file = Bun.file(path);
+    if (!(await file.exists())) return false;
+    return (await file.text()).trim().length > 0;
+  } catch (error) {
+    log.debug(`credentials: quiet credentials file read failed: ${errorMessage(error)}`);
+    return null;
+  }
 }
 
 async function resolveValidToken(): Promise<string | null> {

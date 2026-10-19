@@ -58,6 +58,8 @@ mock.module(
       hasStoredCredentials: async () => mockState.storedToken !== null,
       hasAccountCredentials: async () =>
         Boolean(process.env.CLERK_PLATFORM_API_KEY) || mockState.storedToken !== null,
+      probeAccountCredentials: async () =>
+        Boolean(process.env.CLERK_PLATFORM_API_KEY) || mockState.storedToken !== null,
       storeToken: async (value: { accessToken: string }) => {
         mockState.storedToken = value.accessToken;
       },
@@ -81,6 +83,7 @@ mock.module(
         return had ? ("revoked" as const) : ("nothing_to_revoke" as const);
       },
       _setTokenOverride: () => {},
+      _resetKeychainService: () => {},
       KEYCHAIN_SERVICE: "clerk-cli",
       LOCAL_DEV_KEYCHAIN_SERVICE: "clerk-cli-dev",
       KEYCHAIN_ACCOUNT: "oauth-access-token",

@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from "./config.ts";
+import * as credentialStore from "./credential-store.ts";
+import { _setTokenOverride } from "./credential-store.ts";
 import {
   declareSoftExitError,
   declareSoftExitOutcome,
@@ -180,16 +182,26 @@ describe("finalizeAndSendTelemetry", () => {
   // Isolate from ambient env: clear before each test too (not just after) so a
   // pre-set CLERK_TELEMETRY_DISABLED/DO_NOT_TRACK/CLERK_TELEMETRY_URL in the
   // shell can't change whether telemetry is enabled for the first test.
+  // The event reads the credential store at the end of the run; pin it to
+  // "nothing stored" so no test here reaches the developer's real keychain,
+  // and clear the platform key, which would read as signed in.
+  let originalPlatformApiKey: string | undefined;
   beforeEach(() => {
     delete process.env.CLERK_TELEMETRY_URL;
     delete process.env.CLERK_TELEMETRY_DISABLED;
     delete process.env.DO_NOT_TRACK;
+    originalPlatformApiKey = process.env.CLERK_PLATFORM_API_KEY;
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    _setTokenOverride(null);
   });
   afterEach(() => {
     globalThis.fetch = originalFetch;
     delete process.env.CLERK_TELEMETRY_URL;
     delete process.env.CLERK_TELEMETRY_DISABLED;
     delete process.env.DO_NOT_TRACK;
+    if (originalPlatformApiKey === undefined) delete process.env.CLERK_PLATFORM_API_KEY;
+    else process.env.CLERK_PLATFORM_API_KEY = originalPlatformApiKey;
+    _setTokenOverride(undefined);
   });
 
   function fakeCommand(): TelemetryCommand {
@@ -800,6 +812,7 @@ describe("finalizeAndSendTelemetry", () => {
           "stage",
           "terminal_program",
           "workspace_id",
+          "authenticated",
         ].sort(),
       );
     });
@@ -811,6 +824,66 @@ describe("finalizeAndSendTelemetry", () => {
       const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
       expect(payload.pause_step).toBeNull();
       expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+    });
+  });
+
+  // Whether the machine had account credentials at the end of the run. A
+  // presence check, read after the command: `true`, `false` on a confirmed
+  // absence, `null` when the check could not complete. The store itself is
+  // pinned here (override or spy); the fake-keyring cases, sign-in and
+  // sign-out and the platform split live in telemetry-authenticated.test.ts.
+  describe("authenticated", () => {
+    const success = { outcome: "success" as const, exitCode: 0 };
+
+    // The helper's own pin would overwrite the override a case sets in `run`.
+    async function authenticatedFor(run: () => void): Promise<unknown> {
+      const { payload } = await captureTelemetryPayload("list", run, {
+        result: success,
+        realCredentialStore: true,
+      });
+      return payload.authenticated;
+    }
+
+    test("true when the platform API key is set", async () => {
+      expect(
+        await authenticatedFor(() => {
+          process.env.CLERK_PLATFORM_API_KEY = "ak_test_telemetry";
+        }),
+      ).toBe(true);
+    });
+
+    test("true when a session is stored", async () => {
+      expect(await authenticatedFor(() => _setTokenOverride("stored-session"))).toBe(true);
+    });
+
+    test("false when the store was read and holds nothing", async () => {
+      expect(await authenticatedFor(() => _setTokenOverride(null))).toBe(false);
+    });
+
+    test("null when the check throws, and the event still sends", async () => {
+      const spy = spyOn(credentialStore, "probeAccountCredentials").mockRejectedValue(
+        new Error("keychain exploded"),
+      );
+      try {
+        expect(await authenticatedFor(() => {})).toBeNull();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    // The check honours its signal, but the event must not depend on that:
+    // a check that ignores it still yields null inside the deadline.
+    test("null when the check never resolves, and the event sends within the deadline", async () => {
+      const spy = spyOn(credentialStore, "probeAccountCredentials").mockImplementation(
+        () => new Promise<never>(() => {}),
+      );
+      try {
+        const started = Date.now();
+        expect(await authenticatedFor(() => {})).toBeNull();
+        expect(Date.now() - started).toBeLessThan(900);
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 
