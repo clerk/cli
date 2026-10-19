@@ -11,6 +11,7 @@ import {
   clerk,
   getInstance,
   MOCK_APP,
+  startInAgentMode,
 } from "./lib/harness.ts";
 import { join } from "node:path";
 
@@ -240,7 +241,10 @@ test("--input-json is registered as a global option", async () => {
   expect(parsed.error).toBeDefined();
 });
 
+// `--input-json` is expanded before `--mode` is applied, so these errors are
+// reported in the starting mode: agent, as for a run without a terminal.
 test("structured JSON error in agent mode for invalid JSON", async () => {
+  startInAgentMode();
   const result = await clerk.raw("--mode", "agent", "init", "--input-json", "{bad}");
   expect(result.exitCode).not.toBe(0);
   const parsed = JSON.parse(result.stderr);
@@ -248,6 +252,7 @@ test("structured JSON error in agent mode for invalid JSON", async () => {
 });
 
 test("structured JSON error in agent mode for file not found", async () => {
+  startInAgentMode();
   const result = await clerk.raw(
     "--mode",
     "agent",
@@ -261,6 +266,7 @@ test("structured JSON error in agent mode for file not found", async () => {
 });
 
 test("structured JSON error in agent mode for nested objects", async () => {
+  startInAgentMode();
   const result = await clerk.raw(
     "--mode",
     "agent",

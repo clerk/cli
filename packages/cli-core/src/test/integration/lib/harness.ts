@@ -114,7 +114,18 @@ mock.module(
     }) satisfies typeof import("../../../lib/git.ts"),
 );
 
+/** Person mode, as for a run in a terminal. Reset in {@link setupTest}. */
 let _mode: "human" | "agent" = "human";
+
+/**
+ * Starts the current test's runs in agent mode, as a run without a terminal
+ * starts. `--mode` takes effect in a hook that runs before each command, so an
+ * error raised earlier (a bad `--input-json`, an invalid `--mode`, `clerk help
+ * <command>`) is reported in this starting mode, whatever `--mode` says.
+ */
+export function startInAgentMode(): void {
+  _mode = "agent";
+}
 mock.module(
   "../../../mode.ts",
   () =>
@@ -644,6 +655,9 @@ export async function setupTest(): Promise<TestHarness> {
   mockState.gitRepoIdentifier = "/repo/.git";
   mockState.openBrowserResult = BROWSER_OPENED;
   openedUrls.length = 0;
+  // `--mode agent` sets the mocked mode for the rest of the process; without
+  // this, every later test in the file would run as an agent.
+  _mode = "human";
   resetPromptQueues();
   http.reset();
   process.stdin.isTTY = true;
