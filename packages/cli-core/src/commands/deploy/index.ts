@@ -172,11 +172,13 @@ async function runAgentDeploy(domain: string | undefined): Promise<void> {
   // From here a production instance exists, created by this run or found by
   // it, so a read that fails or comes back empty must not look like nothing
   // happened: the caller would create again, or give up on a live instance.
-  await ensureProductionInstance(ctx, domain);
+  const created = await ensureProductionInstance(ctx, domain);
   const state = await withApiContext(
     resolveDeployState(ctx),
     "The production instance exists, but its status could not be read; run `clerk deploy status` to retry",
-  );
+  ).catch((error: unknown) => {
+    throw instanceReadError(error, created);
+  });
   if (state.kind === "not_started") {
     throw new CliError(
       "The production instance exists, but Clerk did not return it yet. Run `clerk deploy status` to check it.",
@@ -189,11 +191,27 @@ async function runAgentDeploy(domain: string | undefined): Promise<void> {
 }
 
 /**
+ * The deploy error mapping reads a 404 as the application being gone and says
+ * to re-link. After {@link ensureProductionInstance} that is never true: the
+ * application was just read and the instance exists.
+ */
+function instanceReadError(error: unknown, created: boolean): unknown {
+  if (!(error instanceof CliError) || error.code !== ERROR_CODE.NOT_LINKED) return error;
+  return new CliError(
+    `The production instance ${created ? "was created" : "exists"}, but its status couldn't be read yet. ` +
+      "Run `clerk deploy status` to check it.",
+    { code: ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED },
+  );
+}
+
+/**
  * Create the production instance unless the application already has one, and
  * save its id to the profile so `--instance prod` resolves for the commands the
- * report points to next.
+ * report points to next. True when this run created it; false when it found
+ * one, including one another run created first.
  */
-async function ensureProductionInstance(ctx: DeployContext, domain: string): Promise<void> {
+async function ensureProductionInstance(ctx: DeployContext, domain: string): Promise<boolean> {
+  let created = false;
   if (!ctx.productionInstanceId) {
     recordDeployStage("not_started");
     const production = await createProductionInstance(ctx, domain);
@@ -206,11 +224,13 @@ async function ensureProductionInstance(ctx: DeployContext, domain: string): Pro
     } else {
       recordDeployStage(production.active_domain ? "domain_pending" : "domain_provisioning");
       ctx.productionInstanceId = production.id;
+      created = true;
     }
   }
   if (ctx.productionInstanceId && ctx.profile.instances.production !== ctx.productionInstanceId) {
     await persistProductionInstance(ctx, ctx.productionInstanceId);
   }
+  return created;
 }
 
 /**

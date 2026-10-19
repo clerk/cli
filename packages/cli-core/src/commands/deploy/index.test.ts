@@ -641,6 +641,53 @@ describe("deploy", () => {
       expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
     });
 
+    // The deploy error mapping reads any 404 as the application being gone
+    // and says to re-link. Here the application was read a moment ago and the
+    // instance exists, so that would send the caller off to fix nothing.
+    const domainStatusNotFound = () =>
+      new PlapiError(
+        404,
+        JSON.stringify({ errors: [{ code: "resource_not_found" }] }),
+        "https://x",
+      );
+
+    test("a 404 on the read after the create says the instance was created", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      createGoesLive();
+      mockGetApplicationDomainStatus.mockRejectedValue(domainStatusNotFound());
+
+      const error = await runDeploy({ domain: "example.com" }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(CliError);
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      expect((error as CliError).message).toBe(
+        "The production instance was created, but its status couldn't be read yet. " +
+          "Run `clerk deploy status` to check it.",
+      );
+      expect(captured.out).toBe("");
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
+    });
+
+    test("a 404 on the read of an instance it found says the instance exists", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockLiveProduction({ domain: "example.com" });
+      mockGetApplicationDomainStatus.mockRejectedValue(domainStatusNotFound());
+
+      const error = await runDeploy({ domain: "example.com" }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(CliError);
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      expect((error as CliError).message).toBe(
+        "The production instance exists, but its status couldn't be read yet. " +
+          "Run `clerk deploy status` to check it.",
+      );
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect(captured.out).toBe("");
+    });
+
     test("an instance Clerk says exists but does not return is an error, not not_started", async () => {
       mockIsAgent.mockReturnValue(true);
       await linkedProject();
