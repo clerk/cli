@@ -1,4 +1,4 @@
-import { clearKeylessBreadcrumb, peekKeylessBreadcrumb, readKeylessBreadcrumb } from "./keyless.ts";
+import { clearKeylessBreadcrumb, readKeylessBreadcrumb } from "./keyless.ts";
 import {
   claimApplication,
   fetchApplication,
@@ -81,9 +81,7 @@ type Terminal = { status: "not_found" | "no_organization" };
  */
 type ManagedWorkspace = { status: "managed_workspace"; longMessage: string | null };
 type Failed = { status: "failed"; error: Error };
-type Skipped = { status: "not_keyless" };
-
-export type AutoclaimResult = Claimed | Terminal | ManagedWorkspace | Failed | Skipped;
+export type AutoclaimResult = Claimed | Terminal | ManagedWorkspace | Failed;
 
 type ClaimAttempt = { status: "claimed"; app: Application } | Terminal | ManagedWorkspace | Failed;
 
@@ -95,30 +93,37 @@ const TERMINAL_BY_STATUS: Record<number, Terminal["status"]> = {
   403: "no_organization",
 };
 
-/** The app a claim in this folder would move, named the way the claim will name it. */
-export type InitClaim = { appName: string };
+/**
+ * The folder's init token, and the name the claim will give its app. The token
+ * is credential-equivalent: never log it or put it in a message.
+ */
+export type InitClaim = { appName: string; claimToken: string };
 
 /**
- * What a claim here would claim, for a question asked before claiming;
- * undefined without an init token. Reads only: a malformed token file is left
- * for `attemptAutoclaim` to clear, so asking changes nothing on disk.
+ * Reads the folder's init token once, for one claim; undefined without one.
+ * Like every read of the token file, a malformed file is warned about and
+ * deleted.
  */
-export async function peekInitClaim(cwd: string): Promise<InitClaim | undefined> {
-  if (!(await peekKeylessBreadcrumb(cwd))) return undefined;
-  return { appName: await deriveProjectName(cwd) };
+export async function readInitClaim(cwd: string): Promise<InitClaim | undefined> {
+  const breadcrumb = await readKeylessBreadcrumb(cwd);
+  if (!breadcrumb) return undefined;
+  return { appName: await deriveProjectName(cwd), claimToken: breadcrumb.claimToken };
 }
 
-/** Orchestrates post-login claim of a keyless app. Never throws. */
-export async function attemptAutoclaim(cwd: string): Promise<AutoclaimResult> {
-  const breadcrumb = await readKeylessBreadcrumb(cwd);
-  if (!breadcrumb) return { status: "not_keyless" };
-
-  const appName = await deriveProjectName(cwd);
-  const result = await tryClaim(breadcrumb.claimToken, appName);
+/**
+ * Claims the app behind `init`, read by `readInitClaim`, then sets up the
+ * folder if its keys allow. Never throws.
+ *
+ * Takes the token rather than reading the file, so a caller claims exactly the
+ * token it read (and asked a person about), never one that appeared or
+ * replaced it since. The file is deleted only while it still holds that token.
+ */
+export async function attemptAutoclaim(cwd: string, init: InitClaim): Promise<AutoclaimResult> {
+  const result = await tryClaim(init.claimToken, init.appName);
 
   if (result.status === "failed" || result.status === "managed_workspace") return result;
 
-  await clearKeylessBreadcrumb(cwd);
+  await clearKeylessBreadcrumb(cwd, init.claimToken);
 
   if (result.status === "claimed") {
     return { status: "claimed", ...(await setUpFolder(result.app, cwd)) };

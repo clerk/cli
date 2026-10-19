@@ -13,23 +13,32 @@ import { confirm } from "./prompts.ts";
  * set, authenticates every Platform API call (`getAuthToken` in `plapi.ts`),
  * the claim included, so it decides even when a person is also signed in.
  */
-export type ClaimDestination = { kind: "api_key" } | { kind: "account"; email: string };
+export type ClaimDestination = { kind: "api_key" } | { kind: "account"; email?: string };
 
 /**
- * The destination for a claim made now by the account `email` signed into.
- * Undefined when neither credential names one: no claim can go anywhere the
- * person was told about, so callers don't claim.
+ * The destination for a claim made now, given the stored session's account
+ * (null without one). Undefined when neither credential exists: no claim can
+ * go anywhere the person was told about, so callers don't claim.
+ *
+ * Whether a session exists decides; its email only shapes the wording, since
+ * nothing checks that Clerk's account-info reply includes one.
  */
-export function claimDestination(email: string | undefined): ClaimDestination | undefined {
+export function claimDestination(
+  account: { email?: string } | null | undefined,
+): ClaimDestination | undefined {
   if (process.env.CLERK_PLATFORM_API_KEY) return { kind: "api_key" };
-  return email ? { kind: "account", email } : undefined;
+  return account ? { kind: "account", email: account.email || undefined } : undefined;
 }
 
-/** "jane@example.com's account", or the API key's workspace. */
+/**
+ * "jane@example.com's account", or the API key's workspace. The email names
+ * the person, not which of their workspaces gets the app: a session's claim
+ * lands in the workspace that sign-in used.
+ */
 export function describeClaimDestination(destination: ClaimDestination): string {
-  return destination.kind === "api_key"
-    ? "the workspace your `CLERK_PLATFORM_API_KEY` belongs to"
-    : `${destination.email}'s account`;
+  if (destination.kind === "api_key")
+    return "the workspace your `CLERK_PLATFORM_API_KEY` belongs to";
+  return destination.email ? `${destination.email}'s account` : "the account you're signed in to";
 }
 
 /**

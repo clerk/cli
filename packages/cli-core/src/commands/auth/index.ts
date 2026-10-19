@@ -29,7 +29,7 @@ export function registerAuth(program: Program): void {
     ])
     .action(async (opts) => {
       printBanner();
-      await login(opts);
+      await login({ yes: opts.yes });
     });
 
   auth
@@ -48,7 +48,7 @@ export function registerAuth(program: Program): void {
     )
     .action(async (opts) => {
       printBanner();
-      await login(opts);
+      await login({ yes: opts.yes });
     });
 
   program

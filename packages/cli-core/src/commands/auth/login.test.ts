@@ -97,20 +97,25 @@ mock.module("../../lib/first-application.ts", () => ({
   ensureFirstApplication: () => mockEnsureFirstApplication(),
 }));
 
-const mockAttemptAutoclaim = mock(async (_cwd: string): Promise<AutoclaimResult> => ({
-  status: "not_keyless",
-}));
+type InitClaim = { appName: string; claimToken: string };
+
+const mockAttemptAutoclaim = mock(
+  async (_cwd: string, _init?: InitClaim): Promise<AutoclaimResult> => ({ status: "not_found" }),
+);
 
 // No init token unless a test says so; the real reader would look in the
 // repo's own working directory.
-const mockPeekInitClaim = mock(
-  async (_cwd: string): Promise<{ appName: string } | undefined> => undefined,
-);
+const mockReadInitClaim = mock(async (_cwd: string): Promise<InitClaim | undefined> => undefined);
 
 mock.module("../../lib/autoclaim.ts", () => ({
-  attemptAutoclaim: (cwd: string) => mockAttemptAutoclaim(cwd),
-  peekInitClaim: (cwd: string) => mockPeekInitClaim(cwd),
+  attemptAutoclaim: (cwd: string, init?: InitClaim) => mockAttemptAutoclaim(cwd, init),
+  readInitClaim: (cwd: string) => mockReadInitClaim(cwd),
 }));
+
+/** Login claims only a token it read at the start, so a test that claims puts one in the folder. */
+function withInitToken() {
+  mockReadInitClaim.mockResolvedValue({ appName: "bad-agent", claimToken: "claim_token" });
+}
 
 const { setLogLevel } = await import("../../lib/log.ts");
 const telemetryMod = await import("../../lib/telemetry.ts");
@@ -150,9 +155,9 @@ describe("login", () => {
     mockEnsureFirstApplication.mockReset();
     mockEnsureFirstApplication.mockResolvedValue(undefined);
     mockAttemptAutoclaim.mockReset();
-    mockAttemptAutoclaim.mockResolvedValue({ status: "not_keyless" });
-    mockPeekInitClaim.mockReset();
-    mockPeekInitClaim.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({ status: "not_found" });
+    mockReadInitClaim.mockReset();
+    mockReadInitClaim.mockResolvedValue(undefined);
     mockIsHuman.mockReturnValue(false);
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
     mockRevokeToken.mockResolvedValue("revoked");
@@ -677,6 +682,7 @@ describe("login", () => {
     mockGetValidToken.mockResolvedValue(null);
     mockOAuthSuccess();
     mockResolveProfile.mockResolvedValue(undefined);
+    withInitToken();
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
       local: { kind: "linked", envPulled: true },
@@ -706,6 +712,7 @@ describe("login", () => {
     mockGetValidToken.mockResolvedValue(null);
     mockOAuthSuccess();
     mockResolveProfile.mockResolvedValue(undefined);
+    withInitToken();
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
       local: { kind: "linked", envPulled: true },
@@ -741,6 +748,7 @@ describe("login", () => {
     mockGetValidToken.mockResolvedValue(null);
     mockOAuthSuccess();
     mockResolveProfile.mockResolvedValue(undefined);
+    withInitToken();
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
       local: { kind: "linked", envPulled: true },
@@ -774,6 +782,9 @@ describe("login", () => {
       mockGetValidToken.mockResolvedValue(null);
       mockOAuthSuccess();
       mockResolveProfile.mockResolvedValue(undefined);
+      withInitToken();
+      // A person answers Yes to the claim question after signing in.
+      if (mode === "human") mockConfirm.mockResolvedValue(true);
       mockAttemptAutoclaim.mockResolvedValue({ status: "claimed", app: CLAIMED_APP, local });
       await runLogin();
     }
@@ -1027,6 +1038,7 @@ describe("login", () => {
     mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
     mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    withInitToken();
     mockAttemptAutoclaim.mockResolvedValue({
       status: "managed_workspace",
       longMessage:
@@ -1046,6 +1058,7 @@ describe("login", () => {
     mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
     mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    withInitToken();
     mockAttemptAutoclaim.mockResolvedValue({ status: "managed_workspace", longMessage: null });
 
     await runLogin();

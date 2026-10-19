@@ -23,11 +23,16 @@ import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import {
   attemptAutoclaim,
-  peekInitClaim,
+  readInitClaim,
   type AutoclaimResult,
   type FolderUnchanged,
+  type InitClaim,
 } from "../../lib/autoclaim.ts";
-import { claimDestination, confirmClaim } from "../../lib/claim-prompt.ts";
+import {
+  claimDestination,
+  confirmClaim,
+  describeClaimDestination,
+} from "../../lib/claim-prompt.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { cyan, dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
@@ -207,8 +212,11 @@ async function performOAuthFlow(): Promise<OAuthFlowResult> {
 /**
  * Signs in, then claims the app `clerk init` created here, if any. Resolves to
  * the account the stored session belongs to afterwards, or undefined when a
- * person claimed with `CLERK_PLATFORM_API_KEY` and no sign-in ran.
+ * person claimed with `CLERK_PLATFORM_API_KEY` and no sign-in ran, which
+ * `claim: false` rules out.
  */
+export function login(options: LoginOptions & { claim: false }): Promise<UserInfo>;
+export function login(options?: LoginOptions): Promise<UserInfo | undefined>;
 export async function login(options: LoginOptions = {}): Promise<UserInfo | undefined> {
   // `init` and `link` call this mid-flow and share the one process-global
   // telemetry stage. Login's own markers are worth having while it runs, but
@@ -230,23 +238,28 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo | undefine
     getExistingSession(),
   );
 
+  // The init token is read once, here, and only that token is ever claimed: a
+  // token that appears during the browser sign-in, or replaces this one while
+  // a question is open, waits for the next run. `claim: false` reads nothing,
+  // so the folder is left exactly as found.
+  const initClaim = claim ? await readInitClaim(cwd) : undefined;
+
   if (existingSession && !isHuman()) {
     setTelemetryStage("done");
-    log.success(`Logged in as ${existingSession.email}`);
-    await finishLogin(claim ? await handleAutoclaim(cwd) : undefined, showNextSteps);
+    log.success(loggedInLine(existingSession));
+    await finishLogin(initClaim ? await handleAutoclaim(cwd, initClaim) : undefined, showNextSteps);
     return existingSession;
   }
 
   // A person is asked before any claim. `-y` asked to skip confirmations, so
   // it signs in again and then claims, as before.
-  const initClaim = claim && isHuman() && !yes ? await peekInitClaim(cwd) : undefined;
-  if (initClaim) {
-    return loginAskingToClaim(existingSession, initClaim.appName, showNextSteps);
+  if (initClaim && isHuman() && !yes) {
+    return loginAskingToClaim(existingSession, initClaim, showNextSteps);
   }
 
   if (existingSession && isHuman() && !yes) {
     const reauthenticate = await confirm({
-      message: `You're already logged in as ${existingSession.email}. Re-authenticate?`,
+      message: `You're already logged in${existingSession.email ? ` as ${existingSession.email}` : ""}. Re-authenticate?`,
       default: false,
     });
     if (!reauthenticate) {
@@ -256,7 +269,7 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo | undefine
   }
 
   const userInfo = await signInWithBrowser();
-  await finishLogin(claim ? await handleAutoclaim(cwd) : undefined, showNextSteps);
+  await finishLogin(initClaim ? await handleAutoclaim(cwd, initClaim) : undefined, showNextSteps);
   return userInfo;
 }
 
@@ -274,14 +287,19 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo | undefine
  *
  * A No after a sign-in keeps that sign-in: login succeeds, and the app stays
  * unclaimed with its token on disk.
+ *
+ * Known limitation: the question names the account the stored session belongs
+ * to when it's asked. Signing in as someone else in another terminal before
+ * answering changes the credential the claim then uses.
  */
 async function loginAskingToClaim(
   existingSession: UserInfo | null,
-  appName: string,
+  initClaim: InitClaim,
   showNextSteps: boolean,
 ): Promise<UserInfo | undefined> {
   const cwd = process.cwd();
-  const current = claimDestination(existingSession?.email);
+  const { appName } = initClaim;
+  const current = claimDestination(existingSession);
   if (current) {
     const keyDecides = current.kind === "api_key";
     const yes = await confirmClaim({
@@ -291,27 +309,27 @@ async function loginAskingToClaim(
     });
     if (yes) {
       setTelemetryStage("done");
-      if (existingSession) log.success(`Logged in as ${existingSession.email}`);
+      if (existingSession) log.success(loggedInLine(existingSession));
       else log.info("Claiming with `CLERK_PLATFORM_API_KEY`; no browser sign-in needed.");
-      await finishLogin(await handleAutoclaim(cwd), showNextSteps);
+      await finishLogin(await handleAutoclaim(cwd, initClaim), showNextSteps);
       return existingSession ?? undefined;
     }
     if (keyDecides && existingSession) {
-      reportClaimSkipped(appName, existingSession.email);
+      reportClaimSkipped(appName, existingSession);
       await outro();
       throwUserAbort();
     }
   }
 
   const userInfo = await signInWithBrowser();
-  const next = claimDestination(userInfo.email);
+  const next = claimDestination(userInfo);
   // With the API key set, the person already declined its workspace above;
   // the sign-in didn't change where a claim would go.
   if (next?.kind === "account" && (await confirmClaim({ appName, destination: next }))) {
-    await finishLogin(await handleAutoclaim(cwd), showNextSteps);
+    await finishLogin(await handleAutoclaim(cwd, initClaim), showNextSteps);
     return userInfo;
   }
-  reportClaimSkipped(appName, userInfo.email);
+  reportClaimSkipped(appName, userInfo);
   await outro(showNextSteps ? NEXT_STEPS.LOGIN_CLAIM_SKIPPED(appName) : "Done");
   return userInfo;
 }
@@ -321,16 +339,22 @@ async function loginAskingToClaim(
  * wasn't claimed. With the API key set, it also says how to claim into the
  * signed-in account instead.
  */
-function reportClaimSkipped(appName: string, email: string): void {
+function reportClaimSkipped(appName: string, account: UserInfo): void {
   log.warn(
     `Skipped the claim, so \`${appName}\` is still unclaimed. Its claim token stays in this folder.`,
   );
   if (process.env.CLERK_PLATFORM_API_KEY) {
+    const own = describeClaimDestination({ kind: "account", email: account.email || undefined });
     log.info(
       "Claims go to the workspace your `CLERK_PLATFORM_API_KEY` belongs to while it's set. " +
-        `Unset it to claim \`${appName}\` into ${email}'s account instead.`,
+        `Unset it to claim \`${appName}\` into ${own} instead.`,
     );
   }
+}
+
+/** Nothing checks that Clerk's account-info reply includes an email. */
+function loggedInLine(account: UserInfo): string {
+  return account.email ? `Logged in as ${account.email}` : "Logged in";
 }
 
 /** The browser sign-in; replaces and revokes any stored session. */
@@ -362,7 +386,7 @@ async function signInWithBrowser(): Promise<UserInfo> {
 
   bar();
   setTelemetryStage("done");
-  log.success(`Logged in as ${userInfo.email}`);
+  log.success(loggedInLine(userInfo));
   return userInfo;
 }
 
@@ -394,8 +418,8 @@ function claimWarning(result: AutoclaimResult): string | undefined {
   return CLAIM_WARNINGS[result.status];
 }
 
-async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
-  const result = await attemptAutoclaim(cwd);
+async function handleAutoclaim(cwd: string, initClaim: InitClaim): Promise<AutoclaimResult> {
+  const result = await attemptAutoclaim(cwd, initClaim);
 
   if (result.status === "claimed") reportClaimed(result);
 

@@ -22,12 +22,14 @@ const mockFetchUserInfo = mock();
 const mockStartAuthServer = mock();
 const mockIsHuman = mock();
 const mockConfirm = mock();
-const mockAttemptAutoclaim = mock(async (_cwd: string): Promise<AutoclaimResult> => ({
-  status: "not_keyless",
-}));
-const mockPeekInitClaim = mock(
-  async (_cwd: string): Promise<{ appName: string } | undefined> => undefined,
+/** The folder's init token as login reads it once, at the start. */
+type InitClaim = { appName: string; claimToken: string };
+const INIT_CLAIM: InitClaim = { appName: "my-app", claimToken: "claim_token_asked_about" };
+
+const mockAttemptAutoclaim = mock(
+  async (_cwd: string, _init?: InitClaim): Promise<AutoclaimResult> => ({ status: "not_found" }),
 );
+const mockReadInitClaim = mock(async (_cwd: string): Promise<InitClaim | undefined> => undefined);
 
 mock.module("../../lib/credential-store.ts", () => ({
   ...credentialStoreStubs,
@@ -105,8 +107,8 @@ mock.module("../../lib/first-application.ts", () => ({
 }));
 
 mock.module("../../lib/autoclaim.ts", () => ({
-  attemptAutoclaim: (cwd: string) => mockAttemptAutoclaim(cwd),
-  peekInitClaim: (cwd: string) => mockPeekInitClaim(cwd),
+  attemptAutoclaim: (cwd: string, init?: InitClaim) => mockAttemptAutoclaim(cwd, init),
+  readInitClaim: (cwd: string) => mockReadInitClaim(cwd),
 }));
 
 const { login } = await import("./login.ts");
@@ -129,7 +131,7 @@ afterEach(() => {
     mockIsHuman,
     mockConfirm,
     mockAttemptAutoclaim,
-    mockPeekInitClaim,
+    mockReadInitClaim,
   ]) {
     m.mockReset();
   }
@@ -176,7 +178,7 @@ describe("a person is asked before the app `clerk init` created is claimed", () 
 
   beforeEach(() => {
     delete process.env.CLERK_PLATFORM_API_KEY;
-    mockPeekInitClaim.mockResolvedValue({ appName: "my-app" });
+    mockReadInitClaim.mockResolvedValue(INIT_CLAIM);
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
       app: { application_id: "app_init", name: "my-app", instances: [] },
@@ -408,6 +410,97 @@ describe("a person is asked before the app `clerk init` created is claimed", () 
 
       expect(mockConfirm).not.toHaveBeenCalled();
       expect(mockAttemptAutoclaim).not.toHaveBeenCalled();
+      // Reads nothing, so a malformed token file isn't warned about or deleted.
+      expect(mockReadInitClaim).not.toHaveBeenCalled();
     },
   );
+
+  // The token is read once, at the start, and the claim redeems exactly that
+  // one: a token that replaces it while the question is open, or appears during
+  // the browser sign-in, waits for the next run.
+  test.each([
+    { who: "a person who answers Yes", human: true },
+    { who: "an agent", human: false },
+  ])("$who: the claim redeems the token read at the start", async ({ human }) => {
+    mockIsHuman.mockReturnValue(human);
+    storedSession();
+    if (human) answer(true);
+
+    await runLogin();
+
+    expect(mockReadInitClaim).toHaveBeenCalledTimes(1);
+    expect(mockAttemptAutoclaim).toHaveBeenCalledWith(expect.any(String), INIT_CLAIM);
+  });
+
+  /** A stored session that can no longer be refreshed, which login treats as signed out. */
+  function expiredSession() {
+    mockGetAuth.mockResolvedValue({ userId: EXISTING_USER.userId });
+    mockGetValidToken.mockRejectedValue(new Error("Your session has expired."));
+    mockOAuthSuccess({ user: NEW_USER });
+  }
+
+  test("expired session, no API key: asks after the browser sign-in, naming the account just signed into", async () => {
+    mockIsHuman.mockReturnValue(true);
+    expiredSession();
+    const browserStartedWhenAsked = answer(true);
+
+    const result = await runLogin();
+
+    expect(browserStartedWhenAsked).toEqual([true]);
+    expect(questions()).toEqual([{ message: askAccount("new@example.com"), default: true }]);
+    expect(mockAttemptAutoclaim).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(NEW_USER);
+  });
+
+  test("expired session and API key: asks before any browser step, and Yes claims with no sign-in", async () => {
+    process.env.CLERK_PLATFORM_API_KEY = API_KEY;
+    mockIsHuman.mockReturnValue(true);
+    expiredSession();
+    answer(true);
+
+    const result = await runLogin();
+
+    expect(questions()).toEqual([{ message: ASK_API_KEY, default: true }]);
+    expect(mockStartAuthServer).not.toHaveBeenCalled();
+    expect(mockAttemptAutoclaim).toHaveBeenCalledTimes(1);
+    expect(result).toBeUndefined();
+  });
+
+  // Nothing checks that Clerk's account-info reply has an email. Whether to ask
+  // depends on whether a session exists; the email only shapes the wording.
+  const NO_EMAIL_USER = { userId: "user_no_email" } as unknown as typeof EXISTING_USER;
+  const ASK_SIGNED_IN_ACCOUNT =
+    "Claim `my-app` (the app `clerk init` created in this folder) into the account you're signed in to?";
+
+  test("a stored session with no email is still asked about first, naming the signed-in account", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: NO_EMAIL_USER.userId });
+    mockFetchUserInfo.mockResolvedValueOnce(NO_EMAIL_USER);
+    mockOAuthSuccess({ user: NEW_USER });
+    answer(true);
+
+    await runLogin();
+
+    expect(questions()).toEqual([
+      { message: ASK_SIGNED_IN_ACCOUNT + OFFER_SOMEONE_ELSE, default: true },
+    ]);
+    expect(mockStartAuthServer).not.toHaveBeenCalled();
+    expect(mockAttemptAutoclaim).toHaveBeenCalledTimes(1);
+    expect(captured.err).not.toContain("undefined");
+  });
+
+  test("a sign-in with no email asks about the signed-in account and never prints undefined", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess({ user: NO_EMAIL_USER });
+    answer(false);
+
+    await runLogin();
+
+    expect(questions()).toEqual([{ message: ASK_SIGNED_IN_ACCOUNT, default: true }]);
+    expect(mockAttemptAutoclaim).not.toHaveBeenCalled();
+    expect(captured.err).toContain(STILL_UNCLAIMED);
+    expect(captured.err).not.toContain("undefined");
+  });
 });

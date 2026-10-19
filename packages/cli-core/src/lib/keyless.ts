@@ -154,7 +154,17 @@ export async function peekKeylessBreadcrumb(cwd: string): Promise<KeylessBreadcr
   }
 }
 
-export async function clearKeylessBreadcrumb(cwd: string): Promise<void> {
+/**
+ * Deletes the init token file. With `onlyToken`, only while the file still
+ * holds that token: a replacement written since it was read is another app's,
+ * which the next login asks about. Reading and deleting aren't one step, so a
+ * replacement written in that same instant can still be lost.
+ */
+export async function clearKeylessBreadcrumb(cwd: string, onlyToken?: string): Promise<void> {
+  if (onlyToken !== undefined && (await peekKeylessBreadcrumb(cwd))?.claimToken !== onlyToken) {
+    log.debug("Kept accountless breadcrumb: it no longer holds the claimed token");
+    return;
+  }
   try {
     await unlink(breadcrumbPath(cwd));
     log.debug("Cleared accountless breadcrumb");

@@ -11,7 +11,7 @@ import * as keylessMod from "./keyless.ts";
 import { setLogLevel } from "./log.ts";
 import * as pullMod from "../commands/env/pull.ts";
 import type { Profile } from "./config.ts";
-import { attemptAutoclaim } from "./autoclaim.ts";
+import { attemptAutoclaim, readInitClaim } from "./autoclaim.ts";
 
 const MOCK_APP = {
   application_id: "app_claimed",
@@ -81,14 +81,24 @@ describe("attemptAutoclaim", () => {
     readBreadcrumbSpy.mockResolvedValue({ claimToken: token, createdAt: new Date().toISOString() });
   }
 
-  function run() {
-    return attemptAutoclaim(tempDir);
+  /** Reads the token the way login does, once, then claims exactly that token. */
+  async function run() {
+    const init = await readInitClaim(tempDir);
+    if (!init) throw new Error("no init token: call withBreadcrumb() first");
+    return attemptAutoclaim(tempDir, init);
   }
 
-  test("returns not_keyless when no breadcrumb exists", async () => {
-    const result = await run();
-    expect(result.status).toBe("not_keyless");
-    expect(linkAppSpy).not.toHaveBeenCalled();
+  test("finds nothing to claim when no breadcrumb exists", async () => {
+    expect(await readInitClaim(tempDir)).toBeUndefined();
+  });
+
+  test("reads the token and the name the claim will give the app", async () => {
+    withBreadcrumb("my_claim_token");
+
+    expect(await readInitClaim(tempDir)).toEqual({
+      appName: basename(tempDir),
+      claimToken: "my_claim_token",
+    });
   });
 
   test("claims, calls linkApp, and pulls env on success", async () => {
@@ -127,7 +137,8 @@ describe("attemptAutoclaim", () => {
 
     await run();
 
-    expect(clearBreadcrumbSpy).toHaveBeenCalledWith(tempDir);
+    // Only while the file still holds the claimed token.
+    expect(clearBreadcrumbSpy).toHaveBeenCalledWith(tempDir, "valid_token");
   });
 
   test("returns not_found and clears breadcrumb on 404", async () => {
@@ -294,7 +305,7 @@ describe("attemptAutoclaim", () => {
       expect(linkAppSpy).not.toHaveBeenCalled();
       expect(pullSpy).not.toHaveBeenCalled();
       // The token is spent whether or not the folder was set up.
-      expect(clearBreadcrumbSpy).toHaveBeenCalledWith(tempDir);
+      expect(clearBreadcrumbSpy).toHaveBeenCalledWith(tempDir, "valid_token");
     }
 
     test("is linked and its keys pulled when both its keys are the claimed app's", async () => {
