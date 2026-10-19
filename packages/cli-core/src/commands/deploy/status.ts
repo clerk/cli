@@ -762,7 +762,8 @@ export function agentNextAction(step: DeployNextStep): string {
         "Interrupted before the deploy status could be read, so nothing is known about this " +
         "deploy. Run `clerk deploy status` again to check it."
       );
-    case "complete":
+    case "complete": {
+      const pull = `clerk env pull --instance ${step.productionInstanceId ?? "prod"} --print`;
       // Complete on Clerk's side only. The app keeps running on development
       // keys until the production keys reach the host, and the report can't
       // tell whether that already happened — hence "if you haven't already".
@@ -771,18 +772,23 @@ export function agentNextAction(step: DeployNextStep): string {
       // "visit the domains page" clause every pending state carries.
       // `--print` rather than a bare `env pull`: that one writes the
       // production keys into the local env file, over the development ones.
-      // The id rather than `prod` for the same reason as `oauth.setup`.
+      // The id rather than `prod` for the same reason as `oauth.setup`. A
+      // pipe the agent never reads: `--print` output holds the secret key,
+      // and an agent that reads it puts it in its own transcript.
       return (
         `Clerk's production setup for https://${step.domain} is verified. If you haven't already: ` +
-        `run \`clerk env pull --instance ${step.productionInstanceId ?? "prod"} --print\` and set each line as a production ` +
-        `environment variable on your host (pipe it to the host's CLI rather than into a local env file), ` +
-        `alongside the other Clerk variables from your env file, redeploy, then sign up at ` +
-        `https://${step.domain} to confirm.` +
+        `put the production keys on the host without reading them, by piping them to the host's CLI. ` +
+        `For Vercel: \`${pull} | while IFS='=' read -r key value; do ` +
+        `printf '%s' "$value" | vercel env add "$key" production; done\`. ` +
+        `For a host without a CLI, ask the user to run \`${pull}\` and add each line as a production ` +
+        `environment variable. Set them alongside the other Clerk variables from your env file, ` +
+        `redeploy, then sign up at https://${step.domain} to confirm.` +
         unsupported(step.oauthUnsupported) +
         (step.instanceUrl
           ? ` Manage users, settings, and billing for this instance: ${step.instanceUrl}`
           : "")
       );
+    }
     case "oauth_pending":
       if (step.nativeAppleReadinessIssue) {
         const hostedPending = step.oauthPending.filter((provider) => provider !== "apple");

@@ -1021,6 +1021,29 @@ describe("buildDeployStatusReport", () => {
     expect(report.nextAction).not.toContain("No action needed");
   });
 
+  test("complete next action moves the keys to the host without the agent reading them", () => {
+    // The secret key ends up in the agent's transcript if it reads `--print`
+    // output, so the sentence hands it a pipe that never shows the values.
+    const allDone = {
+      ...activeSnapshot,
+      completedOAuthProviders: ["google", "github"],
+    } satisfies LiveDeploySnapshot;
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: allDone },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.nextAction).toContain("put the production keys on the host without reading them");
+    expect(report.nextAction).toContain(
+      "`clerk env pull --instance ins_prod --print | while IFS='=' read -r key value; do " +
+        `printf '%s' "$value" | vercel env add "$key" production; done\``,
+    );
+    // A host without a CLI needs a person to paste the values, not the agent.
+    expect(report.nextAction).toContain(
+      "For a host without a CLI, ask the user to run `clerk env pull --instance ins_prod --print`",
+    );
+  });
+
   test("pending DNS records tell the agent to add them, not to keep polling", () => {
     const report = buildDeployStatusReport(
       { kind: "active", snapshot: activeSnapshot },
