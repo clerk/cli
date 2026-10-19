@@ -27,7 +27,7 @@ clerk deploy status --mode agent --wait # Agent verification with retrying wait
 | `--domain <domain>` | Production domain. Skips the domain prompt; in agent mode it is what allows creating the production instance.                   |
 | `--yes`             | Skips the wizard's "Proceed?" and "Create production instance?" confirmations, and nothing after them. No effect in agent mode. |
 
-`--domain` is validated like the prompt (a domain you own, no scheme, no provider domains) and only applies when the instance is created. If the application already has a production instance on another domain, the command fails with `production_instance_exists` instead of reporting on a domain that was not asked for. Both flags are refused on `clerk deploy status`.
+`--domain` is validated like the prompt (a domain you own, no scheme, no provider domains) and only applies when the instance is created. If the application already has a production instance on another domain, the command fails with `production_instance_exists` instead of reporting on a domain that was not asked for. While Clerk has not yet returned the existing instance's domain (`domain_provisioning`), there is nothing to compare `--domain` against, so a run that did not create the instance fails the same way, even when the domain is the one it was created with; `clerk deploy status` shows the domain once Clerk returns it. Both flags are refused on `clerk deploy status`.
 
 ## Global Options
 

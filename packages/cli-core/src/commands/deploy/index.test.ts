@@ -602,6 +602,79 @@ describe("deploy", () => {
       expect(mockCreateProductionInstance).not.toHaveBeenCalled();
     });
 
+    // While Clerk lists no production domain there is nothing to compare
+    // --domain against. Only a run that created the instance knows it is on
+    // the requested domain.
+    const unappliedDomainMessage = (domain: string): string =>
+      "This application already has a production instance, but Clerk hasn't returned its domain yet, " +
+      `so --domain ${domain} could not be checked and was not applied.`;
+
+    // The same domain fails too: it can't be told apart from another one.
+    test.each(["other.com", "example.com"])(
+      "--domain %s fails on a found instance whose domain is still provisioning",
+      async (domain) => {
+        mockIsAgent.mockReturnValue(true);
+        await linkedProject();
+        mockLiveProduction({ domain: "example.com" });
+        mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+
+        const error = await runDeploy({ domain }).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(CliError);
+        expect((error as CliError).code).toBe(ERROR_CODE.PRODUCTION_INSTANCE_EXISTS);
+        expect((error as CliError).message).toContain(unappliedDomainMessage(domain));
+        expect((error as CliError).message).toContain("clerk deploy status");
+        expect(captured.out).toBe("");
+        expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      },
+    );
+
+    test("--domain fails when a lost create race leaves a provisioning instance", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockCreateProductionInstance.mockImplementation(() => {
+        mockLiveProduction({ domain: "example.com" });
+        mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+        return Promise.reject(
+          new PlapiError(
+            409,
+            JSON.stringify({ errors: [{ code: "production_instance_exists" }] }),
+            "https://x",
+          ),
+        );
+      });
+
+      const error = await runDeploy({ domain: "other.com" }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.PRODUCTION_INSTANCE_EXISTS);
+      expect((error as CliError).message).toContain(unappliedDomainMessage("other.com"));
+      expect(captured.out).toBe("");
+    });
+
+    test("--domain reports provisioning when this run created the instance", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockCreateProductionInstance.mockImplementation(() => {
+        mockLiveProduction({ domain: "example.com" });
+        mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+        return Promise.resolve({
+          object: "instance",
+          id: "ins_prod_mock",
+          environment_type: "production" as const,
+          active_domain: null,
+          publishable_key: "pk_live_test",
+          created_at: 1770000000000,
+          updated_at: 1770000000000,
+        });
+      });
+
+      await runDeploy({ domain: "other.com" });
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.state).toBe("domain_provisioning");
+      expect(payload.productionInstanceId).toBe("ins_prod_mock");
+    });
+
     test("--domain resumes when the create loses a race to another one", async () => {
       mockIsAgent.mockReturnValue(true);
       await linkedProject();

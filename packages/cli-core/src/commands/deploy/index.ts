@@ -187,6 +187,7 @@ async function runAgentDeploy(domain: string | undefined): Promise<void> {
   }
   recordDeployObservation(state);
   if (state.kind === "active") assertRequestedDomain(domain, state.snapshot.domain);
+  else if (!created) throw uncheckedDomainError(domain);
   log.data(JSON.stringify(buildDeployStatusReport(state, null), null, 2));
 }
 
@@ -243,6 +244,21 @@ function assertRequestedDomain(requested: string, existing: string): void {
   throw new CliError(
     `This application already has a production instance on ${existing}, so --domain ${requested} was not applied. ` +
       `Run \`clerk deploy\` without --domain to continue with ${existing}, or change the domain in the Clerk Dashboard.`,
+    { code: ERROR_CODE.PRODUCTION_INSTANCE_EXISTS },
+  );
+}
+
+/**
+ * While Clerk lists no production domain, {@link assertRequestedDomain} has
+ * nothing to compare against. A run that created the instance knows it is on
+ * the requested domain; any other run can't tell, and once Clerk returns the
+ * domain the report would send the caller to add records for it.
+ */
+function uncheckedDomainError(requested: string): CliError {
+  return new CliError(
+    `This application already has a production instance, but Clerk hasn't returned its domain yet, ` +
+      `so --domain ${requested} could not be checked and was not applied. ` +
+      "Run `clerk deploy status` to see its domain once Clerk returns it.",
     { code: ERROR_CODE.PRODUCTION_INSTANCE_EXISTS },
   );
 }
