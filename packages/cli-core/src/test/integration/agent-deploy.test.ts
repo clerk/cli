@@ -276,7 +276,9 @@ describe("creating or resuming production", () => {
 describe("while the production domain is still provisioning", () => {
   const unchecked =
     "This application already has a production instance, but Clerk hasn't returned its domain yet, " +
-    "so --domain other.com could not be checked and was not applied.";
+    "so --domain other.com could not be checked against it. " +
+    "This run did not change the instance's domain. Nothing was changed in Clerk. " +
+    "Run `clerk deploy status` to see its domain once Clerk returns it.";
 
   test("refuses --domain on an instance this run found", async () => {
     await linkDevelopmentOnly();
@@ -285,8 +287,8 @@ describe("while the production domain is still provisioning", () => {
     const result = await deploy("--domain", "other.com");
 
     expect(result.exitCode).toBe(1);
-    expect(agentError(result).code).toBe("production_instance_exists");
-    expect(agentError(result).message).toContain(unchecked);
+    expect(agentError(result).code).toBe("deploy_domain_unchecked");
+    expect(agentError(result).message).toBe(unchecked);
     expect(result.stdout).toBe("");
     expect(createRequests()).toEqual([]);
   });
@@ -303,8 +305,8 @@ describe("while the production domain is still provisioning", () => {
     const result = await deploy("--domain", "other.com");
 
     expect(result.exitCode).toBe(1);
-    expect(agentError(result).code).toBe("production_instance_exists");
-    expect(agentError(result).message).toContain(unchecked);
+    expect(agentError(result).code).toBe("deploy_domain_unchecked");
+    expect(agentError(result).message).toBe(unchecked);
   });
 
   test("reports provisioning when this run created the instance", async () => {

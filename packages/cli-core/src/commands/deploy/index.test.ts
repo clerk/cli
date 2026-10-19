@@ -605,9 +605,13 @@ describe("deploy", () => {
     // While Clerk lists no production domain there is nothing to compare
     // --domain against. Only a run that created the instance knows it is on
     // the requested domain.
-    const unappliedDomainMessage = (domain: string): string =>
+    // Its own code: the next step is to wait, not to ask the user about a
+    // domain that may well be the right one.
+    const uncheckedDomainMessage = (domain: string): string =>
       "This application already has a production instance, but Clerk hasn't returned its domain yet, " +
-      `so --domain ${domain} could not be checked and was not applied.`;
+      `so --domain ${domain} could not be checked against it. ` +
+      "This run did not change the instance's domain. Nothing was changed in Clerk. " +
+      "Run `clerk deploy status` to see its domain once Clerk returns it.";
 
     // The same domain fails too: it can't be told apart from another one.
     test.each(["other.com", "example.com"])(
@@ -621,9 +625,8 @@ describe("deploy", () => {
         const error = await runDeploy({ domain }).catch((e: unknown) => e);
 
         expect(error).toBeInstanceOf(CliError);
-        expect((error as CliError).code).toBe(ERROR_CODE.PRODUCTION_INSTANCE_EXISTS);
-        expect((error as CliError).message).toContain(unappliedDomainMessage(domain));
-        expect((error as CliError).message).toContain("clerk deploy status");
+        expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_UNCHECKED);
+        expect((error as CliError).message).toBe(uncheckedDomainMessage(domain));
         expect(captured.out).toBe("");
         expect(mockCreateProductionInstance).not.toHaveBeenCalled();
       },
@@ -646,8 +649,8 @@ describe("deploy", () => {
 
       const error = await runDeploy({ domain: "other.com" }).catch((e: unknown) => e);
 
-      expect((error as CliError).code).toBe(ERROR_CODE.PRODUCTION_INSTANCE_EXISTS);
-      expect((error as CliError).message).toContain(unappliedDomainMessage("other.com"));
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_UNCHECKED);
+      expect((error as CliError).message).toBe(uncheckedDomainMessage("other.com"));
       expect(captured.out).toBe("");
     });
 

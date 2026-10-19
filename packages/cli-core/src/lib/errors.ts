@@ -111,6 +111,13 @@ export const ERROR_CODE = {
   /** Production instance was created but came back without a domain. */
   DEPLOY_DOMAIN_MISSING: "deploy_domain_missing",
   /**
+   * `clerk deploy --domain` found a production instance whose domain Clerk
+   * hasn't returned yet, so the requested domain couldn't be checked against it.
+   * Unlike `production_instance_exists`, the domain may be the right one: the
+   * next step is to wait for it, not to ask the user.
+   */
+  DEPLOY_DOMAIN_UNCHECKED: "deploy_domain_unchecked",
+  /**
    * `clerk deploy` stopped with the deploy unfinished and something left for
    * the user to do: they skipped an OAuth provider. (Skipping the DNS check is
    * not a pause — the run carries on and ends as a success.) The three codes

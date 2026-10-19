@@ -256,11 +256,14 @@ function assertRequestedDomain(requested: string, existing: string): void {
  * domain the report would send the caller to add records for it.
  */
 function uncheckedDomainError(requested: string): CliError {
+  // Only called when this run created nothing; its own profile write (the
+  // instance id) is local, hence "in Clerk".
   return new CliError(
     `This application already has a production instance, but Clerk hasn't returned its domain yet, ` +
-      `so --domain ${requested} could not be checked and was not applied. ` +
+      `so --domain ${requested} could not be checked against it. ` +
+      "This run did not change the instance's domain. Nothing was changed in Clerk. " +
       "Run `clerk deploy status` to see its domain once Clerk returns it.",
-    { code: ERROR_CODE.PRODUCTION_INSTANCE_EXISTS },
+    { code: ERROR_CODE.DEPLOY_DOMAIN_UNCHECKED },
   );
 }
 
