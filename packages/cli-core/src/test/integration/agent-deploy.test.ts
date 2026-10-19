@@ -7,6 +7,9 @@
  */
 
 import { describe, test, expect } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   useIntegrationTestHarness,
   http,
@@ -18,7 +21,7 @@ import {
   type CLIResult,
 } from "./lib/harness.ts";
 
-useIntegrationTestHarness();
+const h = useIntegrationTestHarness();
 
 const APP = "/v1/platform/applications/app_1";
 const PROFILE_KEY = "github.com/test/project";
@@ -137,6 +140,16 @@ function stubPlatformApi(overrides: Partial<PlatformApi> = {}): PlatformApi {
       });
     }
     if (method === "GET" && path === `${APP}/instances/ins_prod/config`) {
+      return json(api.productionConfig);
+    }
+    // Like the Platform API: each top-level key in the body is merged in.
+    if (method === "PATCH" && path === `${APP}/instances/ins_prod/config`) {
+      const body = JSON.parse(String(init?.body)) as Record<string, Record<string, unknown>>;
+      const merged: Record<string, unknown> = { ...api.productionConfig };
+      for (const [key, value] of Object.entries(body)) {
+        merged[key] = { ...(merged[key] as Record<string, unknown> | undefined), ...value };
+      }
+      api.productionConfig = merged;
       return json(api.productionConfig);
     }
     if (method === "GET" && path === `${APP}/instances/ins_dev/config`) {
@@ -275,6 +288,99 @@ describe("creating or resuming production", () => {
     expect(result.exitCode).toBe(1);
     expect(agentError(result).code).toBe("deploy_instance_unresolved");
     expect(result.stdout).toBe("");
+  });
+});
+
+// The commands the report hands the agent, run one after another as given:
+// create, save Google with the entry's own command, verify, print the keys.
+describe("the whole handoff", () => {
+  test("goes from create to complete and prints exactly the two keys", async () => {
+    await linkDevelopmentOnly();
+    stubPlatformApi({
+      domainStatus: () =>
+        json({
+          status: "complete",
+          dns: { status: "complete", required: true },
+          ssl: { status: "complete", required: true },
+          mail: { status: "complete", required: true },
+        }),
+    });
+
+    const created = await deploy("--domain", "example.com");
+    expect(created.exitCode).toBe(0);
+    const report = JSON.parse(created.stdout);
+    expect(report.state).toBe("oauth_pending");
+    const entry = report.oauth.setup.find(
+      (candidate: { provider: string }) => candidate.provider === "google",
+    );
+
+    // What the agent and user do: the payload in a file outside the project,
+    // the placeholders replaced with the real (here fake) values.
+    const dir = await mkdtemp(join(tmpdir(), "clerk-oauth-"));
+    const file = join(dir, "google.json");
+    await Bun.write(
+      file,
+      JSON.stringify(entry.payload)
+        .replace("<client_id>", "pr536-fake.apps.googleusercontent.com")
+        .replace("<client_secret>", "pr536-fake-oauth-secret"),
+    );
+    const [binary, ...args] = (entry.command as string).split(" ");
+    expect(binary).toBe("clerk");
+    let saved: CLIResult;
+    try {
+      saved = await clerk.raw(
+        "--mode",
+        "agent",
+        ...args.map((arg) => (arg === "<file>" ? file : arg)),
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+    expect(saved.exitCode).toBe(0);
+
+    const exitCodeBefore = process.exitCode;
+    let status: CLIResult;
+    try {
+      status = await clerk.raw("--mode", "agent", "deploy", "status");
+    } finally {
+      process.exitCode = exitCodeBefore;
+    }
+    expect(JSON.parse(status.stdout).state).toBe("complete");
+
+    const pulled = await clerk.raw(
+      "--mode",
+      "agent",
+      "env",
+      "pull",
+      "--instance",
+      "ins_prod",
+      "--print",
+    );
+    expect(pulled.exitCode).toBe(0);
+    const lines = pulled.stdout.trim().split("\n");
+    expect(lines.map((line) => line.split("=")[0])).toEqual([
+      "CLERK_PUBLISHABLE_KEY",
+      "CLERK_SECRET_KEY",
+    ]);
+    expect(lines).toContain(`CLERK_SECRET_KEY=${MOCK_APP.instances[1]!.secret_key}`);
+    expect(
+      await Promise.all(
+        [".env", ".env.local", ".env.production"].map((name) =>
+          Bun.file(join(h.tempDir, name)).exists(),
+        ),
+      ),
+    ).toEqual([false, false, false]);
+    // Only `--print`'s stdout carries a key, by design.
+    const everythingElse = [
+      created.stdout,
+      created.stderr,
+      saved.stdout,
+      saved.stderr,
+      status.stdout,
+      status.stderr,
+      pulled.stderr,
+    ].join("\n");
+    expect(everythingElse).not.toMatch(/sk_(live|test)_|pr536-fake-oauth-secret/);
   });
 });
 
