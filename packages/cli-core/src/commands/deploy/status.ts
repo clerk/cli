@@ -132,7 +132,11 @@ export interface DeployStatusReport {
     configured: string[];
     pending: string[];
     unsupported: string[];
-    /** One entry per provider in `pending`. */
+    /**
+     * One entry per provider in `pending`, except Apple while
+     * `nativeAppleReadinessIssue` is set: native-only Apple needs that fix,
+     * not the web credentials an entry asks for.
+     */
     setup: OAuthSetupGuide[];
   };
   nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
@@ -601,7 +605,11 @@ function oauthSetupGuides(
   // production instance when it was created elsewhere.
   const instance = snapshot.productionInstanceId ?? "prod";
   return snapshot.oauthProviderDescriptors
-    .filter((descriptor) => pending.includes(descriptor.provider))
+    .filter(
+      (descriptor) =>
+        pending.includes(descriptor.provider) &&
+        !(descriptor.provider === "apple" && snapshot.nativeAppleReadinessIssue),
+    )
     .map((descriptor) => ({
       provider: descriptor.provider,
       label: descriptor.label,
@@ -724,6 +732,10 @@ export function agentNextAction(step: DeployNextStep): string {
     url
       ? ` Ask the user to visit the Clerk Dashboard domains page, or offer to open it: ${url}`
       : "";
+  const oauthSetupSteps =
+    "For each entry in `oauth.setup`: have the user create the provider's OAuth app with its " +
+    "`redirectUri` and `authorizedOrigins`, save its `payload` with the real values to a JSON file, " +
+    "run its `command` on that file, then delete the file.";
   const nativeApple =
     "nativeAppleReadinessIssue" in step && step.nativeAppleReadinessIssue
       ? ` ${nativeAppleGuidance(step.nativeAppleReadinessIssue)}`
@@ -774,9 +786,13 @@ export function agentNextAction(step: DeployNextStep): string {
     case "oauth_pending":
       if (step.nativeAppleReadinessIssue) {
         const hostedPending = step.oauthPending.filter((provider) => provider !== "apple");
+        // Apple has no `oauth.setup` entry here; the others still do. No
+        // wizard alternative: it asks for Apple web credentials and pauses
+        // there if the user declines.
         const hostedAction =
           hostedPending.length > 0
-            ? ` These OAuth providers are also missing production credentials: ${hostedPending.join(", ")}.`
+            ? ` These OAuth providers are also missing production credentials: ${hostedPending.join(", ")}. ` +
+              oauthSetupSteps
             : "";
         return (
           `Domain verified, but setup is incomplete.${nativeApple}` +
@@ -789,9 +805,7 @@ export function agentNextAction(step: DeployNextStep): string {
       // page.
       return (
         `Domain verified, but these OAuth providers are missing production credentials: ` +
-        `${step.oauthPending.join(", ")}. For each entry in \`oauth.setup\`: have the user create the ` +
-        `provider's OAuth app with its \`redirectUri\` and \`authorizedOrigins\`, save its \`payload\` ` +
-        `with the real values to a JSON file, run its \`command\` on that file, then delete the file. ` +
+        `${step.oauthPending.join(", ")}. ${oauthSetupSteps} ` +
         `Or the user can run \`clerk deploy\` in a terminal to enter them interactively. ` +
         `Then run \`clerk deploy status\`.` +
         unsupported(step.oauthUnsupported)

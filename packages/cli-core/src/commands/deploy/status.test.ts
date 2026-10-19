@@ -309,6 +309,81 @@ describe("resolveDeployState", () => {
       expect(mockListIOSApplications).not.toHaveBeenCalled();
     });
 
+    // `oauth.setup` asks for web credentials (Services ID, .p8 key), which
+    // native-only Apple doesn't use; an entry there would bury the Bundle ID
+    // fix the readiness issue carries.
+    test("leaves native-only Apple out of oauth.setup", async () => {
+      mockProductionApple({ enabled: true, authenticatable: true }, nativeConnection);
+
+      const report = buildDeployStatusReport(
+        await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" }),
+        null,
+      );
+
+      expect(report.state).toBe("oauth_pending");
+      // Still pending: the readiness issue is what's missing.
+      expect(report.oauth.pending).toEqual(["apple"]);
+      expect(report.oauth.setup).toEqual([]);
+      expect(report.nativeAppleReadinessIssue?.reason).toBe("bundle-id-missing");
+      expect(report.nextAction).toContain("has no Bundle ID");
+      expect(report.nextAction).not.toContain("oauth.setup");
+    });
+
+    test("leaves native-only Apple out of oauth.setup while the domain is pending", async () => {
+      mockProductionApple({ enabled: true, authenticatable: true }, nativeConnection);
+      mockGetApplicationDomainStatus.mockResolvedValue({
+        status: "incomplete",
+        dns: { status: "not_started" },
+        ssl: { status: "not_started", required: true },
+        mail: { status: "not_started", required: true },
+      });
+
+      const report = buildDeployStatusReport(
+        await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" }),
+        null,
+      );
+
+      expect(report.state).toBe("domain_pending");
+      expect(report.oauth.setup).toEqual([]);
+      expect(report.nextAction).toContain("has no Bundle ID");
+    });
+
+    test("sends a pending Google to oauth.setup next to the native Apple guidance", async () => {
+      mockProductionApple({ enabled: true, authenticatable: true }, nativeConnection);
+      mockFetchInstanceConfig.mockImplementation((_appId: string, instanceId: string) => ({
+        connection_oauth_apple:
+          instanceId === "ins_prod" ? { enabled: true, authenticatable: true } : nativeConnection,
+        connection_oauth_google: { enabled: true },
+      }));
+      mockFetchInstanceConfigSchema.mockResolvedValue({
+        properties: {
+          connection_oauth_apple: appleOAuthSchema,
+          connection_oauth_google: {
+            type: "object",
+            properties: {
+              enabled: { type: "boolean" },
+              client_id: { type: "string" },
+              client_secret: { type: "string", "x-clerk-sensitive": true },
+            },
+          },
+        },
+      });
+
+      const report = buildDeployStatusReport(
+        await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" }),
+        null,
+      );
+
+      expect(report.state).toBe("oauth_pending");
+      expect(report.oauth.pending).toEqual(["apple", "google"]);
+      expect(report.oauth.setup.map((entry) => entry.provider)).toEqual(["google"]);
+      expect(report.nextAction).toContain("has no Bundle ID");
+      expect(report.nextAction).toContain("also missing production credentials: google");
+      expect(report.nextAction).toContain("For each entry in `oauth.setup`");
+      // The wizard would ask for Apple web credentials first.
+      expect(report.nextAction).not.toContain("in a terminal to enter them interactively");
+    });
+
     test("reports unverifiable rather than missing when native reads fail", async () => {
       mockProductionApple(nativeConnection);
       mockListIOSApplications.mockRejectedValue(new Error("native endpoint unavailable"));
