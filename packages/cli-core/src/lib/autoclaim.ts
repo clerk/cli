@@ -1,4 +1,4 @@
-import { readKeylessBreadcrumb, clearKeylessBreadcrumb } from "./keyless.ts";
+import { clearKeylessBreadcrumb, peekKeylessBreadcrumb, readKeylessBreadcrumb } from "./keyless.ts";
 import {
   claimApplication,
   fetchApplication,
@@ -94,6 +94,19 @@ const TERMINAL_BY_STATUS: Record<number, Terminal["status"]> = {
   404: "not_found",
   403: "no_organization",
 };
+
+/** The app a claim in this folder would move, named the way the claim will name it. */
+export type InitClaim = { appName: string };
+
+/**
+ * What a claim here would claim, for a question asked before claiming;
+ * undefined without an init token. Reads only: a malformed token file is left
+ * for `attemptAutoclaim` to clear, so asking changes nothing on disk.
+ */
+export async function peekInitClaim(cwd: string): Promise<InitClaim | undefined> {
+  if (!(await peekKeylessBreadcrumb(cwd))) return undefined;
+  return { appName: await deriveProjectName(cwd) };
+}
 
 /** Orchestrates post-login claim of a keyless app. Never throws. */
 export async function attemptAutoclaim(cwd: string): Promise<AutoclaimResult> {

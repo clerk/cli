@@ -54,6 +54,11 @@ export const NEXT_STEPS = {
     "Select a different workspace in the Clerk Dashboard",
     "Run `clerk auth login` again to proceed",
   ],
+  // A person declined the claim. Rerunning `clerk auth login` asks again in
+  // every folder; plain `clerk link` doesn't claim in a folder already linked.
+  LOGIN_CLAIM_SKIPPED: (appName: string) => [
+    `Run \`clerk auth login\` again to claim \`${appName}\``,
+  ],
   ENABLE_ORGS: [
     "Run `clerk config schema --keys organization_settings` to see all available settings",
     "Run `clerk config pull --keys organization_settings` to see current values",

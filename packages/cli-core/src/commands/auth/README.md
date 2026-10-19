@@ -10,7 +10,7 @@ Authenticates the user via an OAuth 2.0 PKCE flow. After a successful login (or 
 
 Before signing in, the command prints a banner: the Clerk logo beside a link to the Clerk docs and the CLI version, plus the active environment (e.g. `staging`) when it isn't production. It's drawn by `lib/banner.ts`, and only from this command's action, so `init`, `link`, and `doctor`, which call `login()` mid-flow, don't print it. The banner is skipped in agent mode, when stderr isn't a terminal, in CI, and when `CLERK_NO_BANNER` is set. `NO_COLOR` prints it without color.
 
-1. Checks for an existing valid token — if found, prompts to re-authenticate (in agent mode, skips and runs autoclaim immediately)
+1. Checks for an existing valid token — if found, prompts to re-authenticate (in agent mode, skips and runs autoclaim immediately). When the folder has an init token, a person gets the claim question below instead
 2. Generates PKCE parameters (code verifier, challenge, state)
 3. Starts a local HTTP callback server on `127.0.0.1`
 4. Prints the Clerk OAuth authorization URL and opens the browser to it. The URL is always printed as a manual fallback for environments where browser launch is unreliable (WSL2, SSH, headless shells). In WSL, the Windows host browser is reached via `wslview` or, when that is not installed, the always-present `powershell.exe` interop binary (`Start-Process`).
@@ -18,7 +18,20 @@ Before signing in, the command prints a banner: the Clerk logo beside a link to 
 6. Exchanges the code for an access token
 7. Stores the token and user info in local config
 8. If this was a re-authentication over an existing session, revokes the previous grant. The outgoing session is read once the authorization code arrives and just before the token exchange replaces it, and revoked only after the replacement is stored — so an abandoned browser flow leaves the original session intact, and a concurrent refresh has the smallest possible window to rotate the token out from under the revocation. A failure here warns rather than failing the login
-9. **Autoclaim**: if `.clerk/keyless.json` exists in the current directory, claims the temporary application. It then links it to the project and pulls environment variables only when the folder's keys belong to that application, or the folder has no Clerk keys (see below)
+9. **Autoclaim**: if `.clerk/keyless.json` exists in the current directory, claims the temporary application, after a person answers Yes to the claim question. It then links it to the project and pulls environment variables only when the folder's keys belong to that application, or the folder has no Clerk keys (see below)
+
+#### A person is asked before the claim
+
+A person is asked one question before any claim, naming where the claim will put the app (default Yes), e.g. "Claim `my-app` (the app `clerk init` created in this folder) into jane@example.com's account?". The name is the one the claim gives the app: the `package.json` name, else the folder's. `CLERK_PLATFORM_API_KEY`, when set, authenticates every Platform API call including the claim, so the question then names "the workspace your `CLERK_PLATFORM_API_KEY` belongs to", and never offers to sign in as someone else, since that wouldn't change the destination.
+
+| Credentials         | When it asks                   | Yes                                                 | No                                                                                                            |
+| ------------------- | ------------------------------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Stored session only | In place of "Re-authenticate?" | Claims with the current session; no browser sign-in | Signs in again in the browser (perhaps as someone else), then asks again about the account just signed into   |
+| Session and API key | In place of "Re-authenticate?" | Claims with the key; no browser sign-in             | Ends as a user abort (exit 0), with nothing claimed, and says how to claim into the signed-in account instead |
+| API key only        | Before any browser step        | Claims with the key; no browser sign-in             | Signs in in the browser without claiming, and says the key decides where claims go                            |
+| Signed out          | After the browser sign-in      | Claims                                              | The sign-in stands                                                                                            |
+
+A No after a sign-in has happened keeps that sign-in, so the login exits 0. The output says the app is still unclaimed and its claim token stays in the folder; the next step is to run `clerk auth login` again, which asks again. A folder without an init token gets "Re-authenticate?" as before. `-y` signs in again and then claims, without asking. Agents can't answer a question, so they claim without one. Commands that sign in on their way to linking can pass `claim: false` to `login()`, which skips both the question and the claim and leaves the token on disk.
 
 #### Accountless autoclaim breadcrumb lifecycle
 

@@ -16,7 +16,10 @@ export function registerAuth(program: Program): void {
     .command("login")
     .aliases(["signup", "signin", "sign-in"])
     .description("Log in to your Clerk account")
-    .option("-y, --yes", "Proceed with OAuth without prompting when already logged in")
+    .option(
+      "-y, --yes",
+      "Skip confirmations: sign in again when already logged in, and claim the app `clerk init` created here without asking",
+    )
     .setExamples([
       { command: "clerk auth login", description: "Log in via browser (OAuth)" },
       {
@@ -39,7 +42,10 @@ export function registerAuth(program: Program): void {
   program
     .command("login", { hidden: true })
     .description("Log in to your Clerk account")
-    .option("-y, --yes", "Proceed with OAuth without prompting when already logged in")
+    .option(
+      "-y, --yes",
+      "Skip confirmations: sign in again when already logged in, and claim the app `clerk init` created here without asking",
+    )
     .action(async (opts) => {
       printBanner();
       await login(opts);

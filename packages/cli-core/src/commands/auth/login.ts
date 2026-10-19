@@ -23,9 +23,11 @@ import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import {
   attemptAutoclaim,
+  peekInitClaim,
   type AutoclaimResult,
   type FolderUnchanged,
 } from "../../lib/autoclaim.ts";
+import { claimDestination, confirmClaim } from "../../lib/claim-prompt.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { cyan, dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
@@ -35,6 +37,13 @@ import { ensureFirstApplication } from "../../lib/first-application.ts";
 interface LoginOptions {
   showNextSteps?: boolean;
   yes?: boolean;
+  /**
+   * False skips the claim of this folder's init token, and the question
+   * before it, leaving the token on disk. For commands that sign in on their
+   * way to `link()`, so that one claim policy applies there. A direct
+   * `clerk auth login` never sets it.
+   */
+  claim?: boolean;
 }
 
 async function getExistingSession(): Promise<UserInfo | null> {
@@ -195,7 +204,12 @@ async function performOAuthFlow(): Promise<OAuthFlowResult> {
   return { userInfo, previousSession };
 }
 
-export async function login(options: LoginOptions = {}): Promise<UserInfo> {
+/**
+ * Signs in, then claims the app `clerk init` created here, if any. Resolves to
+ * the account the stored session belongs to afterwards, or undefined when a
+ * person claimed with `CLERK_PLATFORM_API_KEY` and no sign-in ran.
+ */
+export async function login(options: LoginOptions = {}): Promise<UserInfo | undefined> {
   // `init` and `link` call this mid-flow and share the one process-global
   // telemetry stage. Login's own markers are worth having while it runs, but
   // on a clean return the caller's stage comes back so the rest of *their*
@@ -207,8 +221,9 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
   return userInfo;
 }
 
-async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
-  const { showNextSteps = true, yes } = options;
+async function runLogin(options: LoginOptions = {}): Promise<UserInfo | undefined> {
+  const { showNextSteps = true, yes, claim = true } = options;
+  const cwd = process.cwd();
   intro("Signing in");
   setTelemetryStage("session_check");
   const existingSession = await withSpinner("Checking session...", async () =>
@@ -218,13 +233,15 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   if (existingSession && !isHuman()) {
     setTelemetryStage("done");
     log.success(`Logged in as ${existingSession.email}`);
-    const claimResult = await handleAutoclaim(process.cwd());
-    if (showNextSteps) {
-      await outro(await loginNextSteps(claimResult));
-    } else {
-      await outro("Done");
-    }
+    await finishLogin(claim ? await handleAutoclaim(cwd) : undefined, showNextSteps);
     return existingSession;
+  }
+
+  // A person is asked before any claim. `-y` asked to skip confirmations, so
+  // it signs in again and then claims, as before.
+  const initClaim = claim && isHuman() && !yes ? await peekInitClaim(cwd) : undefined;
+  if (initClaim) {
+    return loginAskingToClaim(existingSession, initClaim.appName, showNextSteps);
   }
 
   if (existingSession && isHuman() && !yes) {
@@ -238,6 +255,86 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
     }
   }
 
+  const userInfo = await signInWithBrowser();
+  await finishLogin(claim ? await handleAutoclaim(cwd) : undefined, showNextSteps);
+  return userInfo;
+}
+
+/**
+ * A person's login in a folder with an init token: the claim waits for a Yes
+ * to a question naming where the app would go.
+ *
+ * - `CLERK_PLATFORM_API_KEY`, when set, decides the destination of every
+ *   claim, so signing in again can't change it. The question offers no other
+ *   sign-in; with a stored session, No ends the run as a user abort.
+ * - With only a stored session, No signs in again (perhaps as someone else),
+ *   then asks about the account just signed into.
+ * - Without a stored session, the browser sign-in comes first, unless the API
+ *   key alone can claim, which needs no sign-in.
+ *
+ * A No after a sign-in keeps that sign-in: login succeeds, and the app stays
+ * unclaimed with its token on disk.
+ */
+async function loginAskingToClaim(
+  existingSession: UserInfo | null,
+  appName: string,
+  showNextSteps: boolean,
+): Promise<UserInfo | undefined> {
+  const cwd = process.cwd();
+  const current = claimDestination(existingSession?.email);
+  if (current) {
+    const keyDecides = current.kind === "api_key";
+    const yes = await confirmClaim({
+      appName,
+      destination: current,
+      offerSignInAsSomeoneElse: !keyDecides,
+    });
+    if (yes) {
+      setTelemetryStage("done");
+      if (existingSession) log.success(`Logged in as ${existingSession.email}`);
+      else log.info("Claiming with `CLERK_PLATFORM_API_KEY`; no browser sign-in needed.");
+      await finishLogin(await handleAutoclaim(cwd), showNextSteps);
+      return existingSession ?? undefined;
+    }
+    if (keyDecides && existingSession) {
+      reportClaimSkipped(appName, existingSession.email);
+      await outro();
+      throwUserAbort();
+    }
+  }
+
+  const userInfo = await signInWithBrowser();
+  const next = claimDestination(userInfo.email);
+  // With the API key set, the person already declined its workspace above;
+  // the sign-in didn't change where a claim would go.
+  if (next?.kind === "account" && (await confirmClaim({ appName, destination: next }))) {
+    await finishLogin(await handleAutoclaim(cwd), showNextSteps);
+    return userInfo;
+  }
+  reportClaimSkipped(appName, userInfo.email);
+  await outro(showNextSteps ? NEXT_STEPS.LOGIN_CLAIM_SKIPPED(appName) : "Done");
+  return userInfo;
+}
+
+/**
+ * Login exits 0 after a declined claim, so this says plainly that the app
+ * wasn't claimed. With the API key set, it also says how to claim into the
+ * signed-in account instead.
+ */
+function reportClaimSkipped(appName: string, email: string): void {
+  log.warn(
+    `Skipped the claim, so \`${appName}\` is still unclaimed. Its claim token stays in this folder.`,
+  );
+  if (process.env.CLERK_PLATFORM_API_KEY) {
+    log.info(
+      "Claims go to the workspace your `CLERK_PLATFORM_API_KEY` belongs to while it's set. " +
+        `Unset it to claim \`${appName}\` into ${email}'s account instead.`,
+    );
+  }
+}
+
+/** The browser sign-in; replaces and revokes any stored session. */
+async function signInWithBrowser(): Promise<UserInfo> {
   // `previousSession` comes from the credential store, not from
   // `existingSession`: the latter is the result of a network round trip whose
   // errors are all swallowed, so a transient failure there would silently
@@ -266,16 +363,19 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   bar();
   setTelemetryStage("done");
   log.success(`Logged in as ${userInfo.email}`);
+  return userInfo;
+}
 
-  const claimResult = await handleAutoclaim(process.cwd());
-
+/** `claimResult` is undefined when the caller skipped the claim. */
+async function finishLogin(
+  claimResult: AutoclaimResult | undefined,
+  showNextSteps: boolean,
+): Promise<void> {
   if (showNextSteps) {
     await outro(await loginNextSteps(claimResult));
   } else {
     await outro("Done");
   }
-
-  return userInfo;
 }
 
 const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
@@ -394,11 +494,11 @@ function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[]> {
-  if (result.status === "claimed") return claimedNextSteps(result);
-  if (result.status === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
-  if (result.status === "managed_workspace") return NEXT_STEPS.AUTOCLAIM_SWITCH_WORKSPACE;
-  if (result.status === "not_found" || result.status === "no_organization") {
+async function loginNextSteps(result: AutoclaimResult | undefined): Promise<readonly string[]> {
+  if (result?.status === "claimed") return claimedNextSteps(result);
+  if (result?.status === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
+  if (result?.status === "managed_workspace") return NEXT_STEPS.AUTOCLAIM_SWITCH_WORKSPACE;
+  if (result?.status === "not_found" || result?.status === "no_organization") {
     return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   }
 

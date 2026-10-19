@@ -101,8 +101,15 @@ const mockAttemptAutoclaim = mock(async (_cwd: string): Promise<AutoclaimResult>
   status: "not_keyless",
 }));
 
+// No init token unless a test says so; the real reader would look in the
+// repo's own working directory.
+const mockPeekInitClaim = mock(
+  async (_cwd: string): Promise<{ appName: string } | undefined> => undefined,
+);
+
 mock.module("../../lib/autoclaim.ts", () => ({
   attemptAutoclaim: (cwd: string) => mockAttemptAutoclaim(cwd),
+  peekInitClaim: (cwd: string) => mockPeekInitClaim(cwd),
 }));
 
 const { setLogLevel } = await import("../../lib/log.ts");
@@ -144,6 +151,8 @@ describe("login", () => {
     mockEnsureFirstApplication.mockResolvedValue(undefined);
     mockAttemptAutoclaim.mockReset();
     mockAttemptAutoclaim.mockResolvedValue({ status: "not_keyless" });
+    mockPeekInitClaim.mockReset();
+    mockPeekInitClaim.mockResolvedValue(undefined);
     mockIsHuman.mockReturnValue(false);
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
     mockRevokeToken.mockResolvedValue("revoked");
