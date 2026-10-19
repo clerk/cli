@@ -92,6 +92,17 @@ export async function pull(options: EnvPullOptions): Promise<void> {
           });
         }
 
+        // --print is for handing both keys to a host. With only the publishable
+        // key, the host keeps the secret key it already has (usually
+        // development's), and the pair no longer matches.
+        if (options.print && !matched.secret_key) {
+          throw new CliError(
+            `Clerk returned no secret key for the ${ctx.instanceLabel} instance, so --print printed nothing. ` +
+              "Copy the keys from the API keys page in the Clerk Dashboard instead.",
+            { code: ERROR_CODE.NO_SECRET_KEY },
+          );
+        }
+
         const publishableKeyName = await detectPublishableKeyName(cwd);
         const secretKeyName = await detectSecretKeyName(cwd);
         // Native platforms (iOS/Android) configure Clerk with only the publishable

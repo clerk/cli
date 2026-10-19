@@ -709,6 +709,37 @@ describe("env pull", () => {
     expect(await Bun.file(join(tempDir, ".env")).exists()).toBe(false);
   });
 
+  // A host handed only the publishable key keeps whatever secret key it
+  // already has, usually development's, and the pair no longer matches.
+  test("--print fails and prints nothing when the API returns no secret key", async () => {
+    stubFetch(
+      async () =>
+        new Response(
+          JSON.stringify({
+            application_id: "app_1",
+            instances: [
+              {
+                instance_id: "ins_prod",
+                environment_type: "production",
+                publishable_key: "pk_live_abc123",
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev", production: "ins_prod" },
+    });
+
+    await expect(runEnvPull({ instance: "prod", print: true })).rejects.toMatchObject({
+      code: "no_secret_key",
+    });
+    expect(captured.out).toBe("");
+  });
+
   test("--print and --file cannot be combined", async () => {
     await setProfile(tempDir, {
       workspaceId: "org_1",
