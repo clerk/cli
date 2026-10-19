@@ -1009,14 +1009,41 @@ describe("buildDeployStatusReport", () => {
       // the command fails, so a typed-in secret can't end up committed.
       expect(report.nextAction).toContain(
         "Create a file for the entry outside the project with `mktemp` (it prints the path, and " +
-          "only your user can read the file), write the entry's `payload` into it as it is, " +
-          "placeholders included, and ask the user to replace each `<placeholder>` with the real " +
-          "value. Don't ask for the values or read the file. Then run its `command` with that path " +
-          "as `<file>`, followed by `; rm -f <path>` so the file is removed whether or not the " +
-          "command succeeds.",
+          "only your user can read the file), and write the entry's `payload` into it with a shell " +
+          "command rather than a file tool, as it is, placeholders included: " +
+          "`printf '%s' '<payload>' > <path>`. Ask the user to replace each `<placeholder>` with the " +
+          "real value; don't ask for the values or read the file. Then run " +
+          '`( rc=0; <command> || rc=$?; rm -f "<path>"; exit "$rc" )`, with the entry\'s `command` ' +
+          "as `<command>` and that path as its `<file>`: it keeps the command's exit status and " +
+          "removes the file whether or not the command succeeds.",
       );
       expect(report.nextAction).not.toContain("with the real values to a JSON file");
       expect(report.nextAction).not.toContain("in a terminal first");
+    });
+
+    // The cleanup wrapper, run in bash as the report words it: a failed save
+    // must still fail, and the secrets file must go either way.
+    test.each([
+      { command: "sh -c 'exit 7'", exitCode: 7 },
+      { command: "true", exitCode: 0 },
+    ])("the cleanup keeps exit $exitCode and removes the file", async ({ command, exitCode }) => {
+      const report = oauthPendingReport([descriptor("github", "GitHub", false)]);
+      const wrapper = /`(\( rc=0; [^`]+\))`/.exec(report.nextAction)?.[1];
+      expect(wrapper).toBeDefined();
+      const dir = await mkdtemp(join(tmpdir(), "clerk-oauth-cleanup-"));
+      const file = join(dir, "payload.json");
+      await Bun.write(file, "{}");
+      try {
+        const proc = Bun.spawn(
+          ["bash", "-c", wrapper!.replace("<command>", command).replace("<path>", file)],
+          { stdout: "pipe", stderr: "pipe" },
+        );
+
+        expect(await proc.exited).toBe(exitCode);
+        expect(await Bun.file(file).exists()).toBe(false);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
     });
 
     test("an entry holding a file's contents sends the user to the wizard first", () => {
