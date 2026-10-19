@@ -1005,10 +1005,15 @@ describe("buildDeployStatusReport", () => {
       const report = oauthPendingReport([descriptor("github", "GitHub", false)]);
 
       expect(report.state).toBe("oauth_pending");
+      // Outside the project, readable only by the user, and removed even when
+      // the command fails, so a typed-in secret can't end up committed.
       expect(report.nextAction).toContain(
-        "Write its `payload` to a temporary JSON file as it is, placeholders included, " +
-          "and ask the user to replace each `<placeholder>` with the real value. " +
-          "Don't ask for the values or read the file.",
+        "Create a file for the entry outside the project with `mktemp` (it prints the path, and " +
+          "only your user can read the file), write the entry's `payload` into it as it is, " +
+          "placeholders included, and ask the user to replace each `<placeholder>` with the real " +
+          "value. Don't ask for the values or read the file. Then run its `command` with that path " +
+          "as `<file>`, followed by `; rm -f <path>` so the file is removed whether or not the " +
+          "command succeeds.",
       );
       expect(report.nextAction).not.toContain("with the real values to a JSON file");
       expect(report.nextAction).not.toContain("in a terminal first");
@@ -1141,9 +1146,15 @@ describe("buildDeployStatusReport", () => {
     expect(report.nextAction).toContain("it stops with exit 1 if it can't read that list");
     expect(report.nextAction).not.toContain("export");
     expect(report.nextAction).toContain("redeploy only after it exits 0");
-    // A host without a CLI needs a person to paste the values, not the agent.
+    // A host without a CLI needs a person to paste the values, not the agent,
+    // and run from the agent's own session (e.g. Claude Code's `!`) the keys
+    // would land in its transcript.
     expect(report.nextAction).toContain(
-      "For a host without a CLI, ask the user to run `clerk env pull --instance ins_prod --print`",
+      "For a host without a CLI, ask the user to run `clerk env pull --instance ins_prod --print` " +
+        "in a separate terminal, not through this session (a shell escape such as Claude Code's " +
+        "`!` would put the keys in your transcript), and add each line as a production " +
+        "environment variable. On macOS, `clerk env pull --instance ins_prod --print | pbcopy` " +
+        "copies the lines to the clipboard without showing them.",
     );
   });
 

@@ -761,12 +761,17 @@ export function agentNextAction(step: DeployNextStep): string {
       ? ` Ask the user to visit the Clerk Dashboard domains page, or offer to open it: ${url}`
       : "";
   // The person types the secrets into the file: pasted into chat, they end up
-  // in the agent's transcript.
+  // in the agent's transcript. The file lives outside the project (so it
+  // can't be committed), is readable only by the user (`mktemp`), and is
+  // removed whether or not the command succeeds.
   const oauthSetupSteps =
     "For each entry in `oauth.setup`: have the user create the provider's OAuth app with its " +
-    "`redirectUri` and `authorizedOrigins`. Write its `payload` to a temporary JSON file as it is, " +
-    "placeholders included, and ask the user to replace each `<placeholder>` with the real value. " +
-    "Don't ask for the values or read the file. Then run its `command` on that file and delete the file.";
+    "`redirectUri` and `authorizedOrigins`. Create a file for the entry outside the project with " +
+    "`mktemp` (it prints the path, and only your user can read the file), write the entry's " +
+    "`payload` into it as it is, placeholders included, and ask the user to replace each " +
+    "`<placeholder>` with the real value. Don't ask for the values or read the file. Then run its " +
+    "`command` with that path as `<file>`, followed by `; rm -f <path>` so the file is removed " +
+    "whether or not the command succeeds.";
   // A private key pasted into JSON needs its newlines escaped, and a mistake
   // only shows when someone signs in. The wizard reads the file by path, and
   // skips providers already saved, so the others go first.
@@ -863,8 +868,10 @@ export function agentNextAction(step: DeployNextStep): string {
         `the production secret key in those deployments. If they agree, run the command again with its leading \`allow_shared=0\` changed to ` +
         `\`allow_shared=1\`. Otherwise it replaces the production values and exits non-zero if the pull or ` +
         `any upload fails; redeploy only after it exits 0. ` +
-        `For a host without a CLI, ask the user to run \`${pull}\` and add each line as a production ` +
-        `environment variable. Set them alongside the other Clerk variables from your env file, ` +
+        `For a host without a CLI, ask the user to run \`${pull}\` in a separate terminal, not through ` +
+        `this session (a shell escape such as Claude Code's \`!\` would put the keys in your transcript), ` +
+        `and add each line as a production environment variable. On macOS, \`${pull} | pbcopy\` copies ` +
+        `the lines to the clipboard without showing them. Set them alongside the other Clerk variables from your env file, ` +
         `redeploy, then sign up at https://${step.domain} to confirm.` +
         unsupported(step.oauthUnsupported) +
         (step.instanceUrl
