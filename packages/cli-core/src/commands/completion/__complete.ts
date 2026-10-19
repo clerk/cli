@@ -1,6 +1,6 @@
 import type { CommandUnknownOpts, Option } from "@commander-js/extra-typings";
 import { sources } from "../migrate/sources/registry.ts";
-import { CHECKS } from "../security/catalog.ts";
+import { CHECKS, findCheck } from "../security/catalog.ts";
 import { KNOWN_DASHBOARD_PATHS } from "../open/dashboard-paths.ts";
 
 const DIRECTIVE = {
@@ -62,9 +62,7 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
   ],
   "--source": SOURCE_COMPLETIONS,
   "--factors": [
-    { name: "authenticator", description: "Authenticator app (TOTP)" },
-    { name: "backup-code", description: "Backup codes" },
-    { name: "sms", description: "SMS code" },
+    ...findCheck("mfa")!.decision!.options.map((o) => ({ name: o.value, description: o.label })),
     { name: "authenticator,backup-code", description: "Authenticator app and backup codes" },
   ],
   "--for": [

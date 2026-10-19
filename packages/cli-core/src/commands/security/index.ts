@@ -6,9 +6,9 @@ import { securityFix } from "./fix.ts";
 import { securityChecks } from "./list-checks.ts";
 import { findCheck } from "./catalog.ts";
 
-const PASSWORDLESS_STRATEGIES = findCheck("passwordless-auth")!.decision!.options.map(
-  (o) => o.value,
-);
+const decisionValues = (id: string): string[] =>
+  findCheck(id)!.decision!.options.map((o) => o.value);
+const PASSWORDLESS_STRATEGIES = decisionValues("passwordless-auth");
 
 export function registerSecurity(program: Program): void {
   const security = program
@@ -54,7 +54,7 @@ export function registerSecurity(program: Program): void {
     .option("--good-to-have", "With --all, also apply the good-to-have tier")
     .option(
       "--factors <list>",
-      "Second factors for `mfa`: authenticator, backup-code, sms (comma-separated; asked interactively when omitted)",
+      `Second factors for \`mfa\`: ${decisionValues("mfa").join(", ")} (comma-separated; asked interactively when omitted)`,
       collectOptionValues,
     )
     .addOption(

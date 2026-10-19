@@ -1,7 +1,7 @@
 import { agentDocsUrl } from "../../lib/errors.ts";
 import { isAgent } from "../../mode.ts";
 import { buildDashboardUrl } from "../open/index.ts";
-import { CHECKS } from "./catalog.ts";
+import { CHECKS, findCheck } from "./catalog.ts";
 import { computeScore } from "./score.ts";
 import type {
   AuditReport,
@@ -21,7 +21,6 @@ export function targetFlags(ref: InstanceRef): string {
   return ` --app ${ref.appId} --instance ${ref.instanceId}`;
 }
 
-/** `clerk security fix <ids> [--factors …] [--strategy …] --app … --instance … [--yes]`. */
 export function fixCommand(
   ids: string[],
   ref: InstanceRef,
@@ -29,7 +28,7 @@ export function fixCommand(
 ): string {
   const flags = ids
     .map((id) => {
-      const decision = CHECKS.find((c) => c.id === id)?.decision;
+      const decision = findCheck(id)?.decision;
       const values = decisions[id];
       return decision && values ? ` --${decision.flag} ${values.join(",")}` : "";
     })
@@ -60,13 +59,14 @@ function remedyFor(
   status: FindingStatus,
   ref: InstanceRef,
   input: CheckInput,
-  blockedByTitle?: string,
 ): string {
   if (status === "met") return "Nothing to do.";
   if (status === "blocked") {
-    const prerequisite = CHECKS.find((c) => c.id === check.blockedBy)?.decision;
-    const decisions = prerequisite ? { [check.blockedBy!]: prerequisite.defaults(input) } : {};
-    return `Make "${blockedByTitle}" available first (\`${check.blockedBy}\`), or fix both together: \`${fixCommand([check.blockedBy!, check.id], ref, decisions)}\`.`;
+    const prerequisite = findCheck(check.blockedBy!)!;
+    const decisions = prerequisite.decision
+      ? { [prerequisite.id]: prerequisite.decision.defaults(input) }
+      : {};
+    return `Make "${prerequisite.title}" available first (\`${check.blockedBy}\`), or fix both together: \`${fixCommand([check.blockedBy!, check.id], ref, decisions)}\`.`;
   }
   if (check.patch) return `Run \`${fixCommand([check.id], ref)}\`.`;
   if (check.decision) {
@@ -88,7 +88,6 @@ export function evaluate(input: CheckInput, ref: InstanceRef): Finding[] {
       : prerequisite && !prerequisite.met
         ? "blocked"
         : "unmet";
-    const blockedByTitle = CHECKS.find((c) => c.id === check.blockedBy)?.title;
     const patch = status === "unmet" && check.patch ? check.patch(input) : null;
     const decision = status === "unmet" && !check.patch ? check.decision : undefined;
     return {
@@ -106,7 +105,7 @@ export function evaluate(input: CheckInput, ref: InstanceRef): Finding[] {
       ...(decision && {
         decision: { ...describeDecision(decision), suggested: decision.defaults(input) },
       }),
-      remedy: remedyFor(check, status, ref, input, blockedByTitle),
+      remedy: remedyFor(check, status, ref, input),
       docsUrl: agentDocsUrl(check.docsUrl),
       dashboardUrl: buildDashboardUrl(ref.appId, ref.instanceId, check.dashboardPath),
     };
@@ -123,15 +122,18 @@ function sortFindings(findings: Finding[]): Finding[] {
   );
 }
 
-export function fixableIds(findings: Finding[], goodToHave = true): string[] {
+// Good-to-have is opt-in everywhere a tier is applied.
+export const inTier = (f: { severity: Severity }, goodToHave: boolean): boolean =>
+  goodToHave || f.severity !== "good-to-have";
+
+export function fixableIds(findings: Finding[], goodToHave: boolean): string[] {
   return findings
-    .filter((f) => f.status === "unmet" && f.patch && (goodToHave || f.severity !== "good-to-have"))
+    .filter((f) => f.status === "unmet" && f.patch && inTier(f, goodToHave))
     .map((f) => f.id);
 }
 
 export function buildReport(input: CheckInput, ref: InstanceRef): AuditReport {
   const findings = evaluate(input, ref);
-  // Good-to-have is opt-in.
   const fixable = fixableIds(findings, false);
   return {
     instance: ref,

@@ -20,6 +20,9 @@ const production = (config: InstanceConfig): CheckInput => ({
   environmentType: "production",
 });
 
+const findingFor = (config: InstanceConfig, id: string) =>
+  evaluate(production(config), REF).find((f) => f.id === id);
+
 function withSection(config: InstanceConfig, key: string, patch: Record<string, unknown>) {
   return deepMerge(config, { [key]: patch });
 }
@@ -135,16 +138,14 @@ describe("not applicable checks", () => {
   });
 
   test("oauth-custom-credentials names the providers on shared credentials", () => {
-    const finding = evaluate(production(INSECURE_OAUTH_CONFIG), REF).find(
-      (f) => f.id === "oauth-custom-credentials",
-    );
+    const finding = findingFor(INSECURE_OAUTH_CONFIG, "oauth-custom-credentials");
     expect(finding?.current).toContain("google");
   });
 });
 
 describe("blocked checks", () => {
   test("mfa-required is blocked until a second factor is available", () => {
-    const finding = evaluate(production(INSECURE_CONFIG), REF).find((f) => f.id === "mfa-required");
+    const finding = findingFor(INSECURE_CONFIG, "mfa-required");
     expect(finding?.status).toBe("blocked");
     expect(finding?.blockedBy).toBe("mfa");
     expect(finding?.patch).toBeNull();
@@ -155,7 +156,7 @@ describe("blocked checks", () => {
     const config = withSection(INSECURE_CONFIG, "auth_multi_factor", {
       authenticator_app: { enabled: true },
     });
-    const finding = evaluate(production(config), REF).find((f) => f.id === "mfa-required");
+    const finding = findingFor(config, "mfa-required");
     expect(finding?.status).toBe("unmet");
     expect(finding?.patch).toEqual({ auth_multi_factor: { required_for_sign_up: true } });
   });
@@ -208,7 +209,7 @@ describe("passwordless detection", () => {
       enabled: true,
       authenticatable: false,
     });
-    const finding = evaluate(production(config), REF).find((f) => f.id === "passwordless-auth");
+    const finding = findingFor(config, "passwordless-auth");
     expect(finding?.status).toBe("unmet");
     expect(finding?.decision).toBeDefined();
   });
@@ -246,7 +247,7 @@ const MFA_OPTION_FEATURES = {
 
 describe("decision remedies", () => {
   test("remedy is a fix command carrying the suggested decision", () => {
-    const mfa = evaluate(production(INSECURE_CONFIG), REF).find((f) => f.id === "mfa")!;
+    const mfa = findingFor(INSECURE_CONFIG, "mfa")!;
     expect(mfa.remedy).toContain(
       "clerk security fix mfa --factors authenticator,backup-code --app app_1 --instance ins_prod",
     );
@@ -260,9 +261,7 @@ describe("decision remedies", () => {
   });
 
   test("a blocked remedy names the combined fix command", () => {
-    const required = evaluate(production(INSECURE_CONFIG), REF).find(
-      (f) => f.id === "mfa-required",
-    )!;
+    const required = findingFor(INSECURE_CONFIG, "mfa-required")!;
     expect(required.remedy).toContain(
       "clerk security fix mfa mfa-required --factors authenticator,backup-code --app app_1",
     );
@@ -276,14 +275,12 @@ describe("plan-gated features", () => {
     ["session-lifetime", ["app:custom_session_duration"]],
   ])("%s reports features %j", (id, features) => {
     expect(findCheck(id)!.features).toEqual(features);
-    const finding = evaluate(production(INSECURE_CONFIG), REF).find((f) => f.id === id);
+    const finding = findingFor(INSECURE_CONFIG, id);
     expect(finding?.features).toEqual(features);
   });
 
   test("passwordless-auth reports the plan-gated option on its decision", () => {
-    const finding = evaluate(production(INSECURE_CONFIG), REF).find(
-      (f) => f.id === "passwordless-auth",
-    )!;
+    const finding = findingFor(INSECURE_CONFIG, "passwordless-auth")!;
     expect(finding.decision?.features).toEqual({ passkey: ["app:passkey"] });
     expect("features" in finding).toBe(false);
   });
@@ -304,7 +301,7 @@ describe("plan-gated features", () => {
   });
 
   test("mfa reports the feature each factor needs", () => {
-    const mfa = evaluate(production(INSECURE_CONFIG), REF).find((f) => f.id === "mfa")!;
+    const mfa = findingFor(INSECURE_CONFIG, "mfa")!;
     expect(mfa.decision?.features).toEqual(MFA_OPTION_FEATURES);
     expect(findCheck("mfa")!.decision!.features!(["sms", "backup-code"])).toEqual([
       "app:mfa_phone_code",
@@ -313,9 +310,7 @@ describe("plan-gated features", () => {
   });
 
   test("checks without features omit the key", () => {
-    const finding = evaluate(production(INSECURE_CONFIG), REF).find(
-      (f) => f.id === "user-lockout",
-    )!;
+    const finding = findingFor(INSECURE_CONFIG, "user-lockout")!;
     expect("features" in finding).toBe(false);
   });
 });
@@ -449,9 +444,9 @@ describe("custom flow notes", () => {
   });
 
   test("the note rides along on unmet findings only", () => {
-    const unmet = evaluate(production(INSECURE_CONFIG), REF).find((f) => f.id === "mfa")!;
+    const unmet = findingFor(INSECURE_CONFIG, "mfa")!;
     expect(unmet.customFlows?.docsUrl).toContain("multi-factor-authentication");
-    const met = evaluate(production(SECURE_CONFIG), REF).find((f) => f.id === "mfa")!;
+    const met = findingFor(SECURE_CONFIG, "mfa")!;
     expect("customFlows" in met).toBe(false);
   });
 

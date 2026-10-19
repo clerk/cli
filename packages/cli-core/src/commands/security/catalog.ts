@@ -3,7 +3,11 @@
 // intentionally absent: Clerk no longer recommends them (NIST 800-63B).
 
 import { isRecord } from "../../lib/objects.ts";
-import type { CheckDecision, CheckDef, CheckInput, ConfigPatch, InstanceConfig } from "./types.ts";
+import {
+  discoverEnabledOAuthProviderSlugs,
+  OAUTH_KEY_PREFIX,
+} from "../../lib/oauth-connections.ts";
+import type { CheckDecision, CheckDef, ConfigPatch, InstanceConfig } from "./types.ts";
 
 const DOCS = "https://clerk.com/docs/guides";
 const DOCS_SIGN_IN_OPTIONS = `${DOCS}/configure/auth-strategies/sign-up-sign-in-options`;
@@ -73,12 +77,6 @@ const mfaAvailable = (config: InstanceConfig): boolean =>
   flag(config, "auth_multi_factor.authenticator_app.enabled") ||
   flag(config, "auth_phone.used_for_second_factor");
 
-function enabledOAuthProviders(config: InstanceConfig): string[] {
-  return Object.keys(config)
-    .filter((key) => key.startsWith("connection_oauth_") && flag(config, `${key}.enabled`))
-    .map((key) => key.slice("connection_oauth_".length));
-}
-
 function passwordlessEnabled(config: InstanceConfig): boolean {
   const emailCode =
     flag(config, "auth_email.used_for_sign_in") &&
@@ -94,8 +92,8 @@ function passwordlessEnabled(config: InstanceConfig): boolean {
     flag(config, "auth_passkey.used_for_sign_in") ||
     flag(config, "auth_web3.used_for_sign_in") ||
     // authenticatable defaults to true in the provider schema, so only an explicit false opts out.
-    enabledOAuthProviders(config).some(
-      (provider) => at(config, `connection_oauth_${provider}.authenticatable`) !== false,
+    discoverEnabledOAuthProviderSlugs(config).some(
+      (provider) => at(config, `${OAUTH_KEY_PREFIX}${provider}.authenticatable`) !== false,
     )
   );
 }
@@ -161,9 +159,8 @@ const PASSWORDLESS_DECISION: CheckDecision = {
       : phoneEnabled(config) || flag(config, "auth_phone.used_for_sign_in")
         ? ["phone-code"]
         : ["passkey"],
-  patch([strategy], input) {
+  patch([strategy], { config }) {
     if (strategy === "passkey") return { auth_passkey: { used_for_sign_in: true } };
-    const { config } = input;
     const section = strategy === "phone-code" ? "auth_phone" : "auth_email";
     const apiStrategy = strategy!.replace("-", "_");
     return {
@@ -173,7 +170,7 @@ const PASSWORDLESS_DECISION: CheckDecision = {
         // An identifier that signs users in must be verified at sign-up, or an
         // attacker can pre-register the victim's and inherit their session.
         ...(flag(config, `${section}.used_for_sign_up`) &&
-          verifyAtSignUpPatch(section, apiStrategy)(input)[section]),
+          verifyAtSignUp(config, section, apiStrategy)),
       },
       // A link redeemed on another device would complete the attacker's attempt.
       ...(strategy === "email-link" && {
@@ -183,20 +180,15 @@ const PASSWORDLESS_DECISION: CheckDecision = {
   },
 };
 
-function verifyAtSignUpPatch(section: string, fallback: string) {
-  return ({ config }: CheckInput) => {
-    const strategies = list(config, `${section}.verification_strategies`);
-    return {
-      [section]: {
-        verify_at_sign_up: true,
-        verification_strategies: strategies.length ? strategies : [fallback],
-      },
-    };
+function verifyAtSignUp(config: InstanceConfig, section: string, fallback: string) {
+  const strategies = list(config, `${section}.verification_strategies`);
+  return {
+    verify_at_sign_up: true,
+    verification_strategies: strategies.length ? strategies : [fallback],
   };
 }
 
 export const CHECKS: CheckDef[] = [
-  // --- critical ---
   {
     id: "bot-protection",
     title: "Bot sign-up protection",
@@ -303,14 +295,13 @@ export const CHECKS: CheckDef[] = [
     docsUrl: DOCS_SIGN_IN_OPTIONS,
     appliesTo: ({ config }) => emailEnabled(config),
     ...booleanCheck("auth_email.verify_at_sign_up", { labels: ["Required", "Not required"] }),
-    patch: verifyAtSignUpPatch("auth_email", "email_code"),
+    patch: ({ config }) => ({ auth_email: verifyAtSignUp(config, "auth_email", "email_code") }),
     customFlows: {
       note: "Custom sign-up flows must handle the email verification step.",
       docsUrl: `${FLOWS}/email-password`,
     },
   },
 
-  // --- recommended ---
   {
     id: "breach-detection-sign-in",
     title: "Reject breached passwords on sign-in",
@@ -367,19 +358,11 @@ export const CHECKS: CheckDef[] = [
     title: "Require two-factor authentication",
     description: "Force every user to set up a second factor, not just offer it.",
     severity: "recommended",
-    path: "auth_multi_factor.required_for_sign_up",
     dashboardPath: "user-authentication",
     docsUrl: DOCS_SIGN_IN_OPTIONS,
     blockedBy: "mfa",
-    evaluate({ config }) {
-      // Drives the setup-mfa task; required_for_sign_in is a different setting.
-      const met = flag(config, "auth_multi_factor.required_for_sign_up");
-      return {
-        met,
-        current: met ? "Required" : "Optional",
-        recommended: "Required",
-      };
-    },
+    // Drives the setup-mfa task; required_for_sign_in is a different setting.
+    ...booleanCheck("auth_multi_factor.required_for_sign_up", { labels: ["Required", "Optional"] }),
     patch: () => ({ auth_multi_factor: { required_for_sign_up: true } }),
     customFlows: {
       note: "Every sign-in gets a pending setup-mfa session task; custom flows that ignore tasks strand users.",
@@ -406,7 +389,7 @@ export const CHECKS: CheckDef[] = [
     docsUrl: DOCS_SIGN_IN_OPTIONS,
     appliesTo: ({ config }) => phoneEnabled(config),
     ...booleanCheck("auth_phone.verify_at_sign_up", { labels: ["Required", "Not required"] }),
-    patch: verifyAtSignUpPatch("auth_phone", "phone_code"),
+    patch: ({ config }) => ({ auth_phone: verifyAtSignUp(config, "auth_phone", "phone_code") }),
     customFlows: {
       note: "Custom sign-up flows must handle the phone verification step.",
       docsUrl: `${FLOWS}/email-sms-otp`,
@@ -455,10 +438,10 @@ export const CHECKS: CheckDef[] = [
     dashboardPath: "user-authentication",
     docsUrl: `${DOCS}/configure/auth-strategies/social-connections/overview`,
     appliesTo: ({ config, environmentType }) =>
-      environmentType === "production" && enabledOAuthProviders(config).length > 0,
+      environmentType === "production" && discoverEnabledOAuthProviderSlugs(config).length > 0,
     evaluate({ config }) {
-      const shared = enabledOAuthProviders(config).filter(
-        (provider) => !at(config, `connection_oauth_${provider}.client_id`),
+      const shared = discoverEnabledOAuthProviderSlugs(config).filter(
+        (provider) => !at(config, `${OAUTH_KEY_PREFIX}${provider}.client_id`),
       );
       return {
         met: shared.length === 0,
@@ -470,7 +453,6 @@ export const CHECKS: CheckDef[] = [
       "Register an OAuth app with each provider and set `client_id` and `client_secret` on its `connection_oauth_<provider>` config key.",
   },
 
-  // --- good to have ---
   {
     id: "session-lifetime",
     title: "Bounded session lifetime",

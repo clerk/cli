@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -45,8 +45,6 @@ describe("security fix", () => {
   const originalEnv = { ...process.env };
   const originalFetch = globalThis.fetch;
   let tempDir: string;
-  let logSpy: ReturnType<typeof spyOn>;
-  let errorSpy: ReturnType<typeof spyOn>;
   let requests: Captured[];
   const captured = useCaptureLog();
 
@@ -70,6 +68,8 @@ describe("security fix", () => {
     });
   }
 
+  const readSummary = () => JSON.parse(captured.out) as FixSummary;
+
   async function run(ids: string[] = [], options: FixOptions = {}) {
     const { securityFix } = await import("./fix.ts");
     return securityFix(ids, options);
@@ -86,8 +86,6 @@ describe("security fix", () => {
     requests = [];
     multiselect.mockReset();
     multiselect.mockImplementation(libPromptsStubs.multiselect);
-    logSpy = spyOn(console, "log").mockImplementation(() => {});
-    errorSpy = spyOn(console, "error").mockImplementation(() => {});
     serve(INSECURE_CONFIG);
     await link();
   });
@@ -96,8 +94,6 @@ describe("security fix", () => {
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -105,7 +101,7 @@ describe("security fix", () => {
     test("breach detection leaves sign-in enforcement as a separate recommendation", async () => {
       await run(["breach-detection"], { yes: true, json: true });
       expect(patches()[0]!.body).toEqual({ auth_password: { disable_hibp: false } });
-      const summary = JSON.parse(captured.out) as FixSummary;
+      const summary = readSummary();
       expect(summary.remaining).not.toContain("breach-detection");
       expect(summary.remaining).toContain("breach-detection-sign-in");
     });
@@ -124,7 +120,7 @@ describe("security fix", () => {
       expect(patches()[0]!.body).toEqual({
         auth_attack_protection: { email_link_require_same_client: true },
       });
-      const summary = JSON.parse(captured.out) as FixSummary;
+      const summary = readSummary();
       expect(summary.applied).toEqual(["email-link-same-client"]);
       expect(summary.skipped).toEqual([]);
     });
@@ -137,7 +133,7 @@ describe("security fix", () => {
 
     test("human mode with no ids opens a picker preselecting the critical and recommended gaps", async () => {
       await run([], { yes: true, json: true });
-      const summary = JSON.parse(captured.out) as FixSummary;
+      const summary = readSummary();
       expect(summary.applied).toContain("user-lockout");
       expect(summary.applied).not.toContain("mfa");
       expect(summary.applied).not.toContain("block-email-subaddresses");
@@ -171,7 +167,7 @@ describe("security fix", () => {
             ...(required && { required_for_sign_up: true }),
           },
         });
-        const summary = JSON.parse(captured.out) as FixSummary;
+        const summary = readSummary();
         expect(summary.applied.includes("mfa-required")).toBe(required);
         expect(summary.remaining.includes("mfa-required")).toBe(!required);
       },
@@ -188,7 +184,7 @@ describe("security fix", () => {
         auth_email: { used_for_sign_in: true, sign_in_strategies: ["email_link"] },
         auth_attack_protection: { email_link_require_same_client: true },
       });
-      const summary = JSON.parse(captured.out) as FixSummary;
+      const summary = readSummary();
       expect(summary.applied).toEqual(["passwordless-auth"]);
       expect(summary.remaining).not.toContain("email-link-same-client");
     });
@@ -203,15 +199,13 @@ describe("security fix", () => {
           verification_strategies: ["email_link"],
         },
       });
-      expect((JSON.parse(captured.out) as FixSummary).remaining).not.toContain(
-        "email-verification",
-      );
+      expect(readSummary().remaining).not.toContain("email-verification");
     });
 
     test("explicit ids never grow, even when they unblock another check", async () => {
       await run(["mfa"], { factors: ["authenticator"], yes: true, json: true });
       expect(patches()[0]!.body).not.toHaveProperty("auth_multi_factor.required_for_sign_in");
-      const summary = JSON.parse(captured.out) as FixSummary;
+      const summary = readSummary();
       expect(summary.applied).toEqual(["mfa"]);
       expect(summary.remaining).toContain("mfa-required");
     });
@@ -258,7 +252,7 @@ describe("security fix", () => {
     expect(body.auth_password).toMatchObject({ min_length: 8 });
     expect(body).not.toHaveProperty("auth_multi_factor");
     expect(body).not.toHaveProperty("session_settings");
-    const summary = JSON.parse(captured.out) as FixSummary;
+    const summary = readSummary();
     expect(summary.remaining.sort()).toEqual([
       "block-disposable-email",
       "block-email-subaddresses",
@@ -309,7 +303,7 @@ describe("security fix", () => {
   test("agent mode prints a JSON summary with the score change on stdout", async () => {
     process.env.CLERK_MODE = "agent";
     await run(["user-lockout", "bot-protection"], { yes: true });
-    const summary = JSON.parse(captured.out) as FixSummary;
+    const summary = readSummary();
     expect(summary).toMatchObject({
       changed: true,
       dryRun: false,
@@ -324,7 +318,7 @@ describe("security fix", () => {
 
   test("--json prints the summary in human mode too", async () => {
     await run(["user-lockout"], { yes: true, json: true });
-    expect((JSON.parse(captured.out) as FixSummary).applied).toEqual(["user-lockout"]);
+    expect(readSummary().applied).toEqual(["user-lockout"]);
   });
 
   test("the after-score comes from the server's response, not the local projection", async () => {
@@ -334,7 +328,7 @@ describe("security fix", () => {
       return new Response(JSON.stringify(INSECURE_CONFIG), { status: 200 });
     });
     await run(["user-lockout"], { yes: true, json: true });
-    const summary = JSON.parse(captured.out) as FixSummary;
+    const summary = readSummary();
     expect(summary.score.after).toEqual(summary.score.before);
     expect(summary.remaining).toContain("user-lockout");
   });
@@ -358,7 +352,7 @@ describe("security fix", () => {
       return new Response(JSON.stringify(envelope), { status: 200 });
     });
     await run(["user-lockout"], { dryRun: true, json: true });
-    const summary = JSON.parse(captured.out) as FixSummary;
+    const summary = readSummary();
     expect(summary.score.after.met).toBe(summary.score.before.met + 1);
     expect(summary.score.after.total).toBe(summary.score.before.total);
     expect(summary.remaining).not.toContain("user-lockout");
@@ -376,14 +370,14 @@ describe("security fix", () => {
       return new Response(JSON.stringify(doc), { status: 200 });
     });
     await run(["device-trust"], { yes: true, json: true });
-    const summary = JSON.parse(captured.out) as FixSummary;
+    const summary = readSummary();
     expect(summary.score.after.total).toBe(summary.score.before.total);
     expect(summary.score.after.met).toBe(summary.score.before.met + 1);
   });
 
   test("--all with --dry-run reports the projected score", async () => {
     await run([], { all: true, goodToHave: true, dryRun: true, json: true });
-    const summary = JSON.parse(captured.out) as FixSummary;
+    const summary = readSummary();
     expect(summary.dryRun).toBe(true);
     expect(summary.changed).toBe(true);
     expect(summary.remaining.sort()).toEqual(["mfa", "mfa-required"]);
@@ -394,7 +388,7 @@ describe("security fix", () => {
     process.env.CLERK_MODE = "agent";
     serve(SECURE_CONFIG);
     await run(["user-lockout"], { yes: true });
-    const summary = JSON.parse(captured.out) as FixSummary;
+    const summary = readSummary();
     expect(summary).toMatchObject({
       changed: false,
       applied: [],
@@ -426,7 +420,7 @@ describe("security fix", () => {
     expect(patches()[0]!.body).toEqual({
       auth_multi_factor: { required_for_sign_up: true },
     });
-    expect((JSON.parse(captured.out) as FixSummary).remaining).not.toContain("mfa-required");
+    expect(readSummary().remaining).not.toContain("mfa-required");
   });
 
   test.each([true, false])(
@@ -441,7 +435,7 @@ describe("security fix", () => {
       expect(patches()[0]!.body).toEqual({
         auth_password: { disable_hibp: false, enforce_hibp_on_sign_in: true },
       });
-      const summary = JSON.parse(captured.out) as FixSummary;
+      const summary = readSummary();
       expect(summary.remaining).not.toContain("breach-detection-sign-in");
       expect(summary.remaining).not.toContain("breach-detection");
     },
@@ -485,17 +479,14 @@ describe("security fix", () => {
         auth_multi_factor: { authenticator_app: { enabled: true } },
         auth_phone: { used_for_second_factor: true, second_factor_strategies: ["phone_code"] },
       });
-      const summary = JSON.parse(captured.out) as FixSummary;
+      const summary = readSummary();
       expect(summary.decisions).toEqual({ mfa: ["authenticator", "sms"] });
       expect(summary.remaining).not.toContain("mfa");
     });
 
     test("--factors may be repeated", async () => {
       await run(["mfa"], { factors: ["authenticator", "backup-code"], yes: true, json: true });
-      expect((JSON.parse(captured.out) as FixSummary).decisions.mfa).toEqual([
-        "authenticator",
-        "backup-code",
-      ]);
+      expect(readSummary().decisions.mfa).toEqual(["authenticator", "backup-code"]);
     });
 
     test("rejects an unknown factor", async () => {
@@ -544,7 +535,7 @@ describe("security fix", () => {
       expect(patches()[0]!.body).toEqual({
         auth_multi_factor: { authenticator_app: { enabled: true }, required_for_sign_up: true },
       });
-      const summary = JSON.parse(captured.out) as FixSummary;
+      const summary = readSummary();
       expect(summary.applied).toEqual(["mfa", "mfa-required"]);
       expect(summary.remaining).not.toContain("mfa-required");
     });
@@ -557,7 +548,7 @@ describe("security fix", () => {
         yes: true,
         json: true,
       });
-      const summary = JSON.parse(captured.out) as FixSummary;
+      const summary = readSummary();
       expect(summary.applied).toContain("mfa");
       expect(summary.applied).toContain("mfa-required");
       expect(summary.remaining).toEqual([]);

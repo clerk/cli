@@ -54,6 +54,9 @@ function formatScoreLine(score: SecurityScore): string {
   return parts.join(dim(" · "));
 }
 
+const fixHint = ({ patch, decision }: { patch?: unknown; decision?: { flag: string } }): string =>
+  patch ? "" : dim(decision ? `  (asks --${decision.flag})` : "  (manual)");
+
 function formatFindingLine(finding: Finding, widths: { title: number; id: number }): string {
   const title = finding.title.padEnd(widths.title);
   const id = finding.id.padEnd(widths.id);
@@ -62,12 +65,7 @@ function formatFindingLine(finding: Finding, widths: { title: number; id: number
     return `${STATUS_ICON.blocked} ${title}  ${cyan(id)}  ${dim(`blocked: ${finding.remedy}`)}`;
   }
   const change = `${finding.current} ${dim("→")} ${finding.recommended}`;
-  const manual = finding.patch
-    ? ""
-    : finding.decision
-      ? dim(`  (asks --${finding.decision.flag})`)
-      : dim("  (manual)");
-  return `${STATUS_ICON.unmet} ${title}  ${cyan(id)}  ${change}${manual}`;
+  return `${STATUS_ICON.unmet} ${title}  ${cyan(id)}  ${change}${fixHint(finding)}`;
 }
 
 export function formatReportHuman(report: AuditReport): string[] {
@@ -116,12 +114,7 @@ export function formatCatalogHuman(checks: CheckDef[]): string[] {
   for (const severity of SEVERITY_ORDER) {
     lines.push(bold(SEVERITY_LABEL[severity]));
     for (const check of checks.filter((c) => c.severity === severity)) {
-      const fix = check.patch
-        ? ""
-        : check.decision
-          ? dim(`  (asks --${check.decision.flag})`)
-          : dim("  (manual)");
-      lines.push(`  ${cyan(check.id.padEnd(width))}  ${check.title}${fix}`);
+      lines.push(`  ${cyan(check.id.padEnd(width))}  ${check.title}${fixHint(check)}`);
     }
     lines.push("");
   }

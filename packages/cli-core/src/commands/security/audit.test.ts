@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn, mock } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -37,8 +37,6 @@ describe("security audit", () => {
   const originalEnv = { ...process.env };
   const originalFetch = globalThis.fetch;
   let tempDir: string;
-  let logSpy: ReturnType<typeof spyOn>;
-  let errorSpy: ReturnType<typeof spyOn>;
   const captured = useCaptureLog();
 
   function serve(config: Record<string, unknown>) {
@@ -76,8 +74,6 @@ describe("security audit", () => {
     process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
     process.env.CLERK_MODE = "human";
     delete process.env.CLERK_SECRET_KEY;
-    logSpy = spyOn(console, "log").mockImplementation(() => {});
-    errorSpy = spyOn(console, "error").mockImplementation(() => {});
     serve(INSECURE_CONFIG);
   });
 
@@ -85,8 +81,6 @@ describe("security audit", () => {
     _setConfigDir(undefined);
     process.env = { ...originalEnv };
     globalThis.fetch = originalFetch;
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
 

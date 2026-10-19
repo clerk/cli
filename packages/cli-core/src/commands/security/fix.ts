@@ -13,7 +13,7 @@ import { withGutter } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
 import { CHECK_IDS, findCheck } from "./catalog.ts";
-import { evaluate, fixCommand, fixableIds } from "./evaluate.ts";
+import { evaluate, fixCommand, fixableIds, inTier } from "./evaluate.ts";
 import { formatScoreTransition } from "./format.ts";
 import { loadAudit } from "./load.ts";
 import { deepMerge, projectPatches, withoutGated, type ProjectedPatches } from "./merge.ts";
@@ -22,6 +22,7 @@ import type {
   AuditReport,
   CheckDef,
   CheckInput,
+  DecisionFlag,
   Finding,
   FixOptions,
   FixSummary,
@@ -52,7 +53,12 @@ interface Selection {
 const byCatalogOrder = (checks: CheckDef[]): CheckDef[] =>
   [...checks].sort((a, b) => CHECK_IDS.indexOf(a.id) - CHECK_IDS.indexOf(b.id));
 
-function suppliedDecisions(options: FixOptions): Partial<Record<"factors" | "strategy", string[]>> {
+type Supplied = Partial<Record<DecisionFlag, string[]>>;
+
+const openIds = (findings: Finding[]): string[] =>
+  findings.filter((f) => f.status !== "met").map((f) => f.id);
+
+function suppliedDecisions(options: FixOptions): Supplied {
   const factors = options.factors
     ?.flatMap((v) => v.split(","))
     .map((v) => v.trim())
@@ -74,10 +80,11 @@ function selectByIds(ids: string[], findings: Finding[], ref: InstanceRef): Sele
       selection.skipped.push({ id, reason: "not_applicable" });
     } else if (finding.status === "met") {
       selection.skipped.push({ id, reason: "met" });
-    } else if (finding.status === "blocked" && !ids.includes(finding.blockedBy!)) {
-      // Allowed when the prerequisite is fixed in the same call.
-      problems.push(`${id}: ${finding.remedy}`);
-    } else if (!check.patch && !check.decision) {
+    } else if (
+      // Blocked is allowed when the prerequisite is fixed in the same call.
+      (finding.status === "blocked" && !ids.includes(finding.blockedBy!)) ||
+      (!check.patch && !check.decision)
+    ) {
       problems.push(`${id}: ${finding.remedy}`);
     } else {
       selection.checks.push(check);
@@ -105,11 +112,7 @@ function selectByIds(ids: string[], findings: Finding[], ref: InstanceRef): Sele
   return selection;
 }
 
-function selectAll(
-  findings: Finding[],
-  supplied: ReturnType<typeof suppliedDecisions>,
-  goodToHave: boolean,
-): Selection {
+function selectAll(findings: Finding[], supplied: Supplied, goodToHave: boolean): Selection {
   const ids = new Set(fixableIds(findings, goodToHave));
   for (const f of findings) {
     if (f.status === "unmet" && f.decision && supplied[f.decision.flag]) ids.add(f.id);
@@ -131,10 +134,7 @@ async function selectInteractively(findings: Finding[]): Promise<Selection> {
         ? `${f.id} · asks which ${f.decision.flag}`
         : `${f.id} · ${f.current} → ${f.recommended}`,
     })),
-    // Good-to-have offered but unticked.
-    initialValues: candidates
-      .filter((f) => f.patch && f.severity !== "good-to-have")
-      .map((f) => f.id),
+    initialValues: candidates.filter((f) => f.patch && inTier(f, false)).map((f) => f.id),
     required: false,
   });
   if (chosen.length === 0) throwUserAbort();
@@ -184,7 +184,7 @@ async function withUnlocked(
 
 async function resolveDecision(
   check: CheckDef,
-  supplied: ReturnType<typeof suppliedDecisions>,
+  supplied: Supplied,
   input: CheckInput,
   ref: InstanceRef,
 ): Promise<string[]> {
@@ -347,7 +347,7 @@ export async function securityFix(ids: string[] = [], options: FixOptions = {}):
       decisions: {},
       skipped,
       score: { before: report.score, after: report.score },
-      remaining: report.findings.filter((f) => f.status !== "met").map((f) => f.id),
+      remaining: openIds(report.findings),
     };
 
     if (checks.length === 0) {
@@ -358,27 +358,26 @@ export async function securityFix(ids: string[] = [], options: FixOptions = {}):
 
     const decided: CheckDef[] = [];
     for (const check of byCatalogOrder(checks)) {
-      if (check.patch || !check.decision) {
+      const { decision } = check;
+      if (check.patch || !decision) {
         decided.push(check);
         continue;
       }
       const values = await resolveDecision(check, supplied, input, report.instance);
-      const problem = check.decision.validate?.(values, input);
+      const problem = decision.validate?.(values, input);
       if (problem) throwUsageError(problem);
       summary.decisions[check.id] = values;
       decided.push({
         ...check,
-        features: check.decision.features?.(values) ?? check.features,
-        patch: (i) => check.decision!.patch(values, i),
+        features: decision.features?.(values) ?? check.features,
+        patch: (i) => decision.patch(values, i),
       });
     }
 
     // --all takes what it unlocks at its tiers, the picker asks, explicit ids never grow.
     const take: TakeUnlocked = all
       ? async (unlocked) =>
-          unlocked
-            .filter((f) => options.goodToHave || f.severity !== "good-to-have")
-            .map((f) => f.id)
+          unlocked.filter((f) => inTier(f, Boolean(options.goodToHave))).map((f) => f.id)
       : selected.length > 0
         ? async () => []
         : pickUnlocked;
@@ -424,7 +423,7 @@ export async function securityFix(ids: string[] = [], options: FixOptions = {}):
       summary.changed = true;
       summary.applied = applied;
       summary.score.after = computeScore(after);
-      summary.remaining = after.filter((f) => f.status !== "met").map((f) => f.id);
+      summary.remaining = openIds(after);
       log.info(formatScoreTransition(summary.score.before, summary.score.after, dryRun));
     }
 

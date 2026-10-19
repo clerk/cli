@@ -2,6 +2,7 @@ import { log } from "../../lib/log.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { intro, outro } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
+import { inTier } from "./evaluate.ts";
 import { formatReportHuman, formatReportJson } from "./format.ts";
 import { loadAudit } from "./load.ts";
 import type { AuditOptions } from "./types.ts";
@@ -22,11 +23,13 @@ export async function securityAudit(options: AuditOptions = {}): Promise<void> {
 
   const flags = `${options.app ? ` --app ${options.app}` : ""}${options.instance ? ` --instance ${options.instance}` : ""}`;
   // --all skips decision checks unless their flag is passed.
-  const decisions = report.findings.filter(
-    (f) => f.status === "unmet" && f.decision && f.severity !== "good-to-have",
+  const needsInput = report.findings.filter(
+    (f) => f.status === "unmet" && f.decision && inTier(f, false),
   );
-  const allHint = decisions.length
-    ? `\`clerk security fix --all${flags}\` for the critical and recommended ones that need no input (add ${decisions.map((f) => `\`--${f.decision!.flag}\``).join(" and ")} to include ${decisions.map((f) => `\`${f.id}\``).join(" and ")})`
+  const flagList = needsInput.map((f) => `\`--${f.decision!.flag}\``).join(" and ");
+  const idList = needsInput.map((f) => `\`${f.id}\``).join(" and ");
+  const allHint = needsInput.length
+    ? `\`clerk security fix --all${flags}\` for the critical and recommended ones that need no input (add ${flagList} to include ${idList})`
     : `\`clerk security fix --all${flags}\` for every critical and recommended one`;
   await outro(
     report.fixCommand

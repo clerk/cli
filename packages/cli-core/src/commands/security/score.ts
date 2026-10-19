@@ -6,10 +6,6 @@ const SEVERITY_WEIGHT: Record<Severity, number> = {
   "good-to-have": 1,
 };
 
-const GRADE_ORDER: SecurityGrade[] = ["F", "D", "C", "B", "A"];
-// A green grade must mean no critical gaps, whatever the weighted ratio says.
-const CRITICAL_GRADE_CAP: SecurityGrade = "C";
-
 function gradeForRatio(ratio: number): SecurityGrade {
   if (ratio >= 0.95) return "A";
   if (ratio >= 0.8) return "B";
@@ -29,9 +25,8 @@ export function computeScore(findings: Finding[]): SecurityScore {
   const hasCriticalGap = findings.some((f) => f.severity === "critical" && f.status !== "met");
 
   let grade = gradeForRatio(ratio);
-  if (hasCriticalGap && GRADE_ORDER.indexOf(grade) > GRADE_ORDER.indexOf(CRITICAL_GRADE_CAP)) {
-    grade = CRITICAL_GRADE_CAP;
-  }
+  // A green grade must mean no critical gaps, whatever the weighted ratio says.
+  if (hasCriticalGap && (grade === "A" || grade === "B")) grade = "C";
 
   return {
     grade,
