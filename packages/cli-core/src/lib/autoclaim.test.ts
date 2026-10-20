@@ -11,7 +11,8 @@ import * as keylessMod from "./keyless.ts";
 import { setLogLevel } from "./log.ts";
 import * as pullMod from "../commands/env/pull.ts";
 import type { Profile } from "./config.ts";
-import { attemptAutoclaim, readInitClaim } from "./autoclaim.ts";
+import { attemptAutoclaim, folderKeysBelongTo, readInitClaim } from "./autoclaim.ts";
+import type { Application } from "./plapi.ts";
 
 const MOCK_APP = {
   application_id: "app_claimed",
@@ -928,5 +929,108 @@ describe("attemptAutoclaim", () => {
         expect(leaked).toEqual([]);
       });
     });
+  });
+});
+
+// `clerk init`'s every-key check after a claim: whether every Clerk key the
+// folder holds belongs to the app `clerk link` chose. Same comparison as the
+// claim check's.
+describe("folderKeysBelongTo", () => {
+  useCleanClerkKeyEnv();
+  const originalFetch = globalThis.fetch;
+  let dir: string;
+
+  const pk = (host: string) => `pk_test_${btoa(`${host}$`)}`;
+  const APP_HOST = "chosen-app.clerk.accounts.dev";
+  const APP_PROD_PK = `pk_live_${btoa(`clerk.chosen-app.com$`)}`;
+  const APP = {
+    application_id: "app_chosen",
+    name: "Chosen App",
+    instances: [
+      {
+        instance_id: "ins_dev",
+        environment_type: "development",
+        publishable_key: pk(APP_HOST),
+        secret_key: "sk_test_chosen_app_secret",
+      },
+      {
+        instance_id: "ins_prod",
+        environment_type: "production",
+        publishable_key: APP_PROD_PK,
+        secret_key: "sk_live_chosen_app_secret",
+      },
+    ],
+  };
+
+  let appFetches: number;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clerk-folder-keys-"));
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test_key";
+    process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
+    appFetches = 0;
+    stubFetch(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("/v1/platform/applications/app_chosen")) {
+        appFetches += 1;
+        return Response.json(APP);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+  });
+
+  afterEach(async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    delete process.env.CLERK_PLATFORM_API_URL;
+    globalThis.fetch = originalFetch;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a folder with no Clerk keys matches: a new link writes over nothing", async () => {
+    expect(await folderKeysBelongTo(APP as Application, dir)).toEqual({ verdict: "match" });
+  });
+
+  test("an SDK keyless file that names no app is couldn't tell", async () => {
+    await Bun.write(join(dir, ".clerk", ".tmp", "keyless.json"), "{ not json");
+
+    expect(await folderKeysBelongTo(APP as Application, dir)).toEqual({ verdict: "couldnt_tell" });
+  });
+
+  test("another app's secret key is a mismatch, naming the variable and its file", async () => {
+    await Bun.write(
+      join(dir, ".env"),
+      `CLERK_PUBLISHABLE_KEY=${pk(APP_HOST)}\nCLERK_SECRET_KEY=sk_test_another_app_secret\n`,
+    );
+
+    expect(await folderKeysBelongTo(APP as Application, dir)).toEqual({
+      verdict: "mismatch",
+      key: { name: "CLERK_SECRET_KEY", source: ".env" },
+    });
+  });
+
+  test("an app listed without its secret keys is fetched once, then matches", async () => {
+    await Bun.write(join(dir, ".env"), "CLERK_SECRET_KEY=sk_test_chosen_app_secret\n");
+    const listed = {
+      ...APP,
+      instances: APP.instances.map(({ secret_key: _secret, ...instance }) => instance),
+    };
+
+    expect(await folderKeysBelongTo(listed as Application, dir)).toEqual({ verdict: "match" });
+    expect(appFetches).toBe(1);
+  });
+
+  // Files that disagree under no documented order can still be one app's.
+  test("one app's development and production keys in two files match", async () => {
+    await Bun.write(join(dir, "package.json"), JSON.stringify({ dependencies: { express: "4" } }));
+    await Bun.write(
+      join(dir, ".env"),
+      `CLERK_PUBLISHABLE_KEY=${APP_PROD_PK}\nCLERK_SECRET_KEY=sk_live_chosen_app_secret\n`,
+    );
+    await Bun.write(
+      join(dir, ".env.local"),
+      `CLERK_PUBLISHABLE_KEY=${pk(APP_HOST)}\nCLERK_SECRET_KEY=sk_test_chosen_app_secret\n`,
+    );
+
+    expect(await folderKeysBelongTo(APP as Application, dir)).toEqual({ verdict: "match" });
   });
 });
