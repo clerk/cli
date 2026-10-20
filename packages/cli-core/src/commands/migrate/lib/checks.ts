@@ -85,6 +85,13 @@ export type ImportChecks = {
   /** Users that do not, each with the first reason that applies to them. */
   rejects: Reject[];
   rejectReasons: ReasonCount[];
+  /**
+   * Users their source asked to skip (a soft-deleted or anonymous account),
+   * with its reason. Left out like a reject, but never a reason to stop the
+   * import: nobody is meant to bring them across.
+   */
+  skipped: Reject[];
+  skippedReasons: ReasonCount[];
   warnings: string[];
   fixes: Fix[];
   quota?: Quota;
@@ -1003,6 +1010,7 @@ function placeholderWarning(count: number): string[] {
 export const ALREADY_IMPORTED = "already in the instance, with this source ID";
 
 export async function checkImport(input: CheckInput): Promise<ImportChecks> {
+  const skipped: Reject[] = [];
   const rejects: Reject[] = input.failures.map((failure) => ({
     sourceId: failure.userId,
     reason: `invalid: ${failure.error}`,
@@ -1078,9 +1086,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         usernameProblem(user, input.settings, loosePhones) ??
         hashProblem ??
         disabledProviders.get(user.userId));
-    if (reason) {
-      const inFile =
-        reason === original.skipReason || reason === refusedOnly || reason === hashProblem;
+    if (reason && reason === original.skipReason) {
+      skipped.push({ sourceId: user.userId, reason, inFile: true });
+    } else if (reason) {
+      const inFile = reason === refusedOnly || reason === hashProblem;
       rejects.push({ sourceId: user.userId, reason, ...(inFile ? { inFile: true as const } : {}) });
     } else {
       passed.push(sent);
@@ -1174,6 +1183,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     ),
     rejects,
     rejectReasons: countReasons(rejects),
+    skipped,
+    skippedReasons: countReasons(skipped),
     warnings: [
       ...buildWarnings(
         input,
