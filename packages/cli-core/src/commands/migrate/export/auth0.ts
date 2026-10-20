@@ -27,6 +27,7 @@ import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
 import { isCredentialStatus, throwApiFailure, withInputRetry } from "../lib/input-retry.ts";
 import { RateLimitExceededError, retryOn429 } from "../lib/retry.ts";
+import { splitName } from "../sources/shared.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 
 const PAGE_SIZE = 100;
@@ -412,8 +413,17 @@ export function buildAuth0Export(
 
       if (mapped.email) counts.email++;
       if (mapped.username) counts.username++;
-      if (mapped.given_name) counts.firstName++;
-      if (mapped.family_name) counts.lastName++;
+      // As the import reads them: given_name/family_name, else `name` split.
+      // The email goes along so splitName drops a `name` that is just it.
+      const names: Record<string, unknown> = {
+        email: mapped.email,
+        firstName: mapped.given_name,
+        lastName: mapped.family_name,
+      };
+      if (!names.firstName && !names.lastName)
+        splitName(Object.assign(names, { name: mapped.name }));
+      if (names.firstName) counts.firstName++;
+      if (names.lastName) counts.lastName++;
       if (mapped.phone_number) counts.phone++;
 
       record({ sourceId: userId, status: "exported" });
