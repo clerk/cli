@@ -371,7 +371,9 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
   // before the first DNS poll — which comes after OAuth setup — would report
   // no stage, and that is where the wizard loses people.
   recordDeployStage(production.active_domain ? "domain_pending" : "domain_provisioning");
-  await persistProductionInstance(ctx, production.id);
+  // As in agent mode, an empty id names no instance and isn't saved; the
+  // guards that need the id then fail as `deploy_instance_unresolved`.
+  await rememberProductionInstance(ctx, production.id);
   // "Clerk production instance", not just "production instance": the user
   // also has a deployment on their host, and this is the one Clerk manages.
   // URL on its own line: with it, the sentence is wider than the frame.

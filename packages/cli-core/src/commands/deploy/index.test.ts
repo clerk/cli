@@ -1102,6 +1102,22 @@ describe("deploy", () => {
       expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
     });
 
+    // As in agent mode, an empty id from the create names no instance, so
+    // the profile isn't given one that `--instance prod` resolves to nothing.
+    test("a create response without an id saves no production id", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockInput.mockResolvedValueOnce("example.com");
+      stubCreateProductionInstanceWithoutId();
+
+      const error = await runDeploy({}).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBeUndefined();
+    });
+
     // The wizard names the instance only from this run's create or Clerk's
     // list, never from a production id left in the profile by an instance
     // since deleted.
