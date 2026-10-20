@@ -413,8 +413,10 @@ export async function fetchHashConfig(
       signerKey: config.signerKey,
       // Firebase omits an empty separator.
       saltSeparator: config.saltSeparator ?? "",
-      rounds: Number(config.rounds ?? 8),
-      memoryCost: Number(config.memoryCost ?? 14),
+      // No default for a missing cost: a guess that is wrong for this project
+      // imports every password, then fails each one at sign-in.
+      rounds: Number(config.rounds),
+      memoryCost: Number(config.memoryCost),
     };
     // Every digest the import builds carries these, so a set Clerk would
     // refuse is left out rather than written: the import then asks for them.
