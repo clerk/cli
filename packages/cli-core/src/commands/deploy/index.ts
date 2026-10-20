@@ -361,7 +361,6 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
     // Nothing to resume or to check --domain against, so this run can't
     // report success.
     if (!refreshed.productionInstanceId) throw unreturnedInstanceError();
-    await persistProductionInstance(ctx, refreshed.productionInstanceId);
     await reconcileExistingDeploy(ctx, refreshed.productionInstanceId, options);
     return;
   }
@@ -446,6 +445,8 @@ async function reconcileExistingDeploy(
   productionInstanceId: string,
   options: DeployOptions,
 ): Promise<void> {
+  // Everything below reads the instance through `ctx`.
+  ctx.productionInstanceId = productionInstanceId;
   await rememberProductionInstance(ctx, productionInstanceId);
 
   const snapshot = await resolveLiveDeploySnapshot(ctx);
