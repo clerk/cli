@@ -756,6 +756,33 @@ describe("deploy", () => {
       expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
     });
 
+    // The profile holds the id the create returned while the application's
+    // instance list may still omit it. Reading only the list would report
+    // `not_started` and send the agent to create again.
+    test.each([
+      ["clerk deploy status", () => deployStatus()],
+      ["clerk deploy", () => runDeploy({})],
+    ])("%s after a create reports the saved instance while the list lags", async (_name, run) => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+      await runDeploy({ domain: "example.com" });
+      captured.clear();
+
+      const exitCodeBefore = process.exitCode;
+      try {
+        await run();
+      } finally {
+        process.exitCode = exitCodeBefore ?? EXIT_CODE.SUCCESS;
+      }
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.state).toBe("domain_pending");
+      expect(payload.productionInstanceId).toBe("ins_prod_mock");
+    });
+
     // A case or trailing-dot difference in how Clerk spells the domain is
     // still the domain this run asked for.
     test.each(["example.com.", "Example.COM."])(
