@@ -49,7 +49,7 @@ export interface FrameworkInfo {
    * False when the framework's Clerk SDK never reads the generic
    * `CLERK_PUBLISHABLE_KEY`, only `envVar`. A generic key in such a folder
    * isn't one the app loads. Omitted (true) where the SDK falls back to it, or
-   * where that isn't verified yet (Nuxt, Vue).
+   * where that isn't verified.
    */
   readsGenericPublishableKey?: boolean;
 }
@@ -124,6 +124,9 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envFile: ".env",
     supportsKeyless: true,
     envLoadOrder: NUXT_LOAD_ORDER,
+    // clerk/javascript at e12d970e3a: packages/nuxt/src/module.ts reads the key
+    // only from Nuxt's runtime config, which this name fills.
+    readsGenericPublishableKey: false,
   },
   {
     dep: "@tanstack/react-start",
@@ -150,6 +153,9 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
     envLoadOrder: VITE_LOAD_ORDER,
+    // clerk/javascript at e12d970e3a: packages/vue/src reads no env var; the
+    // app passes this name's value to the plugin itself.
+    readsGenericPublishableKey: false,
   },
   {
     dep: "expo",

@@ -211,15 +211,17 @@ describe("the key the app loads, by framework", () => {
 
   test("Nuxt loads only .env, so a key in .env.local isn't the one it runs on", async () => {
     await useFramework("nuxt");
-    await write(".env", "CLERK_PUBLISHABLE_KEY=pk_test_env\n");
-    await write(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_local\n");
+    await write(".env", "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_env\n");
+    await write(".env.local", "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_local\n");
 
-    expect((await readFolderKeys(dir)).publishableKey).toEqual(located("pk_test_env", ".env"));
+    expect((await readFolderKeys(dir)).publishableKey).toEqual(
+      located("pk_test_env", ".env", "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY"),
+    );
   });
 
   test("Nuxt with a key only in .env.local loads no key", async () => {
     await useFramework("nuxt");
-    await write(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_local\n");
+    await write(".env.local", "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_local\n");
 
     expect((await readFolderKeys(dir)).publishableKey).toBeUndefined();
   });
@@ -261,36 +263,48 @@ describe("the key the app loads, by framework", () => {
     });
   });
 
-  // Next.js reads only `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and Astro only
-  // `PUBLIC_CLERK_PUBLISHABLE_KEY` (Clerk's SDK source), so the generic name
-  // in the shell or a file isn't a key those apps load.
-  test.each([
-    { framework: "Next.js", dep: "next", own: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" },
-    { framework: "Astro", dep: "astro", own: "PUBLIC_CLERK_PUBLISHABLE_KEY" },
-  ])(
+  // Next.js reads only `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, Astro only
+  // `PUBLIC_CLERK_PUBLISHABLE_KEY`, Nuxt only its runtime config's
+  // `NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, and Vue no env var at all (the app
+  // passes Vite's name itself), per Clerk's SDK source. So the generic name in
+  // the shell or a file isn't a key those apps load. Each in a file its
+  // framework loads: Nuxt loads only `.env`.
+  const OWN_NAME_ONLY = [
+    {
+      framework: "Next.js",
+      dep: "next",
+      own: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+      file: ".env.local",
+    },
+    { framework: "Astro", dep: "astro", own: "PUBLIC_CLERK_PUBLISHABLE_KEY", file: ".env.local" },
+    { framework: "Nuxt", dep: "nuxt", own: "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY", file: ".env" },
+    { framework: "Vue", dep: "vue", own: "VITE_CLERK_PUBLISHABLE_KEY", file: ".env.local" },
+  ];
+
+  test.each(OWN_NAME_ONLY)(
     "$framework: its own name in a file wins over an exported generic key",
-    async ({ dep, own }) => {
+    async ({ dep, own, file }) => {
       await useFramework(dep);
       process.env.CLERK_PUBLISHABLE_KEY = "pk_test_exported_generic";
-      await write(".env.local", `${own}=pk_test_own_name\n`);
+      await write(file, `${own}=pk_test_own_name\n`);
 
       expect((await readFolderKeys(dir)).publishableKey).toEqual({
         value: "pk_test_own_name",
         name: own,
-        source: ".env.local",
+        source: file,
       });
     },
   );
 
-  test.each([
-    { framework: "Next.js", dep: "next" },
-    { framework: "Astro", dep: "astro" },
-  ])("$framework: a generic key alone isn't a key the app loads", async ({ dep }) => {
-    await useFramework(dep);
-    await write(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_generic_only\n");
+  test.each(OWN_NAME_ONLY)(
+    "$framework: a generic key alone isn't a key the app loads",
+    async ({ dep, file }) => {
+      await useFramework(dep);
+      await write(file, "CLERK_PUBLISHABLE_KEY=pk_test_generic_only\n");
 
-    expect((await readFolderKeys(dir)).publishableKey).toBeUndefined();
-  });
+      expect((await readFolderKeys(dir)).publishableKey).toBeUndefined();
+    },
+  );
 
   // The React SDKs read `VITE_CLERK_PUBLISHABLE_KEY`, then the generic name.
   test("React: its own name in a file wins over an exported generic key", async () => {

@@ -364,7 +364,7 @@ export async function readFolderKeys(cwd: string): Promise<FolderKeys> {
       cwd,
       "publishable",
       // Only the names the framework's SDK reads: a generic key isn't one a
-      // Next.js or Astro app loads.
+      // Next.js, Astro, Nuxt, or Vue app loads.
       framework?.readsGenericPublishableKey === false
         ? [framework.envVar]
         : [framework?.envVar ?? "CLERK_PUBLISHABLE_KEY", "CLERK_PUBLISHABLE_KEY"],
