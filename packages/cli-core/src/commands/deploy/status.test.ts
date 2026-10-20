@@ -953,7 +953,10 @@ describe("buildDeployStatusReport", () => {
         command: "clerk config patch --instance ins_prod --file <file> --yes",
       },
     ]);
-    expect(report.nextAction).toContain("For each entry in `oauth.setup`");
+    // Apple's private key is the only entry, so it goes to the wizard, never
+    // through a file the agent writes.
+    expect(report.nextAction).toContain("Apple's entry in `oauth.setup`");
+    expect(report.nextAction).not.toContain("For each entry in `oauth.setup`");
   });
 
   // A client secret pasted into chat ends up in the agent's transcript, so the
@@ -1056,6 +1059,21 @@ describe("buildDeployStatusReport", () => {
         "Apple's entry takes a file's contents (a private key), which is easy to break when pasted " +
           "into JSON. Save the other `oauth.setup` entries first, then send the user to " +
           "`clerk deploy` in a terminal for Apple: the wizard reads the key from its file.",
+      );
+      expect(report.nextAction).toContain("For each entry in `oauth.setup` other than Apple's:");
+    });
+
+    // The private key would go through the file the agent writes, and there
+    // are no other entries to save first.
+    test("an only entry holding a file's contents never goes through a file", () => {
+      const report = oauthPendingReport([descriptor("apple", "Apple", true)]);
+
+      expect(report.nextAction).toBe(
+        "Domain verified, but these OAuth providers are missing production credentials: apple. " +
+          "Apple's entry in `oauth.setup` takes a file's contents (a private key), which is easy to " +
+          "break when pasted into JSON, so don't write it to a file. Send the user to `clerk deploy` " +
+          "in a terminal for Apple: the wizard reads the key from its file. " +
+          "Then run `clerk deploy status`.",
       );
     });
   });

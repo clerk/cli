@@ -185,6 +185,8 @@ export type DeployNextStep =
       nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
       /** Labels of `oauth.setup` entries with a field that takes a file's contents. */
       setupFromFile?: readonly string[];
+      /** How many entries `oauth.setup` has, those included. */
+      setupCount?: number;
     }
   | {
       kind: "records_available" | "records_unavailable" | "ssl_pending" | "finalizing";
@@ -738,6 +740,7 @@ export function deployNextStep(report: DeployStatusFacts): DeployNextStep {
         setupFromFile: report.oauth.setup
           .filter((entry) => entry.fields.some((field) => field.fileContents))
           .map((entry) => entry.label),
+        setupCount: report.oauth.setup.length,
       };
     case "domain_pending": {
       // DNS and email DNS are records someone has to add at the registrar;
@@ -781,28 +784,41 @@ export function agentNextAction(step: DeployNextStep): string {
   // by a shell command (some agent tools echo files they wrote back to the
   // agent), and is removed whether or not the command succeeds. The wrapper
   // keeps the command's status: `<command>; rm -f` would report the rm's.
-  const oauthSetupSteps =
-    "For each entry in `oauth.setup`: have the user create the provider's OAuth app with its " +
-    "`redirectUri` and `authorizedOrigins`. Create a file for the entry outside the project with " +
-    "`mktemp` (it prints the path, and only your user can read the file), and write the entry's " +
-    "`payload` into it with a shell command rather than a file tool, as it is, placeholders " +
-    "included: `printf '%s' '<payload>' > <path>`. Ask the user to replace each `<placeholder>` " +
-    "with the real value; don't ask for the values or read the file. Then run " +
-    '`( rc=0; <command> || rc=$?; rm -f "<path>"; exit "$rc" )`, with the entry\'s `command` as ' +
-    "`<command>` and that path as its `<file>`: it keeps the command's exit status and removes the " +
-    "file whether or not the command succeeds.";
   // A private key pasted into JSON needs its newlines escaped, and a mistake
-  // only shows when someone signs in. The wizard reads the file by path, and
-  // skips providers already saved, so the others go first.
-  const setupFromFile = (labels: readonly string[] = []): string => {
-    if (labels.length === 0) return "";
-    const names = labels.join(", ");
+  // only shows when someone signs in, so an entry that takes a file's
+  // contents never goes through that file: the wizard reads the key by path,
+  // and skips providers already saved, so the others go first.
+  const oauthSetupSteps = (fromFile: readonly string[], entryCount: number): string => {
+    const names = fromFile.join(", ");
+    const fileSteps =
+      `For each entry in \`oauth.setup\`${fromFile.length > 0 ? ` other than ${names}'s` : ""}: ` +
+      "have the user create the provider's OAuth app with its `redirectUri` and " +
+      "`authorizedOrigins`. Create a file for the entry outside the project with `mktemp` (it " +
+      "prints the path, and only your user can read the file), and write the entry's `payload` " +
+      "into it with a shell command rather than a file tool, as it is, placeholders included: " +
+      "`printf '%s' '<payload>' > <path>`. Ask the user to replace each `<placeholder>` with the " +
+      "real value; don't ask for the values or read the file. Then run " +
+      '`( rc=0; <command> || rc=$?; rm -f "<path>"; exit "$rc" )`, with the entry\'s `command` as ' +
+      "`<command>` and that path as its `<file>`: it keeps the command's exit status and removes " +
+      "the file whether or not the command succeeds.";
+    if (fromFile.length === 0) return fileSteps;
+    const wizard = `\`clerk deploy\` in a terminal for ${names}: the wizard reads the key from its file.`;
+    if (entryCount > fromFile.length) {
+      const subject =
+        fromFile.length === 1 ? `${names}'s entry takes` : `The entries for ${names} take`;
+      return (
+        `${fileSteps} ${subject} a file's contents (a private key), which is easy to break when ` +
+        `pasted into JSON. Save the other \`oauth.setup\` entries first, then send the user to ${wizard}`
+      );
+    }
     const subject =
-      labels.length === 1 ? `${names}'s entry takes` : `The entries for ${names} take`;
+      fromFile.length === 1
+        ? `${names}'s entry in \`oauth.setup\` takes`
+        : `The entries for ${names} in \`oauth.setup\` take`;
     return (
-      ` ${subject} a file's contents (a private key), which is easy to break when pasted into JSON. ` +
-      `Save the other \`oauth.setup\` entries first, then send the user to \`clerk deploy\` in a ` +
-      `terminal for ${names}: the wizard reads the key from its file.`
+      `${subject} a file's contents (a private key), which is easy to break when pasted into ` +
+      `JSON, so don't write ${fromFile.length === 1 ? "it" : "them"} to a file. ` +
+      `Send the user to ${wizard}`
     );
   };
   // Only a Bundle ID reads as native-only (production first, development as
@@ -898,7 +914,8 @@ export function agentNextAction(step: DeployNextStep): string {
           : "")
       );
     }
-    case "oauth_pending":
+    case "oauth_pending": {
+      const fromFile = step.setupFromFile ?? [];
       if (step.nativeAppleReadinessIssue) {
         const hostedPending = step.oauthPending.filter((provider) => provider !== "apple");
         // Apple has no `oauth.setup` entry here; the others still do. No
@@ -907,8 +924,7 @@ export function agentNextAction(step: DeployNextStep): string {
         const hostedAction =
           hostedPending.length > 0
             ? ` These OAuth providers are also missing production credentials: ${hostedPending.join(", ")}. ` +
-              oauthSetupSteps +
-              setupFromFile(step.setupFromFile)
+              oauthSetupSteps(fromFile, step.setupCount ?? hostedPending.length)
             : "";
         return (
           `Domain verified, but setup is incomplete.${nativeApple}` +
@@ -917,15 +933,22 @@ export function agentNextAction(step: DeployNextStep): string {
           unsupported(step.oauthUnsupported)
         );
       }
+      const entryCount = step.setupCount ?? step.oauthPending.length;
       // The domain is verified, so there is nothing to monitor on the Domains
-      // page.
+      // page. With every entry already sent to the wizard, offering it again
+      // would only repeat the sentence before.
+      const wizardAlternative =
+        entryCount > fromFile.length
+          ? "Or the user can run `clerk deploy` in a terminal to enter them interactively. "
+          : "";
       return (
         `Domain verified, but these OAuth providers are missing production credentials: ` +
-        `${step.oauthPending.join(", ")}. ${oauthSetupSteps}${setupFromFile(step.setupFromFile)} ` +
-        `Or the user can run \`clerk deploy\` in a terminal to enter them interactively. ` +
+        `${step.oauthPending.join(", ")}. ${oauthSetupSteps(fromFile, entryCount)} ` +
+        wizardAlternative +
         `Then run \`clerk deploy status\`.` +
         unsupported(step.oauthUnsupported)
       );
+    }
     case "records_available":
       return (
         `${step.records} records not found yet for ${step.domain}. ` +
