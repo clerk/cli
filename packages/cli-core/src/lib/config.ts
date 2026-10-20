@@ -4,12 +4,12 @@
  */
 
 import { dirname, join } from "node:path";
-import { mkdir } from "node:fs/promises";
+import { access, constants as fsConstants, mkdir } from "node:fs/promises";
 import { CONFIG_FILE } from "./constants.ts";
 import { getCurrentEnvName } from "./environment.ts";
 import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
 import { CliError, ERROR_CODE } from "./errors.ts";
-import { withHomeFsAccess } from "./host-execution.ts";
+import { probeDirectoryWrite, withHomeFsAccess } from "./host-execution.ts";
 import { log } from "./log.ts";
 import type { Application, ApplicationInstance } from "./plapi.ts";
 
@@ -230,16 +230,32 @@ export async function peekMachineUuid(): Promise<string | null> {
 }
 
 /**
- * Whether the config file can be written right now, by rewriting it with its
- * current contents. For a preview that must say whether a real run's writes
- * (machine id, notice flag) would succeed, without making them.
+ * Whether the config file could be written right now, for a preview that
+ * must say whether a real run's writes (machine id, notice flag) would
+ * succeed without making them. Two checks, because each catches what the
+ * other cannot:
+ *
+ * - A real write of a temporary file in the config directory
+ *   (`probeDirectoryWrite`): a sandbox can deny writes that the permission
+ *   bits allow, and only a write finds out.
+ * - Write permission on the config file itself when it exists: a read-only
+ *   file in a writable directory fails the real run's rewrite in place.
+ *
+ * The config file is never written: a rewrite would race a concurrent
+ * `clerk auth login` and would drop keys this version does not know.
  */
 export async function probeConfigWritable(): Promise<boolean> {
+  const path = getConfigFile();
+  const failure = await probeDirectoryWrite("CLI config directory", dirname(path));
+  if (failure) {
+    log.debug(`config: ${failure.path} could not be written: ${failure.error}`);
+    return false;
+  }
   try {
-    await writeConfig(await readConfig());
+    if (await Bun.file(path).exists()) await access(path, fsConstants.W_OK);
     return true;
   } catch (error) {
-    log.debug(`config: not writable: ${error}`);
+    log.debug(`config: ${path} is not writable: ${error}`);
     return false;
   }
 }

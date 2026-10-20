@@ -48,7 +48,12 @@ function getProbeTargets(): Array<{ label: string; dir: string }> {
   ];
 }
 
-async function probeDirectoryWrite(
+/**
+ * Write and remove a uniquely named temporary file in `dir`. A real write is
+ * the only reliable test: a sandbox can deny writes that the permission bits
+ * allow. Never touches any other file in the directory.
+ */
+export async function probeDirectoryWrite(
   label: string,
   dir: string,
 ): Promise<HostStateProbeFailure | null> {

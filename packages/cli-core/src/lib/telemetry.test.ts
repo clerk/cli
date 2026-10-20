@@ -9,6 +9,7 @@ import {
   declareSoftExitOutcome,
   finalizeAndSendTelemetry,
   getTelemetryStatus,
+  isTelemetryNoticeOwed,
   sendTelemetryEvent,
   setTelemetryPauseStep,
   setTelemetryDomainComponents,
@@ -934,5 +935,32 @@ describe("sendTelemetryEvent always reads the opt-out itself", () => {
     } finally {
       reads.mockRestore();
     }
+  });
+});
+
+// One rule for "the first-run notice is still owed", shared by the notice
+// itself and by `clerk feedback --dry-run`: CI never owes it, and a machine
+// that has shown it once never owes it again.
+describe("isTelemetryNoticeOwed", () => {
+  const originalCi = process.env.CI;
+  afterEach(() => {
+    if (originalCi === undefined) delete process.env.CI;
+    else process.env.CI = originalCi;
+  });
+
+  test("a fresh machine owes the notice", async () => {
+    delete process.env.CI;
+    expect(await isTelemetryNoticeOwed()).toBe(true);
+  });
+
+  test("a machine that has shown it does not", async () => {
+    delete process.env.CI;
+    await markTelemetryNoticeShown();
+    expect(await isTelemetryNoticeOwed()).toBe(false);
+  });
+
+  test("CI never owes it", async () => {
+    process.env.CI = "true";
+    expect(await isTelemetryNoticeOwed()).toBe(false);
   });
 });

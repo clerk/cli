@@ -16,8 +16,10 @@
  * the same best-effort stance as the update check's cache file: an unreadable
  * or missing file counts as empty, a failed write is logged at debug level
  * and nothing else. Two agents sending at once can each read the same count,
- * which the cap tolerates. Only an accepted send is recorded, so a refused or
- * failed one never uses up the allowance.
+ * which the cap tolerates. Every attempted POST is recorded, accepted or not:
+ * a send that timed out or was answered with an error may still have landed,
+ * and a retry loop against a slow endpoint must still meet the cap. A send
+ * refused before any POST (opt-out, cap, a config failure) is not recorded.
  */
 
 import { mkdir } from "node:fs/promises";
@@ -100,7 +102,7 @@ export function checkFeedbackRateLimit(
   return { allowed: true };
 }
 
-/** Append one accepted send, pruning anything outside the window. Best effort. */
+/** Append one attempted send, pruning anything outside the window. Best effort. */
 export async function recordFeedbackSend(send: FeedbackSend): Promise<void> {
   const path = sendsFile();
   try {

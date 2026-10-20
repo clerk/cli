@@ -28,6 +28,8 @@ alwaysApply: false
 
 Use this when `.choices()` would be too restrictive — e.g. `--instance` shows `dev`/`prod` but also accepts raw instance IDs.
 
+One exception lists fixed values here too: `clerk feedback --outcome` rejects anything outside its list, but in its handler rather than with `.choices()`, because Commander rejects a `.choices()` value with plain text and exit 1 before any hook runs, and agent mode needs the JSON usage-error envelope and exit 2.
+
 **3. Fully dynamic or user-specific values** (app IDs, file paths, live API data) — do nothing. The shell falls back to file completion or freeform input.
 
 ## Checklist

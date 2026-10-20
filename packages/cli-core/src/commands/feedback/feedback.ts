@@ -20,27 +20,36 @@
  * built once, so the preview a person confirms is the object that is sent.
  *
  * Telemetry must never affect the command: a config file that cannot be
- * written (no machine id yet, read-only directory) is a `send_failed`, not a
- * crash, matching how the per-run flush swallows the same failure.
+ * written or read (no machine id yet, read-only directory) is a
+ * `send_failed`, not a crash, matching how the per-run flush swallows the
+ * same failure. The report id is printed exactly when a POST was attempted,
+ * because it is the handle for a later removal and means nothing otherwise.
+ * Ctrl-C is the one exception: it follows the CLI's interrupt path (exit 130
+ * from the signal handler) and prints no result.
  */
 
 import {
   FEEDBACK_DAILY_LIMIT,
+  FEEDBACK_FIELD_MAX_LENGTH,
   FEEDBACK_SEND_TIMEOUT_MS,
   FEEDBACK_WINDOW_MS,
   GITHUB_ISSUES_URL,
 } from "../../lib/constants.ts";
-import { getTelemetryNoticeShown, probeConfigWritable } from "../../lib/config.ts";
+import { probeConfigWritable } from "../../lib/config.ts";
 import { throwUsageError, throwUserAbort } from "../../lib/errors.ts";
 import type { Example } from "../../lib/help.ts";
 import { select } from "../../lib/listage.ts";
 import { log } from "../../lib/log.ts";
 import { confirm, editor, text } from "../../lib/prompts.ts";
 import { redactAndCap } from "../../lib/redact.ts";
+import { isCancelled } from "../../lib/signals.ts";
 import {
+  asPostedTelemetryEvent,
   buildTelemetryEnvelope,
   getTelemetryStatus,
+  isTelemetryNoticeOwed,
   peekTelemetryEnvelope,
+  type PostedTelemetryEvent,
   sendTelemetryEvent,
   showTelemetryNoticeOnce,
   type TelemetryEnvelope,
@@ -80,6 +89,38 @@ const FIELD_CAPS = {
   error_text: 4000,
   suggestion: 2000,
 } as const;
+
+/**
+ * What the event attaches to a report besides its fields, one phrase per
+ * field, in the order the help text lists them: the telemetry envelope, and
+ * the CLI version every event carries (`sdkv`). Typed against the envelope so
+ * a new envelope field cannot ship without a phrase, and pinned against the
+ * command's README by a test so the two always name the same fields.
+ */
+export const ATTACHED_FIELDS: Readonly<Record<keyof TelemetryEnvelope | "sdkv", string>> = {
+  machine_uuid: "a random machine id",
+  sdkv: "CLI version",
+  install_method: "install method",
+  ai_agent: "detected AI agent",
+  terminal_program: "terminal",
+  mode: "mode",
+  os: "OS",
+  arch: "architecture",
+  ci: "CI flag",
+  in_tmux: "tmux and screen flags",
+  in_screen: "tmux and screen flags",
+  env: "environment name",
+  workspace_id: "workspace and app ids when a project is linked",
+  app_id: "workspace and app ids when a project is linked",
+};
+
+/** The phrases above, each once, for the help text and the README test. */
+export const ATTACHED_FIELD_PHRASES: readonly string[] = [
+  ...new Set(Object.values(ATTACHED_FIELDS)),
+];
+
+/** The ceiling as the help text and the usage error print it. */
+export const FIELD_MAX_LENGTH_TEXT = `${FEEDBACK_FIELD_MAX_LENGTH.toLocaleString("en-US")} characters`;
 
 /** The shape every `ERROR_CODE` value and API error code has. */
 const ERROR_CODE_PATTERN = /^[a-z0-9_]{1,64}$/;
@@ -142,11 +183,18 @@ export type FeedbackResult =
   | { sent: false; reason: SendFailureReason; fallback: string; report_id?: string };
 
 /** The agent-mode `--dry-run` output: the report, and whether a real run would send it now. */
+/** The feedback event as it is posted (and as the preview and `--dry-run` show it). */
+export type PostedFeedbackEvent = PostedTelemetryEvent<{
+  event: typeof FEEDBACK_EVENT;
+  payload: FeedbackPayload;
+}>;
+
+/** The agent-mode `--dry-run` output: the event a real run would post, and whether it would post it now. */
 export type DryRunResult = {
   dry_run: true;
   would_send: boolean;
   reason?: SendFailureReason;
-  report: FeedbackPayload;
+  event: PostedFeedbackEvent;
 };
 
 /** Why a send was refused, with the detail the human-mode message needs and the JSON omits. */
@@ -206,10 +254,16 @@ function defaultChild(node: CommandTree): CommandTree | undefined {
  * (`deploy` → `deploy run`). A bare group that runs nothing itself (`auth`)
  * never appears in usage events, so it is an error that names its
  * subcommands.
+ *
+ * `clerk help [command]` is Commander's own help command: it prints help and
+ * exits before any usage event starts, so no event carries a spelling for
+ * it. It is accepted as typed (`help users`), for any command that exists,
+ * groups included, because that is what the person ran.
  */
 export function resolveCommand(tree: CommandTree, input: string): CommandResolution {
   const words = input.trim().split(/\s+/).filter(Boolean);
   if (words[0] === "clerk") words.shift();
+  if (words[0] === "help") return resolveHelp(tree, words.slice(1));
   let node = tree;
   const parts: string[] = [];
   for (const word of words) {
@@ -246,6 +300,20 @@ export function resolveCommand(tree: CommandTree, input: string): CommandResolut
   return { path: parts.join(" ") };
 }
 
+/** `help` followed by the path of an existing command, walked by name only (no default child, no arguments). */
+function resolveHelp(tree: CommandTree, words: string[]): CommandResolution {
+  let node = tree;
+  const parts = ["help"];
+  for (const word of words) {
+    if (word.startsWith("-")) break;
+    const child = findChild(node, word);
+    if (!child) return { path: null, reason: "unknown" };
+    parts.push(child.name());
+    node = child;
+  }
+  return { path: parts.join(" ") };
+}
+
 function rootOf(tree: CommandTree): CommandTree {
   let node = tree;
   while (node.parent) node = node.parent;
@@ -261,6 +329,24 @@ function isOutcome(value: string): value is FeedbackOutcome {
   return (FEEDBACK_OUTCOMES as readonly string[]).includes(value);
 }
 
+/** The free-text options by flag name, for the ceiling check. */
+const TEXT_OPTIONS = (options: FeedbackOptions): Record<string, string | undefined> => ({
+  goal: options.goal,
+  attempted: options.attempted,
+  issue: options.issue,
+  "error-text": options.errorText,
+  suggestion: options.suggestion,
+});
+
+/** Prompt validation: required, and under the ceiling. */
+const nonEmptyUnderCeiling = (value: string | undefined): string | undefined => {
+  if (!value?.trim()) return "This field is required.";
+  if (value.length > FEEDBACK_FIELD_MAX_LENGTH) {
+    return `This is ${value.length.toLocaleString("en-US")} characters; the limit is ${FIELD_MAX_LENGTH_TEXT}.`;
+  }
+  return undefined;
+};
+
 /**
  * Step 1 in both modes: the shape of whatever was supplied. Presence of the
  * required fields is checked afterwards, differently per mode. Validated here
@@ -269,6 +355,17 @@ function isOutcome(value: string): value is FeedbackOutcome {
  * the JSON envelope, exit 2 and the examples.
  */
 function validateShape(options: FeedbackOptions, tree: CommandTree): ValidatedFields {
+  for (const [name, value] of Object.entries(TEXT_OPTIONS(options))) {
+    if (value !== undefined && value.length > FEEDBACK_FIELD_MAX_LENGTH) {
+      throwUsageError(
+        `--${name} is ${value.length.toLocaleString("en-US")} characters; the limit is ${FIELD_MAX_LENGTH_TEXT}. Shorten it to what describes the problem.`,
+        undefined,
+        undefined,
+        FEEDBACK_EXAMPLES,
+      );
+    }
+  }
+
   const outcome = trimmedOrUndefined(options.outcome);
   if (outcome !== undefined && !isOutcome(outcome)) {
     throwUsageError(
@@ -340,21 +437,18 @@ function requireFields(fields: ValidatedFields): CompleteFields {
   return fields as CompleteFields;
 }
 
-const nonEmpty = (value: string | undefined): string | undefined =>
-  value?.trim() ? undefined : "This field is required.";
-
 /** Human mode: ask for whatever was not passed as a flag. `--command` and `--error-code` are flags only. */
 async function promptMissingFields(fields: ValidatedFields): Promise<CompleteFields> {
   const goal =
     fields.goal ??
-    (await text({ message: "What were you trying to do?", validate: nonEmpty })).trim();
+    (await text({ message: "What were you trying to do?", validate: nonEmptyUnderCeiling })).trim();
   const attempted =
     fields.attempted ??
     (
       await editor({
         message: "What did you run, and what did you expect? (opens your editor)",
         postfix: ".md",
-        validate: nonEmpty,
+        validate: nonEmptyUnderCeiling,
       })
     ).trim();
   const outcome =
@@ -372,7 +466,7 @@ async function promptMissingFields(fields: ValidatedFields): Promise<CompleteFie
       await editor({
         message: "What went wrong or was confusing? (opens your editor)",
         postfix: ".md",
-        validate: nonEmpty,
+        validate: nonEmptyUnderCeiling,
       })
     ).trim();
   return { ...fields, goal, attempted, outcome, issue };
@@ -448,9 +542,9 @@ function refusalFor(status: TelemetryStatus): Refusal | null {
   return { reason: status.reason === "dev-build" ? "dev_build" : "telemetry_disabled" };
 }
 
-/** Opt-out, then the cap. Null when the report may go. */
+/** Opt-out, then the cap. Null when the report may go; `send_failed` when the config file cannot be read. */
 async function gate(fields: ValidatedFields): Promise<Refusal | null> {
-  const refused = refusalFor(await getTelemetryStatus());
+  const refused = await currentRefusal();
   if (refused) return refused;
   const recent = await readRecentFeedbackSends();
   const verdict = checkFeedbackRateLimit(recent, {
@@ -504,82 +598,167 @@ function printSent(reportId: string): void {
   log.success(`Sent. Thank you. Report id: ${reportId}`);
 }
 
-function printPayload(payload: FeedbackPayload): void {
-  log.data(JSON.stringify(payload, null, 2));
+/** The report as the event the CLI posts: `sdk`, `sdkv` (the CLI version), the event name and the payload. */
+function feedbackEvent(payload: FeedbackPayload): PostedFeedbackEvent {
+  return asPostedTelemetryEvent({ event: FEEDBACK_EVENT, payload });
+}
+
+function printEvent(payload: FeedbackPayload): void {
+  log.data(JSON.stringify(feedbackEvent(payload), null, 2));
+}
+
+/** What became of a send: sent, or refused, with whether a POST was attempted (which earns the report id). */
+type SendOutcome = { sent: true } | { sent: false; refusal: Refusal; posted: boolean };
+
+/**
+ * Connection failures where the request never left the machine: a refused
+ * connection, a host that does not resolve, no network. Bun reports both a
+ * refused connection and an unresolvable host as `ConnectionRefused`; the
+ * Node-style codes cover the same failures from other runtimes and proxies.
+ */
+const CONNECTION_NEVER_MADE = new Set([
+  "ConnectionRefused",
+  "FailedToOpenSocket",
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ENETUNREACH",
+  "ENETDOWN",
+  "EHOSTUNREACH",
+]);
+
+/**
+ * Whether a failed request may still have reached the server. Anything the
+ * CLI cannot place counts as yes, and so does a timeout: the CLI cannot tell a
+ * timeout before the connection from one after the request was sent.
+ */
+function mayHaveReachedServer(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return !(typeof code === "string" && CONNECTION_NEVER_MADE.has(code));
 }
 
 /**
- * POST the report exactly as built. The opt-out is read once more before the
- * first-run notice, so an opt-out that landed during the confirmation neither
- * posts nor consumes the notice; the shared sender checks again at the POST.
- * A rejected POST, a timeout, a network failure or a config write that fails
- * is `send_failed` with the id: a timed-out send can still have reached the
- * endpoint, and the id is what a later removal needs. Only an accepted send is
- * recorded against the cap.
+ * POST the report exactly as built and say what became of it; the caller
+ * prints the result. The opt-out is read once more before the first-run
+ * notice, so an opt-out that landed during the confirmation neither posts nor
+ * consumes the notice; the shared sender checks again at the POST.
+ *
+ * `posted` is true once the sender has passed its opt-out check and made the
+ * request, and it is what earns the report id: a rejected POST, a timeout or
+ * a network failure is `send_failed` with the id, since the id is what a
+ * later removal needs; a failure before the POST (the config could not be
+ * read, the notice could not be recorded) is `send_failed` without one.
+ *
+ * The cap counts a send whenever the request may have reached the server: any
+ * response, a timeout, or a failure the CLI cannot place. A connection that
+ * was never made sent nothing and is not counted. An interrupt is rethrown
+ * for the CLI's interrupt path.
  */
-async function send(payload: FeedbackPayload): Promise<void> {
-  const refused = refusalFor(await getTelemetryStatus());
-  if (refused) return printRefusal(refused);
-
-  // Immediately before the POST, so the notice never promises a report that
-  // an opt-out, the cap or a declined confirmation stopped. The run's own
-  // command event then sends too, which the changed last line discloses.
+async function send(payload: FeedbackPayload): Promise<SendOutcome> {
   try {
+    const refused = refusalFor(await getTelemetryStatus());
+    if (refused) return { sent: false, refusal: refused, posted: false };
+    // Immediately before the POST, so the notice never promises a report that
+    // an opt-out, the cap or a declined confirmation stopped. The run's own
+    // command event then sends too, which the changed last line discloses.
     await showTelemetryNoticeOnce(FEEDBACK_NOTICE_LAST_LINE);
   } catch (error) {
-    log.debug(`feedback: could not record the first-run notice: ${error}`);
-    // No POST was attempted, so no id: the id is promised only for a POST.
-    return printRefusal({ reason: "send_failed" });
+    log.debug(`feedback: could not prepare the send: ${error}`);
+    return { sent: false, refusal: { reason: "send_failed" }, posted: false };
   }
 
+  let posted = false;
+  let reached: boolean;
+  let outcome: "accepted" | "rejected" | "disabled";
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FEEDBACK_SEND_TIMEOUT_MS);
-  let outcome: "accepted" | "rejected" | "disabled";
   try {
     outcome = await sendTelemetryEvent(
       { event: FEEDBACK_EVENT, payload },
-      { signal: controller.signal },
+      {
+        signal: controller.signal,
+        onPost: () => {
+          posted = true;
+        },
+      },
     );
+    reached = outcome !== "disabled";
   } catch (error) {
+    if (isCancelled(error)) throw error;
     log.debug(`feedback: send failed: ${error}`);
     outcome = "rejected";
+    reached = posted && mayHaveReachedServer(error);
   } finally {
     clearTimeout(timer);
   }
 
-  if (outcome === "disabled") return printRefusal({ reason: "telemetry_disabled" });
-  if (outcome === "rejected") return printRefusal({ reason: "send_failed" }, payload.report_id);
-  await recordFeedbackSend({
-    sentAt: Date.now(),
-    command: payload.command,
-    errorCode: payload.error_code,
-  });
-  printSent(payload.report_id);
+  if (reached) {
+    await recordFeedbackSend({
+      sentAt: Date.now(),
+      command: payload.command,
+      errorCode: payload.error_code,
+    });
+  }
+  if (outcome === "disabled") {
+    return { sent: false, refusal: { reason: "telemetry_disabled" }, posted: false };
+  }
+  if (outcome === "rejected") return { sent: false, refusal: { reason: "send_failed" }, posted };
+  return { sent: true };
+}
+
+function printOutcome(outcome: SendOutcome, reportId: string): void {
+  if (outcome.sent) return printSent(reportId);
+  printRefusal(outcome.refusal, outcome.posted ? reportId : undefined);
+}
+
+/** The opt-out as of now; a config file that cannot be read is `send_failed`, never a crash. */
+async function currentRefusal(): Promise<Refusal | null> {
+  try {
+    return refusalFor(await getTelemetryStatus());
+  } catch (error) {
+    log.debug(`feedback: could not read the telemetry status: ${error}`);
+    return { reason: "send_failed" };
+  }
 }
 
 /**
- * `--dry-run`: the exact report, and whether a real run would send it now.
- * Runs before the gates on purpose (it is how someone sees what would be
- * sent) but reports what the gates would say. Creates a machine id only when
- * telemetry is on: an opted-out machine shows the id it already has, or null.
+ * What a dry run would report: the refusal a real run would meet now, and the
+ * envelope to show. Creates a machine id only when telemetry is on: an
+ * opted-out machine shows the id it already has, or null.
  */
-async function dryRun(fields: CompleteFields, reportId: string): Promise<void> {
+async function dryRunVerdict(
+  fields: CompleteFields,
+): Promise<{ refusal: Refusal | null; envelope: TelemetryEnvelopePreview }> {
   let refusal = await gate(fields);
   const telemetryOff = refusal?.reason === "telemetry_disabled" || refusal?.reason === "dev_build";
-  let envelope: TelemetryEnvelopePreview;
-  if (telemetryOff) {
-    envelope = await peekTelemetryEnvelope();
-  } else {
-    // `would_send` must be false in exactly the states where a real run
-    // reports `send_failed`: the machine id cannot be created, or the
-    // first-run notice is still owed and could not be recorded. The second
-    // is probed by rewriting the config file as it is, never by marking.
-    const built = await buildEnvelopeOrNull();
-    envelope = built ?? (await peekTelemetryEnvelope());
-    const noticeOwed = !process.env.CI && !(await getTelemetryNoticeShown());
-    const cannotWrite = built === null || (noticeOwed && !(await probeConfigWritable()));
-    if (cannotWrite) refusal ??= { reason: "send_failed" };
+  if (telemetryOff) return { refusal, envelope: await peekTelemetryEnvelope() };
+  // `would_send` must be false in exactly the states where a real run
+  // reports `send_failed`: the machine id cannot be created, or the
+  // first-run notice is still owed and could not be recorded. The second is
+  // a write probe next to the config file, never a write to it.
+  const built = await buildEnvelopeOrNull();
+  const envelope = built ?? (await peekTelemetryEnvelope());
+  const cannotWrite =
+    built === null || ((await isTelemetryNoticeOwed()) && !(await probeConfigWritable()));
+  if (cannotWrite) refusal ??= { reason: "send_failed" };
+  return { refusal, envelope };
+}
+
+/**
+ * `--dry-run`: the exact event, and whether a real run would send it now.
+ * Runs before the gates on purpose (it is how someone sees what would be
+ * sent) but reports what the gates would say. Whatever fails while deciding,
+ * it prints its own shape, with `send_failed`.
+ */
+async function dryRun(fields: CompleteFields, reportId: string): Promise<void> {
+  let verdict: { refusal: Refusal | null; envelope: TelemetryEnvelopePreview };
+  try {
+    verdict = await dryRunVerdict(fields);
+  } catch (error) {
+    log.debug(`feedback: dry run could not decide: ${error}`);
+    verdict = { refusal: { reason: "send_failed" }, envelope: await peekTelemetryEnvelope() };
   }
+  const { refusal, envelope } = verdict;
   const report = buildPayload(fields, envelope, reportId);
 
   if (isAgent()) {
@@ -587,13 +766,13 @@ async function dryRun(fields: CompleteFields, reportId: string): Promise<void> {
       dry_run: true,
       would_send: refusal === null,
       ...(refusal ? { reason: refusal.reason } : {}),
-      report,
+      event: feedbackEvent(report),
     };
     log.data(JSON.stringify(result));
     return;
   }
 
-  printPayload(report);
+  printEvent(report);
   log.info("Dry run: no report was sent. (The usual usage event for this command still applies.)");
   if (refusal) log.warn(`A real run would not send this report now: ${describeRefusal(refusal)}`);
   else log.info("A real run would send this report now.");
@@ -614,8 +793,11 @@ async function dryRun(fields: CompleteFields, reportId: string): Promise<void> {
  * envelope is built: an opt-out that landed while the editor was open is
  * honoured without a preview and without creating a machine id.
  *
- * A failed or refused send is exit 0 in both modes: telemetry never affects
- * the command, and a script wrapping this one gets the same guarantee.
+ * Only the telemetry steps (the gates, the envelope, the send) turn a failure
+ * into `send_failed`; each catches its own. A failing prompt or editor is the
+ * person's to see and surfaces as its own error. A failed or refused send is
+ * exit 0 in both modes: telemetry never affects the command, and a script
+ * wrapping this one gets the same guarantee.
  */
 export async function feedback(options: FeedbackOptions, tree: CommandTree): Promise<void> {
   const root = rootOf(tree);
@@ -630,7 +812,7 @@ export async function feedback(options: FeedbackOptions, tree: CommandTree): Pro
     if (refused) return printRefusal(refused);
     const envelope = await buildEnvelopeOrNull();
     if (!envelope) return printRefusal({ reason: "send_failed" });
-    return send(buildPayload(complete, envelope, reportId));
+    return printOutcome(await send(buildPayload(complete, envelope, reportId)), reportId);
   }
 
   if (options.dryRun) return dryRun(await promptMissingFields(fields), reportId);
@@ -639,14 +821,14 @@ export async function feedback(options: FeedbackOptions, tree: CommandTree): Pro
   if (refused) return printRefusal(refused);
 
   const complete = await promptMissingFields(fields);
-  const refusedAfterPrompts = refusalFor(await getTelemetryStatus());
+  const refusedAfterPrompts = await currentRefusal();
   if (refusedAfterPrompts) return printRefusal(refusedAfterPrompts);
 
   const envelope = await buildEnvelopeOrNull();
   if (!envelope) return printRefusal({ reason: "send_failed" });
   const payload = buildPayload(complete, envelope, reportId);
   log.info("This is exactly what will be sent:");
-  printPayload(payload);
+  printEvent(payload);
   log.info(
     `${payload.redactions} ${payload.redactions === 1 ? "replacement" : "replacements"} made for secrets, home paths or email addresses.`,
   );
@@ -654,5 +836,5 @@ export async function feedback(options: FeedbackOptions, tree: CommandTree): Pro
     const ok = await confirm({ message: "Send this report to Clerk?", default: true });
     if (!ok) throwUserAbort();
   }
-  return send(payload);
+  return printOutcome(await send(payload), reportId);
 }

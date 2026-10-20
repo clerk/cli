@@ -1,10 +1,17 @@
 import type { Program } from "../../cli-program.ts";
-import { feedback, FEEDBACK_EXAMPLES, FEEDBACK_OUTCOMES } from "./feedback.ts";
+import {
+  ATTACHED_FIELD_PHRASES,
+  feedback,
+  FEEDBACK_EXAMPLES,
+  FEEDBACK_OUTCOMES,
+  FIELD_MAX_LENGTH_TEXT,
+} from "./feedback.ts";
 
 /**
  * The long form of `clerk feedback --help`: when to use the command, what it
  * sends, and the rules. The one-liner lives in `.summary()` so `clerk --help`
- * and the README's help block carry it.
+ * and the README's help block carry it. The attached fields come from the
+ * same list the README is checked against.
  */
 const DESCRIPTION =
   "Send Clerk a report about a problem with this CLI.\n\n" +
@@ -12,12 +19,13 @@ const DESCRIPTION =
   "when an error was confusing or wrong, or when a capability you needed is missing.\n\n" +
   "The report is one event on the CLI's telemetry channel: your goal, what you " +
   "attempted, what went wrong, how it ended, and optionally the command, the error " +
-  "text, the error code and a suggestion, plus the usual telemetry envelope (random " +
-  "machine id, OS, CLI version, mode, and app id when linked). Every text field is " +
+  "text, the error code and a suggestion, plus the usual telemetry envelope: " +
+  `${ATTACHED_FIELD_PHRASES.join(", ")}. Every text field is ` +
   "scrubbed for common secret formats, home-directory paths and email addresses before " +
   "it leaves your machine, and --dry-run prints exactly what would be sent. Scrubbing " +
   "is pattern-based and can miss things, so never include secrets, API keys or personal " +
-  "data about end users. A telemetry opt-out " +
+  `data about end users. A text field longer than ${FIELD_MAX_LENGTH_TEXT} is refused ` +
+  "rather than cut. A telemetry opt-out " +
   "(`clerk telemetry disable`, CLERK_TELEMETRY_DISABLED or DO_NOT_TRACK) blocks the " +
   "send; file at https://github.com/clerk/cli/issues instead.";
 

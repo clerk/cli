@@ -180,24 +180,25 @@ describe("human mode", () => {
     expect(result.stderr).toContain("This is exactly what will be sent:");
     expect(result.stderr).toMatch(/Sent\. Thank you\. Report id: [0-9a-f-]{36}/);
     const preview = JSON.parse(result.stdout);
-    expect(preview.goal).toBe("pull the dev keys");
-    expect(preview.outcome).toBe("blocked");
+    expect(preview.sdk).toBe("clerk-cli");
+    expect(preview.payload.goal).toBe("pull the dev keys");
+    expect(preview.payload.outcome).toBe("blocked");
 
     const sent = events();
     expect(sent.map((e) => e.event)).toEqual(["CLI_FEEDBACK", "CLI_COMMAND_EXECUTED"]);
-    // "This is exactly what will be sent" is literal: the previewed object is the one posted.
-    expect(sent[0]!.payload).toEqual(preview);
+    // "This is exactly what will be sent" is literal: the previewed object is the event posted.
+    expect(sent[0]).toEqual(preview);
   });
 
   test("--yes skips only the confirmation; the preview still prints and is what is sent", async () => {
     await readyToSend();
     const result = await clerk("feedback", ...COMPLETE, "--yes");
     const preview = JSON.parse(result.stdout);
-    expect(preview.goal).toBe("pull the dev keys");
+    expect(preview.payload.goal).toBe("pull the dev keys");
     expect(result.stderr).toContain("Sent. Thank you.");
     const sent = events();
     expect(sent.map((e) => e.event)).toEqual(["CLI_FEEDBACK", "CLI_COMMAND_EXECUTED"]);
-    expect(sent[0]!.payload).toEqual(preview);
+    expect(sent[0]).toEqual(preview);
   });
 
   test("declining the confirmation sends no feedback event and exits 0", async () => {
@@ -210,14 +211,15 @@ describe("human mode", () => {
     expect(events()[0]!.payload.outcome).toBe("abort");
   });
 
-  test("--dry-run prompts for missing fields, prints the payload, and sends no feedback event", async () => {
+  test("--dry-run prompts for missing fields, prints the full event, and sends no feedback event", async () => {
     await readyToSend();
     mockPrompts.input("g");
     mockPrompts.editor("a");
     mockPrompts.select("worked_around");
     mockPrompts.editor("i");
     const result = await clerk("feedback", "--dry-run");
-    const payload = JSON.parse(result.stdout);
+    const { sdk, payload } = JSON.parse(result.stdout);
+    expect(sdk).toBe("clerk-cli");
     expect(payload.report_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(payload.outcome).toBe("worked_around");
     expect(result.stderr).toContain("Dry run: no report was sent.");
@@ -281,7 +283,7 @@ describe("first run", () => {
     const result = await clerk("--mode", "agent", "feedback", ...COMPLETE, "--dry-run");
     const out = JSON.parse(result.stdout);
     expect(out.would_send).toBe(true);
-    expect(out.report.report_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(out.event.payload.report_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(result.stderr).toContain("Nothing has been sent during this run");
     expect(result.stderr).not.toContain("This run sends the feedback report");
     expect(http.requests).toHaveLength(0);
@@ -304,5 +306,30 @@ describe("help", () => {
     expect(help).toContain(
       "Scrubbing is pattern-based and can miss things, so never include secrets",
     );
+  });
+
+  // The help text and the command's README name the same attached fields: a
+  // reader of either learns everything the envelope carries.
+  test.each([
+    ["a random machine id"],
+    ["CLI version"],
+    ["install method"],
+    ["detected AI agent"],
+    ["terminal"],
+    ["mode"],
+    ["OS"],
+    ["architecture"],
+    ["CI flag"],
+    ["tmux and screen flags"],
+    ["environment name"],
+    ["workspace and app ids when a project is linked"],
+  ])("`clerk feedback --help` names the attached field: %s", async (phrase) => {
+    const result = await clerk.raw("feedback", "--help");
+    expect(result.stdout.replace(/\s+/g, " ")).toContain(phrase);
+  });
+
+  test("`clerk feedback --help` states the per-field input ceiling", async () => {
+    const result = await clerk.raw("feedback", "--help");
+    expect(result.stdout.replace(/\s+/g, " ")).toContain("1,000,000 characters");
   });
 });

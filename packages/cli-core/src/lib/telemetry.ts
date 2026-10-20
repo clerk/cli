@@ -16,6 +16,7 @@ import { DEFAULT_TELEMETRY_ENDPOINT, TELEMETRY_TIMEOUT_MS } from "./constants.ts
 import {
   ensureMachineUuid,
   getTelemetryDisabled,
+  getTelemetryNoticeShown,
   markTelemetryNoticeShown,
   peekMachineUuid,
   resolveProfile,
@@ -494,9 +495,14 @@ export async function buildTelemetryEnvelope(): Promise<TelemetryEnvelope> {
   return envelopeWith(await ensureMachineUuid());
 }
 
-/** The envelope with the machine id this machine already has, or null; never creates one. */
+/**
+ * The envelope with the machine id this machine already has; never creates
+ * one. The id is null when the machine has none, or when the config file
+ * cannot be read: this is for a preview, which must always be able to show
+ * something.
+ */
 export async function peekTelemetryEnvelope(): Promise<TelemetryEnvelopePreview> {
-  return envelopeWith(await peekMachineUuid());
+  return envelopeWith(await peekMachineUuid().catch(() => null));
 }
 
 async function envelopeWith<Id extends string | null>(
@@ -524,6 +530,19 @@ export type TelemetryEvent = {
   event: string;
   payload: Record<string, unknown>;
 };
+
+/** An event as it is posted: wrapped with the sender name and the CLI version. */
+export type PostedTelemetryEvent<E extends TelemetryEvent = TelemetryEvent> = {
+  sdk: "clerk-cli";
+  sdkv: string;
+} & E;
+
+/** Wrap an event exactly as {@link sendTelemetryEvent} posts it, so a preview can show the same object. */
+export function asPostedTelemetryEvent<E extends TelemetryEvent>(
+  event: E,
+): PostedTelemetryEvent<E> {
+  return { sdk: "clerk-cli", sdkv: CURRENT_VERSION, ...event };
+}
 
 /**
  * `accepted`: the endpoint answered 2xx. `rejected`: it answered anything
@@ -556,9 +575,13 @@ export type SendOutcome = "accepted" | "rejected" | "disabled";
  */
 export async function sendTelemetryEvent(
   event: TelemetryEvent,
-  options: { signal: AbortSignal; ignoreInterrupt?: boolean },
+  options: { signal: AbortSignal; ignoreInterrupt?: boolean; onPost?: () => void },
 ): Promise<SendOutcome> {
   if (!(await getTelemetryStatus()).enabled) return "disabled";
+  // Tells the caller the opt-out check passed and the request is being made,
+  // which a rejection alone cannot: `clerk feedback` prints the report id
+  // only when a POST was attempted.
+  options.onPost?.();
   return postTelemetryEvent(event, options);
 }
 
@@ -567,7 +590,7 @@ async function postTelemetryEvent(
   event: TelemetryEvent,
   options: { signal: AbortSignal; ignoreInterrupt?: boolean },
 ): Promise<"accepted" | "rejected"> {
-  const wrapped = { sdk: "clerk-cli", sdkv: CURRENT_VERSION, ...event };
+  const wrapped = asPostedTelemetryEvent(event);
   log.debug(`telemetry: event ${JSON.stringify(wrapped)}`);
 
   const url = process.env.CLERK_TELEMETRY_URL ?? DEFAULT_TELEMETRY_ENDPOINT;
@@ -586,6 +609,19 @@ async function postTelemetryEvent(
 const TELEMETRY_NOTICE_LAST_LINE = "Nothing has been sent during this run.";
 
 /**
+ * Whether this run still owes the one-time disclosure notice: never in CI
+ * (see {@link showTelemetryNoticeOnce}), and never once a machine has shown
+ * it. The one rule the notice and `clerk feedback --dry-run` both use, so a
+ * dry run predicts exactly what a real run would do. (`lib/fetch.ts` keeps
+ * its own copy for the User-Agent, because importing this module there would
+ * be a cycle.)
+ */
+export async function isTelemetryNoticeOwed(): Promise<boolean> {
+  if (process.env.CI) return false;
+  return !(await getTelemetryNoticeShown());
+}
+
+/**
  * One-time stderr disclosure for humans and agents alike. Returns true when
  * the notice was just shown — on the command-event path that run sends
  * nothing, so disclosure always precedes a machine's first event. CI is exempt
@@ -599,7 +635,7 @@ const TELEMETRY_NOTICE_LAST_LINE = "Nothing has been sent during this run.";
 export async function showTelemetryNoticeOnce(
   lastLine: string = TELEMETRY_NOTICE_LAST_LINE,
 ): Promise<boolean> {
-  if (process.env.CI) return false;
+  if (!(await isTelemetryNoticeOwed())) return false;
   if (!(await markTelemetryNoticeShown())) return false;
   log.blank();
   log.info(

@@ -69,3 +69,10 @@ export const GITHUB_ISSUES_URL = "https://github.com/clerk/cli/issues";
 export const FEEDBACK_SENDS_FILE_NAME = "feedback-sends.json";
 export const FEEDBACK_DAILY_LIMIT = 10;
 export const FEEDBACK_WINDOW_MS = 24 * 60 * 60 * 1000;
+/**
+ * Longest free-text field `clerk feedback` accepts, in characters. The
+ * scrubber reads a whole field before it is capped, so the field needs a
+ * ceiling; past it the text is refused rather than cut, because a cut before
+ * scrubbing could split a secret.
+ */
+export const FEEDBACK_FIELD_MAX_LENGTH = 1_000_000;

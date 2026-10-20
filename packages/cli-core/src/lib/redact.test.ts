@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import {
   EMAIL_MARKER,
   REDACTED,
-  REDACTION_MARGIN,
   redactAndCap,
   redactText,
   URL_PASSWORD_MAX_LENGTH,
@@ -23,6 +22,14 @@ const AWS_ACCESS_KEY_ID = ["AKIA", "ABCDEFGHIJKLMNOP"].join("");
 const GOOGLE_API_KEY = ["AIza", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"].join("");
 const STRIPE_WEBHOOK_SECRET = ["whsec_", "abcdefghijklmnopqrstuvwxyz"].join("");
 const JWT = ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0In0", "abcdefghijklmnop"].join(".");
+const OPENAI_KEY = ["sk-", "proj-", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdef"].join("");
+const ANTHROPIC_KEY = ["sk-", "ant-api03-", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdef"].join("");
+const PGP_BODY = "lQOYBGRpdmVyc2l0eXNlY3JldGJvZHk=";
+const PGP_KEY_BLOCK = [
+  ["-----BEGIN PGP", "PRIVATE KEY BLOCK-----"].join(" "),
+  PGP_BODY,
+  ["-----END PGP", "PRIVATE KEY BLOCK-----"].join(" "),
+].join("\n");
 
 // Values carry no `sk_`/`pk_` prefix wherever the *name* pattern is what is
 // under test: a value that matches the key pattern would pass on that alone
@@ -58,6 +65,9 @@ describe("secret shapes never reach the output", () => {
     ["Google client secret", "google GOCSPX-abcdefgh1234", "GOCSPX-abcdefgh1234"],
     ["Stripe webhook secret", `stripe ${STRIPE_WEBHOOK_SECRET}`, STRIPE_WEBHOOK_SECRET],
     ["JWT", `jwt ${JWT}`, JWT],
+    ["PGP private key block", `log:\n${PGP_KEY_BLOCK}\nmore`, PGP_BODY],
+    ["OpenAI project key", `error: invalid key ${OPENAI_KEY} (401)`, OPENAI_KEY],
+    ["Anthropic key", `error: invalid x-api-key ${ANTHROPIC_KEY}`, ANTHROPIC_KEY],
     ["bare api_key=value", "config api_key=plainvalue123", "plainvalue123"],
     ["bare token: value", 'config token: "plainvalue123"', "plainvalue123"],
     ["bare password in JSON", '{"password": "hunter2"}', "hunter2"],
@@ -148,16 +158,19 @@ describe("exact replacements", () => {
 // comma or brace. Mixing the rules up either sends part of a password or
 // wipes the rest of a one-line log.
 describe("shell assignments and JSON fields stop differently", () => {
-  // A name upstream also recognises (`password`, `auth`, `authorization`) ends
-  // as upstream's whole-pair replacement, because that pass runs after this
-  // one and takes `name=[REDACTED]` whole. The value is gone either way.
+  // The name always survives, whether or not it is one the MCP server's
+  // patterns also know: a reader learns which variable was pasted, never its value.
   test.each([
     ["DATABASE_PASSWORD=alpha,beta", `DATABASE_PASSWORD=${REDACTED}`],
-    ["PASSWORD=alpha;beta", REDACTED],
+    ["PASSWORD=alpha;beta", `PASSWORD=${REDACTED}`],
     ["DB_PASSWD=alpha;beta tail", `DB_PASSWD=${REDACTED} tail`],
-    ["auth=alpha,beta", REDACTED],
-    ["authorization=abc,def", REDACTED],
+    ["auth=alpha,beta", `auth=${REDACTED}`],
+    ["authorization=abc,def", `authorization=${REDACTED}`],
     ["X_AUTH=abc,def rest", `X_AUTH=${REDACTED} rest`],
+    ["export TOKEN=plain_value_1", `export TOKEN=${REDACTED}`],
+    // A shell word runs through a quoted part, spaces included.
+    ['MY_TOKEN="alpha beta" next', `MY_TOKEN=${REDACTED} next`],
+    ["token=abc[REDACTED]", `token=${REDACTED}`],
   ])("shell: %s → %s", (input, expected) => {
     expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
@@ -169,7 +182,8 @@ describe("shell assignments and JSON fields stop differently", () => {
     ],
     ['"max_tokens":4096,"model":"x"', `"max_tokens":${REDACTED},"model":"x"`],
     ['"githubToken": "x", "a": 1', `"githubToken": ${REDACTED}, "a": 1`],
-    ["{'password': 'pw', 'a': 1}", `{${REDACTED}, 'a': 1}`],
+    ["{'password': 'pw', 'a': 1}", `{'password': ${REDACTED}, 'a': 1}`],
+    ['{"api key": "pw", "a": 1}', `{"api key": ${REDACTED}, "a": 1}`],
   ])("JSON: %s → %s", (input, expected) => {
     expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
@@ -214,17 +228,13 @@ describe("the count is one per secret for the common shapes", () => {
       "DATABASE_URL_PASSWORD=postgres://u:pw@db.example.com/app",
       `DATABASE_URL_PASSWORD=${REDACTED}`,
     ],
-    // The scheme pass runs first and leaves `TOKEN="[REDACTED]` (upstream
-    // drops the closing quote); the named pass must see through the stray
-    // quote and not count it again, and upstream then takes the pair whole.
-    ['TOKEN="Bearer abcdefgh1234"', REDACTED],
-    // The same with a name upstream does not know keeps the name.
-    ['MY_TOKEN="Bearer abcdefgh1234"', `MY_TOKEN="${REDACTED}`],
-    // The scheme pass takes `Bearer x`, then the key-value pass takes the
-    // leftover `Authorization: [REDACTED]`. Same output as upstream, one count.
-    ["Authorization: Bearer abcdef1234567890xyz", REDACTED],
-    // A value that already contains the marker text is still new content.
-    ["token=abc[REDACTED]", REDACTED],
+    // The Bearer pass runs first and keeps the quotes around its marker; the
+    // name pass then sees a value that is already the marker and does not
+    // count it again.
+    ['TOKEN="Bearer abcdefgh1234"', `TOKEN="${REDACTED}"`],
+    ['MY_TOKEN="Bearer abcdefgh1234"', `MY_TOKEN="${REDACTED}"`],
+    // The header pass takes the whole value; the Bearer pass then finds nothing.
+    ["Authorization: Bearer abcdef1234567890xyz", `Authorization: ${REDACTED}`],
   ])("%s → %s", (input, expected) => {
     expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
@@ -238,10 +248,12 @@ describe("the count is one per secret for the common shapes", () => {
     expect(text).toEndWith(" next");
   });
 
-  test("an unterminated key block that swallows an earlier marker still counts itself", () => {
+  // The key-block pass runs first, so a credential inside the block is part
+  // of the one replacement, not a second one.
+  test("an unterminated key block takes everything after it and counts once", () => {
     expect(redact("-----BEGIN PRIVATE KEY-----\nMIIabc Bearer abcdefgh1234")).toEqual({
       text: REDACTED,
-      redactions: 2,
+      redactions: 1,
     });
   });
 });
@@ -251,26 +263,27 @@ describe("the count is one per secret for the common shapes", () => {
 // scheme word, leaving the credential for nothing else to catch.
 describe("Authorization headers", () => {
   test.each([
-    ["Authorization: Bearer abcdefghijkl", REDACTED],
-    ["Authorization: token abc123", REDACTED],
-    ["Authorization: ApiKey plain_value_666", REDACTED],
-    ["authorization=Bearer abcdefghijkl", REDACTED],
-    ['{"Authorization":"token abc","a":1}', `{${REDACTED},"a":1}`],
-    ["Authorization: Bearer abcdefghijkl\nnext line", `${REDACTED}\nnext line`],
+    ["Authorization: Bearer abcdefghijkl", `Authorization: ${REDACTED}`],
+    ["Authorization: token abc123", `Authorization: ${REDACTED}`],
+    ["Authorization: ApiKey plain_value_666", `Authorization: ${REDACTED}`],
+    ["authorization=Bearer abcdefghijkl", `authorization=${REDACTED}`],
+    ['{"Authorization":"token abc","a":1}', `{"Authorization":${REDACTED},"a":1}`],
+    ["Authorization: Bearer abcdefghijkl\nnext line", `Authorization: ${REDACTED}\nnext line`],
+    ['--authorization "token abc123def456" x', `--authorization ${REDACTED} x`],
   ])("%s → %s", (input, expected) => {
     expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
 });
 
-// A quoted value whose closing quote never arrives (a truncated log, or a
-// value the pre-cut split) must not fall back to the unquoted stop rule, which
-// would send everything after the first comma or space.
+// A quoted value whose closing quote never arrives (a truncated log) must not
+// fall back to the unquoted stop rule, which would send everything after the
+// first comma or space.
 describe("an unterminated quoted value runs to the end of its line", () => {
   test.each([
-    ['{"password":"alpha,beta', `{${REDACTED}`],
+    ['{"password":"alpha,beta', `{"password":${REDACTED}`],
     ['{"apiToken":"alpha,beta', `{"apiToken":${REDACTED}`],
-    ['{"api key":"alpha,beta', `{${REDACTED}`],
-    ['PASSWORD="alpha beta gamma', REDACTED],
+    ['{"api key":"alpha,beta', `{"api key":${REDACTED}`],
+    ['PASSWORD="alpha beta gamma', `PASSWORD=${REDACTED}`],
     ['DB_PASSWD="alpha beta gamma', `DB_PASSWD=${REDACTED}`],
     ["DB_PASSWD='alpha beta gamma", `DB_PASSWD=${REDACTED}`],
     ['DB_PASSWD="alpha beta\nNEXT=1', `DB_PASSWD=${REDACTED}\nNEXT=1`],
@@ -279,6 +292,128 @@ describe("an unterminated quoted value runs to the end of its line", () => {
     ['{"apiToken":"alpha\\" beta', `{"apiToken":${REDACTED}`],
   ])("%s → %s", (input, expected) => {
     expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+});
+
+// A quoted value ends on its own line. A closing quote is never looked for on
+// a later line: with two truncated values in a row, the second value's opening
+// quote would close the first, and the second value would survive.
+// The Bearer pass must leave the closing quote of the JSON string it was in,
+// or the next field's quotes pair up wrongly and its value survives.
+describe("adjacent JSON fields with secret names", () => {
+  test.each([
+    [
+      '{"password":"Bearer abcdefgh1234","api_key":"hunter2xyz"}',
+      `{"password":"${REDACTED}","api_key":${REDACTED}}`,
+    ],
+    [
+      '{"token":"Bearer abcdefgh1234","password":"hunter2xyz","a":1}',
+      `{"token":"${REDACTED}","password":${REDACTED},"a":1}`,
+    ],
+    ['{"password":"aaa","secret":"bbb"}', `{"password":${REDACTED},"secret":${REDACTED}}`],
+  ])("%s → %s", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 2 });
+  });
+});
+
+// A name may be two or three words when its last word is the secret noun
+// (`api key`, `secret access key`, `the password`). The name stays.
+describe("names with spaces", () => {
+  test.each([
+    ["api key: plainvalue123", `api key: ${REDACTED}`],
+    ["API KEY=plainvalue123", `API KEY=${REDACTED}`],
+    ["my api key: plainvalue123", `my api key: ${REDACTED}`],
+    ["secret key: plainvalue123", `secret key: ${REDACTED}`],
+    ["secret access key: plainvalue123", `secret access key: ${REDACTED}`],
+    ["client secret: plainvalue123", `client secret: ${REDACTED}`],
+  ])("%s → %s", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+
+  // The words before a separator only join the name when the last of them is
+  // a secret noun, so a value elsewhere on the line is not taken.
+  test.each([["invalid token for user_id=user_123"], ["token and limit=5"], ["primary key: id"]])(
+    "%s is left alone",
+    (input) => {
+      expect(redact(input)).toEqual({ text: input, redactions: 0 });
+    },
+  );
+});
+
+// YAML: the separator never crosses a line break, so a parent key cannot
+// take its child's name as its value. Under a parent whose name is
+// secret-looking, every line indented deeper than it is part of its value:
+// a child's name stays and its value goes.
+describe("YAML parents and block scalars", () => {
+  test.each([
+    ["auth:\n  password: hunter2", `auth:\n  password: ${REDACTED}`, 1],
+    ["tokens:\n  clerk: plainvalue123", `tokens:\n  clerk: ${REDACTED}`, 1],
+    ["secrets:\n  db_password: hunter2pass", `secrets:\n  db_password: ${REDACTED}`, 1],
+    [
+      "secrets:\n  db:\n    password: x\n  api: y\nnext: 1",
+      `secrets:\n  db:\n    password: ${REDACTED}\n  api: ${REDACTED}\nnext: 1`,
+      2,
+    ],
+    ["tokens:\n  - abc123\n  - def456", `tokens:\n  - ${REDACTED}\n  - ${REDACTED}`, 2],
+    // Block scalars: the indicator and every deeper line become one marker.
+    ["password: |\n  hunter2\nnext: 1", `password: ${REDACTED}\nnext: 1`, 1],
+    ["password: >-\n  hunter2\n  more\n\nnext: 1", `password: ${REDACTED}\n\nnext: 1`, 1],
+    [
+      "  private_key: |+\n    line1\n    line2\n  other: x",
+      `  private_key: ${REDACTED}\n  other: x`,
+      1,
+    ],
+    ["token: | # the token\n  abc", `token: ${REDACTED}`, 1],
+    ["- password: |\n    abc\n- next", `- password: ${REDACTED}\n- next`, 1],
+    ["api key: |\n  abc\nnext: 1", `api key: ${REDACTED}\nnext: 1`, 1],
+    // Windows line endings.
+    ["password: |\r\n  hunter2\r\nnext: 1", `password: ${REDACTED}\r\nnext: 1`, 1],
+  ])("%j → %j", (input, expected, count) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: count });
+  });
+
+  test.each([
+    // An empty value with nothing deeper after it is not a parent.
+    ["password:\nnext: 1"],
+    ["api_key=\nnext=1"],
+    // A heading in prose: its last word is not a secret noun.
+    ["Token refresh fails:\n  run clerk auth login"],
+    // Not deeper than the key: a sibling, not a child.
+    ["password:\n- item"],
+  ])("%j is left alone", (input) => {
+    expect(redact(input)).toEqual({ text: input, redactions: 0 });
+  });
+
+  // The key-block pass runs first; the block scalar around it is then
+  // already the marker and is not counted again.
+  test("a private key in a block scalar is counted once", () => {
+    expect(redact(`private_key: |\n  ${PRIVATE_KEY_BLOCK.replaceAll("\n", "\n  ")}`)).toEqual({
+      text: `private_key: ${REDACTED}`,
+      redactions: 1,
+    });
+  });
+});
+
+describe("a quoted value never continues past its line", () => {
+  test.each([
+    ['password="abc\npassword="def', `password=${REDACTED}\npassword=${REDACTED}`],
+    ['{"password":"abc\n{"password":"def', `{"password":${REDACTED}\n{"password":${REDACTED}`],
+    [
+      '{\\"password\\":\\"abc\n{\\"password\\":\\"def',
+      `{\\"password\\":${REDACTED}\n{\\"password\\":${REDACTED}`,
+    ],
+  ])("%s → %s", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 2 });
+  });
+
+  // Pinned limit: a quoted value that really does span lines keeps its later
+  // lines. Private key blocks, the one multi-line secret that is common, are
+  // taken whole by their own pass first.
+  test("the second line of a multi-line quoted value survives", () => {
+    expect(redact('DB_PASSWD="line one\nline two"')).toEqual({
+      text: `DB_PASSWD=${REDACTED}\nline two"`,
+      redactions: 1,
+    });
   });
 });
 
@@ -396,6 +531,13 @@ describe("ordinary prose is untouched", () => {
 
 // Accepted over- and under-matches, pinned so a later change to them is deliberate.
 describe("known limitations", () => {
+  test("every child of a YAML parent with a secret-looking name loses its value, secret or not", () => {
+    expect(redact("auth:\n  enabled: true\n  provider: github")).toEqual({
+      text: `auth:\n  enabled: ${REDACTED}\n  provider: ${REDACTED}`,
+      redactions: 2,
+    });
+  });
+
   test("a user segment in a URL without a password is taken as an email", () => {
     expect(redact("https://git@github.com/clerk/cli")).toEqual({
       text: `https://${EMAIL_MARKER}/clerk/cli`,
@@ -419,7 +561,7 @@ describe("known limitations", () => {
 
   test("prose naming the Authorization header loses the rest of its line", () => {
     expect(redact("set the Authorization: header first\nthen retry")).toEqual({
-      text: `set the ${REDACTED}\nthen retry`,
+      text: `set the Authorization: ${REDACTED}\nthen retry`,
       redactions: 1,
     });
   });
@@ -431,21 +573,24 @@ describe("known limitations", () => {
     });
   });
 
-  // The upstream key-value pass replaces the whole pair for the names it
-  // knows, so the variable name goes with the value. Not a leak.
-  test("a shell export of an upstream-known name loses the name too", () => {
-    expect(redact("export TOKEN=plain_value_1")).toEqual({
-      text: `export ${REDACTED}`,
-      redactions: 1,
-    });
+  // Two truncated quoted values on one line: the second's opening quote closes
+  // the first, and the second value survives. One truncated value per line is
+  // what a truncated log produces, and that case is covered above.
+  test("the second of two unterminated quoted values on one line survives", () => {
+    const { text } = redact('{"password":"abc {"password":"def');
+    expect(text).toBe(`{"password":${REDACTED}password":"def`);
   });
 });
 
-// Two patterns were quadratic in the size of a pasted blob (the named pass on
-// any long run of name characters, the URL pass on long dotted runs); each
-// took seconds at 100 to 200 KB. Fixed they take single-digit milliseconds, so
-// the bound below has two orders of magnitude of headroom for a busy runner
-// and still fails on a regression to quadratic.
+/**
+ * Every pass is linear by construction (see the module comment); these tests
+ * are the backstop. Each shape is one that made an earlier version of a pass
+ * rescan the text from every candidate position. A quadratic pass takes four
+ * times as long when the input doubles; a linear one about twice. The ratio
+ * is checked only when the smaller run took long enough to time (a run under
+ * a few milliseconds is noise), and the 1 MB run must also finish well under
+ * a second on a busy machine.
+ */
 describe("large pastes stay linear", () => {
   const NAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
   function blob(size: number): string {
@@ -453,23 +598,71 @@ describe("large pastes stay linear", () => {
     for (let i = 0; i < size; i++) out += NAME_CHARS[(i * 7919) % NAME_CHARS.length];
     return out;
   }
-  const urlHeavyJson =
+  const MB = 1_048_576;
+  const fill = (unit: string, size: number) => unit.repeat(Math.ceil(size / unit.length));
+  const urlHeavyJson = (size: number) =>
     "[" +
-    Array.from({ length: 4000 }, (_, i) => `{"u":"http://localhost:3000/p/${i}"}`).join(",") +
+    Array.from(
+      { length: Math.ceil(size / 36) },
+      (_, i) => `{"u":"http://localhost:3000/p/${i}"}`,
+    ).join(",") +
     "]";
 
-  test.each([
-    ["200 KB run of name characters", blob(200_000)],
-    ["100 KB dotted run", "a.".repeat(50_000)],
-    ["100 KB dashed run", "a-".repeat(50_000)],
-    ["one-line JSON holding 4,000 URLs", urlHeavyJson],
-    // A lazy BEGIN…END pattern with no END rescans to the end from every BEGIN.
-    ["24,000 BEGIN markers with no END", "-----BEGIN PRIVATE KEY-----\nMIIabc\n".repeat(24_000)],
-  ])("%s finishes well under a second", (_label, input) => {
-    const started = performance.now();
-    redact(input);
-    expect(performance.now() - started).toBeLessThan(1500);
-  });
+  const SHAPES: Array<[string, (size: number) => string]> = [
+    ["run of name characters with no secret word", blob],
+    ["run of a secret word with no separator", (n) => fill("token", n)],
+    ["run of a secret word followed by one separator", (n) => fill("token", n) + "=x"],
+    ["dotted run", (n) => fill("a.", n)],
+    ["dashed run", (n) => fill("a-", n)],
+    ["flag run with no value", (n) => fill("--token ", n)],
+    ["one long flag name", (n) => "--" + fill("token-", n)],
+    ["unterminated quoted value on every line", (n) => fill('password="abc,def\n', n)],
+    ["unterminated escaped quoted value on every line", (n) => fill('{\\"password\\":\\"abc\n', n)],
+    ["quoted names with no separator", (n) => fill('"password" ', n)],
+    ["one-line JSON holding URLs", urlHeavyJson],
+    ["scheme fragments in one token", (n) => fill("a://b:", n)],
+    ["BEGIN markers with no END", (n) => fill("-----BEGIN PRIVATE KEY-----\nMIIabc\n", n)],
+    ["BEGIN followed by a long header line", (n) => "-----BEGIN " + fill("x", n)],
+    [
+      "BEGIN header repeating PRIVATE KEY with no closing dashes",
+      (n) => "-----BEGIN " + fill("PRIVATE KEY ", n),
+    ],
+    [
+      "END header repeating PRIVATE KEY inside a block",
+      (n) => "-----BEGIN PRIVATE KEY-----\nabc\n-----END " + fill("PRIVATE KEY ", n),
+    ],
+    ["spaced name words with no separator", (n) => fill("my api ", n)],
+    ["secret-looking YAML parents on every line", (n) => fill("token:\n", n)],
+    ["one YAML parent followed by indented children", (n) => "secrets:\n" + fill("  a: b\n", n)],
+    ["one YAML block scalar with a long body", (n) => "password: |\n" + fill("  abc def\n", n)],
+    ["a line of spaces ending in a colon", (n) => "token" + fill(" ", n) + ":"],
+    ["home paths", (n) => fill("/Users/alice/x ", n)],
+    ["Authorization headers on one line", (n) => fill("Authorization: ", n)],
+    ["Bearer words", (n) => fill("Bearer ", n)],
+    ["email local part with no domain", (n) => fill("a.", n) + "@"],
+    ["email domain with no top-level domain", (n) => "a@" + fill("b.", n)],
+    ["minified JSON log", (n) => fill('{"level":"info","user":"bob","n":1},', n)],
+  ];
+
+  const timed = (input: string): number => {
+    let best = Infinity;
+    for (let i = 0; i < 3; i++) {
+      const started = performance.now();
+      redact(input);
+      best = Math.min(best, performance.now() - started);
+    }
+    return best;
+  };
+
+  test.each(SHAPES)(
+    "%s: 1 MB finishes well under a second, and doubling at most triples the time",
+    (_label, shape) => {
+      const half = timed(shape(MB / 2));
+      const full = timed(shape(MB));
+      expect(full).toBeLessThan(1000);
+      if (half >= 5) expect(full / half).toBeLessThan(3);
+    },
+  );
 });
 
 describe("redactAndCap", () => {
@@ -510,45 +703,39 @@ describe("redactAndCap", () => {
     expect(capped(`${padding} a@b.io tail`)).toEqual({ text: `${padding} `, redactions: 1 });
   });
 
-  // The pre-cut lands inside this quoted value; what is left is an
-  // unterminated quote, which runs to the end of its line and is taken whole.
-  test("a quoted value the pre-cut splits is still fully redacted", () => {
+  // Scrubbing sees the whole field, so a secret that starts inside the cap
+  // and runs far past it is matched whole, however long it is.
+  test("a quoted value that runs far past the cap is fully redacted", () => {
     const padding = "x".repeat(CAP - 21);
-    const input = `${padding} DB_PASSWD="${"s".repeat(REDACTION_MARGIN + 100)}`;
-    expect(input.length).toBeGreaterThan(CAP + REDACTION_MARGIN);
+    const input = `${padding} DB_PASSWD="${"s".repeat(10 * CAP)}`;
     expect(capped(input)).toEqual({ text: `${padding} DB_PASSWD=${REDACTED}`, redactions: 1 });
   });
 
-  // The pre-cut lands inside this key's body. The unterminated-block pass is
-  // what makes the first cut safe: it takes the block from BEGIN to the end.
-  test("a private key block that straddles the pre-cut boundary is still fully redacted", () => {
-    const body = "A".repeat(REDACTION_MARGIN + 2000);
+  test("a private key block that runs far past the cap is fully redacted", () => {
+    const body = "A".repeat(10 * CAP);
     const input = `${"x".repeat(CAP - 50)}-----BEGIN PRIVATE KEY-----\n${body}\n-----END PRIVATE KEY-----`;
-    expect(input.length).toBeGreaterThan(CAP + REDACTION_MARGIN);
     expect(capped(input)).toEqual({ text: `${"x".repeat(CAP - 50)}${REDACTED}`, redactions: 1 });
   });
 
-  // Documented property: text beyond the bound is never read, so a secret
-  // there is neither sent nor counted.
-  test("replacements beyond the bound are not counted", () => {
-    const { text, redactions } = capped("x".repeat(CAP + REDACTION_MARGIN) + " sk_test_abc123");
-    expect(redactions).toBe(0);
+  // The whole field is scrubbed before the cut, so a secret beyond the cap is
+  // counted even though the cut then removes it: the count describes the
+  // field as pasted.
+  test("a secret beyond the cap is counted, and the output is still cut at the cap", () => {
+    const { text, redactions } = capped("x".repeat(5 * CAP) + " sk_test_abc123");
+    expect(redactions).toBe(1);
     expect(text).toBe("x".repeat(CAP));
   });
 
-  // Earlier redactions can shrink the text by more than the margin, which
-  // slides whatever straddled the pre-cut boundary (a token cut in half, too
-  // short to match its pattern) inside the cap. Fixtures are built at runtime.
-  test("a token the pre-cut splits never reaches the output, even when earlier redactions pull it inside the cap", () => {
+  // A token that starts just inside the cap is matched whole because nothing
+  // is cut before scrubbing, whatever earlier redactions did to the length.
+  test("a token that straddles the cap never reaches the output, whatever earlier redactions shrank", () => {
     const key = ["sk_test_", "a".repeat(92)].join("");
     const token = ["ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"].join("");
     const keys = Array.from({ length: 100 }, () => key).join(" ");
-    const filler = "x".repeat(CAP + REDACTION_MARGIN - keys.length - 2 - 14);
+    // After the keys shrink to markers, the token starts 14 characters before the cap.
+    const scrubbedKeysLength = 100 * REDACTED.length + 99;
+    const filler = "x".repeat(CAP - 14 - scrubbedKeysLength - 2);
     const input = `${keys} ${filler} ${token} tail`;
-    // The boundary falls 14 characters into the token.
-    expect(input.slice(CAP + REDACTION_MARGIN - 14, CAP + REDACTION_MARGIN)).toBe(
-      token.slice(0, 14),
-    );
     const { text } = capped(input);
     expect(text).not.toContain("ghp_");
     expect(text).not.toContain("ABCDEFGHIJ");
@@ -563,11 +750,9 @@ describe("redactAndCap", () => {
     expect(text).toBe("x".repeat(CAP - 1));
   });
 
-  // The pre-cut lands inside a quoted value that contains an escaped quote;
-  // what is left must still run to the end of its line.
-  test("a quoted value with an escaped quote that the pre-cut splits is still fully redacted", () => {
+  test("a quoted value with an escaped quote that runs far past the cap is fully redacted", () => {
     const padding = "x".repeat(CAP - 21);
-    const input = `${padding} DB_PASSWD="al\\"pha${"s".repeat(REDACTION_MARGIN + 100)}" tail`;
+    const input = `${padding} DB_PASSWD="al\\"pha${"s".repeat(10 * CAP)}" tail`;
     expect(capped(input)).toEqual({ text: `${padding} DB_PASSWD=${REDACTED}`, redactions: 1 });
   });
 });
@@ -583,10 +768,12 @@ describe("flags with a secret-looking name", () => {
     ],
     ["--token c_Ab12Cd34Ef", `--token ${REDACTED}`],
     ["--api-key plain_value_999 next", `--api-key ${REDACTED} next`],
-    // `=` form with a name upstream also knows: the upstream key-value pass
-    // then takes `password=[REDACTED]` whole, as it does for any `password=`.
-    ["--db-password=plain_value_888 next", `--db-${REDACTED} next`],
+    ["--db-password=plain_value_888 next", `--db-password=${REDACTED} next`],
+    ["--secret-key=sk_test_abc123 next", `--secret-key=${REDACTED} next`],
     ["--db-encryption-key=plain_value_888 next", `--db-encryption-key=${REDACTED} next`],
+    // The value is a whole shell word, through any quoted part it contains.
+    ['--token MY_TOKEN="alpha beta" next', `--token ${REDACTED} next`],
+    ['--password "alpha beta"gamma next', `--password ${REDACTED} next`],
     ['--auth-token "quoted value" next', `--auth-token ${REDACTED} next`],
     ["--encryption-key plain_value_777", `--encryption-key ${REDACTED}`],
     // Any name containing TOKEN, as for assignments.
