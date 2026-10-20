@@ -1235,6 +1235,33 @@ describe("humanNextAction", () => {
     },
   );
 
+  // A bare `env pull` writes the production keys over the development ones in
+  // the local env file, which breaks localhost. `--print` writes no file.
+  test.each([
+    { productionInstanceId: "ins_prod", instance: "ins_prod" },
+    { productionInstanceId: null, instance: "prod" },
+  ])(
+    "complete has the person print the keys for the host (instance $instance)",
+    ({ productionInstanceId, instance }) => {
+      const line = humanNextAction({
+        kind: "complete",
+        domain: "example.com",
+        productionInstanceId,
+        oauthUnsupported: [],
+        instanceUrl: URL,
+      });
+      expect(line).toBe(
+        "Clerk's production setup for https://example.com is verified. If you haven't already, " +
+          `run \`clerk env pull --instance ${instance} --print\` and add the lines it prints to your ` +
+          "host's production environment variables, with the other Clerk variables from your env " +
+          "file (it writes no local file, so localhost keeps its development keys), then redeploy " +
+          "and sign up at https://example.com to confirm." +
+          ` Manage users, settings, and billing for this instance: ${URL}`,
+      );
+      expect(line).not.toContain("`clerk env pull --instance prod`");
+    },
+  );
+
   test("points a person at the wizard to resume, and at the Dashboard to watch", () => {
     const line = humanNextAction({
       kind: "records_available",
