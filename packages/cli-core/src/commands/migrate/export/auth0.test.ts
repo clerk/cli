@@ -508,6 +508,21 @@ describe("buildAuth0Export", () => {
 
     expect(lines.map((line) => line.status)).toEqual(["exported", "exported"]);
   });
+
+  // Import splits a plain `name`, so coverage counts it the same way, and
+  // drops the email Auth0 fills `name` with for database users.
+  test("counts the names import would split from `name`", () => {
+    const bare = { given_name: undefined, family_name: undefined };
+    const { coverage } = buildAuth0Export([
+      auth0User(0, { ...bare, name: "Ada Abbott" }),
+      auth0User(1, { ...bare, name: "Grace" }),
+      auth0User(2, { ...bare, name: "a2@x.dev" }),
+    ]);
+
+    const byLabel = Object.fromEntries(coverage.map((c) => [c.label, c.count]));
+    expect(byLabel["have a first name"]).toBe(2);
+    expect(byLabel["have a last name"]).toBe(1);
+  });
 });
 
 /** The envelope the one export run in this project wrote. */
