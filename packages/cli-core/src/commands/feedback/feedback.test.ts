@@ -445,6 +445,24 @@ describe("sending", () => {
     }
   });
 
+  // Ctrl-C while the request is out: it may have landed, so it counts, and
+  // the interrupt still goes to the CLI's interrupt path.
+  test("an interrupt during the POST is recorded against the cap before it is rethrown", async () => {
+    await readyToSend();
+    const report = { ...COMPLETE, command: "users list", errorCode: "boom" };
+    respondWith = () => {
+      beginInterrupt();
+      throw new DOMException("The operation was aborted.", "AbortError");
+    };
+    try {
+      await expect(feedback(report, program)).rejects.toThrow();
+    } finally {
+      _resetInterruptState();
+    }
+    respondWith = () => new Response("{}");
+    expect(await run(report)).toMatchObject({ sent: false, reason: "rate_limited" });
+  });
+
   // The cap counts a send whenever the request may have reached the server:
   // any response, a timeout, or a failure the CLI cannot place. A connection
   // that was never made (refused, unresolvable host, offline) sent nothing.

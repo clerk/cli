@@ -67,9 +67,11 @@ parent such as `secrets:`), and escaped JSON pasted inside a string) become
 `[REDACTED]`; home-directory paths become `~`; email addresses become `[EMAIL]`. The
 variable or flag name stays and only the value goes (`export TOKEN=abc` becomes
 `export TOKEN=[REDACTED]`), so a reader learns which setting was involved. An unquoted value is the rest of
-its line when the name starts the line or is followed by a colon (`DB_PASSWORD=a b c`
-loses all of `a b c`), and one word after an `=` in the middle of a line, as in a query
-string. Scrubbing is
+its line when the name starts the line, after indentation and an optional `#`, `*`, `-`,
+`+` or `1.` prefix (`DB_PASSWORD=a b c` loses all of `a b c`); in the middle of a line it
+is one word, and inside a quoted string it runs to the string's closing quote, so the rest
+of a one-line JSON object or log survives. An object or array under a secret-looking JSON
+key goes whole (`{"secrets":{...}}`). Scrubbing is
 pattern-based and can miss things, so never include secrets, API keys or personal data
 about end users. The scrubber is documented in `src/lib/redact.ts`, including its known
 limits (one to expect: a quoted value that spans several lines keeps its later lines).

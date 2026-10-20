@@ -35,6 +35,12 @@
  *   no further than those runs.
  * - The YAML pass is a forward walk over lines, not a pattern: each line is
  *   examined once as a possible parent and at most once as part of a block.
+ * - The JSON-object pass scans from an opening bracket to its match or the
+ *   end of the line and resumes its search there; the quoted-string pass
+ *   matches each string once (a quote with no partner on its line scans to
+ *   the end of the line once) and searches inside it once.
+ * - The line-start test reads back only over the blanks and prefix before a
+ *   position, and only where a secret name starts.
  * - No separator crosses a line break.
  *
  * The timing tests in `redact.test.ts` are the backstop for this rule: each
@@ -49,69 +55,83 @@
  * 2. YAML values on the lines below their key: a block scalar
  *    (`password: |` then indented lines) becomes one marker, and the
  *    children of a parent with a secret-looking name (`secrets:` then
- *    `  db_password: x`) keep their names and lose their values. After pass
+ *    `  db_password: x`) keep their names and lose their values. A compact
+ *    list (`tokens:` then `- x` at the same indentation) and pretty-printed
+ *    JSON (`"secrets": {` ending its line) count as children too. After pass
  *    1 so a key block inside a block scalar is one secret, not two; before
  *    every single-line pass, which would take only the indicator (`|`).
- * 3. `Authorization` headers: the whole value to the end of the line, or the
+ * 3. JSON objects and arrays under a secret-looking key, whole, to the
+ *    matching close bracket on the line (`{"secrets":{"a":"x","b":"y"}}`):
+ *    the inner keys need not look secret. Before the name pass, which would
+ *    take only the first inner value.
+ * 4. Assignments inside a quoted string (`"password: must be 8 chars"`,
+ *    `msg="auth: token expired"`): the value runs to the string's closing
+ *    quote and no further, so the rest of a one-line JSON object or log
+ *    survives. Before the header and name passes, which would otherwise read
+ *    past the quote.
+ * 5. `Authorization` headers: the whole value to the end of the line, or the
  *    quoted value when the header is a JSON field. Before the name pass,
  *    which would take only the first word of the value (`Bearer`).
- * 4. `Bearer` and `Basic` credentials in prose, with the upstream guards that
+ * 6. `Bearer` and `Basic` credentials in prose, with the upstream guards that
  *    keep ordinary words out. Before the name pass so `token: Bearer xyz`
  *    loses `xyz` rather than the word `Bearer`. Quotes that belong to the
  *    string around the credential stay, so the next JSON field still parses.
- * 5. Name and value, in one pass for the three shapes a pasted line takes:
+ * 7. Name and value, in one pass for the three shapes a pasted line takes:
  *    `--flag value` (or `--flag=value`), `NAME=value` and `"name": value`,
  *    where the name contains a secret-looking word (a bare name may be two or
  *    three words ending in a secret noun: `api key: x`). Only the value is
  *    replaced, so a reader still learns which variable or flag was pasted.
  *    A flag value is a shell word (through any quoted part, spaces included).
  *    An unquoted bare value is the rest of its line when the name starts the
- *    line (a dotenv or YAML line: `KEY=a b c` means `a b c`) or the
- *    separator is a colon (prose and headers); after an `=` in the middle of
- *    a line (logfmt, a query string) it is a shell word. Nothing tells a
- *    dotenv line from a shell command line, so a line-start assignment always
- *    takes the rest of the line, which over-redacts a command that follows an
+ *    line, after indentation and an optional comment or list prefix (`#`,
+ *    `*`, `-`, `+`, `1.`) and `export`: a dotenv or YAML line, where
+ *    `KEY=a b c` means `a b c`. In the middle of a line, after `:` or
+ *    `=`, it is one word that stops at a quote (logfmt, a query string,
+ *    prose), so the rest of the line survives. Nothing tells a dotenv line
+ *    from a shell command line, so a line-start assignment always takes the
+ *    rest of the line, which over-redacts a command that follows an
  *    environment assignment. A JSON field's unquoted value stops at `,`, `;`
- *    or `}` so the rest of a one-line log survives.
- * 6. Known key prefixes (`sk_test_`, `ghp_`, `AKIA`, …, plus the CLI's
+ *    or `}`; its object or array value was pass 3's.
+ * 8. Known key prefixes (`sk_test_`, `ghp_`, `AKIA`, …, plus the CLI's
  *    `ak_` Platform API keys and `sk-` keys). After the name pass so a value
  *    already replaced is not counted twice.
- * 7. Credentials in URLs (`scheme://user:password@host`): the credential
+ * 9. Credentials in URLs (`scheme://user:password@host`): the credential
  *    goes, scheme and host stay.
- * 8. Home directories: the current user's literal home first (the text may
- *    name another user's home, or the CLI may run under `sudo`), then the
+ * 10. Home directories: the current user's literal home first (the text may
+ *    name another user's home, or the CLI may run under `sudo`; it ends at
+ *    any character that cannot continue a user name), then the
  *    generic `/Users/<name>`, `/home/<name>` and `C:\Users\<name>` shapes,
  *    also after `file://` as stack traces print them.
- * 9. Email addresses, last, so an address inside a secret already replaced
+ * 11. Email addresses, last, so an address inside a secret already replaced
  *    is not counted twice.
  *
  * ## Relation to the MCP server's redactor
  *
- * Passes 4 and 6 are a port of the redactor in Clerk's MCP server, pattern
- * for pattern and in its order, so the two stay easy to compare (pass 4
+ * Passes 6 and 8 are a port of the redactor in Clerk's MCP server, pattern
+ * for pattern and in its order, so the two stay easy to compare (pass 6
  * differs in one way: it puts back a closing quote that belongs to the string
  * around the credential); secrets
  * become the same `[REDACTED]` marker so reports from both read the same. Two
  * of the upstream patterns are deliberately not carried:
  *
  * - Upstream's `Authorization: Bearer|Basic <token>` pattern is replaced by
- *   pass 3, which takes any scheme and any value.
+ *   pass 5, which takes any scheme and any value.
  * - Upstream's `name: value` pattern, which replaces the name together with
  *   the value for a fixed list of names (`api_key`, `token`, `password`, …),
- *   is replaced by pass 5. Pass 5 matches every name on that list, because
+ *   is replaced by pass 7. Pass 7 matches every name on that list, because
  *   each contains one of its words, and it keeps the name. The two also stop
  *   an unquoted value differently: upstream stops at a comma, which would
  *   send the rest of a `.env` password that contains one.
  *
  * ## Known limits, each pinned by a test so a later change is deliberate
  *
- * - A quoted value that spans lines keeps its later lines (pass 5 ends a
+ * - A quoted value that spans lines keeps its later lines (pass 7 ends a
  *   value on its line). Private key blocks are taken whole by pass 1, and
  *   YAML block scalars by pass 2.
  * - Two truncated quoted values on one line: the second's opening quote
  *   closes the first, and the second value survives.
  * - A URL password longer than {@link URL_PASSWORD_MAX_LENGTH} characters is
- *   outside pass 7; the email pass still removes it, but the username before
+ *   outside pass 9; the email pass still removes it, but the username before
  *   it survives.
  * - A home directory whose user name contains a space keeps the second word.
  * - Over-matches in the safe direction: any name containing `TOKEN`
@@ -122,9 +142,15 @@
  *   parent with a secret-looking name (`auth:` then `  enabled: true`), and
  *   a command after an environment assignment at the start of a line
  *   (`DB_PASSWORD=x npm start` loses `npm start`).
- * - An unquoted value after an `=` in the middle of a line keeps only its
- *   first word redacted (`… with password=correct horse` keeps `horse`):
- *   logfmt and query strings need the shell-word rule there.
+ * - An unquoted value after `:` or `=` in the middle of a line keeps only
+ *   its first word redacted (`I set my password: correct horse` keeps
+ *   `horse`): one-line JSON, logfmt and query strings need that rule there.
+ * - A JSON object or array under a secret-looking key whose content starts
+ *   on the key's line but continues on later lines keeps those later lines
+ *   (pass 3 stops at the end of the line). An object or array opened at the
+ *   very end of the key's line is pass 2's and goes line by line.
+ * - In escaped JSON (`{\"k\":…}`) pass 3 counts brackets inside strings too,
+ *   so a bracket inside a string value can end the object early.
  * - `redactions` counts replacements, one per secret for the common shapes;
  *   it is a "read this report carefully" signal, not a tally.
  */
@@ -163,7 +189,7 @@ export type Redaction = {
 const PRIVATE_KEY_BLOCK =
   /-----BEGIN [^\r\n-]{0,40}PRIVATE KEY[^\r\n-]{0,40}-----[\s\S]*?(?:-----END [^\r\n-]{0,40}PRIVATE KEY[^\r\n-]{0,40}-----|$)/gi;
 
-// ── Quoted values, shared by passes 3 and 5 ─────────────────────────────────
+// ── Quoted values, shared by passes 5 and 7 ─────────────────────────────────
 
 /** A closed quoted value on one line; an escaped quote inside it is part of it. */
 const QUOTED = String.raw`"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'`;
@@ -182,9 +208,11 @@ const ANY_QUOTED = `${ESCAPED_QUOTED}|${ESCAPED_OPEN_QUOTED}|${QUOTED}|${OPEN_QU
 /** A shell word: non-blank characters, through any quoted part they contain (`MY_TOKEN="alpha beta"`). */
 const SHELL_WORD = String.raw`(?:${ANY_QUOTED}|[^\s"'])+`;
 /** A JSON field's value: quoted, or a number or boolean that stops at `,`, `;` or `}`. */
-const JSON_VALUE = String.raw`(?:${ANY_QUOTED}|[^\s,;}]+)`;
+// Not an opening bracket: an object or array value is pass 3's, and one
+// that opens at the end of its line is pretty-printed JSON, pass 2's.
+const JSON_VALUE = String.raw`(?:${ANY_QUOTED}|(?![{[])[^\s,;}]+)`;
 
-// ── Pass 3: Authorization headers ───────────────────────────────────────────
+// ── Pass 5: Authorization headers ───────────────────────────────────────────
 
 /**
  * `Authorization: <anything to the end of the line>`, or a quoted value when
@@ -197,7 +225,7 @@ const AUTHORIZATION_HEADER = new RegExp(
   "gi",
 );
 
-// ── Pass 4: Bearer and Basic credentials (port of the MCP server's redactor) ─
+// ── Pass 6: Bearer and Basic credentials (port of the MCP server's redactor) ─
 
 /**
  * The MCP server's pattern, with the two optional quotes captured: a closing
@@ -229,7 +257,7 @@ function isCredential(scheme: string, value: string): boolean {
   return !basic || (/^[A-Za-z0-9+/]+=*$/.test(value) && /[\d+/=]/.test(value));
 }
 
-// ── Pass 5: name and value ──────────────────────────────────────────────────
+// ── Pass 7: name and value ──────────────────────────────────────────────────
 
 /**
  * A word that makes a name secret-looking wherever it appears in the name
@@ -248,8 +276,8 @@ const secretWord = (joiner: string): string =>
  * rule). The run must contain a secret-looking word, tested once by the
  * first lookahead. `chars` is the run's character class.
  */
-const secretName = (chars: string, joiner: string): string =>
-  String.raw`(?=${chars}*?${secretWord(joiner)})(?=(${chars}+))`;
+const secretName = (chars: string, joiner: string, group: string): string =>
+  String.raw`(?=${chars}*?${secretWord(joiner)})(?=(?<${group}>${chars}+))`;
 
 /** The last word of a name with spaces must be one of these for the words before it to join the name. */
 const SECRET_NOUN = "(?:key|token|secret|password|passwd|auth|authorization)";
@@ -264,12 +292,13 @@ const SECRET_NOUN = "(?:key|token|secret|password|passwd|auth|authorization)";
  * runs, so each run is read from at most three starting positions.
  */
 const BARE_NAME_CHARS = "[A-Za-z0-9_.-]";
-const BARE_SECRET_NAME =
+const bareSecretName = (group: string): string =>
   String.raw`(?=(?:${BARE_NAME_CHARS}+ ){0,2}?${BARE_NAME_CHARS}*?${secretWord("[_ -]")})` +
-  String.raw`(?=((?:${BARE_NAME_CHARS}+ ){1,2}${SECRET_NOUN}(?!${BARE_NAME_CHARS})|${BARE_NAME_CHARS}+))`;
+  String.raw`(?=(?<${group}>(?:${BARE_NAME_CHARS}+ ){1,2}${SECRET_NOUN}(?!${BARE_NAME_CHARS})|${BARE_NAME_CHARS}+))`;
 
 /**
- * The start of a line, after indentation, a YAML list dash or `export`. It
+ * The start of a line, after indentation, then optionally a comment or list
+ * prefix (`#`, `##`, `*`, `-`, `+`, `1.`, `2)`), then optionally `export`. It
  * reads back over the blanks before the current position, so it is placed
  * after the secret-name test and before the name is consumed: tested first,
  * it ran at every blank of a long
@@ -277,7 +306,7 @@ const BARE_SECRET_NAME =
  * quadratic. After the test it runs only where a secret name starts, and the
  * blanks before one name are read for that name alone.
  */
-const LINE_START = String.raw`(?<=(?:^|[\r\n])[ \t]*(?:- )?(?:export[ \t]+)?)`;
+const LINE_START = String.raw`(?<=(?:^|[\r\n])[ \t]*(?:(?:#+|[*+-]|\d{1,3}[.)])[ \t]*)?(?:export[ \t]+)?)`;
 
 /**
  * An unquoted value that is the rest of its line, starting at a non-blank (so
@@ -285,6 +314,15 @@ const LINE_START = String.raw`(?<=(?:^|[\r\n])[ \t]*(?:- )?(?:export[ \t]+)?)`;
  * ends at its quote.
  */
 const LINE_VALUE = String.raw`(?:(?=\\?["'])${SHELL_WORD}|[^\s][^\r\n]*)`;
+
+/**
+ * A value in the middle of a line: a quoted value, or one word. The word
+ * stops at a quote (other than an apostrophe inside it) and at an escaped
+ * quote, because in the middle of a line a quote usually closes the string
+ * the assignment sits in (`msg="auth: token expired"`), and the rest of
+ * the line must survive.
+ */
+const WORD_VALUE = String.raw`(?:(?=\\?["'])${SHELL_WORD}|(?:[^\s"'\\]|\\(?!["'])|'(?=[A-Za-z0-9]))+)`;
 
 /** Separator of an assignment or a field: never crosses a line break, so a YAML parent cannot take its child's name as its value. */
 const ASSIGN = String.raw`[ \t]*[:=][ \t]*`;
@@ -316,24 +354,37 @@ const ASSIGN = String.raw`[ \t]*[:=][ \t]*`;
  */
 const NAME_VALUE = new RegExp(
   String.raw`(?<![A-Za-z0-9_.-])(?:` +
-    String.raw`(?=--)${secretName("[A-Za-z0-9_-]", "[_-]")}\1(=|[ \t]+)(?!-)(${SHELL_WORD})` +
+    String.raw`(?=--)${secretName("[A-Za-z0-9_-]", "[_-]", "flag")}\k<flag>(?<flagSep>=|[ \t]+)(?!-)(?<flagValue>${SHELL_WORD})` +
     "|" +
-    String.raw`(\\?["'])${secretName("[A-Za-z0-9_. -]", "[_ -]")}\5\4(${ASSIGN})(${JSON_VALUE})` +
+    String.raw`(?<quote>\\?["'])${secretName("[A-Za-z0-9_. -]", "[_ -]", "jsonName")}\k<jsonName>\k<quote>(?<jsonSep>${ASSIGN})(?<jsonValue>${JSON_VALUE})` +
     "|" +
     // The name test runs once; only the separator and value branch.
-    String.raw`${BARE_SECRET_NAME}(?:` +
-    String.raw`${LINE_START}\8(${ASSIGN})(${LINE_VALUE})` +
+    String.raw`${bareSecretName("bare")}(?:` +
+    String.raw`${LINE_START}\k<bare>(?<lineSep>${ASSIGN})(?<lineValue>${LINE_VALUE})` +
     "|" +
-    String.raw`\8([ \t]*:[ \t]*)(${LINE_VALUE})` +
-    "|" +
-    String.raw`\8([ \t]*=[ \t]*)(${SHELL_WORD})` +
+    String.raw`\k<bare>(?<wordSep>${ASSIGN})(?<wordValue>${WORD_VALUE})` +
     ")" +
     ")",
   "gi",
 );
 
+type NameValueGroups = {
+  flag?: string;
+  flagSep?: string;
+  flagValue?: string;
+  quote?: string;
+  jsonName?: string;
+  jsonSep?: string;
+  jsonValue?: string;
+  bare?: string;
+  lineSep?: string;
+  lineValue?: string;
+  wordSep?: string;
+  wordValue?: string;
+};
+
 // ── Pass 2: YAML values on the lines below their key ────────────────────────
-// Defined here, after pass 5, because it shares that pass's name rules.
+// Defined here, after pass 7, because it shares that pass's name rules.
 
 /** A block-scalar indicator (`|`, `>-`, `|2+`), optionally followed by a comment. */
 const BLOCK_SCALAR_INDICATOR = /^[|>][0-9+-]{0,3}(?:[ \t]+#.*)?$/;
@@ -346,7 +397,13 @@ const YAML_CHILD_KEY = /^(?:"[^"]*"|'[^']*'|[A-Za-z0-9_.-]+(?: [A-Za-z0-9_.-]+)*
 /** Longest key a parent line may carry; a longer "key" is prose, and the bound keeps each line's check constant. */
 const YAML_KEY_MAX_LENGTH = 128;
 
-type YamlParent = { indent: number; head: string; blockScalar: boolean };
+type YamlParent = {
+  indent: number;
+  head: string;
+  blockScalar: boolean;
+  /** List items at the parent's own indentation are its value (a compact YAML sequence). */
+  compactList: boolean;
+};
 
 function indentOf(line: string): number {
   let i = 0;
@@ -370,15 +427,21 @@ function yamlParent(line: string): YamlParent | null {
   if (colon <= 0 || colon > YAML_KEY_MAX_LENGTH + 8) return null;
   const rest = body.slice(colon + 1).trim();
   const blockScalar = BLOCK_SCALAR_INDICATOR.test(rest);
-  if (rest !== "" && !rest.startsWith("#") && !blockScalar) return null;
+  // `"key": {` or `"key": [` ending its line opens pretty-printed JSON, whose
+  // children are the deeper lines, like a YAML mapping's.
+  const jsonOpen = rest === "{" || rest === "[";
+  if (rest !== "" && !rest.startsWith("#") && !blockScalar && !jsonOpen) return null;
   const head = body.slice(0, colon);
   let key = head.trim();
-  if (key.startsWith("- ")) key = key.slice(2).trimStart();
+  const listItem = key.startsWith("- ");
+  if (listItem) key = key.slice(2).trimStart();
   key = key.replace(/^(\\?["'])(.*)\1$/, "$2");
   if (key.length > YAML_KEY_MAX_LENGTH || !YAML_PARENT_KEY.test(key)) return null;
   if (!YAML_SECRET_WORD.test(key)) return null;
   if (key.includes(" ") && !YAML_SECRET_NOUN_LAST.test(key)) return null;
-  return { indent: indentOf(body), head: `${head}:`, blockScalar };
+  // A parent that is itself a list item has siblings, not children, at its indentation.
+  const compactList = !blockScalar && !jsonOpen && !listItem;
+  return { indent: indentOf(body), head: `${head}:`, blockScalar, compactList };
 }
 
 const isMarker = (value: string): boolean => stripQuotes(value.trim()) === REDACTED;
@@ -421,8 +484,9 @@ function redactChildLine(line: string): string | null {
  */
 function redactYamlBlocks(text: string, onRedact: () => void): string {
   // Cheap test for a line that could open a block: a colon followed, after
-  // optional spaces or tabs, by a block indicator, a comment or the line end.
-  if (!/:[ \t]*(?:[|>#]|\r?\n)/.test(text)) return text;
+  // optional spaces or tabs, by a block indicator, a comment, an opening JSON
+  // bracket or the line end.
+  if (!/:[ \t]*(?:[|>#{[]|\r?\n)/.test(text)) return text;
   const lines = text.split("\n");
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
@@ -434,7 +498,10 @@ function redactYamlBlocks(text: string, onRedact: () => void): string {
     let end = i + 1;
     while (end < lines.length) {
       const [body] = withoutCr(lines[end]!);
-      if (body.trim() !== "" && indentOf(body) <= parent.indent) break;
+      const indent = indentOf(body);
+      const sameIndentItem =
+        parent.compactList && indent === parent.indent && body.startsWith("- ", indent);
+      if (body.trim() !== "" && indent <= parent.indent && !sameIndentItem) break;
       end++;
     }
     while (end > i + 1 && withoutCr(lines[end - 1]!)[0].trim() === "") end--;
@@ -463,12 +530,115 @@ function redactYamlBlocks(text: string, onRedact: () => void): string {
   return out.join("\n");
 }
 
-// ── Pass 6: known key prefixes ──────────────────────────────────────────────
+// ── Pass 3: JSON objects and arrays under a secret-looking key ──────────────
+
+/** A quoted secret-looking key, a colon, and an opening `{` or `[` (not consumed). */
+const JSON_SECRET_CONTAINER = new RegExp(
+  String.raw`(?<![A-Za-z0-9_.-])(?<quote>\\?["'])${secretName("[A-Za-z0-9_. -]", "[_ -]", "name")}\k<name>\k<quote>[ \t]*:[ \t]*(?=[{[])`,
+  "gi",
+);
+
+/**
+ * Where the object or array opened at `open` ends: just past its matching
+ * close bracket on the same line, or the end of the line when it does not
+ * close there. Null when nothing but blanks follows the bracket on its line:
+ * that is pretty-printed JSON, which pass 2 already took line by line. In
+ * plain JSON a bracket inside a string is not structure; in escaped JSON
+ * (`{\"k\":…}`) strings are not tracked and every bracket counts.
+ */
+function containerEnd(text: string, open: number, escaped: boolean): number | null {
+  let depth = 0;
+  let inString = false;
+  let i = open;
+  for (; i < text.length; i++) {
+    const c = text[i];
+    if (c === "\n" || c === "\r") break;
+    if (!escaped) {
+      if (inString) {
+        if (c === "\\") i++;
+        else if (c === '"') inString = false;
+        continue;
+      }
+      if (c === '"') {
+        inString = true;
+        continue;
+      }
+    }
+    if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return text.slice(open + 1, i).trim() === "" ? null : i;
+}
+
+/**
+ * Pass 3. The value of a secret-looking JSON key that is an object or an
+ * array goes whole (`{"secrets":{"db":"x","api":"y"}}` becomes
+ * `{"secrets":[REDACTED]}`): its inner keys need not look secret. Each
+ * character is read once: a scan starts at an opening bracket and the search
+ * resumes where the scan ended.
+ */
+function redactJsonContainers(text: string, onRedact: () => void): string {
+  if (!/[{[]/.test(text)) return text;
+  let out = "";
+  let last = 0;
+  JSON_SECRET_CONTAINER.lastIndex = 0;
+  for (let m = JSON_SECRET_CONTAINER.exec(text); m; m = JSON_SECRET_CONTAINER.exec(text)) {
+    const open = m.index + m[0].length;
+    const end = containerEnd(text, open, m.groups!.quote!.length === 2);
+    if (end === null) continue;
+    out += text.slice(last, open) + REDACTED;
+    last = end;
+    onRedact();
+    JSON_SECRET_CONTAINER.lastIndex = end;
+  }
+  return last === 0 ? text : out + text.slice(last);
+}
+
+// ── Pass 4: assignments inside a quoted string ──────────────────────────────
+
+/**
+ * A quoted string on one line: escaped (`\"…\"`), double or single quoted.
+ * Scanned left to right, so a quote inside one string never opens another.
+ */
+const QUOTED_STRING =
+  /\\"(?:[^"\\\r\n]|\\[^"\r\n])*\\"|"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'/g;
+
+/** The first secret-looking name and separator inside a string, followed by a value. */
+const ASSIGNMENT_IN_STRING = new RegExp(
+  String.raw`(?<![A-Za-z0-9_.-])${bareSecretName("name")}\k<name>[ \t]*[:=][ \t]*(?=\S)`,
+  "i",
+);
+
+/**
+ * Pass 4. An assignment inside a quoted string (`"password: must be 8
+ * chars"`, `msg="auth: token expired"`) loses everything from its value to
+ * the string's closing quote, and nothing past it, so the rest of a one-line
+ * JSON object or log survives. Each string is matched once and searched
+ * once.
+ */
+function redactInsideQuotedStrings(text: string, onRedact: () => void): string {
+  if (!/["']/.test(text)) return text;
+  return text.replace(QUOTED_STRING, (string) => {
+    const quote = string.startsWith("\\") ? 2 : 1;
+    const content = string.slice(quote, string.length - quote);
+    const m = ASSIGNMENT_IN_STRING.exec(content);
+    if (!m) return string;
+    const valueStart = m.index + m[0].length;
+    if (isMarker(content.slice(valueStart))) return string;
+    onRedact();
+    return `${string.slice(0, quote)}${content.slice(0, valueStart)}${REDACTED}${string.slice(string.length - quote)}`;
+  });
+}
+
+// ── Pass 8: known key prefixes ──────────────────────────────────────────────
 
 /**
  * Port of the MCP server's prefix patterns, in its order. Not carried from
  * upstream, as the module comment explains: its `Authorization: Bearer|Basic`
- * pattern (pass 2 is the superset) and its `name: value` pattern (pass 4 is
+ * pattern (pass 5 is the superset) and its `name: value` pattern (pass 7 is
  * the superset and keeps the name).
  */
 const UPSTREAM_PREFIX_PATTERNS = [
@@ -487,7 +657,7 @@ const UPSTREAM_PREFIX_PATTERNS = [
 /** The CLI's additions: Platform API keys (only the prefix is documented, so the body is permissive), and `sk-` keys as OpenAI and Anthropic issue them. */
 const CLI_PREFIX_PATTERNS = [/\bak_[A-Za-z0-9_-]{8,}\b/g, /\bsk-[A-Za-z0-9_-]{20,}/g];
 
-// ── Pass 7: credentials in URLs ─────────────────────────────────────────────
+// ── Pass 9: credentials in URLs ─────────────────────────────────────────────
 
 /**
  * `scheme://user:password@host`: `user:password` goes, scheme and host stay.
@@ -501,7 +671,7 @@ const URL_CREDENTIAL = new RegExp(
   "gi",
 );
 
-// ── Pass 8: home directories ────────────────────────────────────────────────
+// ── Pass 10: home directories ───────────────────────────────────────────────
 
 /**
  * Where a home directory may start: at a word edge that is not already inside
@@ -532,12 +702,14 @@ function literalHomeDirPattern(home: string): RegExp | null {
   if (trimmed.length < 2 || !/[\\/].+/.test(trimmed)) return null;
   // A Windows home may appear with doubled backslashes inside a JSON string.
   const body = escapeRegExp(trimmed).replaceAll("\\\\", "\\\\{1,2}");
-  // Not followed by another user-name character (the generic pattern's class),
-  // so `/Users/shane-old` is not `~-old`.
-  return new RegExp(`${HOME_DIR_START}${body}(?![^\\s/\\\\:"'${"`"}])`, "g");
+  // Not followed by another user-name character (letters, digits, `_`, `-`,
+  // and `.` when a name character follows it), so `/Users/shane-old` is not
+  // `~-old`; any other character, punctuation and brackets included, ends the
+  // home (`/root.`, `(/srv/alice)`).
+  return new RegExp(`${HOME_DIR_START}${body}(?![A-Za-z0-9_-]|\\.[A-Za-z0-9_-])`, "g");
 }
 
-// ── Pass 9: email addresses ─────────────────────────────────────────────────
+// ── Pass 11: email addresses ────────────────────────────────────────────────
 
 /**
  * The lookbehind keeps the local part whole (no match starting mid-word). An
@@ -561,13 +733,14 @@ function stripQuotes(value: string): string {
 
 /**
  * Scrub secrets, home-directory paths and email addresses from `text`, in
- * the nine passes the module comment lists. `homedir` is injectable for
+ * the eleven passes the module comment lists. `homedir` is injectable for
  * tests; production callers omit it.
  *
- * Counting: passes 3 and 5 count unless the value is already the marker
+ * Counting: passes 5 and 7 count unless the value is already the marker
  * (quotes stripped), which happens when an earlier pass took the credential
  * inside the value. Pass 2 counts each child line it changes, and a block
- * scalar once unless pass 1 already took everything in it. Every other pass
+ * scalar once unless pass 1 already took everything in it. Passes 3 and 4
+ * count each object or string they change. Every other pass
  * counts each match.
  */
 export function redactText(text: string, options: { homedir?: string } = {}): Redaction {
@@ -579,12 +752,16 @@ export function redactText(text: string, options: { homedir?: string } = {}): Re
 
   let out = text.replace(PRIVATE_KEY_BLOCK, count);
 
-  out = redactYamlBlocks(out, () => {
+  const tally = (): void => {
     redactions += 1;
-  });
+  };
+  out = redactYamlBlocks(out, tally);
+  out = redactJsonContainers(out, tally);
+  out = redactInsideQuotedStrings(out, tally);
 
   out = out.replace(AUTHORIZATION_HEADER, (match, name: string, value: string) => {
-    if (stripQuotes(value) === REDACTED) return match;
+    // Already taken, by an earlier pass or inside a quoted string by pass 4.
+    if (stripQuotes(value).startsWith(REDACTED)) return match;
     redactions += 1;
     return `${name}${REDACTED}`;
   });
@@ -602,36 +779,24 @@ export function redactText(text: string, options: { homedir?: string } = {}): Re
     },
   );
 
-  out = out.replace(
-    NAME_VALUE,
-    (
-      match: string,
-      flag: string | undefined,
-      flagSeparator: string,
-      flagValue: string,
-      quote: string | undefined,
-      quotedName: string,
-      quotedSeparator: string,
-      quotedValue: string,
-      bareName: string,
-      ...bareForms: string[]
-    ) => {
-      // The three bare forms fill groups 9 and 10, 11 and 12, or 13 and 14.
-      const [bareSeparator, bareValue] = [0, 2, 4]
-        .map((at) => bareForms.slice(at, at + 2))
-        .find(([separator]) => separator !== undefined) ?? ["", ""];
-      const value = flag ? flagValue : quote ? quotedValue : bareValue!;
-      const stripped = stripQuotes(value);
-      if (stripped === REDACTED) return match;
-      // A value to the end of the line can start with a marker an earlier pass
-      // left (`token: [REDACTED] rest`): the rest still goes, but it is the
-      // same secret, so it is not counted again.
-      if (!stripped.startsWith(REDACTED)) redactions += 1;
-      if (flag) return `${flag}${flagSeparator}${REDACTED}`;
-      if (quote) return `${quote}${quotedName}${quote}${quotedSeparator}${REDACTED}`;
-      return `${bareName}${bareSeparator}${REDACTED}`;
-    },
-  );
+  out = out.replace(NAME_VALUE, (match: string, ...rest: unknown[]) => {
+    const g = rest.at(-1) as NameValueGroups;
+    const [name, separator, value] =
+      g.flag !== undefined
+        ? [g.flag, g.flagSep!, g.flagValue!]
+        : g.jsonName !== undefined
+          ? [`${g.quote}${g.jsonName}${g.quote}`, g.jsonSep!, g.jsonValue!]
+          : g.lineSep !== undefined
+            ? [g.bare!, g.lineSep, g.lineValue!]
+            : [g.bare!, g.wordSep!, g.wordValue!];
+    const stripped = stripQuotes(value);
+    if (stripped === REDACTED) return match;
+    // A value to the end of the line can start with a marker an earlier pass
+    // left (`token: [REDACTED] rest`): the rest still goes, but it is the
+    // same secret, so it is not counted again.
+    if (!stripped.startsWith(REDACTED)) redactions += 1;
+    return `${name}${separator}${REDACTED}`;
+  });
 
   for (const pattern of UPSTREAM_PREFIX_PATTERNS) out = out.replace(pattern, count);
   for (const pattern of CLI_PREFIX_PATTERNS) out = out.replace(pattern, count);

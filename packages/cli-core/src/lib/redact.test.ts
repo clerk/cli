@@ -368,6 +368,21 @@ describe("YAML parents and block scalars", () => {
     ["api key: |\n  abc\nnext: 1", `api key: ${REDACTED}\nnext: 1`, 1],
     // Windows line endings.
     ["password: |\r\n  hunter2\r\nnext: 1", `password: ${REDACTED}\r\nnext: 1`, 1],
+    // A compact sequence: list items at the parent's own indentation.
+    [
+      "tokens:\n- first-secret\n- second-secret\nnext: 1",
+      `tokens:\n- ${REDACTED}\n- ${REDACTED}\nnext: 1`,
+      2,
+    ],
+    ["password:\n- item", `password:\n- ${REDACTED}`, 1],
+    ["  tokens:\n  - a1\n  b: 1", `  tokens:\n  - ${REDACTED}\n  b: 1`, 1],
+    // Pretty-printed JSON: an object or array opened at the end of the key's line.
+    [
+      '  "secrets": {\n    "db": "first-secret",\n    "api": "second-secret"\n  },\n  "n": 1',
+      `  "secrets": {\n    "db": ${REDACTED}\n    "api": ${REDACTED}\n  },\n  "n": 1`,
+      2,
+    ],
+    ['"tokens": [\n  "a1",\n  "b2"\n]', `"tokens": [\n  ${REDACTED}\n  ${REDACTED}\n]`, 2],
     // Spaces or a tab after the colon or the indicator.
     ["auth:  \n  pass: hunter2", `auth:  \n  pass: ${REDACTED}`, 1],
     ["auth:\t\n  pass: hunter2", `auth:\t\n  pass: ${REDACTED}`, 1],
@@ -382,8 +397,8 @@ describe("YAML parents and block scalars", () => {
     ["api_key=\nnext=1"],
     // A heading in prose: its last word is not a secret noun.
     ["Token refresh fails:\n  run clerk auth login"],
-    // Not deeper than the key: a sibling, not a child.
-    ["password:\n- item"],
+    // A list item after a parent that is itself a list item is a sibling.
+    ["- tokens:\n- next"],
   ])("%j is left alone", (input) => {
     expect(redact(input)).toEqual({ text: input, redactions: 0 });
   });
@@ -433,11 +448,16 @@ describe("an unquoted value runs to the end of its line", () => {
     ["export DB_PASSWORD=correct horse battery", `export DB_PASSWORD=${REDACTED}`],
     ["  - api_key: correct horse", `  - api_key: ${REDACTED}`],
     ["the db password: correct horse battery staple", `the db password: ${REDACTED}`],
-    // A colon in the middle of a line, past where a spaced name could start.
-    [
-      "login failed because the db password: correct horse battery staple",
-      `login failed because the db password: ${REDACTED}`,
-    ],
+    // Comment, bullet and numbered-list prefixes still start the line.
+    ["# DB_PASSWORD=correct horse battery", `# DB_PASSWORD=${REDACTED}`],
+    ["#DB_PASSWORD=correct horse battery", `#DB_PASSWORD=${REDACTED}`],
+    ["## api_key: correct horse", `## api_key: ${REDACTED}`],
+    ["* DB_PASSWORD=correct horse battery", `* DB_PASSWORD=${REDACTED}`],
+    ["+ DB_PASSWORD=correct horse battery", `+ DB_PASSWORD=${REDACTED}`],
+    ["- DB_PASSWORD=correct horse battery", `- DB_PASSWORD=${REDACTED}`],
+    ["1. DB_PASSWORD=correct horse battery", `1. DB_PASSWORD=${REDACTED}`],
+    ["12) DB_PASSWORD=correct horse battery", `12) DB_PASSWORD=${REDACTED}`],
+    ["  # export DB_PASSWORD=correct horse", `  # export DB_PASSWORD=${REDACTED}`],
     ["DB_PASSWORD=correct horse\nNEXT=1", `DB_PASSWORD=${REDACTED}\nNEXT=1`],
     ["DB_PASSWORD=correct horse\r\nNEXT=1", `DB_PASSWORD=${REDACTED}\r\nNEXT=1`],
     // A quoted value still ends at its closing quote.
@@ -498,6 +518,60 @@ describe("URL credentials", () => {
 
 // Markdown and log brackets around an address. The `[REDACTED]@host` a URL
 // credential leaves behind is still not an address: `]` cannot end a local part.
+// One-line JSON and logs: a value that starts inside a quoted string ends at
+// that string's closing quote, and a colon in unquoted prose takes one word,
+// so the rest of the line survives.
+describe("the rest of a one-line log survives", () => {
+  test.each([
+    [
+      '{"message":"password: must be 8 chars","code":"weak_password","status":422}',
+      `{"message":"password: ${REDACTED}","code":"weak_password","status":422}`,
+    ],
+    [
+      'level=error msg="auth: token expired" user=bob request_id=abc',
+      `level=error msg="auth: ${REDACTED}" user=bob request_id=abc`,
+    ],
+    [
+      "Error: token: invalid, then I tried clerk whoami and it worked",
+      `Error: token: ${REDACTED} then I tried clerk whoami and it worked`,
+    ],
+    [
+      '{"msg":"login failed, password: abc def","user":"bob"}',
+      `{"msg":"login failed, password: ${REDACTED}","user":"bob"}`,
+    ],
+    ["msg='password: abc def' user=bob", `msg='password: ${REDACTED}' user=bob`],
+    [
+      '{\\"message\\":\\"password: abc def\\",\\"code\\":\\"x\\"}',
+      `{\\"message\\":\\"password: ${REDACTED}\\",\\"code\\":\\"x\\"}`,
+    ],
+    [
+      '{"message":"Authorization: header missing","code":"x"}',
+      `{"message":"Authorization: ${REDACTED}","code":"x"}`,
+    ],
+    ['note="set token=abc, done" next=1', `note="set token=${REDACTED}" next=1`],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+});
+
+// The value of a secret-looking JSON key that is an object or an array goes
+// whole, up to its matching close bracket on the same line.
+describe("JSON objects and arrays under a secret-looking key", () => {
+  test.each([
+    ['{"secrets":{"db":"first-secret","api":"second-secret"}}', `{"secrets":${REDACTED}}`],
+    ['{"tokens":["a1","b2"],"user":"bob"}', `{"tokens":${REDACTED},"user":"bob"}`],
+    ['{"auth":{"db":{"pw":"x"},"y":"z"},"n":1}', `{"auth":${REDACTED},"n":1}`],
+    // A bracket inside a string is not structure.
+    ['{"secrets":{"a":"x}y","b":"z"},"n":1}', `{"secrets":${REDACTED},"n":1}`],
+    // Unbalanced on its line: to the end of the line.
+    ['{"secrets":{"db":"x","api":"y"', `{"secrets":${REDACTED}`],
+    ['{"secrets":{"db":"x",\n"n":1}', `{"secrets":${REDACTED}\n"n":1}`],
+    ['{\\"secrets\\":{\\"a\\":\\"x\\"},\\"n\\":1}', `{\\"secrets\\":${REDACTED},\\"n\\":1}`],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+});
+
 describe("emails inside brackets", () => {
   test.each([
     ["user [john@example.com] logged in", `user [${EMAIL_MARKER}] logged in`, 1],
@@ -542,6 +616,7 @@ describe("home-directory paths", () => {
     [`${HOME}2/app`],
     [`${HOME}-old/app`],
     [`${HOME}.bak/app`],
+    [`${HOME}_2/app`],
     // A URL path segment is not a home directory.
     ["https://example.com/Users/alice"],
     // A Backend API path: the POSIX forms are case-sensitive on purpose.
@@ -588,7 +663,38 @@ test.each([
   expect(redactText(input, { homedir: "/Users/shane" })).toEqual({ text: expected, redactions: 1 });
 });
 
+test.each([
+  ["cd /root.", "/root", "cd ~."],
+  ["(/opt/homes/shane)", "/opt/homes/shane", "(~)"],
+  ["(/srv/alice)", "/srv/alice", "(~)"],
+  ["see /srv/alice, then retry", "/srv/alice", "see ~, then retry"],
+  ["[/srv/alice]", "/srv/alice", "[~]"],
+  ["/srv/alice", "/srv/alice", "~"],
+  ["/srv/alice/app", "/srv/alice", "~/app"],
+])(
+  "punctuation after the home directory is a boundary: %s (home %s) → %s",
+  (input, home, expected) => {
+    expect(redactText(input, { homedir: home })).toEqual({ text: expected, redactions: 1 });
+  },
+);
+
 describe("known limitations", () => {
+  test("a colon in the middle of unquoted prose keeps only its first word redacted", () => {
+    expect(redact("I set my password: correct horse")).toEqual({
+      text: `I set my password: ${REDACTED} horse`,
+      redactions: 1,
+    });
+  });
+
+  test("an object or array under a secret-looking JSON key keeps lines past its own", () => {
+    // Pretty-printed JSON is handled by the YAML pass when the bracket ends the
+    // key's line; here the bracket's content starts on the key's line.
+    expect(redact('{"secrets":{"db":"x",\n"api":"second-secret"}}')).toEqual({
+      text: `{"secrets":${REDACTED}\n"api":"second-secret"}}`,
+      redactions: 1,
+    });
+  });
+
   // Mid-line: more than three words before the name, so they cannot be the
   // start of a spaced name (`config password=` at a line start would be one).
   test("an assignment in the middle of a line keeps only its first word redacted", () => {
@@ -713,6 +819,15 @@ describe("large pastes stay linear", () => {
     ["colon assignments repeated on one line", (n) => fill("token: a ", n)],
     ["equals assignments repeated mid-line", (n) => "x " + fill("token=a ", n)],
     ["indented lines each starting with a secret name", (n) => fill("  token \n", n)],
+    ["quoted strings each holding a secret assignment", (n) => fill('"token: a" ', n)],
+    ["one unclosed quote before many assignments", (n) => '"' + fill("token: a ", n)],
+    ["quotes only", (n) => fill('"', n)],
+    ["escaped quotes only", (n) => fill('\\"', n)],
+    ["JSON objects under secret keys, repeated", (n) => fill('{"secrets":{"a":1}}', n)],
+    ["one secret JSON key followed by open braces", (n) => '{"secrets":' + fill("{", n)],
+    ["commented assignments on every line", (n) => fill("# token=a b\n", n)],
+    ["numbered-list prefixes with no name", (n) => fill("1. ", n)],
+    ["compact YAML list under a secret parent", (n) => "tokens:\n" + fill("- a\n", n)],
     ["home paths", (n) => fill("/Users/alice/x ", n)],
     ["Authorization headers on one line", (n) => fill("Authorization: ", n)],
     ["Bearer words", (n) => fill("Bearer ", n)],

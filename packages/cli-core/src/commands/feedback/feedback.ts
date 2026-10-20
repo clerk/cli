@@ -657,7 +657,8 @@ function mayHaveReachedServer(error: unknown): boolean {
  * The cap counts a send whenever the request may have reached the server: any
  * response, a timeout, or a failure the CLI cannot place. A connection that
  * was never made sent nothing and is not counted. An interrupt is rethrown
- * for the CLI's interrupt path.
+ * for the CLI's interrupt path, after the send is counted when the request
+ * may have reached the server.
  */
 async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
   try {
@@ -673,8 +674,14 @@ async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
   }
 
   let posted = false;
-  let reached: boolean;
   let outcome: SendOutcome;
+  const record = async (): Promise<void> => {
+    await recordFeedbackSend({
+      sentAt: Date.now(),
+      command: payload.command,
+      errorCode: payload.error_code,
+    });
+  };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FEEDBACK_SEND_TIMEOUT_MS);
   try {
@@ -687,26 +694,22 @@ async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
         },
       },
     );
-    reached = outcome !== "disabled";
   } catch (error) {
+    // Recorded first even on Ctrl-C: a request that was out may have landed,
+    // and the interrupt is only rethrown once the cap has counted it.
+    if (posted && mayHaveReachedServer(error)) await record();
     if (isCancelled(error)) throw error;
     log.debug(`feedback: send failed: ${error}`);
-    outcome = "rejected";
-    reached = posted && mayHaveReachedServer(error);
+    return { sent: false, refusal: { reason: "send_failed" }, posted };
   } finally {
     clearTimeout(timer);
   }
 
-  if (reached) {
-    await recordFeedbackSend({
-      sentAt: Date.now(),
-      command: payload.command,
-      errorCode: payload.error_code,
-    });
-  }
   if (outcome === "disabled") {
     return { sent: false, refusal: { reason: "telemetry_disabled" }, posted: false };
   }
+  // Any response, accepted or not, means the request reached the server.
+  await record();
   if (outcome === "rejected") return { sent: false, refusal: { reason: "send_failed" }, posted };
   return { sent: true };
 }

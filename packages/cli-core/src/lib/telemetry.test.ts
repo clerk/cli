@@ -939,9 +939,6 @@ describe("sendTelemetryEvent always reads the opt-out itself", () => {
   });
 });
 
-// One rule for "the first-run notice is still owed", shared by the notice
-// itself and by `clerk feedback --dry-run`: CI never owes it, and a machine
-// that has shown it once never owes it again.
 // The end-of-run flush shows the notice through showTelemetryNoticeOnce on
 // every command, so it must cost what it did before the shared predicate:
 // the CI check, then the one read-and-mark.
@@ -962,6 +959,9 @@ describe("showTelemetryNoticeOnce reads the config once", () => {
   });
 });
 
+// "The first-run notice is still owed", as `clerk feedback --dry-run` asks
+// it: CI never owes it, and a machine that has shown it once never owes it
+// again.
 describe("isTelemetryNoticeOwed", () => {
   const originalCi = process.env.CI;
   afterEach(() => {
