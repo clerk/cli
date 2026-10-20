@@ -406,6 +406,21 @@ describe("deploy", () => {
     }
   }
 
+  /** The application as Clerk lists it with no production instance. */
+  function developmentOnlyApplication() {
+    return {
+      application_id: "app_xyz789",
+      name: "my-saas-app",
+      instances: [
+        {
+          instance_id: "ins_dev_123",
+          environment_type: "development",
+          publishable_key: "pk_test_123",
+        },
+      ],
+    };
+  }
+
   function mockLiveProduction(
     options: {
       instanceId?: string;
@@ -708,17 +723,7 @@ describe("deploy", () => {
     test("--domain saves an instance a lost create race finds only on the last read", async () => {
       mockIsAgent.mockReturnValue(true);
       await linkedProject();
-      const developmentOnly = {
-        application_id: "app_xyz789",
-        name: "my-saas-app",
-        instances: [
-          {
-            instance_id: "ins_dev_123",
-            environment_type: "development",
-            publishable_key: "pk_test_123",
-          },
-        ],
-      };
+      const developmentOnly = developmentOnlyApplication();
       mockCreateProductionInstance.mockImplementation(() => {
         mockLiveProduction({ domain: "example.com" });
         mockFetchApplication.mockResolvedValueOnce(developmentOnly);
@@ -756,20 +761,17 @@ describe("deploy", () => {
       expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
     });
 
-    // The profile holds the id the create returned while the application's
-    // instance list may still omit it. Reading only the list would report
-    // `not_started` and send the agent to create again.
+    // A production id left in the profile after its instance was deleted names
+    // nothing. Clerk's list decides, so the report says to create again rather
+    // than to wait for an instance that will never provision.
     test.each([
       ["clerk deploy status", () => deployStatus()],
       ["clerk deploy", () => runDeploy({})],
-    ])("%s after a create reports the saved instance while the list lags", async (_name, run) => {
+    ])("%s reads a deleted instance's leftover profile id as not_started", async (_name, run) => {
       mockIsAgent.mockReturnValue(true);
-      await linkedProject();
-      mockGetApplicationDomainStatus.mockResolvedValue(
-        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
-      );
-      await runDeploy({ domain: "example.com" });
-      captured.clear();
+      await linkedProject({ instances: { development: "ins_dev_123", production: "ins_deleted" } });
+      mockFetchApplication.mockResolvedValue(developmentOnlyApplication());
+      mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
 
       const exitCodeBefore = process.exitCode;
       try {
@@ -779,8 +781,46 @@ describe("deploy", () => {
       }
 
       const payload = JSON.parse(captured.out);
-      expect(payload.state).toBe("domain_pending");
-      expect(payload.productionInstanceId).toBe("ins_prod_mock");
+      expect(payload.state).toBe("not_started");
+      expect(payload.productionInstanceId).toBeNull();
+    });
+
+    // The id this run's create returned only stands in while Clerk's list
+    // shows none. Once it shows one, that is the instance the next commands
+    // read.
+    test("--domain reports the instance Clerk lists over the one its create returned", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      const create = mockCreateProductionInstance.getMockImplementation() as (
+        appId: string,
+        params: { domain: string },
+      ) => unknown;
+      mockCreateProductionInstance.mockImplementation(
+        (appId: string, params: { domain: string }) => {
+          mockLiveProduction({ instanceId: "ins_listed", domain: params.domain });
+          return create(appId, params);
+        },
+      );
+
+      await runDeploy({ domain: "example.com" });
+
+      expect(JSON.parse(captured.out).productionInstanceId).toBe("ins_listed");
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_listed");
+    });
+
+    // An empty id names no instance, wherever it comes from.
+    test("--domain treats a create response without an id as no instance", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      stubCreateProductionInstanceWithoutId();
+
+      const error = await runDeploy({ domain: "example.com" }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      expect(captured.out).toBe("");
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBeUndefined();
     });
 
     // A case or trailing-dot difference in how Clerk spells the domain is
@@ -3581,17 +3621,7 @@ describe("deploy", () => {
       test("agent mode records the last read's stage when saving the id fails", async () => {
         await linkedProject();
         mockIsAgent.mockReturnValue(true);
-        const developmentOnly = {
-          application_id: "app_xyz789",
-          name: "my-saas-app",
-          instances: [
-            {
-              instance_id: "ins_dev_123",
-              environment_type: "development",
-              publishable_key: "pk_test_123",
-            },
-          ],
-        };
+        const developmentOnly = developmentOnlyApplication();
         mockCreateProductionInstance.mockImplementation(() => {
           mockLiveProduction({ domain: "example.com" });
           mockFetchApplication.mockResolvedValueOnce(developmentOnly);

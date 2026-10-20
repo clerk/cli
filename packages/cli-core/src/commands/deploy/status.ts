@@ -301,24 +301,28 @@ export async function resolveLiveApplicationContext(profile: DeployContext["prof
 }
 
 /**
- * The application's instance list can trail a create, so while it shows no
- * production instance this falls back to `knownProductionInstanceId` (one the
- * caller holds from Clerk this run: a create's response, or an earlier read),
- * then to the id saved in the profile. The cost: an instance deleted while its
- * id is still in the profile reads as not ready yet, or fails to read, rather
- * than as `not_started`.
+ * The production instance to read: the one Clerk's application list shows,
+ * else one this run already holds from Clerk (its own create's response, or
+ * an earlier read in the same run) while the list trails a create. Never the
+ * id saved in the profile: an instance deleted since would read as
+ * provisioning forever.
  */
+function productionInstanceToRead(
+  listed: string | undefined,
+  heldThisRun: string | undefined,
+): string | undefined {
+  return listed ?? heldThisRun;
+}
+
+/** `heldThisRun`: see {@link productionInstanceToRead}. */
 export async function resolveDeployState(
   ctx: DeployContext,
-  knownProductionInstanceId?: string,
+  heldThisRun?: string,
 ): Promise<DeployState> {
   const application = await resolveLiveApplicationContext(ctx.profile);
   const live = {
     ...application,
-    productionInstanceId:
-      application.productionInstanceId ??
-      knownProductionInstanceId ??
-      ctx.profile.instances.production,
+    productionInstanceId: productionInstanceToRead(application.productionInstanceId, heldThisRun),
   };
   if (!live.productionInstanceId) return { kind: "not_started" };
 
