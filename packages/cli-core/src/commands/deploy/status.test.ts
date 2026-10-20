@@ -1331,7 +1331,13 @@ vercel() {
     async function run(
       scenario: string,
       options: { command?: string; env?: Record<string, string> } = {},
-    ): Promise<{ exitCode: number; output: string; uploads: string[]; listings: string[] }> {
+    ): Promise<{
+      exitCode: number;
+      output: string;
+      stderr: string;
+      uploads: string[];
+      listings: string[];
+    }> {
       const dir = await mkdtemp(join(tmpdir(), "clerk-key-copy-"));
       const received = join(dir, "received");
       const lines = async (path: string): Promise<string[]> => {
@@ -1359,6 +1365,7 @@ vercel() {
         return {
           exitCode,
           output: stdout + stderr,
+          stderr,
           uploads: await lines(received),
           listings: await lines(`${received}.ls`),
         };
@@ -1445,6 +1452,17 @@ vercel() {
       });
 
       expect(result.exitCode).toBe(3);
+      expect(result.uploads).toEqual([]);
+    });
+
+    // Vercel not installed, not logged in, or the project not linked: its own
+    // error is what tells the user to run `vercel login` or `vercel link`.
+    test.skipIf(!installed)("shows Vercel's error when it can't list the variables", async () => {
+      const result = await run("ls_fails");
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Error: no linked project");
+      expect(result.output).not.toContain("FAKE");
       expect(result.uploads).toEqual([]);
     });
 

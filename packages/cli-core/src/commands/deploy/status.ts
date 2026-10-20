@@ -752,6 +752,10 @@ function oauthSetupGuides(
  * check honors `--no-color` and `FORCE_COLOR=0`), escape codes are stripped
  * anyway, and output that is neither its table nor its "No Environment
  * Variables found" line stops it (exit 1) rather than reading as empty.
+ * When `vercel env ls` itself fails (not installed, not logged in, the
+ * project not linked), its captured output is Vercel's error, so the command
+ * prints it to stderr before exiting 1: it names the fix (`vercel login`,
+ * `vercel link`), and it holds no key, since the keys are only in `$keys`.
  * `>/dev/null` rather than `grep -q`: an early exit would close the pipe on a
  * long listing, and `pipefail` would turn that into a failure. The parentheses
  * keep `pipefail`, `exit`, and `allow_shared` out of the agent's shell.
@@ -760,7 +764,7 @@ function oauthSetupGuides(
 function vercelKeyCopyCommand(pull: string): string {
   return (
     `( allow_shared=0; set -o pipefail; keys=$(${pull}) || exit 1; ` +
-    `e=$(printf '\\033'); vars=$(FORCE_COLOR=0 vercel env ls --no-color 2>&1 | sed "s/$e\\[[0-9;]*m//g") || exit 1; ` +
+    `e=$(printf '\\033'); vars=$(FORCE_COLOR=0 vercel env ls --no-color 2>&1 | sed "s/$e\\[[0-9;]*m//g") || { printf '%s\\n' "$vars" >&2; exit 1; }; ` +
     `printf '%s\\n' "$vars" | grep -iE "^[[:space:]]*name[[:space:]].*environments|No Environment Variables found" >/dev/null || ` +
     `{ echo "Couldn't read the variable list from vercel env ls; check the project's variables before replacing any." >&2; exit 1; }; ` +
     `shared=$(printf '%s\\n' "$keys" | cut -d= -f1 | while read -r name; do ` +
