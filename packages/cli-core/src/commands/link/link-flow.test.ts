@@ -16,7 +16,11 @@ import {
   listageStubs,
   useCaptureLog,
 } from "../../test/lib/stubs.ts";
-import { UserAbortError } from "../../lib/errors.ts";
+import { PlapiError, UserAbortError } from "../../lib/errors.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { useCleanClerkKeyEnv, useSyntheticShellClerkKeys } from "../../test/lib/clerk-key-env.ts";
 
 const mockIsAgent = mock();
 mock.module("../../mode.ts", () => ({
@@ -78,9 +82,22 @@ mock.module("../../lib/config.ts", () => ({
 }));
 
 const mockAutolink = mock(async (_cwd: string): Promise<unknown> => ({ status: "no_key" }));
+const mockLinkApp = mock();
+type MatchableApp = { instances: { publishable_key: string }[] };
 mock.module("../../lib/autolink.ts", () => ({
   ...autolinkStubs,
   autolink: (cwd: string) => mockAutolink(cwd),
+  linkApp: (...args: unknown[]) => mockLinkApp(...args),
+  // Exact publishable-key equality, as the real matcher does.
+  matchKeyToApp: (keys: { key: string; source: string }[], apps: MatchableApp[]) => {
+    for (const { key, source } of keys) {
+      for (const app of apps) {
+        const instance = app.instances.find((i) => i.publishable_key === key);
+        if (instance) return { app, instance, source };
+      }
+    }
+    return undefined;
+  },
 }));
 
 mock.module("../../lib/git.ts", () => ({
@@ -121,7 +138,7 @@ mock.module("../../lib/spinner.ts", () => ({
 
 const { link } = await import("./index.ts");
 
-useCaptureLog();
+const captured = useCaptureLog();
 
 const savedApiKey = process.env.CLERK_PLATFORM_API_KEY;
 
@@ -138,6 +155,7 @@ afterEach(() => {
     mockFetchUserInfo,
     mockGetAuth,
     mockAttemptAutoclaim,
+    mockLinkApp,
     mockLogin,
     mockListApplications,
     mockFetchApplication,
@@ -455,5 +473,261 @@ describe("signing in on the way to a link", () => {
     await link({}).catch(() => {});
 
     expect(mockLogin).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
+  });
+});
+
+// An SDK-only folder: no init token, no plain key, and the keys of an app a
+// Clerk SDK created for itself in `.clerk/.tmp/keyless.json`. The CLI can't
+// claim that app (there's no token), so `clerk link` looks for it in the
+// account, and when it isn't there sends a person to claim it in the
+// Dashboard. Never the picker: any app chosen there isn't the one the SDK runs.
+describe("an SDK-only folder", () => {
+  useSyntheticShellClerkKeys();
+  useCleanClerkKeyEnv();
+
+  const SDK_PK = "pk_test_sdk_created_app";
+  const CLAIM_URL = "https://dashboard.clerk.com/apps/claim?token=secret_claim_token";
+  const SDK_APP = {
+    application_id: "app_sdk",
+    name: "SDK App",
+    instances: [
+      { instance_id: "ins_sdk", environment_type: "development", publishable_key: SDK_PK },
+    ],
+  };
+  const OTHER_APP = {
+    application_id: "app_other",
+    name: "Other App",
+    instances: [
+      {
+        instance_id: "ins_other",
+        environment_type: "development",
+        publishable_key: "pk_test_other",
+      },
+    ],
+  };
+
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clerk-link-sdk-"));
+    mockLinkApp.mockImplementation(async (app: { application_id: string }) => ({
+      path: "github.com/org/repo",
+      profile: { workspaceId: "", appId: app.application_id, instances: {} },
+    }));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  async function writeSdkFile(content: Record<string, unknown> | string) {
+    await Bun.write(
+      join(dir, ".clerk", ".tmp", "keyless.json"),
+      typeof content === "string" ? content : JSON.stringify(content),
+    );
+  }
+
+  function sdkFile(overrides: Record<string, unknown> = {}) {
+    return writeSdkFile({
+      publishableKey: SDK_PK,
+      secretKey: "sk_test_sdk_created_app",
+      claimUrl: CLAIM_URL,
+      ...overrides,
+    });
+  }
+
+  function storedSession(email = "jane@example.com") {
+    mockGetToken.mockResolvedValue("token");
+    mockGetAuth.mockResolvedValue({ userId: "user_1" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_1", email });
+  }
+
+  function expectNoPickerOrNewApp() {
+    expect(mockSearch).not.toHaveBeenCalled();
+    expect(mockCreateApplication).not.toHaveBeenCalled();
+  }
+
+  test.each([
+    { who: "a person", agent: false },
+    { who: "an agent", agent: true },
+  ])("$who links the account's app whose key the SDK's file holds", async ({ agent }) => {
+    mockIsAgent.mockReturnValue(agent);
+    storedSession();
+    await sdkFile();
+    mockListApplications.mockResolvedValue([OTHER_APP, SDK_APP]);
+
+    const outcome = await link({ cwd: dir });
+
+    expect(outcome).toEqual({ status: "linked", appId: "app_sdk" });
+    expect(mockLinkApp).toHaveBeenCalledWith(SDK_APP, dir);
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+    expectNoPickerOrNewApp();
+  });
+
+  test("a signed-out person signs in without login's own claim, then the key is matched", async () => {
+    mockIsAgent.mockReturnValue(false);
+    mockGetToken.mockResolvedValue(null);
+    mockLogin.mockResolvedValue({ userId: "user_new", email: "new@example.com" });
+    await sdkFile();
+    mockListApplications.mockResolvedValue([SDK_APP]);
+
+    const outcome = await link({ cwd: dir });
+
+    expect(mockLogin).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
+    expect(outcome).toEqual({ status: "linked", appId: "app_sdk" });
+  });
+
+  test("a person whose account lacks the app gets the claim page, never its URL, and nothing linked", async () => {
+    mockIsAgent.mockReturnValue(false);
+    storedSession();
+    await sdkFile();
+    mockListApplications.mockResolvedValue([OTHER_APP]);
+
+    const outcome = await link({ cwd: dir });
+
+    expect(outcome).toEqual({ status: "claim_page_opened" });
+    expect(mockOpenBrowser.mock.calls).toEqual([[CLAIM_URL]]);
+    const output = Bun.stripANSI(captured.err + captured.out);
+    expect(output).not.toContain(CLAIM_URL);
+    expect(output).not.toContain("secret_claim_token");
+    expect(output).toContain(
+      "This folder's app was created by the Clerk SDK and isn't in an account yet",
+    );
+    expect(output).toContain("clerk open --print");
+    expect(mockLinkApp).not.toHaveBeenCalled();
+    expect(mockSetProfile).not.toHaveBeenCalled();
+    expectNoPickerOrNewApp();
+  });
+
+  test.each([
+    { credentials: "a stored session", apiKey: false, account: "jane@example.com's account" },
+    {
+      credentials: "an API key",
+      apiKey: true,
+      account: "the workspace your `CLERK_PLATFORM_API_KEY` belongs to",
+    },
+  ])(
+    "the claim page message names the account the rerun will search ($credentials)",
+    async ({ apiKey, account }) => {
+      mockIsAgent.mockReturnValue(false);
+      storedSession();
+      if (apiKey) process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform_key";
+      await sdkFile();
+      mockListApplications.mockResolvedValue([OTHER_APP]);
+
+      await link({ cwd: dir });
+
+      expect(Bun.stripANSI(captured.err)).toContain(`Claim it into ${account}`);
+    },
+  );
+
+  test("when no browser can be opened, the message leads with that, and still never shows the URL", async () => {
+    mockIsAgent.mockReturnValue(false);
+    storedSession();
+    await sdkFile();
+    mockListApplications.mockResolvedValue([OTHER_APP]);
+    mockOpenBrowser.mockResolvedValue({ ok: false, reason: "no-launcher" } as never);
+
+    const outcome = await link({ cwd: dir });
+
+    expect(outcome).toEqual({ status: "claim_page_opened" });
+    const output = Bun.stripANSI(captured.err + captured.out);
+    expect(output).toContain("Couldn't open a browser here");
+    expect(output).toContain("clerk open --print");
+    expect(output).not.toContain(CLAIM_URL);
+  });
+
+  test("an agent whose account lacks the app stops with usage_error naming `clerk open`, opening nothing", async () => {
+    mockIsAgent.mockReturnValue(true);
+    storedSession();
+    await sdkFile();
+    mockListApplications.mockResolvedValue([OTHER_APP]);
+
+    await expect(
+      link({ cwd: dir, skipIfLinked: true, createIfMissing: "my-project" }),
+    ).rejects.toMatchObject({
+      code: "usage_error",
+      message: expect.stringContaining("Run `clerk open`"),
+    });
+
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+    expect(mockLinkApp).not.toHaveBeenCalled();
+    expectNoPickerOrNewApp();
+  });
+
+  test("an agent whose app list fails stops with usage_error naming the failed list", async () => {
+    mockIsAgent.mockReturnValue(true);
+    storedSession();
+    await sdkFile();
+    mockListApplications.mockRejectedValue(new Error("Unauthorized (401)"));
+
+    await expect(link({ cwd: dir })).rejects.toMatchObject({
+      code: "usage_error",
+      message: expect.stringContaining("couldn't list your applications"),
+    });
+
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+    expectNoPickerOrNewApp();
+  });
+
+  // A server error used to turn into a picker offering only "create a new
+  // application", which links a new app while the SDK keeps running the old one.
+  test("a person whose app list fails with a server error gets that error, never the picker or the claim page", async () => {
+    mockIsAgent.mockReturnValue(false);
+    storedSession();
+    await sdkFile();
+    mockListApplications.mockRejectedValue(
+      new PlapiError(500, '{"errors":[{"message":"Internal Server Error"}]}'),
+    );
+    mockSearch.mockResolvedValue("__create_new__");
+
+    await expect(link({ cwd: dir })).rejects.toBeInstanceOf(PlapiError);
+
+    expect(mockOpenBrowser).not.toHaveBeenCalled();
+    expectNoPickerOrNewApp();
+  });
+
+  // The CLI can't tell how to claim the app, so it never guesses with a picker.
+  test.each([
+    { file: "no claimUrl", write: () => sdkFile({ claimUrl: undefined }) },
+    {
+      file: "a claimUrl that isn't https",
+      write: () => sdkFile({ claimUrl: "javascript:alert(1)" }),
+    },
+    { file: "no publishable key", write: () => sdkFile({ publishableKey: undefined }) },
+    { file: "unreadable JSON", write: () => writeSdkFile("{ not json") },
+  ])(
+    "an SDK keyless file with $file stops both modes with usage_error, opening nothing",
+    async ({ write }) => {
+      storedSession();
+      await write();
+      mockListApplications.mockResolvedValue([SDK_APP]);
+
+      for (const agent of [false, true]) {
+        mockIsAgent.mockReturnValue(agent);
+        await expect(link({ cwd: dir })).rejects.toMatchObject({
+          code: "usage_error",
+          message: expect.stringContaining("has no usable claim link"),
+        });
+      }
+
+      expect(mockOpenBrowser).not.toHaveBeenCalled();
+      expect(mockLinkApp).not.toHaveBeenCalled();
+      expectNoPickerOrNewApp();
+    },
+  );
+
+  // Control: a plain key means the app runs on it, not on the SDK's file.
+  test("a plain key next to a stale SDK keyless file: the SDK file's app isn't linked", async () => {
+    mockIsAgent.mockReturnValue(true);
+    storedSession();
+    await sdkFile();
+    await Bun.write(join(dir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_test_unmatched\n");
+    mockListApplications.mockResolvedValue([SDK_APP]);
+    mockAutolink.mockResolvedValue({ status: "no_match", source: ".env" });
+
+    await expect(link({ cwd: dir })).rejects.toThrow("Cannot select an application in agent mode.");
+
+    expect(mockLinkApp).not.toHaveBeenCalled();
   });
 });

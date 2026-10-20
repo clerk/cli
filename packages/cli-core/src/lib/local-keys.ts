@@ -16,6 +16,7 @@
 
 import { join } from "node:path";
 import { ENV_FILE_CANDIDATES, parseEnvFile } from "./dotenv.ts";
+import { log } from "./log.ts";
 import { CLERK_KEY_NAMES, detectFramework } from "./framework.ts";
 
 export interface LocatedKey {
@@ -117,6 +118,53 @@ export async function readSdkKeylessFile(cwd: string): Promise<SdkKeylessFile> {
   } catch {
     return { state: "unreadable" };
   }
+}
+
+/**
+ * Whether the SDK keyless file holds a claim link the CLI may open, and if
+ * not, why, as a clause for a message. Never the URL in that reason: it
+ * carries a credential-equivalent token.
+ */
+export type SdkClaimLink =
+  | { status: "usable"; url: string }
+  | { status: "unusable"; reason: string };
+
+/**
+ * The claim link the SDK wrote for the app it created, already pointed at the
+ * right Dashboard host. The file is written by another process, so its
+ * contents are untrusted: anything but well-formed https is refused rather
+ * than handed to the browser launcher, which on Windows goes through
+ * `cmd /c start "" "<url>"`, where a `file:`/`javascript:` scheme or an
+ * embedded quote stops being just a URL. Never throws, and never logs the URL.
+ */
+export async function readSdkClaimLink(cwd: string): Promise<SdkClaimLink> {
+  const file = Bun.file(join(cwd, ...SDK_KEYLESS_FILE));
+  let parsed: unknown;
+  try {
+    if (!(await file.exists())) return { status: "unusable", reason: "it doesn't exist" };
+    parsed = await file.json();
+  } catch {
+    // A half-written file during an SDK refresh isn't worth failing over.
+    return { status: "unusable", reason: "it can't be read" };
+  }
+  const claimUrl =
+    typeof parsed === "object" && parsed !== null
+      ? (parsed as { claimUrl?: unknown }).claimUrl
+      : undefined;
+  if (typeof claimUrl !== "string" || !claimUrl) {
+    return { status: "unusable", reason: "it has no claim URL" };
+  }
+  let isHttps = false;
+  try {
+    isHttps = new URL(claimUrl).protocol === "https:";
+  } catch {
+    // fall through: not a URL at all
+  }
+  if (!isHttps) {
+    log.debug(`keyless: ignoring non-https claimUrl in ${SDK_KEYLESS_SOURCE}`);
+    return { status: "unusable", reason: "its claim URL isn't an https link" };
+  }
+  return { status: "usable", url: claimUrl };
 }
 
 /**

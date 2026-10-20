@@ -11,8 +11,10 @@ import {
   reportClaimed,
 } from "../auth/claim-report.ts";
 import { attemptAutoclaim, readInitClaim, type InitClaim } from "../../lib/autoclaim.ts";
-import { claimDestination, confirmClaim, currentAccount } from "../../lib/claim-prompt.ts";
-import type { UserInfo } from "../../lib/token-exchange.ts";
+import { claimDestination, confirmClaim } from "../../lib/claim-prompt.ts";
+import { signedInAccount } from "./account.ts";
+import { linkSdkOnlyFolder } from "./sdk-only.ts";
+import { declareSoftExitOutcome } from "../../lib/telemetry.ts";
 import { createApplication, fetchApplication, type Application } from "../../lib/plapi.ts";
 import { appLabel, fetchAppsTolerantly, pickOrCreateApp } from "../../lib/app-picker.ts";
 import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
@@ -23,6 +25,7 @@ import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import {
   CliError,
   ERROR_CODE,
+  EXIT_CODE,
   throwUsageError,
   throwUserAbort,
   withApiContext,
@@ -45,8 +48,12 @@ interface LinkOptions {
   showNextSteps?: boolean;
 }
 
-/** What `link()` did: callers stop when the folder isn't linked. */
-export type LinkOutcome = { status: "linked"; appId: string };
+/**
+ * What `link()` did. Callers stop when the folder isn't linked: after
+ * `claim_page_opened`, a person claims the SDK's app in the Dashboard and
+ * reruns `clerk link`.
+ */
+export type LinkOutcome = { status: "linked"; appId: string } | { status: "claim_page_opened" };
 
 export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
   const agent = isAgent();
@@ -68,13 +75,27 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
   // Claim first: a signed-in picker can't show the app `clerk init` created,
   // because it isn't in an account yet. An explicit `--app` or an existing
   // link wins, so neither claims.
+  // The person's frame opens once, before the first thing they see, and every
+  // return after that closes it. Agents print no frame.
+  let framed = false;
+  const openFrame = () => {
+    if (framed) return;
+    intro("Linking project");
+    framed = true;
+  };
+  const showNextSteps = options.showNextSteps !== false;
+
   const initClaim = !existing && !options.app ? await readInitClaim(cwd) : undefined;
-  // A person's question and the claim's report belong in link's frame.
-  const framedForClaim = Boolean(initClaim) && !agent;
   if (initClaim) {
-    if (framedForClaim) intro("Linking project");
-    const claimed = await claimFirst(cwd, initClaim, agent, options.showNextSteps !== false);
+    openFrame();
+    const claimed = await claimFirst(cwd, initClaim, agent, showNextSteps);
     if (claimed) return claimed;
+  } else if (!existing && !options.app) {
+    const sdkOnly = await linkSdkOnlyFolder(cwd, agent, openFrame);
+    if (sdkOnly) {
+      await outro(sdkOnly.status === "linked" && showNextSteps ? NEXT_STEPS.LINK : undefined);
+      return sdkOnly;
+    }
   }
 
   // Why the folder's own key couldn't pick its app, when the CLI can't tell
@@ -83,7 +104,7 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
   if (!existing && !options.app && (options.skipIfLinked || agent)) {
     const autolinked = await autolink(cwd);
     if (autolinked.status === "linked") {
-      if (framedForClaim) await outro();
+      if (framed) await outro();
       return { status: "linked", appId: autolinked.profile.appId };
     }
     if (autolinked.status === "couldnt_tell") couldntTell = autolinked.reason;
@@ -101,7 +122,7 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
     );
   }
 
-  if (!framedForClaim) intro("Linking project");
+  openFrame();
 
   if (existing && agent) {
     printExistingStatus(existing, normalizedRemote);
@@ -208,19 +229,6 @@ async function claimFirst(
     case "failed":
       throw result.error;
   }
-}
-
-/**
- * The account a person's claim would go to, signing in first when there's no
- * usable session. With `CLERK_PLATFORM_API_KEY` set, the key decides where
- * claims go, so no sign-in is needed and the session's account is only used
- * to word a declined claim.
- */
-async function signedInAccount(): Promise<UserInfo | null> {
-  const account = await currentAccount();
-  if (account || process.env.CLERK_PLATFORM_API_KEY) return account;
-  log.info("Not logged in. Authenticating first...");
-  return login({ showNextSteps: false, claim: false });
 }
 
 async function hasCredentials(): Promise<boolean> {
@@ -337,6 +345,13 @@ export function registerLink(program: Program): void {
     ])
     // Only `--app`: internal options such as `createIfMissing` stay internal.
     .action(async (opts: { app?: string }) => {
-      await link({ app: opts.app });
+      const outcome = await link({ app: opts.app });
+      // Nothing was linked: `clerk link && clerk deploy` must stop here, since
+      // `deploy` would only fail with not_linked. The person did their part,
+      // so no error line; telemetry records an unfinished link, not a failure.
+      if (outcome.status === "claim_page_opened") {
+        declareSoftExitOutcome("incomplete", ERROR_CODE.NOT_LINKED);
+        process.exitCode = EXIT_CODE.GENERAL;
+      }
     });
 }
