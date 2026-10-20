@@ -823,6 +823,22 @@ describe("deploy", () => {
       expect(config.profiles[process.cwd()]?.instances.production).toBeUndefined();
     });
 
+    test("--domain reads past a listed production entry without an id", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockFetchApplication.mockResolvedValue({
+        ...developmentOnlyApplication(),
+        instances: [
+          ...developmentOnlyApplication().instances,
+          { instance_id: "", environment_type: "production", publishable_key: "pk_live_123" },
+        ],
+      });
+
+      await runDeploy({ domain: "example.com" });
+
+      expect(JSON.parse(captured.out).productionInstanceId).toBe("ins_prod_mock");
+    });
+
     // A case or trailing-dot difference in how Clerk spells the domain is
     // still the domain this run asked for.
     test.each(["example.com.", "Example.COM."])(

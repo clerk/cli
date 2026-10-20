@@ -305,13 +305,14 @@ export async function resolveLiveApplicationContext(profile: DeployContext["prof
  * else one this run already holds from Clerk (its own create's response, or
  * an earlier read in the same run) while the list trails a create. Never the
  * id saved in the profile: an instance deleted since would read as
- * provisioning forever.
+ * provisioning forever. An empty id names no instance, as with
+ * `rememberProductionInstance`.
  */
 function productionInstanceToRead(
   listed: string | undefined,
   heldThisRun: string | undefined,
 ): string | undefined {
-  return listed ?? heldThisRun;
+  return listed || heldThisRun || undefined;
 }
 
 /** `heldThisRun`: see {@link productionInstanceToRead}. */
