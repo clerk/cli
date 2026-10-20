@@ -1339,7 +1339,7 @@ The two Identity Toolkit paths are on `identitytoolkit.googleapis.com`, or on
 the export skips that request, and it may not carry the hash parameters: pass
 them to the import. The two WorkOS paths are on `api.workos.com`.
 
-The three database exports (`supabase`, `authjs`, `betterauth`) connect over
+The database exports (`supabase`, `authjs`, `betterauth`) connect over
 `--db-url`. Auth.js and Better Auth also accept a `libsql://` URL, which goes
 over HTTP: it posts to the server's pipeline endpoint. Supabase takes Postgres
 only.

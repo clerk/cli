@@ -61,7 +61,7 @@ const handlers = {
   workos: exportWorkOs,
 };
 
-/** The three platforms that read a database, which share `--db-url`. */
+/** The platforms that read a database, which share `--db-url`. */
 const DB_PLATFORMS = [
   {
     key: "supabase",
@@ -226,8 +226,8 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       handlers.workos(cmd.optsWithGlobals() as Parameters<typeof handlers.workos>[0]),
     );
 
-  // All three take exactly one connection string, so they are registered from
-  // a table rather than three near-identical blocks.
+  // Each takes exactly one connection string, so they are registered from a
+  // table rather than near-identical blocks.
   for (const platform of DB_PLATFORMS) {
     const command = exportCommand
       .command(platform.key)
