@@ -1024,6 +1024,31 @@ describe("deploy", () => {
       expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
     });
 
+    // Rerunning right away can't help: until Clerk returns the domain,
+    // `clerk deploy --domain` refuses with `deploy_domain_unchecked`, and a
+    // bare `clerk deploy` has nothing to resume.
+    test("a create that returns no domain says to wait for it before rerunning", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockCreateProductionInstance.mockResolvedValue({
+        object: "instance",
+        id: "ins_prod_mock",
+        environment_type: "production" as const,
+        active_domain: null,
+        publishable_key: "pk_live_test",
+        created_at: 1770000000000,
+        updated_at: 1770000000000,
+      });
+
+      const error = await runDeploy({ domain: "example.com", yes: true }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_MISSING);
+      expect((error as CliError).message).toBe(
+        "The production instance was created, but Clerk did not return its domain yet. " +
+          "Run `clerk deploy status` to check it, and run `clerk deploy` again once it shows the domain.",
+      );
+    });
+
     test("--domain and --yes skip the domain prompt and both confirmations", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
@@ -1590,7 +1615,7 @@ describe("deploy", () => {
         thrown = e;
       }
       expect(thrown).toBeInstanceOf(CliError);
-      expect((thrown as CliError).message).toContain("did not return a domain");
+      expect((thrown as CliError).message).toContain("did not return its domain yet");
     });
 
     test("Ctrl-C at the DNS handoff reports paused", async () => {

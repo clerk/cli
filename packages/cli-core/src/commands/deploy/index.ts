@@ -379,10 +379,13 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
   log.success("Clerk production instance created. Manage it in the Dashboard:");
   log.info(`  ${instanceDashboardUrl(ctx.appId, production.id)}`);
 
+  // Rerunning at once can't help: until Clerk returns the domain, a rerun
+  // with --domain is refused (`deploy_domain_unchecked`) and one without it
+  // has nothing to resume.
   if (!production.active_domain) {
     throw new CliError(
-      "Production instance was created but Clerk did not return a domain. " +
-        "Run `clerk deploy` again to retry domain provisioning.",
+      "The production instance was created, but Clerk did not return its domain yet. " +
+        "Run `clerk deploy status` to check it, and run `clerk deploy` again once it shows the domain.",
       { code: ERROR_CODE.DEPLOY_DOMAIN_MISSING },
     );
   }
