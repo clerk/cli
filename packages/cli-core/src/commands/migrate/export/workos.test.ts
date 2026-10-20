@@ -97,6 +97,23 @@ function stubWorkOs(
   }) as unknown as typeof fetch;
 }
 
+/**
+ * Wraps the stubbed fetch so the first `times` requests matching `pattern`
+ * answer 429, with a short Retry-After so the backoff takes milliseconds.
+ */
+function throttle(pattern: RegExp, times: number) {
+  const served = globalThis.fetch;
+  let throttled = 0;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (pattern.test(input.toString()) && throttled < times) {
+      throttled++;
+      requests.push(input.toString());
+      return new Response("Too Many Requests", { status: 429, headers: { "retry-after": "0.01" } });
+    }
+    return served(input, init);
+  }) as unknown as typeof fetch;
+}
+
 describe("resolveWorkOsApiKey", () => {
   test("prefers the flag", async () => {
     expect(await resolveWorkOsApiKey({ apiKey: "sk_flag" }, {})).toBe("sk_flag");
@@ -176,6 +193,26 @@ describe("fetchAllWorkOsUsers", () => {
     expect(all).toHaveLength(104);
     expect(requests).toHaveLength(2);
     expect(requests[1]).toContain("after=cursor1");
+  });
+
+  // A 429 used to end the export and drop the pages already read.
+  test("backs off on a 429 while paging, and carries on", async () => {
+    stubWorkOs([[workosUser(0)], [workosUser(1)]]);
+    throttle(/after=cursor1/, 2);
+
+    const all = await fetchAllWorkOsUsers({ apiKey: API_KEY });
+
+    expect(all).toHaveLength(2);
+    expect(requests.filter((url) => url.includes("after=cursor1"))).toHaveLength(3);
+  });
+
+  test("stops with the reason once paging runs out of retries", async () => {
+    stubWorkOs([[workosUser(0)], [workosUser(1)]]);
+    throttle(/after=cursor1/, 100);
+
+    await expect(fetchAllWorkOsUsers({ apiKey: API_KEY })).rejects.toThrow(
+      /WorkOS kept rate-limiting the API \(429, 5 retries\)\. Nothing was exported\./,
+    );
   });
 
   // Cursor pagination has no record ceiling, so a full page that happens to be
@@ -286,6 +323,34 @@ describe("fetchAllWorkOsIdentities", () => {
   // the first into the second would put a wrong number in the report.
   test("leaves a failed lookup absent rather than empty, and counts it", async () => {
     stubWorkOs([[]], { user_00: "fail", user_01: [] });
+
+    const { identities, failed } = await fetchAllWorkOsIdentities({
+      apiKey: API_KEY,
+      users: [workosUser(0), workosUser(1)],
+    });
+
+    expect(identities.has("user_00")).toBe(false);
+    expect(identities.get("user_01")).toEqual([]);
+    expect(failed).toBe(1);
+  });
+
+  // A 429 used to count the user as not readable on the first try.
+  test("backs off on a 429 rather than counting the user as not readable", async () => {
+    stubWorkOs([[]], { user_00: [{ provider: "GitHubOAuth", idp_id: "g", type: "OAuth" }] });
+    throttle(/user_00\/identities/, 2);
+
+    const { identities, failed } = await fetchAllWorkOsIdentities({
+      apiKey: API_KEY,
+      users: [workosUser(0)],
+    });
+
+    expect(identities.get("user_00")).toHaveLength(1);
+    expect(failed).toBe(0);
+  });
+
+  test("counts a user not readable only once its retries run out", async () => {
+    stubWorkOs([[]], { user_01: [] });
+    throttle(/user_00\/identities/, 100);
 
     const { identities, failed } = await fetchAllWorkOsIdentities({
       apiKey: API_KEY,
