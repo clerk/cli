@@ -74,10 +74,7 @@ export async function pull(options: EnvPullOptions): Promise<void> {
       return;
     }
 
-    const [ctx, preferredEnvFile] = await Promise.all([
-      resolveAppContext({ ...options, cwd }),
-      detectEnvFile(cwd),
-    ]);
+    const ctx = await resolveAppContext({ ...options, cwd });
 
     const vars = await withSpinner(
       `Pulling env vars from ${ctx.instanceLabel} instance...`,
@@ -125,7 +122,7 @@ export async function pull(options: EnvPullOptions): Promise<void> {
       return;
     }
 
-    const targetFile = await resolveTargetFile(cwd, options.file, preferredEnvFile);
+    const targetFile = await resolveTargetFile(cwd, options.file, await detectEnvFile(cwd));
     await mergeKeysIntoEnvFile(targetFile, vars);
     log.info(`Environment variables written to ${options.file ?? basename(targetFile)}`);
   });
@@ -159,8 +156,7 @@ async function pullKeylessKeys(
   keyless: KeylessTarget,
   options: Pick<EnvPullOptions, "file" | "print">,
 ): Promise<void> {
-  const [preferredEnvFile, publishableKeyName, secretKeyName, publishableKey] = await Promise.all([
-    detectEnvFile(cwd),
+  const [publishableKeyName, secretKeyName, publishableKey] = await Promise.all([
     detectPublishableKeyName(cwd),
     detectSecretKeyName(cwd),
     findLocalPublishableKey(cwd),
@@ -193,7 +189,7 @@ async function pullKeylessKeys(
   if (options.print) {
     log.data(formatEnvLines(vars));
   } else {
-    const targetFile = await resolveTargetFile(cwd, options.file, preferredEnvFile);
+    const targetFile = await resolveTargetFile(cwd, options.file, await detectEnvFile(cwd));
     await mergeKeysIntoEnvFile(targetFile, vars);
     log.info(
       `Accountless application keys from \`${keyless.source}\` written to ${options.file ?? basename(targetFile)}`,
