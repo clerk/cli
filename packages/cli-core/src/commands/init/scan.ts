@@ -128,7 +128,7 @@ const CODE_SCANS: CodeScan[] = [
     // WorkOS users through the general Node SDK, which the package scan leaves
     // out. The `sso` and `directorySync` modules alone hold no users.
     pattern: "\\bworkos\\.userManagement\\b",
-    message: "WorkOS User Management usage still in use",
+    message: "WorkOS User Management still in use",
     docsUrl: "https://clerk.com/docs/guides/development/migrating/overview",
   },
   {
