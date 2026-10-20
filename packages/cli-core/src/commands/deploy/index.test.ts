@@ -896,6 +896,7 @@ describe("deploy", () => {
 
       expect(error).toBeInstanceOf(CliError);
       expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      // Just created by this run, so not deleted: no `clerk link` pointer.
       expect((error as CliError).message).toBe(
         "The production instance was created, but its status couldn't be read yet. " +
           "Run `clerk deploy status` to check it.",
@@ -915,9 +916,12 @@ describe("deploy", () => {
 
       expect(error).toBeInstanceOf(CliError);
       expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      // A 404 there also follows a production instance deleted since, which
+      // waiting never fixes.
       expect((error as CliError).message).toBe(
         "The production instance exists, but its status couldn't be read yet. " +
-          "Run `clerk deploy status` to check it.",
+          "Run `clerk deploy status` to check it. " +
+          "If the production instance was deleted, run `clerk link`.",
       );
       expect(mockCreateProductionInstance).not.toHaveBeenCalled();
       expect(captured.out).toBe("");

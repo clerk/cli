@@ -404,7 +404,8 @@ describe("deploy status", () => {
     new PlapiError(404, JSON.stringify({ errors: [{ code: "resource_not_found" }] }), "https://x");
   const domainStatusUnreadable =
     "The production instance exists, but Clerk couldn't read its domain status yet. " +
-    "Run `clerk deploy status` again shortly.";
+    "Run `clerk deploy status` again shortly. " +
+    "If the production instance was deleted, run `clerk link`.";
 
   test("a 404 on the domain status says the instance exists, not to re-link", async () => {
     mockFetchApplication.mockResolvedValue(appWith(true));

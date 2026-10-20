@@ -76,6 +76,7 @@ import {
 } from "./state.ts";
 import {
   buildDeployStatusReport,
+  domainStatusNotFoundError,
   loadDevelopmentOAuthProviders,
   resolveDeployContext,
   resolveDeployState,
@@ -210,10 +211,10 @@ function instanceReadError(error: unknown, created: boolean): unknown {
   if (!(error instanceof CliError) || error.code !== ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED) {
     return error;
   }
-  return new CliError(
+  return domainStatusNotFoundError(
     `The production instance ${created ? "was created" : "exists"}, but its status couldn't be read yet. ` +
       "Run `clerk deploy status` to check it.",
-    { code: ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED },
+    { justCreated: created },
   );
 }
 

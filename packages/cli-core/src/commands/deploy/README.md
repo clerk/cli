@@ -86,7 +86,7 @@ Exit codes:
 | `1`  | The check ran successfully, but deploy is incomplete. Inspect `state` and `nextAction`.       |
 | else | A real CLI error occurred, such as not linked or an API failure, via the standard error path. |
 
-A 404 on the production domain's status or DNS-check request fails with `deploy_instance_unresolved` ("The production instance exists, but Clerk couldn't read its domain status yet"), not `not_linked`: the application was read moments earlier, so re-linking would fix nothing. The wizard's DNS polling does the same. Other API failures keep Clerk's own error code.
+A 404 on the production domain's status or DNS-check request fails with `deploy_instance_unresolved` ("The production instance exists, but Clerk couldn't read its domain status yet"), not `not_linked`: the application was read moments earlier, so the status usually just isn't readable yet. The same 404 also follows a production instance deleted since, where waiting never helps, so unless the run just created the instance the message adds: "If the production instance was deleted, run `clerk link`." The wizard's DNS polling does the same. Other API failures keep Clerk's own error code.
 
 ### What telemetry records about a deploy run
 

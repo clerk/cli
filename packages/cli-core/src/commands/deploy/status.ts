@@ -249,12 +249,29 @@ export type DiscoveredOAuthProviders = {
  */
 const DOMAIN_REQUEST: MapDeployErrorOptions<never> = {
   onNotFound: () =>
-    new CliError(
+    domainStatusNotFoundError(
       "The production instance exists, but Clerk couldn't read its domain status yet. " +
         "Run `clerk deploy status` again shortly.",
-      { code: ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED },
     ),
 };
+
+/**
+ * Every `deploy_instance_unresolved` error for a 404 on the production
+ * domain's status. That 404 also follows a production instance deleted since,
+ * where waiting never helps, so the message says what to do then, unless this
+ * run just created the instance.
+ */
+export function domainStatusNotFoundError(
+  message: string,
+  { justCreated = false }: { justCreated?: boolean } = {},
+): CliError {
+  return new CliError(
+    justCreated
+      ? message
+      : `${message} If the production instance was deleted, run \`clerk link\`.`,
+    { code: ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED },
+  );
+}
 
 export async function resolveDeployContext(): Promise<DeployContext> {
   const resolved = await withSpinner("Resolving linked Clerk application...", async () =>
