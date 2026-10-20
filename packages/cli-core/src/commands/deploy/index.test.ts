@@ -204,17 +204,7 @@ describe("deploy", () => {
         connection_oauth_google: basicOAuthSchema,
       }),
     );
-    mockFetchApplication.mockResolvedValue({
-      application_id: "app_xyz789",
-      name: "my-saas-app",
-      instances: [
-        {
-          instance_id: "ins_dev_123",
-          environment_type: "development",
-          publishable_key: "pk_test_123",
-        },
-      ],
-    });
+    mockFetchApplication.mockResolvedValue(developmentOnlyApplication());
     mockListApplicationDomains.mockResolvedValue({
       data: [
         {
@@ -1110,6 +1100,28 @@ describe("deploy", () => {
 
       expect(error).toBeInstanceOf(CliError);
       expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+    });
+
+    // The wizard names the instance only from this run's create or Clerk's
+    // list, never from a production id left in the profile by an instance
+    // since deleted.
+    test("a create without an id never falls back to a leftover profile id", async () => {
+      await linkedProject({ instances: { development: "ins_dev_123", production: "ins_deleted" } });
+      mockFetchApplication.mockResolvedValue(developmentOnlyApplication());
+      mockIsAgent.mockReturnValue(false);
+      mockFetchInstanceConfig.mockResolvedValue({}); // no OAuth setup, so it reaches the next steps
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockInput.mockResolvedValueOnce("example.com");
+      mockSelect.mockResolvedValueOnce("skip");
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+      stubCreateProductionInstanceWithoutId();
+
+      const error = await runDeploy({}).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      expect(captured.err).not.toContain("ins_deleted");
     });
 
     // Rerunning right away can't help: until Clerk returns the domain,
@@ -3271,17 +3283,7 @@ describe("deploy", () => {
       );
       // First fetchApplication call (during resolveDeployContext) sees no production
       // instance, so the wizard takes the startNewDeploy path and hits the 409.
-      mockFetchApplication.mockResolvedValueOnce({
-        application_id: "app_xyz789",
-        name: "my-saas-app",
-        instances: [
-          {
-            instance_id: "ins_dev_123",
-            environment_type: "development",
-            publishable_key: "pk_test_123",
-          },
-        ],
-      });
+      mockFetchApplication.mockResolvedValueOnce(developmentOnlyApplication());
       // Subsequent reads (the recovery refresh + reconcile) see the production
       // instance that another flow created, with google OAuth already configured.
       mockLiveProduction({
@@ -3681,17 +3683,7 @@ describe("deploy", () => {
             JSON.stringify({ errors: [{ code: "production_instance_exists", message: "exists" }] }),
           ),
         );
-        mockFetchApplication.mockResolvedValueOnce({
-          application_id: "app_xyz789",
-          name: "my-saas-app",
-          instances: [
-            {
-              instance_id: "ins_dev_123",
-              environment_type: "development",
-              publishable_key: "pk_test_123",
-            },
-          ],
-        });
+        mockFetchApplication.mockResolvedValueOnce(developmentOnlyApplication());
         mockLiveProduction({
           instanceId: "ins_prod_recovered",
           productionConfig: {
@@ -3730,17 +3722,7 @@ describe("deploy", () => {
         await linkedProject();
         mockIsAgent.mockReturnValue(false);
         mockCreateConflict();
-        mockFetchApplication.mockResolvedValue({
-          application_id: "app_xyz789",
-          name: "my-saas-app",
-          instances: [
-            {
-              instance_id: "ins_dev_123",
-              environment_type: "development",
-              publishable_key: "pk_test_123",
-            },
-          ],
-        });
+        mockFetchApplication.mockResolvedValue(developmentOnlyApplication());
 
         const { payload } = await deployTelemetry(async () => runDeploy({}));
 

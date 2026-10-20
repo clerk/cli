@@ -174,9 +174,7 @@ async function runAgentDeploy(domain: string | undefined): Promise<void> {
   // happened: the caller would create again, or give up on a live instance.
   const created = await ensureProductionInstance(ctx, domain);
   const state = await withApiContext(
-    // The application's instance list can trail a create, so the id this run
-    // already holds stands in until the list shows it.
-    resolveDeployState(ctx, ctx.productionInstanceId),
+    resolveDeployState(ctx),
     "The production instance exists, but its status could not be read; run `clerk deploy status` to retry",
   ).catch((error: unknown) => {
     throw instanceReadError(error, created);
@@ -715,8 +713,7 @@ async function runDnsVerification(
     log.blank();
     log.info(deployComponentStatus(outcome.status));
     log.blank();
-    const productionInstanceId =
-      state.productionInstanceId ?? ctx.productionInstanceId ?? ctx.profile.instances.production;
+    const productionInstanceId = state.productionInstanceId ?? ctx.productionInstanceId;
     // Computed before the footer so the footer can tell the user when there is
     // no record list to print, instead of saying "add them" over nothing.
     const pendingTargets = pendingCnameTargets(state.cnameTargets ?? [], outcome.status);
@@ -808,8 +805,7 @@ async function runOAuthSetup(
   for (const descriptor of descriptors) {
     if (completed.has(descriptor.provider)) continue;
     try {
-      const productionInstanceId =
-        state.productionInstanceId ?? ctx.productionInstanceId ?? ctx.profile.instances.production;
+      const productionInstanceId = state.productionInstanceId ?? ctx.productionInstanceId;
       if (!productionInstanceId) {
         throwUsageError(
           "Cannot save OAuth credentials because the production instance could not be resolved. Run `clerk deploy` after confirming the production instance in the Clerk Dashboard.",
@@ -973,7 +969,9 @@ async function finishDeploy(
     log.info(line);
   }
   log.blank();
-  const productionInstanceId = ctx.productionInstanceId ?? ctx.profile.instances.production;
+  // From this run's create or Clerk's list, never the profile: an id left
+  // there by a deleted instance would name nothing.
+  const productionInstanceId = ctx.productionInstanceId;
   if (!productionInstanceId) {
     throwUsageError(
       "Cannot print deploy next steps because the production instance could not be resolved. Run `clerk deploy` after confirming the production instance in the Clerk Dashboard.",

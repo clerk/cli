@@ -302,28 +302,28 @@ export async function resolveLiveApplicationContext(profile: DeployContext["prof
 
 /**
  * The production instance to read: the one Clerk's application list shows,
- * else one this run already holds from Clerk (its own create's response, or
- * an earlier read in the same run) while the list trails a create. Never the
- * id saved in the profile: an instance deleted since would read as
- * provisioning forever. An empty id names no instance, as with
+ * else the one this run already holds from Clerk in `ctx` (an earlier read in
+ * the same run, or its own create's response) while the list trails a
+ * create. Never the id saved in the profile: an instance deleted since would
+ * read as provisioning forever. An empty id names no instance, as with
  * `rememberProductionInstance`.
  */
 function productionInstanceToRead(
   listed: string | undefined,
-  heldThisRun: string | undefined,
+  thisRun: string | undefined,
 ): string | undefined {
-  return listed || heldThisRun || undefined;
+  return listed || thisRun || undefined;
 }
 
-/** `heldThisRun`: see {@link productionInstanceToRead}. */
-export async function resolveDeployState(
-  ctx: DeployContext,
-  heldThisRun?: string,
-): Promise<DeployState> {
+/** Which instance it reads: see {@link productionInstanceToRead}. */
+export async function resolveDeployState(ctx: DeployContext): Promise<DeployState> {
   const application = await resolveLiveApplicationContext(ctx.profile);
   const live = {
     ...application,
-    productionInstanceId: productionInstanceToRead(application.productionInstanceId, heldThisRun),
+    productionInstanceId: productionInstanceToRead(
+      application.productionInstanceId,
+      ctx.productionInstanceId,
+    ),
   };
   if (!live.productionInstanceId) return { kind: "not_started" };
 
