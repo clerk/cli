@@ -18,7 +18,13 @@ import path from "node:path";
 import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { createDbClient, type DbClient } from "../lib/db.ts";
-import { buildAuthJsExport, buildAuthJsQuery, exportAuthJs, fetchAuthJsUsers } from "./authjs.ts";
+import {
+  buildAuthJsExport,
+  buildAuthJsQuery,
+  exportAuthJs,
+  fetchAuthJsAccounts,
+  fetchAuthJsUsers,
+} from "./authjs.ts";
 import {
   buildBetterAuthExport,
   buildBetterAuthQuery,
@@ -356,6 +362,121 @@ describe("authjs export", () => {
     expect(captured.err).toContain("Credentials provider");
   });
 });
+
+describe("authjs OAuth accounts", () => {
+  /** Prisma's `User` and `Account`, with aj2 signing in with GitHub and Google. */
+  const withAccounts = () =>
+    makeDb((db) => {
+      db.run(
+        `CREATE TABLE "User" (id TEXT PRIMARY KEY, name TEXT, email TEXT, "emailVerified" TEXT)`,
+      );
+      db.run(`INSERT INTO "User" VALUES (?,?,?,?)`, ["aj1", "Jane", "jane@x.dev", "2024-01-15"]);
+      db.run(`INSERT INTO "User" VALUES (?,?,?,?)`, ["aj2", "John", "john@x.dev", null]);
+      db.run(`INSERT INTO "User" VALUES (?,?,?,?)`, ["aj3", "Ann", "ann@x.dev", null]);
+      db.run(`CREATE TABLE "Account" ("userId" TEXT, type TEXT, provider TEXT)`);
+      for (const row of [
+        ["aj2", "oauth", "github"],
+        ["aj2", "oidc", "google"],
+        ["aj2", "oauth", "github"],
+        // An email-link or Credentials account is not an OAuth sign-in.
+        ["aj3", "email", "email"],
+        ["aj1", "credentials", "credentials"],
+      ]) {
+        db.run(`INSERT INTO "Account" VALUES (?,?,?)`, row);
+      }
+    });
+
+  test("reads each user's OAuth providers, once each", async () => {
+    const accounts = await withClient(withAccounts(), async (client) =>
+      fetchAuthJsAccounts(client, (await fetchAuthJsUsers(client)).table),
+    );
+    expect(Object.fromEntries(accounts ?? [])).toEqual({ aj2: ["github", "google"] });
+  });
+
+  test("reads a legacy NextAuth accounts table", async () => {
+    const file = makeDb((db) => {
+      db.run(
+        `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, email_verified TEXT)`,
+      );
+      db.run(`CREATE TABLE accounts (user_id TEXT, provider_type TEXT, provider_id TEXT)`);
+      db.run(`INSERT INTO accounts VALUES (?,?,?)`, ["n1", "oauth", "github"]);
+    });
+    const accounts = await withClient(file, async (client) => fetchAuthJsAccounts(client, "users"));
+    expect(Object.fromEntries(accounts ?? [])).toEqual({ n1: ["github"] });
+  });
+
+  test("says there is no account table rather than failing", async () => {
+    const file = makeDb((db) => {
+      db.run(
+        `CREATE TABLE "User" (id TEXT PRIMARY KEY, name TEXT, email TEXT, "emailVerified" TEXT)`,
+      );
+    });
+    expect(
+      await withClient(file, async (client) => fetchAuthJsAccounts(client, "User")),
+    ).toBeUndefined();
+  });
+
+  const rows = [
+    { id: "aj1", email: "jane@x.dev", email_verified: "2024-01-15" },
+    { id: "aj2", email: "john@x.dev" },
+  ];
+  const accounts = new Map([["aj2", ["github"]]]);
+
+  // Auth.js leaves an OAuth user's email unverified, and Clerk then neither
+  // accepts it as a required email nor links a social sign-in to it.
+  test("counts OAuth users with an unverified email, and keeps it unverified", () => {
+    const result = buildAuthJsExport(rows, () => {}, { accounts });
+    expect(result.users[1]).toEqual({ id: "aj2", email: "john@x.dev", providers: ["github"] });
+    expect(result.oauthUnverified).toBe(1);
+    expect(result.trusted).toBe(0);
+    expect(result.sections).toEqual([
+      { title: "OAuth providers", items: [{ label: "github", count: 1 }] },
+    ]);
+  });
+
+  test("--trust-oauth-emails marks an OAuth user's email verified", () => {
+    const now = "2026-10-20T00:00:00.000Z";
+    const result = buildAuthJsExport(rows, () => {}, { accounts, trustOauthEmails: true, now });
+    expect(result.users[1]).toMatchObject({ email_verified: now, providers: ["github"] });
+    // A user already verified keeps their own date.
+    expect(result.users[0]).toMatchObject({ email_verified: "2024-01-15" });
+    expect(result.trusted).toBe(1);
+    expect(result.oauthUnverified).toBe(0);
+  });
+
+  test("warns how many OAuth users arrive unverified, and how to trust them", async () => {
+    await exportAuthJs({ dbUrl: withAccounts(), output: "oauth.json" });
+
+    const written = JSON.parse(fs.readFileSync(path.join(workDir, "oauth.json"), "utf-8"));
+    expect(written.users.find((u: { id: string }) => u.id === "aj2")).toMatchObject({
+      providers: ["github", "google"],
+    });
+    expect(captured.err).toContain("1 user signs in with OAuth and has an unverified email");
+    expect(captured.err).toContain("--trust-oauth-emails");
+  });
+
+  test("says which emails it trusted, and the risk", async () => {
+    await exportAuthJs({ dbUrl: withAccounts(), output: "trusted.json", trustOauthEmails: true });
+
+    const written = JSON.parse(fs.readFileSync(path.join(workDir, "trusted.json"), "utf-8"));
+    expect(written.users.find((u: { id: string }) => u.id === "aj2")?.email_verified).toBeString();
+    expect(captured.err).toContain("Marked 1 email verified because the user signs in with OAuth");
+  });
+
+  test("warns when there is no account table to read", async () => {
+    await exportAuthJs({ dbUrl: authJsDbWithoutAccounts(), output: "plain.json" });
+    expect(captured.err).toContain("could not tell who signs in with OAuth");
+  });
+});
+
+function authJsDbWithoutAccounts(): string {
+  return makeDb((db) => {
+    db.run(
+      `CREATE TABLE "user" (id TEXT PRIMARY KEY, name TEXT, email TEXT, "emailVerified" TEXT)`,
+    );
+    db.run(`INSERT INTO "user" VALUES (?,?,?,?)`, ["aj1", "Jane", "jane@x.dev", null]);
+  });
+}
 
 describe("betterauth export", () => {
   test("detects only the plugin columns that exist", async () => {
