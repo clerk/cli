@@ -928,6 +928,27 @@ describe("auth0 social providers", () => {
   });
 });
 
+describe("authjs social providers", () => {
+  // `providers` is the export's own field: it must reach the checks, not be
+  // reported as a field Clerk won't store.
+  test("carries the export's providers to the checks, by Clerk's names", () => {
+    const result = transformUsers(
+      [
+        {
+          id: "aj1",
+          email: "a@x.dev",
+          email_verified: "2024-01-01",
+          providers: ["github", "azure-ad"],
+        },
+      ],
+      "authjs",
+    );
+    const user = result.transformedData[0] as User;
+    expect(getSource("authjs").socialProviders?.(user)).toEqual(["github", "microsoft"]);
+    expect(result.unknownFields).toEqual({});
+  });
+});
+
 describe("invalid records", () => {
   // Firebase skips such a user instead; see "skips a user with no email or phone".
   const INVALID: [string, Record<string, unknown>][] = [

@@ -16,7 +16,18 @@ import { routeByVerification, splitName } from "./shared.ts";
  * No password default: Auth.js core stores no passwords, so users arrive
  * without a digest and are imported with `skip_password_requirement`. An app
  * using the Credentials provider keeps its own, which this does not read.
+ *
+ * `providers` is what `export authjs` reads from the account table: each
+ * user's OAuth providers, by Auth.js provider ID. They feed the readiness
+ * check, which offers to turn on any Clerk has off.
  */
+/** Auth.js provider IDs named differently from Clerk's provider key. */
+const AUTHJS_PROVIDER_KEYS: Record<string, string> = {
+  "azure-ad": "microsoft",
+  "microsoft-entra-id": "microsoft",
+  linkedin: "linkedin_oidc",
+};
+
 const authjsSource = {
   key: "authjs",
   label: "Auth.js (NextAuth)",
@@ -30,7 +41,7 @@ const authjsSource = {
     mfa: { level: "no", note: "Auth.js has no MFA of its own." },
     metadata: {
       level: "no",
-      note: "Only `id`, `name`, `email`, `email_verified` and `created_at` are read.",
+      note: "Only `id`, `name`, `email`, `email_verified`, `created_at` and the account table's OAuth providers are read.",
     },
   },
   transformer: {
@@ -39,6 +50,7 @@ const authjsSource = {
     email_verified: "emailVerified",
     name: "name",
     created_at: "createdAt",
+    providers: "socialProviders",
   },
   postTransform: (user) => {
     const verified = user.emailVerified;
@@ -54,6 +66,9 @@ const authjsSource = {
     routeByVerification(user, "email", "emailVerified", "timestamp");
     splitName(user);
   },
+
+  socialProviders: (user) =>
+    (user.socialProviders ?? []).map((provider) => AUTHJS_PROVIDER_KEYS[provider] ?? provider),
 } satisfies SourceEntry;
 
 export default authjsSource;

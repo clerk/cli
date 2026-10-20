@@ -294,6 +294,7 @@ keep `--runs-dir`: the import looks the run ID up there.
 | `--api-key <key>`          | `workos`                           | WorkOS secret API key, the one starting `sk_`                     |
 | `--with-identities`        | `workos`                           | Also record each user's OAuth providers                           |
 | `--no-with-identities`     | `workos`                           | Skip the OAuth provider fan-out without being asked               |
+| `--trust-oauth-emails`     | `authjs`                           | Mark the email of a user who signs in with OAuth verified         |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
 so it resolves a key the same way `clerk migrate import` does, with one extra
@@ -440,10 +441,27 @@ the difference as significant once quoted. On Postgres it tries
 The verified column is read as `emailVerified`, or `email_verified` on a legacy
 NextAuth table, whose `created_at` is kept too when it has one. Auth.js's own
 schemas record no creation time. Auth.js core stores no passwords, so its users
-arrive without credentials. That is all an OAuth or email-link app has. An app
+arrive without credentials, as OAuth and email-link users never had one. An app
 that also uses the Credentials provider stores passwords wherever it chose to,
 which the export does not read, even a password column on the user table:
 migrate those separately, or have those users reset their password.
+
+It also reads the account table beside the user table (`Account`, `account`,
+`accounts` or `next_auth.accounts`) for each user's OAuth providers, kept in
+the export as `providers` and printed as an **OAuth providers** block. The
+import counts them in its checks, which offer to turn on any Clerk has off.
+
+**Auth.js leaves an OAuth user's email unverified** (`emailVerified: null`;
+only an email-link sign-up gets a date). Imported as it is, that user is
+rejected by an instance that requires an email, and on one that doesn't,
+Clerk won't link their social sign-in to the unverified address and creates a
+second user. The export counts these users and warns. If every provider the
+app uses verifies addresses, `--trust-oauth-emails` marks them verified, with
+the export time as the verification date. It is opt-in because Auth.js itself
+won't link accounts by email unless the app sets
+`allowDangerousEmailAccountLinking`: a provider that never verified an address
+lets whoever holds it claim the account. Without an account table, the export
+says it could not tell who signs in with OAuth.
 
 **`betterauth` reads its schema before it queries.** It finds the tables
 (`user` and `account`, or `users` and `accounts` under `usePlural: true`), how
