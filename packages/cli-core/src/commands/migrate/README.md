@@ -757,14 +757,16 @@ plain `rm` for an export written with `--output` outside one.
 #### Checks
 
 Every import runs the checks before writing anything, and `--dry-run` stops
-after them. They sort the users three ways:
+after them. They sort the users four ways:
 
+- **Skipped** — users their source asked to leave out: Better Auth's anonymous
+  guests, Firebase users with no email or phone (such as anonymous ones), and
+  Supabase's soft-deleted and anonymous users. Nobody means to bring these
+  across, so they never stop the import: each is recorded as `skipped` with its
+  source's reason, and `--json` lists them as `checks.skipped`.
 - **Rejected** — users Clerk would refuse. Each gets the first reason that
   applies:
   - it failed schema validation
-  - its source requested a skip (Better Auth: an anonymous guest; Firebase: a
-    user with no email or phone, such as an anonymous one; Supabase: a
-    soft-deleted or anonymous user)
   - its only emails are ones Clerk refuses: malformed, or a domain that can't
     receive mail (`.local`, `.invalid`, `.test`, `.example`, `.arpa`,
     `.internal`, `.lan`, `.corp` and the like). Such an email is dropped from

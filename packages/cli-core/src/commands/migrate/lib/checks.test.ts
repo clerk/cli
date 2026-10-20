@@ -611,13 +611,17 @@ describe("rejects", () => {
     }
   });
 
-  test("a user its source asked to skip, with the source's reason", async () => {
+  // Skipped, not rejected: a reject stops the import without --allow-partial,
+  // and nobody is meant to bring these users across.
+  test("a user its source asked to skip is skipped, with the source's reason", async () => {
     const checks = await checkImport(
       input({ users: [user("a", { skipReason: "anonymous Better Auth user" }), user("b")] }),
     );
-    expect(checks.rejects).toEqual([
+    expect(checks.rejects).toEqual([]);
+    expect(checks.skipped).toEqual([
       { sourceId: "a", reason: "anonymous Better Auth user", inFile: true },
     ]);
+    expect(checks.skippedReasons).toEqual([{ reason: "anonymous Better Auth user", count: 1 }]);
     expect(checks.importable.map((entry) => entry.userId)).toEqual(["b"]);
   });
 

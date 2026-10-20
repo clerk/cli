@@ -1332,6 +1332,39 @@ describe("run", () => {
       );
     });
 
+    // A user the source skips is nobody to bring across: without
+    // --allow-partial the rest still import, and the run says who was left out.
+    test("imports the rest past a user the source skips, and records the skip", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "sb1", email: "a@x.dev", email_confirmed_at: "2024-01-01 00:00:00+00" },
+          {
+            id: "sb2",
+            email: "b@x.dev",
+            email_confirmed_at: "2024-01-01 00:00:00+00",
+            deleted_at: "2026-01-01 00:00:00+00",
+          },
+        ]),
+      );
+
+      await run({ ...baseOptions, source: "supabase", json: true });
+
+      expect(created()).toEqual(["sb1"]);
+      const out = JSON.parse(captured.out);
+      expect(out.checks.rejects).toEqual([]);
+      expect(out.checks.skipped).toEqual([
+        { sourceId: "sb2", reason: "deleted in Supabase", inFile: true },
+      ]);
+      expect(out.result.skipped).toBe(1);
+      const [record] = listRuns(runsDir());
+      expect(latestUserLines(runsDir(), record!.id).get("sb2")).toMatchObject({
+        status: "skipped",
+        reason: "deleted in Supabase",
+      });
+      expect(process.exitCode).toBe(0);
+    });
+
     test("names the fields Clerk won't store", async () => {
       fs.writeFileSync(
         path.join(workDir, "export.json"),
