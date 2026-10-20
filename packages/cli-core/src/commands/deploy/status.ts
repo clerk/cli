@@ -846,11 +846,15 @@ export function agentNextAction(step: DeployNextStep): string {
   switch (step.kind) {
     case "not_started":
       // Creating the instance is hard to undo and the domain is the user's
-      // to choose, so the sentence makes asking the first step.
+      // to choose, so the sentence makes asking the first step. Clerk's list
+      // can trail a create, so this state can follow one, and a rerun on the
+      // same domain resumes rather than creating twice.
       return (
         "No production instance yet. Ask the user which domain they own for production " +
         "(for example example.com; a hosting provider's URL such as *.vercel.app won't work), " +
         "then run `clerk deploy --domain <domain>` to create it and get the DNS records to add. " +
+        "If `clerk deploy --domain` just succeeded, Clerk may not list the instance yet: rerun it " +
+        "with the same domain instead of asking the user for a new one. " +
         "Verify with `clerk deploy status`."
       );
     case "domain_provisioning":

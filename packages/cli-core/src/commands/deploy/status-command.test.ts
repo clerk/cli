@@ -210,6 +210,10 @@ describe("deploy status", () => {
     // reworded, and OAuth was never checked so its row is not printed.
     expect(output).toContain("No production instance yet.");
     expect(output).toContain("Run `clerk deploy` to set it up.");
+    expect(output).toContain(
+      "If `clerk deploy` just created it, Clerk may not list it yet: run `clerk deploy` again " +
+        "with the same domain instead of choosing a new one.",
+    );
     expect(output).not.toContain("ask the user");
     expect(output).not.toContain("human terminal");
     expect(output).not.toContain("OAuth");

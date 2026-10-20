@@ -536,6 +536,11 @@ describe("deploy", () => {
       const payload = JSON.parse(captured.out);
       expect(payload.state).toBe("not_started");
       expect(payload.nextAction).toContain("Ask the user which domain they own");
+      // Clerk's list can trail a create, so `not_started` can follow one.
+      expect(payload.nextAction).toContain(
+        "If `clerk deploy --domain` just succeeded, Clerk may not list the instance yet: rerun it " +
+          "with the same domain instead of asking the user for a new one.",
+      );
       expect(payload.nextAction).toContain("clerk deploy --domain <domain>");
       expect(payload.nextAction).toContain("clerk deploy status");
       expect(mockCreateProductionInstance).not.toHaveBeenCalled();

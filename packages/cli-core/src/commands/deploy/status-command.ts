@@ -234,7 +234,9 @@ export function humanNextAction(step: DeployNextStep): string {
     case "not_started":
       return (
         "No production instance yet. `clerk deploy` configures production interactively and " +
-        "needs a terminal. Run `clerk deploy` to set it up."
+        "needs a terminal. Run `clerk deploy` to set it up. If `clerk deploy` just created it, " +
+        "Clerk may not list it yet: run `clerk deploy` again with the same domain instead of " +
+        "choosing a new one."
       );
     case "domain_provisioning":
       return (
