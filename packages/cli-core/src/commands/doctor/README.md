@@ -97,6 +97,10 @@ Fixable issues:
 | Missing environment variables      | Pull env vars with `clerk env pull` |
 | Missing or corrupt CLI config file | Log in with `clerk auth login`      |
 
+When `clerk link` opens a claim page instead of linking (the folder's app was
+created by a Clerk SDK and isn't in the account yet), the link fix is reported
+as not applied: claim the app, then run `clerk link` again.
+
 Duplicate fix actions (e.g., multiple checks suggesting `clerk auth login`)
 are deduplicated.
 

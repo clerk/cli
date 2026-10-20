@@ -76,6 +76,14 @@ Resolution order: `--secret-key` → `--app` + Platform API lookup →
 `CLERK_SECRET_KEY` → the keyless project's own key → a linked project profile
 from `clerk link`.
 
+In a terminal with none of these, `import` signs in (if needed) and runs
+`clerk link` first. It signs in with `clerk auth login`'s own claim off, since
+`clerk link` claims an app `clerk init` created under its own rule; with
+`--app`, nothing is linked, so login's claim stays on. If `clerk link` opens a
+claim page instead of linking (the folder's app was created by a Clerk SDK and
+isn't in the account yet), `import` stops with exit 1 and imports nothing:
+claim the app, then run the import again.
+
 With a key from `--secret-key` or `CLERK_SECRET_KEY`, the key alone picks the
 instance, so `import` refuses (exit 2) an `--instance` that names a different
 one. `--instance dev` next to an exported `sk_live_…` key would otherwise write

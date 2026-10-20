@@ -345,3 +345,11 @@ The breadcrumb is also what protects an unclaimed accountless app from being orp
 - **`--fresh`**: the explicit escape hatch. Skips the check entirely and mints a new application (and overwrites the env keys and breadcrumb), even in agent mode or with `-y`. Like `--template`, it's a usage error when combined with `--login` or whenever the run doesn't resolve to accountless.
 
 If no breadcrumb exists (first run, or the previous app was already claimed and the breadcrumb removed), init proceeds exactly as before — there's nothing to protect.
+
+### Re-running init signed in
+
+A run that resolves to the authenticated flow links through `clerk link`, which protects the same app (see `commands/link/README.md`):
+
+- **With a breadcrumb,** `link` claims that app first and links it, instead of offering a picker that can't show it or creating a new app. A person is asked first, naming where the app goes, even with `-y`: only `clerk auth login -y` and agent mode claim without asking. Init signs in with `clerk auth login`'s own claim off, so `link` alone decides.
+- **After a claim attempt, the link is saved only if every Clerk key in the folder belongs to the chosen app.** When the claim leaves the folder alone (its keys are another app's, or mix two apps'), `link` goes on to match the key the app loads, but never creates an app. If the app it then chooses doesn't own every key, nothing is linked and init stops with `not_linked`, exit 1, naming the key and its file, before scaffolding or writing keys: otherwise init would write that app's keys next to another app's.
+- **With only a Clerk SDK's own keyless file** (`.clerk/.tmp/keyless.json`), `link` links the account's app with that key; when the app isn't in the account, a person's run opens its claim page and init stops with exit 1 before scaffolding or writing keys (claim it, then run `clerk init` again), and an agent's run stops with `usage_error`, exit 2. No app is created either way.
