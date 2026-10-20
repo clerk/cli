@@ -16,7 +16,7 @@ import {
   listageStubs,
   useCaptureLog,
 } from "../../test/lib/stubs.ts";
-import { PlapiError, UserAbortError } from "../../lib/errors.ts";
+import { ApiError, AuthError, PlapiError, UserAbortError } from "../../lib/errors.ts";
 import * as localKeys from "../../lib/local-keys.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -32,10 +32,12 @@ mock.module("../../mode.ts", () => ({
 }));
 
 const mockGetToken = mock();
+/** Refreshes the stored session; by default, returns the stored token. */
+const mockGetValidToken = mock(async (): Promise<unknown> => mockGetToken());
 mock.module("../../lib/credential-store.ts", () => ({
   ...credentialStoreStubs,
   getToken: (...args: unknown[]) => mockGetToken(...args),
-  getValidToken: (...args: unknown[]) => mockGetToken(...args),
+  getValidToken: () => mockGetValidToken(),
   hasAccountCredentials: async () =>
     Boolean(process.env.CLERK_PLATFORM_API_KEY) || Boolean(await mockGetToken()),
 }));
@@ -172,6 +174,7 @@ afterEach(async () => {
   for (const m of [
     mockIsAgent,
     mockGetToken,
+    mockGetValidToken,
     mockFetchUserInfo,
     mockGetAuth,
     mockAttemptAutoclaim,
@@ -194,6 +197,7 @@ afterEach(async () => {
   mockReadInitClaim.mockResolvedValue(undefined);
   mockAutolink.mockResolvedValue({ status: "no_key" });
   mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
+  mockGetValidToken.mockImplementation(async () => mockGetToken());
 });
 
 const UNDECIDED =
@@ -325,6 +329,71 @@ describe("a folder with an init token, not linked", () => {
     expect(mockAttemptAutoclaim).toHaveBeenCalledTimes(1);
     expectNoOtherWayToAnApp();
   });
+
+  // A session Clerk refuses only works again after a new sign-in, as before.
+  test.each([
+    {
+      how: "an expired session that can't be refreshed",
+      refuse: () =>
+        mockGetValidToken.mockRejectedValue(new AuthError({ reason: "session_expired" })),
+    },
+    {
+      how: "a token the account lookup rejects (401)",
+      refuse: () => mockFetchUserInfo.mockRejectedValue(new ApiError(401, "Unauthorized")),
+    },
+    {
+      how: "a token the account lookup forbids (403)",
+      refuse: () => mockFetchUserInfo.mockRejectedValue(new ApiError(403, "Forbidden")),
+    },
+  ])(
+    "a stored session with $how: signs in again, then asks about that account",
+    async ({ refuse }) => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockGetAuth.mockResolvedValue({ userId: "user_1" });
+      refuse();
+      mockLogin.mockResolvedValue({ userId: "user_new", email: "new@example.com" });
+      mockConfirm.mockResolvedValue(true);
+
+      await link({});
+
+      expect(mockLogin).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
+      expect(mockConfirm.mock.calls).toEqual([
+        [{ message: ASK_ACCOUNT("new@example.com"), default: true }],
+      ]);
+      expect(mockAttemptAutoclaim).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  // A lookup that couldn't reach Clerk isn't a sign-out: signing in again
+  // would open a browser, or login's "Re-authenticate?" No would abort.
+  test.each([
+    { how: "a network error", error: new TypeError("fetch failed") },
+    { how: "a server error (503)", error: new ApiError(503, "Service Unavailable") },
+  ])(
+    "a stored session whose account lookup fails with $how: no new sign-in, and the question names the signed-in account",
+    async ({ error }) => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockGetAuth.mockResolvedValue({ userId: "user_1" });
+      mockFetchUserInfo.mockRejectedValue(error);
+      mockConfirm.mockResolvedValue(true);
+
+      await link({});
+
+      expect(mockLogin).not.toHaveBeenCalled();
+      expect(mockConfirm.mock.calls).toEqual([
+        [
+          {
+            message:
+              "Claim `my-app` (the app `clerk init` created in this folder) into the account you're signed in to?",
+            default: true,
+          },
+        ],
+      ]);
+      expect(mockAttemptAutoclaim).toHaveBeenCalledTimes(1);
+    },
+  );
 
   // Control: an agent can't sign in from `clerk link`.
   test("a signed-out agent doesn't claim, and gets the existing agent error", async () => {

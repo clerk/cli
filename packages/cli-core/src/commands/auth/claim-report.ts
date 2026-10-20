@@ -4,7 +4,6 @@
  * thing about the app and the folder.
  */
 
-import type { UserInfo } from "../../lib/token-exchange.ts";
 import type { AutoclaimResult, FolderUnchanged } from "../../lib/autoclaim.ts";
 import { describeClaimDestination } from "../../lib/claim-prompt.ts";
 import { buildDashboardUrl } from "../../lib/environment.ts";
@@ -153,7 +152,7 @@ export function claimedNextSteps({ app, local }: ClaimedResult): readonly string
  * wasn't claimed. With the API key set, it also says how to claim into the
  * signed-in account instead.
  */
-export function reportClaimSkipped(appName: string, account: UserInfo): void {
+export function reportClaimSkipped(appName: string, account: { email?: string }): void {
   log.warn(
     `Skipped the claim, so \`${appName}\` is still unclaimed. Its claim token stays in this folder.`,
   );

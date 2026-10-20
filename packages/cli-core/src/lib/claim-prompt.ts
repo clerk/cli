@@ -8,6 +8,7 @@
 
 import { getAuth } from "./config.ts";
 import { getValidToken } from "./credential-store.ts";
+import { ApiError, AuthError } from "./errors.ts";
 import { confirm } from "./prompts.ts";
 import { fetchUserInfo, type UserInfo } from "./token-exchange.ts";
 
@@ -18,16 +19,47 @@ import { fetchUserInfo, type UserInfo } from "./token-exchange.ts";
  * failure: callers sign in again instead.
  */
 export async function currentAccount(): Promise<UserInfo | null> {
+  const lookup = await lookUpAccount();
+  return lookup.status === "account" ? lookup.account : null;
+}
+
+/**
+ * What looking up the stored session's account found:
+ *
+ * - `account`: the session works, and this is its account.
+ * - `signed_out`: no session, or one Clerk refused (it expired and can't be
+ *   refreshed, or the account lookup answered 401 or 403). Only signing in
+ *   again fixes it.
+ * - `lookup_failed`: the lookup didn't reach an answer (a network error, a
+ *   5xx, a timeout). The session may well still work.
+ */
+export type AccountLookup =
+  | { status: "account"; account: UserInfo }
+  | { status: "signed_out" }
+  | { status: "lookup_failed" };
+
+/** `currentAccount`, telling a refused session apart from a failed lookup. */
+export async function lookUpAccount(): Promise<AccountLookup> {
   const auth = await getAuth();
-  if (!auth) return null;
+  if (!auth) return { status: "signed_out" };
 
   try {
     const token = await getValidToken();
-    if (!token) return null;
-    return await fetchUserInfo(token);
-  } catch {
-    return null;
+    if (!token) return { status: "signed_out" };
+    return { status: "account", account: await fetchUserInfo(token) };
+  } catch (error) {
+    return isSessionRefused(error) ? { status: "signed_out" } : { status: "lookup_failed" };
   }
+}
+
+/**
+ * The refresh step throws `AuthError` for a session it can't refresh (a
+ * spent or refused refresh token, or a stored value it can't read); the
+ * account lookup answers 401 or 403 for a token it won't accept.
+ */
+function isSessionRefused(error: unknown): boolean {
+  if (error instanceof AuthError) return true;
+  return error instanceof ApiError && (error.status === 401 || error.status === 403);
 }
 
 /**
