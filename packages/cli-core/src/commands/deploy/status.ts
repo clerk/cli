@@ -297,8 +297,20 @@ export async function resolveLiveApplicationContext(profile: DeployContext["prof
   };
 }
 
-export async function resolveDeployState(ctx: DeployContext): Promise<DeployState> {
-  const live = await resolveLiveApplicationContext(ctx.profile);
+/**
+ * `knownProductionInstanceId` is one the caller already holds from Clerk this
+ * run (a create's response, or an earlier read), used while the application's
+ * instance list doesn't show it yet.
+ */
+export async function resolveDeployState(
+  ctx: DeployContext,
+  knownProductionInstanceId?: string,
+): Promise<DeployState> {
+  const application = await resolveLiveApplicationContext(ctx.profile);
+  const live = {
+    ...application,
+    productionInstanceId: application.productionInstanceId ?? knownProductionInstanceId,
+  };
   if (!live.productionInstanceId) return { kind: "not_started" };
 
   // The read-only status path surfaces domain-status read failures instead of

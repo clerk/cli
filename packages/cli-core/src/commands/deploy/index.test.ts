@@ -702,6 +702,60 @@ describe("deploy", () => {
       expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
     });
 
+    // The refresh right after the conflict can still lag while the read after
+    // it finds the instance. Reporting success without saving it leaves
+    // `--instance prod` unresolved for the commands the report names next.
+    test("--domain saves an instance a lost create race finds only on the last read", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      const developmentOnly = {
+        application_id: "app_xyz789",
+        name: "my-saas-app",
+        instances: [
+          {
+            instance_id: "ins_dev_123",
+            environment_type: "development",
+            publishable_key: "pk_test_123",
+          },
+        ],
+      };
+      mockCreateProductionInstance.mockImplementation(() => {
+        mockLiveProduction({ domain: "example.com" });
+        mockFetchApplication.mockResolvedValueOnce(developmentOnly);
+        return Promise.reject(
+          new PlapiError(
+            409,
+            JSON.stringify({ errors: [{ code: "production_instance_exists" }] }),
+            "https://x",
+          ),
+        );
+      });
+
+      await runDeploy({ domain: "example.com" });
+
+      expect(JSON.parse(captured.out).productionInstanceId).toBe("ins_prod_mock");
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
+    });
+
+    // The application's instance list can trail the create. The id the create
+    // returned is the instance either way.
+    test("--domain reports the instance it created before the application lists it", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+
+      await runDeploy({ domain: "example.com" });
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.state).toBe("domain_pending");
+      expect(payload.productionInstanceId).toBe("ins_prod_mock");
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
+    });
+
     test("a failed read after the create says the instance exists", async () => {
       mockIsAgent.mockReturnValue(true);
       await linkedProject();

@@ -174,12 +174,20 @@ async function runAgentDeploy(domain: string | undefined): Promise<void> {
   // happened: the caller would create again, or give up on a live instance.
   const created = await ensureProductionInstance(ctx, domain);
   const state = await withApiContext(
-    resolveDeployState(ctx),
+    // The application's instance list can trail a create, so the id this run
+    // already holds stands in until the list shows it.
+    resolveDeployState(ctx, ctx.productionInstanceId),
     "The production instance exists, but its status could not be read; run `clerk deploy status` to retry",
   ).catch((error: unknown) => {
     throw instanceReadError(error, created);
   });
   if (state.kind === "not_started") throw unreturnedInstanceError();
+  // A create that lost a race, and whose refresh still lagged, finds the
+  // instance only on this read.
+  await rememberProductionInstance(
+    ctx,
+    state.kind === "active" ? state.snapshot.productionInstanceId : state.productionInstanceId,
+  );
   recordDeployObservation(state);
   if (state.kind === "active") assertRequestedDomain(domain, state.snapshot.domain);
   else if (!created) throw uncheckedDomainError(domain);
