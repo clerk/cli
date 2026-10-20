@@ -1632,7 +1632,8 @@ describe("deploy", () => {
       const err = stripAnsi(captured.err);
 
       expect(err).toContain("Next steps");
-      expect(err).toContain("clerk env pull --instance prod");
+      expect(err).toContain("clerk env pull --instance ins_prod_mock --print");
+      expect(err).not.toContain("replace your pk_test_");
       expect(err).toContain("Update env vars on your hosting provider");
       expect(err).toContain("Also copy the other Clerk variables from your env file");
       expect(flat(err)).toContain("sign up at https://example.com to confirm it works");

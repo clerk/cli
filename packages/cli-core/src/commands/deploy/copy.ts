@@ -562,17 +562,17 @@ export function nextStepsBody(
     { hang: 6 },
   ).join("\n");
   return `
-  1. Pull production keys into your environment
-       clerk env pull --instance prod
+  1. Print the production keys
+       clerk env pull --instance ${productionInstanceId} --print
 
-     This writes pk_live_... and sk_live_... to your env file. They
-     replace your pk_test_... and sk_test_... keys.
+     This prints the pk_live_... and sk_live_... lines and writes no file,
+     so your env file keeps its pk_test_... and sk_test_... keys.
 
   2. Update env vars on your hosting provider
      Vercel, AWS, GCP, Heroku, Render, etc. all expose env vars in their UI.
-       - Add the same pk_live_/sk_live_ values there.
+       - Add the printed pk_live_/sk_live_ values there.
        - Also copy the other Clerk variables from your env file, such as
-         NEXT_PUBLIC_CLERK_SIGN_IN_URL. \`env pull\` writes only the two keys.
+         NEXT_PUBLIC_CLERK_SIGN_IN_URL. \`env pull\` prints only the two keys.
 
 ${step3}
 
