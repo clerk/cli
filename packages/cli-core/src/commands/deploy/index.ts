@@ -182,13 +182,15 @@ async function runAgentDeploy(domain: string | undefined): Promise<void> {
     throw instanceReadError(error, created);
   });
   if (state.kind === "not_started") throw unreturnedInstanceError();
+  // Before the profile write, as in the wizard: a failed disk write must not
+  // lose what this read observed.
+  recordDeployObservation(state);
   // A create that lost a race, and whose refresh still lagged, finds the
   // instance only on this read.
   await rememberProductionInstance(
     ctx,
     state.kind === "active" ? state.snapshot.productionInstanceId : state.productionInstanceId,
   );
-  recordDeployObservation(state);
   if (state.kind === "active") assertRequestedDomain(domain, state.snapshot.domain);
   else if (!created) throw uncheckedDomainError(domain);
   log.data(JSON.stringify(buildDeployStatusReport(state, null), null, 2));

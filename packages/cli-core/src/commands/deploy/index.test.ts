@@ -3575,6 +3575,46 @@ describe("deploy", () => {
         expect(payload.stage).toBe("domain_pending");
       });
 
+      // Agent mode, same rule: a create that lost a race and whose refresh
+      // lagged first sees the instance on its last read, and a failed write
+      // of its id must not drop what that read observed.
+      test("agent mode records the last read's stage when saving the id fails", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(true);
+        const developmentOnly = {
+          application_id: "app_xyz789",
+          name: "my-saas-app",
+          instances: [
+            {
+              instance_id: "ins_dev_123",
+              environment_type: "development",
+              publishable_key: "pk_test_123",
+            },
+          ],
+        };
+        mockCreateProductionInstance.mockImplementation(() => {
+          mockLiveProduction({ domain: "example.com" });
+          mockFetchApplication.mockResolvedValueOnce(developmentOnly);
+          return Promise.reject(
+            new PlapiError(
+              409,
+              JSON.stringify({ errors: [{ code: "production_instance_exists" }] }),
+              "https://x",
+            ),
+          );
+        });
+
+        const { payload, error } = await deployTelemetry(async () => {
+          // The next write is `persistProductionInstance` saving the profile.
+          writeSpy.mockImplementationOnce(() => Promise.reject(new Error("EACCES: read-only")));
+          await runDeploy({ domain: "example.com" });
+        });
+
+        expect((error as Error).message).toContain("EACCES");
+        expect(payload.outcome).toBe("error");
+        expect(payload.stage).toBe("oauth_pending");
+      });
+
       /**
        * The create call answers that a production instance already exists, so
        * the wizard resumes it. The first application read (during context
