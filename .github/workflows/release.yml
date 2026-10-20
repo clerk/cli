@@ -122,7 +122,7 @@ jobs:
     needs: [versioning, publish-npm]
     if: needs.versioning.outputs.release_created == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -130,7 +130,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
-      - name: Wait for npm latest and notify clerk-evals
+      - name: Notify clerk-evals of the stable release
         run: bun scripts/dispatch-evals.ts
         env:
           CLERK_CLI_VERSION: ${{ needs.versioning.outputs.version }}
