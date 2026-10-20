@@ -112,6 +112,29 @@ describe("fetchInstanceIdentity", () => {
     });
   });
 
+  // Absent means Clerk did not say (an API that predates the field), which is
+  // not the same as `null`, no limit.
+  test.each([
+    [100, { maxAllowedUsers: 100 }],
+    [null, { maxAllowedUsers: null }],
+    [undefined, {}],
+    ["100", {}],
+    [-1, {}],
+  ])("reads max_allowed_users %p", async (maxAllowedUsers, expected) => {
+    globalThis.fetch = (async () =>
+      Response.json({
+        id: "ins_7",
+        environment_type: "development",
+        ...(maxAllowedUsers === undefined ? {} : { max_allowed_users: maxAllowedUsers }),
+      })) as unknown as typeof fetch;
+
+    expect(await fetchInstanceIdentity("sk_test_x")).toEqual({
+      instanceId: "ins_7",
+      env: "development",
+      ...expected,
+    });
+  });
+
   test("retries a 429 rather than falling back", async () => {
     let calls = 0;
     globalThis.fetch = (async () =>
