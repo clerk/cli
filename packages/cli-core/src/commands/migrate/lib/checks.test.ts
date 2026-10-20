@@ -1202,6 +1202,7 @@ describe("hashShapeProblem", () => {
     // A project with no salt separator.
     ["hash$salt$signer$$8$14", "scrypt_firebase"],
     ["$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2i$v=19$m=1048576,t=20,p=16$c2FsdA$aGFzaA", "argon2i"],
     [`scrypt:16384:16:1$${"a".repeat(32)}$${"b".repeat(128)}`, "scrypt_werkzeug"],
     // Not checked: a bad digest there fails only at sign-in.
     ["anything", "pbkdf2_sha256"],
@@ -1220,6 +1221,17 @@ describe("hashShapeProblem", () => {
     ["not base64!$salt$signer$sep$8$14", "scrypt_firebase"],
     ["hash$sa=lt$signer$sep$8$14", "scrypt_firebase"],
     ["argon2id$...", "argon2id"],
+    // Shapes clerk_go's argon2.DecodeHash refuses, or argon2 cannot run.
+    ["$argon2id$v=19$m=65536,t=3,p=4$notreal", "argon2id"],
+    ["$argon2id$v=16$m=65536,t=3,p=4$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=3,p=4$c2FsdA==$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=3,p=4$c2FsdB$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=2097152,t=3,p=4$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=21,p=4$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=3,p=17$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=0,p=4$c2FsdA$aGFzaA", "argon2id"],
+    // The variant has to match the hasher.
+    ["$argon2i$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA", "argon2id"],
     ["scrypt:16384:16:1$salt$not-hex!", "scrypt_werkzeug"],
   ])("rejects %s as %s", (password, hasher) => {
     expect(hashShapeProblem(password, hasher)).toBeDefined();
