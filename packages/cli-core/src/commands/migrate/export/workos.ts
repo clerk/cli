@@ -395,28 +395,19 @@ export function buildIdentityReport(
   // tenant print the same order.
   const entries = [...byProvider].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 
-  const labels = [
-    ...entries.map(([provider]) => provider),
-    NO_PROVIDER_LABEL,
-    ...(failed > 0 ? [NOT_READABLE_LABEL] : []),
-  ];
-  const width = Math.max(...labels.map((label) => label.length));
-  const row = (label: string, count: number) =>
-    `  ${label.padEnd(width)}  ${dim(`${count} user${count === 1 ? "" : "s"}`)}`;
-
-  const rows = [
-    ...entries.map(([provider, count]) => row(provider, count)),
-    row(NO_PROVIDER_LABEL, none),
+  const items = [
+    ...entries.map(([label, count]) => ({ label, count })),
+    { label: NO_PROVIDER_LABEL, count: none },
+    ...(failed > 0 ? [{ label: NOT_READABLE_LABEL, count: failed }] : []),
   ];
 
-  if (failed > 0) {
-    rows.push(row(NOT_READABLE_LABEL, failed));
-    rows.push(
-      dim("  Those users have no `identities` field in the export, rather than an empty one."),
-    );
-  }
-
-  return { title: "OAuth providers", rows };
+  return {
+    title: "OAuth providers",
+    items,
+    ...(failed > 0
+      ? { note: "Those users have no `identities` field in the export, rather than an empty one." }
+      : {}),
+  };
 }
 
 /**

@@ -5,6 +5,7 @@ import path from "node:path";
 // Colour is on or off depending on the runner, so rows are compared bare.
 import { stripVTControlCharacters as stripAnsi } from "node:util";
 import type { UserLine } from "../lib/run-store.ts";
+import { formatSection } from "./shared.ts";
 import { CliError, EXIT_CODE } from "../../../lib/errors.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { setAssumeYes } from "../lib/assume-yes.ts";
@@ -403,8 +404,8 @@ test("fetchAllWorkOsIdentities counts a user with no id as failed", async () => 
 });
 
 describe("buildIdentityReport", () => {
-  const rowsOf = (section: { rows: string[] }) =>
-    section.rows.map((row) => stripAnsi(row).trimEnd());
+  const rowsOf = (section: Parameters<typeof formatSection>[0]) =>
+    formatSection(section).map((row) => stripAnsi(row).trimEnd());
 
   test("ranks providers by use, and counts users with none", () => {
     const section = buildIdentityReport(
@@ -419,6 +420,12 @@ describe("buildIdentityReport", () => {
     );
 
     expect(section.title).toBe("OAuth providers");
+    // Plain values for --json; the terminal pads and dims them.
+    expect(section.items).toEqual([
+      { label: "GoogleOAuth", count: 2 },
+      { label: "MicrosoftOAuth", count: 1 },
+      { label: "no OAuth provider", count: 2 },
+    ]);
     expect(rowsOf(section)).toEqual([
       "  GoogleOAuth        2 users",
       "  MicrosoftOAuth     1 user",

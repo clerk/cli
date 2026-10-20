@@ -101,7 +101,24 @@ export function formatFieldCoverage(fields: CoverageField[], total: number): str
  * is not the user count. Folding that into the coverage table would put rows
  * of two different kinds under one heading.
  */
-export type ExportSection = { title: string; rows: string[] };
+export type ExportSection = {
+  title: string;
+  /** Printed as a padded table; `--json` carries them as they are. */
+  items: { label: string; count: number }[];
+  /** A caveat printed under the rows. */
+  note?: string;
+};
+
+/** A section's terminal lines: labels padded to one width, counts dimmed. */
+export function formatSection(section: ExportSection): string[] {
+  const width = Math.max(0, ...section.items.map((item) => item.label.length));
+  const lines = section.items.map(
+    ({ label, count }) =>
+      `  ${label.padEnd(width)}  ${dim(`${count} user${count === 1 ? "" : "s"}`)}`,
+  );
+  if (section.note) lines.push(dim(`  ${section.note}`));
+  return lines;
+}
 
 /**
  * The import command for an export run, and what it will target.
@@ -218,7 +235,7 @@ export function finishExport(input: FinishExportInput): FinishedExport {
   for (const section of input.sections ?? []) {
     log.blank();
     log.info(section.title);
-    for (const row of section.rows) log.info(row);
+    for (const line of formatSection(section)) log.info(line);
   }
 
   log.blank();
