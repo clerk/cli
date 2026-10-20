@@ -32,6 +32,7 @@ import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
 import { autolink, findLinkKey, matchKeyToApp, type AutolinkResult } from "../../lib/autolink.ts";
 import {
   couldntTellReason,
+  isClerkKeyShaped,
   mayBeAnAppsKey,
   readAllFolderKeys,
   readFolderKeys,
@@ -41,6 +42,7 @@ import {
   type AllFolderKeys,
   type FolderKeys,
 } from "../../lib/local-keys.ts";
+import { decodePublishableKey } from "../../lib/publishable-key.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
@@ -301,14 +303,32 @@ async function inspectFolder(cwd: string): Promise<FolderFacts> {
 function noAppCanPass(all: AllFolderKeys): string | undefined {
   const line = all.unreadableLines?.[0];
   if (line) return `the CLI couldn't read the \`${line.name}\` line in \`${line.source}\``;
-  const notAKey = [...all.publishableKeys, ...all.secretKeys].find(
-    (key) => !mayBeAnAppsKey(key.value),
-  );
-  if (notAKey) return `${describeKeyLocation(notAKey)} doesn't hold a Clerk key`;
+  const notAKey =
+    all.publishableKeys.find((key) => !mayBeAnAppsPublishableKey(key.value)) ??
+    all.secretKeys.find((key) => !mayBeAnAppsKey(key.value));
+  if (notAKey) {
+    return `${describeKeyLocation(notAKey)} doesn't hold a value the CLI can read as a Clerk key`;
+  }
   if (isUnusable(all)) {
     return `this folder's Clerk SDK keyless file (\`${SDK_KEYLESS_SOURCE}\`) names no app`;
   }
   return undefined;
+}
+
+/**
+ * Whether a publishable value could be an app's. Every app's publishable key
+ * decodes to its Frontend API host, so a key-shaped placeholder
+ * (`pk_test_xxxxxxxxxxxx`) can't be one. A legacy key can still match exactly.
+ */
+function mayBeAnAppsPublishableKey(value: string): boolean {
+  if (!mayBeAnAppsKey(value)) return false;
+  if (!isClerkKeyShaped(value)) return true;
+  try {
+    decodePublishableKey(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** An SDK keyless file that can't be read, or holds no key, names no app. */
@@ -364,7 +384,9 @@ function decideNextStep(input: {
     };
   }
   if (keyCheck && folder.unreadable) {
-    const why = folder.couldntTell ?? folder.unreadable;
+    // What keeps every app from passing comes first: "couldn't tell" alone
+    // would still allow a pick.
+    const why = folder.unreadable ?? folder.couldntTell;
     return {
       kind: "stop",
       error: new CliError(

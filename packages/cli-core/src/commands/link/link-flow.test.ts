@@ -1173,6 +1173,10 @@ describe("when auto-link doesn't link the folder", () => {
       claimLeftFolderAlone();
     });
 
+    /** A publishable key that decodes, as every real app's does. */
+    const decodable = (host: string, env: "test" | "live" = "test") =>
+      `pk_${env}_${btoa(`${host}$`)}`;
+
     // A new app's keys can't match keys the folder already holds, so init's
     // key check would reject it after it was created.
     test("the picker never offers to create an app while the folder holds keys", async () => {
@@ -1193,8 +1197,11 @@ describe("when auto-link doesn't link the folder", () => {
     // which the check accepts: the person picks, and the check decides.
     test("files that disagree get the picker, without creating", async () => {
       await writeFile("package.json", JSON.stringify({ dependencies: { express: "4.0.0" } }));
-      await writeFile(".env", "CLERK_PUBLISHABLE_KEY=pk_live_account_app\n");
-      await writeFile(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_account_app\n");
+      await writeFile(".env", `CLERK_PUBLISHABLE_KEY=${decodable("clerk.account.app", "live")}\n`);
+      await writeFile(
+        ".env.local",
+        `CLERK_PUBLISHABLE_KEY=${decodable("account-app.clerk.accounts.dev")}\n`,
+      );
       mockAutolink.mockResolvedValue({ status: "couldnt_tell", reason: "files disagree" });
       mockListApplications.mockResolvedValue([ACCOUNT_APP]);
       mockSearch.mockResolvedValue(ACCOUNT_APP.application_id);
@@ -1238,14 +1245,38 @@ describe("when auto-link doesn't link the folder", () => {
       expect(mockSearch).not.toHaveBeenCalled();
     });
 
-    // A value no key comparison can read (a placeholder, say) means no app
-    // can pass the check: every choice in the picker would be refused.
-    test("a value that isn't shaped like a Clerk key stops with not_linked before the picker, naming where it is", async () => {
-      await writeFile(
-        ".env",
-        "CLERK_PUBLISHABLE_KEY=pk_test_account_app\nCLERK_SECRET_KEY=your_secret_key_here\n",
-      );
-      mockAutolink.mockResolvedValue({ status: "no_match", source: ".env" });
+    // No app can pass the check, so every choice in the picker would be
+    // refused: a value no comparison can read (a placeholder), or a key-shaped
+    // publishable value that doesn't decode, as every app's does. The stop
+    // names it ahead of files that disagree, which alone would allow a pick.
+    test.each([
+      {
+        value: "a placeholder secret key",
+        files: {
+          ".env": `CLERK_PUBLISHABLE_KEY=${decodable("account-app.clerk.accounts.dev")}\nCLERK_SECRET_KEY=your_secret_key_here\n`,
+        },
+        autolinked: { status: "no_match", source: ".env" },
+        says: "`CLERK_SECRET_KEY` in .env doesn't hold a value the CLI can read as a Clerk key",
+      },
+      {
+        value: "a key-shaped placeholder publishable key",
+        files: { ".env": "CLERK_PUBLISHABLE_KEY=pk_test_xxxxxxxxxxxx\n" },
+        autolinked: { status: "no_match", source: ".env" },
+        says: "`CLERK_PUBLISHABLE_KEY` in .env",
+      },
+      {
+        value: "a placeholder secret key in files that disagree",
+        files: {
+          "package.json": JSON.stringify({ dependencies: { express: "4.0.0" } }),
+          ".env": `CLERK_PUBLISHABLE_KEY=${decodable("clerk.account.app", "live")}\nCLERK_SECRET_KEY=your_secret_key_here\n`,
+          ".env.local": `CLERK_PUBLISHABLE_KEY=${decodable("account-app.clerk.accounts.dev")}\n`,
+        },
+        autolinked: { status: "couldnt_tell", reason: "files disagree" },
+        says: "`CLERK_SECRET_KEY` in .env",
+      },
+    ])("$value: stops with not_linked before the picker, naming it", async (folder) => {
+      await Promise.all(Object.entries(folder.files).map(([file, text]) => writeFile(file, text)));
+      mockAutolink.mockResolvedValue(folder.autolinked);
       mockListApplications.mockResolvedValue([ACCOUNT_APP]);
 
       const error = await link({ skipIfLinked: true, onlyIfFolderKeysMatch: true }).catch(
@@ -1253,7 +1284,7 @@ describe("when auto-link doesn't link the folder", () => {
       );
 
       expect(error).toMatchObject({ code: "not_linked" });
-      expect((error as Error).message).toContain("`CLERK_SECRET_KEY` in .env");
+      expect((error as Error).message).toContain(folder.says);
       expect(mockSearch).not.toHaveBeenCalled();
     });
 
