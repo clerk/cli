@@ -21,6 +21,7 @@ import {
 } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { readInitClaim } from "../../lib/autoclaim.js";
+import { lookUpAccount } from "../../lib/claim-prompt.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
 import { declareSoftExitOutcome, setTelemetryStage } from "../../lib/telemetry.ts";
@@ -615,8 +616,14 @@ async function resolveAuthLabel(cwd: string, app: string | undefined): Promise<s
   const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
   if (hasApiKey) return "Using API key";
 
-  const email = await getAuthenticatedEmail();
-  if (email) return `Logged in as ${email}`;
+  const lookup = await lookUpAccount();
+  if (lookup.status === "account") {
+    return lookup.account.email ? `Logged in as ${lookup.account.email}` : "Logged in";
+  }
+  // A stored session whose account lookup didn't reach an answer (a network
+  // error, a 5xx) is still a sign-in: `link` asks about "the account you're
+  // signed in to" rather than starting a browser sign-in here.
+  if (lookup.status === "lookup_failed") return "Logged in";
 
   // `link`, called next, claims the app `clerk init` created only in a folder
   // that isn't linked and without `--app`; login's claim would run first and

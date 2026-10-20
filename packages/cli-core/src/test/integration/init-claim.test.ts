@@ -12,6 +12,7 @@
 
 import { beforeEach, expect, test } from "bun:test";
 import { join } from "node:path";
+import { ApiError } from "../../lib/errors.ts";
 import type { Application } from "../../lib/plapi.ts";
 import {
   clerk,
@@ -19,6 +20,7 @@ import {
   mockPrompts,
   mockState,
   openedUrls,
+  promptsShown,
   publishableKeyFor,
   readConfig,
   useIntegrationTestHarness,
@@ -289,6 +291,30 @@ test.each([
     expect(await read(".env.local")).toBe(pasted);
   },
 );
+
+// A stored session whose account lookup Clerk can't answer is still a
+// sign-in: init doesn't start a browser sign-in on its way to `link`, and
+// `link` asks about "the account you're signed in to".
+test("person, stored session only, an init token, the account lookup failing (503): no browser sign-in, one claim question naming the signed-in account", async () => {
+  await useStoredSessionOnly();
+  await writeInitToken();
+  mockState.userInfoError = new ApiError(503, "Service Unavailable");
+  mockPrompts.confirm(true);
+
+  const result = await clerk.raw("init", "--no-skills", "-y");
+
+  expect(result.exitCode).toBe(0);
+  expect(openedUrls).toEqual([]);
+  expect(promptsShown).toEqual([
+    {
+      type: "confirm",
+      message:
+        "Claim `my-app` (the app `clerk init` created in this folder) into the account you're signed in to?",
+    },
+  ]);
+  expect(requests("POST", CLAIM_PATH)).toHaveLength(1);
+  expect(await linkedAppId()).toBe(APP_A.application_id);
+});
 
 test("agent, signed in, the app list failing: no new app, and the folder's keys are kept", async () => {
   await useBothCredentials();

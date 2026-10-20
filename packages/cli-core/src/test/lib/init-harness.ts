@@ -35,6 +35,7 @@ import * as linkModule from "../../commands/link/index.ts";
 import * as pullModule from "../../commands/env/pull.ts";
 import * as modeModule from "../../mode.ts";
 import * as configModule from "../../lib/config.ts";
+import * as claimPromptModule from "../../lib/claim-prompt.ts";
 import * as frameworkModule from "../../lib/framework.ts";
 import * as contextModule from "../../commands/init/context.ts";
 import * as scaffoldModule from "../../commands/init/scaffold.ts";
@@ -163,6 +164,11 @@ export function useInitHarness(): InitHarness {
       spyOn(scanModule, "detectAuthLibraries").mockReturnValue(undefined),
       spyOn(scanModule, "scanForIssues").mockResolvedValue([]),
       spyOn(heuristicsModule, "getAuthenticatedEmail").mockResolvedValue(email),
+      spyOn(claimPromptModule, "lookUpAccount").mockResolvedValue(
+        email != null
+          ? { status: "account", account: { userId: "user_test", email } }
+          : { status: "signed_out" },
+      ),
       spyOn(heuristicsModule, "isAuthenticated").mockResolvedValue(authed),
       spyOn(heuristicsModule, "printKeylessInfo").mockReturnValue(undefined),
       spyOn(heuristicsModule, "installSdk").mockResolvedValue(undefined),

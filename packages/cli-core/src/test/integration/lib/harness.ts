@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { capturedOutput } from "../../lib/stubs.ts";
 import { setActiveCapture } from "../../../lib/log.ts";
 import { http } from "../../lib/http.ts";
+import { ApiError } from "../../../lib/errors.ts";
 import type { Application, ApplicationInstance } from "../../../lib/plapi.ts";
 import type { OpenResult } from "../../../lib/open.ts";
 
@@ -44,6 +45,11 @@ export const mockState = {
    * to simulate a machine with no browser.
    */
   openBrowserResult: BROWSER_OPENED as OpenResult,
+  /**
+   * What the stubbed account lookup (`fetchUserInfo`) throws instead of
+   * answering, e.g. `new ApiError(503, "...")` for Clerk being unreachable.
+   */
+  userInfoError: null as Error | null,
 };
 
 /**
@@ -157,8 +163,16 @@ const promptQueues: Record<PromptType, unknown[]> = {
   multiselect: [],
 };
 
+/**
+ * Every prompt the command showed, in order, with its message: a test can
+ * check what was asked, not only how many answers were used. Cleared in
+ * {@link setupTest}.
+ */
+export const promptsShown: { type: PromptType; message?: string }[] = [];
+
 function dequeuePrompt(name: PromptType) {
-  return async () => {
+  return async (config?: { message?: string }) => {
+    promptsShown.push({ type: name, message: config?.message });
     const queue = promptQueues[name];
     if (queue.length === 0) {
       throw new Error(
@@ -202,6 +216,7 @@ function resetPromptQueues() {
   for (const queue of Object.values(promptQueues)) {
     queue.length = 0;
   }
+  promptsShown.length = 0;
 }
 
 function assertPromptQueuesEmpty() {
@@ -281,7 +296,9 @@ mock.module(
       }),
       revokeToken: async () => "revoked" as const,
       fetchUserInfo: async (token: string) => {
-        if (!token || token === "expired_token") throw new Error("Unauthorized");
+        if (mockState.userInfoError) throw mockState.userInfoError;
+        // What the real lookup throws for a token Clerk refuses.
+        if (!token || token === "expired_token") throw new ApiError(401, "Unauthorized");
         return { userId: "user_123", email: "test@example.com" };
       },
     }) satisfies typeof import("../../../lib/token-exchange.ts"),
@@ -654,6 +671,7 @@ export async function setupTest(): Promise<TestHarness> {
   mockState.gitRepoRoot = "/repo";
   mockState.gitRepoIdentifier = "/repo/.git";
   mockState.openBrowserResult = BROWSER_OPENED;
+  mockState.userInfoError = null;
   openedUrls.length = 0;
   // `--mode agent` sets the mocked mode for the rest of the process; without
   // this, every later test in the file would run as an agent.
