@@ -15,16 +15,18 @@ const { makeJsonClient, makeReadOnlyJsonClient } = await import("./make-client.t
 
 useCaptureLog();
 
-// The desired entry shape written by the current CLI — no URL in args; the
-// bridge resolves its target at runtime via CLERK_MCP_URL or the env profile.
-const CURRENT_SHAPE = { command: "clerk", args: ["mcp", "run"] };
+// A Clerk URL — matches what getMcpUrl() returns by default.
+const CLERK_URL = "https://mcp.clerk.com/mcp";
+
+// The entry shape the current CLI writes for Cursor: a bare URL.
+const CURRENT_SHAPE = { url: CLERK_URL };
+
+// The clerk 3.x `clerk mcp run` bridge entry, removed in 4.0.
+const LEGACY_SHAPE = { command: "clerk", args: ["mcp", "run"] };
 
 // A foreign server entry that should be treated as a conflict.
 const FOREIGN_URL = "https://other.example.com/mcp";
 const FOREIGN_SHAPE = { url: FOREIGN_URL };
-
-// A Clerk URL — matches what getMcpUrl() returns by default.
-const CLERK_URL = "https://mcp.clerk.com/mcp";
 
 describe("make-client (via cursor)", () => {
   let cwd: string;
@@ -76,11 +78,11 @@ describe("make-client (via cursor)", () => {
       expect(written.mcpServers?.clerk).toEqual(CURRENT_SHAPE);
     });
 
-    test("upgrades a legacy same-URL entry (bare { url }) to the bridge shape", async () => {
+    test("replaces a legacy `clerk mcp run` bridge entry with the URL entry", async () => {
       await mkdir(join(cwd, ".cursor"), { recursive: true });
       await writeFile(
         join(cwd, ".cursor", "mcp.json"),
-        JSON.stringify({ mcpServers: { clerk: { url: CLERK_URL } } }),
+        JSON.stringify({ mcpServers: { clerk: LEGACY_SHAPE } }),
       );
       const result = await cursorClient.upsert({ name: "clerk", url: CLERK_URL }, cwd);
       expect(result.status).toBe("installed");
@@ -141,48 +143,49 @@ describe("make-client (via cursor)", () => {
   });
 
   describe("list", () => {
-    test("returns only bridge-shaped entries, ignoring direct-URL descriptors", async () => {
-      // Direct-URL entries (hand-added or another tool's) are not ours: the
-      // CLI never wrote that shape, so list/uninstall leave them alone — even
-      // under the `clerk` name.
+    test("returns clerk-named, clerk-host, and legacy entries, ignoring unrelated ones", async () => {
       const configPath = join(cwd, ".cursor", "mcp.json");
       await mkdir(join(cwd, ".cursor"), { recursive: true });
       await writeFile(
         configPath,
         JSON.stringify({
           mcpServers: {
-            clerk: { url: CLERK_URL },
-            bridge: CURRENT_SHAPE,
+            clerk: { url: "https://example.com/mcp" },
+            hosted: CURRENT_SHAPE,
+            bridge: LEGACY_SHAPE,
             unrelated: { url: "https://example.com/mcp" },
           },
         }),
       );
       const entries = await cursorClient.list(cwd);
-      expect(entries.map((e) => e.name)).toEqual(["bridge"]);
+      expect(entries.map((e) => [e.name, e.legacy])).toEqual([
+        ["clerk", false],
+        ["hosted", false],
+        ["bridge", true],
+      ]);
     });
 
-    test("lists a current-shape entry by name, resolving URL from getMcpUrl()", async () => {
+    test("reports a legacy entry at the URL the bridge would have resolved", async () => {
       const configPath = join(cwd, ".cursor", "mcp.json");
       await mkdir(join(cwd, ".cursor"), { recursive: true });
-      await writeFile(configPath, JSON.stringify({ mcpServers: { clerk: CURRENT_SHAPE } }));
-      const entries = await cursorClient.list(cwd);
-      expect(entries).toHaveLength(1);
-      expect(entries[0]!.name).toBe("clerk");
-      expect(entries[0]!.url).toBe(CLERK_URL);
+      await writeFile(configPath, JSON.stringify({ mcpServers: { clerk: LEGACY_SHAPE } }));
+      expect(await cursorClient.list(cwd)).toEqual([
+        { client: "cursor", configPath, name: "clerk", url: CLERK_URL, legacy: true },
+      ]);
     });
 
-    test("lists a custom-named bridge entry even when the resolved URL is not a clerk.com host", async () => {
-      // `--name foo` with `CLERK_MCP_URL` pointing at a local worker: the
-      // descriptor shape identifies the entry as ours, so it must not fall out
-      // of list/doctor (or become unremovable) just because both the name and
-      // the resolved URL miss the clerk heuristics.
+    test("lists a custom-named entry pointing at the resolved CLERK_MCP_URL override", async () => {
+      // `--name foo` with `CLERK_MCP_URL` pointing at a local worker: neither
+      // the name nor the host matches the clerk heuristics, but the URL is the
+      // one install resolved, so it must not fall out of list/doctor (or
+      // become unremovable). The raw override is canonicalized before comparing.
       const originalMcpUrl = process.env.CLERK_MCP_URL;
-      process.env.CLERK_MCP_URL = "http://localhost:8787/mcp";
+      process.env.CLERK_MCP_URL = "HTTP://LOCALHOST:8787/mcp";
       try {
         await mkdir(join(cwd, ".cursor"), { recursive: true });
         await writeFile(
           join(cwd, ".cursor", "mcp.json"),
-          JSON.stringify({ mcpServers: { foo: CURRENT_SHAPE } }),
+          JSON.stringify({ mcpServers: { foo: { url: "http://localhost:8787/mcp" } } }),
         );
         const entries = await cursorClient.list(cwd);
         expect(entries).toHaveLength(1);
@@ -231,7 +234,7 @@ describe("makeReadOnlyJsonClient (CLI-delegated bases)", () => {
     id: "claude",
     displayName: "ReadOnly",
     scope: "user",
-    activation: "n/a",
+    activation: () => "n/a",
     topKey: "mcpServers",
     encode: () => CURRENT_SHAPE,
     extractUrl: () => CLERK_URL,
@@ -269,11 +272,10 @@ describe("make-client nested topKey (OpenClaw-style mcp.servers)", () => {
     id: "openclaw",
     displayName: "Nested",
     scope: "user",
-    activation: "n/a",
+    activation: () => "n/a",
     topKey: ["mcp", "servers"],
     encode: () => CURRENT_SHAPE,
-    extractUrl: (d) =>
-      typeof d === "object" && d !== null && "command" in d ? CLERK_URL : undefined,
+    extractUrl: (d) => (typeof d === "object" && d !== null && "url" in d ? CLERK_URL : undefined),
     configPath: (cwd) => join(cwd, "openclaw.json"),
   });
 
@@ -302,7 +304,7 @@ describe("make-client nested topKey (OpenClaw-style mcp.servers)", () => {
       join(cwd, "openclaw.json"),
       JSON.stringify({
         agents: { keep: true },
-        mcp: { timeout: 5, servers: { other: { command: "x", args: [] } } },
+        mcp: { timeout: 5, servers: { other: { url: "https://example.com/mcp" } } },
       }),
     );
     await nested.upsert({ name: "clerk", url: CLERK_URL }, cwd);
@@ -310,7 +312,7 @@ describe("make-client nested topKey (OpenClaw-style mcp.servers)", () => {
       agents: { keep: true },
       mcp: {
         timeout: 5,
-        servers: { other: { command: "x", args: [] }, clerk: CURRENT_SHAPE },
+        servers: { other: { url: "https://example.com/mcp" }, clerk: CURRENT_SHAPE },
       },
     });
   });

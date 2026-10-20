@@ -7,10 +7,10 @@
 # Once Bun stops leaking a non-empty `url` onto client IncomingMessages, this
 # patch can be removed.
 diff --git a/lib/coreBundle.js b/lib/coreBundle.js
-index d9041dd0f009072511a7d808dec83121ff29e127..5166e3ca1d8be15ab725336cd4348d0eea998af4 100644
+index 8ed8bb5de1b12c7c050191123b22a119298826bb..9c23e184bf1e6dfd58a317bb84385e8344fb1c8e 100644
 --- a/lib/coreBundle.js
 +++ b/lib/coreBundle.js
-@@ -25978,7 +25978,8 @@ ${text2}`;
+@@ -26590,7 +26590,8 @@ ${text2}`;
              fetchLog(`\u2190 ${response2.statusCode} ${response2.statusMessage}`);
              for (const [name, value2] of Object.entries(response2.headers))
                fetchLog(`  ${name}: ${value2}`);
@@ -20,7 +20,7 @@ index d9041dd0f009072511a7d808dec83121ff29e127..5166e3ca1d8be15ab725336cd4348d0e
              if (cookies.length) {
                try {
                  await this.addCookies(cookies);
-@@ -26057,7 +26058,7 @@ ${text2}`;
+@@ -26669,7 +26670,7 @@ ${text2}`;
                  body: body2,
                  log: log2,
                  response: {

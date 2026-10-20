@@ -2,13 +2,16 @@
  * `clerk mcp install` — register the Clerk remote MCP server in supported clients.
  *
  * URL resolution: `CLERK_MCP_URL` > active env profile `mcpUrl` > Clerk's hosted server.
- * The URL is resolved at bridge runtime, not embedded in the stored config entry
- * (except fx, which connects over HTTP directly and stores the resolved URL).
+ * Every client gets a native Streamable HTTP entry with the resolved URL
+ * embedded, and runs the OAuth sign-in itself — so switching env profiles
+ * means re-running install.
  * Target clients: `--client <id>` (repeatable) > `--all` > human picker > all detected (agent mode).
- * Install always converges: whatever entry exists under the name is replaced.
- * Clients with their own CLI (claude, gemini, codex, vscode, openclaw, hermes)
- * are registered by shelling out to it; the rest get their config file written
- * directly.
+ * Install always converges: whatever entry exists under the name is replaced,
+ * and every clerk 3.x `clerk mcp run` bridge entry in the client — under any
+ * name — is cleared (reported as `migrated`).
+ * Clients with their own CLI (claude, gemini, vscode, openclaw, hermes) are
+ * registered by shelling out to it; Codex (whose CLI add blocks on a browser
+ * login) and the rest get their config file written directly.
  */
 
 import { log } from "../../lib/log.ts";
@@ -17,7 +20,9 @@ import { withGutter } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import {
   failWhenAllFailed,
+  legacyEntryNames,
   pickClients,
+  removeLegacyEntries,
   resolveName,
   resolveUrl,
   settleClients,
@@ -26,7 +31,7 @@ import {
   type McpOptions,
 } from "./shared.ts";
 import { detectInstalledClients } from "./clients/registry.ts";
-import type { McpClient, UpsertResult } from "./clients/types.ts";
+import type { McpClient, McpServerEntry, UpsertResult } from "./clients/types.ts";
 
 async function chooseClients(options: McpOptions, cwd: string): Promise<McpClient[]> {
   // Only agent mode implies "no picker" — `--json` is an output format, not a
@@ -45,18 +50,40 @@ async function chooseClients(options: McpOptions, cwd: string): Promise<McpClien
   });
 }
 
-function printResult(client: McpClient, result: UpsertResult): void {
-  log.info(`${client.displayName} → ${dim(result.configPath)}: ${green(result.status)}`);
+/** An upsert result, flagged when it replaced a clerk 3.x bridge entry. */
+type InstallResult = UpsertResult & { migrated: boolean; legacyRemaining?: string[] };
+
+function printResult(client: McpClient, result: InstallResult): void {
+  const note = result.migrated ? dim(" (replaced the `clerk mcp run` bridge)") : "";
+  log.info(`${client.displayName} → ${dim(result.configPath)}: ${green(result.status)}${note}`);
 }
 
-type ClientUpsert = { client: McpClient; result: UpsertResult };
+async function install(
+  client: McpClient,
+  entry: McpServerEntry,
+  cwd: string,
+): Promise<InstallResult> {
+  const legacy = await legacyEntryNames(client, cwd);
+  const result = await client.upsert(entry, cwd);
+  // The upsert replaced a legacy entry under this name; one under another
+  // name would otherwise linger, dead, and keep `doctor` warning.
+  const { removed, remaining } = await removeLegacyEntries(
+    client,
+    legacy.filter((n) => n !== entry.name),
+    cwd,
+  );
+  const migrated = legacy.includes(entry.name) || removed.length > 0;
+  return { ...result, migrated, ...(remaining.length > 0 && { legacyRemaining: remaining }) };
+}
+
+type ClientUpsert = { client: McpClient; result: InstallResult };
 
 // Registering the entry isn't enough — the editor must reload before it
 // connects (and sign in, if the server requires it). Surface that for every
 // client we just installed into, so "installed" doesn't read as "done and
 // working".
-function installNextSteps(settled: ClientUpsert[]): string[] {
-  return settled.map(({ client }) => `${client.displayName}: ${client.activation}`);
+function installNextSteps(settled: ClientUpsert[], name: string): string[] {
+  return settled.map(({ client }) => `${client.displayName}: ${client.activation(name)}`);
 }
 
 export async function mcpInstall(options: McpOptions = {}): Promise<void> {
@@ -67,7 +94,7 @@ export async function mcpInstall(options: McpOptions = {}): Promise<void> {
   const json = wantsJson(options);
 
   if (clients.length === 0 && json) {
-    log.data(JSON.stringify({ url, name, results: [] }, null, 2));
+    log.data(JSON.stringify({ url, name, results: [], failures: [] }, null, 2));
     return;
   }
   if (clients.length === 0) {
@@ -78,7 +105,7 @@ export async function mcpInstall(options: McpOptions = {}): Promise<void> {
   await withGutter(
     `Installing Clerk MCP (${cyan(url)})`,
     async ({ setNextSteps }) => {
-      const outcome = await settleClients(clients, async (c) => c.upsert({ name, url }, cwd));
+      const outcome = await settleClients(clients, async (c) => install(c, { name, url }, cwd));
       const { succeeded, failed } = outcome;
       if (json) {
         log.data(
@@ -93,7 +120,7 @@ export async function mcpInstall(options: McpOptions = {}): Promise<void> {
       }
       failWhenAllFailed(outcome, json);
       succeeded.forEach(({ client, result }) => printResult(client, result));
-      const steps = installNextSteps(succeeded);
+      const steps = installNextSteps(succeeded, name);
       if (steps.length > 0) setNextSteps(steps);
     },
     { skip: json },

@@ -1,0 +1,515 @@
+/**
+ * The load → transform → validate pipeline.
+ *
+ * Ported from the standalone migration-tool's `src/migrate/functions.ts` and
+ * the transform helpers in its `src/lib/index.ts`. Two dependencies were
+ * dropped along the way: `mime-types` (an extension check covers the two
+ * formats we accept) and the repo-specific `/samples/` path special-case.
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+import csvParser from "csv-parser";
+import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
+import { getSource } from "../sources/registry.ts";
+import { normalizeBooleanField } from "../sources/shared.ts";
+import { type TransformContext, type SourceEntry, type User } from "../types.ts";
+import { userSchema } from "../validator.ts";
+import { readJsonFile } from "./export-file.ts";
+
+export type FileType = "application/json" | "text/csv";
+
+/** A user that failed schema validation before any API call was made. */
+export type ValidationFailure = {
+  /** The source ID, or `row-<n>` when the row has none. */
+  userId: string;
+  row: number;
+  error: string;
+  path: (string | number)[];
+};
+
+export type TransformOptions = {
+  /** Set `false` to keep invalid rows, for analysis passes that count fields. */
+  validate?: boolean;
+  /** Per-run values `postTransform` may need. */
+  context?: TransformContext;
+};
+
+/** Resolves an import path against the current working directory. */
+export function resolveImportFilePath(file: string): string {
+  return path.resolve(process.cwd(), file.trim());
+}
+
+export function fileExists(file: string): boolean {
+  return fs.existsSync(resolveImportFilePath(file));
+}
+
+/**
+ * Classifies an import file by extension.
+ *
+ * @returns The MIME type, or `undefined` for anything that is not JSON or CSV.
+ */
+export function getFileType(file: string): FileType | undefined {
+  const ext = path.extname(resolveImportFilePath(file)).toLowerCase();
+  if (ext === ".json" || ext === ".ndjson" || ext === ".jsonl") return "application/json";
+  if (ext === ".csv") return "text/csv";
+  return undefined;
+}
+
+// --- Field mapping ---------------------------------------------------------
+
+/**
+ * Flattens only the nested paths a transformer actually references.
+ *
+ * Lets a transformer map `"_id.$oid"` onto `userId` without flattening
+ * (and thereby mangling) metadata objects it does not mention.
+ */
+export function flattenObjectSelectively(
+  obj: Record<string, unknown>,
+  transformer: Record<string, string>,
+  prefix = "",
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(obj)) {
+    const currentPath = prefix ? `${prefix}.${key}` : key;
+    const hasNestedMapping = Object.keys(transformer).some((mapped) =>
+      mapped.startsWith(`${currentPath}.`),
+    );
+
+    if (hasNestedMapping && value && typeof value === "object" && !Array.isArray(value)) {
+      Object.assign(
+        result,
+        flattenObjectSelectively(value as Record<string, unknown>, transformer, currentPath),
+      );
+    } else {
+      result[currentPath] = value;
+    }
+  }
+
+  return result;
+}
+
+/** Renames source fields onto Clerk's import schema, dropping empty values. */
+export function transformKeys(
+  data: Record<string, unknown>,
+  transformerConfig: { transformer: Record<string, string> },
+): Record<string, unknown> {
+  const transformed: Record<string, unknown> = {};
+  const { transformer } = transformerConfig;
+  const flat = flattenObjectSelectively(data, transformer);
+
+  for (const [key, value] of Object.entries(flat)) {
+    if (value !== "" && value !== '"{}"' && value !== null) {
+      transformed[transformer[key] ?? key] = value;
+    }
+  }
+
+  return transformed;
+}
+
+// --- Value normalization ---------------------------------------------------
+
+function parseJsonValue(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (!["[", "{", '"'].includes(trimmed[0] ?? "")) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function parseDelimitedStrings(field: unknown): string[] {
+  // Trimmed like a split string, so a JSON array compares on the same terms.
+  if (Array.isArray(field)) return field.map((value) => String(value).trim()).filter(Boolean);
+  if (typeof field === "string" && field) {
+    const parsed = parseJsonValue(field);
+    if (Array.isArray(parsed)) {
+      return parsed.map((value) => String(value).trim()).filter(Boolean);
+    }
+    return field
+      .split(/[,|]/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function normalizeStringArrayField(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value !== "string") return value;
+
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  const parsed = parseJsonValue(trimmed);
+  if (Array.isArray(parsed)) {
+    return parsed.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof parsed === "string") {
+    const parsedString = parsed.trim();
+    if (parsedString.includes(",") || parsedString.includes("|")) {
+      return parsedString
+        .split(/[,|]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+    return parsedString;
+  }
+  return parsed;
+}
+
+function normalizeNumberField(value: unknown): unknown {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string") return value;
+
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : value;
+}
+
+function normalizeMetadataField(value: unknown): unknown {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string") return value;
+
+  const parsed = parseJsonValue(value);
+  return typeof parsed === "string" ? value : parsed;
+}
+
+function normalizeDateField(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "number") {
+    // Epoch seconds, not milliseconds, below 1e11: as milliseconds that is
+    // before March 1973, which no signup date is.
+    const date = new Date(value < 1e11 ? value * 1000 : value);
+    return Number.isNaN(date.getTime()) ? value : date.toISOString();
+  }
+  if (typeof value !== "string") return value;
+
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  const date = new Date(trimmed);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+
+const ARRAY_FIELDS = [
+  "email",
+  "emailAddresses",
+  "unverifiedEmailAddresses",
+  "phone",
+  "phoneNumbers",
+  "unverifiedPhoneNumbers",
+  "backupCodes",
+] as const;
+
+const BOOLEAN_FIELDS = [
+  "backupCodesEnabled",
+  "banned",
+  "bypassClientTrust",
+  "createOrganizationEnabled",
+  "deleteSelfEnabled",
+  "skipLegalChecks",
+  "skipPasswordChecks",
+] as const;
+
+const METADATA_FIELDS = ["unsafeMetadata", "publicMetadata", "privateMetadata"] as const;
+
+const DATE_FIELDS = ["createdAt", "legalAcceptedAt"] as const;
+
+/**
+ * Coerces CSV's all-strings-everything into the shapes the schema expects.
+ *
+ * A field that normalizes to `undefined` is deleted rather than set, so an
+ * empty CSV column does not look like an explicitly-null value to Clerk.
+ */
+export function normalizeUserData(user: Record<string, unknown>): Record<string, unknown> {
+  const normalized = { ...user };
+  // Integer keys (Better Auth, a custom JSON file) are still IDs.
+  if (typeof normalized.userId === "number") normalized.userId = String(normalized.userId);
+
+  const setOrDelete = (field: string, value: unknown) => {
+    if (value === undefined) delete normalized[field];
+    else normalized[field] = value;
+  };
+
+  for (const field of ARRAY_FIELDS) {
+    setOrDelete(field, normalizeStringArrayField(normalized[field]));
+  }
+  for (const field of BOOLEAN_FIELDS) {
+    normalized[field] = normalizeBooleanField(normalized[field]);
+  }
+  for (const field of METADATA_FIELDS) {
+    setOrDelete(field, normalizeMetadataField(normalized[field]));
+  }
+  for (const field of DATE_FIELDS) {
+    setOrDelete(field, normalizeDateField(normalized[field]));
+  }
+  setOrDelete(
+    "createOrganizationsLimit",
+    normalizeNumberField(normalized.createOrganizationsLimit),
+  );
+
+  return normalized;
+}
+
+/**
+ * Merges a Clerk export's three email fields (and three phone fields) into the
+ * verified/unverified pair the schema models, deduping across all of them.
+ */
+export function consolidateClerkIdentifiers(user: Record<string, unknown>): void {
+  const merge = (primaryKey: string, verifiedKey: string, unverifiedKey: string) => {
+    // Read like the lists, so the two compare on the same terms. The schema
+    // takes an array here too: its first entry is the primary, the rest verified.
+    const [primary, ...morePrimary] = parseDelimitedStrings(user[primaryKey]);
+    const verified = [...morePrimary, ...parseDelimitedStrings(user[verifiedKey])];
+    const unverified = parseDelimitedStrings(user[unverifiedKey]);
+
+    // The Dashboard lists an unverified primary under the unverified field.
+    // Leading the verified list would put it on POST /v1/users, verified.
+    const all: string[] = [];
+    if (primary && !unverified.includes(primary)) all.push(primary);
+    for (const value of verified) {
+      if (!all.includes(value)) all.push(value);
+    }
+    if (all.length > 0) user[primaryKey] = all;
+    else delete user[primaryKey];
+    delete user[verifiedKey];
+
+    const extraUnverified = unverified.filter((value) => !all.includes(value));
+    if (extraUnverified.length > 0) user[unverifiedKey] = extraUnverified;
+    else delete user[unverifiedKey];
+  };
+
+  merge("email", "emailAddresses", "unverifiedEmailAddresses");
+  merge("phone", "phoneNumbers", "unverifiedPhoneNumbers");
+}
+
+// --- Validation ------------------------------------------------------------
+
+/** Every field the import schema declares; anything else is stripped. */
+const SCHEMA_FIELDS: ReadonlySet<string> = new Set(Object.keys(userSchema.shape));
+
+/**
+ * Validates prepared users, dropping each failure from the run and returning
+ * it for the caller to record.
+ */
+export function validatePreparedUsers(users: Record<string, unknown>[]): {
+  users: User[];
+  validationFailed: number;
+  failures: ValidationFailure[];
+  /** Fields a source produced that Clerk has no place for → how many users carry each. */
+  unknownFields: Record<string, number>;
+} {
+  const validated: User[] = [];
+  const failures: ValidationFailure[] = [];
+  const unknownFields: Record<string, number> = {};
+  let validationFailed = 0;
+
+  for (let i = 0; i < users.length; i++) {
+    const user = users[i] as Record<string, unknown>;
+    for (const [field, value] of Object.entries(user)) {
+      if (!SCHEMA_FIELDS.has(field) && value !== undefined && value !== null && value !== "") {
+        unknownFields[field] = (unknownFields[field] ?? 0) + 1;
+      }
+    }
+    const result = userSchema.safeParse(user);
+
+    if (result.success) {
+      validated.push(result.data);
+      continue;
+    }
+
+    validationFailed++;
+    const firstIssue = result.error.issues[0];
+    if (!firstIssue) continue;
+
+    failures.push({
+      error: firstIssue.message,
+      path: firstIssue.path as (string | number)[],
+      // 1-based, like `assertUserRows`: the second user is row 2.
+      userId: (user.userId as string) || `row-${i + 1}`,
+      row: i + 1,
+    });
+  }
+
+  return { users: validated, validationFailed, failures, unknownFields };
+}
+
+function addDefaultFields(
+  users: Record<string, unknown>[],
+  transformer: SourceEntry,
+): Record<string, unknown>[] {
+  if (!transformer.defaults) return users;
+  // Defaults go first: `transformKeys` maps keys in order, so a later default
+  // `passwordHasher` would overwrite the row's own `password_hasher`.
+  return users.map((user) => ({ ...transformer.defaults, ...user }));
+}
+
+/**
+ * Maps, normalizes and (unless disabled) validates a batch of raw users.
+ *
+ * @param options.validate - Set `false` to get the mapped shape without
+ *   dropping invalid rows, for analysis passes that count fields.
+ * @param options.context - Per-run values `postTransform` may need, e.g.
+ *   Firebase's hash parameters.
+ */
+export function transformUsers(
+  users: Record<string, unknown>[],
+  key: string,
+  options: TransformOptions = {},
+): {
+  transformedData: User[];
+  validationFailed: number;
+  failures: ValidationFailure[];
+  unknownFields: Record<string, number>;
+} {
+  const transformer = getSource(key);
+  const context = options.context ?? {};
+  const transformed: Record<string, unknown>[] = [];
+
+  for (const user of users) {
+    const mapped = transformKeys(user, transformer);
+
+    // The source's own cleanup first: the Clerk Dashboard's formula-safety TAB
+    // has to come off before identifiers are compared, or "\t+1555…" and
+    // "+1555…" read as two phones.
+    transformer.postTransform?.(mapped, context);
+    if (key === "clerk") {
+      consolidateClerkIdentifiers(mapped);
+    }
+
+    transformed.push(normalizeUserData(mapped));
+  }
+
+  if (options.validate === false) {
+    return {
+      transformedData: transformed as User[],
+      validationFailed: 0,
+      failures: [],
+      unknownFields: {},
+    };
+  }
+
+  const result = validatePreparedUsers(transformed);
+  return {
+    transformedData: result.users,
+    validationFailed: result.validationFailed,
+    failures: result.failures,
+    unknownFields: result.unknownFields,
+  };
+}
+
+// --- File loading ----------------------------------------------------------
+
+/**
+ * Every row of a CSV. `#` is not a comment: a row whose first cell starts
+ * with one is a row.
+ *
+ * @param headers - Column names, for a CSV with no header row.
+ */
+async function readCsv(filePath: string, headers?: string[]): Promise<Record<string, unknown>[]> {
+  return new Promise((resolve, reject) => {
+    const users: Record<string, unknown>[] = [];
+    fs.createReadStream(filePath)
+      // Excel's "CSV UTF-8" starts with a BOM, which would otherwise become
+      // part of the first header and hide that column from every row.
+      .pipe(
+        csvParser({
+          ...(headers ? { headers } : {}),
+          mapHeaders: ({ header }) => header.replace(/^\uFEFF/, ""),
+        }),
+      )
+      .on("data", (row: Record<string, unknown>) => users.push(row))
+      .on("error", reject)
+      .on("end", () => resolve(users));
+  });
+}
+
+async function readUsersFromFile(
+  file: string,
+  transformer: SourceEntry,
+): Promise<Record<string, unknown>[]> {
+  let filePath = resolveImportFilePath(file);
+  const type = getFileType(file);
+  let preExtracted: Record<string, unknown>[] | undefined;
+  let csvHeaders: string[] | undefined;
+
+  if (type === "application/json") {
+    const parsed = readJsonFile(filePath);
+    if (!transformer.preTransform) return assertUserRows(parsed, file);
+  }
+
+  if (transformer.preTransform) {
+    const result = await transformer.preTransform(filePath, type ?? "");
+    filePath = result.filePath;
+    preExtracted = result.data;
+    csvHeaders = result.csvHeaders;
+  }
+
+  // A pre-transform's rows win over the file, CSV or not.
+  if (preExtracted) return preExtracted;
+  if (type === "text/csv") return readCsv(filePath, csvHeaders);
+
+  return assertUserRows(readJsonFile(filePath), file);
+}
+
+/** A JSON export's rows, refusing anything but an array of objects. */
+function assertUserRows(parsed: unknown, file: string): Record<string, unknown>[] {
+  if (!Array.isArray(parsed)) {
+    throw new CliError(`Expected ${file} to contain a JSON array of users, got ${typeof parsed}.`, {
+      code: ERROR_CODE.INVALID_JSON,
+    });
+  }
+  const bad = parsed.findIndex((row) => !row || typeof row !== "object" || Array.isArray(row));
+  if (bad !== -1) {
+    throw new CliError(`${file}: row ${bad + 1} is not a user object.`, {
+      code: ERROR_CODE.INVALID_JSON,
+    });
+  }
+  return parsed as Record<string, unknown>[];
+}
+
+/**
+ * Reads the export exactly as the transformer sees it, before any field
+ * mapping.
+ *
+ * Used by the Supabase provider cross-reference, which reads
+ * `raw_app_meta_data` — a column no transformer maps, so it is gone by the time
+ * users are transformed.
+ */
+export async function readRawUsers(file: string, key: string): Promise<Record<string, unknown>[]> {
+  return readUsersFromFile(file, getSource(key));
+}
+
+/**
+ * Reads a JSON or CSV export and returns the users ready to import.
+ *
+ * @param options - Passed through to {@link transformUsers}.
+ */
+export async function loadUsersFromFile(
+  file: string,
+  key: string,
+  options: TransformOptions = {},
+): Promise<{
+  users: User[];
+  validationFailed: number;
+  failures: ValidationFailure[];
+  unknownFields: Record<string, number>;
+}> {
+  const transformer = getSource(key);
+  const raw = await readUsersFromFile(file, transformer);
+  const withDefaults = addDefaultFields(raw, transformer);
+  const { transformedData, validationFailed, failures, unknownFields } = transformUsers(
+    withDefaults,
+    key,
+    options,
+  );
+  return { users: transformedData, validationFailed, failures, unknownFields };
+}

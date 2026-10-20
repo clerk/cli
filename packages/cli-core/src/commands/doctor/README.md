@@ -16,19 +16,22 @@ clerk doctor --fix       # Offer to auto-fix issues
 
 ## Options
 
-| Flag          | Description                                           |
-| ------------- | ----------------------------------------------------- |
-| `--verbose`   | Show detailed diagnostic info for each check          |
-| `--json`      | Output results as machine-readable JSON               |
-| `--spotlight` | Only show warnings and failures (hide passing checks) |
-| `--fix`       | Offer to auto-fix issues with known remedies          |
+| Flag                           | Description                                                      |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `--verbose`                    | Show detailed diagnostic info for each check                     |
+| `--json`                       | Output results as machine-readable JSON                          |
+| `--spotlight`                  | Only show warnings and failures (hide passing checks)            |
+| `--fix`                        | Offer to auto-fix issues with known remedies                     |
+| `--xcode-project <path>`       | Xcode project or workspace to check; also selects the iOS checks |
+| `--xcode-target <name-or-id>`  | Xcode app target to check                                        |
+| `--xcode-configuration <name>` | Xcode build configuration to check                               |
 
 ## Checks
 
 | Check                 | Category       | What it verifies                                                                                                                                                                                     |
 | --------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Authentication token  | Authentication | Credential store has a stored token                                                                                                                                                                  |
-| Token validity        | Authentication | Token is still valid (calls `/oauth/userinfo`)                                                                                                                                                       |
+| Account credentials   | Authentication | Credential store has a session or a Platform API key is configured                                                                                                                                   |
+| Token validity        | Authentication | OAuth access is verified through `/oauth/userinfo` or an account-scoped application-list fallback; Platform API-key access uses the same read-only application-list request                          |
 | Project linkage       | Project        | Current directory is linked to a Clerk app                                                                                                                                                           |
 | Linked application    | Project        | Linked application ID is accessible via the API                                                                                                                                                      |
 | Instances             | Project        | Configured dev/prod instance IDs match the application's instances                                                                                                                                   |
@@ -64,6 +67,16 @@ The Linked application and Instances checks are account-only (the Platform
 API application/instance-list concepts have no accountless equivalent), so they
 continue to skip for an accountless project — the skip reason names the accountless
 application instead of reading like a problem.
+
+### iOS and macOS projects
+
+When the directory is an Xcode project (or an `--xcode-*` flag is given), doctor
+skips the env-file check, since native apps configure Clerk in Swift, and adds
+read-only checks from the same engine as `clerk init`: configuration coverage,
+SDK linkage and version, capabilities, Native API, registration, and the Apple
+connection. It never edits the project, resolves packages, or writes to Clerk.
+Without Xcode (another OS, or a Mac with only the Command Line Tools) these checks become one warning and the env-file check stays, matching `clerk init`'s fallback. If Clerk can't
+be reached, the local checks still run and a warning says so.
 
 ## Auto-Fix (`--fix`)
 

@@ -18,7 +18,17 @@
  */
 
 import { isRecord } from "../../../lib/objects.ts";
-import { chmod, mkdir, rename, unlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  constants,
+  mkdir,
+  realpath,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { log } from "../../../lib/log.ts";
 import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
@@ -78,25 +88,55 @@ export async function readJsonConfig(path: string): Promise<ConfigRecord> {
 }
 
 export async function writeJsonConfig(path: string, config: ConfigRecord): Promise<void> {
-  log.debug(`mcp: write ${path}`);
-  const dir = dirname(path);
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  // Atomic write: write to a sibling temp file then rename so a concurrent
-  // reader (e.g. Claude Code) never sees a partial file. This prevents a torn
-  // read but not a lost update — if the client itself rewrites this file
-  // between our read and this rename (e.g. Claude Code persists its own state
-  // to ~/.claude.json frequently), our rename clobbers that write. Same
-  // tradeoff `claude mcp add` itself makes; install/uninstall is safest with
-  // the target client closed.
-  const tmp = `${path}.clerk-tmp-${process.pid}`;
+  await writeConfigText(path, JSON.stringify(config, null, 2) + "\n");
+}
+
+/**
+ * Atomically replace a config file's contents: write a sibling temp file, then
+ * rename it over the target, so a concurrent reader (e.g. the client itself)
+ * never sees a partial file. This prevents a torn read but not a lost update —
+ * if the client rewrites the file between our read and the rename, our rename
+ * clobbers that write; install/uninstall is safest with the client closed.
+ *
+ * A symlinked config (stow, chezmoi, home-manager) is written through to its
+ * target, so the link survives; renaming over the link itself would silently
+ * detach the user's dotfile. A file without write permission is refused rather
+ * than replaced, since a rename only needs write access to the directory.
+ */
+export async function writeConfigText(path: string, text: string): Promise<void> {
+  const target = await resolveWriteTarget(path);
+  log.debug(`mcp: write ${target}${target === path ? "" : ` (via symlink ${path})`}`);
+  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+  // Unique per call: two configs symlinked to one file resolve to the same
+  // target, and a shared temp name would let one write rename the other's.
+  const tmp = `${target}.clerk-tmp-${process.pid}-${randomUUID()}`;
   try {
-    await writeFile(tmp, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
-    await rename(tmp, path);
+    await writeFile(tmp, text, { mode: 0o600 });
+    await rename(tmp, target);
   } catch (error) {
     await unlink(tmp).catch(() => {});
     throw error;
   }
-  await restrictPermissions(path);
+  await restrictPermissions(target);
+}
+
+/** The real file behind `path` (following symlinks), refusing a read-only one. */
+async function resolveWriteTarget(path: string): Promise<string> {
+  let target: string;
+  try {
+    target = await realpath(path);
+  } catch {
+    // Absent (or a dangling link): nothing to preserve, create it at `path`.
+    return path;
+  }
+  try {
+    await access(target, constants.W_OK);
+  } catch {
+    throw new CliError(`Refusing to modify ${target}: the file is not writable.`, {
+      code: ERROR_CODE.MCP_CLIENT_CONFIG_INVALID,
+    });
+  }
+  return target;
 }
 
 /**

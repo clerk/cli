@@ -308,7 +308,7 @@ export async function resolveProfile(cwd: string): Promise<
   return undefined;
 }
 
-const INSTANCE_ALIASES: Record<string, "development" | "production"> = {
+export const INSTANCE_ALIASES: Record<string, "development" | "production"> = {
   dev: "development",
   development: "development",
   prod: "production",
