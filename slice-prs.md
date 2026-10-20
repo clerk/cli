@@ -12,7 +12,21 @@ Ship `migrate` in small PRs instead of one 20k-line PR. #479 (`ra/integrate-migr
 
 **Don't port these from #479:** `slice-prs.md` (this plan), `.changeset/integrate-migration-tool-into-cli.md` (each slice writes its own), and the `.gitignore` lines for `commands/migrate/logs/` (that folder no longer exists).
 
-**Size:** 6 slices, shipped as 10 PRs. Slice 4 is five PRs, one per provider.
+**Size:** 6 slices, shipped as 13 PRs. Slice 1 went out as four PRs (1a to 1d), and slice 4 is five, one per provider.
+
+## Status
+
+| Slice        | PR                             | State                                       |
+| ------------ | ------------------------------ | ------------------------------------------- |
+| 1 (1a to 1d) | #517, #518, #519, #520         | Merged 2026-10-14. #514 (`slice-1`) closed. |
+| 2            | #515                           | Merged 2026-10-20                           |
+| 3            | #524                           | Merged 2026-10-20                           |
+| 4a Firebase  | #525                           | In review, base `main`                      |
+| 4b to 4e     | #526 (Auth0) to #529 (Auth.js) | Open, stacked on #525                       |
+| 5            | #530                           | Open, stacked on #529                       |
+| 6            | #531                           | Open, stacked on #530                       |
+
+Merged slices take no more changes on their branches. A fix to merged code goes in a small `fix(migrate):` PR off `main` (see "When #479 gets another fix").
 
 ## How it ships: one PR at a time, gated until the last one
 
