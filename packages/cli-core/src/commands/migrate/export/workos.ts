@@ -548,7 +548,7 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
 
     if (exported.length > 0) {
       log.warn(
-        "WorkOS does not return password hashes or TOTP secrets, and there is no export that does. Imported users who signed in with a password must reset it on their first Clerk sign-in, and anyone using an authenticator app has to re-enrol. Users on SSO or social sign-in are unaffected.",
+        "WorkOS's API does not return password hashes or TOTP secrets. Imported users who signed in with a password must reset it on their first Clerk sign-in, and anyone using an authenticator app has to re-enrol. SSO and social users don't need a reset, but set up those providers in Clerk first: social accounts link by verified email, and SSO needs an enterprise connection.",
       );
       log.info(dim(`See ${DOCS_URL}`));
     }
