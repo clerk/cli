@@ -86,7 +86,7 @@ export type RunRecord = {
   /** The source the export file named, when a custom source replaced it. */
   envelopeSource?: string;
   /**
-   * A Firebase import's hash parameters, as SHA-256 of the four (never the
+   * A Firebase import's hash parameters, as a scrypt hash of the four (never the
    * parameters themselves): every digest it builds carries them, so a continue
    * with others is refused.
    */
