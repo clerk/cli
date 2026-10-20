@@ -209,6 +209,9 @@ async function ensureImportTarget(options: MigrateRunOptions): Promise<void> {
   if (!options.app && (await resolveKeylessTarget({ instance: options.instance }))) return;
 
   const interactive = canPrompt(options);
+  // Left to the secret-key chain when non-interactive: its `not_linked` error
+  // is the one every other command raises, and there is nothing to add to it.
+  const linkNext = interactive && !options.app && !(await resolveProfile(process.cwd()));
 
   if (!(await hasAccountCredentials())) {
     if (!interactive) {
@@ -227,12 +230,12 @@ async function ensureImportTarget(options: MigrateRunOptions): Promise<void> {
       });
     }
     log.info("Not logged in. Signing in first...");
-    await login({ showNextSteps: false });
+    // On the way to `link`, which claims under its own rule, login doesn't
+    // claim. With `--app` nothing is linked, so login's own claim stays on.
+    await login(linkNext ? { showNextSteps: false, claim: false } : { showNextSteps: false });
   }
 
-  // Left to the secret-key chain when non-interactive: its `not_linked` error
-  // is the one every other command raises, and there is nothing to add to it.
-  if (interactive && !options.app && !(await resolveProfile(process.cwd()))) {
+  if (linkNext) {
     log.info("This directory isn't linked to a Clerk application. Linking one first...");
     await link({ skipIfLinked: true });
   }

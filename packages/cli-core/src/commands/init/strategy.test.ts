@@ -58,7 +58,7 @@ describe("init strategy", () => {
 
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
     expect(linkMod.link).toHaveBeenCalled();
   });
 
@@ -390,7 +390,7 @@ describe("init strategy", () => {
 
     await init({ app: "app_abc" });
 
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
     expect(linkMod.link).toHaveBeenCalledWith({
       skipIfLinked: true,
       app: "app_abc",
@@ -408,7 +408,7 @@ describe("init strategy", () => {
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
     // `-y` skips y/n confirmations but not authentication.
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
   });
 
   test("-y flag triggers login for non-keyless frameworks in bootstrap", async () => {
@@ -432,7 +432,7 @@ describe("init strategy", () => {
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
   test("existing repo with keyless framework uses authenticated flow when signed in", async () => {
@@ -480,7 +480,7 @@ describe("init strategy", () => {
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     // Unauthenticated + existing repo → login + link run via authenticateAndLink.
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
     expect(linkMod.link).toHaveBeenCalled();
     expect(pullMod.pull).toHaveBeenCalled();
   });

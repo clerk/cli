@@ -67,6 +67,14 @@ mock.module("../../lib/autolink.ts", () => ({
   matchKeyToApp: (...args: unknown[]) => mockMatchKeyToApp(...args),
 }));
 
+// No folder here has an init token; `link-flow.test.ts` covers the claim.
+mock.module("../../lib/autoclaim.ts", () => ({
+  readInitClaim: async () => undefined,
+  attemptAutoclaim: async () => {
+    throw new Error("unexpected claim");
+  },
+}));
+
 const mockGetGitRepoIdentifier = mock();
 const mockGetGitRepoRoot = mock();
 const mockGetGitNormalizedRemote = mock();
@@ -394,7 +402,8 @@ describe("link", () => {
 
       await runLink({ app: "app_123" });
 
-      expect(mockLogin).toHaveBeenCalledWith({ showNextSteps: false });
+      // Login's own claim stays off: `link` applies the claim rule itself.
+      expect(mockLogin).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
     });
   });
 

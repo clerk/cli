@@ -606,7 +606,9 @@ async function resolveAuthLabel(): Promise<string> {
   const email = await getAuthenticatedEmail();
   if (email) return `Logged in as ${email}`;
 
-  await login({ showNextSteps: false });
+  // `link`, called next, claims the app `clerk init` created, under its own
+  // rule; login's claim would run first and leave `link` nothing to decide.
+  await login({ showNextSteps: false, claim: false });
   return "";
 }
 

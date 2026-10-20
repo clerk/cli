@@ -6,7 +6,29 @@
  * way. Agents can't answer, so they claim without it.
  */
 
+import { getAuth } from "./config.ts";
+import { getValidToken } from "./credential-store.ts";
 import { confirm } from "./prompts.ts";
+import { fetchUserInfo, type UserInfo } from "./token-exchange.ts";
+
+/**
+ * The account the stored session belongs to, or null when there's no session
+ * the CLI can use: none stored, one that can't be refreshed, or account info
+ * that couldn't be fetched. Network errors count as "no session", never a
+ * failure: callers sign in again instead.
+ */
+export async function currentAccount(): Promise<UserInfo | null> {
+  const auth = await getAuth();
+  if (!auth) return null;
+
+  try {
+    const token = await getValidToken();
+    if (!token) return null;
+    return await fetchUserInfo(token);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Where a claim made now would put the app. `CLERK_PLATFORM_API_KEY`, when

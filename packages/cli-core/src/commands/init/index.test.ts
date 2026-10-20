@@ -38,7 +38,7 @@ describe("init", () => {
 
     await init({ yes: true });
 
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
     expect(linkMod.link).toHaveBeenCalledWith({
       skipIfLinked: true,
       app: undefined,

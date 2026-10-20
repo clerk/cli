@@ -4,6 +4,15 @@ import { confirm } from "../../lib/prompts.ts";
 import { isAgent } from "../../mode.ts";
 import { getToken } from "../../lib/credential-store.ts";
 import { login } from "../auth/login.ts";
+import {
+  claimWarning,
+  claimedNextSteps,
+  reportClaimSkipped,
+  reportClaimed,
+} from "../auth/claim-report.ts";
+import { attemptAutoclaim, readInitClaim, type InitClaim } from "../../lib/autoclaim.ts";
+import { claimDestination, confirmClaim, currentAccount } from "../../lib/claim-prompt.ts";
+import type { UserInfo } from "../../lib/token-exchange.ts";
 import { createApplication, fetchApplication, type Application } from "../../lib/plapi.ts";
 import { appLabel, fetchAppsTolerantly, pickOrCreateApp } from "../../lib/app-picker.ts";
 import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
@@ -11,7 +20,13 @@ import { autolink, findLinkKey, matchKeyToApp } from "../../lib/autolink.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
-import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
+import {
+  CliError,
+  ERROR_CODE,
+  throwUsageError,
+  throwUserAbort,
+  withApiContext,
+} from "../../lib/errors.ts";
 import { intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
@@ -30,7 +45,10 @@ interface LinkOptions {
   showNextSteps?: boolean;
 }
 
-export async function link(options: LinkOptions = {}): Promise<void> {
+/** What `link()` did: callers stop when the folder isn't linked. */
+export type LinkOutcome = { status: "linked"; appId: string };
+
+export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
   const agent = isAgent();
   const cwd = options.cwd ?? process.cwd();
   const repoRoot = await getGitRepoRoot(cwd);
@@ -44,7 +62,19 @@ export async function link(options: LinkOptions = {}): Promise<void> {
 
   if (existing && options.skipIfLinked && !targetsDifferentApp) {
     printExistingStatus(existing, normalizedRemote);
-    return;
+    return { status: "linked", appId: existing.profile.appId };
+  }
+
+  // Claim first: a signed-in picker can't show the app `clerk init` created,
+  // because it isn't in an account yet. An explicit `--app` or an existing
+  // link wins, so neither claims.
+  const initClaim = !existing && !options.app ? await readInitClaim(cwd) : undefined;
+  // A person's question and the claim's report belong in link's frame.
+  const framedForClaim = Boolean(initClaim) && !agent;
+  if (initClaim) {
+    if (framedForClaim) intro("Linking project");
+    const claimed = await claimFirst(cwd, initClaim, agent, options.showNextSteps !== false);
+    if (claimed) return claimed;
   }
 
   // Why the folder's own key couldn't pick its app, when the CLI can't tell
@@ -52,13 +82,18 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   let couldntTell: string | undefined;
   if (!existing && !options.app && (options.skipIfLinked || agent)) {
     const autolinked = await autolink(cwd);
-    if (autolinked.status === "linked") return;
+    if (autolinked.status === "linked") {
+      if (framedForClaim) await outro();
+      return { status: "linked", appId: autolinked.profile.appId };
+    }
     if (autolinked.status === "couldnt_tell") couldntTell = autolinked.reason;
   }
 
-  // "Couldn't tell" never creates an app: `init` would then write its keys
-  // over ones the CLI couldn't attribute.
-  if (agent && !existing && !options.app && (!options.createIfMissing || couldntTell)) {
+  // Neither "couldn't tell" nor a folder that had an init token creates an
+  // app: `init` would then write the new app's keys over ones the CLI couldn't
+  // attribute, or that the claim check just left alone.
+  const mayCreate = Boolean(options.createIfMissing) && !couldntTell && !initClaim;
+  if (agent && !existing && !options.app && !mayCreate) {
     // The lead sentence stays verbatim: agents and the skill's troubleshooting
     // table match on it.
     throwUsageError(
@@ -66,19 +101,19 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     );
   }
 
-  intro("Linking project");
+  if (!framedForClaim) intro("Linking project");
 
   if (existing && agent) {
     printExistingStatus(existing, normalizedRemote);
     if (!targetsDifferentApp) {
       await outro();
-      return;
+      return { status: "linked", appId: existing.profile.appId };
     }
   } else if (existing) {
     const shouldRelink = await handleExistingProfile(existing, normalizedRemote, options);
     if (!shouldRelink) {
       await outro();
-      return;
+      return { status: "linked", appId: existing.profile.appId };
     }
   }
 
@@ -86,7 +121,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
 
   const app = options.app
     ? await withApiContext(fetchApplication(options.app), "Failed to fetch application")
-    : agent && options.createIfMissing
+    : agent && mayCreate && options.createIfMissing
       ? await withApiContext(
           createApplication(options.createIfMissing),
           "Failed to create application",
@@ -116,6 +151,80 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   log.success(`Linked to ${cyan(label)} in ${dim(displayPath)}`);
 
   await outro(options.showNextSteps === false ? undefined : NEXT_STEPS.LINK);
+  return { status: "linked", appId: app.application_id };
+}
+
+/**
+ * Claims the app `clerk init` created, as the first step of a link. Returns
+ * the outcome when the claim linked the folder; undefined when `link` should
+ * go on to match the folder's own key, which it does without ever creating an
+ * app. Throws when the claim was refused (the folder stays unlinked) or
+ * failed.
+ *
+ * A person is asked first, naming where the app will go; declining is a user
+ * abort, before any picker. An agent can't answer, so it claims silently, and
+ * one that isn't signed in can't sign in here, so it doesn't claim.
+ */
+async function claimFirst(
+  cwd: string,
+  initClaim: InitClaim,
+  agent: boolean,
+  showNextSteps: boolean,
+): Promise<LinkOutcome | undefined> {
+  if (agent) {
+    if (!(await hasCredentials())) return undefined;
+  } else {
+    const account = await signedInAccount();
+    const destination = claimDestination(account);
+    // Signed in, so there's always a destination; without one, nothing is
+    // claimed into an account the person wasn't told about.
+    if (!destination) return undefined;
+    const yes = await confirmClaim({ appName: initClaim.appName, destination });
+    if (!yes) {
+      if (account) reportClaimSkipped(initClaim.appName, account);
+      await outro();
+      throwUserAbort();
+    }
+  }
+
+  const result = await attemptAutoclaim(cwd, initClaim);
+  switch (result.status) {
+    case "claimed":
+      reportClaimed(result);
+      if (result.local.kind === "linked") {
+        await outro(showNextSteps ? claimedNextSteps(result) : undefined);
+        return { status: "linked", appId: result.app.application_id };
+      }
+      return undefined;
+    case "not_found":
+      // The app may already be in the account, where the folder's key finds it.
+      log.warn(claimWarning(result) ?? "");
+      return undefined;
+    case "managed_workspace":
+    case "no_organization":
+      throw new CliError(`${claimWarning(result)} This folder isn't linked.`, {
+        code: ERROR_CODE.NOT_LINKED,
+      });
+    case "failed":
+      throw result.error;
+  }
+}
+
+/**
+ * The account a person's claim would go to, signing in first when there's no
+ * usable session. With `CLERK_PLATFORM_API_KEY` set, the key decides where
+ * claims go, so no sign-in is needed and the session's account is only used
+ * to word a declined claim.
+ */
+async function signedInAccount(): Promise<UserInfo | null> {
+  const account = await currentAccount();
+  if (account || process.env.CLERK_PLATFORM_API_KEY) return account;
+  log.info("Not logged in. Authenticating first...");
+  return login({ showNextSteps: false, claim: false });
+}
+
+async function hasCredentials(): Promise<boolean> {
+  return Boolean(process.env.CLERK_PLATFORM_API_KEY) || Boolean(await getToken());
 }
 
 async function ensureAuth() {
@@ -126,7 +235,8 @@ async function ensureAuth() {
   const token = await getToken();
   if (!token) {
     log.info("Not logged in. Authenticating first...");
-    await login({ showNextSteps: false });
+    // `link` applies the claim rule itself, before it gets here.
+    await login({ showNextSteps: false, claim: false });
   }
 }
 
@@ -225,5 +335,8 @@ export function registerLink(program: Program): void {
       { command: "clerk link", description: "Pick an app interactively" },
       { command: "clerk link --app app_abc123", description: "Link directly by application ID" },
     ])
-    .action(link);
+    // Only `--app`: internal options such as `createIfMissing` stay internal.
+    .action(async (opts: { app?: string }) => {
+      await link({ app: opts.app });
+    });
 }

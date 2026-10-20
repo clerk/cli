@@ -172,7 +172,7 @@ export function useInitHarness(): InitHarness {
       spyOn(heuristicsModule, "printOutro").mockReturnValue(undefined),
       spyOn(skillsModule, "installSkills").mockResolvedValue(undefined),
       spyOn(loginModule, "login").mockResolvedValue(undefined as never),
-      spyOn(linkModule, "link").mockResolvedValue(undefined),
+      spyOn(linkModule, "link").mockResolvedValue({ status: "linked", appId: "app_stub" }),
       spyOn(pullModule, "pull").mockResolvedValue(undefined),
       spyOn(bootstrapModule, "promptAndBootstrap").mockResolvedValue(FAKE_BOOTSTRAP),
       spyOn(bootstrapModule, "confirmOverwrite").mockResolvedValue(undefined),
