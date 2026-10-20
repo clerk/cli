@@ -503,7 +503,8 @@ returning the first thousand would read as "that is everyone". A tenant of
 exactly 1000 gets the warning too: Auth0 reports a larger tenant's total as
 1000, so the two look the same. It also says so when fewer users come back
 than Auth0 counted. Either way the file holds what came back, `--json` carries
-`truncated: true`, and the export exits 1. The bulk job downloads gzipped
+`truncated: true`, and the export exits 1. The run finishes `partial`, and
+importing it by run ID warns that it is not every user. The bulk job downloads gzipped
 NDJSON: unzip it before importing. Ask the job for `user_metadata`,
 `app_metadata` and `blocked` by name, since a job with no `fields` leaves
 them out.

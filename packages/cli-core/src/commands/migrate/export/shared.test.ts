@@ -49,6 +49,16 @@ describe("finishExport", () => {
     expect(latestUserLines(runsDir, record.id).get("u1")?.status).toBe("exported");
   });
 
+  // Exit code and --json are gone by the time someone imports the run.
+  test("records a truncated export, and finishes it partial", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "auth0" });
+    run.append({ sourceId: "u1", status: "exported" });
+
+    const { record } = finishExport({ run, options: {}, users, coverage, truncated: true });
+
+    expect(readRun(runsDir, record.id)).toMatchObject({ status: "partial", truncated: true });
+  });
+
   // The file holds password hashes and PII, so no other local account reads it.
   test("writes the file owner-only, in an owner-only run folder", async () => {
     const run = await startExportRun({ runsDir }, { platform: "supabase" });
