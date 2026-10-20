@@ -224,7 +224,12 @@ describe("deploy status", () => {
 
     const output = stripAnsi(captured.err);
     expect(output).toContain("its domain is still provisioning");
-    expect(output).toContain("or run `clerk deploy` to finish setup.");
+    // Same advice as the wizard's: until the domain shows, `clerk deploy
+    // --domain` is refused and a bare `clerk deploy` has nothing to resume.
+    expect(output).toContain(
+      "Run `clerk deploy status` again shortly, and run `clerk deploy` again once it shows the domain.",
+    );
+    expect(output).not.toContain("to finish setup");
     expect(output).not.toContain("ask the user");
     expect(output).not.toContain("OAuth");
   });

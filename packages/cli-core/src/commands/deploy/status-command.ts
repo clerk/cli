@@ -239,7 +239,7 @@ export function humanNextAction(step: DeployNextStep): string {
     case "domain_provisioning":
       return (
         "A production instance exists but its domain is still provisioning. " +
-        "Run `clerk deploy status` again shortly, or run `clerk deploy` to finish setup." +
+        "Run `clerk deploy status` again shortly, and run `clerk deploy` again once it shows the domain." +
         domains(step.domainsUrl)
       );
     case "interrupted":
