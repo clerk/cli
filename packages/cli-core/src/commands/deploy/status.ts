@@ -30,6 +30,7 @@ import {
   classifyDomainPending,
   domainsDashboardUrl,
   instanceDashboardUrl,
+  keyPullCommand,
   nativeAppleGuidance,
   nativeApplicationsDashboardUrl,
   pendingRecordComponents,
@@ -730,11 +731,6 @@ function oauthSetupGuides(
       },
       command: `clerk config patch --instance ${instance} --file <file> --yes`,
     }));
-}
-
-/** Prints the production keys as `KEY=value` lines; the id rather than `prod`, as in `oauth.setup`. */
-function keyPullCommand(productionInstanceId: string | null): string {
-  return `clerk env pull --instance ${productionInstanceId ?? "prod"} --print`;
 }
 
 /**
