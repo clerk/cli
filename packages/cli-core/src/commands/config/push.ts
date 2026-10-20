@@ -151,7 +151,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
 /**
  * `clerk deploy`'s `oauth.setup` payload is a template the user fills in.
  * Saved with a placeholder left, the placeholder would become the production
- * credential, so it is refused before anything is read or written, dry runs
+ * credential, so it is refused before any config read or write, dry runs
  * included. The message names fields and placeholders only, never a value.
  */
 function assertNoCredentialPlaceholders(payload: Record<string, unknown>): void {
