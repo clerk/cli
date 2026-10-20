@@ -58,12 +58,12 @@ mock.module("../../lib/config.ts", () => ({
 }));
 
 const mockAutolink = mock();
-const mockFindClerkKeys = mock();
+const mockFindLinkKey = mock();
 const mockMatchKeyToApp = mock();
 mock.module("../../lib/autolink.ts", () => ({
   ...autolinkStubs,
   autolink: (...args: unknown[]) => mockAutolink(...args),
-  findClerkKeys: (...args: unknown[]) => mockFindClerkKeys(...args),
+  findLinkKey: (...args: unknown[]) => mockFindLinkKey(...args),
   matchKeyToApp: (...args: unknown[]) => mockMatchKeyToApp(...args),
 }));
 
@@ -137,9 +137,9 @@ describe("link", () => {
     mockResolveProfile.mockReset();
     mockResolveProfile.mockResolvedValue(undefined);
     mockAutolink.mockReset();
-    mockAutolink.mockResolvedValue(undefined);
-    mockFindClerkKeys.mockReset();
-    mockFindClerkKeys.mockResolvedValue([]);
+    mockAutolink.mockResolvedValue({ status: "no_key" });
+    mockFindLinkKey.mockReset();
+    mockFindLinkKey.mockResolvedValue({ status: "none" });
     mockMatchKeyToApp.mockReset();
     mockMatchKeyToApp.mockReturnValue(undefined);
     mockMoveProfile.mockReset();
@@ -182,6 +182,7 @@ describe("link", () => {
     test("auto-links without prompts when a key match is available", async () => {
       mockIsAgent.mockReturnValue(true);
       mockAutolink.mockResolvedValue({
+        status: "linked",
         path: "github.com/org/repo",
         profile: { workspaceId: "", appId: "app_auto", instances: { development: "ins_dev" } },
       });
@@ -257,6 +258,7 @@ describe("link", () => {
     test("autolink takes precedence over createIfMissing when keys match", async () => {
       mockIsAgent.mockReturnValue(true);
       mockAutolink.mockResolvedValue({
+        status: "linked",
         path: "github.com/org/repo",
         profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
       });
@@ -883,9 +885,14 @@ describe("link", () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([mockApp]);
-      mockFindClerkKeys.mockResolvedValue([
-        { key: "pk_test", source: "CLERK_PUBLISHABLE_KEY env var" },
-      ]);
+      mockFindLinkKey.mockResolvedValue({
+        status: "found",
+        key: {
+          value: "pk_test",
+          name: "CLERK_PUBLISHABLE_KEY",
+          source: "CLERK_PUBLISHABLE_KEY env var",
+        },
+      });
       mockMatchKeyToApp.mockReturnValue({
         app: mockApp,
         instance: mockApp.instances[0],
@@ -896,7 +903,7 @@ describe("link", () => {
 
       await runLink();
 
-      expect(mockFindClerkKeys).toHaveBeenCalled();
+      expect(mockFindLinkKey).toHaveBeenCalled();
       expect(mockMatchKeyToApp).toHaveBeenCalled();
       expect(mockConfirm).toHaveBeenCalled();
       expect(mockSetProfile).toHaveBeenCalledWith("github.com/org/repo", {
@@ -925,9 +932,14 @@ describe("link", () => {
         ],
       };
       mockListApplications.mockResolvedValue([mockApp, otherApp]);
-      mockFindClerkKeys.mockResolvedValue([
-        { key: "pk_test", source: "CLERK_PUBLISHABLE_KEY env var" },
-      ]);
+      mockFindLinkKey.mockResolvedValue({
+        status: "found",
+        key: {
+          value: "pk_test",
+          name: "CLERK_PUBLISHABLE_KEY",
+          source: "CLERK_PUBLISHABLE_KEY env var",
+        },
+      });
       mockMatchKeyToApp.mockReturnValue({
         app: mockApp,
         instance: mockApp.instances[0],
@@ -954,13 +966,14 @@ describe("link", () => {
 
       await runLink({ app: "app_123" });
 
-      expect(mockFindClerkKeys).not.toHaveBeenCalled();
+      expect(mockFindLinkKey).not.toHaveBeenCalled();
       expect(mockMatchKeyToApp).not.toHaveBeenCalled();
     });
 
     test("returns silently with skipIfLinked when autolink succeeds", async () => {
       mockIsAgent.mockReturnValue(false);
       mockAutolink.mockResolvedValue({
+        status: "linked",
         path: "github.com/org/repo",
         profile: { workspaceId: "", appId: "app_detected", instances: { development: "ins_1" } },
       });
@@ -978,13 +991,13 @@ describe("link", () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([mockApp]);
-      mockFindClerkKeys.mockResolvedValue([]);
+      mockFindLinkKey.mockResolvedValue({ status: "none" });
       mockSearch.mockResolvedValue("app_123");
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await runLink();
 
-      expect(mockFindClerkKeys).toHaveBeenCalled();
+      expect(mockFindLinkKey).toHaveBeenCalled();
       expect(mockMatchKeyToApp).not.toHaveBeenCalled();
       expect(mockSearch).toHaveBeenCalled();
     });
@@ -993,7 +1006,10 @@ describe("link", () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([mockApp]);
-      mockFindClerkKeys.mockResolvedValue([{ key: "sk_unknown", source: ".env" }]);
+      mockFindLinkKey.mockResolvedValue({
+        status: "found",
+        key: { value: "sk_unknown", name: "CLERK_PUBLISHABLE_KEY", source: ".env" },
+      });
       mockMatchKeyToApp.mockReturnValue(undefined);
       mockSearch.mockResolvedValue("app_123");
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
@@ -1021,7 +1037,7 @@ describe("link", () => {
 
       await runLink();
 
-      expect(mockFindClerkKeys).not.toHaveBeenCalled();
+      expect(mockFindLinkKey).not.toHaveBeenCalled();
       expect(mockMatchKeyToApp).not.toHaveBeenCalled();
       expect(mockSearch).toHaveBeenCalled();
     });
@@ -1043,7 +1059,7 @@ describe("link", () => {
 
       const output = captured.err;
       expect(output).toContain("Auto-linked via git remote");
-      expect(mockFindClerkKeys).not.toHaveBeenCalled();
+      expect(mockFindLinkKey).not.toHaveBeenCalled();
       expect(mockSearch).toHaveBeenCalled();
     });
 
@@ -1060,7 +1076,7 @@ describe("link", () => {
 
       await runLink({ app: "app_123" });
 
-      expect(mockFindClerkKeys).not.toHaveBeenCalled();
+      expect(mockFindLinkKey).not.toHaveBeenCalled();
       expect(mockSearch).not.toHaveBeenCalled();
       expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
     });
@@ -1113,9 +1129,14 @@ describe("link", () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       mockListApplications.mockResolvedValue([mockApp]);
-      mockFindClerkKeys.mockResolvedValue([
-        { key: "pk_test", source: "CLERK_PUBLISHABLE_KEY env var" },
-      ]);
+      mockFindLinkKey.mockResolvedValue({
+        status: "found",
+        key: {
+          value: "pk_test",
+          name: "CLERK_PUBLISHABLE_KEY",
+          source: "CLERK_PUBLISHABLE_KEY env var",
+        },
+      });
       mockMatchKeyToApp.mockReturnValue({
         app: mockApp,
         instance: mockApp.instances[0],
@@ -1126,7 +1147,7 @@ describe("link", () => {
 
       await runLink();
 
-      expect(mockFindClerkKeys).toHaveBeenCalled();
+      expect(mockFindLinkKey).toHaveBeenCalled();
       expect(mockMatchKeyToApp).toHaveBeenCalled();
       const output = captured.err;
       expect(output).toContain("We found");
@@ -1150,7 +1171,7 @@ describe("link", () => {
 
       await runLink();
 
-      expect(mockFindClerkKeys).not.toHaveBeenCalled();
+      expect(mockFindLinkKey).not.toHaveBeenCalled();
       expect(mockSearch).toHaveBeenCalled();
     });
   });

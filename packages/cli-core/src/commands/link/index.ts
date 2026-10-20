@@ -7,7 +7,7 @@ import { login } from "../auth/login.ts";
 import { createApplication, fetchApplication, type Application } from "../../lib/plapi.ts";
 import { appLabel, fetchAppsTolerantly, pickOrCreateApp } from "../../lib/app-picker.ts";
 import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
-import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
+import { autolink, findLinkKey, matchKeyToApp } from "../../lib/autolink.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
@@ -47,14 +47,22 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     return;
   }
 
+  // Why the folder's own key couldn't pick its app, when the CLI can't tell
+  // which key the app loads.
+  let couldntTell: string | undefined;
   if (!existing && !options.app && (options.skipIfLinked || agent)) {
     const autolinked = await autolink(cwd);
-    if (autolinked) return;
+    if (autolinked.status === "linked") return;
+    if (autolinked.status === "couldnt_tell") couldntTell = autolinked.reason;
   }
 
-  if (agent && !existing && !options.app && !options.createIfMissing) {
+  // "Couldn't tell" never creates an app: `init` would then write its keys
+  // over ones the CLI couldn't attribute.
+  if (agent && !existing && !options.app && (!options.createIfMissing || couldntTell)) {
+    // The lead sentence stays verbatim: agents and the skill's troubleshooting
+    // table match on it.
     throwUsageError(
-      "Cannot select an application in agent mode. Pass --app <id>, or run `clerk apps list --json` and retry.",
+      `Cannot select an application in agent mode. ${couldntTell ? `${capitalize(couldntTell)}. ` : ""}Pass --app <id>, or run \`clerk apps list --json\` and retry.`,
     );
   }
 
@@ -171,10 +179,14 @@ async function handleExistingProfile(
 }
 
 async function tryDetectApp(cwd: string, apps: Application[]): Promise<Application | undefined> {
-  const detectedKeys = await findClerkKeys(cwd);
-  if (!detectedKeys.length) return undefined;
+  const found = await findLinkKey(cwd);
+  if (found.status === "couldnt_tell") {
+    log.info(`${capitalize(found.reason)}, so choose the application this folder should use.`);
+    return undefined;
+  }
+  if (found.status === "none") return undefined;
 
-  const match = matchKeyToApp(detectedKeys, apps);
+  const match = matchKeyToApp([{ key: found.key.value, source: found.key.source }], apps);
   if (!match) return undefined;
 
   log.info(`We found ${cyan(appLabel(match.app))} from ${dim(match.source)}.`);
@@ -198,6 +210,10 @@ async function resolveApp(
     apps,
     message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
   });
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 export function registerLink(program: Program): void {

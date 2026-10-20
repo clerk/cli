@@ -14,7 +14,7 @@ mock.module("./git.ts", () => ({
   getGitNormalizedRemote: (...args: unknown[]) => mockGetGitNormalizedRemote(...args),
 }));
 
-const { findClerkKeys, matchKeyToApp, autolink } = await import("./autolink.ts");
+const { findLinkKey, matchKeyToApp, autolink } = await import("./autolink.ts");
 const { _setConfigDir, readConfig } = await import("./config.ts");
 
 const mockApps = [
@@ -51,7 +51,9 @@ async function writePackageJson(dir: string, dep: string) {
   await Bun.write(join(dir, "package.json"), JSON.stringify({ dependencies: { [dep]: "latest" } }));
 }
 
-describe("findClerkKeys", () => {
+// `clerk link` matches on one key: the publishable key the folder's app loads.
+// It never falls back to another file's key when that one matches nothing.
+describe("findLinkKey", () => {
   const originalEnv = { ...process.env };
   let tempDir: string;
 
@@ -71,62 +73,86 @@ describe("findClerkKeys", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  test("returns empty when no keys found", async () => {
-    const keys = await findClerkKeys(tempDir);
-    expect(keys).toEqual([]);
+  const found = (value: string, name: string, source: string) => ({
+    status: "found" as const,
+    key: { value, name, source },
+  });
+
+  test("finds none when no keys found", async () => {
+    expect(await findLinkKey(tempDir)).toEqual({ status: "none" });
   });
 
   test("detects CLERK_PUBLISHABLE_KEY from env var", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
-    const keys = await findClerkKeys(tempDir);
-    expect(keys).toEqual([{ key: "pk_test_abc", source: "CLERK_PUBLISHABLE_KEY env var" }]);
+    expect(await findLinkKey(tempDir)).toEqual(
+      found("pk_test_abc", "CLERK_PUBLISHABLE_KEY", "CLERK_PUBLISHABLE_KEY env var"),
+    );
   });
 
   test("detects NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY from env var", async () => {
     await writePackageJson(tempDir, "next");
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_next";
-    const keys = await findClerkKeys(tempDir);
-    expect(keys).toEqual([
-      { key: "pk_test_next", source: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY env var" },
-    ]);
+    expect(await findLinkKey(tempDir)).toEqual(
+      found(
+        "pk_test_next",
+        "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+        "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY env var",
+      ),
+    );
   });
 
   test("detects keys from .env.local file", async () => {
     await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_test_file\n");
-    const keys = await findClerkKeys(tempDir);
-    expect(keys).toEqual([{ key: "pk_test_file", source: ".env.local" }]);
+    expect(await findLinkKey(tempDir)).toEqual(
+      found("pk_test_file", "CLERK_PUBLISHABLE_KEY", ".env.local"),
+    );
   });
 
   test("detects keys from .env file", async () => {
     await Bun.write(join(tempDir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_test_dotenv\n");
-    const keys = await findClerkKeys(tempDir);
-    expect(keys).toEqual([{ key: "pk_test_dotenv", source: ".env" }]);
+    expect(await findLinkKey(tempDir)).toEqual(
+      found("pk_test_dotenv", "CLERK_PUBLISHABLE_KEY", ".env"),
+    );
   });
 
-  test("prioritizes env vars over .env files", async () => {
+  // Was a list with the file's key as a fallback; the app loads the exported key.
+  test("an exported key is the only candidate, even when a file holds another", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_from_env";
     await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_from_file\n");
-    const keys = await findClerkKeys(tempDir);
-    expect(keys).toHaveLength(2);
-    expect(keys[0]).toEqual({ key: "pk_from_env", source: "CLERK_PUBLISHABLE_KEY env var" });
-    expect(keys[1]).toEqual({ key: "pk_from_file", source: ".env.local" });
+    expect(await findLinkKey(tempDir)).toEqual(
+      found("pk_from_env", "CLERK_PUBLISHABLE_KEY", "CLERK_PUBLISHABLE_KEY env var"),
+    );
   });
 
-  test("deduplicates identical keys across sources (last wins)", async () => {
-    process.env.CLERK_PUBLISHABLE_KEY = "pk_test_same";
-    await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_test_same\n");
-    const keys = await findClerkKeys(tempDir);
-    expect(keys).toHaveLength(1);
-    expect(keys[0]!.source).toBe(".env.local");
-  });
-
-  test(".env.local overrides .env for the same key (last wins)", async () => {
+  // Was a list with `.env` as a fallback; Next.js loads `.env.local`'s key.
+  test("Next.js: .env.local's key is the only candidate when .env holds another", async () => {
+    await writePackageJson(tempDir, "next");
     await Bun.write(join(tempDir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_dotenv\n");
     await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_local\n");
-    const keys = await findClerkKeys(tempDir);
-    expect(keys).toHaveLength(2);
-    expect(keys[0]!.key).toBe("pk_dotenv");
-    expect(keys[1]!.key).toBe("pk_local");
+    expect(await findLinkKey(tempDir)).toEqual(
+      found("pk_local", "CLERK_PUBLISHABLE_KEY", ".env.local"),
+    );
+  });
+
+  test("couldn't tell when no framework order applies and the files disagree", async () => {
+    await Bun.write(join(tempDir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_dotenv\n");
+    await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_local\n");
+    expect(await findLinkKey(tempDir)).toEqual({
+      status: "couldnt_tell",
+      reason:
+        "`.env.local` and `.env` hold different Clerk publishable keys, and the CLI doesn't know which one this app loads",
+    });
+  });
+
+  test("couldn't tell when a Clerk key line can't be read", async () => {
+    await writePackageJson(tempDir, "next");
+    await Bun.write(join(tempDir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_dotenv\n");
+    await Bun.write(join(tempDir, ".env.local"), "  CLERK_PUBLISHABLE_KEY=pk_local\n");
+    expect(await findLinkKey(tempDir)).toEqual({
+      status: "couldnt_tell",
+      reason:
+        "the CLI couldn't read the `CLERK_PUBLISHABLE_KEY` line in `.env.local`, so it can't tell which key this app loads",
+    });
   });
 
   test("detects framework-specific publishable keys from .env files", async () => {
@@ -135,20 +161,30 @@ describe("findClerkKeys", () => {
       join(tempDir, ".env.local"),
       "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_next\n",
     );
-    const keys = await findClerkKeys(tempDir);
-    expect(keys).toEqual([{ key: "pk_test_next", source: ".env.local" }]);
+    expect(await findLinkKey(tempDir)).toEqual(
+      found("pk_test_next", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", ".env.local"),
+    );
   });
 
   test("handles quoted values in .env files", async () => {
     await Bun.write(join(tempDir, ".env"), 'CLERK_PUBLISHABLE_KEY="pk_test_quoted"\n');
-    const keys = await findClerkKeys(tempDir);
-    expect(keys).toEqual([{ key: "pk_test_quoted", source: ".env" }]);
+    expect(await findLinkKey(tempDir)).toEqual(
+      found("pk_test_quoted", "CLERK_PUBLISHABLE_KEY", ".env"),
+    );
   });
 
   test("skips empty values", async () => {
     await Bun.write(join(tempDir, ".env"), "CLERK_PUBLISHABLE_KEY=\n");
-    const keys = await findClerkKeys(tempDir);
-    expect(keys).toEqual([]);
+    expect(await findLinkKey(tempDir)).toEqual({ status: "none" });
+  });
+
+  // The SDK keyless file is matched only for an SDK-only folder, by its own step.
+  test("ignores the SDK keyless file's key", async () => {
+    await Bun.write(
+      join(tempDir, ".clerk", ".tmp", "keyless.json"),
+      JSON.stringify({ publishableKey: "pk_test_sdk", secretKey: "sk_test_sdk" }),
+    );
+    expect(await findLinkKey(tempDir)).toEqual({ status: "none" });
   });
 });
 
@@ -254,43 +290,79 @@ describe("autolink", () => {
     return autolink(cwd);
   }
 
-  test("returns undefined when no keys detected", async () => {
-    const result = await runAutolink(tempDir);
-    expect(result).toBeUndefined();
+  /** The result when it linked; fails the test otherwise. */
+  function linked(result: Awaited<ReturnType<typeof autolink>>) {
+    if (result.status !== "linked") throw new Error(`expected a link, got ${result.status}`);
+    return result;
+  }
+
+  test("reports no key when no keys detected", async () => {
+    expect(await runAutolink(tempDir)).toEqual({ status: "no_key" });
   });
 
-  test("returns undefined when not authenticated", async () => {
+  test("reports a failed app list when not authenticated, with the error", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
     delete process.env.CLERK_PLATFORM_API_KEY;
 
     const result = await runAutolink(tempDir);
-    expect(result).toBeUndefined();
+    expect(result.status).toBe("list_failed");
+    expect(result.status === "list_failed" && result.error).toBeInstanceOf(Error);
   });
 
-  test("returns undefined when API returns error", async () => {
+  test("reports a failed app list when the API returns an error", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
     stubFetch(async () => new Response("Unauthorized", { status: 401 }));
 
     const result = await runAutolink(tempDir);
-    expect(result).toBeUndefined();
+    expect(result.status).toBe("list_failed");
   });
 
-  test("returns undefined when key doesn't match any app", async () => {
+  test("reports no match, naming the key's source, when the key matches no app", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_unknown";
 
+    expect(await runAutolink(tempDir)).toEqual({
+      status: "no_match",
+      source: "CLERK_PUBLISHABLE_KEY env var",
+    });
+  });
+
+  // Decided behavior: the matcher never falls back to a key the app doesn't load.
+  test("Next.js: doesn't link .env's app when .env.local's key matches nothing", async () => {
+    await writePackageJson(tempDir, "next");
+    await Bun.write(join(tempDir, ".env"), "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_abc\n");
+    await Bun.write(
+      join(tempDir, ".env.local"),
+      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_unknown\n",
+    );
+
+    expect(await runAutolink(tempDir)).toEqual({ status: "no_match", source: ".env.local" });
+    expect((await readConfig()).profiles[tempDir]).toBeUndefined();
+  });
+
+  test("reports couldn't tell, without listing apps, when the files disagree", async () => {
+    await Bun.write(join(tempDir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_test_abc\n");
+    await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_test_def\n");
+    let listed = false;
+    stubFetch(async () => {
+      listed = true;
+      return new Response(JSON.stringify(mockApps), { status: 200 });
+    });
+
     const result = await runAutolink(tempDir);
-    expect(result).toBeUndefined();
+
+    expect(result.status).toBe("couldnt_tell");
+    expect(listed).toBe(false);
+    expect((await readConfig()).profiles[tempDir]).toBeUndefined();
   });
 
   test("auto-links when publishable key matches via env var", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
 
-    const result = await runAutolink(tempDir);
+    const result = linked(await runAutolink(tempDir));
 
-    expect(result).toBeDefined();
-    expect(result!.profile.appId).toBe("app_123");
-    expect(result!.profile.instances.development).toBe("ins_dev");
-    expect(result!.profile.instances.production).toBe("ins_prod");
+    expect(result.profile.appId).toBe("app_123");
+    expect(result.profile.instances.development).toBe("ins_dev");
+    expect(result.profile.instances.production).toBe("ins_prod");
 
     // Verify profile was persisted
     const config = await readConfig();
@@ -301,20 +373,19 @@ describe("autolink", () => {
   test("auto-links when publishable key matches via .env file", async () => {
     await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_test_def\n");
 
-    const result = await runAutolink(tempDir);
+    const result = linked(await runAutolink(tempDir));
 
-    expect(result).toBeDefined();
-    expect(result!.profile.appId).toBe("app_456");
-    expect(result!.profile.instances.development).toBe("ins_dev_2");
+    expect(result.profile.appId).toBe("app_456");
+    expect(result.profile.instances.development).toBe("ins_dev_2");
   });
 
   test("uses normalized remote as profile key when available", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
     mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
 
-    const result = await runAutolink(tempDir);
+    const result = linked(await runAutolink(tempDir));
 
-    expect(result!.path).toBe("github.com/org/repo");
+    expect(result.path).toBe("github.com/org/repo");
     const config = await readConfig();
     expect(config.profiles["github.com/org/repo"]).toBeDefined();
   });
@@ -324,9 +395,9 @@ describe("autolink", () => {
     mockGetGitNormalizedRemote.mockResolvedValue(undefined);
     mockGetGitRepoIdentifier.mockResolvedValue("/repo/.git");
 
-    const result = await runAutolink(tempDir);
+    const result = linked(await runAutolink(tempDir));
 
-    expect(result!.path).toBe("/repo/.git");
+    expect(result.path).toBe("/repo/.git");
     const config = await readConfig();
     expect(config.profiles["/repo/.git"]).toBeDefined();
   });
@@ -334,9 +405,9 @@ describe("autolink", () => {
   test("falls back to cwd when not in a git repo", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
 
-    const result = await runAutolink(tempDir);
+    const result = linked(await runAutolink(tempDir));
 
-    expect(result!.path).toBe(tempDir);
+    expect(result.path).toBe(tempDir);
   });
 
   test("prints auto-link message to stderr", async () => {
@@ -370,23 +441,24 @@ describe("autolink", () => {
         ),
     );
 
-    const result = await runAutolink(tempDir);
-    expect(result).toBeUndefined();
+    expect(await runAutolink(tempDir)).toEqual({
+      status: "no_development_instance",
+      appId: "app_no_dev",
+    });
   });
 
-  test("handles non-array response from listApplications", async () => {
+  test("reports a failed app list for a non-array response from listApplications", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_abc";
     stubFetch(async () => new Response(JSON.stringify({ error: "not an array" }), { status: 200 }));
 
-    const result = await runAutolink(tempDir);
-    expect(result).toBeUndefined();
+    expect((await runAutolink(tempDir)).status).toBe("list_failed");
   });
 
   test("omits production instance when not present", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_test_def";
 
-    const result = await runAutolink(tempDir);
+    const result = linked(await runAutolink(tempDir));
 
-    expect(result!.profile.instances.production).toBeUndefined();
+    expect(result.profile.instances.production).toBeUndefined();
   });
 });

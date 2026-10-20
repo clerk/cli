@@ -845,17 +845,32 @@ describe("attemptAutoclaim", () => {
       test("names the publishable key the app loads, not the first one found", async () => {
         stubPlatform(CLAIMED_APP);
         const SECOND_OTHER_PK = publishableKeyFor("third-app.clerk.accounts.dev");
+        await Bun.write(
+          join(tempDir, "package.json"),
+          JSON.stringify({ dependencies: { next: "15.0.0" } }),
+        );
         await writeEnv([`CLERK_PUBLISHABLE_KEY=${OTHER_PK}`]);
         await Bun.write(join(tempDir, ".env.local"), `CLERK_PUBLISHABLE_KEY=${SECOND_OTHER_PK}\n`);
 
         const result = await runClaim();
 
-        // `.env.local` overrides `.env`, so that's the key `clerk link` will try.
+        // Next.js loads `.env.local` over `.env`, so that's the key `clerk link` will try.
         expect(result.local).toMatchObject({
           reason: "different_keys",
           source: ".env.local",
           linkCanTryKey: true,
         });
+      });
+
+      test("doesn't offer plain `clerk link` when no framework order says which differing key the app loads", async () => {
+        stubPlatform(CLAIMED_APP);
+        const SECOND_OTHER_PK = publishableKeyFor("third-app.clerk.accounts.dev");
+        await writeEnv([`CLERK_PUBLISHABLE_KEY=${OTHER_PK}`]);
+        await Bun.write(join(tempDir, ".env.local"), `CLERK_PUBLISHABLE_KEY=${SECOND_OTHER_PK}\n`);
+
+        const result = await runClaim();
+
+        expect(result.local).toMatchObject({ reason: "different_keys", linkCanTryKey: false });
       });
 
       test("doesn't offer plain `clerk link` when the folder is already linked to the claimed app", async () => {

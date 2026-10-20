@@ -206,9 +206,9 @@ export const keylessTargetStubs = {
 };
 
 export const autolinkStubs = {
-  findClerkKeys: async () => [],
+  findLinkKey: async () => ({ status: "none" }),
   matchKeyToApp: () => undefined,
-  autolink: async () => undefined,
+  autolink: async () => ({ status: "no_key" }),
   linkApp: async () => undefined,
 };
 

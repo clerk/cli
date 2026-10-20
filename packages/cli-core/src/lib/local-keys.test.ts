@@ -38,7 +38,8 @@ async function writeSdkKeylessFile(keys: { publishableKey?: string; secretKey?: 
 }
 
 describe("readFolderKeys", () => {
-  test(".env.local wins over .env when they hold different keys", async () => {
+  test(".env.local wins over .env when they hold different keys (Next.js)", async () => {
+    await write("package.json", JSON.stringify({ dependencies: { next: "15.0.0" } }));
     await write(
       ".env",
       "CLERK_PUBLISHABLE_KEY=pk_test_from_env\nCLERK_SECRET_KEY=sk_test_from_env\n",
@@ -146,6 +147,118 @@ describe("readFolderKeys", () => {
       publishableKey: undefined,
       secretKey: undefined,
       unreadableLines: [{ kind: "secret", name: "CLERK_SECRET_KEY", source: ".env" }],
+    });
+  });
+});
+
+// The key the app loads follows each framework's documented env file order,
+// and the CLI answers "couldn't tell" rather than guess for any other
+// framework whose files disagree.
+describe("the key the app loads, by framework", () => {
+  async function useFramework(dep: string) {
+    await write("package.json", JSON.stringify({ dependencies: { [dep]: "1.0.0" } }));
+  }
+
+  const located = (value: string, source: string) => ({
+    value,
+    name: "CLERK_PUBLISHABLE_KEY",
+    source,
+  });
+
+  test.each([
+    { files: [".env.local", ".env.development.local"], loads: ".env.development.local" },
+    { files: [".env", ".env.development"], loads: ".env.development" },
+    { files: [".env.development", ".env.local"], loads: ".env.local" },
+  ])("Next.js: $loads wins over the other of $files", async ({ files, loads }) => {
+    await useFramework("next");
+    for (const file of files) await write(file, `CLERK_PUBLISHABLE_KEY=pk_test_${file}\n`);
+
+    expect((await readFolderKeys(dir)).publishableKey).toEqual(located(`pk_test_${loads}`, loads));
+  });
+
+  // Vite loads `.env`, `.env.local`, `.env.[mode]`, `.env.[mode].local`, later
+  // files winning: a mode file beats `.env.local`, unlike Next.js.
+  test.each(["vite", "astro", "vue", "react-router", "@tanstack/react-start", "react"])(
+    "the Vite family (%s): .env.development wins over .env.local, and .env.development.local over both",
+    async (dep) => {
+      await useFramework(dep);
+      await write(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_local\n");
+      await write(".env.development", "CLERK_PUBLISHABLE_KEY=pk_test_development\n");
+
+      expect((await readFolderKeys(dir)).publishableKey).toEqual(
+        located("pk_test_development", ".env.development"),
+      );
+
+      await write(".env.development.local", "CLERK_PUBLISHABLE_KEY=pk_test_development_local\n");
+
+      expect((await readFolderKeys(dir)).publishableKey).toEqual(
+        located("pk_test_development_local", ".env.development.local"),
+      );
+    },
+  );
+
+  test("Nuxt loads only .env, so a key in .env.local isn't the one it runs on", async () => {
+    await useFramework("nuxt");
+    await write(".env", "CLERK_PUBLISHABLE_KEY=pk_test_env\n");
+    await write(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_local\n");
+
+    expect((await readFolderKeys(dir)).publishableKey).toEqual(located("pk_test_env", ".env"));
+  });
+
+  test("Nuxt with a key only in .env.local loads no key", async () => {
+    await useFramework("nuxt");
+    await write(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_local\n");
+
+    expect((await readFolderKeys(dir)).publishableKey).toBeUndefined();
+  });
+
+  test.each([
+    { framework: "Express", dep: "express" },
+    { framework: "no detected framework", dep: undefined },
+  ])(
+    "$framework: files holding different keys leave both keys undecided, never picking one",
+    async ({ dep }) => {
+      if (dep) await useFramework(dep);
+      await write(".env", "CLERK_PUBLISHABLE_KEY=pk_test_a\nCLERK_SECRET_KEY=sk_test_a\n");
+      await write(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_b\nCLERK_SECRET_KEY=sk_test_b\n");
+      // Undecided keys are plain keys: the SDK's file doesn't stand in for them.
+      await writeSdkKeylessFile({ publishableKey: "pk_test_sdk", secretKey: "sk_test_sdk" });
+
+      expect(await readFolderKeys(dir)).toEqual({
+        publishableKey: undefined,
+        secretKey: undefined,
+        undecided: {
+          publishable: [located("pk_test_b", ".env.local"), located("pk_test_a", ".env")],
+          secret: [
+            { value: "sk_test_b", name: "CLERK_SECRET_KEY", source: ".env.local" },
+            { value: "sk_test_a", name: "CLERK_SECRET_KEY", source: ".env" },
+          ],
+        },
+      });
+    },
+  );
+
+  test("no documented order: files that agree give that key", async () => {
+    await useFramework("express");
+    await write(".env", "CLERK_PUBLISHABLE_KEY=pk_test_same\n");
+    await write(".env.development", "CLERK_PUBLISHABLE_KEY=pk_test_same\n");
+
+    expect(await readFolderKeys(dir)).toEqual({
+      publishableKey: located("pk_test_same", ".env.development"),
+      secretKey: undefined,
+    });
+  });
+
+  test("no documented order: an exported key still wins over files that disagree", async () => {
+    await useFramework("express");
+    await write(".env", "CLERK_PUBLISHABLE_KEY=pk_test_a\n");
+    await write(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_b\n");
+    process.env.CLERK_PUBLISHABLE_KEY = "pk_test_shell";
+
+    expect((await readFolderKeys(dir)).publishableKey).toEqual({
+      value: "pk_test_shell",
+      name: "CLERK_PUBLISHABLE_KEY",
+      source: "CLERK_PUBLISHABLE_KEY env var",
     });
   });
 });

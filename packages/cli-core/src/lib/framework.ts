@@ -5,7 +5,7 @@
 
 import { join } from "node:path";
 import { readdir } from "node:fs/promises";
-import type { PreferredEnvFile } from "./dotenv.ts";
+import type { EnvFileName, PreferredEnvFile } from "./dotenv.ts";
 import { log } from "./log.ts";
 
 /** Where the framework's Clerk SDK is published. Drives how `clerk init`
@@ -39,7 +39,45 @@ export interface FrameworkInfo {
   supportsJson?: boolean;
   /** SDK distribution ecosystem. Defaults to "npm" when omitted. */
   ecosystem?: FrameworkEcosystem;
+  /**
+   * The env files the framework loads in development, highest priority first,
+   * when its docs define the order. Omitted for frameworks without one: the
+   * CLI then can't tell which of several disagreeing files the app runs on.
+   */
+  envLoadOrder?: readonly EnvFileName[];
 }
+
+/**
+ * Next.js, development: `.env.development.local`, `.env.local`,
+ * `.env.development`, `.env`.
+ * https://nextjs.org/docs/app/guides/environment-variables#environment-variable-load-order
+ */
+const NEXT_LOAD_ORDER: readonly EnvFileName[] = [
+  ".env.development.local",
+  ".env.local",
+  ".env.development",
+  ".env",
+];
+
+/**
+ * Vite, and the frameworks built on it, in development mode. Vite loads
+ * `.env`, `.env.local`, `.env.[mode]`, `.env.[mode].local`, later files
+ * winning, so a mode file beats `.env.local`, unlike Next.js.
+ * https://vite.dev/guide/env-and-mode#env-files and
+ * https://github.com/vitejs/vite/blob/main/packages/vite/src/node/env.ts
+ */
+const VITE_LOAD_ORDER: readonly EnvFileName[] = [
+  ".env.development.local",
+  ".env.development",
+  ".env.local",
+  ".env",
+];
+
+/**
+ * Nuxt loads only `.env` unless run with `--dotenv`.
+ * https://github.com/nuxt/nuxt/blob/main/docs/2.directory-structure/2.env.md
+ */
+const NUXT_LOAD_ORDER: readonly EnvFileName[] = [".env"];
 
 export function isNpmFramework(fw: Pick<FrameworkInfo, "ecosystem">): boolean {
   return (fw.ecosystem ?? "npm") === "npm";
@@ -54,6 +92,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
     supportsKeyless: true,
+    envLoadOrder: NEXT_LOAD_ORDER,
   },
   {
     dep: "astro",
@@ -62,6 +101,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envVar: "PUBLIC_CLERK_PUBLISHABLE_KEY",
     envFile: ".env",
     supportsKeyless: true,
+    envLoadOrder: VITE_LOAD_ORDER,
   },
   {
     dep: "nuxt",
@@ -71,6 +111,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     secretKeyEnvVar: "NUXT_CLERK_SECRET_KEY",
     envFile: ".env",
     supportsKeyless: true,
+    envLoadOrder: NUXT_LOAD_ORDER,
   },
   {
     dep: "@tanstack/react-start",
@@ -79,6 +120,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
     supportsKeyless: true,
+    envLoadOrder: VITE_LOAD_ORDER,
   },
   {
     dep: "react-router",
@@ -87,6 +129,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
     supportsKeyless: true,
+    envLoadOrder: VITE_LOAD_ORDER,
   },
   {
     dep: "vue",
@@ -94,6 +137,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/vue",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
+    envLoadOrder: VITE_LOAD_ORDER,
   },
   {
     dep: "expo",
@@ -108,6 +152,8 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/react",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
+    // The CLI reads only Vite's names for React, which only a Vite build exposes.
+    envLoadOrder: VITE_LOAD_ORDER,
   },
   {
     dep: "vite",
@@ -115,6 +161,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/clerk-js",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
+    envLoadOrder: VITE_LOAD_ORDER,
   },
   {
     dep: "express",

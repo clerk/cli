@@ -6,7 +6,9 @@
 import { join } from "node:path";
 
 /**
- * Env file candidates in Next.js/Vite development load order (highest priority first).
+ * Env file candidates in Next.js development load order (highest priority first).
+ * Vite ranks `.env.development` above `.env.local`, and Nuxt loads only `.env`:
+ * each framework's own order is `envLoadOrder` in `lib/framework.ts`.
  * Production/test variants (.env.production.local, .env.test.local) are excluded —
  * the CLI always runs in a development-setup context.
  */
