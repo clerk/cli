@@ -1173,10 +1173,14 @@ describe("buildDeployStatusReport", () => {
     );
 
     expect(report.nextAction).toContain("put the production keys on the host without reading them");
+    // The command is a report field the agent copies whole, not text it has
+    // to cut out of this sentence.
     expect(report.nextAction).toContain(
-      "`( allow_shared=0; set -o pipefail; keys=$(clerk env pull --instance ins_prod --print) || exit 1; ",
+      "For Vercel, run the `command` from the `hostSetup` entry whose `host` is `vercel`, " +
+        "exactly as given, in bash or zsh.",
     );
-    expect(report.nextAction).toContain("FORCE_COLOR=0 vercel env ls --no-color");
+    expect(report.nextAction).not.toContain("vercel env add");
+    expect(report.nextAction).not.toContain("allow_shared=0;");
     // Whether `--force` on production rewrites a variable Vercel shares with
     // preview and development is unverified, so a shared one needs a person,
     // and the consent stays in the one command they approved.
@@ -1201,6 +1205,54 @@ describe("buildDeployStatusReport", () => {
         "environment variable. On macOS, `clerk env pull --instance ins_prod --print | pbcopy` " +
         "copies the lines to the clipboard without showing them.",
     );
+  });
+
+  // `hostSetup` holds the key-copying commands, one per host the CLI has a
+  // recipe for, and only once Clerk's side is complete.
+  test("complete hands over the Vercel command in hostSetup", () => {
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: { ...activeSnapshot, completedOAuthProviders: ["google", "github"] },
+      },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.hostSetup).toEqual([
+      { host: "vercel", label: "Vercel", shells: ["bash", "zsh"], command: expect.any(String) },
+    ]);
+    const command = report.hostSetup[0]!.command;
+    expect(command).toStartWith(
+      "( allow_shared=0; set -o pipefail; keys=$(clerk env pull --instance ins_prod --print) || exit 1; ",
+    );
+    expect(command).toContain("FORCE_COLOR=0 vercel env ls --no-color");
+    expect(command).toEndWith('vercel env add "$key" production --force || exit 1; done )');
+  });
+
+  test.each([
+    { state: "not_started", report: buildDeployStatusReport({ kind: "not_started" }, null) },
+    {
+      state: "domain_provisioning",
+      report: buildDeployStatusReport(
+        { kind: "domain_provisioning", appId: "app_1", productionInstanceId: "ins_prod" },
+        null,
+      ),
+    },
+    {
+      state: "domain_pending",
+      report: buildDeployStatusReport({ kind: "active", snapshot: activeSnapshot }, null),
+    },
+    {
+      state: "oauth_pending",
+      report: buildDeployStatusReport(
+        { kind: "active", snapshot: activeSnapshot },
+        { verified: true, status: { dns: true, ssl: true, mail: true } },
+      ),
+    },
+    { state: "interrupted", report: buildInterruptedDeployStatusReport() },
+  ])("hostSetup is empty at $state", ({ state, report }) => {
+    expect(report.state as string).toBe(state);
+    expect(report.hostSetup).toEqual([]);
   });
 
   // The command an agent copies from the `complete` report, run as written in
@@ -1267,9 +1319,10 @@ vercel() {
         },
         { verified: true, status: { dns: true, ssl: true, mail: true } },
       );
-      const match = /For Vercel[^`]*`([^`]+)`/.exec(report.nextAction);
-      if (!match) throw new Error(`No key-copying command in: ${report.nextAction}`);
-      return match[1]!;
+      const entry = report.hostSetup.find((candidate) => candidate.host === "vercel");
+      if (!entry)
+        throw new Error(`No Vercel entry in hostSetup: ${JSON.stringify(report.hostSetup)}`);
+      return entry.command;
     }
 
     async function run(
@@ -1626,6 +1679,7 @@ describe("deployNextStep", () => {
       domains: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
       instance: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod",
     },
+    hostSetup: [],
   };
 
   test.each([

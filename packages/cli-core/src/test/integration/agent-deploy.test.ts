@@ -414,6 +414,14 @@ describe("a deploy that is complete on Clerk's side", () => {
     const report = JSON.parse(result.stdout);
     expect(report.state).toBe("complete");
     expect(report.nextAction).toContain("clerk env pull --instance ins_prod --print");
+    // The command the agent runs is its own field, naming the instance by id;
+    // it pipes the keys, so it carries none itself.
+    expect(report.hostSetup).toHaveLength(1);
+    expect(report.hostSetup[0].host).toBe("vercel");
+    expect(report.hostSetup[0].command).toContain(
+      "keys=$(clerk env pull --instance ins_prod --print) || exit 1;",
+    );
+    expect(report.hostSetup[0].command).not.toMatch(/sk_(live|test)_|pk_(live|test)_/);
     const output = result.stdout + result.stderr;
     expect(output).not.toContain("sk_live_");
     expect(output).not.toContain("sk_test_");

@@ -123,6 +123,17 @@ export type OAuthSetupGuide = {
   command: string;
 };
 
+/** A command that copies the production keys to one host, for an agent to run as given. */
+export type HostSetupEntry = {
+  /** The host's slug, e.g. `vercel`. */
+  host: string;
+  label: string;
+  /** The shells `command` is written for. */
+  shells: string[];
+  /** Pipes `clerk env pull --print` into the host's CLI, so the keys never reach the agent's output. */
+  command: string;
+};
+
 export interface DeployStatusReport {
   complete: boolean;
   state: DeployStatusState;
@@ -153,6 +164,11 @@ export interface DeployStatusReport {
    * interrupted before the state could be read.
    */
   urls: { domains: string; instance: string } | null;
+  /**
+   * Commands that put the production keys on a host without the agent
+   * reading them, at `complete` only; `[]` in every other state.
+   */
+  hostSetup: HostSetupEntry[];
   /**
    * Derived, never written: every constructor goes through `withNextAction`,
    * which renders this from `deployNextStep` over the other fields. Assigning
@@ -607,6 +623,7 @@ function buildDeployStatusFacts(
       pendingDnsRecords: [],
       oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
       urls: null,
+      hostSetup: [],
     };
   }
 
@@ -620,6 +637,7 @@ function buildDeployStatusFacts(
       pendingDnsRecords: [],
       oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
       urls: dashboardUrls(state.appId, state.productionInstanceId),
+      hostSetup: [],
     };
   }
 
@@ -661,6 +679,7 @@ function buildDeployStatusFacts(
     urls: snapshot.productionInstanceId
       ? dashboardUrls(snapshot.appId, snapshot.productionInstanceId)
       : null,
+    hostSetup: complete ? hostSetupEntries(snapshot.productionInstanceId ?? null) : [],
   };
 }
 
@@ -707,6 +726,58 @@ function oauthSetupGuides(
     }));
 }
 
+/** Prints the production keys as `KEY=value` lines; the id rather than `prod`, as in `oauth.setup`. */
+function keyPullCommand(productionInstanceId: string | null): string {
+  return `clerk env pull --instance ${productionInstanceId ?? "prod"} --print`;
+}
+
+/**
+ * The Vercel command for `hostSetup`: a pipe the agent never reads, since
+ * `--print` output holds the secret key and an agent that reads it puts it in
+ * its own transcript. It reads the keys into a variable first so a failed
+ * pull stops it, stops at the first failed upload, and uses `--force` because
+ * the production values it replaces are usually development's. Whether
+ * `--force` on production rewrites a variable Vercel shares with other
+ * environments is unverified, so a production variable that also targets any
+ * other environment (Production in a comma-separated list) stops the command
+ * (exit 3) until the user agrees. The consent is the command's own
+ * `allow_shared=0`, changed for that one run, so it can't carry over to later
+ * runs or another project. `vercel env ls` runs with color off (Vercel's color
+ * check honors `--no-color` and `FORCE_COLOR=0`), escape codes are stripped
+ * anyway, and output that is neither its table nor its "No Environment
+ * Variables found" line stops it (exit 1) rather than reading as empty.
+ * `>/dev/null` rather than `grep -q`: an early exit would close the pipe on a
+ * long listing, and `pipefail` would turn that into a failure. The parentheses
+ * keep `pipefail`, `exit`, and `allow_shared` out of the agent's shell.
+ * `${name}` has braces because zsh reads `$name[` as an array subscript.
+ */
+function vercelKeyCopyCommand(pull: string): string {
+  return (
+    `( allow_shared=0; set -o pipefail; keys=$(${pull}) || exit 1; ` +
+    `e=$(printf '\\033'); vars=$(FORCE_COLOR=0 vercel env ls --no-color 2>&1 | sed "s/$e\\[[0-9;]*m//g") || exit 1; ` +
+    `printf '%s\\n' "$vars" | grep -iE "^[[:space:]]*name[[:space:]].*environments|No Environment Variables found" >/dev/null || ` +
+    `{ echo "Couldn't read the variable list from vercel env ls; check the project's variables before replacing any." >&2; exit 1; }; ` +
+    `shared=$(printf '%s\\n' "$keys" | cut -d= -f1 | while read -r name; do ` +
+    `printf '%s\\n' "$vars" | grep -E "^[[:space:]]*\${name}[[:space:]]" | grep -iE "production[[:space:]]*,|,[[:space:]]*production" >/dev/null && echo "$name"; done); ` +
+    `if [ -n "$shared" ] && [ "$allow_shared" != 1 ]; then ` +
+    `echo "Also set for an environment other than Production: $shared" >&2; exit 3; fi; ` +
+    `printf '%s\\n' "$keys" | while IFS='=' read -r key value; do ` +
+    `printf '%s' "$value" | vercel env add "$key" production --force || exit 1; done )`
+  );
+}
+
+/** The `hostSetup` entries at `complete`: one per host the CLI has a recipe for. */
+function hostSetupEntries(productionInstanceId: string | null): HostSetupEntry[] {
+  return [
+    {
+      host: "vercel",
+      label: "Vercel",
+      shells: ["bash", "zsh"],
+      command: vercelKeyCopyCommand(keyPullCommand(productionInstanceId)),
+    },
+  ];
+}
+
 function dashboardUrls(appId: string, productionInstanceId: string): DeployStatusReport["urls"] {
   return {
     domains: domainsDashboardUrl(appId, productionInstanceId),
@@ -733,6 +804,7 @@ export function buildInterruptedDeployStatusReport(): DeployStatusReport {
     pendingDnsRecords: [],
     oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
     urls: null,
+    hostSetup: [],
   });
 }
 
@@ -886,7 +958,7 @@ export function agentNextAction(step: DeployNextStep): string {
         "deploy. Run `clerk deploy status` again to check it."
       );
     case "complete": {
-      const pull = `clerk env pull --instance ${step.productionInstanceId ?? "prod"} --print`;
+      const pull = keyPullCommand(step.productionInstanceId);
       // Complete on Clerk's side only. The app keeps running on development
       // keys until the production keys reach the host, and the report can't
       // tell whether that already happened — hence "if you haven't already".
@@ -898,36 +970,11 @@ export function agentNextAction(step: DeployNextStep): string {
       // The id rather than `prod` for the same reason as `oauth.setup`. A
       // pipe the agent never reads: `--print` output holds the secret key,
       // and an agent that reads it puts it in its own transcript.
-      // The Vercel command reads the keys into a variable first so a failed
-      // pull stops it, stops at the first failed upload, and uses `--force`
-      // because the production values it replaces are usually development's.
-      // Whether `--force` on production rewrites a variable Vercel shares
-      // with other environments is unverified, so a production variable that
-      // also targets any other environment (Production in a comma-separated
-      // list) stops the command (exit 3) until the user agrees. The consent is the command's own `allow_shared=0`, changed
-      // for that one run, so it can't carry over to later runs or another
-      // project. `vercel env ls` runs with color off (Vercel's color check
-      // honors `--no-color` and `FORCE_COLOR=0`), escape codes are stripped
-      // anyway, and output that is neither its table nor its "No Environment
-      // Variables found" line stops it (exit 1) rather than reading as empty.
-      // `>/dev/null` rather than `grep -q`: an early exit would close the pipe
-      // on a long listing, and `pipefail` would turn that into a failure.
-      // The parentheses keep `pipefail`, `exit`, and `allow_shared` out of the
-      // agent's shell. `${name}` has braces because zsh reads `$name[` as an
-      // array subscript.
       return (
         `Clerk's production setup for https://${step.domain} is verified. If you haven't already: ` +
         `put the production keys on the host without reading them, by piping them to the host's CLI. ` +
-        `For Vercel, in bash or zsh: \`( allow_shared=0; set -o pipefail; keys=$(${pull}) || exit 1; ` +
-        `e=$(printf '\\033'); vars=$(FORCE_COLOR=0 vercel env ls --no-color 2>&1 | sed "s/$e\\[[0-9;]*m//g") || exit 1; ` +
-        `printf '%s\\n' "$vars" | grep -iE "^[[:space:]]*name[[:space:]].*environments|No Environment Variables found" >/dev/null || ` +
-        `{ echo "Couldn't read the variable list from vercel env ls; check the project's variables before replacing any." >&2; exit 1; }; ` +
-        `shared=$(printf '%s\\n' "$keys" | cut -d= -f1 | while read -r name; do ` +
-        `printf '%s\\n' "$vars" | grep -E "^[[:space:]]*\${name}[[:space:]]" | grep -iE "production[[:space:]]*,|,[[:space:]]*production" >/dev/null && echo "$name"; done); ` +
-        `if [ -n "$shared" ] && [ "$allow_shared" != 1 ]; then ` +
-        `echo "Also set for an environment other than Production: $shared" >&2; exit 3; fi; ` +
-        `printf '%s\\n' "$keys" | while IFS='=' read -r key value; do ` +
-        `printf '%s' "$value" | vercel env add "$key" production --force || exit 1; done )\`. ` +
+        `For Vercel, run the \`command\` from the \`hostSetup\` entry whose \`host\` is \`vercel\`, ` +
+        `exactly as given, in bash or zsh. ` +
         `It reads the keys and the variable list (\`vercel env ls\`) before changing anything, and it stops ` +
         `with exit 1 if it can't read that list. If a key is already set as a production variable that also ` +
         `targets another environment (Preview, Development, or a custom one), it stops with exit 3 and names ` +
