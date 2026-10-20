@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
 import { loadUsersFromFile, transformUsers } from "../lib/transform.ts";
-import type { FirebaseHashConfig } from "../types.ts";
+import type { FirebaseHashConfig, User } from "../types.ts";
 import { getSource, sourceKeys, sources } from "./registry.ts";
 import { isVerified } from "./shared.ts";
 
@@ -623,6 +623,22 @@ describe("fields the CLI's own export adds", () => {
   ])("%s reports no unknown fields", async (key, record) => {
     const { unknownFields } = await load(key, [record]);
     expect(unknownFields).toEqual({});
+  });
+});
+
+describe("auth0 social providers", () => {
+  test.each([
+    ["github|1", ["github"]],
+    ["google-oauth2|1", ["google"]],
+    ["windowslive|1", ["microsoft"]],
+    ["linkedin|1", ["linkedin_oidc"]],
+    ["amazon|1", ["amazon"]],
+    ["auth0|1", []],
+    ["samlp|acme|1", []],
+    ["email|1", []],
+    ["plain-id", []],
+  ])("%s signs in with %p", (userId, expected) => {
+    expect(getSource("auth0").socialProviders?.({ userId } as User)).toEqual(expected);
   });
 });
 

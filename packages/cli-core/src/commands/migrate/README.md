@@ -985,6 +985,9 @@ There is no column for social sign-ins, because no source copies them and none
 needs to. Enable the same providers in Clerk, and a user who signs in with one
 is linked to their imported account by verified email. See
 [account linking](https://clerk.com/docs/guides/configure/auth-strategies/social-connections/account-linking).
+The import's checks count the providers in a Supabase or Auth0 file and offer
+to enable any that are off. Auth0's come from each `user_id`'s prefix
+(`github|…`), so a user who linked a second provider counts under the first.
 
 ### Metadata
 
