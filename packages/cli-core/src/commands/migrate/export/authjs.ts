@@ -98,6 +98,23 @@ function isMissingTable(error: unknown): boolean {
 }
 
 /**
+ * The name a table really has. SQLite matches a quoted name without case, so
+ * the first candidate, `User`, answers for a Drizzle `user` table too.
+ */
+async function storedName(client: DbClient, table: string): Promise<string> {
+  if (client.dbType !== "sqlite") return table;
+  try {
+    const [row] = await client.query<{ name: unknown }>(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ${client.placeholder(1)} COLLATE NOCASE`,
+      [table],
+    );
+    return typeof row?.name === "string" ? row.name : table;
+  } catch {
+    return table;
+  }
+}
+
+/**
  * Reads the user table, trying each casing until one answers.
  *
  * A table that exists but lacks the columns is passed over too: Postgres
@@ -120,7 +137,7 @@ export async function fetchAuthJsUsers(
         const rows = await client.query<AuthJsRow>(
           buildAuthJsQuery(client, table, verifiedColumn, createdAt),
         );
-        return { rows, table };
+        return { rows, table: await storedName(client, table) };
       } catch (error) {
         // The table is there: try the next shape of it.
         if (isMissingColumn(error)) {
