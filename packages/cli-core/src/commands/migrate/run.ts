@@ -49,7 +49,7 @@ import { importUsers } from "./import-users.ts";
 import { ALREADY_IMPORTED, checkImport, type ImportChecks } from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
-import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
+import { resolveLimits, resolveUserLimit, type InstanceType } from "./lib/instance.ts";
 import {
   continueRun,
   latestUserLines,
@@ -216,7 +216,7 @@ export function explainErrors(errors: Iterable<string>, instanceType: InstanceTy
     all.some((error) => /You have reached your limit of \d+ users/.test(error))
   ) {
     notes.push(
-      `The user limit is a development-instance quota (${DEV_USER_LIMIT} by default). Import into a production ` +
+      `The user limit is a development-instance quota. Import into a production ` +
         `instance to bring everyone across, or contact support to raise this instance's limit.`,
     );
   }
@@ -787,7 +787,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   await withGutter(
     "Migrating users to Clerk",
     async ({ setNextSteps }) => {
-      const { secretKey, target } = await resolveClerkTarget(options);
+      const { secretKey, target, maxAllowedUsers } = await resolveClerkTarget(options);
       if (!options.json) printTarget(target);
       // Every user is already here, so each would be refused as a duplicate.
       if (input.exportInstanceId && input.exportInstanceId === target.instanceId) {
@@ -922,7 +922,9 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const [settings, existingUsers] = await withSpinner("Checking the instance...", async () =>
         Promise.all([
           fetchInstanceSettings(secretKey),
-          limits.instanceType === "dev" ? fetchUserCount(secretKey) : Promise.resolve(null),
+          resolveUserLimit(maxAllowedUsers, limits.instanceType)
+            ? fetchUserCount(secretKey)
+            : Promise.resolve(null),
         ]),
       );
 
@@ -958,6 +960,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           ...(supabaseRows ? { supabaseRows } : {}),
           settings,
           existingUsers,
+          maxAllowedUsers,
           instanceType: limits.instanceType,
           target,
           secretKey,
