@@ -207,7 +207,7 @@ describe("scanForIssues", () => {
     );
 
     const findings = await scanForIssues(tempDir, "next");
-    expect(findings.map((f) => f.message)).toContain("WorkOS User Management usage still in use");
+    expect(findings.map((f) => f.message)).toContain("WorkOS User Management still in use");
   });
 
   test("does not flag WorkOS SSO alone", async () => {
