@@ -76,6 +76,12 @@ describe("secret shapes never reach the output", () => {
     ["camelCase JSON name ending in ApiKey", '"clerkApiKey": "plainvalue123"', "plainvalue123"],
     ["camelCase name ending in PrivateKey", "sshPrivateKey=plain_value_333", "plain_value_333"],
     ["name containing PRIVATE_KEY", "NPM_PRIVATE_KEY=plain_value_000", "plain_value_000"],
+    ["name containing ENCRYPTION_KEY", "CLERK_ENCRYPTION_KEY=a1b2c3d4e5f6g7h8", "a1b2c3d4e5f6g7h8"],
+    [
+      "camelCase name ending in EncryptionKey",
+      '"dbEncryptionKey": "a1b2c3d4e5f6g7h8"',
+      "a1b2c3d4e5f6g7h8",
+    ],
     [
       "name containing API_KEY in a URL query",
       "GET /x?MY_API_KEY=plain_value_111",
@@ -170,7 +176,7 @@ describe("shell assignments and JSON fields stop differently", () => {
 
   // `AUTH` must be a whole segment of the name, or every OAuth setting and
   // every author field would be scrubbed.
-  test.each([["oauth_client_id=abc"], ["author=Shane"], ["OAUTH_REDIRECT=https://x.io/cb"]])(
+  test.each([["oauth_client_id=abc"], ["author=alice"], ["OAUTH_REDIRECT=https://x.io/cb"]])(
     "%s is left alone",
     (input) => {
       expect(redact(input)).toEqual({ text: input, redactions: 0 });

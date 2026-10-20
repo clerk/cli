@@ -1,19 +1,17 @@
 /**
  * Client-side scrubbing for the free text `clerk feedback` sends.
  *
- * Every text field of a feedback report is meant to pass through
- * {@link redactAndCap} before it leaves the machine (the command that calls
- * it lands with the feedback command; until then this module has no caller).
+ * Every free-text field of a feedback report passes through
+ * {@link redactAndCap} before it leaves the machine.
  * Scrubbing runs before the field's length cap is applied, on everything up to
  * the cap plus a margin larger than any secret: a secret cut in half by the
  * cap would no longer match the pattern that catches it whole.
  *
- * The upstream block of patterns is a port of the MCP server's redactor,
- * cloudflare-workers `workers/remote-mcp-server/src/redact.ts` at commit
- * `0d0f978`, kept pattern for pattern so a diff of the two files stays easy.
- * That file is upstream; the two are expected to drift, and a change there is
- * a change to consider here. Secrets become the same `[REDACTED]` marker it
- * uses, so combined analysis of CLI and MCP reports sees one spelling.
+ * The upstream block of patterns is a port of the redactor in Clerk's MCP
+ * server, kept pattern for pattern and in the same order so the two stay easy
+ * to compare. The two are expected to drift, and a change to one is worth
+ * considering for the other. Secrets become the same `[REDACTED]` marker the
+ * MCP server uses, so reports from both read the same.
  *
  * The CLI additions cover what the upstream set misses for text a local tool
  * sees: `ak_` Platform API keys, `NAME=value` pairs whose name merely
@@ -137,7 +135,7 @@ function isCredential(scheme: string, value: string): boolean {
  * `CLERK_SECRET_KEY`, `clerkApiKey`, `DATABASE_PASSWORD`, `X_AUTH`. `AUTH`
  * alone must be a whole segment so `oauth_client_id` and `author` stay.
  */
-const SECRET_NAME = String.raw`[A-Za-z0-9_.-]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API[_ -]?KEY|PRIVATE[_-]?KEY|AUTHORIZATION|(?<![A-Za-z0-9])AUTH(?![A-Za-z0-9]))[A-Za-z0-9_.-]*`;
+const SECRET_NAME = String.raw`[A-Za-z0-9_.-]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API[_ -]?KEY|PRIVATE[_-]?KEY|ENCRYPTION[_-]?KEY|AUTHORIZATION|(?<![A-Za-z0-9])AUTH(?![A-Za-z0-9]))[A-Za-z0-9_.-]*`;
 const QUOTED_VALUE = String.raw`"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'`;
 /**
  * An opening quote with no closing quote before the end of its line: a
@@ -347,12 +345,11 @@ export function redactText(text: string, options: { homedir?: string } = {}): Re
 /**
  * Prepare one free-text field for sending: bound it, scrub it, cap it.
  *
- * The plan's convention was "scrub, then cap", with no bound on the input.
- * This helper cuts to `cap` plus {@link REDACTION_MARGIN} first, then scrubs,
- * then cuts to `cap`. Deviation recorded by Shane on 2026-10-19, with this
- * reason: a second slow pattern got past two reviewers and the implementer, so
- * a bound that holds without finding the next one is worth it, and the
- * missing-END pass catches a key block the first cut splits. Within the first
+ * Cuts to `cap` plus {@link REDACTION_MARGIN} first, then scrubs, then cuts
+ * to `cap`. The first cut bounds the work whatever the input size, so a
+ * pattern that turns out to be slow on large input cannot stall the command.
+ * It is safe because the missing-END pass catches a key block the first cut
+ * splits. Within the first
  * `cap` characters nothing is ever cut before scrubbing: a secret that starts
  * inside the cap and runs past it is still matched whole (it is shorter than
  * the margin) or, if it is a key block the first cut split, taken to the end
