@@ -149,6 +149,13 @@ describe("readServiceAccount", () => {
     expect(() => readServiceAccount("./bad.json")).toThrow(/is not valid JSON/);
   });
 
+  test.each([["null"], ["[]"], ['"key"']])("reports %s as not a JSON object", (content) => {
+    fs.writeFileSync(path.join(workDir, "not-object.json"), content);
+    expect(() => readServiceAccount("./not-object.json")).toThrow(
+      /is not a usable service account key: it is not a JSON object/,
+    );
+  });
+
   // Downloading the web app config instead of a service account key is the
   // usual mistake, and the two files look similar at a glance.
   test("points at the right console page for a web app config", () => {

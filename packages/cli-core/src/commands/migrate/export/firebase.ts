@@ -76,10 +76,13 @@ export type ServiceAccount = {
  *   "the pasted key" when it came from the prompt.
  */
 function validateServiceAccount(parsed: unknown, label: string): ServiceAccount {
-  const account = parsed as Partial<ServiceAccount> & { type?: string };
   const invalid = (problem: string): never => {
     throwUsageError(`${label} is not a usable service account key: ${problem}`, DOCS_URL);
   };
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    invalid("it is not a JSON object");
+  }
+  const account = parsed as Partial<ServiceAccount> & { type?: string };
 
   if (account.type && account.type !== "service_account") {
     invalid(
