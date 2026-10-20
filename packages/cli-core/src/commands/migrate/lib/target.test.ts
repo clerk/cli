@@ -112,6 +112,43 @@ describe("fetchInstanceIdentity", () => {
     });
   });
 
+  test.each([
+    [100, 100],
+    [0, 0],
+    [null, null],
+  ])("reads max_allowed_users %p as the user limit", async (served, expected) => {
+    globalThis.fetch = (async () =>
+      Response.json({
+        object: "instance",
+        id: "ins_7",
+        environment_type: "production",
+        max_allowed_users: served,
+      })) as unknown as typeof fetch;
+
+    expect(await fetchInstanceIdentity("sk_live_x")).toEqual({
+      instanceId: "ins_7",
+      env: "production",
+      userLimit: expected,
+    });
+  });
+
+  // An API older than clerk/clerk_go#22871 has no such field; a malformed
+  // value is no answer either, not a limit.
+  test.each([
+    ["absent", {}],
+    ["a string", { max_allowed_users: "100" }],
+    ["negative", { max_allowed_users: -1 }],
+  ])("leaves the user limit out when max_allowed_users is %s", async (_label, extra) => {
+    globalThis.fetch = (async () =>
+      Response.json({
+        id: "ins_7",
+        environment_type: "development",
+        ...extra,
+      })) as unknown as typeof fetch;
+
+    expect("userLimit" in (await fetchInstanceIdentity("sk_test_x"))).toBe(false);
+  });
+
   test("retries a 429 rather than falling back", async () => {
     let calls = 0;
     globalThis.fetch = (async () =>

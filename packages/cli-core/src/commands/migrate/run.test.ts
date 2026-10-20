@@ -105,6 +105,8 @@ type Stub = {
   failing?: Set<string>;
   /** `GET /v1/instance` fails, so the target falls back to the key's stand-in ID. */
   instanceDown?: boolean;
+  /** `max_allowed_users` on `GET /v1/instance`; absent, as an older API leaves it. */
+  maxAllowedUsers?: number | null;
 };
 
 describe("run", () => {
@@ -134,7 +136,12 @@ describe("run", () => {
         return new Response("unavailable", { status: 503 });
       }
       if (url.pathname === "/v1/instance") {
-        return Response.json({ object: "instance", id: "ins_1", environment_type: "development" });
+        return Response.json({
+          object: "instance",
+          id: "ins_1",
+          environment_type: "development",
+          ...("maxAllowedUsers" in stub ? { max_allowed_users: stub.maxAllowedUsers } : {}),
+        });
       }
       if (url.pathname === "/v1/domains") {
         if (!stub.settings) return new Response("nope", { status: 500 });
@@ -1132,6 +1139,73 @@ describe("run", () => {
       expect(created()).toEqual(["u1"]);
       const [record] = listRuns(runsDir());
       expect(latestUserLines(runsDir(), record!.id).get("u2")?.reason).toContain("100-user limit");
+    });
+
+    describe("the user limit GET /v1/instance serves", () => {
+      const countRead = () => requests.some((r) => r.url.endsWith("/v1/users/count"));
+
+      test("replaces a development instance's default", async () => {
+        stubClerk({ count: 99, maxAllowedUsers: 101 });
+
+        await run(baseOptions);
+        expect(created()).toEqual(["u1", "u2"]);
+      });
+
+      test("limits a production instance", async () => {
+        stubClerk({ count: 4, maxAllowedUsers: 5 });
+
+        await run({ ...baseOptions, secretKey: "sk_live_x", allowPartial: true });
+        expect(countRead()).toBe(true);
+        expect(created()).toEqual(["u1"]);
+        const [record] = listRuns(runsDir());
+        expect(latestUserLines(runsDir(), record!.id).get("u2")?.reason).toBe(
+          "over the production instance's 5-user limit",
+        );
+      });
+
+      test.each([["sk_test_x"], ["sk_live_x"]])(
+        "null means no limit, and no count read, for %s",
+        async (secretKey) => {
+          stubClerk({ count: 99, maxAllowedUsers: null });
+
+          await run({ ...baseOptions, secretKey });
+          expect(countRead()).toBe(false);
+          expect(created()).toEqual(["u1", "u2"]);
+        },
+      );
+
+      test("wins over CLERK_MIGRATE_DEV_USER_LIMIT", async () => {
+        process.env.CLERK_MIGRATE_DEV_USER_LIMIT = "500";
+        try {
+          stubClerk({ count: 99, maxAllowedUsers: 100 });
+
+          expect(await exitCodeOf(run(baseOptions))).toBe(EXIT_CODE.USAGE);
+          expect(created()).toHaveLength(0);
+        } finally {
+          delete process.env.CLERK_MIGRATE_DEV_USER_LIMIT;
+        }
+      });
+
+      // An API older than clerk/clerk_go#22871: production stays unlimited.
+      test("absent, a production instance has no limit and no count read", async () => {
+        stubClerk({ count: 99 });
+
+        await run({ ...baseOptions, secretKey: "sk_live_x" });
+        expect(countRead()).toBe(false);
+        expect(created()).toEqual(["u1", "u2"]);
+      });
+
+      test("absent, CLERK_MIGRATE_DEV_USER_LIMIT raises a development instance's", async () => {
+        process.env.CLERK_MIGRATE_DEV_USER_LIMIT = "101";
+        try {
+          stubClerk({ count: 99 });
+
+          await run(baseOptions);
+          expect(created()).toEqual(["u1", "u2"]);
+        } finally {
+          delete process.env.CLERK_MIGRATE_DEV_USER_LIMIT;
+        }
+      });
     });
 
     test("supabase users whose only provider is disabled are rejected", async () => {

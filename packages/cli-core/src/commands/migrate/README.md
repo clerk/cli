@@ -93,7 +93,8 @@ to production.
 
 The **instance type is read from the key**: `sk_live_…` is treated as
 production, anything else as development. That choice drives the throughput
-defaults and the development-instance user limit below.
+defaults, and the development-instance user limit when the API serves none
+(see below).
 
 **Every command prints its target first.** `import` and `undo` name the
 instance — its
@@ -574,9 +575,8 @@ after them. They sort the users three ways:
     username (a batched `GET /v1/users` lookup, 100 values a request, through
     the scheduler). A user a continued run found behind its own interrupted
     create does not count
-  - a development instance: it is past the 100-user headroom
-    (`CLERK_MIGRATE_DEV_USER_LIMIT` when Clerk raised it), counted in file
-    order
+  - it is past the instance's user-limit headroom, counted in file order (see
+    [the user limit](#throughput))
 - **Imported, but not everything comes across** — emails or phones the
   instance is not set up to store, fields Clerk has no place for (`Clerk won't
 store: …`), passwords a source had to drop, emails Clerk refuses (malformed,
@@ -649,21 +649,24 @@ Defaults follow Clerk's documented `POST /v1/users` limits: 100 req/s for
 production instances, 10 req/s for development. Concurrency defaults to ~95% of
 that, assuming ~100ms of API latency. Both are overridable:
 
-| Variable                          | Effect                                                       |
-| --------------------------------- | ------------------------------------------------------------ |
-| `CLERK_MIGRATE_RATE_LIMIT`        | Requests per second                                          |
-| `CLERK_MIGRATE_CONCURRENCY_LIMIT` | Concurrent in-flight requests                                |
-| `CLERK_MIGRATE_DEV_USER_LIMIT`    | Development-instance user limit the checks use (default 100) |
+| Variable                          | Effect                                                                                |
+| --------------------------------- | ------------------------------------------------------------------------------------- |
+| `CLERK_MIGRATE_RATE_LIMIT`        | Requests per second                                                                   |
+| `CLERK_MIGRATE_CONCURRENCY_LIMIT` | Concurrent in-flight requests                                                         |
+| `CLERK_MIGRATE_DEV_USER_LIMIT`    | Development-instance user limit the checks use when the API serves none (default 100) |
 
 A non-numeric or non-positive value is ignored in favour of the default.
 
-A development instance's user limit is checked with the other
-[checks](#checks): new development instances are created with a 100-user limit,
-production instances have none by default (a plan can set one; the import
-stops at the first refusal), and the run reads the live count
-(`GET /v1/users/count`). The limit itself is not served by any API, so for a
-development instance Clerk has raised, set `CLERK_MIGRATE_DEV_USER_LIMIT` to
-the raised limit; `--allow-partial` imports up to the headroom.
+The instance's user limit is checked with the other [checks](#checks), against
+the live count (`GET /v1/users/count`). The limit is `max_allowed_users` from
+`GET /v1/instance`, for development and production instances alike; `null`
+there means no limit, and then the count is not read. An API that does not
+serve the field yet falls back: development instances are assumed to have the
+100-user limit they are created with, or `CLERK_MIGRATE_DEV_USER_LIMIT` when
+Clerk raised it, and production instances none (a plan can set one; the import
+stops at the first refusal). A served limit wins over
+`CLERK_MIGRATE_DEV_USER_LIMIT`, since it is the one Clerk enforces.
+`--allow-partial` imports up to the headroom.
 
 Users that do exceed the limit come back in the error breakdown as
 `You have reached your limit of N users`, annotated with what a development
@@ -944,13 +947,13 @@ stamping every user with today's.
 | `POST`   | `/v1/phone_numbers`                                     | `migrate import` — attaches additional phones                                                                                  |
 | `GET`    | `/v1/users?limit=&offset=&order_by=+created_at`         | `migrate export clerk` — pages the whole instance, oldest first, 500 at a time                                                 |
 | `GET`    | `/v1/users?limit=&starting_after=&order_by=+created_at` | `migrate export clerk` — pages the whole instance, oldest first, 500 at a time, each page from the last user of the one before |
-| `GET`    | `/v1/users/count`                                       | `migrate import` — headroom against a development instance's user limit                                                        |
+| `GET`    | `/v1/users/count`                                       | `migrate import` — headroom against the instance's user limit                                                                  |
 | `GET`    | `/v1/users?external_id=…`                               | `migrate import` — checks for users already in the instance, 100 values a call                                                 |
 | `GET`    | `/v1/users?external_id=…`                               | `migrate import` — a continue looks up users whose create was in flight                                                        |
 | `GET`    | `/v1/users?external_id=…`                               | `migrate undo` — finds users whose create was in flight when the import stopped                                                |
 | `GET`    | `/v1/users?user_id=…`                                   | `migrate undo` — reads the imported users back, 100 a call                                                                     |
 | `DELETE` | `/v1/users/{user_id}`                                   | `migrate undo` — deletes one user                                                                                              |
-| `GET`    | `/v1/instance`                                          | `migrate import`, `undo`, `export clerk` — names the instance behind the key                                                   |
+| `GET`    | `/v1/instance`                                          | `migrate import`, `undo`, `export clerk` — names the instance behind the key; `import` reads its user limit too                |
 | `GET`    | `/v1/domains`                                           | `migrate import` checks — resolves the Frontend API host                                                                       |
 
 The checks also read the instance's Frontend API `GET /v1/environment`

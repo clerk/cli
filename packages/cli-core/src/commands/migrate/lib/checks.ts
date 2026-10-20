@@ -31,7 +31,7 @@ import {
   providerLabel,
   toClerkStrategy,
 } from "./clerk-config.ts";
-import { resolveDevUserLimit } from "./instance.ts";
+import { resolveUserLimit, type UserLimit } from "./instance.ts";
 import { buildChangePayload, buildSettingChanges } from "./modify-settings.ts";
 import { acceptsIdentifier, buildReadinessReport } from "./readiness.ts";
 import type { ApiScheduler } from "./scheduler.ts";
@@ -99,9 +99,14 @@ export type CheckInput = {
   /** The raw Supabase rows, for the provider checks. Absent for any other source. */
   supabaseRows?: Record<string, unknown>[];
   settings: UserSettingsJSON | null;
-  /** Users already in the instance, for the quota. Development instances only. */
+  /** Users already in the instance, for the quota. Only read when there is a limit. */
   existingUsers?: number | null;
   instanceType: "dev" | "prod";
+  /**
+   * The limit the quota is checked against. Without one, the instance type's
+   * fallback from {@link resolveUserLimit}, as if `GET /v1/instance` served none.
+   */
+  userLimit?: UserLimit;
   target: ClerkTarget;
   secretKey: string;
   schedule: ApiScheduler;
@@ -978,6 +983,19 @@ function placeholderWarning(count: number): string[] {
   ];
 }
 
+function instanceLabel(instanceType: "dev" | "prod"): string {
+  return instanceType === "prod" ? "production" : "development";
+}
+
+/** What a quota reject adds, by where its limit came from. */
+const LIMIT_HINT: Record<UserLimit["source"], string> = {
+  // The instance's own limit; raising it is the fix, not a setting here.
+  api: "",
+  env: " (set by CLERK_MIGRATE_DEV_USER_LIMIT)",
+  // An API that does not serve the limit, so it may have been raised.
+  default: " (raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT)",
+};
+
 /**
  * The reason for a user an earlier import already created here. Exported so
  * the import can name the run that created them.
@@ -1125,12 +1143,13 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   }
   candidates = unique;
 
-  // The limit is a development-instance default, not a number the API serves,
-  // so it is checked against the live count and the importable users alone.
-  // An instance Clerk has raised sets CLERK_MIGRATE_DEV_USER_LIMIT.
+  // Checked against the live count and the importable users alone. The limit
+  // is the instance's own when `GET /v1/instance` serves it, otherwise a
+  // development instance's default (or CLERK_MIGRATE_DEV_USER_LIMIT).
   let quota: Quota | undefined;
-  if (input.instanceType === "dev") {
-    const limit = resolveDevUserLimit();
+  const { limit, source: limitSource } =
+    input.userLimit ?? resolveUserLimit(input.instanceType, undefined);
+  if (limit !== null) {
     // An adopted user is in the instance's count already, and is never
     // created: only the new users take headroom, in file order.
     const headroom = Math.max(0, limit - (input.existingUsers ?? 0));
@@ -1139,12 +1158,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     quota = { existing: input.existingUsers ?? null, limit, headroom, over };
     if (over > 0) {
       const past = new Set(fresh.slice(headroom));
-      for (const user of past) {
-        rejects.push({
-          sourceId: user.userId,
-          reason: `over the development instance's ${limit}-user limit (raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT)`,
-        });
-      }
+      const reason = `over the ${instanceLabel(input.instanceType)} instance's ${limit}-user limit${LIMIT_HINT[limitSource]}`;
+      for (const user of past) rejects.push({ sourceId: user.userId, reason });
       candidates = candidates.filter((user) => !past.has(user));
     }
   }
@@ -1174,7 +1189,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       // An unknown count is checked as zero; say so rather than imply it fit.
       ...(quota && quota.existing === null
         ? [
-            `Could not read how many users this development instance holds, so the ${quota.limit}-user limit was checked as if it were empty`,
+            `Could not read how many users this ${instanceLabel(input.instanceType)} instance holds, so the ${quota.limit}-user limit was checked as if it were empty`,
           ]
         : []),
     ],

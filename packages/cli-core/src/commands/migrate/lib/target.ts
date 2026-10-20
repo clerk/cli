@@ -22,7 +22,7 @@ import {
 } from "../../../lib/keyless-target.ts";
 import { log } from "../../../lib/log.ts";
 import { isHuman } from "../../../mode.ts";
-import { detectInstanceType } from "./instance.ts";
+import { detectInstanceType, type ServedUserLimit } from "./instance.ts";
 import { retryOn429 } from "./retry.ts";
 import { type CarryOptions, carryFlags } from "./carry-flags.ts";
 import type { RunTarget } from "./run-store.ts";
@@ -54,7 +54,12 @@ export const KEY_SOURCE = {
 
 type NamedKeySource = (typeof KEY_SOURCE)[keyof typeof KEY_SOURCE];
 
-type InstanceIdentity = { instanceId: string; env: string };
+type InstanceIdentity = {
+  instanceId: string;
+  env: string;
+  /** The instance's `max_allowed_users`; see {@link ServedUserLimit}. */
+  userLimit?: ServedUserLimit;
+};
 
 type KeySource = {
   keySource: string;
@@ -164,6 +169,10 @@ export function laterCarry(runsDir: string | undefined, target: RunTarget): stri
  * same key always addresses the same instance, so it still tells two
  * instances apart, and nothing is sent anywhere. A 429 is retried first: it is
  * most likely straight after a large import, which is when `undo` runs.
+ *
+ * The same response carries the instance's user limit: `max_allowed_users`,
+ * `null` for none. An API older than clerk/clerk_go#22871 leaves it out, so
+ * the field is absent from the result then, as it is on a failed read.
  */
 export async function fetchInstanceIdentity(secretKey: string): Promise<InstanceIdentity> {
   const fallbackEnv = detectInstanceType(secretKey) === "prod" ? "production" : "development";
@@ -171,18 +180,30 @@ export async function fetchInstanceIdentity(secretKey: string): Promise<Instance
     const { body } = await retryOn429(async () =>
       bapiRequest({ method: "GET", path: "/v1/instance", secretKey }),
     );
-    const instance = body as { id?: unknown; environment_type?: unknown };
+    const instance = body as {
+      id?: unknown;
+      environment_type?: unknown;
+      max_allowed_users?: unknown;
+    };
     if (typeof instance.id === "string" && isClerkInstanceId(instance.id)) {
+      const userLimit = servedUserLimit(instance.max_allowed_users);
       return {
         instanceId: instance.id,
         env:
           typeof instance.environment_type === "string" ? instance.environment_type : fallbackEnv,
+        ...(userLimit !== undefined ? { userLimit } : {}),
       };
     }
   } catch (error) {
     log.debug(`migrate: could not read the instance behind the key: ${String(error)}`);
   }
   return { instanceId: keyInstanceId(secretKey), env: fallbackEnv };
+}
+
+/** `max_allowed_users` when it is a count or `null`; anything else is no answer. */
+function servedUserLimit(value: unknown): ServedUserLimit {
+  if (value === null) return null;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 /** A stand-in for an instance Clerk did not name: {@link keyInstanceId}'s `key_` hash. */
@@ -241,7 +262,7 @@ export function assertInstanceFlagMatches(
 /** Resolves the key, then names the instance it addresses. */
 export async function resolveClerkTarget(
   options: TargetOptions,
-): Promise<{ secretKey: string; target: ClerkTarget }> {
+): Promise<{ secretKey: string; target: ClerkTarget; userLimit: ServedUserLimit }> {
   const secretKey = await resolveBapiSecretKey(options);
   const { instance: named, ...source } = await describeKeySource(options);
   const fetched = await fetchInstanceIdentity(secretKey);
@@ -262,6 +283,9 @@ export async function resolveClerkTarget(
       instanceType: detectInstanceType(secretKey),
       ...source,
     },
+    // Not part of the target: a run records the target, and the limit can
+    // change between runs.
+    userLimit: fetched.userLimit,
   };
 }
 

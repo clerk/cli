@@ -49,7 +49,12 @@ import { importUsers } from "./import-users.ts";
 import { ALREADY_IMPORTED, checkImport, type ImportChecks } from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
-import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
+import {
+  DEV_USER_LIMIT,
+  resolveLimits,
+  resolveUserLimit,
+  type InstanceType,
+} from "./lib/instance.ts";
 import {
   continueRun,
   latestUserLines,
@@ -787,7 +792,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   await withGutter(
     "Migrating users to Clerk",
     async ({ setNextSteps }) => {
-      const { secretKey, target } = await resolveClerkTarget(options);
+      const { secretKey, target, userLimit: servedUserLimit } = await resolveClerkTarget(options);
       if (!options.json) printTarget(target);
       // Every user is already here, so each would be refused as a duplicate.
       if (input.exportInstanceId && input.exportInstanceId === target.instanceId) {
@@ -797,6 +802,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
         );
       }
       const limits = resolveLimits(secretKey);
+      const userLimit = resolveUserLimit(limits.instanceType, servedUserLimit);
 
       const filePath = resolveImportFilePath(file);
       const sha256 = sha256File(filePath);
@@ -922,7 +928,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const [settings, existingUsers] = await withSpinner("Checking the instance...", async () =>
         Promise.all([
           fetchInstanceSettings(secretKey),
-          limits.instanceType === "dev" ? fetchUserCount(secretKey) : Promise.resolve(null),
+          userLimit.limit !== null ? fetchUserCount(secretKey) : Promise.resolve(null),
         ]),
       );
 
@@ -959,6 +965,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           settings,
           existingUsers,
           instanceType: limits.instanceType,
+          userLimit,
           target,
           secretKey,
           schedule,

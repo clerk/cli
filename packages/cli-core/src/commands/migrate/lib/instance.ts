@@ -9,12 +9,12 @@
 /**
  * The user limit a development instance is created with.
  *
- * Only a default: Clerk raises it per instance on request, and the real value
- * (`max_allowed_users`) is not served by BAPI, DAPI or FAPI — only by Clerk's
- * internal staff API. The checks reject users past it, so an instance Clerk has
- * raised overrides it with `CLERK_MIGRATE_DEV_USER_LIMIT` (see
- * {@link resolveDevUserLimit}). A production instance's limit comes from its
- * plan; the import stops at the first `user_quota_exceeded` either way.
+ * Only a fallback: `GET /v1/instance` serves the real limit as
+ * `max_allowed_users` (see {@link resolveUserLimit}), but an API older than
+ * clerk/clerk_go#22871 leaves the field out. Then a development instance is
+ * assumed to hold this many, or `CLERK_MIGRATE_DEV_USER_LIMIT` when Clerk raised
+ * it, and a production instance no limit. The import stops at the first
+ * `user_quota_exceeded` either way.
  */
 export const DEV_USER_LIMIT = 100;
 
@@ -26,12 +26,41 @@ function positive(value: string | undefined): number | undefined {
 }
 
 /**
- * The development-instance user limit for this run: `CLERK_MIGRATE_DEV_USER_LIMIT`
- * when it is a positive number, otherwise {@link DEV_USER_LIMIT}.
+ * `max_allowed_users` as `GET /v1/instance` returned it: a number, `null` for
+ * an instance with no limit, or `undefined` when the response had no such field
+ * or could not be read.
  */
-export function resolveDevUserLimit(env: Record<string, string | undefined> = process.env): number {
+export type ServedUserLimit = number | null | undefined;
+
+export type UserLimit = {
+  /** `null` when the instance has no user limit. */
+  limit: number | null;
+  /**
+   * `api` when `GET /v1/instance` served it, `env` from
+   * `CLERK_MIGRATE_DEV_USER_LIMIT`, `default` otherwise.
+   */
+  source: "api" | "env" | "default";
+};
+
+/**
+ * The user limit the checks hold this run to.
+ *
+ * A served `max_allowed_users` wins, for either instance type, over
+ * `CLERK_MIGRATE_DEV_USER_LIMIT` too: it is the number Clerk enforces. Without
+ * one, a development instance gets the override when it is a positive number,
+ * otherwise {@link DEV_USER_LIMIT}, and a production instance no limit.
+ */
+export function resolveUserLimit(
+  instanceType: InstanceType,
+  served: ServedUserLimit,
+  env: Record<string, string | undefined> = process.env,
+): UserLimit {
+  if (served !== undefined) return { limit: served, source: "api" };
+  if (instanceType === "prod") return { limit: null, source: "default" };
   const override = positive(env.CLERK_MIGRATE_DEV_USER_LIMIT);
-  return override ? Math.floor(override) : DEV_USER_LIMIT;
+  return override
+    ? { limit: Math.floor(override), source: "env" }
+    : { limit: DEV_USER_LIMIT, source: "default" };
 }
 
 /** How many times a 429 is retried before the user is recorded as failed. */

@@ -593,6 +593,67 @@ describe("rejects", () => {
     }
   });
 
+  test("a production instance's served limit rejects past its headroom", async () => {
+    const checks = await checkImport(
+      input({
+        existingUsers: 9,
+        userLimit: { limit: 10, source: "api" },
+        users: [user("a"), user("b")],
+      }),
+    );
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["a"]);
+    // The instance's own limit: no env var raises it.
+    expect(checks.rejects).toEqual([
+      { sourceId: "b", reason: "over the production instance's 10-user limit" },
+    ]);
+    expect(checks.quota).toEqual({ existing: 9, limit: 10, headroom: 1, over: 1 });
+  });
+
+  test("a development instance's served limit replaces the default", async () => {
+    const checks = await checkImport(
+      input({
+        instanceType: "dev",
+        existingUsers: 98,
+        userLimit: { limit: 200, source: "api" },
+        users: [user("a"), user("b"), user("c")],
+      }),
+    );
+    expect(checks.rejects).toEqual([]);
+    expect(checks.quota).toEqual({ existing: 98, limit: 200, headroom: 102, over: 0 });
+  });
+
+  test("a served null leaves a development instance unlimited", async () => {
+    const checks = await checkImport(
+      input({
+        instanceType: "dev",
+        existingUsers: 99,
+        userLimit: { limit: null, source: "api" },
+        users: [user("a"), user("b")],
+      }),
+    );
+    expect(checks.rejects).toEqual([]);
+    expect(checks.quota).toBeUndefined();
+  });
+
+  test("a production instance with no served limit has no quota", async () => {
+    const checks = await checkImport(input({ existingUsers: 1_000_000, users: [user("a")] }));
+    expect(checks.quota).toBeUndefined();
+  });
+
+  test("names the override when it set the limit", async () => {
+    const checks = await checkImport(
+      input({
+        instanceType: "dev",
+        existingUsers: 5,
+        userLimit: { limit: 5, source: "env" },
+        users: [user("a")],
+      }),
+    );
+    expect(checks.rejects[0]?.reason).toBe(
+      "over the development instance's 5-user limit (set by CLERK_MIGRATE_DEV_USER_LIMIT)",
+    );
+  });
+
   test("a user its source asked to skip, with the source's reason", async () => {
     const checks = await checkImport(
       input({ users: [user("a", { skipReason: "anonymous Better Auth user" }), user("b")] }),

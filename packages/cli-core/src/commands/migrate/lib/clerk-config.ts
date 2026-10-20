@@ -177,9 +177,10 @@ export async function fetchEnabledSocialProviders(secretKey: string): Promise<st
 /**
  * How many users the destination instance already holds.
  *
- * The closest thing to a live quota check the CLI has: `max_allowed_users` is
- * not exposed by any public API, so headroom on a development instance can
- * only be estimated from the count and {@link DEV_USER_LIMIT}.
+ * With the limit, it gives the headroom: `max_allowed_users` from
+ * `GET /v1/instance` counts against this same unfiltered total. An API that
+ * does not serve the limit leaves a development instance checked against
+ * {@link DEV_USER_LIMIT}.
  *
  * @returns `null` when the count could not be read — an unknown count must not
  *   be reported as zero.

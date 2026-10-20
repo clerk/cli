@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEV_USER_LIMIT,
-  resolveDevUserLimit,
+  resolveUserLimit,
   detectInstanceType,
   getDefaultConcurrencyLimit,
   getDefaultRateLimit,
@@ -41,16 +41,50 @@ describe("default limits", () => {
   });
 });
 
-describe("resolveDevUserLimit", () => {
+describe("resolveUserLimit", () => {
+  // `max_allowed_users` from GET /v1/instance: a number, null, or absent on an
+  // API older than clerk/clerk_go#22871.
   test.each([
-    [undefined, 100],
-    ["500", 500],
-    ["250.7", 250],
-    ["0", 100],
-    ["-5", 100],
-    ["lots", 100],
-  ])("CLERK_MIGRATE_DEV_USER_LIMIT=%p gives %i", (value, expected) => {
-    expect(resolveDevUserLimit({ CLERK_MIGRATE_DEV_USER_LIMIT: value })).toBe(expected);
+    ["dev", 500, { limit: 500, source: "api" }],
+    ["prod", 25_000, { limit: 25_000, source: "api" }],
+    ["dev", 0, { limit: 0, source: "api" }],
+    ["dev", null, { limit: null, source: "api" }],
+    ["prod", null, { limit: null, source: "api" }],
+    ["dev", undefined, { limit: 100, source: "default" }],
+    ["prod", undefined, { limit: null, source: "default" }],
+  ] as const)("a %s instance serving %p", (instanceType, served, expected) => {
+    expect(resolveUserLimit(instanceType, served, {})).toEqual(expected);
+  });
+
+  test.each([
+    [undefined, { limit: 100, source: "default" }],
+    ["500", { limit: 500, source: "env" }],
+    ["250.7", { limit: 250, source: "env" }],
+    ["0", { limit: 100, source: "default" }],
+    ["-5", { limit: 100, source: "default" }],
+    ["lots", { limit: 100, source: "default" }],
+  ] as const)(
+    "CLERK_MIGRATE_DEV_USER_LIMIT=%p on a dev instance serving none",
+    (value, expected) => {
+      expect(resolveUserLimit("dev", undefined, { CLERK_MIGRATE_DEV_USER_LIMIT: value })).toEqual(
+        expected,
+      );
+    },
+  );
+
+  // The served limit is the one Clerk enforces; the override only stands in
+  // for it.
+  test.each([[250], [null]])("a served %p wins over CLERK_MIGRATE_DEV_USER_LIMIT", (served) => {
+    expect(resolveUserLimit("dev", served, { CLERK_MIGRATE_DEV_USER_LIMIT: "500" })).toEqual({
+      limit: served,
+      source: "api",
+    });
+  });
+
+  test("CLERK_MIGRATE_DEV_USER_LIMIT does not limit a production instance", () => {
+    expect(
+      resolveUserLimit("prod", undefined, { CLERK_MIGRATE_DEV_USER_LIMIT: "500" }).limit,
+    ).toBeNull();
   });
 });
 
