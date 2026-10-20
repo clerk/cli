@@ -223,6 +223,27 @@ export async function ensureMachineUuid(): Promise<string> {
   return config.machineUuid;
 }
 
+/** The machine id if this machine has one; never creates it (a preview on an opted-out machine must not). */
+export async function peekMachineUuid(): Promise<string | null> {
+  const config = await readConfig();
+  return config.machineUuid ?? null;
+}
+
+/**
+ * Whether the config file can be written right now, by rewriting it with its
+ * current contents. For a preview that must say whether a real run's writes
+ * (machine id, notice flag) would succeed, without making them.
+ */
+export async function probeConfigWritable(): Promise<boolean> {
+  try {
+    await writeConfig(await readConfig());
+    return true;
+  } catch (error) {
+    log.debug(`config: not writable: ${error}`);
+    return false;
+  }
+}
+
 /** Read-only peek at the notice flag (the User-Agent gating needs it). */
 export async function getTelemetryNoticeShown(): Promise<boolean> {
   const config = await readConfig();

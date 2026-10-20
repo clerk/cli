@@ -221,6 +221,7 @@ describe("human mode", () => {
     expect(payload.report_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(payload.outcome).toBe("worked_around");
     expect(result.stderr).toContain("Dry run: no report was sent.");
+    expect(result.stderr).toContain("A real run would send this report now.");
     expect(events().map((e) => e.event)).toEqual(["CLI_COMMAND_EXECUTED"]);
   });
 
@@ -245,7 +246,7 @@ describe("human mode", () => {
       await recordFeedbackSend({ sentAt: base + i, command: null, errorCode: null });
     }
     const result = await clerk("feedback");
-    expect(result.stderr).toContain("reached its feedback limit");
+    expect(result.stderr).toContain("which is the limit");
     expect(result.stderr).toContain(ISSUES_URL);
     expect(events().map((e) => e.event)).toEqual(["CLI_COMMAND_EXECUTED"]);
   });
@@ -278,7 +279,9 @@ describe("first run", () => {
     process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
     http.mock(); // any fetch would record and throw
     const result = await clerk("--mode", "agent", "feedback", ...COMPLETE, "--dry-run");
-    expect(JSON.parse(result.stdout).report_id).toMatch(/^[0-9a-f-]{36}$/);
+    const out = JSON.parse(result.stdout);
+    expect(out.would_send).toBe(true);
+    expect(out.report.report_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(result.stderr).toContain("Nothing has been sent during this run");
     expect(result.stderr).not.toContain("This run sends the feedback report");
     expect(http.requests).toHaveLength(0);

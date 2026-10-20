@@ -23,7 +23,7 @@ clerk feedback --input-json @report.json    # long text from a file; keys match 
 | `--error-text` | no       | The exact error you saw (4,000)                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `--error-code` | no       | The code from the error output, e.g. `not_linked`: lowercase letters, digits and underscores                                                                                                                                                                                                                                                                                                                                                                                             |
 | `--suggestion` | no       | What would have helped (2,000)                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `--dry-run`    | no       | Print exactly what would be sent and send no report. The run's usual usage event for this command still applies, and the dry run may create the local machine id in the config file                                                                                                                                                                                                                                                                                                      |
+| `--dry-run`    | no       | Print exactly what would be sent and whether a real run would send it now, and send no report. The run's usual usage event for this command still applies. The dry run may create the local machine id in the config file, but never while telemetry is off: then it shows the id the machine already has, or `null`                                                                                                                                                                     |
 | `--yes`        | no       | Skip the confirmation prompt (human mode)                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 Human mode prompts for any missing required field, shows the exact report, and asks before
@@ -50,14 +50,17 @@ what will be sent" is the object that is posted.
 
 Every text field is scrubbed before it is capped and before anything leaves your machine:
 common secret formats (API keys and tokens by their prefixes, private key blocks,
-`Authorization` headers, credentials in URLs, and assignments whose name contains a
+`Authorization` headers, credentials in URLs, assignments whose name contains a
 secret-looking word such as SECRET, TOKEN, PASSWORD, API_KEY, PRIVATE_KEY or
-ENCRYPTION_KEY (`CLERK_SECRET_KEY=...`)) become `[REDACTED]`; home-directory paths become
-`~`; email addresses become `[EMAIL]`. Scrubbing is pattern-based and can miss things, so
-never include secrets, API keys or personal data about end users. The scrubber is
-documented in `src/lib/redact.ts`, including its known limits. Scrubbing runs on the
-client, before truncation, so a secret cut in half by the cap cannot escape the pattern
-that would have caught it whole.
+ENCRYPTION_KEY (`CLERK_SECRET_KEY=...`), the same names as command-line flags
+(`--password x`), and escaped JSON pasted inside a string) become `[REDACTED]`;
+home-directory paths become `~`; email addresses become `[EMAIL]`. Scrubbing is
+pattern-based and can miss things, so never include secrets, API keys or personal data
+about end users. The scrubber is documented in `src/lib/redact.ts`, including its known
+limits; one to expect is that for the names the MCP server's patterns also know, the
+variable name goes with the value (`export TOKEN=abc` becomes `export [REDACTED]`), which
+is not a leak. Scrubbing runs on the client, before truncation, so a secret cut in half by
+the cap cannot escape the pattern that would have caught it whole.
 
 **Never attached:** files, environment variables, transcripts, or the command line
 (`argv`). The report is built only from the fields above and the envelope.
@@ -86,7 +89,9 @@ the rate limit, then prompts for missing fields, then the opt-out check again, t
 preview and the confirmation, then the first-run notice, then the POST. Gating comes before
 the prompts so someone opted out or capped is told before writing a report. The second
 opt-out check catches an opt-out that landed while the editor was open: the person is told
-then, no preview is shown, and no machine id is created.
+then, no preview is shown, and no machine id is created. The opt-out is read once more
+just before the first-run notice, so an opt-out that landed during the confirmation
+neither posts nor uses up the notice.
 
 The opt-out is also enforced inside the shared telemetry sender, at the moment of the POST,
 so no telemetry event, including a feedback report, leaves an opted-out machine. The
@@ -105,15 +110,26 @@ Agent mode prints one JSON object on stdout and exits 0 in every case after vali
 `reason` is one of `telemetry_disabled` (an env var or `clerk telemetry disable`),
 `dev_build`, `rate_limited`, `send_failed`. `report_id` is present whenever a POST was
 attempted, including `send_failed`: a send that timed out can still have reached the
-endpoint, and the id is what a later removal needs.
+endpoint, and the id is what a later removal needs. A `send_failed` without a report id
+means the report could not be built at all (the local config file could not be written).
+
+Agent-mode `--dry-run` prints the report wrapped with whether a real run would send it:
+
+```json
+{"dry_run": true, "would_send": true, "report": {...}}
+{"dry_run": true, "would_send": false, "reason": "telemetry_disabled", "report": {...}}
+```
+
+`reason` takes the same values as `sent: false`.
 
 Human mode prints the preview on stdout and the result on stderr: "Sent. Thank you.
 Report id: <uuid>", or the reason, the issues URL and, if a POST was attempted, the id.
-`--dry-run` prints the exact report (with the id it would carry) in both modes and sends no
-feedback event.
+`--dry-run` prints the exact report (with the id it would carry) on stdout and, on stderr,
+whether a real run would send it now; it sends no feedback event.
 
 A failed send (`send_failed`) is exit 0 in both modes: the JSON result is the delivery
 signal, and a telemetry outage must never read as a task failure to a script or an agent.
+A local config file that cannot be written is reported the same way, never as a crash.
 
 ## Opt-out, dev builds, rate limit
 
@@ -124,12 +140,14 @@ GitHub issues URL instead. A dev build without `CLERK_TELEMETRY_URL` sends nothi
 
 At most 10 reports per machine in a rolling 24 hours, and no second report with the same
 `command` and `error_code` inside that window (checked only when both are present). Over
-either limit the result is `rate_limited`. The record is a best-effort JSON file in the CLI
-cache directory; an unreadable file counts as empty, and only accepted sends are recorded.
-Why this shape: agent-mode errors tend to come from retry loops, so a per-hour cap alone
-would admit hundreds of identical reports a day from one busy machine. Known cost: two
-distinct problems that share a command and code within a day are collapsed into one
-report.
+either limit the result is `rate_limited`; the human-mode message says which of the two
+applied. The record is a best-effort JSON file in the CLI cache directory; an unreadable
+file counts as empty, and only accepted sends are recorded. The cap fails open: where the
+cache file cannot be written, sends are accepted but not counted, because failing closed
+would block feedback entirely in sandboxes that forbid cache writes. Why this shape: agent-mode
+errors tend to come from retry loops, so a per-hour cap alone would admit hundreds of
+identical reports a day from one busy machine. Known cost: two distinct problems that share
+a command and code within a day are collapsed into one report.
 
 ## First run
 

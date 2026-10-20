@@ -17,6 +17,7 @@ import {
   ensureMachineUuid,
   getTelemetryDisabled,
   markTelemetryNoticeShown,
+  peekMachineUuid,
   resolveProfile,
 } from "./config.ts";
 import {
@@ -420,14 +421,17 @@ async function buildAndSend(
 ): Promise<void> {
   // Re-checked here (not just at start) so `clerk telemetry disable` itself
   // sees the freshly persisted opt-out and sends nothing.
-  if (!(await getTelemetryStatus()).enabled) return;
+  const telemetryStatus = await getTelemetryStatus();
+  if (!telemetryStatus.enabled) return;
 
   // The notice tells the user "Nothing has been sent during this run" — honor it.
   if (await showTelemetryNoticeOnce()) return;
 
   const envelope = await buildTelemetryEnvelope();
 
-  await sendTelemetryEvent(
+  // The internal post step, not the exported sender: the opt-out was read
+  // just above, and this whole job runs under a one-second deadline.
+  await postTelemetryEvent(
     {
       event: "CLI_COMMAND_EXECUTED",
       payload: {
@@ -476,12 +480,28 @@ export type TelemetryEnvelope = {
   app_id: string | null;
 };
 
+/** {@link TelemetryEnvelope} for a preview on a machine that may have no id yet. */
+export type TelemetryEnvelopePreview = Omit<TelemetryEnvelope, "machine_uuid"> & {
+  machine_uuid: string | null;
+};
+
 /**
  * Read the envelope fields. Creates the machine id on a machine that has
- * none, so a caller that only previews an event still writes the config file.
+ * none, so a caller that only previews an event still writes the config file;
+ * a preview that must not do that uses {@link peekTelemetryEnvelope}.
  */
 export async function buildTelemetryEnvelope(): Promise<TelemetryEnvelope> {
-  const machineUuid = await ensureMachineUuid();
+  return envelopeWith(await ensureMachineUuid());
+}
+
+/** The envelope with the machine id this machine already has, or null; never creates one. */
+export async function peekTelemetryEnvelope(): Promise<TelemetryEnvelopePreview> {
+  return envelopeWith(await peekMachineUuid());
+}
+
+async function envelopeWith<Id extends string | null>(
+  machineUuid: Id,
+): Promise<Omit<TelemetryEnvelope, "machine_uuid"> & { machine_uuid: Id }> {
   const resolved = await resolveProfile(process.cwd()).catch(() => undefined);
   return {
     machine_uuid: machineUuid,
@@ -520,11 +540,13 @@ export type SendOutcome = "accepted" | "rejected" | "disabled";
  * command-event flush keeps its context for the shutdown flush while the
  * feedback command reports the failure to the user.
  *
- * The opt-out is enforced here, at the one place every event passes, so a
- * caller that forgets to check it cannot send from an opted-out machine (the
- * README promises that nothing is). The per-run flush still checks earlier,
- * because it must also skip the first-run notice; for it this is a second
- * read of the same config, and the result is ignored.
+ * The opt-out is enforced here, at the one place every outside caller passes,
+ * so a caller that forgets to check it cannot send from an opted-out machine
+ * (the README promises that nothing is), and nothing a caller passes can skip
+ * the check. The one exception is inside this module: the per-run flush reads
+ * the status itself (it must, to decide about the first-run notice) and then
+ * calls {@link postTelemetryEvent} directly, so its one-second job pays no
+ * second config read.
  *
  * Shared by the per-run `CLI_COMMAND_EXECUTED` flush and by `clerk feedback`,
  * whose `CLI_FEEDBACK` event is a second, differently named event sent by the
@@ -537,7 +559,14 @@ export async function sendTelemetryEvent(
   options: { signal: AbortSignal; ignoreInterrupt?: boolean },
 ): Promise<SendOutcome> {
   if (!(await getTelemetryStatus()).enabled) return "disabled";
+  return postTelemetryEvent(event, options);
+}
 
+/** The POST itself, with no opt-out check: only for a caller in this module that has just made one. */
+async function postTelemetryEvent(
+  event: TelemetryEvent,
+  options: { signal: AbortSignal; ignoreInterrupt?: boolean },
+): Promise<"accepted" | "rejected"> {
   const wrapped = { sdk: "clerk-cli", sdkv: CURRENT_VERSION, ...event };
   log.debug(`telemetry: event ${JSON.stringify(wrapped)}`);
 

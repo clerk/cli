@@ -274,6 +274,9 @@ describe("an unterminated quoted value runs to the end of its line", () => {
     ['DB_PASSWD="alpha beta gamma', `DB_PASSWD=${REDACTED}`],
     ["DB_PASSWD='alpha beta gamma", `DB_PASSWD=${REDACTED}`],
     ['DB_PASSWD="alpha beta\nNEXT=1', `DB_PASSWD=${REDACTED}\nNEXT=1`],
+    // An escaped quote inside the value is not the end of it.
+    ['DB_PASSWD="alpha\\" beta gamma', `DB_PASSWD=${REDACTED}`],
+    ['{"apiToken":"alpha\\" beta', `{"apiToken":${REDACTED}`],
   ])("%s → %s", (input, expected) => {
     expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
@@ -286,6 +289,9 @@ describe("URL credentials", () => {
       "alice:hunter2",
       "db.example.com:5432/app",
     ],
+    // An empty username is still a credential.
+    ["redis://:s3cr3tPass@10.0.0.5:6379", ":s3cr3tPass", "10.0.0.5:6379"],
+    ["redis://:s3cr3tPass@localhost:6379", ":s3cr3tPass", "localhost:6379"],
     // A raw connection string whose password holds `/` or `@` is still taken whole.
     ["postgres://u:pa/ss@db.example.com/app", "pa/ss", "db.example.com/app"],
     ["postgres://u:p@ss@localhost:5432/app", "p@ss", "localhost:5432/app"],
@@ -424,6 +430,15 @@ describe("known limitations", () => {
       redactions: 1,
     });
   });
+
+  // The upstream key-value pass replaces the whole pair for the names it
+  // knows, so the variable name goes with the value. Not a leak.
+  test("a shell export of an upstream-known name loses the name too", () => {
+    expect(redact("export TOKEN=plain_value_1")).toEqual({
+      text: `export ${REDACTED}`,
+      redactions: 1,
+    });
+  });
 });
 
 // Two patterns were quadratic in the size of a pasted blob (the named pass on
@@ -519,5 +534,88 @@ describe("redactAndCap", () => {
     const { text, redactions } = capped("x".repeat(CAP + REDACTION_MARGIN) + " sk_test_abc123");
     expect(redactions).toBe(0);
     expect(text).toBe("x".repeat(CAP));
+  });
+
+  // Earlier redactions can shrink the text by more than the margin, which
+  // slides whatever straddled the pre-cut boundary (a token cut in half, too
+  // short to match its pattern) inside the cap. Fixtures are built at runtime.
+  test("a token the pre-cut splits never reaches the output, even when earlier redactions pull it inside the cap", () => {
+    const key = ["sk_test_", "a".repeat(92)].join("");
+    const token = ["ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"].join("");
+    const keys = Array.from({ length: 100 }, () => key).join(" ");
+    const filler = "x".repeat(CAP + REDACTION_MARGIN - keys.length - 2 - 14);
+    const input = `${keys} ${filler} ${token} tail`;
+    // The boundary falls 14 characters into the token.
+    expect(input.slice(CAP + REDACTION_MARGIN - 14, CAP + REDACTION_MARGIN)).toBe(
+      token.slice(0, 14),
+    );
+    const { text } = capped(input);
+    expect(text).not.toContain("ghp_");
+    expect(text).not.toContain("ABCDEFGHIJ");
+    expect(text.length).toBeLessThanOrEqual(CAP);
+  });
+
+  // The cap is in UTF-16 code units; a character outside the BMP is two of
+  // them, and half of one is not text.
+  test("the cut never splits a surrogate pair", () => {
+    const { text } = capped(`${"x".repeat(CAP - 1)}😀 tail`);
+    expect(text.isWellFormed()).toBe(true);
+    expect(text).toBe("x".repeat(CAP - 1));
+  });
+
+  // The pre-cut lands inside a quoted value that contains an escaped quote;
+  // what is left must still run to the end of its line.
+  test("a quoted value with an escaped quote that the pre-cut splits is still fully redacted", () => {
+    const padding = "x".repeat(CAP - 21);
+    const input = `${padding} DB_PASSWD="al\\"pha${"s".repeat(REDACTION_MARGIN + 100)}" tail`;
+    expect(capped(input)).toEqual({ text: `${padding} DB_PASSWD=${REDACTED}`, redactions: 1 });
+  });
+});
+
+// `--name value` and `--name=value` where the flag name contains a
+// secret-looking word: the value goes, the flag stays. A value cannot itself
+// be a flag, so `--token --other` is left alone.
+describe("flags with a secret-looking name", () => {
+  test.each([
+    [
+      "clerk users list --password Hunter2Secret! --limit 5",
+      `clerk users list --password ${REDACTED} --limit 5`,
+    ],
+    ["--token c_Ab12Cd34Ef", `--token ${REDACTED}`],
+    ["--api-key plain_value_999 next", `--api-key ${REDACTED} next`],
+    // `=` form with a name upstream also knows: the upstream key-value pass
+    // then takes `password=[REDACTED]` whole, as it does for any `password=`.
+    ["--db-password=plain_value_888 next", `--db-${REDACTED} next`],
+    ["--db-encryption-key=plain_value_888 next", `--db-encryption-key=${REDACTED} next`],
+    ['--auth-token "quoted value" next', `--auth-token ${REDACTED} next`],
+    ["--encryption-key plain_value_777", `--encryption-key ${REDACTED}`],
+    // Any name containing TOKEN, as for assignments.
+    ["--max-tokens 4096", `--max-tokens ${REDACTED}`],
+    ['curl --authorization "token abc123def456" x', `curl --authorization ${REDACTED} x`],
+    ["--authorization token_abc123def456", `--authorization ${REDACTED}`],
+  ])("%s → %s", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+
+  test.each([["--token --other"], ["--author alice"], ["--authorize now"]])(
+    "%s is left alone",
+    (input) => {
+      expect(redact(input)).toEqual({ text: input, redactions: 0 });
+    },
+  );
+});
+
+// JSON pasted inside a string has its quotes escaped (`{\"password\":\"x\"}`).
+describe("escaped JSON inside a string", () => {
+  test.each([
+    [
+      '{\\"password\\":\\"hunter2xyz\\",\\"user\\":\\"a\\"}',
+      `{\\"password\\":${REDACTED},\\"user\\":\\"a\\"}`,
+    ],
+    ['{\\"apiToken\\":\\"plain_value_123\\"}', `{\\"apiToken\\":${REDACTED}}`],
+    // Unterminated, as a truncated log leaves it.
+    ['log: {\\"password\\":\\"hunter2xyz', `log: {\\"password\\":${REDACTED}`],
+  ])("%s → %s", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
 });

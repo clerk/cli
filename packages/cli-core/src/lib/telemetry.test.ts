@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from "./config.ts";
+import * as config from "./config.ts";
 import {
   declareSoftExitError,
   declareSoftExitOutcome,
@@ -884,5 +885,54 @@ describe("sendTelemetryEvent", () => {
     await optOut();
     expect(await send()).toBe("disabled");
     expect(calls).toBe(0);
+  });
+});
+
+// The per-run flush already read the status before it decided to send; it
+// hands that in so the 1-second flush pays no second config read. A caller
+// that passes nothing gets the read here.
+// The exported sender always reads the opt-out itself: no caller can hand it
+// a status and skip the check. The per-run flush avoids a second read by
+// calling the module-internal post step after its own check.
+describe("sendTelemetryEvent always reads the opt-out itself", () => {
+  const originalFetch = globalThis.fetch;
+  beforeEach(() => {
+    delete process.env.CLERK_TELEMETRY_DISABLED;
+    delete process.env.DO_NOT_TRACK;
+    process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+    globalThis.fetch = (async () => new Response("{}")) as unknown as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    delete process.env.CLERK_TELEMETRY_URL;
+  });
+
+  const signal = () => new AbortController().signal;
+
+  test("reads once per call, whatever extra options a caller passes", async () => {
+    await sendTelemetryEvent({ event: "X", payload: {} }, { signal: signal() }); // warms the User-Agent cache
+    const reads = spyOn(config, "getTelemetryDisabled");
+    try {
+      const smuggled = { signal: signal(), telemetryStatus: { enabled: true } } as unknown as {
+        signal: AbortSignal;
+      };
+      expect(await sendTelemetryEvent({ event: "X", payload: {} }, smuggled)).toBe("accepted");
+      expect(reads).toHaveBeenCalledTimes(1);
+    } finally {
+      reads.mockRestore();
+    }
+  });
+
+  test("the per-run flush reads the opt-out once", async () => {
+    await markTelemetryNoticeShown();
+    await sendTelemetryEvent({ event: "X", payload: {} }, { signal: signal() }); // warms the User-Agent cache
+    const reads = spyOn(config, "getTelemetryDisabled");
+    try {
+      startCommandTelemetry(fakeTelemetryCommand("list"));
+      await finalizeAndSendTelemetry({ outcome: "success", exitCode: 0 });
+      expect(reads).toHaveBeenCalledTimes(1);
+    } finally {
+      reads.mockRestore();
+    }
   });
 });

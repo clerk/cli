@@ -16,7 +16,9 @@
  * The CLI additions cover what the upstream set misses for text a local tool
  * sees: `ak_` Platform API keys, `NAME=value` pairs whose name merely
  * *contains* a secret-looking word (the upstream pattern needs the word to
- * start at a word boundary, so `CLERK_SECRET_KEY=` never matches it),
+ * start at a word boundary, so `CLERK_SECRET_KEY=` never matches it), the
+ * same names as command-line flags (`--password x`), escaped JSON inside a
+ * string,
  * credentials inside URLs, an unterminated private-key block, `Authorization`
  * headers with any scheme, home-directory paths (which name the person), and
  * email addresses.
@@ -141,9 +143,19 @@ const QUOTED_VALUE = String.raw`"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'`;
  * An opening quote with no closing quote before the end of its line: a
  * truncated log, or a value the pre-cut in {@link redactAndCap} split. It runs
  * to the end of the line, because falling through to the unquoted stop rule
- * would send everything after the first comma or space of the secret.
+ * would send everything after the first comma or space of the secret. An
+ * escaped quote inside it (`\"`) is part of the value, not its end.
  */
-const OPEN_QUOTED_VALUE = String.raw`"[^"\r\n]*(?![^\r\n])|'[^'\r\n]*(?![^\r\n])`;
+const OPEN_QUOTED_VALUE = String.raw`"(?:\\.|[^"\\\r\n])*\\?(?![^\r\n])|'(?:\\.|[^'\\\r\n])*\\?(?![^\r\n])`;
+/**
+ * JSON pasted inside a string arrives with its quotes escaped:
+ * `{\"password\":\"x\"}`. The string ends at the next `\"`, and a bare `"`
+ * cannot occur inside it. Closed and unterminated forms.
+ */
+const ESCAPED_QUOTED_VALUE = String.raw`\\"(?:[^"\\]|\\[^"])*\\"|\\'(?:[^'\\]|\\[^'])*\\'`;
+const ESCAPED_OPEN_QUOTED_VALUE = String.raw`\\"(?:[^"\\\r\n]|\\[^"\r\n])*(?![^\r\n])|\\'(?:[^'\\\r\n]|\\[^'\r\n])*(?![^\r\n])`;
+/** Every quoted-value shape, most specific first, then the unquoted stop rule a caller appends. */
+const ANY_QUOTED_VALUE = `${ESCAPED_QUOTED_VALUE}|${ESCAPED_OPEN_QUOTED_VALUE}|${QUOTED_VALUE}|${OPEN_QUOTED_VALUE}`;
 
 /**
  * `NAME=value` and `"name": value` where the name contains a secret-looking
@@ -157,8 +169,9 @@ const OPEN_QUOTED_VALUE = String.raw`"[^"\r\n]*(?![^\r\n])|'[^'\r\n]*(?![^\r\n])
  *   whitespace, because `.env` values contain commas and a stop there would
  *   send the rest of the password.
  *
- * In both shapes a closed quoted value is tried first, then an open one (to
- * the end of the line), then the unquoted rule.
+ * In both shapes the quoted-value forms are tried first (escaped-JSON and
+ * plain, closed and open to the end of the line), then the unquoted rule. A
+ * quoted name may itself carry escaped quotes (`\"password\"`).
  *
  * The leading lookbehind (not `\b`) means a match can only start at the
  * beginning of a run of name characters. With `\b` the engine retried at every
@@ -169,7 +182,19 @@ const OPEN_QUOTED_VALUE = String.raw`"[^"\r\n]*(?![^\r\n])|'[^'\r\n]*(?![^\r\n])
  * 6 separator, 7 value.
  */
 const NAMED_SECRET_ASSIGNMENT = new RegExp(
-  String.raw`(?<![A-Za-z0-9_.-])(?:(["'])(${SECRET_NAME})\1(\s*[:=]\s*)(${QUOTED_VALUE}|${OPEN_QUOTED_VALUE}|[^\s,;}]+)|(${SECRET_NAME})(\s*[:=]\s*)(${QUOTED_VALUE}|${OPEN_QUOTED_VALUE}|\S+))`,
+  String.raw`(?<![A-Za-z0-9_.-])(?:(\\?["'])(${SECRET_NAME})\1(\s*[:=]\s*)(${ANY_QUOTED_VALUE}|[^\s,;}]+)|(${SECRET_NAME})(\s*[:=]\s*)(${ANY_QUOTED_VALUE}|\S+))`,
+  "gi",
+);
+
+/**
+ * `--name value` and `--name=value` on a pasted command line, where the flag
+ * name contains a secret-looking word (`--password x`, `--db-password=x`,
+ * `--auth-token "x"`). Only the value is replaced. A value cannot itself be a
+ * flag, so `--token --other` is left alone. Groups: 1 flag, 2 separator,
+ * 3 value.
+ */
+const SECRET_FLAG = new RegExp(
+  String.raw`(?<![\w-])(--[a-z0-9-]*(?:password|passwd|secret|token|api-?key|private-?key|encryption-?key|authorization|(?<![a-z0-9])auth(?![a-z0-9]))[a-z0-9-]*)(=|[ \t]+)(?!-)(${ANY_QUOTED_VALUE}|\S+)`,
   "gi",
 );
 
@@ -192,7 +217,8 @@ const AUTHORIZATION_HEADER = new RegExp(
  * dotted runs.
  */
 const URL_CREDENTIAL = new RegExp(
-  String.raw`(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)[^\s@/:]+:\S{0,${URL_PASSWORD_MAX_LENGTH}}@`,
+  // The username may be empty (`redis://:password@host`).
+  String.raw`(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)[^\s@/:]*:\S{0,${URL_PASSWORD_MAX_LENGTH}}@`,
   "gi",
 );
 
@@ -256,7 +282,7 @@ function stripQuotes(value: string): string {
  * Pass order (see the module comment for the deliberate departures from
  * "upstream first"): the Bearer/Basic pass, so the key-value pattern cannot
  * take the scheme word as the value; the private-key-block pass; the
- * Authorization-header pass; the named-assignment pass; the remaining
+ * Authorization-header pass; the secret-flag pass; the named-assignment pass; the remaining
  * upstream patterns; URL credentials and
  * `ak_` keys; home directories (the literal `homedir` before the generic
  * shapes, since the sender's text may name another user's home or the CLI may
@@ -295,6 +321,12 @@ export function redactText(text: string, options: { homedir?: string } = {}): Re
     if (stripQuotes(value) === REDACTED) return match;
     redactions += 1;
     return `${name}${REDACTED}`;
+  });
+
+  out = out.replace(SECRET_FLAG, (match, flag: string, separator: string, value: string) => {
+    if (stripQuotes(value) === REDACTED) return match;
+    redactions += 1;
+    return `${flag}${separator}${REDACTED}`;
   });
 
   out = out.replace(
@@ -349,7 +381,9 @@ export function redactText(text: string, options: { homedir?: string } = {}): Re
  * to `cap`. The first cut bounds the work whatever the input size, so a
  * pattern that turns out to be slow on large input cannot stall the command.
  * It is safe because the missing-END pass catches a key block the first cut
- * splits. Within the first
+ * splits, and because the scrub is repeated with a larger bound whenever
+ * earlier redactions shrank the text enough to pull the cut's edge inside the
+ * cap (see the loop below). Within the first
  * `cap` characters nothing is ever cut before scrubbing: a secret that starts
  * inside the cap and runs past it is still matched whole (it is shorter than
  * the margin) or, if it is a key block the first cut split, taken to the end
@@ -367,10 +401,24 @@ export function redactAndCap(
   cap: number,
   options: { homedir?: string } = {},
 ): Redaction {
-  const bounded =
-    text.length > cap + REDACTION_MARGIN ? text.slice(0, cap + REDACTION_MARGIN) : text;
-  const scrubbed = redactText(bounded, options);
-  return { text: cutKeepingMarkersWhole(scrubbed.text, cap), redactions: scrubbed.redactions };
+  // The first cut can split a secret at the bound, leaving a fragment too
+  // short to match its pattern. That fragment is safe only while it is cut
+  // away again by the final cut, which holds when the scrubbed text is still
+  // at least `cap + margin` long. Earlier redactions can shrink the text by
+  // more than the margin and pull the fragment inside the cap; when that
+  // happens, scrub again with a doubled bound until the fragment is beyond
+  // the cap or the whole input has been read. The bound doubles, so the
+  // total work stays within a small multiple of the input size.
+  for (let bound = cap + REDACTION_MARGIN; ; bound *= 2) {
+    const wasCut = text.length > bound;
+    const scrubbed = redactText(wasCut ? text.slice(0, bound) : text, options);
+    if (!wasCut || scrubbed.text.length >= cap + REDACTION_MARGIN) {
+      return {
+        text: cutKeepingMarkersWhole(scrubbed.text, cap),
+        redactions: scrubbed.redactions,
+      };
+    }
+  }
 }
 
 const MARKERS = [REDACTED, EMAIL_MARKER];
@@ -382,5 +430,12 @@ function cutKeepingMarkersWhole(text: string, cap: number): string {
     const start = text.lastIndexOf(marker, cap - 1);
     if (start !== -1 && start + marker.length > cap) end = Math.min(end, start);
   }
+  // The cap counts UTF-16 code units; never leave the first half of a
+  // surrogate pair (half an emoji) as the last unit.
+  if (end > 0 && isHighSurrogate(text.charCodeAt(end - 1))) end -= 1;
   return text.slice(0, end);
+}
+
+function isHighSurrogate(codeUnit: number): boolean {
+  return codeUnit >= 0xd800 && codeUnit <= 0xdbff;
 }

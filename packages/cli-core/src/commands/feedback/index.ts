@@ -39,7 +39,7 @@ export function registerFeedback(program: Program): void {
     .option("--suggestion <text>", "What would have helped")
     .option(
       "--dry-run",
-      "Print exactly what would be sent and send no report (the usual usage event for this command still applies; may create the local machine id)",
+      "Print exactly what would be sent and whether a real run would send it now, and send no report (the usual usage event for this command still applies; may create the local machine id unless telemetry is off)",
     )
     .option("--yes", "Skip the confirmation prompt")
     .setExamples(FEEDBACK_EXAMPLES)

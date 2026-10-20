@@ -6,12 +6,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProgram } from "../../cli-program.ts";
+import * as config from "../../lib/config.ts";
 import {
   _setConfigDir,
+  ensureMachineUuid,
   markTelemetryNoticeShown,
   readConfig,
   setTelemetryDisabled,
@@ -25,7 +27,7 @@ import { useCaptureLog } from "../../test/lib/stubs.ts";
 import {
   FEEDBACK_EVENT,
   feedback,
-  resolveCommandPath,
+  resolveCommand,
   type CommandTree,
   type FeedbackOptions,
   type FeedbackResult,
@@ -120,7 +122,7 @@ async function recordSends(count: number): Promise<void> {
   }
 }
 
-describe("resolveCommandPath", () => {
+describe("resolveCommand", () => {
   // The result must be a name usage events record (`commandPathOf` in
   // telemetry.ts): the command whose action ran. Verified against the real
   // tree: `deploy` and `open` are the only groups with a default child;
@@ -165,7 +167,7 @@ describe("resolveCommandPath", () => {
     ["", null],
     ["clerk", null],
   ])("%j → %j", (input, expected) => {
-    expect(resolveCommandPath(program, input)).toBe(expected);
+    expect(resolveCommand(program, input).path).toBe(expected);
   });
 
   test("a bare group's usage error names its subcommands", async () => {
@@ -194,7 +196,7 @@ describe("resolveCommandPath", () => {
       commands: [group],
       parent: null,
     };
-    expect(resolveCommandPath(root, "users ls")).toBe("users list");
+    expect(resolveCommand(root, "users ls").path).toBe("users list");
   });
 });
 
@@ -437,23 +439,179 @@ describe("every free-text field is scrubbed before the POST", () => {
   });
 });
 
+// Agent-mode dry-run output: the report a real run would send, plus whether a
+// real run would send it now and, if not, the same reason a real run would
+// print. Runs before the gates on purpose (it is how someone sees what would
+// be sent), but never creates a machine id on an opted-out machine.
 describe("--dry-run", () => {
-  test("prints the exact payload with a report id and sends nothing, even under opt-out", async () => {
-    process.env.CLERK_TELEMETRY_DISABLED = "1";
+  type DryRun = {
+    dry_run: true;
+    would_send: boolean;
+    reason?: string;
+    report: Record<string, unknown>;
+  };
+  const dryRun = async (): Promise<DryRun> => {
     await feedback({ ...COMPLETE, dryRun: true }, program);
-    const payload = JSON.parse(captured.out) as Record<string, unknown>;
-    expect(payload.report_id).toMatch(/^[0-9a-f-]{36}$/);
-    expect(payload.goal).toBe(COMPLETE.goal);
+    return JSON.parse(captured.out) as DryRun;
+  };
+
+  test("when telemetry is on: would_send true, the report with its id, and nothing posted", async () => {
+    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
+    const out = await dryRun();
+    expect(out.dry_run).toBe(true);
+    expect(out.would_send).toBe(true);
+    expect(out.reason).toBeUndefined();
+    expect(out.report.report_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(out.report.goal).toBe(COMPLETE.goal);
+    expect(out.report.machine_uuid).toMatch(/^[0-9a-f-]{36}$/);
     expect(posted).toHaveLength(0);
   });
 
   test("shows no first-run notice and touches no cap file, but may create the machine id", async () => {
     process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
-    await feedback({ ...COMPLETE, dryRun: true }, program);
+    await dryRun();
     expect(captured.err).not.toContain("usage telemetry");
     expect(await Bun.file(join(configDir, "cache", "feedback-sends.json")).exists()).toBe(false);
     expect((await readConfig()).machineUuid).toMatch(/^[0-9a-f-]{36}$/);
     expect((await readConfig()).telemetryNoticeShown).toBeUndefined();
+  });
+
+  test("under an opt-out: would_send false with the reason, a null machine id, and no id created", async () => {
+    process.env.CLERK_TELEMETRY_DISABLED = "1";
+    const out = await dryRun();
+    expect(out.would_send).toBe(false);
+    expect(out.reason).toBe("telemetry_disabled");
+    expect(out.report.report_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(out.report.machine_uuid).toBeNull();
+    expect((await readConfig()).machineUuid).toBeUndefined();
+    expect(posted).toHaveLength(0);
+  });
+
+  test("under an opt-out, an existing machine id is shown rather than null", async () => {
+    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
+    await feedback(COMPLETE, program); // creates the id
+    const existing = (await readConfig()).machineUuid;
+    process.env.CLERK_TELEMETRY_DISABLED = "1";
+    captured.clear();
+    const out = await dryRun();
+    expect(out.report.machine_uuid).toBe(existing);
+  });
+
+  test("when capped: would_send false with rate_limited", async () => {
+    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
+    await recordSends(FEEDBACK_DAILY_LIMIT);
+    const out = await dryRun();
+    expect(out.would_send).toBe(false);
+    expect(out.reason).toBe("rate_limited");
+  });
+
+  // `would_send` must be false in exactly the states where a real run would
+  // return `send_failed`: the machine id cannot be created, or the first-run
+  // notice could not be recorded.
+  test("reports send_failed when the machine id cannot be created (read-only config dir)", async () => {
+    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
+    await chmod(configDir, 0o555);
+    try {
+      const out = await dryRun();
+      expect(out.would_send).toBe(false);
+      expect(out.reason).toBe("send_failed");
+      expect(out.report.machine_uuid).toBeNull();
+    } finally {
+      await chmod(configDir, 0o755);
+    }
+  });
+
+  // The id exists, so building the envelope writes nothing; the config file
+  // itself is read-only, so marking the notice would fail (a read-only
+  // directory alone does not stop rewriting a file that already exists).
+  test("reports send_failed when the notice is still owed and the config file cannot be written", async () => {
+    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
+    await ensureMachineUuid();
+    const configFile = join(configDir, "config.json");
+    await chmod(configFile, 0o444);
+    try {
+      const out = await dryRun();
+      expect(out.would_send).toBe(false);
+      expect(out.reason).toBe("send_failed");
+      expect(out.report.machine_uuid).toMatch(/^[0-9a-f-]{36}$/);
+    } finally {
+      await chmod(configFile, 0o644);
+    }
+  });
+
+  test("would_send stays true in CI with an unwritable config file, where no notice is ever attempted", async () => {
+    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
+    process.env.CI = "true";
+    await ensureMachineUuid();
+    const configFile = join(configDir, "config.json");
+    await chmod(configFile, 0o444);
+    try {
+      expect((await dryRun()).would_send).toBe(true);
+    } finally {
+      await chmod(configFile, 0o644);
+    }
+  });
+});
+
+// Config failures must never escape as an exit-1 error: the per-run flush
+// swallows them, and the feedback command reports `send_failed` instead.
+describe("a config write failure", () => {
+  test("creating the machine id in a read-only config dir yields send_failed, exit 0 semantics", async () => {
+    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
+    process.env.CI = "true";
+    await chmod(configDir, 0o555);
+    try {
+      expect(await run(COMPLETE)).toEqual({
+        sent: false,
+        reason: "send_failed",
+        fallback: GITHUB_ISSUES_URL,
+      });
+    } finally {
+      await chmod(configDir, 0o755);
+    }
+    expect(posted).toHaveLength(0);
+  });
+
+  test("marking the first-run notice shown throwing yields send_failed with the report id and no POST", async () => {
+    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
+    const mark = spyOn(config, "markTelemetryNoticeShown").mockImplementation(async () => {
+      throw new Error("EACCES: permission denied");
+    });
+    try {
+      const result = await run(COMPLETE);
+      // No POST was attempted, so no id: the README promises the id only when one was.
+      expect(result).toEqual({ sent: false, reason: "send_failed", fallback: GITHUB_ISSUES_URL });
+    } finally {
+      mark.mockRestore();
+    }
+    expect(posted).toHaveLength(0);
+  });
+});
+
+describe("the human-mode rate-limit message says which limit applied", () => {
+  const originalMode = process.env.CLERK_MODE;
+  beforeEach(() => {
+    process.env.CLERK_MODE = "human";
+  });
+  afterEach(() => {
+    if (originalMode === undefined) delete process.env.CLERK_MODE;
+    else process.env.CLERK_MODE = originalMode;
+  });
+
+  test("the daily cap names the limit and the window", async () => {
+    await readyToSend();
+    await recordSends(FEEDBACK_DAILY_LIMIT);
+    await feedback({ ...COMPLETE, yes: true }, program);
+    expect(captured.err).toContain(`${FEEDBACK_DAILY_LIMIT} reports in 24 hours`);
+    expect(captured.err).not.toContain("same command and error code");
+  });
+
+  test("the repeat check names the command and code", async () => {
+    await readyToSend();
+    await recordFeedbackSend({ sentAt: Date.now() - 1000, command: "users list", errorCode: "x" });
+    await feedback({ ...COMPLETE, command: "users list", errorCode: "x", yes: true }, program);
+    expect(captured.err).toContain("same command and error code");
+    expect(captured.err).toContain("24 hours");
   });
 });
 
