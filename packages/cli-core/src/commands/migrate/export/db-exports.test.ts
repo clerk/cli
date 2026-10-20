@@ -238,10 +238,16 @@ describe("authjs export", () => {
 
   // Prisma capitalizes the table, Drizzle does not, and Auth.js has no single
   // schema — so the export tries rather than making the user guess.
-  test.each([["User"], ["user"], ["users"]])("finds the %s table", async (table) => {
-    const { rows } = await withClient(authJsDb(table), fetchAuthJsUsers);
-    expect(rows).toHaveLength(2);
-  });
+  // The table is named as it is stored: SQLite matches `User` to a Drizzle
+  // `user` table, which then read as "Read 2 rows from User."
+  test.each([["User"], ["user"], ["users"]])(
+    "finds the %s table, by its own name",
+    async (table) => {
+      const { rows, table: found } = await withClient(authJsDb(table), fetchAuthJsUsers);
+      expect(rows).toHaveLength(2);
+      expect(found).toBe(table);
+    },
+  );
 
   // SQLite reads an unqualified "emailVerified" that matches no column as the
   // string "emailVerified", which would mark every email verified.
