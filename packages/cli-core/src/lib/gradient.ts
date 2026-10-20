@@ -1,3 +1,4 @@
+import { colorDisabled } from "./color.ts";
 import { log } from "./log.ts";
 
 export function hslToRgb(h: number, s: number, l: number): [number, number, number] {
@@ -79,13 +80,6 @@ export function shineText(text: string, options: ShineOptions = {}): string {
 }
 
 export const isInteractive = () => !!process.stderr.isTTY && !process.env.CI;
-
-const forceColor = () => {
-  const v = process.env.FORCE_COLOR;
-  return v != null && v !== "0" && v !== "false" && v !== "";
-};
-
-export const colorDisabled = () => "NO_COLOR" in process.env && !forceColor();
 
 export const supportsTruecolor = () => /truecolor|24bit/i.test(process.env.COLORTERM ?? "");
 
