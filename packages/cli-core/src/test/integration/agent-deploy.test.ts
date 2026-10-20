@@ -525,7 +525,9 @@ describe("when the read after the instance exists fails", () => {
         message:
           `The production instance ${verb}, but its status couldn't be read yet. ` +
           "Run `clerk deploy status` to check it." +
-          (verb === "exists" ? " If the production instance was deleted, run `clerk link`." : ""),
+          (verb === "exists"
+            ? " If the production instance was deleted, `clerk deploy status` reports `not_started` once Clerk stops listing it; then run `clerk deploy --domain`."
+            : ""),
       });
       expect(result.stdout).toBe("");
       expect(await savedProductionInstance()).toBe("ins_prod");
@@ -550,7 +552,7 @@ describe("clerk deploy status", () => {
       message:
         "The production instance exists, but Clerk couldn't read its domain status yet. " +
         "Run `clerk deploy status` again shortly. " +
-        "If the production instance was deleted, run `clerk link`.",
+        "If the production instance was deleted, `clerk deploy status` reports `not_started` once Clerk stops listing it; then run `clerk deploy --domain`.",
     });
     expect(result.stdout).toBe("");
   });

@@ -280,9 +280,12 @@ export type DomainCheckOptions = { justCreated?: boolean };
 
 /**
  * Every `deploy_instance_unresolved` error for a 404 on the production
- * domain's status. That 404 also follows a production instance deleted since,
- * where waiting never helps, so the message says what to do then, unless this
- * run just created the instance.
+ * domain's status. That 404 also follows a production instance deleted since.
+ * `clerk link` can't help there (an already-linked profile is left as it is,
+ * and deploy state comes from Clerk's list), so the message says what will:
+ * once Clerk stops listing the instance, status reports `not_started` and
+ * `clerk deploy --domain` creates a new one. Left out when this run just
+ * created the instance, which can't be the deleted one.
  */
 export function domainStatusNotFoundError(
   message: string,
@@ -291,7 +294,8 @@ export function domainStatusNotFoundError(
   return new CliError(
     justCreated
       ? message
-      : `${message} If the production instance was deleted, run \`clerk link\`.`,
+      : `${message} If the production instance was deleted, \`clerk deploy status\` reports ` +
+          "`not_started` once Clerk stops listing it; then run `clerk deploy --domain`.",
     { code: ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED },
   );
 }

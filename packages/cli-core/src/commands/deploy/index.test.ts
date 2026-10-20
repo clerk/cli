@@ -896,7 +896,7 @@ describe("deploy", () => {
 
       expect(error).toBeInstanceOf(CliError);
       expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
-      // Just created by this run, so not deleted: no `clerk link` pointer.
+      // Just created by this run, so not deleted: no deleted-instance hint.
       expect((error as CliError).message).toBe(
         "The production instance was created, but its status couldn't be read yet. " +
           "Run `clerk deploy status` to check it.",
@@ -916,12 +916,12 @@ describe("deploy", () => {
 
       expect(error).toBeInstanceOf(CliError);
       expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
-      // A 404 there also follows a production instance deleted since, which
-      // waiting never fixes.
+      // A 404 there also follows a production instance deleted since, so the
+      // message says how that case resolves.
       expect((error as CliError).message).toBe(
         "The production instance exists, but its status couldn't be read yet. " +
           "Run `clerk deploy status` to check it. " +
-          "If the production instance was deleted, run `clerk link`.",
+          "If the production instance was deleted, `clerk deploy status` reports `not_started` once Clerk stops listing it; then run `clerk deploy --domain`.",
       );
       expect(mockCreateProductionInstance).not.toHaveBeenCalled();
       expect(captured.out).toBe("");
@@ -1107,7 +1107,7 @@ describe("deploy", () => {
     });
 
     // A 404 on the DNS check after this run's own create can't mean the
-    // instance was deleted, so the message leaves out the `clerk link` hint;
+    // instance was deleted, so the message leaves out the deleted-instance hint;
     // after a resume it keeps it.
     const dnsCheckNotFound = () =>
       new PlapiError(
@@ -1119,7 +1119,7 @@ describe("deploy", () => {
       "The production instance exists, but Clerk couldn't read its domain status yet. " +
       "Run `clerk deploy status` again shortly.";
 
-    test("a DNS-check 404 after its own create leaves out the clerk link hint", async () => {
+    test("a DNS-check 404 after its own create leaves out the deleted-instance hint", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockFetchInstanceConfig.mockResolvedValue({}); // no OAuth setup, so DNS comes next
@@ -1133,7 +1133,7 @@ describe("deploy", () => {
       expect((error as CliError).message).toBe(domainStatusUnreadable);
     });
 
-    test("a DNS-check 404 on a resumed deploy keeps the clerk link hint", async () => {
+    test("a DNS-check 404 on a resumed deploy keeps the deleted-instance hint", async () => {
       await linkedProject({
         instances: { development: "ins_dev_123", production: "ins_prod_mock" },
       });
@@ -1149,7 +1149,7 @@ describe("deploy", () => {
       expect(mockCreateProductionInstance).not.toHaveBeenCalled();
       expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
       expect((error as CliError).message).toBe(
-        `${domainStatusUnreadable} If the production instance was deleted, run \`clerk link\`.`,
+        `${domainStatusUnreadable} If the production instance was deleted, \`clerk deploy status\` reports \`not_started\` once Clerk stops listing it; then run \`clerk deploy --domain\`.`,
       );
     });
 
