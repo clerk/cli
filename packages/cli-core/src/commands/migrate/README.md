@@ -81,8 +81,9 @@ In a terminal with none of these, `import` signs in (if needed) and runs
 `clerk link` claims an app `clerk init` created under its own rule; with
 `--app`, nothing is linked, so login's claim stays on. If `clerk link` opens a
 claim page instead of linking (the folder's app was created by a Clerk SDK and
-isn't in the account yet), `import` stops with exit 1 and imports nothing:
-claim the app, then run the import again.
+isn't in the account yet), `import` stops with exit 1 and imports nothing.
+The message says to claim the app and then run the same `clerk migrate import`
+command again; it doesn't echo the command's arguments, which can hold a key.
 
 With a key from `--secret-key` or `CLERK_SECRET_KEY`, the key alone picks the
 instance, so `import` refuses (exit 2) an `--instance` that names a different

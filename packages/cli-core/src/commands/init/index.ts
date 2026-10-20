@@ -870,7 +870,10 @@ export function registerInit(program: Program): void {
       "--prebuilt-auth-ui",
       "Add ClerkKitUI's prebuilt sign-in screen to an unchanged SwiftUI starter",
     )
-    .option("-y, --yes", "Skip confirmation prompts")
+    .option(
+      "-y, --yes",
+      "Skip init's own confirmation prompts. Choosing or claiming an app still asks.",
+    )
     .option("--no-skills", "Skip the optional agent skills install prompt")
     .setExamples([
       { command: "clerk init", description: "Auto-detect framework and set up Clerk" },

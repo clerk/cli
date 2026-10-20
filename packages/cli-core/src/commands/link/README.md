@@ -27,15 +27,19 @@ deterministic paths:
 - in a folder with an init token (below), it claims that app silently and links it
 - in an SDK-only folder (below), it links the account's app whose key the SDK's file holds, or stops with `usage_error` (exit 2) saying to run `clerk open`, which prints the claim link for a person
 - otherwise, bare `clerk link` tries silent autolink on the key the folder's app loads
-- if no app can be determined, the command exits with a usage error led by "Cannot select an application in agent mode." telling the caller to pass `--app`; when the CLI couldn't tell which key the app loads, the error says why
+- if no app can be determined, the command exits with a usage error led by "Cannot select an application in agent mode." telling the caller to pass `--app`; when the CLI couldn't tell which key the app loads, couldn't list the account's apps, or found the folder's secret keys disagreeing, the error says why
+- if the folder's key belongs to an app with no development instance, it stops with `instance_not_found`
 
 `clerk init` calls `link` with an internal `createIfMissing` option (the
 project name) so an authenticated agent run that finds no autolink match auto-
 creates a fresh app named after the project instead of erroring. The CLI does
 not expose `createIfMissing` as a flag — it is library-only and reserved for
-`clerk init`'s flow. It never creates an app when the folder had an init token
-(the claim check may just have left its keys alone) or when the CLI couldn't
-tell which key the app loads: `init` would write the new app's keys over them.
+`clerk init`'s flow. It never creates an app when `init` would then write the
+new app's keys over keys that may belong to a real app: when the folder had an
+init token (the claim check may just have left its keys alone), when the CLI
+couldn't tell which key the app loads, when the app list failed, or when the
+folder's secret keys disagree. One decision function in `link()` makes this
+call for every way auto-link can fail to link.
 
 ## Flow
 
@@ -52,9 +56,11 @@ tell which key the app loads: `init` would write the new app's keys over them.
    - **Claimed but the folder left unlinked** (another app's keys, keys it couldn't read, or a failed link), **or a stale token** (the claim returns not found): `link` goes on to match the folder's own key (steps 5 onward), but never creates an app.
    - **Refused** (a workspace managed by an integration, or no organization): stops with `not_linked`, exit 1. **A temporary failure:** stops with the original error. Neither reaches the picker.
 4. **SDK-only folder: match or claim page.** When the folder's only Clerk keys are in `.clerk/.tmp/keyless.json`, which a Clerk SDK writes for an app it created for itself, `link` looks for that app in the account by the file's publishable key. The CLI can't claim it: there's no token.
-   - **The file has no publishable key, no claim URL, a claim URL that isn't https, or can't be read:** stops with `usage_error`, exit 2, in both modes, offering `clerk link --app <app_id>`. Checked before any sign-in or app list.
-   - **A match:** links it. This is also what the rerun after claiming does.
-   - **No match, person:** opens the app's claim page in the browser, says to claim it into the account the rerun will search and then run `clerk link` again, and always adds a line pointing at `clerk open --print` for a browser that opened on another screen. It never prints the URL, which carries a claim token. Exits 1 with no error line; telemetry records outcome `incomplete` with `not_linked`, so `clerk link && clerk deploy` stops there. When no browser can be opened, the message leads with "Couldn't open a browser here".
+   - **The file has no publishable key or can't be read:** stops with `usage_error`, exit 2, in both modes, offering `clerk link --app <app_id>`. Checked before any sign-in or app list.
+   - **A match:** links it, with or without a usable claim URL. This is also what the rerun after claiming does. When `init` calls `link` after a claim attempt, its every-key check runs first, since the SDK file's secret key needn't be the matched app's.
+   - **No match, and no usable claim URL** (none, or one that isn't https): stops with `usage_error`, exit 2, in both modes. An agent isn't sent to `clerk open`, which would find no link either.
+   - This step also runs after a claim that didn't link the folder: the token is gone then, so a folder whose only keys are the SDK's is SDK-only.
+   - **No match, person:** opens the app's claim page in the browser, says to claim it into the account the rerun will search and then rerun the command (`clerk link`; `clerk init` and `clerk migrate import` name themselves, the import without echoing its arguments), and always adds a line pointing at `clerk open --print` for a browser that opened on another screen. It never prints the URL, which carries a claim token. Exits 1 with no error line; telemetry records outcome `incomplete` with `not_linked`, so `clerk link && clerk deploy` stops there. When no browser can be opened, the message leads with "Couldn't open a browser here".
    - **No match, agent:** stops with `usage_error`, exit 2, saying to run `clerk open`.
    - **The app list fails:** a person gets the original error; an agent gets `usage_error`, exit 2, naming the failed list. Never the picker, which used to offer only "create a new application" after a server error.
 5. If `skipIfLinked` or in agent mode, tries silent autolink on the key the folder's app loads (detect → match → persist without prompting)
@@ -64,9 +70,10 @@ tell which key the app loads: `init` would write the new app's keys over them.
 9. If the key matches an application, suggests it: "We found \<app\>. Link to this application?"
    - If the user confirms (default), links to the detected app
    - If the user declines, falls through to the interactive picker
-   - If the CLI couldn't tell which key the app loads, it says why and goes straight to the picker
+   - If the CLI couldn't tell which key the app loads, it says why (even when the account has no apps) and goes straight to the picker
 10. If no match (or no apps exist), presents a searchable picker (type to filter by name)
-    - The picker always includes a "+ Create a new application" option pinned at the top
+    - The picker includes a "+ Create a new application" option pinned at the top, except when `init`'s key check applies (step 11) and the folder holds Clerk keys: a new app's keys couldn't match them. With no app left to choose, `init` stops with `not_linked`
+    - When `init`'s key check applies and a key line can't be read, no app could pass it, so `link` stops with `not_linked` before the picker. Files that disagree still get the picker: they may be one app's development and production keys
     - Selecting it prompts for a name and creates the app via the Platform API
     - For non-interactive/CI/agent flows, create apps from the Clerk Dashboard or via the Platform API, then pass `--app <id>`
 11. **`clerk init`'s key check:** when `init` calls `link` after a claim attempt (`onlyIfFolderKeysMatch`), the link is saved only if every Clerk key in the folder belongs to the chosen app. Otherwise nothing is saved and `link` stops with `not_linked`, exit 1, naming the key and its file: `init` writes the linked app's keys next, and the folder would otherwise point at an app it doesn't run on. "Couldn't tell" stops too.
@@ -106,7 +113,12 @@ loads its env files in.
 
 3. **Any other framework, or none detected:** all four files are read. When they hold different publishable keys, the key is undecided: the CLI can't tell which one the app loads.
 
-A framework's own variable name wins over the generic one, whatever file it's in.
+A framework's own variable name wins over the generic one, wherever each is: a
+generic `CLERK_PUBLISHABLE_KEY` exported in the shell doesn't beat
+`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in `.env.local`. Next.js and Astro never
+read the generic name (Clerk's SDK source), so for them it doesn't count at
+all; React, React Router, and TanStack Start read it as a fallback; Nuxt and
+Vue keep it as a fallback until their SDKs are checked.
 
 ### Couldn't tell
 

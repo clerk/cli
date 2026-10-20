@@ -40,7 +40,8 @@ import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
  * What happened to the command, not to the thing it acted on. `incomplete`
  * means the command did its part and the thing it acts on is not finished; it
  * is sent only by declaring it: `clerk deploy status` for an unfinished
- * deploy, and `clerk link` when it opened a claim page instead of linking. How
+ * deploy, and `clerk link`, `clerk init`, and `clerk migrate import` when
+ * `link` opened a claim page instead of linking. How
  * far a deploy got is `stage` and `components`, never `outcome`.
  */
 export type TelemetryOutcome = "success" | "error" | "abort" | "incomplete";
