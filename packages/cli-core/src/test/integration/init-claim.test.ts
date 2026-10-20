@@ -251,8 +251,78 @@ test("person, signed in, SDK-only folder whose app isn't in the account: opens t
 
   expect(result.exitCode).toBe(1);
   expect(openedUrls).toEqual(["https://dashboard.clerk.com/apps/claim?token=sdk_token"]);
+  // The person reruns init, which finishes setup, and is told so once.
+  expect(Bun.stripANSI(result.stderr)).toContain("run `clerk init` again");
+  expect(Bun.stripANSI(result.stderr)).not.toContain("run `clerk link` again");
   expect(await linkedAppId()).toBeUndefined();
   // Stopped before scaffolding and before any key write.
   expect(await read("middleware.js")).toBeUndefined();
   expect(await read(".env.local")).toBeUndefined();
+});
+
+// A claim that leaves the folder alone, or a stale token: no account app owns
+// the folder's keys, so whichever app the person picks, init links nothing and
+// writes nothing. (The picker's missing "Create" choice is checked in
+// `link-flow.test.ts`, which can see the choices.)
+test.each([
+  { token: "an init token", claim: () => Response.json(APP_A) },
+  {
+    token: "a stale init token",
+    claim: () => Response.json({ errors: [{ message: "not found" }] }, { status: 404 }),
+  },
+])(
+  "person, stored session only, $token, keys of an app not in the account: links nothing and creates nothing",
+  async ({ claim }) => {
+    await useStoredSessionOnly();
+    await writeInitToken();
+    const pasted = envFor(APP_C);
+    await Bun.write(join(h.tempDir, ".env.local"), pasted);
+    claimResponse = claim;
+    mockPrompts.confirm(true);
+    mockPrompts.search(APP_B.application_id);
+
+    const result = await clerk.raw("init", "--no-skills", "-y");
+
+    expect(result.exitCode).toBe(1);
+    expect(requests("POST", APPS_PATH)).toHaveLength(0);
+    expect(await linkedAppId()).toBeUndefined();
+    expect(await read(".env.local")).toBe(pasted);
+  },
+);
+
+test("agent, signed in, the app list failing: no new app, and the folder's keys are kept", async () => {
+  await useBothCredentials();
+  const own = envFor(APP_B);
+  await Bun.write(join(h.tempDir, ".env.local"), own);
+  http.stub(async (url, init) => {
+    const { pathname } = new URL(url);
+    if (pathname === APPS_PATH && init?.method === "POST") {
+      return Response.json(app("app_created", "my-app", "created-app.clerk.accounts.dev"));
+    }
+    if (pathname === APPS_PATH) {
+      return Response.json({ errors: [{ message: "Internal Server Error" }] }, { status: 500 });
+    }
+    return Response.json({ errors: [{ message: `unexpected ${url}` }] }, { status: 404 });
+  });
+
+  const result = await clerk.raw("--mode", "agent", "init", "--no-skills", "-y");
+
+  expect(result.exitCode).toBe(2);
+  expect(result.stderr).toContain("couldn't list your applications");
+  expect(requests("POST", APPS_PATH)).toHaveLength(0);
+  expect(await read(".env.local")).toBe(own);
+});
+
+// The case init's every-key check exists to allow.
+test("agent, signed in, a stale init token, the account app's keys: links that app and writes its keys", async () => {
+  await useBothCredentials();
+  await writeInitToken();
+  await Bun.write(join(h.tempDir, ".env.local"), envFor(APP_B));
+  claimResponse = () => Response.json({ errors: [{ message: "not found" }] }, { status: 404 });
+
+  const result = await clerk.raw("--mode", "agent", "init", "--no-skills", "-y");
+
+  expect(result.exitCode).toBe(0);
+  expect(await linkedAppId()).toBe(APP_B.application_id);
+  expect(await read(".env.local")).toContain(APP_B.instances[0]!.secret_key);
 });

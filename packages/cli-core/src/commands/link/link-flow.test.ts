@@ -17,6 +17,7 @@ import {
   useCaptureLog,
 } from "../../test/lib/stubs.ts";
 import { PlapiError, UserAbortError } from "../../lib/errors.ts";
+import * as localKeys from "../../lib/local-keys.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,11 +49,14 @@ mock.module("../../lib/token-exchange.ts", () => ({
 type InitClaim = { appName: string; claimToken: string };
 const mockReadInitClaim = mock(async (_cwd: string): Promise<InitClaim | undefined> => undefined);
 const mockAttemptAutoclaim = mock();
+const mockFolderKeysBelongTo = mock(async (..._args: unknown[]): Promise<unknown> => ({
+  verdict: "match",
+}));
 mock.module("../../lib/autoclaim.ts", () => ({
   readInitClaim: (cwd: string) => mockReadInitClaim(cwd),
   attemptAutoclaim: (...args: unknown[]) => mockAttemptAutoclaim(...args),
   // `clerk init`'s key check; covered end to end in `init-claim.test.ts`.
-  folderKeysBelongTo: async () => ({ verdict: "match" }),
+  folderKeysBelongTo: (...args: unknown[]) => mockFolderKeysBelongTo(...args),
 }));
 
 const mockLogin = mock();
@@ -143,14 +147,26 @@ const { link } = await import("./index.ts");
 const captured = useCaptureLog();
 
 const savedApiKey = process.env.CLERK_PLATFORM_API_KEY;
+const originalCwd = process.cwd();
+/** An empty folder each test runs in, so no test reads this repo's own files. */
+let workDir: string;
 
-beforeEach(() => {
+useSyntheticShellClerkKeys();
+useCleanClerkKeyEnv();
+
+beforeEach(async () => {
   delete process.env.CLERK_PLATFORM_API_KEY;
+  workDir = await mkdtemp(join(tmpdir(), "clerk-link-flow-"));
+  process.chdir(workDir);
 });
 
-afterEach(() => {
+afterEach(async () => {
+  process.chdir(originalCwd);
+  await rm(workDir, { recursive: true, force: true });
   if (savedApiKey === undefined) delete process.env.CLERK_PLATFORM_API_KEY;
   else process.env.CLERK_PLATFORM_API_KEY = savedApiKey;
+  mockFolderKeysBelongTo.mockReset();
+  mockFolderKeysBelongTo.mockResolvedValue({ verdict: "match" });
   for (const m of [
     mockIsAgent,
     mockGetToken,
@@ -484,9 +500,6 @@ describe("signing in on the way to a link", () => {
 // account, and when it isn't there sends a person to claim it in the
 // Dashboard. Never the picker: any app chosen there isn't the one the SDK runs.
 describe("an SDK-only folder", () => {
-  useSyntheticShellClerkKeys();
-  useCleanClerkKeyEnv();
-
   const SDK_PK = "pk_test_sdk_created_app";
   const CLAIM_URL = "https://dashboard.clerk.com/apps/claim?token=secret_claim_token";
   const SDK_APP = {
@@ -703,7 +716,8 @@ describe("an SDK-only folder", () => {
     async ({ write }) => {
       storedSession();
       await write();
-      mockListApplications.mockResolvedValue([SDK_APP]);
+      // The app isn't in the account: a matched app links without a claim link.
+      mockListApplications.mockResolvedValue([OTHER_APP]);
 
       for (const agent of [false, true]) {
         mockIsAgent.mockReturnValue(agent);
@@ -719,6 +733,80 @@ describe("an SDK-only folder", () => {
     },
   );
 
+  // Matching needs no claim link; only sending a person to claim the app does.
+  test.each([
+    { who: "a person", agent: false },
+    { who: "an agent", agent: true },
+  ])(
+    "$who links the account's app even when the SDK file has no usable claim URL",
+    async ({ agent }) => {
+      mockIsAgent.mockReturnValue(agent);
+      storedSession();
+      await sdkFile({ claimUrl: undefined });
+      mockListApplications.mockResolvedValue([SDK_APP]);
+
+      expect(await link({ cwd: dir })).toEqual({ status: "linked", appId: "app_sdk" });
+    },
+  );
+
+  test("the claim page message names the command to rerun", async () => {
+    mockIsAgent.mockReturnValue(false);
+    storedSession();
+    await sdkFile();
+    mockListApplications.mockResolvedValue([OTHER_APP]);
+
+    await link({ cwd: dir, rerun: "run `clerk init` again" });
+
+    const output = Bun.stripANSI(captured.err);
+    expect(output).toContain("then run `clerk init` again");
+    expect(output).not.toContain("run `clerk link` again");
+  });
+
+  // After a claim that didn't link the folder, the token is gone: a folder
+  // whose only keys are the SDK's is SDK-only, and the picker can't show its app.
+  test("a token and only SDK keys, after a claim that left the folder alone: the claim page, never the picker", async () => {
+    mockIsAgent.mockReturnValue(false);
+    storedSession();
+    await sdkFile();
+    mockReadInitClaim.mockResolvedValue({ appName: "my-app", claimToken: "claim_token_init" });
+    mockConfirm.mockResolvedValue(true);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "claimed",
+      app: OTHER_APP,
+      local: { kind: "unchanged", reason: "unverified" },
+    });
+    mockListApplications.mockResolvedValue([OTHER_APP]);
+
+    const outcome = await link({ cwd: dir });
+
+    expect(outcome).toEqual({ status: "claim_page_opened" });
+    expect(mockSearch).not.toHaveBeenCalled();
+  });
+
+  test("init's every-key check runs before the SDK step saves a link: a matched app that doesn't own every key isn't linked", async () => {
+    mockIsAgent.mockReturnValue(true);
+    storedSession();
+    await sdkFile();
+    mockReadInitClaim.mockResolvedValue({ appName: "my-app", claimToken: "claim_token_init" });
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "claimed",
+      app: OTHER_APP,
+      local: { kind: "unchanged", reason: "unverified" },
+    });
+    mockListApplications.mockResolvedValue([SDK_APP]);
+    mockFolderKeysBelongTo.mockResolvedValue({
+      verdict: "mismatch",
+      key: { name: "secretKey", source: ".clerk/.tmp/keyless.json" },
+    });
+
+    await expect(
+      link({ cwd: dir, skipIfLinked: true, onlyIfFolderKeysMatch: true }),
+    ).rejects.toMatchObject({ code: "not_linked" });
+
+    expect(mockLinkApp).not.toHaveBeenCalled();
+    expect(mockSetProfile).not.toHaveBeenCalled();
+  });
+
   // Control: a plain key means the app runs on it, not on the SDK's file.
   test("a plain key next to a stale SDK keyless file: the SDK file's app isn't linked", async () => {
     mockIsAgent.mockReturnValue(true);
@@ -731,5 +819,241 @@ describe("an SDK-only folder", () => {
     await expect(link({ cwd: dir })).rejects.toThrow("Cannot select an application in agent mode.");
 
     expect(mockLinkApp).not.toHaveBeenCalled();
+  });
+});
+
+// What `clerk link` may do when auto-link didn't link the folder: one decision
+// for every case, so no path creates an app or reaches a picker it shouldn't.
+describe("when auto-link doesn't link the folder", () => {
+  const ACCOUNT_APP = {
+    application_id: "app_account",
+    name: "Account App",
+    instances: [
+      {
+        instance_id: "ins_account",
+        environment_type: "development",
+        publishable_key: "pk_test_account_app",
+      },
+    ],
+  };
+  const INIT_CLAIM = { appName: "my-app", claimToken: "claim_token_init" };
+
+  function storedSession() {
+    mockGetToken.mockResolvedValue("token");
+    mockGetAuth.mockResolvedValue({ userId: "user_1" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_1", email: "jane@example.com" });
+  }
+
+  async function writeFile(file: string, content: string) {
+    await Bun.write(join(workDir, file), content);
+  }
+
+  /** A claim of the init app that left the folder alone. */
+  function claimLeftFolderAlone() {
+    mockReadInitClaim.mockResolvedValue(INIT_CLAIM);
+    mockConfirm.mockResolvedValue(true);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "claimed",
+      app: ACCOUNT_APP,
+      local: { kind: "unchanged", reason: "unverified" },
+    });
+  }
+
+  /** The choices the person's picker offered, from its `source`. */
+  function pickerChoices(): unknown[] {
+    const config = mockSearch.mock.calls[0]?.[0] as {
+      source: (term: string | undefined) => { value: string }[];
+    };
+    return config.source(undefined).map((choice) => choice.value);
+  }
+
+  test("an agent never creates an app when the app list failed: it stops, naming the failed list", async () => {
+    mockIsAgent.mockReturnValue(true);
+    storedSession();
+    mockAutolink.mockResolvedValue({
+      status: "list_failed",
+      error: new Error("Server Error (500)"),
+    });
+
+    await expect(link({ skipIfLinked: true, createIfMissing: "my-project" })).rejects.toMatchObject(
+      {
+        code: "usage_error",
+        message: expect.stringContaining("couldn't list your applications"),
+      },
+    );
+
+    expect(mockCreateApplication).not.toHaveBeenCalled();
+  });
+
+  test("the folder's key matching an app with no development instance stops with instance_not_found, creating nothing", async () => {
+    mockIsAgent.mockReturnValue(true);
+    storedSession();
+    mockAutolink.mockResolvedValue({ status: "no_development_instance", appId: "app_prod_only" });
+
+    await expect(link({ skipIfLinked: true, createIfMissing: "my-project" })).rejects.toMatchObject(
+      {
+        code: "instance_not_found",
+      },
+    );
+
+    expect(mockCreateApplication).not.toHaveBeenCalled();
+  });
+
+  test("an agent never creates an app when the folder's secret keys disagree", async () => {
+    mockIsAgent.mockReturnValue(true);
+    storedSession();
+    await writeFile("package.json", JSON.stringify({ dependencies: { express: "4.0.0" } }));
+    await writeFile(".env", "CLERK_SECRET_KEY=sk_test_one_app\n");
+    await writeFile(".env.local", "CLERK_SECRET_KEY=sk_test_another_app\n");
+    mockAutolink.mockResolvedValue({ status: "no_key" });
+
+    await expect(link({ skipIfLinked: true, createIfMissing: "my-project" })).rejects.toMatchObject(
+      {
+        code: "usage_error",
+        message: expect.stringContaining("hold different Clerk secret keys"),
+      },
+    );
+
+    expect(mockCreateApplication).not.toHaveBeenCalled();
+  });
+
+  describe("an env file that can't be read", () => {
+    const READ_FAILED = "couldn't read this folder's env files";
+
+    beforeEach(() => {
+      spyOn(localKeys, "readFolderKeys").mockRejectedValue(
+        Object.assign(new Error("EACCES: permission denied, open '.env.local'"), {
+          code: "EACCES",
+        }),
+      );
+    });
+
+    afterEach(() => {
+      (localKeys.readFolderKeys as unknown as { mockRestore: () => void }).mockRestore();
+    });
+
+    test("an agent gets the not-linked stop saying why, not a raw error", async () => {
+      mockIsAgent.mockReturnValue(true);
+      storedSession();
+
+      await expect(
+        link({ skipIfLinked: true, createIfMissing: "my-project" }),
+      ).rejects.toMatchObject({
+        code: "usage_error",
+        message: expect.stringContaining(READ_FAILED),
+      });
+
+      expect(mockCreateApplication).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      { apps: "no apps", list: [] },
+      { apps: "an app", list: [ACCOUNT_APP] },
+    ])("a person whose account has $apps is told why, then gets the picker", async ({ list }) => {
+      mockIsAgent.mockReturnValue(false);
+      storedSession();
+      mockListApplications.mockResolvedValue(list);
+      mockSearch.mockResolvedValue(ACCOUNT_APP.application_id);
+      mockFetchApplication.mockResolvedValue(ACCOUNT_APP);
+
+      await link({}).catch(() => {});
+
+      expect(Bun.stripANSI(captured.err)).toContain(READ_FAILED);
+      expect(mockSearch).toHaveBeenCalledTimes(1);
+      // No "Link to this application?" suggestion from a key it couldn't read.
+      expect(mockConfirm).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("init, after a claim that left the folder alone", () => {
+    beforeEach(() => {
+      mockIsAgent.mockReturnValue(false);
+      storedSession();
+      claimLeftFolderAlone();
+    });
+
+    // A new app's keys can't match keys the folder already holds, so init's
+    // key check would reject it after it was created.
+    test("the picker never offers to create an app while the folder holds keys", async () => {
+      await writeFile(".env.local", "CLERK_SECRET_KEY=sk_test_some_app\n");
+      mockAutolink.mockResolvedValue({ status: "no_key" });
+      mockListApplications.mockResolvedValue([ACCOUNT_APP]);
+      mockSearch.mockResolvedValue(ACCOUNT_APP.application_id);
+      mockFetchApplication.mockResolvedValue(ACCOUNT_APP);
+
+      await link({ skipIfLinked: true, onlyIfFolderKeysMatch: true });
+
+      expect(pickerChoices()).not.toContain("__create_new__");
+      expect(pickerChoices()).toContain(ACCOUNT_APP.application_id);
+      expect(mockCreateApplication).not.toHaveBeenCalled();
+    });
+
+    // Files that disagree may be one app's development and production keys,
+    // which the check accepts: the person picks, and the check decides.
+    test("files that disagree get the picker, without creating", async () => {
+      await writeFile("package.json", JSON.stringify({ dependencies: { express: "4.0.0" } }));
+      await writeFile(".env", "CLERK_PUBLISHABLE_KEY=pk_live_account_app\n");
+      await writeFile(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_account_app\n");
+      mockAutolink.mockResolvedValue({ status: "couldnt_tell", reason: "files disagree" });
+      mockListApplications.mockResolvedValue([ACCOUNT_APP]);
+      mockSearch.mockResolvedValue(ACCOUNT_APP.application_id);
+      mockFetchApplication.mockResolvedValue(ACCOUNT_APP);
+
+      expect(await link({ skipIfLinked: true, onlyIfFolderKeysMatch: true })).toEqual({
+        status: "linked",
+        appId: ACCOUNT_APP.application_id,
+      });
+      expect(pickerChoices()).not.toContain("__create_new__");
+    });
+
+    test("with no app to choose and creating off, it stops with not_linked instead of an empty picker", async () => {
+      await writeFile(".env.local", "CLERK_SECRET_KEY=sk_test_some_app\n");
+      mockAutolink.mockResolvedValue({ status: "no_key" });
+      mockListApplications.mockResolvedValue([]);
+
+      await expect(link({ skipIfLinked: true, onlyIfFolderKeysMatch: true })).rejects.toMatchObject(
+        {
+          code: "not_linked",
+        },
+      );
+
+      expect(mockSearch).not.toHaveBeenCalled();
+      expect(mockCreateApplication).not.toHaveBeenCalled();
+    });
+
+    // No app can pass the check when a key line can't be read.
+    test("a key line it can't read stops with not_linked before the picker", async () => {
+      await writeFile("package.json", JSON.stringify({ dependencies: { next: "15.0.0" } }));
+      await writeFile(".env.local", "  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_indented\n");
+      mockAutolink.mockResolvedValue({ status: "couldnt_tell", reason: "unreadable" });
+      mockListApplications.mockResolvedValue([ACCOUNT_APP]);
+
+      await expect(link({ skipIfLinked: true, onlyIfFolderKeysMatch: true })).rejects.toMatchObject(
+        {
+          code: "not_linked",
+        },
+      );
+
+      expect(mockSearch).not.toHaveBeenCalled();
+    });
+
+    test("an exported key that isn't the chosen app's is named as an env var", async () => {
+      mockAutolink.mockResolvedValue({ status: "no_key" });
+      mockListApplications.mockResolvedValue([ACCOUNT_APP]);
+      mockSearch.mockResolvedValue(ACCOUNT_APP.application_id);
+      mockFetchApplication.mockResolvedValue(ACCOUNT_APP);
+      mockFolderKeysBelongTo.mockResolvedValue({
+        verdict: "mismatch",
+        key: { name: "CLERK_SECRET_KEY", source: "CLERK_SECRET_KEY env var" },
+      });
+
+      const error = await link({ skipIfLinked: true, onlyIfFolderKeysMatch: true }).catch(
+        (thrown: unknown) => thrown as Error,
+      );
+
+      expect(error).toMatchObject({ code: "not_linked" });
+      expect((error as Error).message).toContain("The `CLERK_SECRET_KEY` env var isn't");
+      expect((error as Error).message).not.toContain("in CLERK_SECRET_KEY env var");
+    });
   });
 });

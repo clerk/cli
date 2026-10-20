@@ -3,8 +3,10 @@ import { listApplications, type Application, type ApplicationInstance } from "./
 import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
 import { errorMessage } from "./errors.ts";
 import {
+  couldntTellReason,
   readFolderKeys,
   SDK_KEYLESS_SOURCE,
+  unreadableFolderReason,
   type FolderKeys,
   type LocatedKey,
 } from "./local-keys.ts";
@@ -39,33 +41,13 @@ export async function findLinkKey(cwd: string): Promise<LinkKey> {
   try {
     keys = await readFolderKeys(cwd);
   } catch (error) {
-    return {
-      status: "couldnt_tell",
-      reason: `the CLI couldn't read this folder's env files (${errorMessage(error)})`,
-    };
+    return { status: "couldnt_tell", reason: unreadableFolderReason(error) };
   }
   const reason = couldntTellReason(keys);
   if (reason) return { status: "couldnt_tell", reason };
   const key = keys.publishableKey;
   if (!key || key.source === SDK_KEYLESS_SOURCE) return { status: "none" };
   return { status: "found", key };
-}
-
-function couldntTellReason({ unreadableLines, undecided }: FolderKeys): string | undefined {
-  const line = unreadableLines?.[0];
-  if (line) {
-    return `the CLI couldn't read the \`${line.name}\` line in \`${line.source}\`, so it can't tell which key this app loads`;
-  }
-  const conflicting = undecided?.publishable;
-  if (conflicting) {
-    return `${listInProse(conflicting.map((key) => `\`${key.source}\``))} hold different Clerk publishable keys, and the CLI doesn't know which one this app loads`;
-  }
-  return undefined;
-}
-
-function listInProse(items: string[]): string {
-  if (items.length <= 2) return items.join(" and ");
-  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
 }
 
 /**

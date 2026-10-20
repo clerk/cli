@@ -200,7 +200,8 @@ export async function init(options: InitOptions = {}) {
     if (linked?.status === "claim_page_opened") {
       declareSoftExitOutcome("incomplete", ERROR_CODE.NOT_LINKED);
       process.exitCode = EXIT_CODE.GENERAL;
-      await outro("Claim the app, then run `clerk init` again to finish setting up Clerk");
+      // `link` already said to claim the app and rerun `clerk init`.
+      await outro();
       return;
     }
   }
@@ -651,6 +652,8 @@ async function authenticateAndLink(
     cwd,
     createIfMissing,
     onlyIfFolderKeysMatch: true,
+    // After claiming an SDK-created app, rerunning `init` finishes setup.
+    rerun: "run `clerk init` again",
     ...linkOptions,
   });
 }

@@ -14,12 +14,7 @@
 import { linkApp, matchKeyToApp } from "../../lib/autolink.ts";
 import { claimDestination, describeClaimDestination } from "../../lib/claim-prompt.ts";
 import { CliError, ERROR_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
-import {
-  readFolderKeys,
-  readSdkClaimLink,
-  SDK_KEYLESS_SOURCE,
-  type FolderKeys,
-} from "../../lib/local-keys.ts";
+import { readSdkClaimLink, SDK_KEYLESS_SOURCE, type FolderKeys } from "../../lib/local-keys.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { listApplications, type Application } from "../../lib/plapi.ts";
@@ -31,39 +26,52 @@ export type SdkOnlyOutcome = { status: "linked"; appId: string } | { status: "cl
 /** The lead sentence of agent-mode `clerk link`'s not-linked stop, kept verbatim. */
 const AGENT_LEAD = "Cannot select an application in agent mode.";
 
+/** What `linkSdkOnlyFolder` needs besides the folder. */
+export interface SdkOnlyOptions {
+  /** The folder's keys, already read by `link`. */
+  keys: FolderKeys;
+  /** Opens `clerk link`'s frame, once the folder is known to be SDK-only. */
+  openFrame: () => void;
+  /**
+   * Runs on the matched app before the link is saved, and may throw to stop
+   * it: `init`'s every-key check, after a claim attempt. The SDK file's
+   * secret key needn't be the matched app's.
+   */
+  beforeLink?: (app: Application) => Promise<void>;
+  /** What to tell a person to run after claiming, as a clause. */
+  rerun: string;
+}
+
 /**
  * Links an SDK-only folder to its app, or sends a person to claim it.
  * Undefined when the folder isn't SDK-only, for `link` to carry on.
  *
- * Throws `usage_error` (exit 2) when the SDK file has no usable claim link,
- * in either mode, and for an agent whose account lacks the app or whose app
- * list failed. A person's failed app list throws the original error.
+ * Throws `usage_error` (exit 2) when the SDK file has no publishable key, or
+ * when no account app matches and the file has no usable claim link, in either
+ * mode, and for an agent whose account lacks the app or whose app list
+ * failed. A person's failed app list throws the original error.
  */
 export async function linkSdkOnlyFolder(
   cwd: string,
   agent: boolean,
-  /** Opens `clerk link`'s frame, once the folder is known to be SDK-only. */
-  openFrame: () => void,
+  { keys, openFrame, beforeLink, rerun }: SdkOnlyOptions,
 ): Promise<SdkOnlyOutcome | undefined> {
-  const keys = await readFolderKeys(cwd);
   if (!isSdkOnly(keys)) return undefined;
   openFrame();
 
-  // Before any list or sign-in: without a usable claim link, the CLI can't
-  // say how to claim the app, so it never guesses with a picker.
   function noUsableLink(why: string): never {
     throwUsageError(
       `${agent ? `${AGENT_LEAD} ` : ""}This folder's Clerk SDK keyless file (\`${SDK_KEYLESS_SOURCE}\`) has no usable claim link: ${why}. Link an existing application with \`clerk link --app <app_id>\`.`,
     );
   }
+  // Before any list or sign-in: without a publishable key there's nothing to
+  // match and no way to claim, so the CLI never guesses with a picker.
   const publishableKey = keys.publishableKey?.value;
   if (!publishableKey) {
     noUsableLink(
       keys.sdkFile?.state === "unreadable" ? "it can't be read" : "it has no publishable key",
     );
   }
-  const claimLink = await readSdkClaimLink(cwd);
-  if (claimLink.status === "unusable") noUsableLink(claimLink.reason);
 
   const account = agent ? null : await signedInAccount();
   let apps: Application[];
@@ -76,8 +84,10 @@ export async function linkSdkOnlyFolder(
     );
   }
 
+  // Matching needs no claim link: only sending a person to claim the app does.
   const match = matchKeyToApp([{ key: publishableKey, source: SDK_KEYLESS_SOURCE }], apps);
   if (match) {
+    await beforeLink?.(match.app);
     if (!(await linkApp(match.app, cwd))) {
       throw new CliError("Application has no development instance", {
         code: ERROR_CODE.INSTANCE_NOT_FOUND,
@@ -89,13 +99,16 @@ export async function linkSdkOnlyFolder(
     return { status: "linked", appId: match.app.application_id };
   }
 
+  const claimLink = await readSdkClaimLink(cwd);
+  if (claimLink.status === "unusable") noUsableLink(claimLink.reason);
+
   if (agent) {
     throwUsageError(
-      `${AGENT_LEAD} This folder's app was created by the Clerk SDK and isn't in your account yet. Run \`clerk open\` to get its claim link for a person to claim it, then run \`clerk link\` again.`,
+      `${AGENT_LEAD} This folder's app was created by the Clerk SDK and isn't in your account yet. Run \`clerk open\` to get its claim link for a person to claim it, then ${rerun}.`,
     );
   }
 
-  await sendToClaimPage(claimLink.url, account);
+  await sendToClaimPage(claimLink.url, account, rerun);
   return { status: "claim_page_opened" };
 }
 
@@ -115,7 +128,11 @@ function isSdkOnly(keys: FolderKeys): boolean {
  * diagnostics target, which reaches a debug line only in agent mode, and
  * agents never get here.
  */
-async function sendToClaimPage(url: string, account: { email?: string } | null): Promise<void> {
+async function sendToClaimPage(
+  url: string,
+  account: { email?: string } | null,
+  rerun: string,
+): Promise<void> {
   const destination = claimDestination(account);
   const into = destination ? describeClaimDestination(destination) : "your account";
   const notInAccount = "This folder's app was created by the Clerk SDK and isn't in an account yet";
@@ -124,7 +141,7 @@ async function sendToClaimPage(url: string, account: { email?: string } | null):
   const opened = await openBrowser(url);
   if (!opened.ok) {
     log.warn(
-      `Couldn't open a browser here. ${notInAccount}. To claim it, ${printIt}, claim it into ${into}, then run \`clerk link\` again.`,
+      `Couldn't open a browser here. ${notInAccount}. To claim it, ${printIt}, claim it into ${into}, then ${rerun}.`,
     );
     return;
   }
@@ -132,9 +149,9 @@ async function sendToClaimPage(url: string, account: { email?: string } | null):
   // A claim into any other account or workspace leaves the rerun with no
   // match, and it would open the claim page again.
   log.info(
-    `Opened its claim page in your browser. Claim it into ${into}, the one \`clerk link\` searches, then run \`clerk link\` again.`,
+    `Opened its claim page in your browser. Claim it into ${into}, the one \`clerk link\` searches, then ${rerun}.`,
   );
   // Always said: a launcher can succeed while nothing opens on this screen
   // (over SSH to a Mac, `open` opens the remote machine's browser).
-  log.info(`If no browser opened on your screen, ${printIt}, then run \`clerk link\` again.`);
+  log.info(`If no browser opened on your screen, ${printIt}, then ${rerun}.`);
 }

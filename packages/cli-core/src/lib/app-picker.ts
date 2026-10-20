@@ -44,7 +44,14 @@ export async function fetchAppsTolerantly(): Promise<Application[]> {
 export async function pickOrCreateApp(opts: {
   apps: Application[];
   message: string;
+  /**
+   * False leaves out "+ Create a new application", for a caller that would
+   * reject a new app anyway (`clerk init` after a claim, in a folder holding
+   * keys). Default true.
+   */
+  allowCreate?: boolean;
 }): Promise<Application> {
+  const allowCreate = opts.allowCreate !== false;
   const appChoices = opts.apps.map((a) => ({ name: appLabel(a), value: a.application_id }));
   const createChoice = {
     name: cyan("+ Create a new application"),
@@ -57,11 +64,11 @@ export async function pickOrCreateApp(opts: {
       const filtered = term
         ? appChoices.filter((c) => c.name.toLowerCase().includes(term.toLowerCase()))
         : appChoices;
-      return [createChoice, ...filtered];
+      return allowCreate ? [createChoice, ...filtered] : filtered;
     },
   });
 
-  if (selectedId === CREATE_NEW_APP) {
+  if (selectedId === CREATE_NEW_APP && allowCreate) {
     const name = await text({
       message: "Application name:",
       validate: (v) => (v?.trim() ? undefined : "Application name cannot be empty"),

@@ -7,6 +7,7 @@ import { login } from "../auth/login.ts";
 import {
   claimWarning,
   claimedNextSteps,
+  describeKeyLocation,
   reportClaimSkipped,
   reportClaimed,
 } from "../auth/claim-report.ts";
@@ -20,10 +21,24 @@ import { claimDestination, confirmClaim } from "../../lib/claim-prompt.ts";
 import { signedInAccount } from "./account.ts";
 import { linkSdkOnlyFolder } from "./sdk-only.ts";
 import { declareSoftExitOutcome } from "../../lib/telemetry.ts";
-import { createApplication, fetchApplication, type Application } from "../../lib/plapi.ts";
+import {
+  createApplication,
+  fetchApplication,
+  listApplications,
+  type Application,
+} from "../../lib/plapi.ts";
 import { appLabel, fetchAppsTolerantly, pickOrCreateApp } from "../../lib/app-picker.ts";
 import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
-import { autolink, findLinkKey, matchKeyToApp } from "../../lib/autolink.ts";
+import { autolink, findLinkKey, matchKeyToApp, type AutolinkResult } from "../../lib/autolink.ts";
+import {
+  couldntTellReason,
+  readAllFolderKeys,
+  readFolderKeys,
+  secretKeysDisagreeReason,
+  unreadableFolderReason,
+  type AllFolderKeys,
+  type FolderKeys,
+} from "../../lib/local-keys.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
@@ -31,7 +46,7 @@ import {
   CliError,
   ERROR_CODE,
   EXIT_CODE,
-  throwUsageError,
+  errorMessage,
   throwUserAbort,
   withApiContext,
 } from "../../lib/errors.ts";
@@ -59,6 +74,13 @@ interface LinkOptions {
    * the only way the folder never points at an app it doesn't run on.
    */
   onlyIfFolderKeysMatch?: boolean;
+  /**
+   * What to tell a person to run after claiming an SDK-created app on its
+   * claim page, as a clause. Default "run `clerk link` again"; `init` and
+   * `migrate` name themselves, since rerunning `link` alone wouldn't finish
+   * their work.
+   */
+  rerun?: string;
 }
 
 /**
@@ -85,9 +107,6 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
     return { status: "linked", appId: existing.profile.appId };
   }
 
-  // Claim first: a signed-in picker can't show the app `clerk init` created,
-  // because it isn't in an account yet. An explicit `--app` or an existing
-  // link wins, so neither claims.
   // The person's frame opens once, before the first thing they see, and every
   // return after that closes it. Agents print no frame.
   let framed = false;
@@ -97,18 +116,16 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
     framed = true;
   };
   const showNextSteps = options.showNextSteps !== false;
+  const rerun = options.rerun ?? "run `clerk link` again";
 
+  // Claim first: a signed-in picker can't show the app `clerk init` created,
+  // because it isn't in an account yet. An explicit `--app` or an existing
+  // link wins, so neither claims.
   const initClaim = !existing && !options.app ? await readInitClaim(cwd) : undefined;
   if (initClaim) {
     openFrame();
     const claimed = await claimFirst(cwd, initClaim, agent, showNextSteps);
     if (claimed) return claimed;
-  } else if (!existing && !options.app) {
-    const sdkOnly = await linkSdkOnlyFolder(cwd, agent, openFrame);
-    if (sdkOnly) {
-      await outro(sdkOnly.status === "linked" && showNextSteps ? NEXT_STEPS.LINK : undefined);
-      return sdkOnly;
-    }
   }
 
   // After a claim attempt, `init` writes the chosen app's keys next: check
@@ -118,28 +135,43 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
       ? async (target: Application) => requireFolderKeysBelongTo(target, cwd)
       : undefined;
 
-  // Why the folder's own key couldn't pick its app, when the CLI can't tell
-  // which key the app loads.
-  let couldntTell: string | undefined;
-  if (!existing && !options.app && (options.skipIfLinked || agent)) {
-    const autolinked = await autolink(cwd, { beforeLink: checkFolderKeys });
-    if (autolinked.status === "linked") {
-      if (framed) await outro();
-      return { status: "linked", appId: autolinked.profile.appId };
-    }
-    if (autolinked.status === "couldnt_tell") couldntTell = autolinked.reason;
-  }
+  let step: NextStep | undefined;
+  if (!existing && !options.app) {
+    const folder = await inspectFolder(cwd);
 
-  // Neither "couldn't tell" nor a folder that had an init token creates an
-  // app: `init` would then write the new app's keys over ones the CLI couldn't
-  // attribute, or that the claim check just left alone.
-  const mayCreate = Boolean(options.createIfMissing) && !couldntTell && !initClaim;
-  if (agent && !existing && !options.app && !mayCreate) {
-    // The lead sentence stays verbatim: agents and the skill's troubleshooting
-    // table match on it.
-    throwUsageError(
-      `Cannot select an application in agent mode. ${couldntTell ? `${capitalize(couldntTell)}. ` : ""}Pass --app <id>, or run \`clerk apps list --json\` and retry.`,
-    );
+    // After a claim that didn't link the folder, the token is gone, so a
+    // folder whose only keys are the SDK's is SDK-only too.
+    if (folder.keys) {
+      const sdkOnly = await linkSdkOnlyFolder(cwd, agent, {
+        keys: folder.keys,
+        openFrame,
+        beforeLink: checkFolderKeys,
+        rerun,
+      });
+      if (sdkOnly) {
+        await outro(sdkOnly.status === "linked" && showNextSteps ? NEXT_STEPS.LINK : undefined);
+        return sdkOnly;
+      }
+    }
+
+    let autolinked: AutolinkResult | undefined;
+    if (options.skipIfLinked || agent) {
+      autolinked = await autolink(cwd, { beforeLink: checkFolderKeys });
+      if (autolinked.status === "linked") {
+        if (framed) await outro();
+        return { status: "linked", appId: autolinked.profile.appId };
+      }
+    }
+
+    step = decideNextStep({
+      agent,
+      autolinked,
+      folder,
+      createIfMissing: options.createIfMissing,
+      afterClaim: Boolean(initClaim),
+      keyCheck: Boolean(checkFolderKeys),
+    });
+    if (step.kind === "stop") throw step.error;
   }
 
   openFrame();
@@ -162,12 +194,13 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
 
   const app = options.app
     ? await withApiContext(fetchApplication(options.app), "Failed to fetch application")
-    : agent && mayCreate && options.createIfMissing
-      ? await withApiContext(
-          createApplication(options.createIfMissing),
-          "Failed to create application",
-        )
-      : await resolveApp(cwd, displayPath, !existing);
+    : step?.kind === "create"
+      ? await withApiContext(createApplication(step.name), "Failed to create application")
+      : await resolveApp(
+          cwd,
+          displayPath,
+          step?.kind === "pick" ? step : { detect: !existing, allowCreate: true },
+        );
 
   await checkFolderKeys?.(app);
 
@@ -195,6 +228,158 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
 
   await outro(options.showNextSteps === false ? undefined : NEXT_STEPS.LINK);
   return { status: "linked", appId: app.application_id };
+}
+
+/** What `link` read about the folder's keys, for deciding what it may do. */
+interface FolderFacts {
+  /** The keys the folder's app loads; undefined when an env file couldn't be read. */
+  keys?: FolderKeys;
+  /** Why the CLI can't tell which publishable key the app loads, as a clause. */
+  couldntTell?: string;
+  /** Why the folder's secret keys are undecided, as a clause. */
+  secretsDisagree?: string;
+  /**
+   * No app can pass `init`'s every-key check: an env file or a key line can't
+   * be read, or an SDK keyless file names no app.
+   */
+  unreadable: boolean;
+  /**
+   * The folder holds a Clerk key value (placeholders included), a line naming
+   * one, or an SDK keyless file. A new app's keys can't match any of them.
+   */
+  holdsKeys: boolean;
+}
+
+/** Reads the folder's keys once; a read error is carried, never thrown. */
+async function inspectFolder(cwd: string): Promise<FolderFacts> {
+  let keys: FolderKeys;
+  let all: AllFolderKeys;
+  try {
+    [keys, all] = await Promise.all([readFolderKeys(cwd), readAllFolderKeys(cwd)]);
+  } catch (error) {
+    return { couldntTell: unreadableFolderReason(error), unreadable: true, holdsKeys: true };
+  }
+  const anyKey = all.publishableKeys.length > 0 || all.secretKeys.length > 0;
+  const sdkFile = Boolean(all.sdkFile) && all.sdkFile?.state !== "absent";
+  return {
+    keys,
+    couldntTell: couldntTellReason(keys),
+    secretsDisagree: secretKeysDisagreeReason(keys),
+    unreadable: Boolean(all.unreadableLines?.length) || (sdkFile && !anyKey && isUnusable(all)),
+    holdsKeys: anyKey || Boolean(all.unreadableLines?.length) || sdkFile,
+  };
+}
+
+/** An SDK keyless file that can't be read, or holds no key, names no app. */
+function isUnusable(all: AllFolderKeys): boolean {
+  return (
+    all.sdkFile?.state === "unreadable" ||
+    (all.sdkFile?.state === "parsed" && !all.publishableKeys.length && !all.secretKeys.length)
+  );
+}
+
+/** What `link` does when auto-link didn't link the folder. */
+type NextStep =
+  | { kind: "create"; name: string }
+  | { kind: "pick"; detect: boolean; allowCreate: boolean; why?: string }
+  | { kind: "stop"; error: Error };
+
+/**
+ * One decision for every way auto-link can fail to link, so no path creates
+ * an app, or reaches a picker, that it shouldn't.
+ *
+ * - The folder's key belongs to an app with no development instance: stop.
+ * - `init`'s every-key check applies and no app can pass it: stop before the
+ *   picker. Files that disagree aren't such a case: they may be one app's
+ *   development and production keys.
+ * - A person picks, without "Create" when the check applies and the folder
+ *   holds keys, since a new app's keys couldn't match them.
+ * - An agent creates an app only when nothing blocks it (`createBlocker`).
+ */
+function decideNextStep(input: {
+  agent: boolean;
+  autolinked?: AutolinkResult;
+  folder: FolderFacts;
+  createIfMissing?: string;
+  afterClaim: boolean;
+  keyCheck: boolean;
+}): NextStep {
+  const { agent, autolinked } = input;
+  // Auto-link read the same keys; its reason stands when it gives one.
+  const folder: FolderFacts = {
+    ...input.folder,
+    couldntTell:
+      autolinked?.status === "couldnt_tell" ? autolinked.reason : input.folder.couldntTell,
+  };
+  const { keyCheck } = input;
+  if (autolinked?.status === "no_development_instance") {
+    return {
+      kind: "stop",
+      error: new CliError("Application has no development instance", {
+        code: ERROR_CODE.INSTANCE_NOT_FOUND,
+      }),
+    };
+  }
+  if (keyCheck && folder.unreadable) {
+    const why = folder.couldntTell ?? "the CLI couldn't read this folder's Clerk keys";
+    return {
+      kind: "stop",
+      error: new CliError(
+        `${capitalize(why)}, so no application can be confirmed to own this folder's keys, and it wasn't linked. Make the folder's Clerk keys readable and belong to one application, then run \`clerk init\` again.`,
+        { code: ERROR_CODE.NOT_LINKED },
+      ),
+    };
+  }
+  if (!agent) {
+    return {
+      kind: "pick",
+      detect: !folder.couldntTell,
+      allowCreate: !(keyCheck && folder.holdsKeys),
+      why: folder.couldntTell,
+    };
+  }
+  const reason = whyNoAppForAgent(autolinked, folder);
+  if (input.createIfMissing && !createBlocker(input, reason)) {
+    return { kind: "create", name: input.createIfMissing };
+  }
+  // The lead sentence stays verbatim: agents and the skill's troubleshooting
+  // table match on it.
+  return {
+    kind: "stop",
+    error: new CliError(
+      `Cannot select an application in agent mode. ${reason ? `${capitalize(reason)}. ` : ""}Pass --app <id>, or run \`clerk apps list --json\` and retry.`,
+      { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE },
+    ),
+  };
+}
+
+/** Why an agent's auto-link found no app, as a clause, when there's more to say than "no match". */
+function whyNoAppForAgent(
+  autolinked: AutolinkResult | undefined,
+  folder: FolderFacts,
+): string | undefined {
+  if (folder.couldntTell) return folder.couldntTell;
+  if (autolinked?.status === "list_failed") {
+    return `the CLI couldn't list your applications to match this folder's key (${errorMessage(autolinked.error)})`;
+  }
+  return folder.secretsDisagree;
+}
+
+/**
+ * Whether something stops an agent from creating a new app for the folder:
+ * `init` would write the new app's keys over the folder's. Each entry is a
+ * case where those keys may belong to a real app.
+ */
+function createBlocker(
+  { afterClaim }: { afterClaim: boolean },
+  reason: string | undefined,
+): boolean {
+  // The claim check may just have left the folder's keys alone.
+  if (afterClaim) return true;
+  // The CLI couldn't tell which key the app loads, couldn't list the
+  // account's apps, or the folder's secret keys disagree.
+  if (reason) return true;
+  return false;
 }
 
 /**
@@ -263,15 +448,13 @@ async function requireFolderKeysBelongTo(app: Application, cwd: string): Promise
   const result = await folderKeysBelongTo(app, cwd);
   if (result.verdict === "match") return;
   const label = `\`${app.name || app.application_id}\``;
-  const which = result.key
-    ? `\`${result.key.name}\` in ${result.key.source}`
-    : "this folder's Clerk keys";
+  const which = result.key ? describeKeyLocation(result.key) : "this folder's Clerk keys";
   const problem =
     result.verdict === "mismatch"
       ? `${which} isn't ${label}'s`
       : `The CLI couldn't confirm ${which} belongs to ${label}`;
   throw new CliError(
-    `${capitalize(problem)}, so this folder wasn't linked to ${label} and no keys were written. Make the folder's Clerk keys belong to one application, then run \`clerk init\` again.`,
+    `${capitalize(problem)}, so this folder wasn't linked to ${label} and no keys were written. Make the folder's Clerk keys, and any exported in your shell, belong to one application, then run \`clerk init\` again.`,
     { code: ERROR_CODE.NOT_LINKED },
   );
 }
@@ -343,11 +526,7 @@ async function handleExistingProfile(
 
 async function tryDetectApp(cwd: string, apps: Application[]): Promise<Application | undefined> {
   const found = await findLinkKey(cwd);
-  if (found.status === "couldnt_tell") {
-    log.info(`${capitalize(found.reason)}, so choose the application this folder should use.`);
-    return undefined;
-  }
-  if (found.status === "none") return undefined;
+  if (found.status !== "found") return undefined;
 
   const match = matchKeyToApp([{ key: found.key.value, source: found.key.source }], apps);
   if (!match) return undefined;
@@ -360,18 +539,32 @@ async function tryDetectApp(cwd: string, apps: Application[]): Promise<Applicati
 async function resolveApp(
   cwd: string,
   displayPath: string,
-  detectKeys: boolean,
+  { detect, allowCreate, why }: { detect: boolean; allowCreate: boolean; why?: string },
 ): Promise<Application> {
-  const apps = await fetchAppsTolerantly();
+  // Said before the list, so a person whose account has no apps hears it too.
+  if (why) log.info(`${capitalize(why)}, so choose the application this folder should use.`);
 
-  if (apps.length > 0 && detectKeys) {
+  // With "Create" off, a failed list can't fall back to a create-only picker.
+  const apps = allowCreate
+    ? await fetchAppsTolerantly()
+    : await withApiContext(listApplications(), "Failed to fetch applications");
+
+  if (apps.length > 0 && detect) {
     const detected = await tryDetectApp(cwd, apps);
     if (detected) return detected;
+  }
+
+  if (!allowCreate && apps.length === 0) {
+    throw new CliError(
+      "No application in your account can be linked to this folder, and creating one here would replace the Clerk keys it holds, so it wasn't linked. Link an existing application with `clerk link --app <app_id>`.",
+      { code: ERROR_CODE.NOT_LINKED },
+    );
   }
 
   return pickOrCreateApp({
     apps,
     message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
+    allowCreate,
   });
 }
 

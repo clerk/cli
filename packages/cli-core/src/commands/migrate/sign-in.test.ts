@@ -79,6 +79,19 @@ test("signing in on the way to `clerk link` leaves the claim to `link`", async (
   expect(mockLink).toHaveBeenCalledTimes(1);
 });
 
+// After a claim page, the person reruns the import, not just the link. Its
+// arguments aren't echoed: they can hold a secret key.
+test("`clerk link`'s rerun advice names the import, without its arguments", async () => {
+  await run({ source: "clerk", input: "users.json" }).catch((error: unknown) => {
+    if (error !== STOP) throw error;
+  });
+
+  expect(mockLink).toHaveBeenCalledWith({
+    skipIfLinked: true,
+    rerun: "run the same `clerk migrate import` command again",
+  });
+});
+
 // A person is claiming the SDK's app in the Dashboard; there is nothing to
 // import into until they rerun.
 test("when `clerk link` opens a claim page instead of linking, the import stops with exit 1", async () => {

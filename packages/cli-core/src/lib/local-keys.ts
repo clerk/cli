@@ -16,6 +16,7 @@
 
 import { join } from "node:path";
 import { ENV_FILE_CANDIDATES, parseEnvFile } from "./dotenv.ts";
+import { errorMessage } from "./errors.ts";
 import { log } from "./log.ts";
 import { CLERK_KEY_NAMES, detectFramework } from "./framework.ts";
 
@@ -438,4 +439,37 @@ export async function readAllFolderKeys(cwd: string): Promise<AllFolderKeys> {
     secretKeys: secretKey ? [secretKey] : [],
     sdkFile,
   };
+}
+
+/** Why the folder's env files couldn't be read, as a clause; never a key. */
+export function unreadableFolderReason(error: unknown): string {
+  return `the CLI couldn't read this folder's env files (${errorMessage(error)})`;
+}
+
+/**
+ * Why the CLI can't tell which publishable key the folder's app loads, as a
+ * clause; undefined when it can.
+ */
+export function couldntTellReason({ unreadableLines, undecided }: FolderKeys): string | undefined {
+  const line = unreadableLines?.[0];
+  if (line) {
+    return `the CLI couldn't read the \`${line.name}\` line in \`${line.source}\`, so it can't tell which key this app loads`;
+  }
+  const conflicting = undecided?.publishable;
+  if (conflicting) {
+    return `${listInProse(conflicting.map((key) => `\`${key.source}\``))} hold different Clerk publishable keys, and the CLI doesn't know which one this app loads`;
+  }
+  return undefined;
+}
+
+/** Why the folder's secret keys are undecided, as a clause; undefined when they aren't. */
+export function secretKeysDisagreeReason({ undecided }: FolderKeys): string | undefined {
+  const conflicting = undecided?.secret;
+  if (!conflicting) return undefined;
+  return `${listInProse(conflicting.map((key) => `\`${key.source}\``))} hold different Clerk secret keys, and the CLI doesn't know which one this app loads`;
+}
+
+function listInProse(items: string[]): string {
+  if (items.length <= 2) return items.join(" and ");
+  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
 }

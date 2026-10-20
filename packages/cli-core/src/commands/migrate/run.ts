@@ -241,7 +241,12 @@ async function ensureImportTarget(
 
   if (linkNext) {
     log.info("This directory isn't linked to a Clerk application. Linking one first...");
-    const linked = await link({ skipIfLinked: true });
+    // After a claim page the person reruns the import, not just the link. Its
+    // arguments aren't echoed: they can hold a secret key.
+    const linked = await link({
+      skipIfLinked: true,
+      rerun: "run the same `clerk migrate import` command again",
+    });
     if (linked.status === "claim_page_opened") return "claim_page_opened";
   }
   return "ready";

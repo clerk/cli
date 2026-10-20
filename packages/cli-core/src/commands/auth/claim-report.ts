@@ -108,7 +108,7 @@ function folderLeftAloneWarning(
 }
 
 /** "`CLERK_SECRET_KEY` in .env.local", or "the `CLERK_SECRET_KEY` env var". */
-function describeKeyLocation({ name, source }: { name: string; source: string }): string {
+export function describeKeyLocation({ name, source }: { name: string; source: string }): string {
   return source === `${name} env var` ? `the \`${name}\` env var` : `\`${name}\` in ${source}`;
 }
 

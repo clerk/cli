@@ -1,4 +1,7 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   useCaptureLog,
   configStubs,
@@ -110,7 +113,22 @@ mock.module("../../lib/spinner.ts", () => ({
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 
+// No test may reach a real browser.
+mock.module("../../lib/open.ts", () => ({ openBrowser: async () => ({ ok: true }) }));
+
 const { link } = await import("./index.ts");
+
+// Each test runs in an empty folder: `link` reads the folder's keys.
+const originalCwd = process.cwd();
+let workDir = "";
+beforeEach(() => {
+  workDir = mkdtempSync(join(tmpdir(), "clerk-link-"));
+  process.chdir(workDir);
+});
+afterEach(() => {
+  process.chdir(originalCwd);
+  rmSync(workDir, { recursive: true, force: true });
+});
 
 const mockApp = {
   application_id: "app_123",
