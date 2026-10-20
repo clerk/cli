@@ -625,7 +625,8 @@ after them. They sort the users three ways:
 - **Rejected** — users Clerk would refuse. Each gets the first reason that
   applies:
   - it failed schema validation
-  - its source requested a skip (Supabase: a soft-deleted user)
+  - its source requested a skip (Supabase: a soft-deleted or anonymous user;
+    Firebase: a user with no email or phone, such as an anonymous one)
   - its only emails are ones Clerk refuses: malformed, or a domain that can't
     receive mail (`.local`, `.invalid`, `.test`, `.example`, `.arpa`,
     `.internal`, `.lan`, `.corp` and the like). Such an email is dropped from

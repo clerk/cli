@@ -106,6 +106,13 @@ const firebaseSource = {
       delete user.salt;
     }
 
+    // Anonymous sign-in leaves a user with no email or phone to sign in with.
+    // Neither export keeps the providers, so a provider that shared neither
+    // looks the same; either way Clerk has nothing to create the user under.
+    if (!user.email && !user.phone) {
+      user.skipReason ??= "anonymous in Firebase, or with no email or phone";
+    }
+
     routeByVerification(user, "email", "emailVerified", "boolean");
     // Firebase exports timestamps as Unix milliseconds, often as strings.
     user.createdAt = toIsoDate(user.createdAt, true);

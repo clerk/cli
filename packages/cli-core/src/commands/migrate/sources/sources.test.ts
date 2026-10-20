@@ -124,6 +124,22 @@ describe("firebase", () => {
   ])("disabled=%p carries as banned=%p", (disabled, expected) => {
     expect(one("firebase", { ...base, disabled })?.banned).toBe(expected as boolean | undefined);
   });
+  // Without the skip, each would fail validation as missing an identifier,
+  // which reads like a broken file.
+  test("skips a user with no email or phone, as an anonymous one is", () => {
+    const result = transformUsers([{ localId: "anon", createdAt: "1700000000000" }], "firebase");
+    expect(result.validationFailed).toBe(0);
+    expect(result.transformedData[0]?.skipReason).toBe(
+      "anonymous in Firebase, or with no email or phone",
+    );
+  });
+
+  test("does not skip a user with only a phone", () => {
+    expect(
+      one("firebase", { localId: "p1", phoneNumber: "+14165550123" })?.skipReason,
+    ).toBeUndefined();
+  });
+
   const withHash = { ...base, passwordHash: "SGFzaA==", salt: "U2FsdA==" };
 
   test("builds the scrypt digest Clerk expects, parameters inline", async () => {
@@ -531,10 +547,8 @@ describe("fields the CLI's own export adds", () => {
 });
 
 describe("invalid records", () => {
-  const INVALID: [string, Record<string, unknown>][] = [
-    ["firebase", { localId: "a4" }],
-    ["supabase", { id: "a5" }],
-  ];
+  // Firebase skips such a user instead; see "skips a user with no email or phone".
+  const INVALID: [string, Record<string, unknown>][] = [["supabase", { id: "a5" }]];
 
   test.each(INVALID)(
     "%s reports a user with no identifier instead of crashing",
