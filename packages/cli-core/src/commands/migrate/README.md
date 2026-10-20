@@ -362,8 +362,10 @@ alongside imports.
   the API — only the `*_enabled` booleans. Migrated users must reset their
   password in the destination instance.
 - **Auth0**'s Management API does not return password hashes either; they come
-  only from a support request. Add a `passwordHash` field to each user before
-  importing, or migrate without passwords.
+  only from a support request. That file has no `user_id`: a user's ID is
+  `auth0|` plus `alt_id`, or `_id` when there's no `alt_id`. Copy each
+  `passwordHash` onto the matching user before importing, or migrate without
+  passwords.
 
 Both print a warning whenever they export anyone. `clerk`'s coverage also
 counts users who _have_ a password, so the size of the gap is visible up front.
