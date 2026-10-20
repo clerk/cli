@@ -232,12 +232,17 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
 
 /** What `link` read about the folder's keys, for deciding what it may do. */
 interface FolderFacts {
-  /** The keys the folder's app loads; undefined when an env file couldn't be read. */
+  /** The keys the folder's app loads; undefined when an env file it loads couldn't be read. */
   keys?: FolderKeys;
   /** Why the CLI can't tell which publishable key the app loads, as a clause. */
   couldntTell?: string;
   /** Why the folder's secret keys are undecided, as a clause. */
   secretsDisagree?: string;
+  /**
+   * Why an env file couldn't be read, as a clause. Even a file the framework
+   * doesn't load may hold a real app's keys.
+   */
+  readError?: string;
   /**
    * No app can pass `init`'s every-key check: an env file or a key line can't
    * be read, or an SDK keyless file names no app.
@@ -250,21 +255,38 @@ interface FolderFacts {
   holdsKeys: boolean;
 }
 
-/** Reads the folder's keys once; a read error is carried, never thrown. */
+/**
+ * Reads the folder's keys once; a read error is carried, never thrown. The two
+ * reads fail apart: `readAllFolderKeys` also reads env files the framework
+ * doesn't load (Nuxt loads only `.env`), so when only it fails, the keys the
+ * app loads, and the SDK-only step, still stand.
+ */
 async function inspectFolder(cwd: string): Promise<FolderFacts> {
-  let keys: FolderKeys;
-  let all: AllFolderKeys;
-  try {
-    [keys, all] = await Promise.all([readFolderKeys(cwd), readAllFolderKeys(cwd)]);
-  } catch (error) {
-    return { couldntTell: unreadableFolderReason(error), unreadable: true, holdsKeys: true };
+  const [loaded, every] = await Promise.allSettled([readFolderKeys(cwd), readAllFolderKeys(cwd)]);
+  if (loaded.status === "rejected") {
+    const reason = unreadableFolderReason(loaded.reason);
+    return { couldntTell: reason, readError: reason, unreadable: true, holdsKeys: true };
   }
-  const anyKey = all.publishableKeys.length > 0 || all.secretKeys.length > 0;
-  const sdkFile = Boolean(all.sdkFile) && all.sdkFile?.state !== "absent";
-  return {
+  const keys = loaded.value;
+  const facts = {
     keys,
     couldntTell: couldntTellReason(keys),
     secretsDisagree: secretKeysDisagreeReason(keys),
+  };
+  if (every.status === "rejected") {
+    // No app can pass `init`'s every-key check, which reads every file.
+    return {
+      ...facts,
+      readError: unreadableFolderReason(every.reason),
+      unreadable: true,
+      holdsKeys: true,
+    };
+  }
+  const all = every.value;
+  const anyKey = all.publishableKeys.length > 0 || all.secretKeys.length > 0;
+  const sdkFile = Boolean(all.sdkFile) && all.sdkFile?.state !== "absent";
+  return {
+    ...facts,
     unreadable: Boolean(all.unreadableLines?.length) || (sdkFile && !anyKey && isUnusable(all)),
     holdsKeys: anyKey || Boolean(all.unreadableLines?.length) || sdkFile,
   };
@@ -323,7 +345,8 @@ function decideNextStep(input: {
     };
   }
   if (keyCheck && folder.unreadable) {
-    const why = folder.couldntTell ?? "the CLI couldn't read this folder's Clerk keys";
+    const why =
+      folder.couldntTell ?? folder.readError ?? "the CLI couldn't read this folder's Clerk keys";
     return {
       kind: "stop",
       error: new CliError(
@@ -383,6 +406,7 @@ function autolinkAllowsCreate(autolinked: AutolinkResult | undefined): boolean {
 type CreateBlocker =
   | { kind: "after_claim" }
   | { kind: "couldnt_tell"; reason: string }
+  | { kind: "unreadable_file"; reason: string }
   | { kind: "list_failed"; error: unknown }
   | { kind: "secrets_disagree"; reason: string };
 
@@ -396,6 +420,7 @@ function createBlockers(
   // The claim check may just have left the folder's keys alone.
   if (afterClaim) blockers.push({ kind: "after_claim" });
   if (folder.couldntTell) blockers.push({ kind: "couldnt_tell", reason: folder.couldntTell });
+  if (folder.readError) blockers.push({ kind: "unreadable_file", reason: folder.readError });
   if (autolinked?.status === "list_failed") {
     blockers.push({ kind: "list_failed", error: autolinked.error });
   }
@@ -413,6 +438,7 @@ function describeBlocker(blocker: CreateBlocker): string | undefined {
       // agent error stands.
       return undefined;
     case "couldnt_tell":
+    case "unreadable_file":
     case "secrets_disagree":
       return blocker.reason;
     case "list_failed":

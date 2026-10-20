@@ -820,6 +820,41 @@ describe("an SDK-only folder", () => {
 
     expect(mockLinkApp).not.toHaveBeenCalled();
   });
+
+  // Nuxt loads only `.env`, so an `.env.local` the CLI can't read says nothing
+  // about the keys the app runs on: the SDK step still decides.
+  describe("in a Nuxt folder whose .env.local can't be read", () => {
+    beforeEach(async () => {
+      await Bun.write(
+        join(dir, "package.json"),
+        JSON.stringify({ dependencies: { nuxt: "4.0.0" } }),
+      );
+      spyOn(localKeys, "readAllFolderKeys").mockRejectedValue(
+        Object.assign(new Error("EACCES: permission denied, open '.env.local'"), {
+          code: "EACCES",
+        }),
+      );
+    });
+
+    afterEach(() => {
+      (localKeys.readAllFolderKeys as unknown as { mockRestore: () => void }).mockRestore();
+    });
+
+    test.each([
+      { who: "a person", agent: false },
+      { who: "an agent", agent: true },
+    ])("$who still links the account's app whose key the SDK's file holds", async ({ agent }) => {
+      mockIsAgent.mockReturnValue(agent);
+      storedSession();
+      await sdkFile();
+      mockListApplications.mockResolvedValue([OTHER_APP, SDK_APP]);
+
+      const outcome = await link({ cwd: dir });
+
+      expect(outcome).toEqual({ status: "linked", appId: "app_sdk" });
+      expectNoPickerOrNewApp();
+    });
+  });
 });
 
 // What `clerk link` may do when auto-link didn't link the folder: one decision
@@ -982,6 +1017,37 @@ describe("when auto-link doesn't link the folder", () => {
       expect(mockSearch).toHaveBeenCalledTimes(1);
       // No "Link to this application?" suggestion from a key it couldn't read.
       expect(mockConfirm).not.toHaveBeenCalled();
+    });
+  });
+
+  // Nuxt loads only `.env`, but an `.env.local` the CLI can't read may still
+  // hold a real app's keys.
+  describe("an env file the framework doesn't load that can't be read", () => {
+    beforeEach(async () => {
+      await writeFile("package.json", JSON.stringify({ dependencies: { nuxt: "4.0.0" } }));
+      spyOn(localKeys, "readAllFolderKeys").mockRejectedValue(
+        Object.assign(new Error("EACCES: permission denied, open '.env.local'"), {
+          code: "EACCES",
+        }),
+      );
+    });
+
+    afterEach(() => {
+      (localKeys.readAllFolderKeys as unknown as { mockRestore: () => void }).mockRestore();
+    });
+
+    test("an agent never creates an app: it stops, saying why", async () => {
+      mockIsAgent.mockReturnValue(true);
+      storedSession();
+
+      await expect(
+        link({ skipIfLinked: true, createIfMissing: "my-project" }),
+      ).rejects.toMatchObject({
+        code: "usage_error",
+        message: expect.stringContaining("couldn't read this folder's env files"),
+      });
+
+      expect(mockCreateApplication).not.toHaveBeenCalled();
     });
   });
 

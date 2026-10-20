@@ -8,8 +8,9 @@
  * changes which key the folder's app loads.
  */
 
-import { beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { join } from "node:path";
+import * as localKeys from "../../lib/local-keys.ts";
 import type { Application } from "../../lib/plapi.ts";
 import { clerk, http, mockPrompts, readConfig, useIntegrationTestHarness } from "./lib/harness.ts";
 import { useCleanClerkKeyEnv, useSyntheticShellClerkKeys } from "../lib/clerk-key-env.ts";
@@ -153,4 +154,41 @@ test("person, no framework detected: files holding different keys go straight to
     "`.env.local` and `.env` hold different Clerk publishable keys",
   );
   expect(await linkedAppId()).toBe(APP_B.application_id);
+});
+
+// Nuxt loads only `.env`, so an `.env.local` the CLI can't read doesn't hide
+// the key Nuxt runs on. The read fails through a rejecting spy: chmod doesn't
+// stop root in CI.
+describe("person, Nuxt, an .env.local the CLI can't read", () => {
+  beforeEach(() => {
+    spyOn(localKeys, "readAllFolderKeys").mockRejectedValue(
+      Object.assign(new Error("EACCES: permission denied, open '.env.local'"), {
+        code: "EACCES",
+      }),
+    );
+  });
+
+  afterEach(() => {
+    (localKeys.readAllFolderKeys as unknown as { mockRestore: () => void }).mockRestore();
+  });
+
+  test("is asked to link .env's app and links it on yes, with no picker and no new app", async () => {
+    await useFramework("nuxt");
+    await writeEnv(
+      ".env",
+      `NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${APP_A.instances[0]!.publishable_key}`,
+    );
+    // "Link to this application?" is the only prompt answered: the harness
+    // fails on any other, the picker included.
+    mockPrompts.confirm(true);
+
+    const result = await clerk("link");
+
+    expect(Bun.stripANSI(result.stderr)).toContain(`We found ${APP_A.name}`);
+    expect(await linkedAppId()).toBe(APP_A.application_id);
+    const creates = http.requests.filter(
+      (r) => r.method === "POST" && new URL(r.url).pathname === "/v1/platform/applications",
+    );
+    expect(creates).toEqual([]);
+  });
 });
