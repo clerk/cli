@@ -867,6 +867,26 @@ describe("when auto-link doesn't link the folder", () => {
     return config.source(undefined).map((choice) => choice.value);
   }
 
+  // Creating is for a folder whose keys no account app holds: no key at all,
+  // or one that matches nothing.
+  test.each([
+    { outcome: "no key", autolinked: { status: "no_key" } },
+    { outcome: "a key no app matches", autolinked: { status: "no_match", source: ".env" } },
+  ])(
+    "an agent creates the app it was asked to when auto-link found $outcome",
+    async ({ autolinked }) => {
+      mockIsAgent.mockReturnValue(true);
+      storedSession();
+      mockAutolink.mockResolvedValue(autolinked);
+      mockCreateApplication.mockResolvedValue({ ...ACCOUNT_APP, application_id: "app_new" });
+
+      const outcome = await link({ skipIfLinked: true, createIfMissing: "my-project" });
+
+      expect(mockCreateApplication).toHaveBeenCalledWith("my-project");
+      expect(outcome).toEqual({ status: "linked", appId: "app_new" });
+    },
+  );
+
   test("an agent never creates an app when the app list failed: it stops, naming the failed list", async () => {
     mockIsAgent.mockReturnValue(true);
     storedSession();

@@ -294,7 +294,9 @@ type NextStep =
  *   development and production keys.
  * - A person picks, without "Create" when the check applies and the folder
  *   holds keys, since a new app's keys couldn't match them.
- * - An agent creates an app only when nothing blocks it (`createBlocker`).
+ * - An agent creates an app only when auto-link found no key, or a key no
+ *   account app holds (`autolinkAllowsCreate`), and nothing blocks it
+ *   (`createBlockers`). Otherwise it stops, saying why.
  */
 function decideNextStep(input: {
   agent: boolean;
@@ -338,10 +340,11 @@ function decideNextStep(input: {
       why: folder.couldntTell,
     };
   }
-  const reason = whyNoAppForAgent(autolinked, folder);
-  if (input.createIfMissing && !createBlocker(input, reason)) {
+  const blockers = createBlockers(autolinked, folder, input.afterClaim);
+  if (input.createIfMissing && autolinkAllowsCreate(autolinked) && blockers.length === 0) {
     return { kind: "create", name: input.createIfMissing };
   }
+  const reason = blockers.map(describeBlocker).find((clause) => clause !== undefined);
   // The lead sentence stays verbatim: agents and the skill's troubleshooting
   // table match on it.
   return {
@@ -353,33 +356,68 @@ function decideNextStep(input: {
   };
 }
 
-/** Why an agent's auto-link found no app, as a clause, when there's more to say than "no match". */
-function whyNoAppForAgent(
-  autolinked: AutolinkResult | undefined,
-  folder: FolderFacts,
-): string | undefined {
-  if (folder.couldntTell) return folder.couldntTell;
-  if (autolinked?.status === "list_failed") {
-    return `the CLI couldn't list your applications to match this folder's key (${errorMessage(autolinked.error)})`;
+/**
+ * Whether auto-link's outcome leaves room for a new app: it found no key, or a
+ * key no account app holds. Every outcome is listed, so a new one fails the
+ * typecheck here until someone decides whether it may create.
+ */
+function autolinkAllowsCreate(autolinked: AutolinkResult | undefined): boolean {
+  if (!autolinked) return false;
+  switch (autolinked.status) {
+    case "no_key":
+    case "no_match":
+      return true;
+    case "linked":
+    case "couldnt_tell":
+    case "list_failed":
+    case "no_development_instance":
+      return false;
   }
-  return folder.secretsDisagree;
 }
 
 /**
- * Whether something stops an agent from creating a new app for the folder:
- * `init` would write the new app's keys over the folder's. Each entry is a
- * case where those keys may belong to a real app.
+ * Something that stops an agent from creating a new app for the folder:
+ * `init` would write the new app's keys over the folder's, and each is a case
+ * where those keys may belong to a real app.
  */
-function createBlocker(
-  { afterClaim }: { afterClaim: boolean },
-  reason: string | undefined,
-): boolean {
+type CreateBlocker =
+  | { kind: "after_claim" }
+  | { kind: "couldnt_tell"; reason: string }
+  | { kind: "list_failed"; error: unknown }
+  | { kind: "secrets_disagree"; reason: string };
+
+/** Everything that stops an agent from creating an app, in the order its message names them. */
+function createBlockers(
+  autolinked: AutolinkResult | undefined,
+  folder: FolderFacts,
+  afterClaim: boolean,
+): CreateBlocker[] {
+  const blockers: CreateBlocker[] = [];
   // The claim check may just have left the folder's keys alone.
-  if (afterClaim) return true;
-  // The CLI couldn't tell which key the app loads, couldn't list the
-  // account's apps, or the folder's secret keys disagree.
-  if (reason) return true;
-  return false;
+  if (afterClaim) blockers.push({ kind: "after_claim" });
+  if (folder.couldntTell) blockers.push({ kind: "couldnt_tell", reason: folder.couldntTell });
+  if (autolinked?.status === "list_failed") {
+    blockers.push({ kind: "list_failed", error: autolinked.error });
+  }
+  if (folder.secretsDisagree) {
+    blockers.push({ kind: "secrets_disagree", reason: folder.secretsDisagree });
+  }
+  return blockers;
+}
+
+/** What the agent's stop says about a blocker, as a clause; undefined when it adds nothing. */
+function describeBlocker(blocker: CreateBlocker): string | undefined {
+  switch (blocker.kind) {
+    case "after_claim":
+      // A claim that ran already reported its outcome; otherwise the existing
+      // agent error stands.
+      return undefined;
+    case "couldnt_tell":
+    case "secrets_disagree":
+      return blocker.reason;
+    case "list_failed":
+      return `the CLI couldn't list your applications to match this folder's key (${errorMessage(blocker.error)})`;
+  }
 }
 
 /**
