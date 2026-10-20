@@ -263,13 +263,19 @@ export type DiscoveredOAuthProviders = {
  * return the domain's status yet. The application was read moments earlier,
  * so the default reading (the application is gone; re-link) would be wrong.
  */
-const DOMAIN_REQUEST: MapDeployErrorOptions<never> = {
-  onNotFound: () =>
-    domainStatusNotFoundError(
-      "The production instance exists, but Clerk couldn't read its domain status yet. " +
-        "Run `clerk deploy status` again shortly.",
-    ),
-};
+function domainRequest(options: DomainCheckOptions = {}): MapDeployErrorOptions<never> {
+  return {
+    onNotFound: () =>
+      domainStatusNotFoundError(
+        "The production instance exists, but Clerk couldn't read its domain status yet. " +
+          "Run `clerk deploy status` again shortly.",
+        options,
+      ),
+  };
+}
+
+/** `justCreated`: this run created the production instance, so it can't be the deleted one. */
+export type DomainCheckOptions = { justCreated?: boolean };
 
 /**
  * Every `deploy_instance_unresolved` error for a 404 on the production
@@ -571,7 +577,7 @@ export async function loadInitialDeployStatus(
   try {
     const status = await mapDeployError(
       getApplicationDomainStatus(appId, domainIdOrName),
-      DOMAIN_REQUEST,
+      domainRequest(),
     );
     return { status, live: true };
   } catch (error) {
@@ -1088,15 +1094,13 @@ export async function waitForDeployStatus(
   domainIdOrName: string,
   domain: string,
   handlers: DeployProgressHandlers,
-  options: { triggerCheck?: boolean } = {},
+  options: { triggerCheck?: boolean } & DomainCheckOptions = {},
 ): Promise<DeployStatusOutcome> {
+  const notFound = domainRequest(options);
   if (options.triggerCheck !== false) {
-    await triggerDeployStatusCheck(appId, domainIdOrName);
+    await triggerDeployStatusCheck(appId, domainIdOrName, options);
   }
-  let response = await mapDeployError(
-    getApplicationDomainStatus(appId, domainIdOrName),
-    DOMAIN_REQUEST,
-  );
+  let response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName), notFound);
   let status = deployComponentStatusFromDomainStatus(response);
   handlers.onStatus?.({ verified: response.status === "complete", status });
 
@@ -1116,10 +1120,7 @@ export async function waitForDeployStatus(
       );
       retriesRemaining--;
       nextRetryDelay *= DEPLOY_STATUS_BACKOFF_FACTOR;
-      response = await mapDeployError(
-        getApplicationDomainStatus(appId, domainIdOrName),
-        DOMAIN_REQUEST,
-      );
+      response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName), notFound);
       status = deployComponentStatusFromDomainStatus(response);
       handlers.onStatus?.({ verified: response.status === "complete", status });
       if (response.status === "complete") return true;
@@ -1155,9 +1156,13 @@ async function sleepWithRetryCountdown(
 export async function triggerDeployStatusCheck(
   appId: string,
   domainIdOrName: string,
+  options: DomainCheckOptions = {},
 ): Promise<void> {
   try {
-    await mapDeployError(triggerApplicationDomainDNSCheck(appId, domainIdOrName), DOMAIN_REQUEST);
+    await mapDeployError(
+      triggerApplicationDomainDNSCheck(appId, domainIdOrName),
+      domainRequest(options),
+    );
   } catch (error) {
     if (error instanceof PlapiError && error.status === 409 && error.code === "conflict") {
       log.debug("DNS check is already in flight; continuing to poll domain status.");

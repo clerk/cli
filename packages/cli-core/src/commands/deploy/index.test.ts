@@ -1106,6 +1106,53 @@ describe("deploy", () => {
       expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
     });
 
+    // A 404 on the DNS check after this run's own create can't mean the
+    // instance was deleted, so the message leaves out the `clerk link` hint;
+    // after a resume it keeps it.
+    const dnsCheckNotFound = () =>
+      new PlapiError(
+        404,
+        JSON.stringify({ errors: [{ code: "resource_not_found" }] }),
+        "https://x",
+      );
+    const domainStatusUnreadable =
+      "The production instance exists, but Clerk couldn't read its domain status yet. " +
+      "Run `clerk deploy status` again shortly.";
+
+    test("a DNS-check 404 after its own create leaves out the clerk link hint", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockFetchInstanceConfig.mockResolvedValue({}); // no OAuth setup, so DNS comes next
+      mockSelect.mockResolvedValueOnce("check");
+      mockTriggerApplicationDomainDNSCheck.mockRejectedValue(dnsCheckNotFound());
+
+      const error = await runDeploy({ domain: "example.com", yes: true }).catch((e: unknown) => e);
+
+      expect(mockCreateProductionInstance).toHaveBeenCalled();
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      expect((error as CliError).message).toBe(domainStatusUnreadable);
+    });
+
+    test("a DNS-check 404 on a resumed deploy keeps the clerk link hint", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+      mockSelect.mockResolvedValueOnce("check");
+      mockTriggerApplicationDomainDNSCheck.mockRejectedValue(dnsCheckNotFound());
+
+      const error = await runDeploy({}).catch((e: unknown) => e);
+
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      expect((error as CliError).message).toBe(
+        `${domainStatusUnreadable} If the production instance was deleted, run \`clerk link\`.`,
+      );
+    });
+
     // As in agent mode, an empty id from the create names no instance, so
     // the profile isn't given one that `--instance prod` resolves to nothing.
     test("a create response without an id saves no production id", async () => {

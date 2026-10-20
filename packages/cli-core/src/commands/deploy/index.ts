@@ -85,6 +85,7 @@ import {
   resolveNativeAppleConfiguration,
   waitForDeployStatus,
   type DeployProgressHandlers,
+  type DomainCheckOptions,
   type DeployStatusOutcome,
   type DiscoveredOAuthProviders,
   type LiveDeploySnapshot,
@@ -427,11 +428,11 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
   completedOAuthProviders = await runOAuthSetup(ctx, operationState, oauthProviders);
 
   bar();
-  const dnsStatus = await runDnsVerificationPrompt(ctx, {
-    ...operationState,
-    pending: { type: "dns" },
-    completedOAuthProviders,
-  });
+  const dnsStatus = await runDnsVerificationPrompt(
+    ctx,
+    { ...operationState, pending: { type: "dns" }, completedOAuthProviders },
+    { justCreated: true },
+  );
 
   await finishDeploy(
     ctx,
@@ -677,6 +678,7 @@ async function runExistingDomainDnsVerification(
 async function runDnsVerificationPrompt(
   ctx: DeployContext,
   state: DeployOperationState,
+  options: DomainCheckOptions = {},
 ): Promise<DnsVerificationResult> {
   try {
     const action = await chooseDnsVerificationAction();
@@ -685,7 +687,7 @@ async function runDnsVerificationPrompt(
       log.info("Skipping DNS verification for now.");
       return "pending";
     }
-    return await runDnsVerification(ctx, state);
+    return await runDnsVerification(ctx, state, options);
   } catch (error) {
     if (error instanceof UserAbortError) {
       throwDeployPaused(state, "cancelled");
@@ -697,14 +699,19 @@ async function runDnsVerificationPrompt(
 async function runDnsVerification(
   ctx: DeployContext,
   state: DeployOperationState,
+  options: DomainCheckOptions,
 ): Promise<DnsVerificationResult> {
   const domainIdOrName = state.productionDomainId ?? state.domain;
 
   while (true) {
     // Per poll, not once the wait returns: a Ctrl-C mid-wait is reported by
     // the signal handler with the stage as it stands at that moment.
-    const outcome = await pollDeployStatus(ctx.appId, domainIdOrName, state.domain, (polled) =>
-      recordDeployPoll(state, polled),
+    const outcome = await pollDeployStatus(
+      ctx.appId,
+      domainIdOrName,
+      state.domain,
+      (polled) => recordDeployPoll(state, polled),
+      options,
     );
 
     if (outcome.verified) {
@@ -763,12 +770,19 @@ async function pollDeployStatus(
   domainIdOrName: string,
   domain: string,
   onStatus: DeployProgressHandlers["onStatus"],
+  options: DomainCheckOptions,
 ): Promise<DeployStatusOutcome> {
-  return waitForDeployStatus(appId, domainIdOrName, domain, {
-    runVerification: async (progressLabel, work) => withSpinner(progressLabel, work),
-    onVerified: () => log.success(deployComponentLabels("dns", domain).done),
-    onStatus,
-  });
+  return waitForDeployStatus(
+    appId,
+    domainIdOrName,
+    domain,
+    {
+      runVerification: async (progressLabel, work) => withSpinner(progressLabel, work),
+      onVerified: () => log.success(deployComponentLabels("dns", domain).done),
+      onStatus,
+    },
+    options,
+  );
 }
 
 async function offerBindZoneExport(
