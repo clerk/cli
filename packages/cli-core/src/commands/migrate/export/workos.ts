@@ -51,7 +51,7 @@ const IDENTITY_RATE_PER_SECOND = 20;
  *
  * `withSpinner` hands a no-op `update` to anything that is not a TTY, so an
  * agent exporting 50,000 users with `--with-identities` would otherwise see
- * nothing at all for the ten minutes the fan-out takes. These two print
+ * nothing at all while the fan-out runs, at 20 users a second. These two print
  * through `log.info` instead, which a non-TTY does get.
  */
 const IDENTITY_PROGRESS_EVERY = 500;
