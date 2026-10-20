@@ -124,7 +124,7 @@ export type OAuthSetupGuide = {
   command: string;
 };
 
-/** A command that copies the production keys to one host, for an agent to run as given. */
+/** A command that copies the production keys to one host, for an agent to copy verbatim and run. */
 export type HostSetupEntry = {
   /** The host's slug, e.g. `vercel`. */
   host: string;
@@ -979,8 +979,8 @@ export function agentNextAction(step: DeployNextStep): string {
       return (
         `Clerk's production setup for https://${step.domain} is verified. If you haven't already: ` +
         `put the production keys on the host without reading them, by piping them to the host's CLI. ` +
-        `For Vercel, run the \`command\` from the \`hostSetup\` entry whose \`host\` is \`vercel\`, ` +
-        `exactly as given, in bash or zsh. ` +
+        `For Vercel, run the \`command\` from the \`hostSetup\` entry whose \`host\` is \`vercel\` ` +
+        `in bash or zsh, copied verbatim from the field. ` +
         `It reads the keys and the variable list (\`vercel env ls\`) before changing anything, and it stops ` +
         `with exit 1 if it can't read that list. If a key is already set as a production variable that also ` +
         `targets another environment (Preview, Development, or a custom one), it stops with exit 3 and names ` +

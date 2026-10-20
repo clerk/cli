@@ -1175,10 +1175,13 @@ describe("buildDeployStatusReport", () => {
     expect(report.nextAction).toContain("put the production keys on the host without reading them");
     // The command is a report field the agent copies whole, not text it has
     // to cut out of this sentence.
+    // "Verbatim" once, for the first run: the consent rerun below changes one
+    // token of it.
     expect(report.nextAction).toContain(
-      "For Vercel, run the `command` from the `hostSetup` entry whose `host` is `vercel`, " +
-        "exactly as given, in bash or zsh.",
+      "For Vercel, run the `command` from the `hostSetup` entry whose `host` is `vercel` " +
+        "in bash or zsh, copied verbatim from the field.",
     );
+    expect(report.nextAction).not.toContain("exactly as given");
     expect(report.nextAction).not.toContain("vercel env add");
     expect(report.nextAction).not.toContain("allow_shared=0;");
     // Whether `--force` on production rewrites a variable Vercel shares with
