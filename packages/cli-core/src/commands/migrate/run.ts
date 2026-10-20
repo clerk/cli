@@ -345,6 +345,12 @@ async function resolveInput(options: MigrateRunOptions): Promise<{
   if (sha256File(file) !== sha256 || readEnvelope(file)?.runId !== record.id) {
     throwChangedExport(value, file);
   }
+  if (record.truncated) {
+    log.warn(
+      `Export run ${value} did not get every user: the source cut it short. ` +
+        "Users it never reached are not in this import.",
+    );
+  }
   // Carried on, so the file is checked again where the users are read: another
   // export can still overwrite the path after this.
   return {

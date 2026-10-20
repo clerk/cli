@@ -403,6 +403,16 @@ describe("run", () => {
       await expect(run({ ...noSource, input: record.id })).rejects.toThrow(/is gone/);
     });
 
+    test("warns that a truncated export run is not every user", async () => {
+      const { record } = exportRun("clerk", export2);
+      patchRun(runsDir(), record.id, { truncated: true });
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).toContain(`Export run ${record.id} did not get every user`);
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+    });
+
     test("names an --output export file outside the run folder for deletion too", async () => {
       const { record, file } = exportRun("clerk", export2);
       const outside = path.join(workDir, `users-${record.id}.json`);

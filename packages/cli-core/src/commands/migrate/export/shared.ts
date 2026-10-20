@@ -170,7 +170,10 @@ export function finishExport(input: FinishExportInput): FinishedExport {
         `Nothing was written. Run the export again${options.output ? " with another --output" : ""}.`,
     );
   }
-  run.update({ file: { path: outputPath, sha256: sha256File(outputPath) } });
+  run.update({
+    file: { path: outputPath, sha256: sha256File(outputPath) },
+    ...(input.truncated ? { truncated: true } : {}),
+  });
   const record = run.finish();
   // Only the runs folder: the export's --secret-key, --app and --instance name
   // the source, and would aim the import at it.
