@@ -1,0 +1,47 @@
+import type { Program } from "../../cli-program.ts";
+import { feedback, FEEDBACK_EXAMPLES, FEEDBACK_OUTCOMES } from "./feedback.ts";
+
+/**
+ * The long form of `clerk feedback --help`: when to use the command, what it
+ * sends, and the rules. The one-liner lives in `.summary()` so `clerk --help`
+ * and the README's help block carry it.
+ */
+const DESCRIPTION =
+  "Send Clerk a report about a problem with this CLI.\n\n" +
+  "Use it when a command exited 0 but did something other than what you expected, " +
+  "when an error was confusing or wrong, or when a capability you needed is missing.\n\n" +
+  "The report is one event on the CLI's telemetry channel: your goal, what you " +
+  "attempted, what went wrong, how it ended, and optionally the command, the error " +
+  "text, the error code and a suggestion, plus the usual telemetry envelope (random " +
+  "machine id, OS, CLI version, mode, and app id when linked). Every text field is " +
+  "scrubbed for common secret formats, home-directory paths and email addresses before " +
+  "it leaves your machine, and --dry-run prints exactly what would be sent. Scrubbing " +
+  "is pattern-based and can miss things, so never include secrets, API keys or personal " +
+  "data about end users. A telemetry opt-out " +
+  "(`clerk telemetry disable`, CLERK_TELEMETRY_DISABLED or DO_NOT_TRACK) blocks the " +
+  "send; file at https://github.com/clerk/cli/issues instead.";
+
+export function registerFeedback(program: Program): void {
+  program
+    .command("feedback")
+    .summary("Report a wrong result, a confusing error or a missing capability to Clerk")
+    .description(DESCRIPTION)
+    .option("--goal <text>", "What you were trying to do (required)")
+    .option("--attempted <text>", "What you ran and what you expected (required)")
+    .option("--issue <text>", "What went wrong or was confusing (required)")
+    .option("--outcome <outcome>", `How it ended: ${FEEDBACK_OUTCOMES.join(", ")} (required)`)
+    .option(
+      "--command <path>",
+      'The CLI command involved, as typed after `clerk` (e.g. "users list"); a pasted command line is fine: arguments and flags after the command are dropped, global flags before it are not read',
+    )
+    .option("--error-text <text>", "The exact error you saw")
+    .option("--error-code <code>", "The code from the error output (e.g. not_linked)")
+    .option("--suggestion <text>", "What would have helped")
+    .option(
+      "--dry-run",
+      "Print exactly what would be sent and send no report (the usual usage event for this command still applies; may create the local machine id)",
+    )
+    .option("--yes", "Skip the confirmation prompt")
+    .setExamples(FEEDBACK_EXAMPLES)
+    .action(async (options, command) => feedback(options, command));
+}

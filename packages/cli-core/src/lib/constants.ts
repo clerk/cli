@@ -55,3 +55,17 @@ export const NPM_REGISTRY_URL = "https://registry.npmjs.org/";
 /** Event ingestion endpoint (telemetry-service worker → BigQuery). */
 export const DEFAULT_TELEMETRY_ENDPOINT = "https://clerk-telemetry.com/v1/event";
 export const TELEMETRY_TIMEOUT_MS = 1000;
+
+// ── Feedback (`clerk feedback`) ───────────────────────────────────────────
+
+/**
+ * Longer than TELEMETRY_TIMEOUT_MS on purpose: a person who typed a report is
+ * waiting for a confirmation, where the per-run event has nobody waiting.
+ */
+export const FEEDBACK_SEND_TIMEOUT_MS = 5000;
+/** Where to send a report when telemetry is off or the send is refused. */
+export const GITHUB_ISSUES_URL = "https://github.com/clerk/cli/issues";
+/** Recent feedback sends, in the cache directory; best-effort like the update check's file. */
+export const FEEDBACK_SENDS_FILE_NAME = "feedback-sends.json";
+export const FEEDBACK_DAILY_LIMIT = 10;
+export const FEEDBACK_WINDOW_MS = 24 * 60 * 60 * 1000;

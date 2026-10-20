@@ -65,6 +65,13 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
     { name: "users", description: "Users only" },
     { name: "orgs,users", description: "Both organizations and users" },
   ],
+  // Kept off `.choices()` so an invalid value gets the handler's usage error
+  // (JSON envelope, exit 2) rather than Commander's plain text and exit 1.
+  "--outcome": [
+    { name: "blocked", description: "Could not finish" },
+    { name: "worked_around", description: "Finished with a workaround" },
+    { name: "succeeded_with_friction", description: "Finished, but harder than it should be" },
+  ],
 };
 
 /**

@@ -8,6 +8,7 @@ import {
   declareSoftExitOutcome,
   finalizeAndSendTelemetry,
   getTelemetryStatus,
+  sendTelemetryEvent,
   setTelemetryPauseStep,
   setTelemetryDomainComponents,
   setTelemetryOAuthComplete,
@@ -835,5 +836,53 @@ describe("finalizeAndSendTelemetry", () => {
       );
       expect(payload.pause_step).toBe("oauth");
     });
+  });
+});
+
+// The shared sender enforces the opt-out itself, so a caller that forgets the
+// check cannot send from an opted-out machine. The per-run flush keeps its own
+// earlier check (it must also skip the notice) and ignores this result.
+describe("sendTelemetryEvent", () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  let status = 200;
+
+  beforeEach(() => {
+    delete process.env.CLERK_TELEMETRY_URL;
+    delete process.env.CLERK_TELEMETRY_DISABLED;
+    delete process.env.DO_NOT_TRACK;
+    process.env.CLERK_TELEMETRY_URL = "https://capture.invalid/v1/event";
+    calls = 0;
+    status = 200;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response("{}", { status });
+    }) as unknown as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    delete process.env.CLERK_TELEMETRY_URL;
+    delete process.env.CLERK_TELEMETRY_DISABLED;
+    delete process.env.DO_NOT_TRACK;
+  });
+
+  const send = async () =>
+    sendTelemetryEvent({ event: "X", payload: {} }, { signal: new AbortController().signal });
+
+  test("accepted on a 2xx, rejected on a 5xx", async () => {
+    expect(await send()).toBe("accepted");
+    status = 500;
+    expect(await send()).toBe("rejected");
+    expect(calls).toBe(2);
+  });
+
+  test.each([
+    ["DO_NOT_TRACK", async () => void (process.env.DO_NOT_TRACK = "1")],
+    ["CLERK_TELEMETRY_DISABLED", async () => void (process.env.CLERK_TELEMETRY_DISABLED = "1")],
+    ["clerk telemetry disable", async () => setTelemetryDisabled(true)],
+  ])("disabled by %s: no request at all", async (_label, optOut) => {
+    await optOut();
+    expect(await send()).toBe("disabled");
+    expect(calls).toBe(0);
   });
 });
