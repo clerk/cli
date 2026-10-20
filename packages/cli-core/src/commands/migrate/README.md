@@ -371,9 +371,9 @@ alongside imports.
   `auth0|` plus `alt_id`, or `_id` when there's no `alt_id`. Copy each
   `passwordHash` onto the matching user before importing, or migrate without
   passwords.
-- **WorkOS** returns neither password hashes nor TOTP secrets, and has no
-  support-request escape hatch: hashes go in on import and never come back, and
-  `totp.secret` is returned on enrol only. There is nothing to add to the file.
+- **WorkOS** returns neither password hashes nor TOTP secrets over the API:
+  hashes go in on import and never come back, and `totp.secret` is returned on
+  enrol only. WorkOS documents no other way to get them out.
 
 All three print a warning whenever they export anyone. `clerk`'s and `workos`'s
 coverage also counts users who _have_ a password, so the size of the gap is
