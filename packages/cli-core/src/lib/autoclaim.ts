@@ -10,6 +10,7 @@ import { linkApp } from "./autolink.ts";
 import { resolveProfile } from "./config.ts";
 import { decodePublishableKey } from "./fapi.ts";
 import {
+  isClerkKeyShaped,
   readAllFolderKeys,
   readFolderKeys,
   type AllFolderKeys,
@@ -414,18 +415,6 @@ function isEffective(check: KeyCheck, effective: FolderKeys | undefined): boolea
   return key !== undefined && key.name === check.name && key.source === check.source;
 }
 
-/**
- * Whether a folder value is shaped like a Clerk key at all. Anything else
- * (a value with a trailing `# comment` the CLI's parser kept, a `${VAR}`
- * reference, a placeholder) needs interpretation the CLI doesn't do, so it is
- * unreadable rather than another app's key.
- *
- * Covers the modern `pk_`/`sk_` formats only. A legacy `test_`/`live_` key
- * still matches when it is identical to one of the claimed app's keys, which
- * is checked first; otherwise it fails safe as "couldn't tell".
- */
-const KEY_SHAPE = /^(?:pk|sk)_(?:test|live)_[A-Za-z0-9+/=_-]+$/;
-
 /** Whether `value` is exactly one of the claimed app's keys of that kind, in any format. */
 function isOneOfTheAppsKeys(
   key: KeyCheck["key"],
@@ -454,9 +443,13 @@ function checkFolderKeys(
     key,
     name,
     source,
+    // A value not shaped like a Clerk key is unreadable rather than another
+    // app's key. A legacy `test_`/`live_` key still matches when it's
+    // identical to one of the claimed app's keys, checked first; otherwise it
+    // fails safe as "couldn't tell".
     result: isOneOfTheAppsKeys(key, value, list)
       ? "match"
-      : KEY_SHAPE.test(value)
+      : isClerkKeyShaped(value)
         ? compare(value, list)
         : "unreadable",
   });

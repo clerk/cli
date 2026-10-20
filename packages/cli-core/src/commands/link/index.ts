@@ -32,8 +32,10 @@ import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
 import { autolink, findLinkKey, matchKeyToApp, type AutolinkResult } from "../../lib/autolink.ts";
 import {
   couldntTellReason,
+  mayBeAnAppsKey,
   readAllFolderKeys,
   readFolderKeys,
+  SDK_KEYLESS_SOURCE,
   secretKeysDisagreeReason,
   unreadableFolderReason,
   type AllFolderKeys,
@@ -245,10 +247,11 @@ interface FolderFacts {
    */
   readError?: string;
   /**
-   * No app can pass `init`'s every-key check: an env file or a key line can't
-   * be read, or an SDK keyless file names no app.
+   * Why no app can pass `init`'s every-key check, as a clause: an env file or
+   * a key line can't be read, a value can't be any app's key, or an SDK
+   * keyless file names no app.
    */
-  unreadable: boolean;
+  unreadable?: string;
   /**
    * The folder holds a Clerk key value (placeholders included), a line naming
    * one, or an SDK keyless file. A new app's keys can't match any of them.
@@ -266,7 +269,7 @@ async function inspectFolder(cwd: string): Promise<FolderFacts> {
   const [loaded, every] = await Promise.allSettled([readFolderKeys(cwd), readAllFolderKeys(cwd)]);
   if (loaded.status === "rejected") {
     const reason = unreadableFolderReason(loaded.reason);
-    return { couldntTell: reason, readError: reason, unreadable: true, holdsKeys: true };
+    return { couldntTell: reason, readError: reason, unreadable: reason, holdsKeys: true };
   }
   const keys = loaded.value;
   const facts = {
@@ -276,21 +279,36 @@ async function inspectFolder(cwd: string): Promise<FolderFacts> {
   };
   if (every.status === "rejected") {
     // No app can pass `init`'s every-key check, which reads every file.
-    return {
-      ...facts,
-      readError: unreadableFolderReason(every.reason),
-      unreadable: true,
-      holdsKeys: true,
-    };
+    const readError = unreadableFolderReason(every.reason);
+    return { ...facts, readError, unreadable: readError, holdsKeys: true };
   }
   const all = every.value;
   const anyKey = all.publishableKeys.length > 0 || all.secretKeys.length > 0;
   const sdkFile = Boolean(all.sdkFile) && all.sdkFile?.state !== "absent";
   return {
     ...facts,
-    unreadable: Boolean(all.unreadableLines?.length) || (sdkFile && !anyKey && isUnusable(all)),
+    unreadable: noAppCanPass(all),
     holdsKeys: anyKey || Boolean(all.unreadableLines?.length) || sdkFile,
   };
+}
+
+/**
+ * Why no app can pass `init`'s every-key check, as a clause; undefined when
+ * one may. The check compares every key with the app's, and a value that
+ * can't be any app's key (a placeholder, say) never compares as a match.
+ * Names the variable and its file, never the value.
+ */
+function noAppCanPass(all: AllFolderKeys): string | undefined {
+  const line = all.unreadableLines?.[0];
+  if (line) return `the CLI couldn't read the \`${line.name}\` line in \`${line.source}\``;
+  const notAKey = [...all.publishableKeys, ...all.secretKeys].find(
+    (key) => !mayBeAnAppsKey(key.value),
+  );
+  if (notAKey) return `${describeKeyLocation(notAKey)} doesn't hold a Clerk key`;
+  if (isUnusable(all)) {
+    return `this folder's Clerk SDK keyless file (\`${SDK_KEYLESS_SOURCE}\`) names no app`;
+  }
+  return undefined;
 }
 
 /** An SDK keyless file that can't be read, or holds no key, names no app. */
@@ -346,8 +364,7 @@ function decideNextStep(input: {
     };
   }
   if (keyCheck && folder.unreadable) {
-    const why =
-      folder.couldntTell ?? folder.readError ?? "the CLI couldn't read this folder's Clerk keys";
+    const why = folder.couldntTell ?? folder.unreadable;
     return {
       kind: "stop",
       error: new CliError(

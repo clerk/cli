@@ -102,6 +102,31 @@ const SDK_KEYLESS_FILE = [".clerk", ".tmp", "keyless.json"];
  */
 export const SDK_KEYLESS_SOURCE = SDK_KEYLESS_FILE.join("/");
 
+/** The current Clerk key formats, `pk_`/`sk_`. */
+const KEY_SHAPE = /^(?:pk|sk)_(?:test|live)_[A-Za-z0-9+/=_-]+$/;
+/** The legacy `test_`/`live_` key format. */
+const LEGACY_KEY_SHAPE = /^(?:test|live)_[A-Za-z0-9+/=_-]+$/;
+
+/**
+ * Whether a value is shaped like a Clerk key in the current formats. Anything
+ * else (a value with a trailing `# comment` the CLI's parser kept, a `${VAR}`
+ * reference, a placeholder) needs interpretation the CLI doesn't do. Shared
+ * by the claim check's key comparison and `clerk link`, so both mean the same
+ * thing by "a key".
+ */
+export function isClerkKeyShaped(value: string): boolean {
+  return KEY_SHAPE.test(value);
+}
+
+/**
+ * Whether a folder value could be one of an app's keys: shaped like a Clerk
+ * key, or a legacy key, which the claim check still matches when it's
+ * identical to one of the app's.
+ */
+export function mayBeAnAppsKey(value: string): boolean {
+  return isClerkKeyShaped(value) || LEGACY_KEY_SHAPE.test(value);
+}
+
 /** Reads the SDK's own keyless file and says what state it's in. Never throws. */
 export async function readSdkKeylessFile(cwd: string): Promise<SdkKeylessFile> {
   const file = Bun.file(join(cwd, ...SDK_KEYLESS_FILE));

@@ -1238,6 +1238,40 @@ describe("when auto-link doesn't link the folder", () => {
       expect(mockSearch).not.toHaveBeenCalled();
     });
 
+    // A value no key comparison can read (a placeholder, say) means no app
+    // can pass the check: every choice in the picker would be refused.
+    test("a value that isn't shaped like a Clerk key stops with not_linked before the picker, naming where it is", async () => {
+      await writeFile(
+        ".env",
+        "CLERK_PUBLISHABLE_KEY=pk_test_account_app\nCLERK_SECRET_KEY=your_secret_key_here\n",
+      );
+      mockAutolink.mockResolvedValue({ status: "no_match", source: ".env" });
+      mockListApplications.mockResolvedValue([ACCOUNT_APP]);
+
+      const error = await link({ skipIfLinked: true, onlyIfFolderKeysMatch: true }).catch(
+        (thrown: unknown) => thrown as Error,
+      );
+
+      expect(error).toMatchObject({ code: "not_linked" });
+      expect((error as Error).message).toContain("`CLERK_SECRET_KEY` in .env");
+      expect(mockSearch).not.toHaveBeenCalled();
+    });
+
+    // A legacy `test_`/`live_` key can still be identical to the chosen app's.
+    test("a legacy-format key still gets the picker", async () => {
+      await writeFile(".env", "CLERK_SECRET_KEY=test_legacyFormatKey123\n");
+      mockAutolink.mockResolvedValue({ status: "no_key" });
+      mockListApplications.mockResolvedValue([ACCOUNT_APP]);
+      mockSearch.mockResolvedValue(ACCOUNT_APP.application_id);
+      mockFetchApplication.mockResolvedValue(ACCOUNT_APP);
+
+      expect(await link({ skipIfLinked: true, onlyIfFolderKeysMatch: true })).toEqual({
+        status: "linked",
+        appId: ACCOUNT_APP.application_id,
+      });
+      expect(mockSearch).toHaveBeenCalledTimes(1);
+    });
+
     test("an exported key that isn't the chosen app's is named as an env var", async () => {
       mockAutolink.mockResolvedValue({ status: "no_key" });
       mockListApplications.mockResolvedValue([ACCOUNT_APP]);
