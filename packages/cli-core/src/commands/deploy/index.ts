@@ -179,16 +179,19 @@ async function runAgentDeploy(domain: string | undefined): Promise<void> {
   ).catch((error: unknown) => {
     throw instanceReadError(error, created);
   });
-  if (state.kind === "not_started") {
-    throw new CliError(
-      "The production instance exists, but Clerk did not return it yet. Run `clerk deploy status` to check it.",
-      { code: ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED },
-    );
-  }
+  if (state.kind === "not_started") throw unreturnedInstanceError();
   recordDeployObservation(state);
   if (state.kind === "active") assertRequestedDomain(domain, state.snapshot.domain);
   else if (!created) throw uncheckedDomainError(domain);
   log.data(JSON.stringify(buildDeployStatusReport(state, null), null, 2));
+}
+
+/** Clerk said a production instance exists but returned none: nothing to resume or report. */
+function unreturnedInstanceError(): CliError {
+  return new CliError(
+    "The production instance exists, but Clerk did not return it yet. Run `clerk deploy status` to check it.",
+    { code: ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED },
+  );
 }
 
 /**
@@ -229,10 +232,21 @@ async function ensureProductionInstance(ctx: DeployContext, domain: string): Pro
       created = true;
     }
   }
-  if (ctx.productionInstanceId && ctx.profile.instances.production !== ctx.productionInstanceId) {
-    await persistProductionInstance(ctx, ctx.productionInstanceId);
-  }
+  await rememberProductionInstance(ctx, ctx.productionInstanceId);
   return created;
+}
+
+/**
+ * Save the production instance id to the profile when it isn't there yet, so
+ * `--instance prod` resolves for the commands the report points to next.
+ */
+async function rememberProductionInstance(
+  ctx: DeployContext,
+  productionInstanceId: string | undefined,
+): Promise<void> {
+  if (productionInstanceId && ctx.profile.instances.production !== productionInstanceId) {
+    await persistProductionInstance(ctx, productionInstanceId);
+  }
 }
 
 /**
@@ -276,7 +290,7 @@ async function runDeploy(ctx: DeployContext, options: DeployOptions): Promise<vo
   }
 
   if (ctx.productionInstanceId) {
-    await reconcileExistingDeploy(ctx, options);
+    await reconcileExistingDeploy(ctx, ctx.productionInstanceId, options);
     return;
   }
 
@@ -329,17 +343,11 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
     const refreshed = await withSpinner("Refreshing application state...", async () =>
       resolveLiveApplicationContext(ctx.profile),
     );
-    // Clerk said an instance exists but didn't return it: nothing to resume
-    // or to check --domain against, so this run can't report success.
-    if (!refreshed.productionInstanceId) {
-      throw new CliError(
-        "The production instance exists, but Clerk did not return it yet. Run `clerk deploy status` to check it.",
-        { code: ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED },
-      );
-    }
-    ctx.productionInstanceId = refreshed.productionInstanceId;
+    // Nothing to resume or to check --domain against, so this run can't
+    // report success.
+    if (!refreshed.productionInstanceId) throw unreturnedInstanceError();
     await persistProductionInstance(ctx, refreshed.productionInstanceId);
-    await reconcileExistingDeploy(ctx, options);
+    await reconcileExistingDeploy(ctx, refreshed.productionInstanceId, options);
     return;
   }
   const production = productionOrExists;
@@ -415,20 +423,20 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
   );
 }
 
-async function reconcileExistingDeploy(ctx: DeployContext, options: DeployOptions): Promise<void> {
-  if (ctx.productionInstanceId && ctx.profile.instances.production !== ctx.productionInstanceId) {
-    await persistProductionInstance(ctx, ctx.productionInstanceId);
-  }
+async function reconcileExistingDeploy(
+  ctx: DeployContext,
+  productionInstanceId: string,
+  options: DeployOptions,
+): Promise<void> {
+  await rememberProductionInstance(ctx, productionInstanceId);
 
   const snapshot = await resolveLiveDeploySnapshot(ctx);
   if (!snapshot) {
-    // No snapshot also means no production instance id, which only happens when
-    // a create said one exists and the refresh could not find it. The run knows
-    // nothing then, so it records nothing.
-    if (ctx.productionInstanceId) recordDeployStage("domain_provisioning");
+    // The instance exists, but Clerk lists no production domain for it yet.
+    recordDeployStage("domain_provisioning");
     // Same as agent mode: nothing to check --domain against, so it is refused
     // rather than reported as if it had been applied.
-    if (options.domain && ctx.productionInstanceId) throw uncheckedDomainError(options.domain);
+    if (options.domain) throw uncheckedDomainError(options.domain);
     log.blank();
     log.info("A production instance exists, but Clerk did not return a production domain yet.");
     log.info("Run `clerk deploy` again after the domain is available from the API.");
