@@ -16,7 +16,7 @@
  * discovered when nobody can sign in.
  */
 
-import { CliError, EXIT_CODE, throwUsageError } from "../../../lib/errors.ts";
+import { ApiError, CliError, EXIT_CODE, throwUsageError } from "../../../lib/errors.ts";
 import { loggedFetch } from "../../../lib/fetch.ts";
 import { dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
@@ -28,6 +28,7 @@ import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
 import { isAssumeYes } from "../lib/assume-yes.ts";
 import { throwApiFailure, withInputRetry } from "../lib/input-retry.ts";
+import { RateLimitExceededError, retryOn429 } from "../lib/retry.ts";
 import { createApiScheduler } from "../lib/scheduler.ts";
 import { finishExport, startExportRun, type ExportSection } from "./shared.ts";
 
@@ -150,6 +151,26 @@ async function describeFailure(response: Response): Promise<string> {
 export type WorkOsPage = { users: WorkOsUser[]; after?: string };
 
 /**
+ * One WorkOS read, backing off on a 429 as the Auth0 and Clerk exports do.
+ * WorkOS allows 1,000 reads per 10 seconds per environment, shared with the
+ * live app, so a busy tenant can push an export over it.
+ */
+async function getFromWorkOs(apiKey: string, url: URL): Promise<Response> {
+  return retryOn429(async () => {
+    const response = await loggedFetch(url, {
+      tag: "workos",
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+    });
+    // Thrown as an ApiError so `retryOn429` backs off, honouring Retry-After.
+    if (response.status === 429) {
+      throw new ApiError(429, await response.text(), response.headers);
+    }
+    return response;
+  });
+}
+
+/**
  * Fetches one page of users.
  *
  * Cursor pagination, so unlike Auth0's offset endpoint there is no record
@@ -161,11 +182,17 @@ export async function fetchWorkOsPage(apiKey: string, after?: string): Promise<W
   url.searchParams.set("order", "asc");
   if (after) url.searchParams.set("after", after);
 
-  const response = await loggedFetch(url, {
-    tag: "workos",
-    method: "GET",
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-  });
+  let response: Response;
+  try {
+    response = await getFromWorkOs(apiKey, url);
+  } catch (error) {
+    if (!(error instanceof RateLimitExceededError)) throw error;
+    throw new CliError(
+      `WorkOS kept rate-limiting the API (429, ${error.attempts} retries). Nothing was exported. ` +
+        "Try again shortly; the limit is shared with the live app.",
+      { docsUrl: DOCS_URL },
+    );
+  }
 
   if (!response.ok) {
     throwApiFailure(
@@ -250,13 +277,11 @@ export async function fetchWorkOsIdentities(
   apiKey: string,
   userId: string,
 ): Promise<WorkOsIdentity[]> {
-  const response = await loggedFetch(
+  // Retries run out as a RateLimitExceededError, which the fan-out counts as
+  // one user not readable, like any other failed lookup.
+  const response = await getFromWorkOs(
+    apiKey,
     new URL(`${API_BASE}/users/${encodeURIComponent(userId)}/identities`),
-    {
-      tag: "workos",
-      method: "GET",
-      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-    },
   );
 
   if (!response.ok) {
