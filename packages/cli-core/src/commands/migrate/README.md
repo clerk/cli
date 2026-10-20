@@ -15,17 +15,19 @@ Migrate users into a Clerk instance from another auth provider, or from another
 Clerk instance.
 
 ```
-clerk migrate import <file> [--source <source>] [--dry-run] [--allow-partial] [--new-run] [--yes] [--json]
+clerk migrate export [source] [-o <path>] [--json]
+clerk migrate import <file|export-run-id> [--source <source>] [--dry-run] [--allow-partial] [--new-run] [--yes] [--json]
 clerk migrate runs [run-id] [--json]
 clerk migrate undo <run-id> [--dry-run] [--yes] [--include-signed-in] [--json]
 clerk migrate help
 ```
 
-An import is usually two steps:
+A migration is usually three steps:
 
 ```sh
-clerk migrate import users.json --source supabase --dry-run   # 1. check it against the instance
-clerk migrate import users.json --source supabase --yes       # 2. import it
+clerk migrate export supabase                         # 1. a run, holding export.json
+clerk migrate import 20260929-141502-a1b2 --dry-run   # 2. check it against the instance
+clerk migrate import 20260929-141502-a1b2 --yes       # 3. import it
 ```
 
 `clerk migrate undo <run-id>` takes an import back out, and `clerk migrate runs`
@@ -48,8 +50,8 @@ Every command follows these:
    be dropped are warnings.
 3. **State lives in one place: the [run store](#the-run-store).** Each run
    records its target, its file, and every source ID → Clerk ID outcome,
-   including the error for each user who failed. `runs`, `undo` and re-runs all
-   read or write it.
+   including the error for each user who failed. `runs`, `undo`, re-runs and
+   exports all read or write it.
 4. **Every command prints its target first:** the environment, app and
    instance, and where the key came from.
 5. **Every subcommand takes `--json`.** Exit codes: `0` all good, `1` some users
@@ -98,8 +100,9 @@ instance — its
 environment, its app when the key came from one, and its ID from
 `GET /v1/instance` — and where the key came from: `--secret-key`, `--app`, the
 `CLERK_SECRET_KEY` env var, an accountless app's `.env.local`, or the linked
-profile. `runs` names the runs folder. `--json` carries the same facts as
-`target`.
+profile. An export names its source platform instead, and `export clerk` the
+instance it reads. `runs` names the runs folder. `--json` carries the same
+facts as `target`.
 
 ```
 Target: My App (app_2x9k…), production instance ins_2x9k…
@@ -111,10 +114,10 @@ the key now in use still addresses the same instance.
 
 ## The run store
 
-Every import and undo that gets as far as writing is a **run**, and the run store is
-the one place `clerk migrate` keeps state. A dry run, a refusal, a run that
-needs consent and an empty file write none (`run: null`). An import whose
-users `--require-password` all leaves out still writes one, recording them
+Every import, export and undo that gets as far as writing is a **run**, and the
+run store is the one place `clerk migrate` keeps state. A dry run, a refusal, a
+run that needs consent and an empty file write none (`run: null`). An import
+whose users `--require-password` all leaves out still writes one, recording them
 as skipped.
 
 ### Where runs are kept
@@ -147,10 +150,11 @@ On a `failed` line, `code` is the HTTP status, such as `422` or `429`, or
 the checks skipped for the file's own data (invalid, a duplicate within it, an
 email Clerk refuses, a malformed hash).
 
-A user's status is `creating`, `created`, `failed`, `skipped` or `deleted`. The last line
-for each `sourceId` wins. A `429` retry, an extra email or phone that did not
-attach, a first phone Clerk refused (which the summary also counts), and a
-validation failure all land in the line's `error` field.
+A user's status is `creating`, `created`, `failed`, `skipped`, `deleted` or
+`exported`. The last line for each `sourceId` wins. A `429` retry, an extra
+email or phone that did not attach, a first phone Clerk refused (which the
+summary also counts), and a validation failure all land in the line's `error`
+field.
 
 `creating` is written as a user's `POST /v1/users` goes out. It stays the latest
 status when no answer says whether the create landed: an abort, a network error,
@@ -169,11 +173,13 @@ the lock file to delete if that process is not a migrate run. A lock holding
 this process's own PID is stale: in a container the CLI often gets the same PID
 every run.
 
-Run folders are created owner-only (`0700`), because they hold user data.
+Run folders are created owner-only (`0700`), and export files `0600`: they hold
+password hashes and user data.
 
 `users.ndjson` writes are synchronous appends, so a run interrupted with Ctrl-C
 still leaves a complete record of everything already processed. A line that
-cannot be written stops that user's create from going out.
+cannot be written stops that user's create from going out. An export's file
+lands in its run folder as `export.json` unless `--output` says otherwise.
 
 ### Why `users.ndjson` is NDJSON
 
@@ -196,6 +202,188 @@ grep '"sourceId":"user_123"' .clerk/migrate/20260929-141502-a1b2/users.ndjson
 
 ## Commands
 
+The direction is always spelled out — `migrate import` moves users **into**
+Clerk, `migrate export` gets them **out** of a source platform — so neither is
+implied by the group.
+
+### `clerk migrate export`
+
+Gets users **out** of a source platform, so there is something to feed
+`clerk migrate import`.
+
+```sh
+clerk migrate export                                    # pick a platform
+clerk migrate export clerk --output users.json
+clerk migrate export supabase --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
+```
+
+The platform is an optional positional. Omitted, you get a picker built from
+the registry; given, it runs directly. Each platform resolves its own flags —
+what a Clerk export needs (a secret key) has nothing in common with what a
+database export needs.
+
+**A credential the far end rejects is asked for again.** A connection string is
+long, pasted by hand, masked as it is typed, and wrong in ways nothing local can
+check: a typo'd host, a revoked password, the right server but the wrong
+database. Only the connection can say, and by then the operator has answered
+every other question the command asked. So that step — and only that step,
+never a fetch already under way or a file already written — runs inside a
+retry: the failure is explained, the prompt comes back, and the rest of the
+export continues against whichever credential worked. Agent mode and a non-TTY
+fail outright instead, having nobody to ask, and `-y` fails too, having been
+told not to.
+
+| Platform   | Source                           | Feeds               |
+| ---------- | -------------------------------- | ------------------- |
+| `clerk`    | Clerk Backend API                | `--source clerk`    |
+| `supabase` | Supabase Postgres (`auth.users`) | `--source supabase` |
+
+Every export is a [run](#the-run-store), and the file lands in the run
+folder as `export.json`. `--output` writes it somewhere else instead,
+resolved against the **current directory** like every other path flag here;
+the run still records where. It must end in `.json`, since the import reads a
+file by its extension. Nothing is asked about where the file goes.
+
+The file is an envelope around the users:
+
+```json
+{
+  "clerkMigrate": 1,
+  "source": "clerk",
+  "exportedAt": "2026-09-29T14:15:02.000Z",
+  "runId": "20260929-141502-a1b2",
+  "users": [ … ]
+}
+```
+
+`source` is what lets `clerk migrate import <export-run-id>` run with no
+`--source`.
+
+`--json` prints the result on stdout instead — `{ target, run, output, users,
+skipped, coverage, next }` — and never prompts, so a missing credential exits 2
+naming the flag to pass. `next`, and the commands printed after a human run,
+keep `--runs-dir`: the import looks the run ID up there.
+
+| Flag                  | Platforms  | Description                                               |
+| --------------------- | ---------- | --------------------------------------------------------- |
+| `-o, --output <path>` | all        | Write the export here instead of the run folder           |
+| `-y, --yes`           | all        | Do not prompt: fail on a bad credential                   |
+| `--json`              | all        | Print the result as JSON; never prompts                   |
+| `--runs-dir <path>`   | all        | Where runs are kept (see [the run store](#the-run-store)) |
+| `--db-url <url>`      | `supabase` | Postgres connection string                                |
+
+`export clerk` also takes the targeting flags — it reads from a Clerk instance,
+so it resolves a key the same way `clerk migrate import` does, with one extra
+step. The linked project is usually the migration's _destination_, so taking it
+as the source without asking is how a run exports an instance and imports it
+back into itself. Instead:
+
+- **Naming the instance runs unquestioned.** `--secret-key <sk_…>`, `--app`,
+  `--instance`, or an exported `CLERK_SECRET_KEY` — any of them is a sentence
+  you typed for this run, so none of them opens a picker. That is what makes
+  the export scriptable outside agent mode, and it keeps an exported key
+  outranking the linked profile here the way it does everywhere else in the
+  CLI.
+- Anything resolved on your behalf — the linked project, a keyless app — is
+  never taken silently. A picker of every **instance** on your account opens
+  instead — one flat row each, `my-app - Production instance (ins_…)`, not an
+  application picker followed by an instance picker. The resolved
+  application's instances come **last**, marked `(linked: usually the
+destination)`: it is usually where the users are going, and the first row is
+  what a reflexive Enter takes. When there are no instances to offer, it exits
+  2 naming `--secret-key`, `--app`/`--instance` and `CLERK_SECRET_KEY`. When
+  listing your applications needs a login (an accountless app, or an expired
+  session), it asks whether to export the resolved instance instead.
+- With nothing to resolve at all (no link, no key, no flags), you get the same
+  flat list of instances, rather than an error about an unlinked directory.
+  Not logged in, there is nothing to list, so it exits 2 naming the same flags.
+
+The instance picker has no "create a new application" choice: a brand-new
+application has no users to export.
+Its rows are searchable by what they show, so typing an application name,
+`production`, or an instance id all narrow it.
+
+With nobody to ask — agent mode, `--json` or `-y` — an instance resolved on
+your behalf is never taken: the export exits 2 and names the flags, since
+exporting the destination and importing it back is the mistake this guards
+against. The same goes for nothing to resolve at all. Name the source with
+`--secret-key`, `--app`/`--instance` or `CLERK_SECRET_KEY`. And `clerk migrate
+import` refuses an export run of the instance it would import into: every user
+is already there.
+
+After each export you get a field-coverage table — which Clerk-relevant fields
+were present on how many users — so you know the data is thin _before_ you
+import it, not after:
+
+```
+Field coverage
+  ✓ 3/3 have an email address
+  ✗ 0/3 have a phone number
+  ! 1/3 have a username
+  ! 2/3 have a password (not exportable — see below)
+
+Exported 3 users to /project/.clerk/migrate/20260929-141502-a1b2/export.json
+Run 20260929-141502-a1b2. See each user with `clerk migrate runs 20260929-141502-a1b2`.
+
+Import them with:
+  clerk migrate import 20260929-141502-a1b2
+
+  Imports into whichever instance the resolved secret key belongs to.
+  For production, add `--instance prod` or use a production secret key.
+```
+
+The import command prints through the same channel as the coverage table
+rather than the gutter's **Next steps** outro, which is human-only — an agent
+would otherwise be told what was exported and never how to import it.
+
+There is one command, not a development and a production variant, because no
+flag's absence means "development" — the resolved key decides, through
+`--secret-key`, `--app`, `CLERK_SECRET_KEY`, the keyless project and the linked
+profile in that order.
+
+The export run has one line per exported user, so `clerk migrate runs` lists it
+alongside imports.
+
+#### Clerk exports no passwords
+
+Clerk never returns password digests, TOTP secrets or backup codes over the API
+— only the `*_enabled` booleans. Migrated users must reset their password in
+the destination instance. The export says so on every run, and the coverage row
+counts users who _have_ a password, so the size of the gap is visible up front.
+
+#### `supabase` reads the database
+
+```sh
+clerk migrate export supabase --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
+```
+
+Supabase's database is Postgres, read through `Bun.sql`: any URL but
+`postgres://` or `postgresql://` is refused before connecting. Nothing native
+ships in the binary — that is the whole reason the `engines.bun` floor exists. Resolution is `--db-url`, then `SUPABASE_DB_URL`, then a masked
+prompt, since a connection string carries the password inline. A password
+pasted unencoded (`#`, `@`, `/` and the like) is percent-encoded for you.
+
+**Connection strings are redacted everywhere.** Errors show
+`postgres://***@host/db`, including when the password itself contains an
+unencoded `@` — the most common mistake, and exactly when the string ends up in
+an error message.
+
+Connection failures get a hint rather than a driver error. Bun reports both an
+unreachable host and a closed port as "Connection closed", so:
+
+| Situation                | What you are told                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------- |
+| Host or port unreachable | Check the host and port. On Supabase: use the pooler connection string, or enable the IPv4 add-on |
+| Credentials rejected     | Check the user and password                                                                       |
+| Table missing            | Check the database name and SELECT permission. On Supabase: enable Auth, connect as `postgres`    |
+| SQLite file missing      | Check the path and that the file is readable                                                      |
+
+**It reads the database rather than the Admin API** because
+`encrypted_password` exists only there. An API-based export would force every
+user to reset their password; this one carries the bcrypt digests across. It
+also keeps `raw_app_meta_data`, which is what the import's
+[checks](#checks) read for each user's providers.
+
 ### `clerk migrate import`
 
 Reads an exported user file, maps it onto Clerk's user schema, checks every
@@ -203,8 +391,9 @@ user against the destination instance, and creates them through the Backend
 API.
 
 ```sh
-clerk migrate import users.json --source supabase --dry-run   # check, write nothing
-clerk migrate import users.json --source supabase --yes       # import
+clerk migrate import 20260929-141502-a1b2 --dry-run           # check, write nothing
+clerk migrate import 20260929-141502-a1b2 --yes               # an export run
+clerk migrate import users.json --source supabase --yes       # any other file
 clerk migrate import users.json --source clerk --allow-partial --yes
 clerk migrate import users.json --source clerk --new-run --yes
 clerk migrate import users.json --source clerk --json --yes
@@ -216,31 +405,37 @@ clerk migrate import users.json --source clerk --secret-key sk_test_... -y
 clerk migrate import                                          # a human is asked
 ```
 
-| Flag                  | Description                                                         |
-| --------------------- | ------------------------------------------------------------------- |
-| `[file]`              | A JSON or CSV export                                                |
-| `--source <key>`      | Where the file came from: one of the [sources](#sources)            |
-| `--dry-run`           | Run the [checks](#checks) against the instance, and write nothing   |
-| `--allow-partial`     | Import the users that pass, and record the rest as skipped          |
-| `--new-run`           | Start a new run instead of [continuing](#re-running) an earlier one |
-| `--require-password`  | Import only users that carry a password digest                      |
-| `--skip-legal-checks` | Import users with no legal acceptance into an instance requiring it |
-| `-y, --yes`           | Import without prompting                                            |
-| `--json`              | Output as JSON. Never prompts, so importing needs `--yes`           |
-| `--runs-dir <path>`   | Where runs are kept (see [the run store](#the-run-store))           |
+| Flag                    | Description                                                         |
+| ----------------------- | ------------------------------------------------------------------- |
+| `[file\|export-run-id]` | The export file, or the ID of the export run that wrote it          |
+| `--source <key>`        | Where the file came from: one of the [sources](#sources)            |
+| `--dry-run`             | Run the [checks](#checks) against the instance, and write nothing   |
+| `--allow-partial`       | Import the users that pass, and record the rest as skipped          |
+| `--new-run`             | Start a new run instead of [continuing](#re-running) an earlier one |
+| `--require-password`    | Import only users that carry a password digest                      |
+| `--skip-legal-checks`   | Import users with no legal acceptance into an instance requiring it |
+| `-y, --yes`             | Import without prompting                                            |
+| `--json`                | Output as JSON. Never prompts, so importing needs `--yes`           |
+| `--runs-dir <path>`     | Where runs are kept (see [the run store](#the-run-store))           |
 
 Plus the targeting flags from the table above: `--secret-key`, `--app` and
 `--instance`.
 
-A file is a JSON array, a CSV, or NDJSON, one user per line (what Auth0's bulk
-export job writes). NDJSON is read always for `.ndjson` and `.jsonl`, and for a
-`.json` file that doesn't parse whole. A leading BOM is ignored in JSON and
-CSV. A file that isn't valid JSON is named in the error.
+An export run ID stands for the file that run wrote: if that file is gone, or
+has changed since (an `--output` path another export or an edit overwrote), the
+import exits 2 and imports nothing. The import records it
+as `fromExport`. A file `clerk migrate export` wrote carries its source, so it
+needs no `--source`, and a `--source` that contradicts it exits 2. Any other
+file needs `--source`: a JSON array, a CSV, or NDJSON, one user per line (what
+Auth0's bulk export job writes). NDJSON is read always for `.ndjson` and
+`.jsonl`, and for a `.json` file that doesn't parse whole. A leading BOM is
+ignored in JSON and CSV. A file that isn't valid JSON is named in the error.
 
 **What a human is asked, and what an agent is told.** A human at a terminal who
-leaves out the file is asked for its path, and then for its source. An agent, a
-non-TTY run, or `--json` without the file or `--source` exits 2 naming what to
-pass.
+leaves out the file is asked for its path, and is asked for a source only when
+the file does not name one. An agent, a non-TTY run, or `--json` without the
+file, or without `--source` for a file that does not name one, exits 2 naming
+what to pass.
 
 **Nothing is written to Clerk without consent.** After the checks, a human is asked
 `Import N users?`, and declining writes nothing. `--yes` skips the question.
@@ -315,8 +510,10 @@ the user into the source instance. It is how a cut-off create is told apart
 from a user an app or another tool made with the same `external_id`, and it
 stays on the user. A run recorded before the marker existed adopts nothing.
 
-When an import completes, it names its run folder, which only `undo` needs and
-which holds user data, with the `rm -rf` to remove it.
+When an import completes, it names the folders it no longer needs: the export it
+read, which holds your users' data, and its own run, which only `undo` needs.
+Each comes with the command to remove it: `rm -rf` for a run folder, and a
+plain `rm` for an export written with `--output` outside one.
 
 #### Checks
 
@@ -740,19 +937,21 @@ stamping every user with today's.
 
 ## API endpoints
 
-| Method   | Path                      | Used by                                                                         |
-| -------- | ------------------------- | ------------------------------------------------------------------------------- |
-| `POST`   | `/v1/users`               | `migrate import` — creates each user                                            |
-| `POST`   | `/v1/email_addresses`     | `migrate import` — attaches additional emails                                   |
-| `POST`   | `/v1/phone_numbers`       | `migrate import` — attaches additional phones                                   |
-| `GET`    | `/v1/users/count`         | `migrate import` — headroom against a development instance's user limit         |
-| `GET`    | `/v1/users?external_id=…` | `migrate import` — checks for users already in the instance, 100 values a call  |
-| `GET`    | `/v1/users?external_id=…` | `migrate import` — a continue looks up users whose create was in flight         |
-| `GET`    | `/v1/users?external_id=…` | `migrate undo` — finds users whose create was in flight when the import stopped |
-| `GET`    | `/v1/users?user_id=…`     | `migrate undo` — reads the imported users back, 100 a call                      |
-| `DELETE` | `/v1/users/{user_id}`     | `migrate undo` — deletes one user                                               |
-| `GET`    | `/v1/instance`            | `migrate import`, `undo` — names the instance behind the key                    |
-| `GET`    | `/v1/domains`             | `migrate import` checks — resolves the Frontend API host                        |
+| Method   | Path                                                    | Used by                                                                                                                        |
+| -------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `POST`   | `/v1/users`                                             | `migrate import` — creates each user                                                                                           |
+| `POST`   | `/v1/email_addresses`                                   | `migrate import` — attaches additional emails                                                                                  |
+| `POST`   | `/v1/phone_numbers`                                     | `migrate import` — attaches additional phones                                                                                  |
+| `GET`    | `/v1/users?limit=&offset=&order_by=+created_at`         | `migrate export clerk` — pages the whole instance, oldest first, 500 at a time                                                 |
+| `GET`    | `/v1/users?limit=&starting_after=&order_by=+created_at` | `migrate export clerk` — pages the whole instance, oldest first, 500 at a time, each page from the last user of the one before |
+| `GET`    | `/v1/users/count`                                       | `migrate import` — headroom against a development instance's user limit                                                        |
+| `GET`    | `/v1/users?external_id=…`                               | `migrate import` — checks for users already in the instance, 100 values a call                                                 |
+| `GET`    | `/v1/users?external_id=…`                               | `migrate import` — a continue looks up users whose create was in flight                                                        |
+| `GET`    | `/v1/users?external_id=…`                               | `migrate undo` — finds users whose create was in flight when the import stopped                                                |
+| `GET`    | `/v1/users?user_id=…`                                   | `migrate undo` — reads the imported users back, 100 a call                                                                     |
+| `DELETE` | `/v1/users/{user_id}`                                   | `migrate undo` — deletes one user                                                                                              |
+| `GET`    | `/v1/instance`                                          | `migrate import`, `undo`, `export clerk` — names the instance behind the key                                                   |
+| `GET`    | `/v1/domains`                                           | `migrate import` checks — resolves the Frontend API host                                                                       |
 
 The checks also read the instance's Frontend API `GET /v1/environment`
 (bootstrapping a dev browser first on development instances) for its
