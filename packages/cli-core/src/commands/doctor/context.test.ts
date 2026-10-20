@@ -42,6 +42,12 @@ let mockAppResponse: Application | Application[] | null = null;
 let mockAppError: Error | null = null;
 const mockFetch = mock();
 
+// The link fix's `clerk link`: what it reports decides whether the fix applied.
+const mockLink = mock();
+mock.module("../link/index.ts", () => ({
+  link: (...args: unknown[]) => mockLink(...args),
+}));
+
 const { createDoctorContext } = await import("./context.ts");
 
 describe("createDoctorContext", () => {
@@ -305,6 +311,22 @@ describe("createDoctorContext", () => {
       const envPullFix = ctx.fixes.envPull();
       expect(envPullFix.label).toContain("clerk env pull");
       expect(typeof envPullFix.run).toBe("function");
+    });
+
+    test("the link fix applies when `clerk link` links the folder", async () => {
+      mockLink.mockResolvedValue({ status: "linked", appId: "app_123" });
+
+      await createDoctorContext().fixes.link().run();
+    });
+
+    // A person is claiming the SDK's app in the Dashboard; the folder isn't
+    // linked yet, so the fix didn't apply.
+    test("the link fix isn't applied when `clerk link` opened a claim page instead", async () => {
+      mockLink.mockResolvedValue({ status: "claim_page_opened" });
+
+      await expect(createDoctorContext().fixes.link().run()).rejects.toThrow(
+        "claim the app on the page that opened, then run `clerk link` again",
+      );
     });
   });
 });

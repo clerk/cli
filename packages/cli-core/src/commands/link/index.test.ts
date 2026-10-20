@@ -73,6 +73,7 @@ mock.module("../../lib/autoclaim.ts", () => ({
   attemptAutoclaim: async () => {
     throw new Error("unexpected claim");
   },
+  folderKeysBelongTo: async () => ({ verdict: "match" }),
 }));
 
 const mockGetGitRepoIdentifier = mock();

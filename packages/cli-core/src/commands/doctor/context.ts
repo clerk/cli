@@ -153,7 +153,14 @@ export function createDoctorContext(): DoctorContext {
         label: "Link project with clerk link",
         run: async () => {
           const { link } = await import("../link/index.ts");
-          await link();
+          const outcome = await link();
+          // The person is claiming the SDK's app in the Dashboard; the folder
+          // isn't linked yet, so the fix didn't apply.
+          if (outcome.status === "claim_page_opened") {
+            throw new Error(
+              "Not linked yet: claim the app on the page that opened, then run `clerk link` again.",
+            );
+          }
         },
       }),
       envPull: () => ({

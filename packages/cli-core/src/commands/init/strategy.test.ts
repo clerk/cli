@@ -318,6 +318,7 @@ describe("init strategy", () => {
       skipIfLinked: true,
       app: undefined,
       cwd: KEYLESS_CTX.cwd,
+      onlyIfFolderKeysMatch: true,
       createIfMissing: expect.any(String),
     });
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
@@ -350,6 +351,7 @@ describe("init strategy", () => {
       skipIfLinked: true,
       app: "app_abc",
       cwd: KEYLESS_CTX.cwd,
+      onlyIfFolderKeysMatch: true,
       createIfMissing: expect.any(String),
     });
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
@@ -395,6 +397,7 @@ describe("init strategy", () => {
       skipIfLinked: true,
       app: "app_abc",
       cwd: FAKE_CTX.cwd,
+      onlyIfFolderKeysMatch: true,
       createIfMissing: expect.any(String),
     });
   });

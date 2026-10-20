@@ -43,6 +43,7 @@ describe("init", () => {
       skipIfLinked: true,
       app: undefined,
       cwd: FAKE_CTX.cwd,
+      onlyIfFolderKeysMatch: true,
     });
   });
 
@@ -59,6 +60,7 @@ describe("init", () => {
       skipIfLinked: true,
       app: "app_abc",
       cwd: FAKE_CTX.cwd,
+      onlyIfFolderKeysMatch: true,
       createIfMissing: undefined,
     });
   });
@@ -74,6 +76,7 @@ describe("init", () => {
       skipIfLinked: true,
       app: "app_abc",
       cwd: FAKE_CTX.cwd,
+      onlyIfFolderKeysMatch: true,
       createIfMissing: undefined,
     });
   });
@@ -399,6 +402,7 @@ describe("init", () => {
       skipIfLinked: true,
       app: undefined,
       cwd: "/tmp/fake",
+      onlyIfFolderKeysMatch: true,
     });
     expect(pullMod.pull).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
@@ -585,6 +589,7 @@ describe("init", () => {
       skipIfLinked: true,
       app: undefined,
       cwd: FAKE_BOOTSTRAP.projectDir,
+      onlyIfFolderKeysMatch: true,
     });
   });
 

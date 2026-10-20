@@ -283,6 +283,70 @@ async function checkFolder(
   return { app };
 }
 
+/** Whether a folder's Clerk keys all belong to one app; see `folderKeysBelongTo`. */
+export type FolderKeysVerdict =
+  | { verdict: "match" }
+  | {
+      verdict: "mismatch" | "couldnt_tell";
+      /** The key it's about, when there is one; never the key's value. */
+      key?: { name: string; source: string };
+    };
+
+/**
+ * Whether every Clerk key the folder holds belongs to `app`, compared the way
+ * the claim check compares them. For a link that writes `app`'s keys next:
+ * `clerk init` after a claim attempt saves the link only on `match`, so no
+ * write replaces a key another app owns. A folder with no keys matches.
+ * Fetches the app once when it lacks the keys to compare.
+ *
+ * "Couldn't tell" covers keys that can't be read or compared, and a present
+ * but unusable SDK keyless file; callers treat it like a mismatch.
+ */
+export async function folderKeysBelongTo(
+  app: Application,
+  cwd: string,
+): Promise<FolderKeysVerdict> {
+  let folderKeys: AllFolderKeys;
+  try {
+    folderKeys = await readAllFolderKeys(cwd);
+  } catch (error) {
+    log.debug(`autoclaim: couldn't read this folder's keys — ${errorMessage(error)}`);
+    return { verdict: "couldnt_tell" };
+  }
+  if (
+    folderKeys.publishableKeys.length === 0 &&
+    folderKeys.secretKeys.length === 0 &&
+    (folderKeys.unreadableLines ?? []).length === 0
+  ) {
+    // An SDK keyless file that names no app: the CLI can't tell what runs here.
+    const unusableSdkFile = folderKeys.sdkFile && folderKeys.sdkFile.state !== "absent";
+    return unusableSdkFile ? { verdict: "couldnt_tell" } : { verdict: "match" };
+  }
+
+  let instances = app.instances;
+  let checks = checkFolderKeys(folderKeys, instances);
+  if (!checks.some(isMismatch) && checks.some(fetchMayHelp)) {
+    try {
+      instances = (await fetchApplication(app.application_id)).instances;
+      checks = checkFolderKeys(folderKeys, instances);
+    } catch (error) {
+      log.debug(`autoclaim: fetching ${app.application_id} failed — ${errorMessage(error)}`);
+    }
+  }
+
+  const mismatch =
+    checks.find((check) => isMismatch(check) && check.key === "publishable") ??
+    checks.find(isMismatch);
+  if (mismatch) {
+    return { verdict: "mismatch", key: { name: mismatch.name, source: mismatch.source } };
+  }
+  const unknown = checks.find((check) => check.result !== "match");
+  if (unknown) {
+    return { verdict: "couldnt_tell", key: { name: unknown.name, source: unknown.source } };
+  }
+  return { verdict: "match" };
+}
+
 function hasInstances(app: Application): boolean {
   // Deserialized API JSON: the array can be missing despite the type.
   return Array.isArray(app.instances) && app.instances.length > 0;

@@ -10,7 +10,12 @@ import {
   reportClaimSkipped,
   reportClaimed,
 } from "../auth/claim-report.ts";
-import { attemptAutoclaim, readInitClaim, type InitClaim } from "../../lib/autoclaim.ts";
+import {
+  attemptAutoclaim,
+  folderKeysBelongTo,
+  readInitClaim,
+  type InitClaim,
+} from "../../lib/autoclaim.ts";
 import { claimDestination, confirmClaim } from "../../lib/claim-prompt.ts";
 import { signedInAccount } from "./account.ts";
 import { linkSdkOnlyFolder } from "./sdk-only.ts";
@@ -46,6 +51,14 @@ interface LinkOptions {
   createIfMissing?: string;
   /** Callers that continue setup themselves (native `clerk init`) skip link's own next steps. */
   showNextSteps?: boolean;
+  /**
+   * Set by `clerk init`, which writes the linked app's keys next. After a
+   * claim attempt (the folder had an init token), the link is saved only if
+   * every Clerk key in the folder belongs to the chosen app; otherwise
+   * nothing is saved and `link` stops with not_linked, naming the key. It's
+   * the only way the folder never points at an app it doesn't run on.
+   */
+  onlyIfFolderKeysMatch?: boolean;
 }
 
 /**
@@ -98,11 +111,18 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
     }
   }
 
+  // After a claim attempt, `init` writes the chosen app's keys next: check
+  // every key in the folder belongs to that app before saving the link.
+  const checkFolderKeys =
+    options.onlyIfFolderKeysMatch && initClaim
+      ? async (target: Application) => requireFolderKeysBelongTo(target, cwd)
+      : undefined;
+
   // Why the folder's own key couldn't pick its app, when the CLI can't tell
   // which key the app loads.
   let couldntTell: string | undefined;
   if (!existing && !options.app && (options.skipIfLinked || agent)) {
-    const autolinked = await autolink(cwd);
+    const autolinked = await autolink(cwd, { beforeLink: checkFolderKeys });
     if (autolinked.status === "linked") {
       if (framed) await outro();
       return { status: "linked", appId: autolinked.profile.appId };
@@ -148,6 +168,8 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
           "Failed to create application",
         )
       : await resolveApp(cwd, displayPath, !existing);
+
+  await checkFolderKeys?.(app);
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
@@ -229,6 +251,29 @@ async function claimFirst(
     case "failed":
       throw result.error;
   }
+}
+
+/**
+ * Stops the link, saving nothing, unless every Clerk key in the folder
+ * belongs to `app`: `init` would otherwise write `app`'s keys next to another
+ * app's, and the folder would point at an app it doesn't run on. "Couldn't
+ * tell" stops too.
+ */
+async function requireFolderKeysBelongTo(app: Application, cwd: string): Promise<void> {
+  const result = await folderKeysBelongTo(app, cwd);
+  if (result.verdict === "match") return;
+  const label = `\`${app.name || app.application_id}\``;
+  const which = result.key
+    ? `\`${result.key.name}\` in ${result.key.source}`
+    : "this folder's Clerk keys";
+  const problem =
+    result.verdict === "mismatch"
+      ? `${which} isn't ${label}'s`
+      : `The CLI couldn't confirm ${which} belongs to ${label}`;
+  throw new CliError(
+    `${capitalize(problem)}, so this folder wasn't linked to ${label} and no keys were written. Make the folder's Clerk keys belong to one application, then run \`clerk init\` again.`,
+    { code: ERROR_CODE.NOT_LINKED },
+  );
 }
 
 async function hasCredentials(): Promise<boolean> {

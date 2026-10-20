@@ -1,7 +1,7 @@
 import { createOption } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
 import { login } from "../auth/login.js";
-import { link } from "../link/index.js";
+import { link, type LinkOutcome } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
@@ -10,6 +10,7 @@ import {
   throwUsageError,
   CliError,
   ERROR_CODE,
+  EXIT_CODE,
   errorMessage,
 } from "../../lib/errors.js";
 import {
@@ -21,7 +22,7 @@ import {
 import { resolveProfile } from "../../lib/config.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
-import { setTelemetryStage } from "../../lib/telemetry.ts";
+import { declareSoftExitOutcome, setTelemetryStage } from "../../lib/telemetry.ts";
 import { confirm } from "../../lib/prompts.ts";
 import {
   createAccountlessApp,
@@ -186,13 +187,22 @@ export async function init(options: InitOptions = {}) {
     const createIfMissing = agent
       ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
       : undefined;
-    await authenticateAndLink(
+    const linked = await authenticateAndLink(
       ctx.cwd,
       options.app,
       createIfMissing,
       // Native setup continues right after linking, so link's `clerk env pull` advice doesn't apply.
       ctx.framework.dep === "ios" && canSetUpXcode() ? { showNextSteps: false } : {},
     );
+    // A person is claiming the SDK's app in the Dashboard: nothing is linked,
+    // so there are no keys to write yet. Same exit and telemetry as `clerk
+    // link`, and no error line: the person did their part.
+    if (linked?.status === "claim_page_opened") {
+      declareSoftExitOutcome("incomplete", ERROR_CODE.NOT_LINKED);
+      process.exitCode = EXIT_CODE.GENERAL;
+      await outro("Claim the app, then run `clerk init` again to finish setting up Clerk");
+      return;
+    }
   }
 
   // Native Apple setup edits the Xcode project and registers the app instead of
@@ -612,12 +622,13 @@ async function resolveAuthLabel(): Promise<string> {
   return "";
 }
 
+/** Undefined when the folder was already linked to the requested app. */
 async function authenticateAndLink(
   cwd: string,
   app: string | undefined,
   createIfMissing: string | undefined,
   linkOptions: { showNextSteps?: false } = {},
-): Promise<void> {
+): Promise<LinkOutcome | undefined> {
   const label = await resolveAuthLabel();
   const profile = await resolveProfile(cwd);
 
@@ -625,14 +636,23 @@ async function authenticateAndLink(
 
   if (label && alreadyOnRequestedApp) {
     log.info(dim(`${label} · Linked to ${profile.profile.appId}`));
-    return;
+    return undefined;
   }
 
   if (label) {
     log.info(dim(label));
   }
 
-  await link({ skipIfLinked: true, app, cwd, createIfMissing, ...linkOptions });
+  // `init` writes the linked app's keys next, so after a claim attempt `link`
+  // saves the link only if every key in the folder is that app's.
+  return link({
+    skipIfLinked: true,
+    app,
+    cwd,
+    createIfMissing,
+    onlyIfFolderKeysMatch: true,
+    ...linkOptions,
+  });
 }
 
 // --- Keyless app setup ---

@@ -131,8 +131,14 @@ export type AutolinkResult =
  * Links the folder to the account's app whose publishable key is the one the
  * folder's app loads (`findLinkKey`). Never throws for a failed app list: it
  * reports `list_failed` with the error, so each caller decides what that means.
+ *
+ * `beforeLink` runs on the matched app before the link is saved, and may throw
+ * to stop the link with nothing saved.
  */
-export async function autolink(cwd: string): Promise<AutolinkResult> {
+export async function autolink(
+  cwd: string,
+  options: { beforeLink?: (app: Application) => Promise<void> } = {},
+): Promise<AutolinkResult> {
   const found = await findLinkKey(cwd);
   if (found.status === "none") {
     log.debug("autolink: no clerk publishable key found in env or .env files");
@@ -166,6 +172,7 @@ export async function autolink(cwd: string): Promise<AutolinkResult> {
     `autolink: matched key from ${match.source} → app ${match.app.application_id} (${match.app.name ?? "unnamed"})`,
   );
 
+  await options.beforeLink?.(match.app);
   const result = await linkApp(match.app, cwd);
   if (!result) return { status: "no_development_instance", appId: match.app.application_id };
 

@@ -79,6 +79,17 @@ test("signing in on the way to `clerk link` leaves the claim to `link`", async (
   expect(mockLink).toHaveBeenCalledTimes(1);
 });
 
+// A person is claiming the SDK's app in the Dashboard; there is nothing to
+// import into until they rerun.
+test("when `clerk link` opens a claim page instead of linking, the import stops with exit 1", async () => {
+  mockLink.mockResolvedValueOnce({ status: "claim_page_opened" } as never);
+
+  await run({ source: "clerk", input: "/nonexistent/users.json" });
+
+  expect(process.exitCode).toBe(1);
+  process.exitCode = 0;
+});
+
 test("with --app nothing is linked, so login's own claim stays on", async () => {
   await run({ source: "clerk", input: "/nonexistent/users.json", app: "app_123" }).catch(() => {});
 

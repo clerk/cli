@@ -51,6 +51,8 @@ const mockAttemptAutoclaim = mock();
 mock.module("../../lib/autoclaim.ts", () => ({
   readInitClaim: (cwd: string) => mockReadInitClaim(cwd),
   attemptAutoclaim: (...args: unknown[]) => mockAttemptAutoclaim(...args),
+  // `clerk init`'s key check; covered end to end in `init-claim.test.ts`.
+  folderKeysBelongTo: async () => ({ verdict: "match" }),
 }));
 
 const mockLogin = mock();
