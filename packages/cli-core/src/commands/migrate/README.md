@@ -584,6 +584,9 @@ A lookup that fails is counted on its own row rather than folded into
 `no OAuth provider`. "Lookup failed" and "has no providers" are different
 facts, and flattening the first into the second would understate social
 sign-in.
+A lookup is retried on a `429`, honouring `Retry-After`, and counted as not
+readable only once its retries run out. `--json` carries the block as
+`sections: [{ title, items: [{ label, count }], note? }]`.
 
 Non-interactive runs get progress on stderr every 500 users during the fan-out,
 and every 10 pages during the user fetch. `withSpinner` hands a no-op to
