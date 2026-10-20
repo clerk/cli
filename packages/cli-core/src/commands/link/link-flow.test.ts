@@ -404,6 +404,50 @@ describe("a folder with an init token, not linked", () => {
     },
   );
 
+  // `clerk link` goes on to link the folder in the same run, so the report
+  // says what the claim did and why, and names no command to run next.
+  test.each([
+    {
+      result: "another app's key",
+      local: {
+        kind: "unchanged",
+        reason: "different_keys",
+        key: "publishable",
+        name: "CLERK_PUBLISHABLE_KEY",
+        source: ".env",
+        mixed: false,
+        linkCanTryKey: true,
+      },
+      says: "`CLERK_PUBLISHABLE_KEY` in .env isn't `my-app`'s, so this folder's link and keys were left alone.",
+    },
+    {
+      result: "couldn't tell",
+      local: { kind: "unchanged", reason: "unverified" },
+      says: "Couldn't confirm this folder's Clerk keys belong to `my-app`, so this folder's link and keys were left alone.",
+    },
+    {
+      result: "link failed",
+      local: { kind: "link_failed", reason: "read-only" },
+      says: "Linking this folder failed: read-only.",
+    },
+  ])(
+    "claimed, $result: the report says why the folder wasn't linked, naming no next command",
+    async ({ local, says }) => {
+      mockIsAgent.mockReturnValue(true);
+      storedSession();
+      mockAttemptAutoclaim.mockResolvedValue({ status: "claimed", app: INIT_APP, local });
+      mockAutolink.mockResolvedValue({ status: "no_match", source: ".env" });
+
+      await link({ skipIfLinked: true }).catch(() => {});
+
+      const output = Bun.stripANSI(captured.err);
+      expect(output).toContain("Claimed application: `my-app`");
+      expect(output).toContain(says);
+      expect(output).not.toContain("clerk link");
+      expect(output).not.toContain("clerk apps list");
+    },
+  );
+
   test("claimed but left alone: an agent links the app the folder's own key belongs to", async () => {
     mockIsAgent.mockReturnValue(true);
     storedSession();

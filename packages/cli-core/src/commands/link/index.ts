@@ -483,7 +483,8 @@ async function claimFirst(
   const result = await attemptAutoclaim(cwd, initClaim);
   switch (result.status) {
     case "claimed":
-      reportClaimed(result);
+      // `link` goes on to link the folder itself: no next command to name.
+      reportClaimed(result, { insideLink: true });
       if (result.local.kind === "linked") {
         await outro(showNextSteps ? claimedNextSteps(result) : undefined);
         return { status: "linked", appId: result.app.application_id };

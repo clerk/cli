@@ -30,7 +30,15 @@ export function claimWarning(result: AutoclaimResult): string | undefined {
 
 export type ClaimedResult = Extract<AutoclaimResult, { status: "claimed" }>;
 
-export function reportClaimed({ app, local }: ClaimedResult): void {
+/**
+ * `insideLink`: for `clerk link`, which goes on to link the folder in the
+ * same run. The report then says what the claim did and why, and names no
+ * command to run next.
+ */
+export function reportClaimed(
+  { app, local }: ClaimedResult,
+  { insideLink = false }: { insideLink?: boolean } = {},
+): void {
   const label = app.name || app.application_id;
   log.success(
     local.kind === "linked"
@@ -51,15 +59,18 @@ export function reportClaimed({ app, local }: ClaimedResult): void {
   // After the claim line, so the output says what was claimed before what
   // happened to the folder.
   if (local.kind === "link_failed") {
-    log.warn(`Linking this folder failed: ${local.reason}. Run \`clerk link\` to finish setup.`);
+    const finish = insideLink ? "" : " Run `clerk link` to finish setup.";
+    log.warn(`Linking this folder failed: ${local.reason}.${finish}`);
   }
   if (local.kind === "unchanged") {
-    log.warn(folderLeftAloneWarning(local, { id: app.application_id, label }));
+    const { why, next } = folderLeftAlone(local, { id: app.application_id, label });
+    log.warn(insideLink ? why : `${why} ${next}`);
   }
 }
 
 /**
- * Names the next command in the warning itself, not only in the outro's next
+ * Why the claim left the folder alone, and the next command, as two parts.
+ * The warning names the next command itself, not only in the outro's next
  * steps: agents see warnings but never the outro. So the commands here must
  * work without a prompt. Plain `clerk link` is suggested only when it can try
  * to match the folder's key by itself (`linkCanTryKey`); otherwise the warning
@@ -69,10 +80,10 @@ export function reportClaimed({ app, local }: ClaimedResult): void {
  * the claimed app's, never which app it does belong to, and never that
  * `clerk link` or `clerk apps list` will identify that app.
  */
-function folderLeftAloneWarning(
+function folderLeftAlone(
   local: FolderUnchanged,
   claimed: { id: string; label: string },
-): string {
+): { why: string; next: string } {
   const leftAlone = "so this folder's link and keys were left alone.";
   const chooseById =
     "Choose the application this folder should use: `clerk apps list --json` lists your applications' IDs, then run `clerk link --app <app_id>`";
@@ -81,30 +92,33 @@ function folderLeftAloneWarning(
       const linkedLabel = local.linkedTo.appName
         ? `${local.linkedTo.appName} (${local.linkedTo.appId})`
         : local.linkedTo.appId;
-      return (
-        `This folder stays linked to \`${linkedLabel}\`, so its link and keys were left alone. ` +
-        `Run \`clerk link --app ${claimed.id}\` to switch it to \`${claimed.label}\`.`
-      );
+      return {
+        why: `This folder stays linked to \`${linkedLabel}\`, so its link and keys were left alone.`,
+        next: `Run \`clerk link --app ${claimed.id}\` to switch it to \`${claimed.label}\`.`,
+      };
     }
     case "different_keys": {
       const where = describeKeyLocation(local);
       if (local.mixed) {
-        return (
-          `This folder holds keys for \`${claimed.label}\` and ${where}, which isn't \`${claimed.label}\`'s, so its link and keys were left alone. ` +
-          `Make the folder's Clerk keys belong to one application, then link it. ${chooseById}.`
-        );
+        return {
+          why: `This folder holds keys for \`${claimed.label}\` and ${where}, which isn't \`${claimed.label}\`'s, so its link and keys were left alone.`,
+          next: `Make the folder's Clerk keys belong to one application, then link it. ${chooseById}.`,
+        };
       }
-      const lead = `${capitalize(where)} isn't \`${claimed.label}\`'s, ${leftAlone}`;
+      const why = `${capitalize(where)} isn't \`${claimed.label}\`'s, ${leftAlone}`;
       if (local.linkCanTryKey) {
-        return `${lead} Run \`clerk link\`; it tries to match that key to an application in your account.`;
+        return {
+          why,
+          next: "Run `clerk link`; it tries to match that key to an application in your account.",
+        };
       }
-      return `${lead} ${chooseById}.`;
+      return { why, next: `${chooseById}.` };
     }
     case "unverified":
-      return (
-        `Couldn't confirm this folder's Clerk keys belong to \`${claimed.label}\`, ${leftAlone} ` +
-        `${chooseById}, or run \`clerk link --app ${claimed.id}\` to use \`${claimed.label}\`.`
-      );
+      return {
+        why: `Couldn't confirm this folder's Clerk keys belong to \`${claimed.label}\`, ${leftAlone}`,
+        next: `${chooseById}, or run \`clerk link --app ${claimed.id}\` to use \`${claimed.label}\`.`,
+      };
   }
 }
 
