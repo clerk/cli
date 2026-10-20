@@ -25,6 +25,7 @@ import { isEnabled, isRequired, type AttributeName } from "../../users/interacti
 import { splitIdentifiers } from "../import-users.ts";
 import type { User } from "../types.ts";
 import { analyzeFields, hasValue } from "./analysis.ts";
+import { argon2Variant } from "../sources/shared.ts";
 import { decodesLikeClerk } from "./firebase-hash.ts";
 import {
   clerkOffersProvider,
@@ -161,7 +162,9 @@ export function hashShapeProblem(password: string, hasher: string): string | und
     }
     case "argon2i":
     case "argon2id":
-      return password.startsWith("$argon2") ? undefined : "password is not an argon2 hash";
+      return argon2Variant(password) === hasher
+        ? undefined
+        : `password is not an ${hasher} hash Clerk can verify ($${hasher}$v=19$m=…,t=…,p=…$salt$hash)`;
     case "scrypt_werkzeug":
       return /^scrypt:\d+:\d+:\d+\$[^$]+\$[0-9a-f]+$/i.test(password)
         ? undefined

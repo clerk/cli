@@ -381,18 +381,21 @@ describe("betterauth", () => {
 
   // Imported without the password rather than rejected: the user can still
   // sign in another way, or reset it.
-  test.each([["plaintext"], ["$pbkdf2$abc"], [`${SALT}:short`]])(
-    "drops a password it cannot verify (%s) and imports the user",
-    async (stored) => {
-      const { users, validationFailed } = await load("betterauth", [
-        { ...base, password_hash: stored },
-      ]);
-      expect(validationFailed).toBe(0);
-      expect(users[0]?.password).toBeUndefined();
-      expect(users[0]?.passwordHasher).toBeUndefined();
-      expect(users[0]?.passwordDropped).toBe(true);
-    },
-  );
+  test.each([
+    ["plaintext"],
+    ["$pbkdf2$abc"],
+    [`${SALT}:short`],
+    // The argon2 prefix alone: Clerk decodes the whole digest on create.
+    ["$argon2id$v=19$m=65536,t=3,p=4$notreal"],
+  ])("drops a password it cannot verify (%s) and imports the user", async (stored) => {
+    const { users, validationFailed } = await load("betterauth", [
+      { ...base, password_hash: stored },
+    ]);
+    expect(validationFailed).toBe(0);
+    expect(users[0]?.password).toBeUndefined();
+    expect(users[0]?.passwordHasher).toBeUndefined();
+    expect(users[0]?.passwordDropped).toBe(true);
+  });
 
   test("names no hasher for a user without a password", async () => {
     const { users } = await load("betterauth", [base]);
