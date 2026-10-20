@@ -328,6 +328,17 @@ describe("help", () => {
     expect(result.stdout.replace(/\s+/g, " ")).toContain(phrase);
   });
 
+  // What a dry run may write, said exactly, so nobody reads "dry run" as
+  // "touches nothing".
+  test("`clerk feedback --help` says exactly what a dry run writes", async () => {
+    const result = await clerk.raw("feedback", "--help");
+    const help = result.stdout.replace(/\s+/g, " ");
+    expect(help).toContain("With telemetry off, a dry run writes nothing.");
+    expect(help).toContain(
+      "With telemetry on, it may create the config directory and the machine id, and while the first-run notice is still owed it writes and deletes a temporary file in the config directory to check that a real run could record the notice.",
+    );
+  });
+
   test("`clerk feedback --help` states the per-field input ceiling", async () => {
     const result = await clerk.raw("feedback", "--help");
     expect(result.stdout.replace(/\s+/g, " ")).toContain("1,000,000 characters");

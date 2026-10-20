@@ -163,10 +163,10 @@ describe("shell assignments and JSON fields stop differently", () => {
   test.each([
     ["DATABASE_PASSWORD=alpha,beta", `DATABASE_PASSWORD=${REDACTED}`],
     ["PASSWORD=alpha;beta", `PASSWORD=${REDACTED}`],
-    ["DB_PASSWD=alpha;beta tail", `DB_PASSWD=${REDACTED} tail`],
+    ["DB_PASSWD=alpha;beta tail", `DB_PASSWD=${REDACTED}`],
     ["auth=alpha,beta", `auth=${REDACTED}`],
     ["authorization=abc,def", `authorization=${REDACTED}`],
-    ["X_AUTH=abc,def rest", `X_AUTH=${REDACTED} rest`],
+    ["X_AUTH=abc,def rest", `X_AUTH=${REDACTED}`],
     ["export TOKEN=plain_value_1", `export TOKEN=${REDACTED}`],
     // A shell word runs through a quoted part, spaces included.
     ['MY_TOKEN="alpha beta" next', `MY_TOKEN=${REDACTED} next`],
@@ -368,6 +368,10 @@ describe("YAML parents and block scalars", () => {
     ["api key: |\n  abc\nnext: 1", `api key: ${REDACTED}\nnext: 1`, 1],
     // Windows line endings.
     ["password: |\r\n  hunter2\r\nnext: 1", `password: ${REDACTED}\r\nnext: 1`, 1],
+    // Spaces or a tab after the colon or the indicator.
+    ["auth:  \n  pass: hunter2", `auth:  \n  pass: ${REDACTED}`, 1],
+    ["auth:\t\n  pass: hunter2", `auth:\t\n  pass: ${REDACTED}`, 1],
+    ["password: |  \n  hunter2", `password: ${REDACTED}`, 1],
   ])("%j → %j", (input, expected, count) => {
     expect(redact(input)).toEqual({ text: expected, redactions: count });
   });
@@ -417,6 +421,35 @@ describe("a quoted value never continues past its line", () => {
   });
 });
 
+// A dotenv or YAML line has no shell quoting: `KEY=a b c` and `key: a b c`
+// both mean the whole rest of the line. Such lines start with the name (after
+// indentation, a list dash or `export`), and so does a colon anywhere in
+// prose (`the db password: a b c`). Only an `=` in the middle of a line
+// (logfmt, a query string) keeps the shell-word rule.
+describe("an unquoted value runs to the end of its line", () => {
+  test.each([
+    ["db_password: correct horse battery staple", `db_password: ${REDACTED}`],
+    ["DB_PASSWORD=correct horse battery staple", `DB_PASSWORD=${REDACTED}`],
+    ["export DB_PASSWORD=correct horse battery", `export DB_PASSWORD=${REDACTED}`],
+    ["  - api_key: correct horse", `  - api_key: ${REDACTED}`],
+    ["the db password: correct horse battery staple", `the db password: ${REDACTED}`],
+    // A colon in the middle of a line, past where a spaced name could start.
+    [
+      "login failed because the db password: correct horse battery staple",
+      `login failed because the db password: ${REDACTED}`,
+    ],
+    ["DB_PASSWORD=correct horse\nNEXT=1", `DB_PASSWORD=${REDACTED}\nNEXT=1`],
+    ["DB_PASSWORD=correct horse\r\nNEXT=1", `DB_PASSWORD=${REDACTED}\r\nNEXT=1`],
+    // A quoted value still ends at its closing quote.
+    ['PASSWORD="alpha beta" next', `PASSWORD=${REDACTED} next`],
+    // An `=` in the middle of a line keeps the shell-word rule.
+    ["run with api_key=abc123 then retry", `run with api_key=${REDACTED} then retry`],
+    ["GET /x?MY_API_KEY=abc123&user=bob HTTP/1.1", `GET /x?MY_API_KEY=${REDACTED} HTTP/1.1`],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+});
+
 describe("URL credentials", () => {
   test.each([
     [
@@ -463,6 +496,19 @@ describe("URL credentials", () => {
   });
 });
 
+// Markdown and log brackets around an address. The `[REDACTED]@host` a URL
+// credential leaves behind is still not an address: `]` cannot end a local part.
+describe("emails inside brackets", () => {
+  test.each([
+    ["user [john@example.com] logged in", `user [${EMAIL_MARKER}] logged in`, 1],
+    ["[jane.doe@corp.io](mailto:jane.doe@corp.io)", `[${EMAIL_MARKER}](mailto:${EMAIL_MARKER})`, 2],
+    ["[REDACTED]@example.com", "[REDACTED]@example.com", 0],
+    ["https://alice:pw@example.com/x", `https://${REDACTED}@example.com/x`, 1],
+  ])("%j → %j", (input, expected, count) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: count });
+  });
+});
+
 describe("home-directory paths", () => {
   test.each([
     ["/Users/alice/app/src", "~/app/src"],
@@ -494,6 +540,8 @@ describe("home-directory paths", () => {
   test.each([
     // A longer name that merely starts with the home directory is someone else's.
     [`${HOME}2/app`],
+    [`${HOME}-old/app`],
+    [`${HOME}.bak/app`],
     // A URL path segment is not a home directory.
     ["https://example.com/Users/alice"],
     // A Backend API path: the POSIX forms are case-sensitive on purpose.
@@ -530,7 +578,33 @@ describe("ordinary prose is untouched", () => {
 });
 
 // Accepted over- and under-matches, pinned so a later change to them is deliberate.
+// A home under /Users is also caught by the generic pass, so a longer name
+// that starts with the current user's is taken whole, never as `~-old`.
+test.each([
+  ["/Users/shane-old/app", "~/app"],
+  ["/Users/shane.bak/app", "~/app"],
+  ["/Users/shane/app", "~/app"],
+])("with home /Users/shane, %s → %s", (input, expected) => {
+  expect(redactText(input, { homedir: "/Users/shane" })).toEqual({ text: expected, redactions: 1 });
+});
+
 describe("known limitations", () => {
+  // Mid-line: more than three words before the name, so they cannot be the
+  // start of a spaced name (`config password=` at a line start would be one).
+  test("an assignment in the middle of a line keeps only its first word redacted", () => {
+    expect(redact("then I ran it with password=correct horse")).toEqual({
+      text: `then I ran it with password=${REDACTED} horse`,
+      redactions: 1,
+    });
+  });
+
+  test("a command after an environment assignment at the start of a line is redacted with it", () => {
+    expect(redact("DB_PASSWORD=abc npm start")).toEqual({
+      text: `DB_PASSWORD=${REDACTED}`,
+      redactions: 1,
+    });
+  });
+
   test("every child of a YAML parent with a secret-looking name loses its value, secret or not", () => {
     expect(redact("auth:\n  enabled: true\n  provider: github")).toEqual({
       text: `auth:\n  enabled: ${REDACTED}\n  provider: ${REDACTED}`,
@@ -636,6 +710,9 @@ describe("large pastes stay linear", () => {
     ["one YAML parent followed by indented children", (n) => "secrets:\n" + fill("  a: b\n", n)],
     ["one YAML block scalar with a long body", (n) => "password: |\n" + fill("  abc def\n", n)],
     ["a line of spaces ending in a colon", (n) => "token" + fill(" ", n) + ":"],
+    ["colon assignments repeated on one line", (n) => fill("token: a ", n)],
+    ["equals assignments repeated mid-line", (n) => "x " + fill("token=a ", n)],
+    ["indented lines each starting with a secret name", (n) => fill("  token \n", n)],
     ["home paths", (n) => fill("/Users/alice/x ", n)],
     ["Authorization headers on one line", (n) => fill("Authorization: ", n)],
     ["Bearer words", (n) => fill("Bearer ", n)],
@@ -769,6 +846,9 @@ describe("flags with a secret-looking name", () => {
     ["--token c_Ab12Cd34Ef", `--token ${REDACTED}`],
     ["--api-key plain_value_999 next", `--api-key ${REDACTED} next`],
     ["--db-password=plain_value_888 next", `--db-password=${REDACTED} next`],
+    ["--api_key abc123secretvalue next", `--api_key ${REDACTED} next`],
+    ["--client_secret abc123secretvalue next", `--client_secret ${REDACTED} next`],
+    ["--db_password=abc123secretvalue next", `--db_password=${REDACTED} next`],
     ["--secret-key=sk_test_abc123 next", `--secret-key=${REDACTED} next`],
     ["--db-encryption-key=plain_value_888 next", `--db-encryption-key=${REDACTED} next`],
     // The value is a whole shell word, through any quoted part it contains.

@@ -107,8 +107,9 @@ arguments, option values, file paths, or personal data, except the text you choo
 send with `clerk feedback`, which is scrubbed for common secret formats, home-directory
 paths and email addresses before it leaves your machine (`clerk feedback --dry-run` shows
 exactly what would be sent and whether a real run would send it, and sends no report,
-though the run's usual usage event still applies, and it may create the local machine id
-unless telemetry is off). The first run only shows a disclosure
+though the run's usual usage event still applies; with telemetry on it may create the
+config directory and the local machine id, and briefly writes a temporary file there to
+check it is writable, and with telemetry off it writes nothing). The first run only shows a disclosure
 notice and sends nothing (CI environments send from the first run), except
 `clerk feedback`, which shows the notice and then sends the report you asked it to send
 and the run's usage event. `clerk --verbose` prints every event before it is sent. Shell completion (`clerk

@@ -190,6 +190,14 @@ describe("resolveCommand", () => {
     expect(error.message).toContain("auth logout");
   });
 
+  // A hidden subcommand is not something to suggest: `mcp run` is what MCP
+  // clients launch, not a command a person types.
+  test("a bare group's usage error leaves hidden subcommands out", async () => {
+    const error = await usageErrorOf({ ...COMPLETE, command: "mcp" });
+    expect(error.message).toContain("mcp install, mcp list, mcp uninstall.");
+    expect(error.message).not.toContain("mcp run");
+  });
+
   test("an alias resolves to the canonical name", () => {
     const leaf: CommandTree = {
       name: () => "list",

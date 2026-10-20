@@ -50,6 +50,7 @@ import {
   isTelemetryNoticeOwed,
   peekTelemetryEnvelope,
   type PostedTelemetryEvent,
+  type SendOutcome,
   sendTelemetryEvent,
   showTelemetryNoticeOnce,
   type TelemetryEnvelope,
@@ -145,9 +146,11 @@ export interface FeedbackOptions {
 
 /**
  * The slice of Commander's command tree that `--command` is validated
- * against. The two underscored fields are Commander's own private state,
- * read the same way `__complete.ts` reads `_hidden`: which child runs when
- * the group is invoked bare, and whether the group runs anything itself.
+ * against. The underscored fields are Commander's own private state, read
+ * the same way `__complete.ts` reads `_hidden`: which child runs when the
+ * group is invoked bare, whether the group runs anything itself, and whether
+ * a command is hidden from help (and so from the subcommands an error
+ * suggests).
  */
 export type CommandTree = {
   name(): string;
@@ -157,6 +160,7 @@ export type CommandTree = {
   registeredArguments?: readonly unknown[];
   _defaultCommandName?: string | null;
   _actionHandler?: unknown;
+  _hidden?: boolean;
 };
 
 export const FEEDBACK_EXAMPLES: Example[] = [
@@ -182,7 +186,6 @@ export type FeedbackResult =
   | { sent: true; report_id: string }
   | { sent: false; reason: SendFailureReason; fallback: string; report_id?: string };
 
-/** The agent-mode `--dry-run` output: the report, and whether a real run would send it now. */
 /** The feedback event as it is posted (and as the preview and `--dry-run` show it). */
 export type PostedFeedbackEvent = PostedTelemetryEvent<{
   event: typeof FEEDBACK_EVENT;
@@ -294,7 +297,9 @@ export function resolveCommand(tree: CommandTree, input: string): CommandResolut
       path: null,
       reason: "bare_group",
       group: parts.join(" "),
-      subcommands: node.commands.map((c) => `${parts.join(" ")} ${c.name()}`),
+      subcommands: node.commands
+        .filter((c) => !c._hidden)
+        .map((c) => `${parts.join(" ")} ${c.name()}`),
     };
   }
   return { path: parts.join(" ") };
@@ -607,8 +612,8 @@ function printEvent(payload: FeedbackPayload): void {
   log.data(JSON.stringify(feedbackEvent(payload), null, 2));
 }
 
-/** What became of a send: sent, or refused, with whether a POST was attempted (which earns the report id). */
-type SendOutcome = { sent: true } | { sent: false; refusal: Refusal; posted: boolean };
+/** What became of a feedback send: sent, or refused, with whether a POST was attempted (which earns the report id). */
+type FeedbackSendResult = { sent: true } | { sent: false; refusal: Refusal; posted: boolean };
 
 /**
  * Connection failures where the request never left the machine: a refused
@@ -654,7 +659,7 @@ function mayHaveReachedServer(error: unknown): boolean {
  * was never made sent nothing and is not counted. An interrupt is rethrown
  * for the CLI's interrupt path.
  */
-async function send(payload: FeedbackPayload): Promise<SendOutcome> {
+async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
   try {
     const refused = refusalFor(await getTelemetryStatus());
     if (refused) return { sent: false, refusal: refused, posted: false };
@@ -669,7 +674,7 @@ async function send(payload: FeedbackPayload): Promise<SendOutcome> {
 
   let posted = false;
   let reached: boolean;
-  let outcome: "accepted" | "rejected" | "disabled";
+  let outcome: SendOutcome;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FEEDBACK_SEND_TIMEOUT_MS);
   try {
@@ -706,7 +711,7 @@ async function send(payload: FeedbackPayload): Promise<SendOutcome> {
   return { sent: true };
 }
 
-function printOutcome(outcome: SendOutcome, reportId: string): void {
+function printOutcome(outcome: FeedbackSendResult, reportId: string): void {
   if (outcome.sent) return printSent(reportId);
   printRefusal(outcome.refusal, outcome.posted ? reportId : undefined);
 }

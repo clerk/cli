@@ -609,16 +609,22 @@ async function postTelemetryEvent(
 const TELEMETRY_NOTICE_LAST_LINE = "Nothing has been sent during this run.";
 
 /**
- * Whether this run still owes the one-time disclosure notice: never in CI
- * (see {@link showTelemetryNoticeOnce}), and never once a machine has shown
- * it. The one rule the notice and `clerk feedback --dry-run` both use, so a
- * dry run predicts exactly what a real run would do. (`lib/fetch.ts` keeps
+ * Whether this run still owes the one-time disclosure notice: never in CI,
+ * and never once a machine has shown it. `clerk feedback --dry-run` asks this
+ * to predict what a real run would do. {@link showTelemetryNoticeOnce} applies
+ * the same rule without calling it: the same CI check, then a mark that reads
+ * the flag itself, so the end-of-run flush pays one config read, not two. (`lib/fetch.ts` keeps
  * its own copy for the User-Agent, because importing this module there would
  * be a cycle.)
  */
 export async function isTelemetryNoticeOwed(): Promise<boolean> {
-  if (process.env.CI) return false;
+  if (noticeExemptRun()) return false;
   return !(await getTelemetryNoticeShown());
+}
+
+/** CI is exempt from the notice; the one place both the notice and the predicate read it. */
+function noticeExemptRun(): boolean {
+  return Boolean(process.env.CI);
 }
 
 /**
@@ -635,7 +641,10 @@ export async function isTelemetryNoticeOwed(): Promise<boolean> {
 export async function showTelemetryNoticeOnce(
   lastLine: string = TELEMETRY_NOTICE_LAST_LINE,
 ): Promise<boolean> {
-  if (!(await isTelemetryNoticeOwed())) return false;
+  // Not the predicate above: this runs at the end of every command, and the
+  // mark below already reads the flag, so a separate read would be a second
+  // config read on every run.
+  if (noticeExemptRun()) return false;
   if (!(await markTelemetryNoticeShown())) return false;
   log.blank();
   log.info(

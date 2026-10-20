@@ -47,7 +47,7 @@ export function registerFeedback(program: Program): void {
     .option("--suggestion <text>", "What would have helped")
     .option(
       "--dry-run",
-      "Print exactly what would be sent and whether a real run would send it now, and send no report (the usual usage event for this command still applies; may create the local machine id unless telemetry is off)",
+      "Print exactly what would be sent and whether a real run would send it now, and send no report. With telemetry off, a dry run writes nothing. With telemetry on, it may create the config directory and the machine id, and while the first-run notice is still owed it writes and deletes a temporary file in the config directory to check that a real run could record the notice. The run's usual end-of-run telemetry step still applies: on a first run it shows the disclosure notice and records that it was shown.",
     )
     .option("--yes", "Skip the confirmation prompt")
     .setExamples(FEEDBACK_EXAMPLES)

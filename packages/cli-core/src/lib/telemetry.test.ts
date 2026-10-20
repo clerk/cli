@@ -11,6 +11,7 @@ import {
   getTelemetryStatus,
   isTelemetryNoticeOwed,
   sendTelemetryEvent,
+  showTelemetryNoticeOnce,
   setTelemetryPauseStep,
   setTelemetryDomainComponents,
   setTelemetryOAuthComplete,
@@ -941,6 +942,26 @@ describe("sendTelemetryEvent always reads the opt-out itself", () => {
 // One rule for "the first-run notice is still owed", shared by the notice
 // itself and by `clerk feedback --dry-run`: CI never owes it, and a machine
 // that has shown it once never owes it again.
+// The end-of-run flush shows the notice through showTelemetryNoticeOnce on
+// every command, so it must cost what it did before the shared predicate:
+// the CI check, then the one read-and-mark.
+describe("showTelemetryNoticeOnce reads the config once", () => {
+  test.each([
+    ["a machine that has shown the notice", true],
+    ["a fresh machine", false],
+  ])("%s: no separate read of the notice flag", async (_label, alreadyShown) => {
+    delete process.env.CI;
+    if (alreadyShown) await markTelemetryNoticeShown();
+    const peek = spyOn(config, "getTelemetryNoticeShown");
+    try {
+      await showTelemetryNoticeOnce();
+      expect(peek).not.toHaveBeenCalled();
+    } finally {
+      peek.mockRestore();
+    }
+  });
+});
+
 describe("isTelemetryNoticeOwed", () => {
   const originalCi = process.env.CI;
   afterEach(() => {
