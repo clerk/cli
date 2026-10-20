@@ -101,7 +101,7 @@ import {
   loadUsersFromFile,
   resolveImportFilePath,
 } from "./lib/transform.ts";
-import { resolveSource, sourceKeys } from "./sources/registry.ts";
+import { getSource, resolveSource, sourceKeys } from "./sources/registry.ts";
 import type { ImportSummary, User } from "./types.ts";
 import { promptForFile, promptForFirebaseHashConfig, promptForSource } from "./wizard.ts";
 import { login } from "../auth/login.ts";
@@ -1033,6 +1033,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           failures,
           unknownFields: loaded.unknownFields,
           ...(supabaseRows ? { supabaseRows } : {}),
+          socialProviders: getSource(source).socialProviders,
           settings,
           existingUsers,
           instanceType: limits.instanceType,

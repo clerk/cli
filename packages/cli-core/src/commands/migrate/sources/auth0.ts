@@ -12,6 +12,32 @@ import { isVerified, routeByVerification, splitName } from "./shared.ts";
  * be requested from Auth0 support. When present they are bcrypt (`$2a$`/`$2b$`,
  * 10 rounds), which is why `passwordHasher` defaults to `bcrypt`.
  */
+/** Auth0 social connections named differently from Clerk's provider key. */
+const AUTH0_PROVIDER_KEYS: Record<string, string> = {
+  "google-oauth2": "google",
+  windowslive: "microsoft",
+  linkedin: "linkedin_oidc",
+};
+
+/**
+ * `user_id` prefixes that are not social sign-in: the database, passwordless,
+ * enterprise connections, and custom `oauth2` ones Clerk cannot match by name.
+ */
+const AUTH0_NOT_SOCIAL = new Set([
+  "auth0",
+  "email",
+  "sms",
+  "samlp",
+  "waad",
+  "adfs",
+  "ad",
+  "oidc",
+  "okta",
+  "pingfederate",
+  "google-apps",
+  "oauth2",
+]);
+
 const auth0Source = {
   key: "auth0",
   label: "Auth0",
@@ -57,6 +83,17 @@ const auth0Source = {
     if (isVerified(user.banned, "boolean")) user.banned = true;
     else delete user.banned;
   },
+
+  // The prefix names the connection the user signed up with. A user who later
+  // linked another provider is counted only under the first.
+  socialProviders: (user) => {
+    const separator = user.userId.indexOf("|");
+    if (separator < 1) return [];
+    const connection = user.userId.slice(0, separator);
+    if (AUTH0_NOT_SOCIAL.has(connection)) return [];
+    return [AUTH0_PROVIDER_KEYS[connection] ?? connection];
+  },
+
   defaults: {
     passwordHasher: "bcrypt" as const,
   },
