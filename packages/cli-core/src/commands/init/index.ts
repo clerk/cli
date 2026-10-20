@@ -20,6 +20,7 @@ import {
   type FrameworkInfo,
 } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
+import { readInitClaim } from "../../lib/autoclaim.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
 import { declareSoftExitOutcome, setTelemetryStage } from "../../lib/telemetry.ts";
@@ -610,16 +611,29 @@ async function runStrategy(
 
 // --- Auth ---
 
-async function resolveAuthLabel(): Promise<string> {
+async function resolveAuthLabel(cwd: string, app: string | undefined): Promise<string> {
   const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
   if (hasApiKey) return "Using API key";
 
   const email = await getAuthenticatedEmail();
   if (email) return `Logged in as ${email}`;
 
-  // `link`, called next, claims the app `clerk init` created, under its own
-  // rule; login's claim would run first and leave `link` nothing to decide.
+  // `link`, called next, claims the app `clerk init` created only in a folder
+  // that isn't linked and without `--app`; login's claim would run first and
+  // leave it nothing to decide. In an already-linked folder `link` doesn't
+  // claim, so login does, as it always has. With `--app`, the named app is
+  // the person's choice, so nothing claims, and they're told how to.
+  if (!app && (await resolveProfile(cwd))) {
+    await login({ showNextSteps: false });
+    return "";
+  }
   await login({ showNextSteps: false, claim: false });
+  const initClaim = app ? await readInitClaim(cwd) : undefined;
+  if (initClaim) {
+    log.info(
+      `\`${initClaim.appName}\`, the app \`clerk init\` created in this folder, is still unclaimed: \`clerk auth login\` claims it.`,
+    );
+  }
   return "";
 }
 
@@ -630,7 +644,7 @@ async function authenticateAndLink(
   createIfMissing: string | undefined,
   linkOptions: { showNextSteps?: false } = {},
 ): Promise<LinkOutcome | undefined> {
-  const label = await resolveAuthLabel();
+  const label = await resolveAuthLabel(cwd, app);
   const profile = await resolveProfile(cwd);
 
   const alreadyOnRequestedApp = profile && (!app || profile.profile.appId === app);

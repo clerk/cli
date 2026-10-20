@@ -24,6 +24,7 @@ import {
   previewMod,
   skillsMod,
 } from "../../test/lib/init-harness.ts";
+import * as autoclaimMod from "../../lib/autoclaim.ts";
 import * as promptsMod from "../../lib/prompts.ts";
 import { CODEX_ENV_VARS } from "../../lib/env-signals.ts";
 import { _resetMode } from "../../mode.ts";
@@ -489,6 +490,37 @@ describe("init strategy", () => {
     expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
     expect(linkMod.link).toHaveBeenCalled();
     expect(pullMod.pull).toHaveBeenCalled();
+  });
+
+  // `link` claims the app `init` created only in a folder that isn't linked
+  // and without `--app`; in the other two cases a signed-out person's sign-in
+  // decides.
+  test("signed out, folder already linked: signs in with login's own claim", async () => {
+    setup();
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+
+    await init({});
+
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+  });
+
+  test("signed out with --app: keeps the claim off and says the init app is still unclaimed", async () => {
+    const { captured } = setup();
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    track(
+      spyOn(autoclaimMod, "readInitClaim").mockResolvedValue({
+        appName: "my-app",
+        claimToken: "claim_token_init",
+      }),
+    );
+
+    await init({ app: "app_abc" });
+
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
+    expect(Bun.stripANSI(captured.err)).toContain(
+      "`my-app`, the app `clerk init` created in this folder, is still unclaimed: `clerk auth login` claims it.",
+    );
   });
 
   describe("keeping an existing unclaimed keyless app (defect: re-run minted a second app)", () => {
