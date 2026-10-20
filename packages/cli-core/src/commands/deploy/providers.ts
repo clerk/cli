@@ -3,6 +3,7 @@ import { bundleIdentifiersEqual } from "../../lib/apple-native-identity.ts";
 import { bold, cyan, dim, yellow } from "../../lib/color.ts";
 import { clerkSubdomains } from "./copy.ts";
 import { log } from "../../lib/log.ts";
+import { OAUTH_KEY_PREFIX, isCredentialPlaceholder } from "../../lib/oauth-config.ts";
 import { wrap } from "../../lib/wrap.ts";
 import { openBrowser } from "../../lib/open.ts";
 import type {
@@ -134,7 +135,7 @@ type ProviderWithOverride = keyof typeof PROVIDER_OVERRIDES;
 
 const SYSTEM_FIELD_KEYS = new Set(["enabled", "authenticatable", "block_email_subaddresses"]);
 const DEFAULT_FIELD_ORDER = ["client_id", "client_secret"];
-export const OAUTH_KEY_PREFIX = "connection_oauth_";
+export { OAUTH_KEY_PREFIX };
 
 const SHARED_OAUTH_METADATA = new Map<string, (typeof OAUTH_PROVIDERS)[number]>(
   OAUTH_PROVIDERS.map((provider) => [provider.provider, provider]),
@@ -233,9 +234,15 @@ export function hasProviderRequiredCredentials(
   if (!value || typeof value !== "object") return false;
   const providerConfig = value as Record<string, unknown>;
   if (providerConfig.enabled !== true) return false;
+  // A file saved from `oauth.setup` before the user filled it in holds the
+  // report's own placeholder, which is no credential.
   return descriptor.requiredCredentialKeys.every((key) => {
     const fieldValue = providerConfig[key];
-    return typeof fieldValue === "string" && fieldValue.length > 0;
+    return (
+      typeof fieldValue === "string" &&
+      fieldValue.length > 0 &&
+      !isCredentialPlaceholder(key, fieldValue)
+    );
   });
 }
 

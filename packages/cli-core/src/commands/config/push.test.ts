@@ -10,6 +10,7 @@ import {
   libPromptsStubs,
   stubFetch,
 } from "../../test/lib/stubs.ts";
+import { CliError, EXIT_CODE } from "../../lib/errors.ts";
 import { printDiff, hasConfigChanges } from "./push.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
@@ -286,6 +287,80 @@ describe("config push", () => {
       expect(captured.out + captured.err).not.toContain("FAKE_OAUTH_SECRET");
     },
   );
+
+  // `clerk deploy`'s `oauth.setup` payload holds `<key>` under each credential
+  // key for the user to replace. Saved as is, the placeholder would become the
+  // production credential.
+  describe("oauth.setup placeholders", () => {
+    async function patchGoogle(credentials: Record<string, string>, dryRun = false) {
+      const writes: string[] = [];
+      stubFetch(async (_input, init) => {
+        const isGet = !init?.method || init.method === "GET";
+        if (!isGet) writes.push(init?.method ?? "");
+        return new Response(JSON.stringify(isGet ? currentConfig : mockResponse), {
+          status: 200,
+        });
+      });
+      await setProfile(process.cwd(), {
+        workspaceId: "org_1",
+        appId: "app_1",
+        instances: { development: "ins_dev" },
+      });
+      const error = await runConfigPatch({
+        json: JSON.stringify({ connection_oauth_google: { enabled: true, ...credentials } }),
+        yes: true,
+        dryRun,
+      }).catch((e: unknown) => e);
+      return { error, writes };
+    }
+
+    test.each([{ dryRun: false }, { dryRun: true }])(
+      "refuses a field that still holds its placeholder (dryRun: $dryRun)",
+      async ({ dryRun }) => {
+        const { error, writes } = await patchGoogle(
+          { client_id: "client.apps.googleusercontent.com", client_secret: "<client_secret>" },
+          dryRun,
+        );
+
+        expect(error).toBeInstanceOf(CliError);
+        expect((error as CliError).exitCode).toBe(EXIT_CODE.USAGE);
+        expect((error as CliError).message).toBe(
+          "Nothing was saved: connection_oauth_google.client_secret still holds its placeholder, " +
+            "<client_secret>. Replace it with the real value, then run the command again.",
+        );
+        expect(writes).toEqual([]);
+      },
+    );
+
+    test("names every field still holding its placeholder", async () => {
+      const { error, writes } = await patchGoogle({
+        client_id: "<client_id>",
+        client_secret: "<client_secret>",
+      });
+
+      expect((error as CliError).message).toBe(
+        "Nothing was saved: connection_oauth_google.client_id and " +
+          "connection_oauth_google.client_secret still hold their placeholders " +
+          "(<client_id>, <client_secret>). Replace them with the real values, then run the command again.",
+      );
+      expect(writes).toEqual([]);
+    });
+
+    // Only the exact `<key>` under `key` is the report's: anything else may be
+    // a real credential.
+    test.each(["<fake-client-secret>", "x<client_secret>", "<client_id>"])(
+      "saves a client_secret of %p",
+      async (clientSecret) => {
+        const { error, writes } = await patchGoogle({
+          client_id: "client.apps.googleusercontent.com",
+          client_secret: clientSecret,
+        });
+
+        expect(error).toBeUndefined();
+        expect(writes).toEqual(["PATCH"]);
+      },
+    );
+  });
 
   test("patch shows 'Updating' label", async () => {
     await setProfile(process.cwd(), {

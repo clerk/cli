@@ -93,6 +93,8 @@ Input can be provided via `--json` (inline), `--file` (path to a JSON file), or 
 
 The diff printed before a `patch` or `put`, the response it prints to stdout afterwards (including a server-side `--dry-run`'s), and that response in the `--verbose` log of the config writer the `orgs` and `billing` commands use all show string values under keys named like a secret (`*secret*`, `*private_key*`) as `[REDACTED]`, so credentials do not end up in terminal scrollback or captured output. `--verbose` still logs the raw body of a failed request (the shared request logger), so `--verbose` output is not guaranteed free of secrets.
 
+`patch` and `put` refuse, before reading or writing anything (dry runs included), a payload whose `connection_oauth_*` entry still holds a placeholder from `clerk deploy`'s `oauth.setup`: the value `<key>` under that same key, e.g. `<client_secret>` under `client_secret`. The error names each such field and exits 2. Only that exact value under that key counts, so no real credential is refused.
+
 ```sh
 clerk config patch --json '{"session":{"lifetime":3600}}'
 clerk config patch --app app_123 --json '{"session":{"lifetime":3600}}'

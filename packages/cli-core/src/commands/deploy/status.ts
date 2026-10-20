@@ -7,6 +7,7 @@ import {
   UserAbortError,
 } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
+import { credentialPlaceholder } from "../../lib/oauth-config.ts";
 import {
   fetchApplication,
   fetchInstanceConfig,
@@ -667,7 +668,9 @@ function oauthSetupGuides(
       payload: {
         [descriptor.configKey]: {
           enabled: true,
-          ...Object.fromEntries(descriptor.requiredCredentialKeys.map((key) => [key, `<${key}>`])),
+          ...Object.fromEntries(
+            descriptor.requiredCredentialKeys.map((key) => [key, credentialPlaceholder(key)]),
+          ),
         },
       },
       command: `clerk config patch --instance ${instance} --file <file> --yes`,
