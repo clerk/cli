@@ -756,6 +756,30 @@ describe("deploy", () => {
       expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
     });
 
+    // A case or trailing-dot difference in how Clerk spells the domain is
+    // still the domain this run asked for.
+    test.each(["example.com.", "Example.COM."])(
+      "--domain accepts the created instance's domain spelled %p",
+      async (spelling) => {
+        mockIsAgent.mockReturnValue(true);
+        await linkedProject();
+        const create = mockCreateProductionInstance.getMockImplementation() as (
+          appId: string,
+          params: { domain: string },
+        ) => unknown;
+        mockCreateProductionInstance.mockImplementation(
+          (appId: string, params: { domain: string }) => {
+            mockLiveProduction({ domain: spelling });
+            return create(appId, params);
+          },
+        );
+
+        await runDeploy({ domain: "example.com" });
+
+        expect(JSON.parse(captured.out).productionInstanceId).toBe("ins_prod_mock");
+      },
+    );
+
     test("a failed read after the create says the instance exists", async () => {
       mockIsAgent.mockReturnValue(true);
       await linkedProject();

@@ -263,12 +263,17 @@ async function rememberProductionInstance(
  * caller off to add DNS records for a domain they did not ask for.
  */
 function assertRequestedDomain(requested: string, existing: string): void {
-  if (existing.toLowerCase() === requested) return;
+  if (comparableDomain(existing) === comparableDomain(requested)) return;
   throw new CliError(
     `This application already has a production instance on ${existing}, so --domain ${requested} was not applied. ` +
       `Run \`clerk deploy\` without --domain to continue with ${existing}, or change the domain in the Clerk Dashboard.`,
     { code: ERROR_CODE.PRODUCTION_INSTANCE_EXISTS },
   );
+}
+
+/** A domain as DNS compares it: case-insensitive, with or without the root's trailing dot. */
+function comparableDomain(domain: string): string {
+  return domain.trim().toLowerCase().replace(/\.$/, "");
 }
 
 /**
