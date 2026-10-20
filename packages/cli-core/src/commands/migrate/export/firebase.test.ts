@@ -451,6 +451,19 @@ describe("fetchHashConfig", () => {
     );
   });
 
+  test.each([["rounds"], ["memoryCost"]])("leaves out a config missing %s", async (cost) => {
+    const hashConfig: Record<string, unknown> = {
+      signerKey: "KEY=",
+      saltSeparator: "Bw==",
+      rounds: 8,
+      memoryCost: 14,
+    };
+    delete hashConfig[cost];
+    stubFirebase([[]], { signIn: { hashConfig } });
+    expect(await fetchHashConfig(account, "tok")).toBeNull();
+    expect(captured.err).toContain("won't work in Clerk");
+  });
+
   test("returns null when the response carries no hash config", async () => {
     stubFirebase([[]], { signIn: {} });
     expect(await fetchHashConfig(account, "tok")).toBeNull();
