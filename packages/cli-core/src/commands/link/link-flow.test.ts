@@ -36,6 +36,8 @@ mock.module("../../lib/credential-store.ts", () => ({
   ...credentialStoreStubs,
   getToken: (...args: unknown[]) => mockGetToken(...args),
   getValidToken: (...args: unknown[]) => mockGetToken(...args),
+  hasAccountCredentials: async () =>
+    Boolean(process.env.CLERK_PLATFORM_API_KEY) || Boolean(await mockGetToken()),
 }));
 
 const mockFetchUserInfo = mock();

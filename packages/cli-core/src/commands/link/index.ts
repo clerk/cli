@@ -2,7 +2,7 @@ import type { Program } from "../../cli-program.ts";
 import { basename } from "node:path";
 import { confirm } from "../../lib/prompts.ts";
 import { isAgent } from "../../mode.ts";
-import { getToken } from "../../lib/credential-store.ts";
+import { getToken, hasAccountCredentials } from "../../lib/credential-store.ts";
 import { login } from "../auth/login.ts";
 import {
   claimWarning,
@@ -42,6 +42,7 @@ import {
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
+import { capitalize } from "../../lib/text.ts";
 import {
   CliError,
   ERROR_CODE,
@@ -464,7 +465,7 @@ async function claimFirst(
   showNextSteps: boolean,
 ): Promise<LinkOutcome | undefined> {
   if (agent) {
-    if (!(await hasCredentials())) return undefined;
+    if (!(await hasAccountCredentials())) return undefined;
   } else {
     const account = await signedInAccount();
     const destination = claimDestination(account);
@@ -521,10 +522,6 @@ async function requireFolderKeysBelongTo(app: Application, cwd: string): Promise
     `${capitalize(problem)}, so this folder wasn't linked to ${label} and no keys were written. Make the folder's Clerk keys, and any exported in your shell, belong to one application, then run \`clerk init\` again.`,
     { code: ERROR_CODE.NOT_LINKED },
   );
-}
-
-async function hasCredentials(): Promise<boolean> {
-  return Boolean(process.env.CLERK_PLATFORM_API_KEY) || Boolean(await getToken());
 }
 
 async function ensureAuth() {
@@ -630,10 +627,6 @@ async function resolveApp(
     message: `Select a Clerk application to link ${dim(`(repo: ${basename(displayPath)})`)}`,
     allowCreate,
   });
-}
-
-function capitalize(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 export function registerLink(program: Program): void {
