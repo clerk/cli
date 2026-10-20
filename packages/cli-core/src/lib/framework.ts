@@ -45,6 +45,13 @@ export interface FrameworkInfo {
    * CLI then can't tell which of several disagreeing files the app runs on.
    */
   envLoadOrder?: readonly EnvFileName[];
+  /**
+   * False when the framework's Clerk SDK never reads the generic
+   * `CLERK_PUBLISHABLE_KEY`, only `envVar`. A generic key in such a folder
+   * isn't one the app loads. Omitted (true) where the SDK falls back to it, or
+   * where that isn't verified yet (Nuxt, Vue).
+   */
+  readsGenericPublishableKey?: boolean;
 }
 
 /**
@@ -93,6 +100,9 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envFile: ".env.local",
     supportsKeyless: true,
     envLoadOrder: NEXT_LOAD_ORDER,
+    // clerk/javascript at e12d970e3a: packages/nextjs/src/server/constants.ts
+    // and src/utils/mergeNextClerkPropsWithEnv.ts read only the prefixed name.
+    readsGenericPublishableKey: false,
   },
   {
     dep: "astro",
@@ -102,6 +112,8 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envFile: ".env",
     supportsKeyless: true,
     envLoadOrder: VITE_LOAD_ORDER,
+    // clerk/javascript at e12d970e3a: the Astro SDK reads only this name.
+    readsGenericPublishableKey: false,
   },
   {
     dep: "nuxt",

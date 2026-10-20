@@ -82,6 +82,21 @@ test("agent, Next.js: doesn't link .env's app when .env.local, which Next.js loa
   expect(await linkedAppId()).toBeUndefined();
 });
 
+// Next.js reads only `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`: a generic key
+// exported in the shell (for another project, say) isn't the one it runs on.
+test("agent, Next.js: links .env.local's app, not the one a generic key exported in the shell belongs to", async () => {
+  await useFramework("next");
+  process.env.CLERK_PUBLISHABLE_KEY = APP_A.instances[0]!.publishable_key;
+  await writeEnv(
+    ".env.local",
+    `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${APP_B.instances[0]!.publishable_key}`,
+  );
+
+  await clerk("--mode", "agent", "link");
+
+  expect(await linkedAppId()).toBe(APP_B.application_id);
+});
+
 test("agent, Vite: links the app whose key is in .env.development, which Vite loads over .env.local", async () => {
   await useFramework("vite");
   await writeEnv(

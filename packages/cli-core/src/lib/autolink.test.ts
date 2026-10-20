@@ -127,10 +127,10 @@ describe("findLinkKey", () => {
   // Was a list with `.env` as a fallback; Next.js loads `.env.local`'s key.
   test("Next.js: .env.local's key is the only candidate when .env holds another", async () => {
     await writePackageJson(tempDir, "next");
-    await Bun.write(join(tempDir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_dotenv\n");
-    await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_local\n");
+    await Bun.write(join(tempDir, ".env"), "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_dotenv\n");
+    await Bun.write(join(tempDir, ".env.local"), "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_local\n");
     expect(await findLinkKey(tempDir)).toEqual(
-      found("pk_local", "CLERK_PUBLISHABLE_KEY", ".env.local"),
+      found("pk_local", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", ".env.local"),
     );
   });
 
@@ -146,12 +146,12 @@ describe("findLinkKey", () => {
 
   test("couldn't tell when a Clerk key line can't be read", async () => {
     await writePackageJson(tempDir, "next");
-    await Bun.write(join(tempDir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_dotenv\n");
-    await Bun.write(join(tempDir, ".env.local"), "  CLERK_PUBLISHABLE_KEY=pk_local\n");
+    await Bun.write(join(tempDir, ".env"), "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_dotenv\n");
+    await Bun.write(join(tempDir, ".env.local"), "  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_local\n");
     expect(await findLinkKey(tempDir)).toEqual({
       status: "couldnt_tell",
       reason:
-        "the CLI couldn't read the `CLERK_PUBLISHABLE_KEY` line in `.env.local`, so it can't tell which key this app loads",
+        "the CLI couldn't read the `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` line in `.env.local`, so it can't tell which key this app loads",
     });
   });
 

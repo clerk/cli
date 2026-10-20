@@ -849,8 +849,11 @@ describe("attemptAutoclaim", () => {
           join(tempDir, "package.json"),
           JSON.stringify({ dependencies: { next: "15.0.0" } }),
         );
-        await writeEnv([`CLERK_PUBLISHABLE_KEY=${OTHER_PK}`]);
-        await Bun.write(join(tempDir, ".env.local"), `CLERK_PUBLISHABLE_KEY=${SECOND_OTHER_PK}\n`);
+        await writeEnv([`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${OTHER_PK}`]);
+        await Bun.write(
+          join(tempDir, ".env.local"),
+          `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${SECOND_OTHER_PK}\n`,
+        );
 
         const result = await runClaim();
 

@@ -42,17 +42,17 @@ describe("readFolderKeys", () => {
     await write("package.json", JSON.stringify({ dependencies: { next: "15.0.0" } }));
     await write(
       ".env",
-      "CLERK_PUBLISHABLE_KEY=pk_test_from_env\nCLERK_SECRET_KEY=sk_test_from_env\n",
+      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_from_env\nCLERK_SECRET_KEY=sk_test_from_env\n",
     );
     await write(
       ".env.local",
-      "CLERK_PUBLISHABLE_KEY=pk_test_from_local\nCLERK_SECRET_KEY=sk_test_from_local\n",
+      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_from_local\nCLERK_SECRET_KEY=sk_test_from_local\n",
     );
 
     expect(await readFolderKeys(dir)).toEqual({
       publishableKey: {
         value: "pk_test_from_local",
-        name: "CLERK_PUBLISHABLE_KEY",
+        name: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
         source: ".env.local",
       },
       secretKey: { value: "sk_test_from_local", name: "CLERK_SECRET_KEY", source: ".env.local" },
@@ -159,9 +159,9 @@ describe("the key the app loads, by framework", () => {
     await write("package.json", JSON.stringify({ dependencies: { [dep]: "1.0.0" } }));
   }
 
-  const located = (value: string, source: string) => ({
+  const located = (value: string, source: string, name = "CLERK_PUBLISHABLE_KEY") => ({
     value,
-    name: "CLERK_PUBLISHABLE_KEY",
+    name,
     source,
   });
 
@@ -171,28 +171,40 @@ describe("the key the app loads, by framework", () => {
     { files: [".env.development", ".env.local"], loads: ".env.local" },
   ])("Next.js: $loads wins over the other of $files", async ({ files, loads }) => {
     await useFramework("next");
-    for (const file of files) await write(file, `CLERK_PUBLISHABLE_KEY=pk_test_${file}\n`);
+    for (const file of files) {
+      await write(file, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_${file}\n`);
+    }
 
-    expect((await readFolderKeys(dir)).publishableKey).toEqual(located(`pk_test_${loads}`, loads));
+    expect((await readFolderKeys(dir)).publishableKey).toEqual(
+      located(`pk_test_${loads}`, loads, "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"),
+    );
   });
 
   // Vite loads `.env`, `.env.local`, `.env.[mode]`, `.env.[mode].local`, later
   // files winning: a mode file beats `.env.local`, unlike Next.js.
-  test.each(["vite", "astro", "vue", "react-router", "@tanstack/react-start", "react"])(
-    "the Vite family (%s): .env.development wins over .env.local, and .env.development.local over both",
-    async (dep) => {
+  // Each with the name its SDK reads: Astro's has no `VITE_` prefix.
+  test.each([
+    { dep: "vite", name: "VITE_CLERK_PUBLISHABLE_KEY" },
+    { dep: "astro", name: "PUBLIC_CLERK_PUBLISHABLE_KEY" },
+    { dep: "vue", name: "VITE_CLERK_PUBLISHABLE_KEY" },
+    { dep: "react-router", name: "VITE_CLERK_PUBLISHABLE_KEY" },
+    { dep: "@tanstack/react-start", name: "VITE_CLERK_PUBLISHABLE_KEY" },
+    { dep: "react", name: "VITE_CLERK_PUBLISHABLE_KEY" },
+  ])(
+    "the Vite family ($dep): .env.development wins over .env.local, and .env.development.local over both",
+    async ({ dep, name }) => {
       await useFramework(dep);
-      await write(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_local\n");
-      await write(".env.development", "CLERK_PUBLISHABLE_KEY=pk_test_development\n");
+      await write(".env.local", `${name}=pk_test_local\n`);
+      await write(".env.development", `${name}=pk_test_development\n`);
 
       expect((await readFolderKeys(dir)).publishableKey).toEqual(
-        located("pk_test_development", ".env.development"),
+        located("pk_test_development", ".env.development", name),
       );
 
-      await write(".env.development.local", "CLERK_PUBLISHABLE_KEY=pk_test_development_local\n");
+      await write(".env.development.local", `${name}=pk_test_development_local\n`);
 
       expect((await readFolderKeys(dir)).publishableKey).toEqual(
-        located("pk_test_development_local", ".env.development.local"),
+        located("pk_test_development_local", ".env.development.local", name),
       );
     },
   );
@@ -247,6 +259,59 @@ describe("the key the app loads, by framework", () => {
       publishableKey: located("pk_test_same", ".env.development"),
       secretKey: undefined,
     });
+  });
+
+  // Next.js reads only `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and Astro only
+  // `PUBLIC_CLERK_PUBLISHABLE_KEY` (Clerk's SDK source), so the generic name
+  // in the shell or a file isn't a key those apps load.
+  test.each([
+    { framework: "Next.js", dep: "next", own: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" },
+    { framework: "Astro", dep: "astro", own: "PUBLIC_CLERK_PUBLISHABLE_KEY" },
+  ])(
+    "$framework: its own name in a file wins over an exported generic key",
+    async ({ dep, own }) => {
+      await useFramework(dep);
+      process.env.CLERK_PUBLISHABLE_KEY = "pk_test_exported_generic";
+      await write(".env.local", `${own}=pk_test_own_name\n`);
+
+      expect((await readFolderKeys(dir)).publishableKey).toEqual({
+        value: "pk_test_own_name",
+        name: own,
+        source: ".env.local",
+      });
+    },
+  );
+
+  test.each([
+    { framework: "Next.js", dep: "next" },
+    { framework: "Astro", dep: "astro" },
+  ])("$framework: a generic key alone isn't a key the app loads", async ({ dep }) => {
+    await useFramework(dep);
+    await write(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_generic_only\n");
+
+    expect((await readFolderKeys(dir)).publishableKey).toBeUndefined();
+  });
+
+  // The React SDKs read `VITE_CLERK_PUBLISHABLE_KEY`, then the generic name.
+  test("React: its own name in a file wins over an exported generic key", async () => {
+    await useFramework("react");
+    process.env.CLERK_PUBLISHABLE_KEY = "pk_test_exported_generic";
+    await write(".env.local", "VITE_CLERK_PUBLISHABLE_KEY=pk_test_own_name\n");
+
+    expect((await readFolderKeys(dir)).publishableKey).toEqual({
+      value: "pk_test_own_name",
+      name: "VITE_CLERK_PUBLISHABLE_KEY",
+      source: ".env.local",
+    });
+  });
+
+  test("React: a generic key alone is still the fallback", async () => {
+    await useFramework("react");
+    await write(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_generic_only\n");
+
+    expect((await readFolderKeys(dir)).publishableKey).toEqual(
+      located("pk_test_generic_only", ".env.local"),
+    );
   });
 
   test("no documented order: an exported key still wins over files that disagree", async () => {

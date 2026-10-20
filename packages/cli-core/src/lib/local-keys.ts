@@ -258,9 +258,14 @@ interface EffectiveKey {
 
 /**
  * The key under any of `names` the app loads, and any unreadable lines among
- * the files it would have come from. An exported key wins and returns before
- * any file is read, so an unreadable env file can't break a caller that only
- * needs the exported key.
+ * the files it would have come from.
+ *
+ * Priority is by name, then source: the first name found anywhere wins, so
+ * the framework's own name in a file beats a generic name exported in the
+ * shell. Within one name, the shell beats the files. An exported first name
+ * returns before any file is read, so an unreadable env file can't break a
+ * caller that only needs that key. `envFirst` keeps the older rule, every
+ * exported name before any file, for `findKeyInProject`.
  *
  * `loadOrder` lists the files the app loads, highest priority first. Without
  * one, every candidate file is read, and files holding different values leave
@@ -271,21 +276,23 @@ async function effectiveKey(
   kind: "publishable" | "secret",
   names: string[],
   loadOrder: readonly string[] | undefined,
+  { envFirst = false }: { envFirst?: boolean } = {},
 ): Promise<EffectiveKey> {
-  for (const name of new Set(names)) {
+  const unique = [...new Set(names)];
+  for (const name of envFirst ? unique : unique.slice(0, 1)) {
     const key = fromEnv(name);
     if (key) return { key, unreadable: [] };
   }
 
   const { keys, unreadable } = await readKeyLines(cwd, loadOrder ?? ENV_FILE_CANDIDATES, {
-    publishable: kind === "publishable" ? names : [],
-    secret: kind === "secret" ? names : [],
+    publishable: kind === "publishable" ? unique : [],
+    secret: kind === "secret" ? unique : [],
   });
-  // Priority is by name, not by position: the framework-specific name beats
-  // the generic fallback even when the generic one is in a higher-priority
-  // file. Within one name, each file's last line is its value, and the file
-  // highest in the load order wins.
-  for (const name of names) {
+  // Within one name, each file's last line is its value, and the file highest
+  // in the load order wins.
+  for (const name of unique) {
+    const exported = fromEnv(name);
+    if (exported) return { key: exported, unreadable };
     const perFile = new Map<string, LocatedKey>();
     for (const { value, source } of keys.filter((key) => key.name === name)) {
       perFile.set(source, { value, name, source });
@@ -309,7 +316,7 @@ export async function findKeyInProject(
   names: string[],
 ): Promise<LocatedKey | undefined> {
   // The kind only labels unreadable lines, which this caller doesn't use.
-  return (await effectiveKey(cwd, "publishable", names, LEGACY_LOAD_ORDER)).key;
+  return (await effectiveKey(cwd, "publishable", names, LEGACY_LOAD_ORDER, { envFirst: true })).key;
 }
 
 /** The SDK keyless file's keys, labelled with their source. */
@@ -355,7 +362,11 @@ export async function readFolderKeys(cwd: string): Promise<FolderKeys> {
     effectiveKey(
       cwd,
       "publishable",
-      [framework?.envVar ?? "CLERK_PUBLISHABLE_KEY", "CLERK_PUBLISHABLE_KEY"],
+      // Only the names the framework's SDK reads: a generic key isn't one a
+      // Next.js or Astro app loads.
+      framework?.readsGenericPublishableKey === false
+        ? [framework.envVar]
+        : [framework?.envVar ?? "CLERK_PUBLISHABLE_KEY", "CLERK_PUBLISHABLE_KEY"],
       loadOrder,
     ),
     effectiveKey(
