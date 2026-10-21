@@ -227,7 +227,7 @@ When the user chooses the guided walkthrough, these values are derived from thei
 
 | Field                         | Value                                      |
 | ----------------------------- | ------------------------------------------ |
-| Authorized JavaScript origins | `https://{domain}`, `https://www.{domain}` |
+| Authorized JavaScript origins | `https://{domain}` and `https://www.{domain}` when the domain does not already start with `www.`. For a `www.` domain, the second origin is the bare host. |
 | Authorized redirect URI       | `{frontend_api_url}/v1/oauth_callback`     |
 
 The redirect URI is served by the Frontend API (`clerk.{domain}`), not the Account
