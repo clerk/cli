@@ -1148,8 +1148,17 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     if (over > 0) {
       const reason =
         limitSource === "instance"
-          ? `over this instance's ${limit}-user limit (contact support to raise it)`
-          : `over the development instance's ${limit}-user limit (raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT)`;
+          ? `over this instance's ${limit}-user limit (${
+              // What Clerk's own quota error points at for each.
+              input.instanceType === "prod"
+                ? "upgrading to a paid plan removes it"
+                : "contact support to raise it"
+            })`
+          : `over the development instance's ${limit}-user limit (${
+              limitSource === "env"
+                ? "set by CLERK_MIGRATE_DEV_USER_LIMIT"
+                : "raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT"
+            })`;
       const past = new Set(fresh.slice(headroom));
       for (const user of past) rejects.push({ sourceId: user.userId, reason });
       candidates = candidates.filter((user) => !past.has(user));

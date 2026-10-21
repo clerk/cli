@@ -611,6 +611,24 @@ describe("rejects", () => {
     }
   });
 
+  test("a reject past CLERK_MIGRATE_DEV_USER_LIMIT names the variable as set", async () => {
+    process.env.CLERK_MIGRATE_DEV_USER_LIMIT = "5";
+    try {
+      const checks = await checkImport(
+        input({ instanceType: "dev", existingUsers: 5, users: [user("a")] }),
+      );
+      expect(checks.rejects).toEqual([
+        {
+          sourceId: "a",
+          reason:
+            "over the development instance's 5-user limit (set by CLERK_MIGRATE_DEV_USER_LIMIT)",
+        },
+      ]);
+    } finally {
+      delete process.env.CLERK_MIGRATE_DEV_USER_LIMIT;
+    }
+  });
+
   test("the instance's own limit wins over CLERK_MIGRATE_DEV_USER_LIMIT, and names support", async () => {
     process.env.CLERK_MIGRATE_DEV_USER_LIMIT = "500";
     try {
@@ -638,7 +656,13 @@ describe("rejects", () => {
     const checks = await checkImport(
       input({ instanceType: "prod", maxAllowedUsers: 1, existingUsers: 1, users: [user("a")] }),
     );
-    expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["a"]);
+    // Clerk's own production quota error points at a paid plan, not support.
+    expect(checks.rejects).toEqual([
+      {
+        sourceId: "a",
+        reason: "over this instance's 1-user limit (upgrading to a paid plan removes it)",
+      },
+    ]);
     expect(checks.quota).toMatchObject({ limit: 1, limitSource: "instance", headroom: 0 });
   });
 

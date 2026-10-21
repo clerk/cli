@@ -1156,6 +1156,58 @@ describe("run", () => {
       expect(requests.some((r) => r.url.endsWith("/v1/users/count"))).toBe(true);
     });
 
+    describe("the user limit the instance reports", () => {
+      const countRead = () => requests.some((r) => r.url.endsWith("/v1/users/count"));
+
+      test("lets a development import past the 100 default", async () => {
+        stubClerk({ count: 99, maxAllowedUsers: 101 });
+
+        await run(baseOptions);
+        expect(created()).toEqual(["u1", "u2"]);
+      });
+
+      test("withholds the users past a production instance's limit", async () => {
+        stubClerk({ count: 4, maxAllowedUsers: 5 });
+
+        await run({ ...baseOptions, secretKey: "sk_live_x", allowPartial: true });
+        expect(created()).toEqual(["u1"]);
+        const [record] = listRuns(runsDir());
+        expect(latestUserLines(runsDir(), record!.id).get("u2")?.reason).toContain("5-user limit");
+      });
+
+      test.each([["sk_test_x"], ["sk_live_x"]])(
+        "null means no limit and no count read, for %s",
+        async (secretKey) => {
+          stubClerk({ count: 99, maxAllowedUsers: null });
+
+          await run({ ...baseOptions, secretKey });
+          expect(countRead()).toBe(false);
+          expect(created()).toEqual(["u1", "u2"]);
+        },
+      );
+
+      test("wins over CLERK_MIGRATE_DEV_USER_LIMIT", async () => {
+        process.env.CLERK_MIGRATE_DEV_USER_LIMIT = "500";
+        try {
+          stubClerk({ count: 99, maxAllowedUsers: 100 });
+
+          expect(await exitCodeOf(run(baseOptions))).toBe(EXIT_CODE.USAGE);
+          expect(created()).toHaveLength(0);
+        } finally {
+          delete process.env.CLERK_MIGRATE_DEV_USER_LIMIT;
+        }
+      });
+
+      // An API that predates the field: production stays unchecked.
+      test("left out, a production instance has no limit and no count read", async () => {
+        stubClerk({ count: 99 });
+
+        await run({ ...baseOptions, secretKey: "sk_live_x" });
+        expect(countRead()).toBe(false);
+        expect(created()).toEqual(["u1", "u2"]);
+      });
+    });
+
     test("supabase users whose only provider is disabled are rejected", async () => {
       stubClerk({
         settings: {
