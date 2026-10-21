@@ -534,15 +534,20 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     code: string,
     notes: string[],
     unknown: boolean,
+    attempt?: UserLine,
   ) => {
     failed++;
     processed++;
     tallyError(errorBreakdown, message);
     // With no answer, the user stays `creating`: Clerk may hold it, and a
-    // re-run looks it up before creating it again. The line still says why.
+    // re-run looks it up before creating it again. The line still says why,
+    // and keeps what the attempt reserved and left out: a continue reads only
+    // the latest line to adopt the user the way it was created.
     record({
       sourceId: userId,
       status: unknown ? "creating" : "failed",
+      ...(unknown && attempt?.reserved ? { reserved: true } : {}),
+      ...(unknown && attempt?.pending ? { pending: attempt.pending } : {}),
       error: [message, ...notes].join("; "),
       code,
     });
@@ -579,6 +584,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       : reserveUnverified &&
         (identifiers.unverifiedEmails.length > 0 || identifiers.unverifiedPhones.length > 0);
     let sent = false;
+    // The `creating` line of the latest attempt, for an unknown outcome to keep.
+    let attempt: UserLine | undefined;
     try {
       created = adoptedId
         ? { clerkUserId: adoptedId, notes: [], attachLater: adoptedPending.get(user.userId) ?? [] }
@@ -592,7 +599,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
                 const leftOut = reserved
                   ? identifiers.unverifiedPhones.filter((phone) => !sentPhones.has(phone))
                   : [];
-                record({
+                attempt = {
                   sourceId: user.userId,
                   status: "creating",
                   ...(reserved ? { reserved: true } : {}),
@@ -605,7 +612,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
                         })),
                       }
                     : {}),
-                });
+                };
+                record(attempt);
                 sent = true;
               }),
             {
@@ -650,6 +658,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         code,
         retries,
         unknown,
+        attempt,
       );
       return;
     }

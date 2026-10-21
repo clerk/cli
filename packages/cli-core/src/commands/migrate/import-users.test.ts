@@ -819,6 +819,61 @@ describe("importUsers", () => {
       expect(lines.at(-1)?.error).not.toContain("+15555550100");
     });
 
+    // A continue reads only the latest line: with no answer, it has to keep
+    // what the attempt reserved and left out, or the user is adopted as if
+    // nothing was reserved and the left-out phones are never attached.
+    test("keeps reserved and the left-out phones when the retried create gets no answer", async () => {
+      stub((url, attempt) =>
+        !url.endsWith("/v1/users")
+          ? ok("idn_1")
+          : attempt === 1
+            ? new Response(
+                JSON.stringify({
+                  errors: [
+                    {
+                      code: "form_param_format_invalid",
+                      message: "bad phone",
+                      meta: { param_name: "phone_number" },
+                    },
+                  ],
+                }),
+                { status: 422 },
+              )
+            : new Response("upstream", { status: 503 }),
+      );
+
+      const summary = await importUsers({
+        users: [withPhones()],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      expect(summary.failed).toBe(1);
+      expect(allLines.at(-1)).toMatchObject({
+        status: "creating",
+        reserved: true,
+        pending: [{ kind: "phone", value: "+31612345678", verified: false }],
+        error: expect.stringContaining("a re-run checks"),
+      });
+    });
+
+    test("keeps reserved when a reserved create gets no answer", async () => {
+      stub(() => new Response("upstream", { status: 503 }));
+
+      await importUsers({
+        users: [user({ unverifiedEmailAddresses: ["c@x.dev"] })],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      expect(allLines.at(-1)).toMatchObject({ status: "creating", reserved: true });
+      expect(allLines.at(-1)).not.toHaveProperty("pending");
+    });
+
     test("creates a user with no email on its verified phone", async () => {
       refusePhone(1);
       const summary = await importUsers({
