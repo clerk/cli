@@ -67,7 +67,7 @@ export const FEEDBACK_SEND_TIMEOUT_MS = 5000;
 export const GITHUB_ISSUES_URL = "https://github.com/clerk/cli/issues";
 /** Recent feedback sends, in the cache directory; best-effort like the update check's file. */
 export const FEEDBACK_SENDS_FILE_NAME = "feedback-sends.json";
-export const FEEDBACK_DAILY_LIMIT = 10;
+export const FEEDBACK_DAILY_LIMIT = 50;
 export const FEEDBACK_WINDOW_MS = 24 * 60 * 60 * 1000;
 /**
  * Longest free-text field `clerk feedback` accepts, in characters. The

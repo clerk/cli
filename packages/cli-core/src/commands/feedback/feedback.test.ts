@@ -329,7 +329,7 @@ describe("gating", () => {
     expect(posted).toHaveLength(0);
   });
 
-  test("the daily cap refuses the eleventh report and allows the tenth", async () => {
+  test("the daily cap refuses the 51st report and allows the 50th", async () => {
     await readyToSend();
     await recordSends(FEEDBACK_DAILY_LIMIT - 1);
     expect((await run(COMPLETE)).sent).toBe(true);

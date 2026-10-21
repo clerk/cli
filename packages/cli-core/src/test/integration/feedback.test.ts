@@ -242,9 +242,10 @@ describe("human mode", () => {
   test("a capped run is told before any prompt", async () => {
     await readyToSend();
     const { recordFeedbackSend } = await import("../../commands/feedback/rate-limit.ts");
+    const { FEEDBACK_DAILY_LIMIT } = await import("../../lib/constants.ts");
     // Ascending timestamps: each record prunes what is dated after it.
     const base = Date.now() - 10_000;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < FEEDBACK_DAILY_LIMIT; i++) {
       await recordFeedbackSend({ sentAt: base + i, command: null, errorCode: null });
     }
     const result = await clerk("feedback");

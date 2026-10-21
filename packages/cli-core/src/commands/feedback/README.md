@@ -186,7 +186,7 @@ disable`) blocks the send: `clerk telemetry disable` promises that nothing will 
 from this machine, and an explicit report is still something sent. The command prints the
 GitHub issues URL instead. A dev build without `CLERK_TELEMETRY_URL` sends nothing either.
 
-At most 10 reports per machine in a rolling 24 hours, and no second report with the same
+At most 50 reports per machine in a rolling 24 hours, and no second report with the same
 `command` and `error_code` inside that window (checked only when both are present). Over
 either limit the result is `rate_limited`; the human-mode message says which of the two
 applied. The record is a best-effort JSON file in the CLI cache directory; an unreadable

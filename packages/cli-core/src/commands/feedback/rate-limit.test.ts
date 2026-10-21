@@ -41,6 +41,10 @@ describe("checkFeedbackRateLimit", () => {
     });
   });
 
+  test("the daily limit is 50 reports", () => {
+    expect(FEEDBACK_DAILY_LIMIT).toBe(50);
+  });
+
   test("refuses at the daily limit and allows one below it", () => {
     const report = { command: null, errorCode: null };
     expect(checkFeedbackRateLimit(sends(FEEDBACK_DAILY_LIMIT - 1), report)).toEqual({
@@ -141,12 +145,14 @@ describe("the sends file", () => {
     expect(recent).toEqual([send(NOW - 1000, "users list", "boom")]);
   });
 
-  test("ten sends dated a year ahead do not block a report now", async () => {
+  test("a full limit of sends dated a year ahead does not block a report now", async () => {
     const yearAhead = NOW + 365 * 24 * 60 * 60 * 1000;
     await Bun.write(
       file(),
       JSON.stringify({
-        sends: Array.from({ length: 10 }, (_, i) => send(yearAhead + i, "users list", "boom")),
+        sends: Array.from({ length: FEEDBACK_DAILY_LIMIT }, (_, i) =>
+          send(yearAhead + i, "users list", "boom"),
+        ),
       }),
     );
     expect(
