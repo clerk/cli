@@ -72,6 +72,21 @@ describe("parseEnvFile", () => {
       raw: "FOO=bar=baz",
     });
   });
+
+  test("reads indented keys, spaces around =, CRLF, comments, and trimmed unquoted values", () => {
+    expect(parseEnvFile("  FOO=bar\n")[0]).toMatchObject({ type: "entry", key: "FOO", value: "bar" });
+    expect(parseEnvFile("FOO = bar\n")[0]).toMatchObject({ type: "entry", key: "FOO", value: "bar" });
+    expect(parseEnvFile("FOO=bar\r\nBAZ=qux\r\n")).toEqual([
+      { type: "entry", key: "FOO", value: "bar", raw: "FOO=bar" },
+      { type: "entry", key: "BAZ", value: "qux", raw: "BAZ=qux" },
+    ]);
+    expect(parseEnvFile("FOO=bar # note\n")[0]).toMatchObject({
+      type: "entry",
+      key: "FOO",
+      value: "bar",
+    });
+    expect(parseEnvFile("FOO= value\n")[0]).toMatchObject({ type: "entry", key: "FOO", value: "value" });
+  });
 });
 
 describe("mergeEnvVars", () => {
@@ -117,6 +132,24 @@ describe("mergeEnvVars", () => {
     const merged = mergeEnvVars(lines, { CLERK_SECRET_KEY: "sk_test" });
     const output = serializeEnvFile(merged);
     expect(output).toBe("CLERK_SECRET_KEY=sk_test\n");
+  });
+
+  test("rewrites ignored line shapes in place instead of appending duplicates", () => {
+    const indented = mergeEnvVars(parseEnvFile("  CLERK_SECRET_KEY=old\n"), {
+      CLERK_SECRET_KEY: "new",
+    });
+    expect(serializeEnvFile(indented)).toBe("  CLERK_SECRET_KEY=new\n");
+
+    const spaced = mergeEnvVars(parseEnvFile("CLERK_SECRET_KEY = old\n"), {
+      CLERK_SECRET_KEY: "new",
+    });
+    expect(serializeEnvFile(spaced)).toBe("CLERK_SECRET_KEY = new\n");
+
+    const crlf = mergeEnvVars(parseEnvFile("CLERK_SECRET_KEY=old\r\n"), {
+      CLERK_SECRET_KEY: "new",
+    });
+    expect(serializeEnvFile(crlf)).toBe("CLERK_SECRET_KEY=new\n");
+    expect(serializeEnvFile(crlf)).not.toContain("# Clerk");
   });
 
   test("updates one key and appends another", () => {

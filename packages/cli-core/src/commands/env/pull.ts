@@ -1,7 +1,12 @@
 import { resolve, join, basename } from "node:path";
 import { resolveAppContext, type AppContextOptions } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
-import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
+import {
+  parseEnvFile,
+  mergeEnvVars,
+  serializeEnvFile,
+  envFileHasClerkKeys,
+} from "../../lib/dotenv.ts";
 import {
   detectPublishableKeyName,
   detectSecretKeyName,
@@ -30,7 +35,7 @@ async function hasClerkKeys(path: string): Promise<boolean> {
   const file = Bun.file(path);
   if (!(await file.exists())) return false;
   const content = await file.text();
-  return /(?:CLERK_SECRET_KEY|(?:\w+_)?CLERK_PUBLISHABLE_KEY)=/.test(content);
+  return envFileHasClerkKeys(content);
 }
 
 async function resolveTargetFile(
