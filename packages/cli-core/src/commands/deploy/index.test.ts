@@ -204,17 +204,7 @@ describe("deploy", () => {
         connection_oauth_google: basicOAuthSchema,
       }),
     );
-    mockFetchApplication.mockResolvedValue({
-      application_id: "app_xyz789",
-      name: "my-saas-app",
-      instances: [
-        {
-          instance_id: "ins_dev_123",
-          environment_type: "development",
-          publishable_key: "pk_test_123",
-        },
-      ],
-    });
+    mockFetchApplication.mockResolvedValue(developmentOnlyApplication());
     mockListApplicationDomains.mockResolvedValue({
       data: [
         {
@@ -406,6 +396,21 @@ describe("deploy", () => {
     }
   }
 
+  /** The application as Clerk lists it with no production instance. */
+  function developmentOnlyApplication() {
+    return {
+      application_id: "app_xyz789",
+      name: "my-saas-app",
+      instances: [
+        {
+          instance_id: "ins_dev_123",
+          environment_type: "development",
+          publishable_key: "pk_test_123",
+        },
+      ],
+    };
+  }
+
   function mockLiveProduction(
     options: {
       instanceId?: string;
@@ -422,8 +427,11 @@ describe("deploy", () => {
     const developmentConfig = options.developmentConfig ?? {
       connection_oauth_google: { enabled: true },
     };
+    // What creating production left for Google, a provider with no
+    // credentials yet: enabled, with empty fields (observed for Google on one
+    // clone, against the Platform API on 2026-10-19).
     const productionConfig = options.productionConfig ?? {
-      connection_oauth_google: { enabled: false, client_id: "", client_secret: "" },
+      connection_oauth_google: { enabled: true, client_id: "", client_secret: "" },
     };
     const cnameTargets = options.cnameTargets ?? [
       { host: `clerk.${domain}`, value: "frontend-api.clerk.services", required: true },
@@ -509,7 +517,7 @@ describe("deploy", () => {
   });
 
   describe("agent mode", () => {
-    test("not_started emits JSON handoff telling human to run wizard", async () => {
+    test("without --domain, not_started creates nothing and says how to create", async () => {
       mockIsAgent.mockReturnValue(true);
       await linkedProject();
 
@@ -517,9 +525,475 @@ describe("deploy", () => {
 
       const payload = JSON.parse(captured.out);
       expect(payload.state).toBe("not_started");
-      expect(payload.nextAction).toContain("clerk deploy");
+      expect(payload.nextAction).toContain("Ask the user which domain they own");
+      // Clerk's list can trail a create, so `not_started` can follow one.
+      expect(payload.nextAction).toContain(
+        "If `clerk deploy --domain` just succeeded, Clerk may not list the instance yet: rerun it " +
+          "with the same domain instead of asking the user for a new one.",
+      );
+      expect(payload.nextAction).toContain("clerk deploy --domain <domain>");
       expect(payload.nextAction).toContain("clerk deploy status");
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
     });
+
+    /** Once created, the Platform API returns the instance and its domain. */
+    function createGoesLive() {
+      const create = mockCreateProductionInstance.getMockImplementation() as (
+        appId: string,
+        params: { domain: string },
+      ) => unknown;
+      mockCreateProductionInstance.mockImplementation(
+        (appId: string, params: { domain: string }) => {
+          mockLiveProduction({ domain: params.domain });
+          return create(appId, params);
+        },
+      );
+    }
+
+    test("--domain creates the production instance and reports the DNS records to add", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      createGoesLive();
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+
+      await runDeploy({ domain: "Example.com" });
+
+      expect(mockCreateProductionInstance).toHaveBeenCalledWith("app_xyz789", {
+        clone_instance_id: "ins_dev_123",
+        domain: "example.com",
+        environment_type: "production",
+      });
+      const payload = JSON.parse(captured.out);
+      expect(payload.state).toBe("domain_pending");
+      expect(payload.domain).toBe("example.com");
+      expect(payload.productionInstanceId).toBe("ins_prod_mock");
+      expect(payload.pendingDnsRecords).toEqual([
+        {
+          type: "CNAME",
+          host: "clerk.example.com",
+          value: "frontend-api.clerk.services",
+          required: true,
+        },
+      ]);
+      // `--instance prod` has to resolve for the commands the report names next.
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockPassword).not.toHaveBeenCalled();
+    });
+
+    test("--domain resumes an existing deploy on that domain without creating", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockLiveProduction({ domain: "example.com" });
+
+      await runDeploy({ domain: "example.com" });
+
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect(JSON.parse(captured.out).state).toBe("oauth_pending");
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
+    });
+
+    test("--domain fails when the existing deploy is on another domain", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockLiveProduction({ domain: "example.com" });
+
+      const error = await runDeploy({ domain: "other.com" }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(CliError);
+      expect((error as CliError).code).toBe(ERROR_CODE.PRODUCTION_INSTANCE_EXISTS);
+      expect((error as CliError).message).toContain(
+        "already has a production instance on example.com, so --domain other.com was not applied",
+      );
+      expect(captured.out).toBe("");
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+    });
+
+    // While Clerk lists no production domain there is nothing to compare
+    // --domain against. Only a run that created the instance knows it is on
+    // the requested domain.
+    // Its own code: the next step is to wait, not to ask the user about a
+    // domain that may well be the right one.
+    const uncheckedDomainMessage = (domain: string): string =>
+      "This application already has a production instance, but Clerk hasn't returned its domain yet, " +
+      `so --domain ${domain} could not be checked against it. ` +
+      "This run did not change the instance's domain. Nothing was changed in Clerk. " +
+      "Run `clerk deploy status` to see its domain once Clerk returns it.";
+
+    // The same domain fails too: it can't be told apart from another one.
+    test.each(["other.com", "example.com"])(
+      "--domain %s fails on a found instance whose domain is still provisioning",
+      async (domain) => {
+        mockIsAgent.mockReturnValue(true);
+        await linkedProject();
+        mockLiveProduction({ domain: "example.com" });
+        mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+
+        const error = await runDeploy({ domain }).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(CliError);
+        expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_UNCHECKED);
+        expect((error as CliError).message).toBe(uncheckedDomainMessage(domain));
+        expect(captured.out).toBe("");
+        expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      },
+    );
+
+    test("--domain fails when a lost create race leaves a provisioning instance", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockCreateProductionInstance.mockImplementation(() => {
+        mockLiveProduction({ domain: "example.com" });
+        mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+        return Promise.reject(
+          new PlapiError(
+            409,
+            JSON.stringify({ errors: [{ code: "production_instance_exists" }] }),
+            "https://x",
+          ),
+        );
+      });
+
+      const error = await runDeploy({ domain: "other.com" }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_UNCHECKED);
+      expect((error as CliError).message).toBe(uncheckedDomainMessage("other.com"));
+      expect(captured.out).toBe("");
+    });
+
+    test("--domain reports provisioning when this run created the instance", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockCreateProductionInstance.mockImplementation(() => {
+        mockLiveProduction({ domain: "example.com" });
+        mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+        return Promise.resolve({
+          object: "instance",
+          id: "ins_prod_mock",
+          environment_type: "production" as const,
+          active_domain: null,
+          publishable_key: "pk_live_test",
+          created_at: 1770000000000,
+          updated_at: 1770000000000,
+        });
+      });
+
+      await runDeploy({ domain: "other.com" });
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.state).toBe("domain_provisioning");
+      expect(payload.productionInstanceId).toBe("ins_prod_mock");
+    });
+
+    test("--domain resumes when the create loses a race to another one", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockCreateProductionInstance.mockImplementation(() => {
+        mockLiveProduction({ domain: "example.com" });
+        return Promise.reject(
+          new PlapiError(
+            409,
+            JSON.stringify({ errors: [{ code: "production_instance_exists" }] }),
+            "https://x",
+          ),
+        );
+      });
+
+      await runDeploy({ domain: "example.com" });
+
+      expect(JSON.parse(captured.out).productionInstanceId).toBe("ins_prod_mock");
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
+    });
+
+    // The refresh right after the conflict can still lag while the read after
+    // it finds the instance. Reporting success without saving it leaves
+    // `--instance prod` unresolved for the commands the report names next.
+    test("--domain saves an instance a lost create race finds only on the last read", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      const developmentOnly = developmentOnlyApplication();
+      mockCreateProductionInstance.mockImplementation(() => {
+        mockLiveProduction({ domain: "example.com" });
+        mockFetchApplication.mockResolvedValueOnce(developmentOnly);
+        return Promise.reject(
+          new PlapiError(
+            409,
+            JSON.stringify({ errors: [{ code: "production_instance_exists" }] }),
+            "https://x",
+          ),
+        );
+      });
+
+      await runDeploy({ domain: "example.com" });
+
+      expect(JSON.parse(captured.out).productionInstanceId).toBe("ins_prod_mock");
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
+    });
+
+    // The application's instance list can trail the create. The id the create
+    // returned is the instance either way.
+    test("--domain reports the instance it created before the application lists it", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+
+      await runDeploy({ domain: "example.com" });
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.state).toBe("domain_pending");
+      expect(payload.productionInstanceId).toBe("ins_prod_mock");
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
+    });
+
+    // A production id left in the profile after its instance was deleted names
+    // nothing. Clerk's list decides, so the report says to create again rather
+    // than to wait for an instance that will never provision.
+    test.each([
+      ["clerk deploy status", () => deployStatus()],
+      ["clerk deploy", () => runDeploy({})],
+    ])("%s reads a deleted instance's leftover profile id as not_started", async (_name, run) => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject({ instances: { development: "ins_dev_123", production: "ins_deleted" } });
+      mockFetchApplication.mockResolvedValue(developmentOnlyApplication());
+      mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+
+      const exitCodeBefore = process.exitCode;
+      try {
+        await run();
+      } finally {
+        process.exitCode = exitCodeBefore ?? EXIT_CODE.SUCCESS;
+      }
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.state).toBe("not_started");
+      expect(payload.productionInstanceId).toBeNull();
+    });
+
+    // The id this run's create returned only stands in while Clerk's list
+    // shows none. Once it shows one, that is the instance the next commands
+    // read.
+    test("--domain reports the instance Clerk lists over the one its create returned", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      const create = mockCreateProductionInstance.getMockImplementation() as (
+        appId: string,
+        params: { domain: string },
+      ) => unknown;
+      mockCreateProductionInstance.mockImplementation(
+        (appId: string, params: { domain: string }) => {
+          mockLiveProduction({ instanceId: "ins_listed", domain: params.domain });
+          return create(appId, params);
+        },
+      );
+
+      await runDeploy({ domain: "example.com" });
+
+      expect(JSON.parse(captured.out).productionInstanceId).toBe("ins_listed");
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_listed");
+    });
+
+    // An empty id names no instance, wherever it comes from.
+    test("--domain treats a create response without an id as no instance", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      stubCreateProductionInstanceWithoutId();
+
+      const error = await runDeploy({ domain: "example.com" }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      expect(captured.out).toBe("");
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBeUndefined();
+    });
+
+    test("--domain reads past a listed production entry without an id", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockFetchApplication.mockResolvedValue({
+        ...developmentOnlyApplication(),
+        instances: [
+          ...developmentOnlyApplication().instances,
+          { instance_id: "", environment_type: "production", publishable_key: "pk_live_123" },
+        ],
+      });
+
+      await runDeploy({ domain: "example.com" });
+
+      expect(JSON.parse(captured.out).productionInstanceId).toBe("ins_prod_mock");
+    });
+
+    // A case or trailing-dot difference in how Clerk spells the domain is
+    // still the domain this run asked for.
+    test.each(["example.com.", "Example.COM."])(
+      "--domain accepts the created instance's domain spelled %p",
+      async (spelling) => {
+        mockIsAgent.mockReturnValue(true);
+        await linkedProject();
+        const create = mockCreateProductionInstance.getMockImplementation() as (
+          appId: string,
+          params: { domain: string },
+        ) => unknown;
+        mockCreateProductionInstance.mockImplementation(
+          (appId: string, params: { domain: string }) => {
+            mockLiveProduction({ domain: spelling });
+            return create(appId, params);
+          },
+        );
+
+        await runDeploy({ domain: "example.com" });
+
+        expect(JSON.parse(captured.out).productionInstanceId).toBe("ins_prod_mock");
+      },
+    );
+
+    test("a failed read after the create says the instance exists", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      createGoesLive();
+      mockGetApplicationDomainStatus.mockRejectedValue(
+        new PlapiError(500, JSON.stringify({ errors: [{ code: "server_error" }] }), "https://x"),
+      );
+
+      const error = await runDeploy({ domain: "example.com" }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(PlapiError);
+      expect((error as PlapiError).context).toContain("The production instance exists");
+      expect((error as PlapiError).context).toContain("clerk deploy status");
+      expect(captured.out).toBe("");
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
+    });
+
+    // The deploy error mapping reads any 404 as the application being gone
+    // and says to re-link. Here the application was read a moment ago and the
+    // instance exists, so that would send the caller off to fix nothing.
+    const domainStatusNotFound = () =>
+      new PlapiError(
+        404,
+        JSON.stringify({ errors: [{ code: "resource_not_found" }] }),
+        "https://x",
+      );
+
+    test("a 404 on the read after the create says the instance was created", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      createGoesLive();
+      mockGetApplicationDomainStatus.mockRejectedValue(domainStatusNotFound());
+
+      const error = await runDeploy({ domain: "example.com" }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(CliError);
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      // Just created by this run, so not deleted: no deleted-instance hint.
+      expect((error as CliError).message).toBe(
+        "The production instance was created, but its status couldn't be read yet. " +
+          "Run `clerk deploy status` to check it.",
+      );
+      expect(captured.out).toBe("");
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBe("ins_prod_mock");
+    });
+
+    test("a 404 on the read of an instance it found says the instance exists", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockLiveProduction({ domain: "example.com" });
+      mockGetApplicationDomainStatus.mockRejectedValue(domainStatusNotFound());
+
+      const error = await runDeploy({ domain: "example.com" }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(CliError);
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      // A 404 there also follows a production instance deleted since, so the
+      // message says how that case resolves.
+      expect((error as CliError).message).toBe(
+        "The production instance exists, but its status couldn't be read yet. " +
+          "Run `clerk deploy status` to check it. " +
+          "If the production instance was deleted, `clerk deploy status` reports `not_started` once Clerk stops listing it; then run `clerk deploy --domain`.",
+      );
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect(captured.out).toBe("");
+    });
+
+    test("an instance Clerk says exists but does not return is an error, not not_started", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockCreateProductionInstance.mockRejectedValue(
+        new PlapiError(
+          409,
+          JSON.stringify({ errors: [{ code: "production_instance_exists" }] }),
+          "https://x",
+        ),
+      );
+
+      const error = await runDeploy({ domain: "example.com" }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      expect(captured.out).toBe("");
+    });
+
+    // The create request is about the application itself, so its 404 keeps
+    // the default reading: the application is gone.
+    test("a 404 on the create still says to re-link", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockCreateProductionInstance.mockRejectedValue(domainStatusNotFound());
+
+      const error = await runDeploy({ domain: "example.com" }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.NOT_LINKED);
+      expect(captured.out).toBe("");
+    });
+
+    test("a plan that cannot cover development's features fails without a report", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockCreateProductionInstance.mockRejectedValue(
+        new PlapiError(
+          402,
+          JSON.stringify({
+            errors: [
+              {
+                code: "unsupported_subscription_plan_features",
+                meta: { unsupported_features: ["custom_roles"] },
+              },
+            ],
+          }),
+          "https://x",
+        ),
+      );
+
+      const error = await runDeploy({ domain: "example.com" }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.PLAN_INSUFFICIENT);
+      expect(captured.out).toBe("");
+    });
+
+    test.each(["https://example.com", "my-app.vercel.app", ""])(
+      "rejects --domain %p before reading anything",
+      async (domain) => {
+        mockIsAgent.mockReturnValue(true);
+        await linkedProject();
+
+        const error = await runDeploy({ domain }).catch((e: unknown) => e);
+
+        expect((error as CliError).exitCode).toBe(EXIT_CODE.USAGE);
+        expect(mockFetchApplication).not.toHaveBeenCalled();
+        expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      },
+    );
 
     test("does not trigger interactive prompts", async () => {
       mockIsAgent.mockReturnValue(true);
@@ -611,6 +1085,191 @@ describe("deploy", () => {
       mockInput.mockResolvedValueOnce("fake-client-id-12345");
       mockPassword.mockResolvedValueOnce("fake-secret");
     }
+
+    // A create that loses a race to another one but whose refresh can't find
+    // that instance knows nothing about it, so it can't report success or
+    // check --domain against it.
+    test("a create conflict whose refresh finds no instance fails as unresolved", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockCreateProductionInstance.mockRejectedValue(
+        new PlapiError(
+          409,
+          JSON.stringify({ errors: [{ code: "production_instance_exists" }] }),
+          "https://x",
+        ),
+      );
+
+      const error = await runDeploy({ domain: "other.com", yes: true }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(CliError);
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+    });
+
+    // A 404 on the DNS check after this run's own create can't mean the
+    // instance was deleted, so the message leaves out the deleted-instance hint;
+    // after a resume it keeps it.
+    const dnsCheckNotFound = () =>
+      new PlapiError(
+        404,
+        JSON.stringify({ errors: [{ code: "resource_not_found" }] }),
+        "https://x",
+      );
+    const domainStatusUnreadable =
+      "The production instance exists, but Clerk couldn't read its domain status yet. " +
+      "Run `clerk deploy status` again shortly.";
+
+    test("a DNS-check 404 after its own create leaves out the deleted-instance hint", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockFetchInstanceConfig.mockResolvedValue({}); // no OAuth setup, so DNS comes next
+      mockSelect.mockResolvedValueOnce("check");
+      mockTriggerApplicationDomainDNSCheck.mockRejectedValue(dnsCheckNotFound());
+
+      const error = await runDeploy({ domain: "example.com", yes: true }).catch((e: unknown) => e);
+
+      expect(mockCreateProductionInstance).toHaveBeenCalled();
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      expect((error as CliError).message).toBe(domainStatusUnreadable);
+    });
+
+    test("a DNS-check 404 on a resumed deploy keeps the deleted-instance hint", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockIsAgent.mockReturnValue(false);
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+      mockSelect.mockResolvedValueOnce("check");
+      mockTriggerApplicationDomainDNSCheck.mockRejectedValue(dnsCheckNotFound());
+
+      const error = await runDeploy({}).catch((e: unknown) => e);
+
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      expect((error as CliError).message).toBe(
+        `${domainStatusUnreadable} If the production instance was deleted, \`clerk deploy status\` reports \`not_started\` once Clerk stops listing it; then run \`clerk deploy --domain\`.`,
+      );
+    });
+
+    // As in agent mode, an empty id from the create names no instance, so
+    // the profile isn't given one that `--instance prod` resolves to nothing.
+    test("a create response without an id saves no production id", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockInput.mockResolvedValueOnce("example.com");
+      stubCreateProductionInstanceWithoutId();
+
+      const error = await runDeploy({}).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      const config = await readConfig();
+      expect(config.profiles[process.cwd()]?.instances.production).toBeUndefined();
+    });
+
+    // The wizard names the instance only from this run's create or Clerk's
+    // list, never from a production id left in the profile by an instance
+    // since deleted.
+    test("a create without an id never falls back to a leftover profile id", async () => {
+      await linkedProject({ instances: { development: "ins_dev_123", production: "ins_deleted" } });
+      mockFetchApplication.mockResolvedValue(developmentOnlyApplication());
+      mockIsAgent.mockReturnValue(false);
+      mockFetchInstanceConfig.mockResolvedValue({}); // no OAuth setup, so it reaches the next steps
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockInput.mockResolvedValueOnce("example.com");
+      mockSelect.mockResolvedValueOnce("skip");
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: false, ssl: false, mail: false }),
+      );
+      stubCreateProductionInstanceWithoutId();
+
+      const error = await runDeploy({}).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+      expect(captured.err).not.toContain("ins_deleted");
+    });
+
+    // Rerunning right away can't help: until Clerk returns the domain,
+    // `clerk deploy --domain` refuses with `deploy_domain_unchecked`, and a
+    // bare `clerk deploy` has nothing to resume.
+    test("a create that returns no domain says to wait for it before rerunning", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      mockCreateProductionInstance.mockResolvedValue({
+        object: "instance",
+        id: "ins_prod_mock",
+        environment_type: "production" as const,
+        active_domain: null,
+        publishable_key: "pk_live_test",
+        created_at: 1770000000000,
+        updated_at: 1770000000000,
+      });
+
+      const error = await runDeploy({ domain: "example.com", yes: true }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_MISSING);
+      expect((error as CliError).message).toBe(
+        "The production instance was created, but Clerk did not return its domain yet. " +
+          "Run `clerk deploy status` to check it, and run `clerk deploy` again once it shows the domain.",
+      );
+    });
+
+    test("--domain and --yes skip the domain prompt and both confirmations", async () => {
+      await linkedProject();
+      mockIsAgent.mockReturnValue(false);
+      // The zone-file offer, then pause at OAuth.
+      mockConfirm.mockResolvedValueOnce(false);
+      mockSelect.mockResolvedValueOnce("skip");
+
+      await runDeployUntilPause({ domain: "example.com", yes: true });
+
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockConfirm).toHaveBeenCalledTimes(1);
+      expect(mockCreateProductionInstance).toHaveBeenCalledWith(
+        "app_xyz789",
+        expect.objectContaining({ domain: "example.com" }),
+      );
+    });
+
+    test("--domain fails when resuming a deploy on another domain", async () => {
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockIsAgent.mockReturnValue(false);
+
+      await expect(runDeploy({ domain: "other.com" })).rejects.toThrow(
+        "already has a production instance on example.com",
+      );
+
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+    });
+
+    // Same rule as agent mode: with no domain from Clerk there is nothing to
+    // check --domain against, so the wizard refuses it rather than exiting 0
+    // as if it had been applied. The same domain can't be told apart either.
+    test.each(["other.com", "example.com"])(
+      "--domain %s fails on an existing instance whose domain is still provisioning",
+      async (domain) => {
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+        });
+        mockIsAgent.mockReturnValue(false);
+        mockLiveProduction({ domain: "example.com" });
+        mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+
+        const error = await runDeploy({ domain }).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(CliError);
+        expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_UNCHECKED);
+        expect((error as CliError).message).toContain(
+          `so --domain ${domain} could not be checked against it.`,
+        );
+        expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      },
+    );
 
     test("does not print deploy prompt", async () => {
       await linkedProject();
@@ -1020,7 +1679,8 @@ describe("deploy", () => {
       const err = stripAnsi(captured.err);
 
       expect(err).toContain("Next steps");
-      expect(err).toContain("clerk env pull --instance prod");
+      expect(err).toContain("clerk env pull --instance ins_prod_mock --print");
+      expect(err).not.toContain("replace your pk_test_");
       expect(err).toContain("Update env vars on your hosting provider");
       expect(err).toContain("Also copy the other Clerk variables from your env file");
       expect(flat(err)).toContain("sign up at https://example.com to confirm it works");
@@ -1123,7 +1783,7 @@ describe("deploy", () => {
         thrown = e;
       }
       expect(thrown).toBeInstanceOf(CliError);
-      expect((thrown as CliError).message).toContain("did not return a domain");
+      expect((thrown as CliError).message).toContain("did not return its domain yet");
     });
 
     test("Ctrl-C at the DNS handoff reports paused", async () => {
@@ -2691,17 +3351,7 @@ describe("deploy", () => {
       );
       // First fetchApplication call (during resolveDeployContext) sees no production
       // instance, so the wizard takes the startNewDeploy path and hits the 409.
-      mockFetchApplication.mockResolvedValueOnce({
-        application_id: "app_xyz789",
-        name: "my-saas-app",
-        instances: [
-          {
-            instance_id: "ins_dev_123",
-            environment_type: "development",
-            publishable_key: "pk_test_123",
-          },
-        ],
-      });
+      mockFetchApplication.mockResolvedValueOnce(developmentOnlyApplication());
       // Subsequent reads (the recovery refresh + reconcile) see the production
       // instance that another flow created, with google OAuth already configured.
       mockLiveProduction({
@@ -3056,6 +3706,36 @@ describe("deploy", () => {
         expect(payload.stage).toBe("domain_pending");
       });
 
+      // Agent mode, same rule: a create that lost a race and whose refresh
+      // lagged first sees the instance on its last read, and a failed write
+      // of its id must not drop what that read observed.
+      test("agent mode records the last read's stage when saving the id fails", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(true);
+        const developmentOnly = developmentOnlyApplication();
+        mockCreateProductionInstance.mockImplementation(() => {
+          mockLiveProduction({ domain: "example.com" });
+          mockFetchApplication.mockResolvedValueOnce(developmentOnly);
+          return Promise.reject(
+            new PlapiError(
+              409,
+              JSON.stringify({ errors: [{ code: "production_instance_exists" }] }),
+              "https://x",
+            ),
+          );
+        });
+
+        const { payload, error } = await deployTelemetry(async () => {
+          // The next write is `persistProductionInstance` saving the profile.
+          writeSpy.mockImplementationOnce(() => Promise.reject(new Error("EACCES: read-only")));
+          await runDeploy({ domain: "example.com" });
+        });
+
+        expect((error as Error).message).toContain("EACCES");
+        expect(payload.outcome).toBe("error");
+        expect(payload.stage).toBe("oauth_pending");
+      });
+
       /**
        * The create call answers that a production instance already exists, so
        * the wizard resumes it. The first application read (during context
@@ -3071,17 +3751,7 @@ describe("deploy", () => {
             JSON.stringify({ errors: [{ code: "production_instance_exists", message: "exists" }] }),
           ),
         );
-        mockFetchApplication.mockResolvedValueOnce({
-          application_id: "app_xyz789",
-          name: "my-saas-app",
-          instances: [
-            {
-              instance_id: "ins_dev_123",
-              environment_type: "development",
-              publishable_key: "pk_test_123",
-            },
-          ],
-        });
+        mockFetchApplication.mockResolvedValueOnce(developmentOnlyApplication());
         mockLiveProduction({
           instanceId: "ins_prod_recovered",
           productionConfig: {
@@ -3120,21 +3790,14 @@ describe("deploy", () => {
         await linkedProject();
         mockIsAgent.mockReturnValue(false);
         mockCreateConflict();
-        mockFetchApplication.mockResolvedValue({
-          application_id: "app_xyz789",
-          name: "my-saas-app",
-          instances: [
-            {
-              instance_id: "ins_dev_123",
-              environment_type: "development",
-              publishable_key: "pk_test_123",
-            },
-          ],
-        });
+        mockFetchApplication.mockResolvedValue(developmentOnlyApplication());
 
         const { payload } = await deployTelemetry(async () => runDeploy({}));
 
-        expect(payload.outcome).toBe("success");
+        // Clerk said an instance exists but didn't return it, so the run
+        // fails as unresolved rather than ending as a success.
+        expect(payload.outcome).toBe("error");
+        expect(payload.error_code).toBe("deploy_instance_unresolved");
         expect(payload.stage).toBeNull();
       });
 
@@ -3381,6 +4044,67 @@ describe("deploy", () => {
         expect(payload.exit_code).toBe(EXIT_CODE.SUCCESS);
         expect(payload.stage).toBe("not_started");
         expect(payload.components).toEqual(noComponents);
+      });
+
+      // The read after the create fails, so the create response is the only
+      // thing that can have recorded the stage.
+      test("agent mode --domain records the created instance even when the read after it fails", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(true);
+        mockFetchApplication
+          .mockResolvedValueOnce({
+            application_id: "app_xyz789",
+            name: "my-saas-app",
+            instances: [{ instance_id: "ins_dev_123", environment_type: "development" }],
+          })
+          .mockRejectedValue(
+            new PlapiError(
+              500,
+              JSON.stringify({ errors: [{ code: "server_error" }] }),
+              "https://x",
+            ),
+          );
+
+        const { payload, error } = await deployTelemetry(async () =>
+          runDeploy({ domain: "example.com" }),
+        );
+
+        expect(error).toBeInstanceOf(PlapiError);
+        expect(payload.stage).toBe("domain_pending");
+      });
+
+      test("agent mode --domain that finds an instance it cannot read records no stage", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(true);
+        mockCreateProductionInstance.mockRejectedValue(
+          new PlapiError(
+            409,
+            JSON.stringify({ errors: [{ code: "production_instance_exists" }] }),
+            "https://x",
+          ),
+        );
+
+        const { payload } = await deployTelemetry(async () => runDeploy({ domain: "example.com" }));
+
+        expect(payload.error_code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+        expect(payload.stage).toBeNull();
+      });
+
+      test("agent mode --domain that fails to create stays at not_started", async () => {
+        await linkedProject();
+        mockIsAgent.mockReturnValue(true);
+        mockCreateProductionInstance.mockRejectedValue(
+          new PlapiError(
+            402,
+            JSON.stringify({ errors: [{ code: "unsupported_subscription_plan_features" }] }),
+            "https://x",
+          ),
+        );
+
+        const { payload } = await deployTelemetry(async () => runDeploy({ domain: "example.com" }));
+
+        expect(payload.error_code).toBe(ERROR_CODE.PLAN_INSUFFICIENT);
+        expect(payload.stage).toBe("not_started");
       });
 
       test("agent mode on a finished deploy is a success at complete", async () => {

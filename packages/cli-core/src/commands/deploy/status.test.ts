@@ -309,6 +309,98 @@ describe("resolveDeployState", () => {
       expect(mockListIOSApplications).not.toHaveBeenCalled();
     });
 
+    // `oauth.setup` asks for web credentials (Services ID, .p8 key), which
+    // native-only Apple doesn't use; an entry there would bury the Bundle ID
+    // fix the readiness issue carries.
+    test("leaves native-only Apple out of oauth.setup", async () => {
+      mockProductionApple({ enabled: true, authenticatable: true }, nativeConnection);
+
+      const report = buildDeployStatusReport(
+        await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" }),
+        null,
+      );
+
+      expect(report.state).toBe("oauth_pending");
+      // Still pending: the readiness issue is what's missing.
+      expect(report.oauth.pending).toEqual(["apple"]);
+      expect(report.oauth.setup).toEqual([]);
+      expect(report.nativeAppleReadinessIssue?.reason).toBe("bundle-id-missing");
+      expect(report.nextAction).toContain("has no Bundle ID");
+      expect(report.nextAction).not.toContain("oauth.setup");
+    });
+
+    // A Bundle ID with no web credentials reads as native-only, but the app may
+    // also offer Apple sign-in on the web, which development serves with
+    // Clerk's shared credentials. #509's wizard asks; the report says it.
+    test("says web Sign in with Apple still needs web credentials", async () => {
+      mockProductionApple({ enabled: true, authenticatable: true }, nativeConnection);
+
+      const report = buildDeployStatusReport(
+        await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" }),
+        null,
+      );
+
+      expect(report.nextAction).toContain(
+        "If the app also offers Sign in with Apple on the web, production needs Apple web " +
+          "credentials too; the user can add them with `clerk deploy` in a terminal.",
+      );
+    });
+
+    test("leaves native-only Apple out of oauth.setup while the domain is pending", async () => {
+      mockProductionApple({ enabled: true, authenticatable: true }, nativeConnection);
+      mockGetApplicationDomainStatus.mockResolvedValue({
+        status: "incomplete",
+        dns: { status: "not_started" },
+        ssl: { status: "not_started", required: true },
+        mail: { status: "not_started", required: true },
+      });
+
+      const report = buildDeployStatusReport(
+        await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" }),
+        null,
+      );
+
+      expect(report.state).toBe("domain_pending");
+      expect(report.oauth.setup).toEqual([]);
+      expect(report.nextAction).toContain("has no Bundle ID");
+    });
+
+    test("sends a pending Google to oauth.setup next to the native Apple guidance", async () => {
+      mockProductionApple({ enabled: true, authenticatable: true }, nativeConnection);
+      mockFetchInstanceConfig.mockImplementation((_appId: string, instanceId: string) => ({
+        connection_oauth_apple:
+          instanceId === "ins_prod" ? { enabled: true, authenticatable: true } : nativeConnection,
+        connection_oauth_google: { enabled: true },
+      }));
+      mockFetchInstanceConfigSchema.mockResolvedValue({
+        properties: {
+          connection_oauth_apple: appleOAuthSchema,
+          connection_oauth_google: {
+            type: "object",
+            properties: {
+              enabled: { type: "boolean" },
+              client_id: { type: "string" },
+              client_secret: { type: "string", "x-clerk-sensitive": true },
+            },
+          },
+        },
+      });
+
+      const report = buildDeployStatusReport(
+        await resolveDeployState({ ...ctx, productionInstanceId: "ins_prod" }),
+        null,
+      );
+
+      expect(report.state).toBe("oauth_pending");
+      expect(report.oauth.pending).toEqual(["apple", "google"]);
+      expect(report.oauth.setup.map((entry) => entry.provider)).toEqual(["google"]);
+      expect(report.nextAction).toContain("has no Bundle ID");
+      expect(report.nextAction).toContain("also missing production credentials: google");
+      expect(report.nextAction).toContain("For each entry in `oauth.setup`");
+      // The wizard would ask for Apple web credentials first.
+      expect(report.nextAction).not.toContain("in a terminal to enter them interactively");
+    });
+
     test("reports unverifiable rather than missing when native reads fail", async () => {
       mockProductionApple(nativeConnection);
       mockListIOSApplications.mockRejectedValue(new Error("native endpoint unavailable"));
@@ -689,7 +781,11 @@ describe("buildDeployStatusReport", () => {
     expect(report.domain).toBeNull();
     expect(report.productionInstanceId).toBeNull();
     expect(report.domainStatus).toBeNull();
-    expect(report.nextAction).toContain("clerk deploy");
+    // Creating is hard to undo and the domain is the user's to pick, so asking
+    // comes before the command.
+    expect(report.nextAction).toContain("Ask the user which domain they own");
+    expect(report.nextAction).toContain("clerk deploy --domain <domain>");
+    expect(report.nextAction).not.toContain("human terminal");
   });
 
   test("domain_provisioning reports production instance", () => {
@@ -763,6 +859,260 @@ describe("buildDeployStatusReport", () => {
     });
   });
 
+  test("oauth_pending hands over what each pending provider needs", () => {
+    const apple = {
+      provider: "apple",
+      configKey: "connection_oauth_apple",
+      label: "Apple",
+      docsUrl: "https://clerk.com/docs/apple",
+      credentialLabel: "",
+      redirectLabel: "Return URL",
+      setupCopy: "",
+      gotcha: "Save the .p8 file.",
+      fields: [
+        {
+          key: "client_id",
+          label: "Apple Services ID",
+          type: "text",
+          secret: false,
+          filePath: false,
+        },
+        {
+          key: "client_secret",
+          // The wizard's prompt asks for a path; the config field takes the key itself.
+          label: "Apple Private Key - path to .p8 file",
+          description: "Apple Private Key",
+          type: "password",
+          secret: true,
+          filePath: true,
+        },
+        {
+          key: "actor",
+          label: "Actor",
+          type: "select",
+          options: ["user", "application"],
+          secret: false,
+          filePath: false,
+        },
+      ],
+      requiredCredentialKeys: ["client_id", "client_secret"],
+      credentialSources: ["manual"],
+    } satisfies LiveDeploySnapshot["oauthProviderDescriptors"][number];
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: {
+          ...activeSnapshot,
+          frontendApiUrl: "https://clerk.example.com",
+          oauthProviders: ["google", "apple"],
+          // A configured provider gets no entry even though it has a descriptor.
+          oauthProviderDescriptors: [{ ...apple, provider: "google" }, apple],
+          completedOAuthProviders: ["google"],
+        },
+      },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.oauth.setup).toEqual([
+      {
+        provider: "apple",
+        label: "Apple",
+        configKey: "connection_oauth_apple",
+        fields: [
+          { key: "client_id", label: "Apple Services ID", required: true, secret: false },
+          {
+            key: "client_secret",
+            label: "Apple Private Key",
+            required: true,
+            secret: true,
+            fileContents: true,
+          },
+          {
+            key: "actor",
+            label: "Actor",
+            required: false,
+            secret: false,
+            options: ["user", "application"],
+          },
+        ],
+        authorizedOrigins: ["https://example.com", "https://www.example.com"],
+        redirectUri: "https://clerk.example.com/v1/oauth_callback",
+        docsUrl: "https://clerk.com/docs/apple",
+        note: "Save the .p8 file.",
+        // Required fields only: a placeholder for an optional one would be
+        // sent as its value.
+        payload: {
+          connection_oauth_apple: {
+            enabled: true,
+            client_id: "<client_id>",
+            client_secret: "<client_secret>",
+          },
+        },
+        // A file, not `--json`: secrets on a command line end up in process
+        // listings. The id, not `prod`: that alias needs the local profile.
+        command: "clerk config patch --instance ins_prod --file <file> --yes",
+      },
+    ]);
+    // Apple's private key is the only entry, so it goes to the wizard, never
+    // through a file the agent writes.
+    expect(report.nextAction).toContain("Apple's entry in `oauth.setup`");
+    expect(report.nextAction).not.toContain("For each entry in `oauth.setup`");
+  });
+
+  // A client secret pasted into chat ends up in the agent's transcript, so the
+  // person types the values into the file and the agent never reads them.
+  describe("who fills in OAuth credentials", () => {
+    const descriptor = (
+      provider: string,
+      label: string,
+      fileField: boolean,
+    ): LiveDeploySnapshot["oauthProviderDescriptors"][number] => ({
+      provider,
+      configKey: `connection_oauth_${provider}`,
+      label,
+      docsUrl: "",
+      credentialLabel: "",
+      redirectLabel: "",
+      setupCopy: "",
+      gotcha: null,
+      fields: [
+        { key: "client_id", label: "Client ID", type: "text", secret: false, filePath: false },
+        {
+          key: "client_secret",
+          label: fileField ? "Private key - path to .p8 file" : "Client secret",
+          type: "password",
+          secret: true,
+          filePath: fileField,
+        },
+      ],
+      requiredCredentialKeys: ["client_id", "client_secret"],
+      credentialSources: ["manual"],
+    });
+    const oauthPendingReport = (
+      descriptors: LiveDeploySnapshot["oauthProviderDescriptors"],
+    ): ReturnType<typeof buildDeployStatusReport> =>
+      buildDeployStatusReport(
+        {
+          kind: "active",
+          snapshot: {
+            ...activeSnapshot,
+            oauthProviders: descriptors.map((entry) => entry.provider),
+            oauthProviderDescriptors: descriptors,
+            completedOAuthProviders: [],
+          },
+        },
+        { verified: true, status: { dns: true, ssl: true, mail: true } },
+      );
+
+    test("the agent writes the placeholders and the user replaces them", () => {
+      const report = oauthPendingReport([descriptor("github", "GitHub", false)]);
+
+      expect(report.state).toBe("oauth_pending");
+      // Outside the project, readable only by the user, and removed even when
+      // the command fails, so a typed-in secret can't end up committed.
+      expect(report.nextAction).toContain(
+        "Create a file for the entry outside the project with `mktemp` (it prints the path, and " +
+          "only your user can read the file), and write the entry's `payload` into it with a shell " +
+          "command rather than a file tool, as it is, placeholders included: " +
+          "`printf '%s' '<payload>' > <path>`. Ask the user to replace each `<placeholder>` with the " +
+          "real value; don't ask for the values or read the file. Then run " +
+          '`( rc=0; <command> || rc=$?; rm -f "<path>"; exit "$rc" )`, with the entry\'s `command` ' +
+          "as `<command>` and that path as its `<file>`: it keeps the command's exit status and " +
+          "removes the file whether or not the command succeeds.",
+      );
+      expect(report.nextAction).not.toContain("with the real values to a JSON file");
+      expect(report.nextAction).not.toContain("in a terminal first");
+    });
+
+    // The cleanup wrapper, run in bash as the report words it: a failed save
+    // must still fail, and the secrets file must go either way.
+    test.each([
+      { command: "sh -c 'exit 7'", exitCode: 7 },
+      { command: "true", exitCode: 0 },
+    ])("the cleanup keeps exit $exitCode and removes the file", async ({ command, exitCode }) => {
+      const report = oauthPendingReport([descriptor("github", "GitHub", false)]);
+      const wrapper = /`(\( rc=0; [^`]+\))`/.exec(report.nextAction)?.[1];
+      expect(wrapper).toBeDefined();
+      const dir = await mkdtemp(join(tmpdir(), "clerk-oauth-cleanup-"));
+      const file = join(dir, "payload.json");
+      await Bun.write(file, "{}");
+      try {
+        const proc = Bun.spawn(
+          ["bash", "-c", wrapper!.replace("<command>", command).replace("<path>", file)],
+          { stdout: "pipe", stderr: "pipe" },
+        );
+
+        expect(await proc.exited).toBe(exitCode);
+        expect(await Bun.file(file).exists()).toBe(false);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("an entry holding a file's contents sends the user to the wizard first", () => {
+      const report = oauthPendingReport([
+        descriptor("github", "GitHub", false),
+        descriptor("apple", "Apple", true),
+      ]);
+
+      expect(report.nextAction).toContain(
+        "Apple's entry takes a file's contents (a private key), which is easy to break when pasted " +
+          "into JSON. Save the other `oauth.setup` entries first, then send the user to " +
+          "`clerk deploy` in a terminal for Apple: the wizard reads the key from its file.",
+      );
+      expect(report.nextAction).toContain("For each entry in `oauth.setup` other than Apple's:");
+    });
+
+    // The private key would go through the file the agent writes, and there
+    // are no other entries to save first.
+    test("an only entry holding a file's contents never goes through a file", () => {
+      const report = oauthPendingReport([descriptor("apple", "Apple", true)]);
+
+      expect(report.nextAction).toBe(
+        "Domain verified, but these OAuth providers are missing production credentials: apple. " +
+          "Apple's entry in `oauth.setup` takes a file's contents (a private key), which is easy to " +
+          "break when pasted into JSON, so don't write it to a file. Send the user to `clerk deploy` " +
+          "in a terminal for Apple: the wizard reads the key from its file. " +
+          "Then run `clerk deploy status`.",
+      );
+    });
+  });
+
+  test("setup entries are there while the domain is still pending", () => {
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: {
+          ...activeSnapshot,
+          oauthProviderDescriptors: [
+            {
+              provider: "github",
+              configKey: "connection_oauth_github",
+              label: "GitHub",
+              docsUrl: "",
+              credentialLabel: "",
+              redirectLabel: "",
+              setupCopy: "",
+              gotcha: null,
+              fields: [],
+              requiredCredentialKeys: [],
+              credentialSources: ["manual"],
+            },
+          ],
+        },
+      },
+      null,
+    );
+
+    expect(report.state).toBe("domain_pending");
+    expect(report.oauth.setup.map((entry) => entry.provider)).toEqual(["github"]);
+  });
+
+  test("a report with nothing pending has no setup entries", () => {
+    expect(buildDeployStatusReport({ kind: "not_started" }, null).oauth.setup).toEqual([]);
+    expect(buildInterruptedDeployStatusReport().oauth.setup).toEqual([]);
+  });
+
   test("active with complete domain and OAuth reports complete", () => {
     const allDone = {
       ...activeSnapshot,
@@ -802,10 +1152,347 @@ describe("buildDeployStatusReport", () => {
     expect(report.nextAction).toContain(
       "Clerk's production setup for https://example.com is verified. If you haven't already:",
     );
-    expect(report.nextAction).toContain("clerk env pull --instance prod");
+    // A bare `env pull` would write the production keys over the local
+    // development ones.
+    expect(report.nextAction).toContain("clerk env pull --instance ins_prod --print");
     expect(report.nextAction).toContain("alongside the other Clerk variables from your env file");
     expect(report.nextAction).toContain("sign up at https://example.com to confirm");
     expect(report.nextAction).not.toContain("No action needed");
+  });
+
+  test("complete next action moves the keys to the host without the agent reading them", () => {
+    // The secret key ends up in the agent's transcript if it reads `--print`
+    // output, so the sentence hands it a pipe that never shows the values.
+    const allDone = {
+      ...activeSnapshot,
+      completedOAuthProviders: ["google", "github"],
+    } satisfies LiveDeploySnapshot;
+    const report = buildDeployStatusReport(
+      { kind: "active", snapshot: allDone },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.nextAction).toContain("put the production keys on the host without reading them");
+    // The command is a report field the agent copies whole, not text it has
+    // to cut out of this sentence.
+    // "Verbatim" once, for the first run: the consent rerun below changes one
+    // token of it.
+    expect(report.nextAction).toContain(
+      "For Vercel, run the `command` from the `hostSetup` entry whose `host` is `vercel` " +
+        "in bash or zsh, copied verbatim from the field.",
+    );
+    expect(report.nextAction).not.toContain("exactly as given");
+    expect(report.nextAction).not.toContain("vercel env add");
+    expect(report.nextAction).not.toContain("allow_shared=0;");
+    // Whether `--force` on production rewrites a variable Vercel shares with
+    // preview and development is unverified, so a shared one needs a person,
+    // and the consent stays in the one command they approved.
+    expect(report.nextAction).toContain(
+      "If a key is already set as a production variable that also targets another environment " +
+        "(Preview, Development, or a custom one), it stops with exit 3 and names it: ask the user " +
+        "before replacing it, because `--force` may rewrite that shared variable and put the " +
+        "production secret key in those deployments. " +
+        "If they agree, run the command again with its leading `allow_shared=0` changed to " +
+        "`allow_shared=1`.",
+    );
+    expect(report.nextAction).toContain("it stops with exit 1 if it can't read that list");
+    expect(report.nextAction).not.toContain("export");
+    expect(report.nextAction).toContain("redeploy only after it exits 0");
+    // A host without a CLI needs a person to paste the values, not the agent,
+    // and run from the agent's own session (e.g. Claude Code's `!`) the keys
+    // would land in its transcript.
+    expect(report.nextAction).toContain(
+      "For a host without a CLI, ask the user to run `clerk env pull --instance ins_prod --print` " +
+        "in a separate terminal, not through this session (a shell escape such as Claude Code's " +
+        "`!` would put the keys in your transcript), and add each line as a production " +
+        "environment variable. On macOS, `clerk env pull --instance ins_prod --print | pbcopy` " +
+        "copies the lines to the clipboard without showing them.",
+    );
+  });
+
+  // `hostSetup` holds the key-copying commands, one per host the CLI has a
+  // recipe for, and only once Clerk's side is complete.
+  test("complete hands over the Vercel command in hostSetup", () => {
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: { ...activeSnapshot, completedOAuthProviders: ["google", "github"] },
+      },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+    );
+
+    expect(report.hostSetup).toEqual([
+      { host: "vercel", label: "Vercel", shells: ["bash", "zsh"], command: expect.any(String) },
+    ]);
+    const command = report.hostSetup[0]!.command;
+    expect(command).toStartWith(
+      "( allow_shared=0; set -o pipefail; keys=$(clerk env pull --instance ins_prod --print) || exit 1; ",
+    );
+    expect(command).toContain("FORCE_COLOR=0 vercel env ls --no-color");
+    expect(command).toEndWith('vercel env add "$key" production --force || exit 1; done )');
+  });
+
+  test.each([
+    { state: "not_started", report: buildDeployStatusReport({ kind: "not_started" }, null) },
+    {
+      state: "domain_provisioning",
+      report: buildDeployStatusReport(
+        { kind: "domain_provisioning", appId: "app_1", productionInstanceId: "ins_prod" },
+        null,
+      ),
+    },
+    {
+      state: "domain_pending",
+      report: buildDeployStatusReport({ kind: "active", snapshot: activeSnapshot }, null),
+    },
+    {
+      state: "oauth_pending",
+      report: buildDeployStatusReport(
+        { kind: "active", snapshot: activeSnapshot },
+        { verified: true, status: { dns: true, ssl: true, mail: true } },
+      ),
+    },
+    { state: "interrupted", report: buildInterruptedDeployStatusReport() },
+  ])("hostSetup is empty at $state", ({ state, report }) => {
+    expect(report.state as string).toBe(state);
+    expect(report.hostSetup).toEqual([]);
+  });
+
+  // The command an agent copies from the `complete` report, run as written in
+  // the shells agents use, against stub `clerk` and `vercel` commands. Its exit
+  // status is what tells the agent whether it may redeploy, so every failure
+  // has to show up there, and no key may reach the agent's output. The
+  // `vercel env ls` output follows Vercel's own formatting (env/ls.ts).
+  describe.each(["bash", "zsh"])("the key-copying command in %s", (shell) => {
+    // Skipped only off CI: the CI workflow installs zsh, so a missing shell
+    // there fails these tests instead of silently skipping them.
+    const installed = Bun.which(shell) !== null || Boolean(process.env.CI);
+    const stubs = `
+clerk() {
+  case "$SCENARIO" in
+    pull_fails) echo "error: not signed in" >&2; return 1 ;;
+    pull_prints_then_fails) printf '%s\n' 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_FAKE'; return 1 ;;
+    trailing_equals) printf '%s\n' 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_FAKE=' 'CLERK_SECRET_KEY=sk_live_FAKE=' ;;
+    *) printf '%s\n' 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_FAKE' 'CLERK_SECRET_KEY=sk_live_FAKE=with=equals' ;;
+  esac
+}
+vercel() {
+  if [ "$1 $2" = "env ls" ]; then
+    echo "FORCE_COLOR=$FORCE_COLOR $*" >> "$RECEIVED.ls"
+    case "$SCENARIO" in
+      ls_fails) echo "Error: no linked project" >&2; return 1 ;;
+      unrecognized) echo "Vercel CLI 99.0.0"; echo "Something we have never seen" ;;
+      none) echo "> No Environment Variables found for team/project [120ms]" >&2 ;;
+      *)
+        echo "> Environment Variables found for team/project [120ms]" >&2
+        echo ""
+        echo " name                value      type       environments                        created"
+        case "$SCENARIO" in
+          unrelated) echo " OTHER_VAR           Encrypted  Sensitive  Production, Preview, Development    1d ago" ;;
+          production_only) echo " CLERK_SECRET_KEY    Encrypted  Sensitive  Production                          1d ago" ;;
+          preview_dev_only) echo " CLERK_SECRET_KEY    Encrypted  Sensitive  Preview, Development                1d ago" ;;
+          shared) echo " CLERK_SECRET_KEY    Encrypted  Sensitive  Production, Preview, Development    1d ago" ;;
+          custom_env) echo " CLERK_SECRET_KEY    Encrypted  Sensitive  Production, staging                 1d ago" ;;
+          large)
+            i=0
+            while [ $i -lt 1000 ]; do
+              echo " OTHER_VAR_$i    Encrypted  Sensitive  Production, Preview, Development    1d ago"
+              i=$((i + 1))
+            done
+            ;;
+          colored_shared) printf ' \\033[1mCLERK_SECRET_KEY\\033[22m    \\033[90mEncrypted\\033[39m  Sensitive  \\033[1mProduction\\033[22m, \\033[1mPreview\\033[22m, \\033[1mDevelopment\\033[22m    1d ago\\n' ;;
+        esac
+        ;;
+    esac
+    return 0
+  fi
+  value=$(cat)
+  if [ "$SCENARIO" = first_upload_fails ] && [ "$3" = NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ]; then
+    echo "Error: upload failed" >&2
+    return 1
+  fi
+  printf '%s|%s\n' "$*" "$value" >> "$RECEIVED"
+}
+`;
+
+    function keyCopyCommand(): string {
+      const report = buildDeployStatusReport(
+        {
+          kind: "active",
+          snapshot: { ...activeSnapshot, completedOAuthProviders: ["google", "github"] },
+        },
+        { verified: true, status: { dns: true, ssl: true, mail: true } },
+      );
+      const entry = report.hostSetup.find((candidate) => candidate.host === "vercel");
+      if (!entry)
+        throw new Error(`No Vercel entry in hostSetup: ${JSON.stringify(report.hostSetup)}`);
+      return entry.command;
+    }
+
+    async function run(
+      scenario: string,
+      options: { command?: string; env?: Record<string, string> } = {},
+    ): Promise<{
+      exitCode: number;
+      output: string;
+      stderr: string;
+      uploads: string[];
+      listings: string[];
+    }> {
+      const dir = await mkdtemp(join(tmpdir(), "clerk-key-copy-"));
+      const received = join(dir, "received");
+      const lines = async (path: string): Promise<string[]> => {
+        const file = Bun.file(path);
+        return (await file.exists()) ? (await file.text()).trim().split("\n") : [];
+      };
+      try {
+        // `-f` keeps zsh from reading the developer's startup files.
+        const args = shell === "zsh" ? ["zsh", "-f", "-c"] : ["bash", "-c"];
+        const proc = Bun.spawn([...args, `${stubs}\n${options.command ?? keyCopyCommand()}`], {
+          env: {
+            PATH: process.env.PATH ?? "",
+            SCENARIO: scenario,
+            RECEIVED: received,
+            ...options.env,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]);
+        return {
+          exitCode,
+          output: stdout + stderr,
+          stderr,
+          uploads: await lines(received),
+          listings: await lines(`${received}.ls`),
+        };
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+
+    const bothUploaded = [
+      "env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production --force|pk_live_FAKE",
+      "env add CLERK_SECRET_KEY production --force|sk_live_FAKE=with=equals",
+    ];
+
+    // A Preview or Development-only variable has no production target for
+    // `--force` to rewrite, so it doesn't need the user.
+    test
+      .skipIf(!installed)
+      .each(["none", "unrelated", "production_only", "preview_dev_only", "large"])(
+      "replaces both production keys and exits 0 when %s",
+      async (scenario) => {
+        const result = await run(scenario);
+
+        expect(result.exitCode).toBe(0);
+        expect(result.uploads).toEqual(bothUploaded);
+        expect(result.output).not.toContain("FAKE");
+      },
+    );
+
+    // The value is everything after the first `=`. Split with IFS='=', bash's
+    // `read` drops a single trailing `=` (zsh keeps it), which would upload a
+    // truncated key and still exit 0.
+    test.skipIf(!installed)("uploads a value ending in a single = intact", async () => {
+      const result = await run("trailing_equals");
+
+      expect(result.exitCode).toBe(0);
+      expect(result.uploads).toEqual([
+        "env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production --force|pk_live_FAKE=",
+        "env add CLERK_SECRET_KEY production --force|sk_live_FAKE=",
+      ]);
+      expect(result.output).not.toContain("FAKE");
+    });
+
+    test.skipIf(!installed)("lists the variables with color turned off", async () => {
+      const result = await run("none");
+
+      expect(result.listings).toEqual(["FORCE_COLOR=0 env ls --no-color"]);
+    });
+
+    // Any environment besides Production on the variable's line, custom ones included.
+    test.skipIf(!installed).each(["shared", "colored_shared", "custom_env"])(
+      "stops with exit 3 before uploading when %s",
+      async (scenario) => {
+        const result = await run(scenario);
+
+        expect(result.exitCode).toBe(3);
+        expect(result.uploads).toEqual([]);
+        expect(result.output).toContain(
+          "Also set for an environment other than Production: CLERK_SECRET_KEY",
+        );
+        expect(result.output).not.toContain("FAKE");
+      },
+    );
+
+    test.skipIf(!installed)("stops with exit 1 when it can't read the variable list", async () => {
+      const result = await run("unrecognized");
+
+      expect(result.exitCode).toBe(1);
+      expect(result.uploads).toEqual([]);
+      expect(result.output).toContain("Couldn't read the variable list from vercel env ls");
+    });
+
+    // Consent lives in the command the user sees, for that one run.
+    test.skipIf(!installed)("replaces a shared key when rerun with allow_shared=1", async () => {
+      const command = keyCopyCommand();
+      expect(command).toStartWith("( allow_shared=0; ");
+
+      const result = await run("shared", {
+        command: command.replace("allow_shared=0", "allow_shared=1"),
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.uploads).toEqual(bothUploaded);
+      expect(result.output).not.toContain("FAKE");
+    });
+
+    test.skipIf(!installed).each([
+      {
+        label: "allow_shared=1 exported in the environment",
+        value: "0",
+        env: { allow_shared: "1" },
+      },
+      { label: "allow_shared=yes", value: "yes", env: {} },
+      { label: "allow_shared=2", value: "2", env: {} },
+    ])("still stops with $label", async ({ value, env }) => {
+      const result = await run("shared", {
+        command: keyCopyCommand().replace("allow_shared=0", `allow_shared=${value}`),
+        env: env as Record<string, string>,
+      });
+
+      expect(result.exitCode).toBe(3);
+      expect(result.uploads).toEqual([]);
+    });
+
+    // Vercel not installed, not logged in, or the project not linked: its own
+    // error is what tells the user to run `vercel login` or `vercel link`.
+    test.skipIf(!installed)("shows Vercel's error when it can't list the variables", async () => {
+      const result = await run("ls_fails");
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Error: no linked project");
+      expect(result.output).not.toContain("FAKE");
+      expect(result.uploads).toEqual([]);
+    });
+
+    test
+      .skipIf(!installed)
+      .each(["pull_fails", "pull_prints_then_fails", "ls_fails", "first_upload_fails"])(
+      "exits non-zero and uploads nothing more when %s",
+      async (scenario) => {
+        const result = await run(scenario);
+
+        expect(result.exitCode).not.toBe(0);
+        expect(result.uploads).toEqual([]);
+        expect(result.output).not.toContain("FAKE");
+      },
+    );
   });
 
   test("pending DNS records tell the agent to add them, not to keep polling", () => {
@@ -1023,11 +1710,12 @@ describe("deployNextStep", () => {
     pendingDnsRecords: [
       { type: "CNAME" as const, host: "clerk.example.com", value: "v", required: true },
     ],
-    oauth: { complete: true, configured: [], pending: [], unsupported: [] },
+    oauth: { complete: true, configured: [], pending: [], unsupported: [], setup: [] },
     urls: {
       domains: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
       instance: "https://dashboard.clerk.com/apps/app_1/instances/ins_prod",
     },
+    hostSetup: [],
   };
 
   test.each([

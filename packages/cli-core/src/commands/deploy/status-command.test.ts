@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EXIT_CODE, PlapiError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, EXIT_CODE, PlapiError } from "../../lib/errors.ts";
 import {
   captureTelemetryPayload,
   fakeTelemetryCommand,
@@ -210,6 +210,10 @@ describe("deploy status", () => {
     // reworded, and OAuth was never checked so its row is not printed.
     expect(output).toContain("No production instance yet.");
     expect(output).toContain("Run `clerk deploy` to set it up.");
+    expect(output).toContain(
+      "If `clerk deploy` just created it, Clerk may not list it yet: run `clerk deploy` again " +
+        "with the same domain instead of choosing a new one.",
+    );
     expect(output).not.toContain("ask the user");
     expect(output).not.toContain("human terminal");
     expect(output).not.toContain("OAuth");
@@ -224,7 +228,12 @@ describe("deploy status", () => {
 
     const output = stripAnsi(captured.err);
     expect(output).toContain("its domain is still provisioning");
-    expect(output).toContain("or run `clerk deploy` to finish setup.");
+    // Same advice as the wizard's: until the domain shows, `clerk deploy
+    // --domain` is refused and a bare `clerk deploy` has nothing to resume.
+    expect(output).toContain(
+      "Run `clerk deploy status` again shortly, and run `clerk deploy` again once it shows the domain.",
+    );
+    expect(output).not.toContain("to finish setup");
     expect(output).not.toContain("ask the user");
     expect(output).not.toContain("OAuth");
   });
@@ -387,6 +396,58 @@ describe("deploy status", () => {
 
     expect(captured.out).toBe("");
     expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledWith("app_1", "dmn_1");
+  });
+
+  // A 404 from the domain's own endpoints means its status isn't readable yet.
+  // The application was read moments earlier, so "re-link" would be wrong.
+  const domainNotFound = () =>
+    new PlapiError(404, JSON.stringify({ errors: [{ code: "resource_not_found" }] }), "https://x");
+  const domainStatusUnreadable =
+    "The production instance exists, but Clerk couldn't read its domain status yet. " +
+    "Run `clerk deploy status` again shortly. " +
+    "If the production instance was deleted, `clerk deploy status` reports `not_started` once Clerk stops listing it; then run `clerk deploy --domain`.";
+
+  test("a 404 on the domain status says the instance exists, not to re-link", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(completeDomainStatus());
+    mockGetApplicationDomainStatus.mockRejectedValue(domainNotFound());
+
+    const error = await deployStatus().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+    expect((error as CliError).message).toBe(domainStatusUnreadable);
+    expect(captured.out).toBe("");
+  });
+
+  test("a 404 on the DNS check says the instance exists, not to re-link", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockRejectedValue(domainNotFound());
+
+    const error = await deployStatus().catch((e: unknown) => e);
+
+    expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+    expect((error as CliError).message).toBe(domainStatusUnreadable);
+    expect(mockGetApplicationDomainStatus).not.toHaveBeenCalled();
+  });
+
+  test("a 404 while waiting on DNS says the instance exists, not to re-link", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockDomain();
+    mockOAuthComplete();
+    mockTriggerApplicationDomainDNSCheck.mockResolvedValue(pendingDnsDomainStatus());
+    mockGetApplicationDomainStatus
+      .mockResolvedValueOnce(pendingDnsDomainStatus())
+      .mockRejectedValue(domainNotFound());
+
+    const error = await deployStatus({ wait: true }).catch((e: unknown) => e);
+
+    expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED);
+    expect((error as CliError).message).toBe(domainStatusUnreadable);
   });
 
   test("human mode shows a spinner while waiting for the DNS check to process", async () => {
@@ -1148,7 +1209,13 @@ describe("humanNextAction", () => {
     { kind: "not_started" as const },
     { kind: "domain_provisioning" as const, domainsUrl: `${URL}/domains` },
     { kind: "interrupted" as const },
-    { kind: "complete" as const, domain: "example.com", oauthUnsupported: ["x"], instanceUrl: URL },
+    {
+      kind: "complete" as const,
+      domain: "example.com",
+      productionInstanceId: "ins_prod",
+      oauthUnsupported: ["x"],
+      instanceUrl: URL,
+    },
     { kind: "oauth_pending" as const, oauthPending: ["github"], oauthUnsupported: ["x"] },
     ...(["records_available", "records_unavailable", "ssl_pending", "finalizing"] as const).map(
       (kind) => ({ kind, domain: "example.com", records: "DNS", domainsUrl: `${URL}/domains` }),
@@ -1166,6 +1233,33 @@ describe("humanNextAction", () => {
       expect(line).not.toContain("human terminal");
       // The warning row above the sentence already names unsupported providers.
       expect(line).not.toContain("could not configure them");
+    },
+  );
+
+  // A bare `env pull` writes the production keys over the development ones in
+  // the local env file, which breaks localhost. `--print` writes no file.
+  test.each([
+    { productionInstanceId: "ins_prod", instance: "ins_prod" },
+    { productionInstanceId: null, instance: "prod" },
+  ])(
+    "complete has the person print the keys for the host (instance $instance)",
+    ({ productionInstanceId, instance }) => {
+      const line = humanNextAction({
+        kind: "complete",
+        domain: "example.com",
+        productionInstanceId,
+        oauthUnsupported: [],
+        instanceUrl: URL,
+      });
+      expect(line).toBe(
+        "Clerk's production setup for https://example.com is verified. If you haven't already, " +
+          `run \`clerk env pull --instance ${instance} --print\` and add the lines it prints to your ` +
+          "host's production environment variables, with the other Clerk variables from your env " +
+          "file (it writes no local file, so localhost keeps its development keys), then redeploy " +
+          "and sign up at https://example.com to confirm." +
+          ` Manage users, settings, and billing for this instance: ${URL}`,
+      );
+      expect(line).not.toContain("`clerk env pull --instance prod`");
     },
   );
 

@@ -19,6 +19,13 @@ export type MapDeployErrorOptions<T> = {
    * surfacing the error. Pass a recovery callback here to opt into that path.
    */
   onProductionInstanceExists?: ProductionInstanceExistsRecovery<T>;
+  /**
+   * Replaces the 404 `resource_not_found` translation, which otherwise reads
+   * as the application being gone. Requests for one of its domains pass this:
+   * the application was read moments earlier, so the domain's status is what
+   * is missing.
+   */
+  onNotFound?: () => CliError;
 };
 
 export async function mapDeployError<T>(
@@ -31,7 +38,7 @@ export async function mapDeployError<T>(
     if (!(error instanceof PlapiError)) throw error;
     const recovered = await maybeRecover(error, options);
     if (recovered.recovered) return recovered.value;
-    throw translatePlapiError(error);
+    throw translatePlapiError(error, options);
   }
 }
 
@@ -49,7 +56,10 @@ async function maybeRecover<T>(
   return { recovered: false };
 }
 
-function translatePlapiError(error: PlapiError): CliError | PlapiError {
+function translatePlapiError<T>(
+  error: PlapiError,
+  options: MapDeployErrorOptions<T>,
+): CliError | PlapiError {
   const { status, code } = error;
 
   if (status === 402 && code === "unsupported_subscription_plan_features") {
@@ -84,6 +94,7 @@ function translatePlapiError(error: PlapiError): CliError | PlapiError {
   }
 
   if (status === 404 && code === "resource_not_found") {
+    if (options.onNotFound) return options.onNotFound();
     return new CliError(
       "Clerk couldn't find this application (it may have been deleted or your workspace no longer has access). " +
         "Run `clerk link` to re-link this directory.",
