@@ -16,6 +16,8 @@ import { claimDestination, describeClaimDestination } from "../../lib/claim-prom
 import { CliError, ERROR_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
 import {
   isSdkOnly,
+  LINK_EXISTING_APP_SENTENCE,
+  noUsableClaimLinkSentence,
   readSdkClaimLink,
   SDK_KEYLESS_SOURCE,
   sdkFileWithoutKeyReason,
@@ -67,7 +69,7 @@ export async function linkSdkOnlyFolder(
 
   function noUsableLink(why: string): never {
     throwUsageError(
-      `${agent ? `${AGENT_LEAD} ` : ""}This folder's Clerk SDK keyless file (\`${SDK_KEYLESS_SOURCE}\`) has no usable claim link: ${why}. Link an existing application with \`clerk link --app <app_id>\`.`,
+      `${agent ? `${AGENT_LEAD} ` : ""}${noUsableClaimLinkSentence(why)} ${LINK_EXISTING_APP_SENTENCE}`,
     );
   }
   // Before any list or sign-in: without a publishable key there's nothing to

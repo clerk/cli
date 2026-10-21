@@ -453,6 +453,18 @@ export function sdkFileWithoutKeyReason(sdkFile: SdkKeylessFile | undefined): st
 }
 
 /**
+ * Says the SDK keyless file has no usable claim link, and why. Shared by
+ * `clerk link`'s stop and the unlinked-folder advice, so the two say the same.
+ */
+export function noUsableClaimLinkSentence(why: string): string {
+  return `This folder's Clerk SDK keyless file (\`${SDK_KEYLESS_SOURCE}\`) has no usable claim link: ${why}.`;
+}
+
+/** What to do when no claim link and no key match leads to the folder's app. */
+export const LINK_EXISTING_APP_SENTENCE =
+  "Link an existing application with `clerk link --app <app_id>`.";
+
+/**
  * Every Clerk key the folder holds, from the environment and every env file
  * the app or `clerk env pull` could use, under every name a supported Clerk
  * SDK reads (`CLERK_KEY_NAMES`), each with its source. Lines naming a Clerk key
