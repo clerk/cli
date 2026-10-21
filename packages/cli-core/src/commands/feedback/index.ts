@@ -23,7 +23,7 @@ const DESCRIPTION =
   `${ATTACHED_FIELD_PHRASES.join(", ")}.\n\n` +
   "Every text field is scrubbed before it leaves your machine, on a best-effort basis: " +
   "keys and tokens by their shape, private key blocks, Authorization headers, " +
-  "credentials in URLs, values assigned to secret-looking names on one line, email " +
+  "credentials in URLs and in curl's -u, values assigned to secret-looking names on one line, email " +
   "addresses and home-directory paths. It misses values that span lines, structured " +
   "config files such as YAML and pretty-printed JSON, passwords with spaces, and " +
   "Markdown formatting around a label, so never include secrets, API keys or personal " +
@@ -44,14 +44,17 @@ export function registerFeedback(program: Program): void {
     .option("--outcome <outcome>", `How it ended: ${FEEDBACK_OUTCOMES.join(", ")} (required)`)
     .option(
       "--command <path>",
-      'The CLI command involved, as typed after `clerk` (e.g. "users list"); a pasted command line is fine: arguments and flags after the command are dropped, global flags before it are not read',
+      'The CLI command involved, as typed after `clerk` (e.g. "users list"); a pasted command line is fine: global flags before the command are skipped, and arguments and flags after it are dropped',
     )
     .option("--error-text <text>", "The exact error you saw")
-    .option("--error-code <code>", "The code from the error output (e.g. not_linked)")
+    .option(
+      "--error-code <code>",
+      "The code from the error output (e.g. not_linked); case does not matter, and it is sent in lowercase",
+    )
     .option("--suggestion <text>", "What would have helped")
     .option(
       "--dry-run",
-      "Print exactly what would be sent and whether a real run would send it now, and send no report. With telemetry off, a dry run writes no machine id, notice flag or rate-limit record. In agent mode, the sandbox check every command that reads the config runs may still create the config directory and write and delete a temporary file there. With telemetry on, it may create the config directory and the machine id, and while the first-run notice is still owed it writes and deletes a temporary file in the config directory to check that a real run could record the notice. The run's usual end-of-run telemetry step still applies: on a first run it shows the disclosure notice and records that it was shown.",
+      "Print exactly what would be sent and whether a real run would send it now (the telemetry opt-out and the rate limit), and send no report. A real run can still fail to write the local config file. The report id is a placeholder; a real send assigns one. With telemetry on, it may create the config directory and the machine id. With telemetry off, a dry run writes no machine id, notice flag or rate-limit record. In agent mode, the sandbox check every command that reads the config runs may still create the config directory and write and delete a temporary file there. The run's usual end-of-run telemetry step still applies: on a first run it shows the disclosure notice and records that it was shown.",
     )
     .option("--yes", "Skip the confirmation prompt")
     .setExamples(FEEDBACK_EXAMPLES)

@@ -72,6 +72,24 @@ describe("checkFeedbackRateLimit", () => {
     if (!verdict.allowed) expect(verdict.reason).toBe("repeat");
   });
 
+  // A send the endpoint refused (a 4xx) was not stored, so it never blocks a
+  // retry about the same command and code; it still counts toward the
+  // daily total.
+  test("a send marked daily-total-only never counts as a repeat", () => {
+    const recent = [{ ...send(NOW, "users list", "not_linked"), dailyTotalOnly: true }];
+    expect(
+      checkFeedbackRateLimit(recent, { command: "users list", errorCode: "not_linked" }),
+    ).toEqual({ allowed: true });
+  });
+
+  test("a send marked daily-total-only counts toward the daily limit", () => {
+    const recent = [...sends(FEEDBACK_DAILY_LIMIT - 1), { ...send(NOW - 1), dailyTotalOnly: true }];
+    expect(checkFeedbackRateLimit(recent, { command: null, errorCode: null })).toEqual({
+      allowed: false,
+      reason: "daily_limit",
+    });
+  });
+
   test("a recorded send without a code never counts as a repeat", () => {
     const recent = [send(NOW, "users list", null)];
     expect(
@@ -99,6 +117,20 @@ describe("the sends file", () => {
     // Appends: a second send keeps the first.
     await recordFeedbackSend(send(NOW + 1));
     expect(await readRecentFeedbackSends(NOW + 1)).toHaveLength(2);
+  });
+
+  test("keeps the daily-total-only mark when read back", async () => {
+    const entry = { ...send(NOW, "users list", "not_linked"), dailyTotalOnly: true };
+    await recordFeedbackSend(entry);
+    expect(await readRecentFeedbackSends(NOW)).toEqual([entry]);
+  });
+
+  test("drops an entry whose daily-total-only mark is not a boolean", async () => {
+    await Bun.write(
+      file(),
+      JSON.stringify({ sends: [{ ...send(NOW), dailyTotalOnly: "yes" }, send(NOW - 1)] }),
+    );
+    expect(await readRecentFeedbackSends(NOW)).toEqual([send(NOW - 1)]);
   });
 
   test("drops sends outside the window and malformed entries", async () => {

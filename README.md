@@ -108,8 +108,7 @@ send with `clerk feedback`, which is scrubbed on a best-effort basis for common 
 formats, home-directory paths and email addresses before it leaves your machine (`clerk feedback --dry-run` shows
 exactly what would be sent and whether a real run would send it, and sends no report,
 though the run's usual usage event still applies; with telemetry on it may create the
-config directory and the local machine id, and briefly writes a temporary file there to
-check it is writable; with telemetry off it writes no machine id or record, though in
+config directory and the local machine id; with telemetry off it writes no machine id or record, though in
 agent mode the CLI's usual sandbox check may still create the config directory). The first run only shows a disclosure
 notice and sends nothing (CI environments send from the first run), except
 `clerk feedback`, which shows the notice and then sends the report you asked it to send

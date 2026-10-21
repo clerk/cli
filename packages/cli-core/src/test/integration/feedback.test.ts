@@ -220,7 +220,7 @@ describe("human mode", () => {
     const result = await clerk("feedback", "--dry-run");
     const { sdk, payload } = JSON.parse(result.stdout);
     expect(sdk).toBe("clerk-cli");
-    expect(payload.report_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(payload.report_id).toBe("<assigned when sent>");
     expect(payload.outcome).toBe("worked_around");
     expect(result.stderr).toContain("Dry run: no report was sent.");
     expect(result.stderr).toContain("A real run would send this report now.");
@@ -284,7 +284,7 @@ describe("first run", () => {
     const result = await clerk("--mode", "agent", "feedback", ...COMPLETE, "--dry-run");
     const out = JSON.parse(result.stdout);
     expect(out.would_send).toBe(true);
-    expect(out.event.payload.report_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(out.event.payload.report_id).toBe("<assigned when sent>");
     expect(result.stderr).toContain("Nothing has been sent during this run");
     expect(result.stderr).not.toContain("This run sends the feedback report");
     expect(http.requests).toHaveLength(0);
@@ -305,6 +305,9 @@ describe("help", () => {
     expect(help).toContain("--dry-run");
     expect(help).toContain("telemetry opt-out");
     expect(help).toContain("scrubbed before it leaves your machine, on a best-effort basis");
+    expect(help).toContain(
+      "a pasted command line is fine: global flags before the command are skipped",
+    );
     expect(help).toContain(
       "It misses values that span lines, structured config files such as YAML and pretty-printed JSON, passwords with spaces, and Markdown formatting around a label, so never include secrets",
     );
@@ -331,7 +334,7 @@ describe("help", () => {
   });
 
   // What a dry run may write, said exactly, so nobody reads "dry run" as
-  // "touches nothing".
+  // "touches nothing", and what it does not predict.
   test("`clerk feedback --help` says exactly what a dry run writes", async () => {
     const result = await clerk.raw("feedback", "--help");
     const help = result.stdout.replace(/\s+/g, " ");
@@ -342,8 +345,12 @@ describe("help", () => {
       "In agent mode, the sandbox check every command that reads the config runs may still create the config directory and write and delete a temporary file there.",
     );
     expect(help).toContain(
-      "With telemetry on, it may create the config directory and the machine id, and while the first-run notice is still owed it writes and deletes a temporary file in the config directory to check that a real run could record the notice.",
+      "whether a real run would send it now (the telemetry opt-out and the rate limit), and send no report. A real run can still fail to write the local config file.",
     );
+    expect(help).toContain(
+      "With telemetry on, it may create the config directory and the machine id.",
+    );
+    expect(help).not.toContain("to check that a real run could record the notice");
   });
 
   test("`clerk feedback --help` states the per-field input ceiling", async () => {

@@ -9,7 +9,6 @@ import {
   declareSoftExitOutcome,
   finalizeAndSendTelemetry,
   getTelemetryStatus,
-  isTelemetryNoticeOwed,
   sendTelemetryEvent,
   showTelemetryNoticeOnce,
   setTelemetryPauseStep,
@@ -879,6 +878,18 @@ describe("sendTelemetryEvent", () => {
     expect(calls).toBe(2);
   });
 
+  // A 4xx is the endpoint refusing the event itself, which a caller must be
+  // able to tell from a server failure: the refused event was not stored.
+  test.each([[400], [404], [499]])("refused on a %i", async (code) => {
+    status = code;
+    expect(await send()).toBe("refused");
+  });
+
+  test.each([[399], [500]])("not refused on a %i", async (code) => {
+    status = code;
+    expect(await send()).toBe("rejected");
+  });
+
   test.each([
     ["DO_NOT_TRACK", async () => void (process.env.DO_NOT_TRACK = "1")],
     ["CLERK_TELEMETRY_DISABLED", async () => void (process.env.CLERK_TELEMETRY_DISABLED = "1")],
@@ -890,9 +901,6 @@ describe("sendTelemetryEvent", () => {
   });
 });
 
-// The per-run flush already read the status before it decided to send; it
-// hands that in so the 1-second flush pays no second config read. A caller
-// that passes nothing gets the read here.
 // The exported sender always reads the opt-out itself: no caller can hand it
 // a status and skip the check. The per-run flush avoids a second read by
 // calling the module-internal post step after its own check.
@@ -940,9 +948,15 @@ describe("sendTelemetryEvent always reads the opt-out itself", () => {
 });
 
 // The end-of-run flush shows the notice through showTelemetryNoticeOnce on
-// every command, so it must cost what it did before the shared predicate:
-// the CI check, then the one read-and-mark.
+// every command, so it must cost one config read: the CI check, then the one
+// read-and-mark.
 describe("showTelemetryNoticeOnce reads the config once", () => {
+  const originalCi = process.env.CI;
+  afterEach(() => {
+    if (originalCi === undefined) delete process.env.CI;
+    else process.env.CI = originalCi;
+  });
+
   test.each([
     ["a machine that has shown the notice", true],
     ["a fresh machine", false],
@@ -956,32 +970,5 @@ describe("showTelemetryNoticeOnce reads the config once", () => {
     } finally {
       peek.mockRestore();
     }
-  });
-});
-
-// "The first-run notice is still owed", as `clerk feedback --dry-run` asks
-// it: CI never owes it, and a machine that has shown it once never owes it
-// again.
-describe("isTelemetryNoticeOwed", () => {
-  const originalCi = process.env.CI;
-  afterEach(() => {
-    if (originalCi === undefined) delete process.env.CI;
-    else process.env.CI = originalCi;
-  });
-
-  test("a fresh machine owes the notice", async () => {
-    delete process.env.CI;
-    expect(await isTelemetryNoticeOwed()).toBe(true);
-  });
-
-  test("a machine that has shown it does not", async () => {
-    delete process.env.CI;
-    await markTelemetryNoticeShown();
-    expect(await isTelemetryNoticeOwed()).toBe(false);
-  });
-
-  test("CI never owes it", async () => {
-    process.env.CI = "true";
-    expect(await isTelemetryNoticeOwed()).toBe(false);
   });
 });

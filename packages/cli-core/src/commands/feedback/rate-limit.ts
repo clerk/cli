@@ -19,6 +19,9 @@
  * which the cap tolerates. Every attempted POST is recorded, accepted or not:
  * a send that timed out or was answered with an error may still have landed,
  * and a retry loop against a slow endpoint must still meet the cap. A send
+ * the endpoint refused with a 4xx was not stored, so it is recorded with
+ * `dailyTotalOnly`: it counts toward the daily total, which keeps a retry
+ * loop against a refusing endpoint bounded, but never blocks a repeat. A send
  * refused before any POST (opt-out, cap, a config failure) is not recorded.
  */
 
@@ -37,6 +40,8 @@ export type FeedbackSend = {
   sentAt: number;
   command: string | null;
   errorCode: string | null;
+  /** The endpoint refused it (4xx), so nothing was stored: counted toward the daily total, never a repeat. */
+  dailyTotalOnly?: boolean;
 };
 
 export type RateLimitVerdict =
@@ -64,7 +69,8 @@ function isFeedbackSend(value: unknown): value is FeedbackSend {
   return (
     typeof v.sentAt === "number" &&
     (v.command === null || typeof v.command === "string") &&
-    (v.errorCode === null || typeof v.errorCode === "string")
+    (v.errorCode === null || typeof v.errorCode === "string") &&
+    (v.dailyTotalOnly === undefined || typeof v.dailyTotalOnly === "boolean")
   );
 }
 
@@ -106,7 +112,12 @@ export function checkFeedbackRateLimit(
   if (
     report.command !== null &&
     report.errorCode !== null &&
-    recent.some((send) => send.command === report.command && send.errorCode === report.errorCode)
+    recent.some(
+      (send) =>
+        !send.dailyTotalOnly &&
+        send.command === report.command &&
+        send.errorCode === report.errorCode,
+    )
   ) {
     return { allowed: false, reason: "repeat" };
   }

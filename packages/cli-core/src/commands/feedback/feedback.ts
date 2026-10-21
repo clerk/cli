@@ -22,8 +22,9 @@
  * Telemetry must never affect the command: a config file that cannot be
  * written or read (no machine id yet, read-only directory) is a
  * `send_failed`, not a crash, matching how the per-run flush swallows the
- * same failure. The report id is printed exactly when a POST was attempted,
- * because it is the handle for a later removal and means nothing otherwise.
+ * same failure. The report id is printed exactly when the report may have
+ * been stored, because it is the handle for a later removal and means
+ * nothing otherwise. A dry run shows a placeholder in its place.
  * Ctrl-C is the one exception: it follows the CLI's interrupt path (exit 130
  * from the signal handler) and prints no result.
  */
@@ -35,7 +36,6 @@ import {
   FEEDBACK_WINDOW_MS,
   GITHUB_ISSUES_URL,
 } from "../../lib/constants.ts";
-import { probeConfigWritable } from "../../lib/config.ts";
 import { throwUsageError, throwUserAbort } from "../../lib/errors.ts";
 import type { Example } from "../../lib/help.ts";
 import { select } from "../../lib/listage.ts";
@@ -47,7 +47,6 @@ import {
   asPostedTelemetryEvent,
   buildTelemetryEnvelope,
   getTelemetryStatus,
-  isTelemetryNoticeOwed,
   peekTelemetryEnvelope,
   type PostedTelemetryEvent,
   type SendOutcome,
@@ -123,8 +122,15 @@ export const ATTACHED_FIELD_PHRASES: readonly string[] = [
 /** The ceiling as the help text and the usage error print it. */
 export const FIELD_MAX_LENGTH_TEXT = `${FEEDBACK_FIELD_MAX_LENGTH.toLocaleString("en-US")} characters`;
 
-/** The shape every `ERROR_CODE` value and API error code has. */
+/** The shape every `ERROR_CODE` value and API error code has, checked after lowercasing. */
 const ERROR_CODE_PATTERN = /^[a-z0-9_]{1,64}$/;
+
+/**
+ * What a dry run shows as the report id. No id exists until a report is
+ * sent: one shown by a dry run would name a report nobody could ever ask
+ * Clerk to remove.
+ */
+export const DRY_RUN_REPORT_ID = "<assigned when sent>";
 
 const FEEDBACK_NOTICE_LAST_LINE =
   "This run sends the feedback report you asked for and one usage event for this command.";
@@ -150,13 +156,15 @@ export interface FeedbackOptions {
  * the same way `__complete.ts` reads `_hidden`: which child runs when the
  * group is invoked bare, whether the group runs anything itself, and whether
  * a command is hidden from help (and so from the subcommands an error
- * suggests).
+ * suggests). `options` is Commander's public option list, read for the
+ * root's global flags and whether each takes a value.
  */
 export type CommandTree = {
   name(): string;
   aliases(): string[];
   commands: readonly CommandTree[];
   parent: CommandTree | null;
+  options?: readonly CommandOption[];
   registeredArguments?: readonly unknown[];
   _defaultCommandName?: string | null;
   _actionHandler?: unknown;
@@ -224,6 +232,16 @@ type CompleteFields = ValidatedFields & {
   outcome: FeedbackOutcome;
 };
 
+/** The fields of a Commander `Option` that say how it is spelled and whether it takes a value. */
+type CommandOption = {
+  long?: string;
+  short?: string;
+  /** `<value>`: always takes the next word. */
+  required?: boolean;
+  /** `[value]`: takes the next word unless it is a flag. */
+  optional?: boolean;
+};
+
 type CommandResolution =
   | { path: string }
   | { path: null; reason: "unknown" }
@@ -242,22 +260,71 @@ function defaultChild(node: CommandTree): CommandTree | undefined {
   return name ? node.commands.find((c) => c.name() === name) : undefined;
 }
 
+/** `clerk`, a path to the binary, or the package with a version or tag (`clerk@latest`). */
+function isClerk(word: string | undefined): boolean {
+  return word !== undefined && /^(?:(?:.*[\\/])?clerk(?:\.exe)?|clerk@[^\s\\/]+)$/.test(word);
+}
+
+/** Package runners that may come before `clerk` on a pasted command line. */
+const PACKAGE_RUNNERS: readonly (readonly string[])[] = [["npx"], ["bunx"], ["pnpm", "dlx"]];
+
+/**
+ * Drop a package runner and its own flags (`npx -y`, `pnpm dlx`), but only
+ * when `clerk` follows them: `npx users list` is not a clerk command line.
+ */
+function dropPackageRunner(words: string[]): void {
+  const runner = PACKAGE_RUNNERS.find((r) => r.every((word, i) => words[i] === word));
+  if (!runner) return;
+  let next = runner.length;
+  while (words[next]?.startsWith("-")) next += 1;
+  if (isClerk(words[next])) words.splice(0, next);
+}
+
+/**
+ * Drop the global flags before the command, with the value of each that
+ * takes one, read from the root's own options as Commander parses them:
+ * `--mode agent`, `--mode=agent`, `--verbose`. False when a flag is one the
+ * root does not have, or its value is missing: Commander fails such a line
+ * before any command runs, so no usage event carries a command for it.
+ */
+function dropGlobalFlags(root: CommandTree, words: string[]): boolean {
+  while (words[0]?.startsWith("-")) {
+    const word = words.shift()!;
+    const long = word.startsWith("--");
+    const name = long ? word.split("=", 1)[0] : word.slice(0, 2);
+    const option = root.options?.find((o) => (long ? o.long : o.short) === name);
+    if (!option) return false;
+    const attached = long ? word.includes("=") : word.length > 2;
+    if (attached || !(option.required || option.optional)) continue;
+    if (option.required) {
+      if (words.length === 0) return false;
+      words.shift();
+    } else if (words[0] !== undefined && !words[0].startsWith("-")) {
+      words.shift();
+    }
+  }
+  return true;
+}
+
 /**
  * Resolve `--command` to the spelling usage events record: the command whose
  * action ran (`commandPathOf` in `lib/telemetry.ts`). The input is the path
- * as typed after `clerk`, a leading `clerk` tolerated (also after `npx`,
- * `bunx` or `pnpm dlx`, or as a path to the binary), and may be a whole
- * pasted command line: anything after the command is dropped (arguments and
- * flags are never sent). Leading global flags are not parsed.
+ * as typed after `clerk`, a leading `clerk` tolerated (also as `clerk@latest`,
+ * after `npx`, `bunx` or `pnpm dlx` and their own flags, or as a path to the
+ * binary), and may be a whole pasted command line: global flags before the
+ * command are skipped, and anything after the command is dropped (arguments
+ * and flags are never sent).
  *
- * Walk rules, verified against the real tree: at a group, an unknown word is
- * the group's own argument if it takes one (`impersonate user_123` →
- * `impersonate`), the default child's argument if that child takes one
- * (`open users` → `open dashboard`), and an error otherwise (`users lst`,
- * `deploy statsu`). A group with a default child is recorded as that child
- * (`deploy` → `deploy run`). A bare group that runs nothing itself (`auth`)
- * never appears in usage events, so it is an error that names its
- * subcommands.
+ * Walk rules, in the order Commander dispatches (`_parseCommand`), verified
+ * against the real tree: at a group, a word that names a child is that child.
+ * Otherwise a group with a default child hands the word to that child, which
+ * must take an argument (`open users` → `open dashboard`; `deploy run` takes
+ * none, so `deploy statsu` is an error). Otherwise the word is the group's
+ * own argument if it takes one (`impersonate user_123` → `impersonate`), and
+ * an error if not (`users lst`). A group with a default child is recorded as
+ * that child (`deploy` → `deploy run`), even when the group has an action of
+ * its own. A bare group that runs nothing itself (`auth`) never appears in
+ * usage events, so it is an error that names its subcommands.
  *
  * `clerk help [command]` is Commander's own help command: it prints help and
  * exits before any usage event starts, so no event carries a spelling for
@@ -266,15 +333,9 @@ function defaultChild(node: CommandTree): CommandTree | undefined {
  */
 export function resolveCommand(tree: CommandTree, input: string): CommandResolution {
   const words = input.trim().split(/\s+/).filter(Boolean);
-  // A package runner or a path to the binary before `clerk`, as pasted from a
-  // command line: `npx clerk …`, `bunx clerk …`, `pnpm dlx clerk …`,
-  // `/usr/local/bin/clerk …`.
-  // A runner is stripped only when clerk follows it.
-  const isClerk = (word: string | undefined): boolean =>
-    word !== undefined && /^(?:.*[\\/])?clerk(?:\.exe)?$/.test(word);
-  if ((words[0] === "npx" || words[0] === "bunx") && isClerk(words[1])) words.shift();
-  else if (words[0] === "pnpm" && words[1] === "dlx" && isClerk(words[2])) words.splice(0, 2);
+  dropPackageRunner(words);
   if (isClerk(words[0])) words.shift();
+  if (!dropGlobalFlags(tree, words)) return { path: null, reason: "unknown" };
   if (words[0] === "help") return resolveHelp(tree, words.slice(1));
   let node = tree;
   const parts: string[] = [];
@@ -286,18 +347,23 @@ export function resolveCommand(tree: CommandTree, input: string): CommandResolut
       node = child;
       continue;
     }
-    // Not a subcommand: an argument of something, or a typo. Under a group
-    // with a default child it is that child's argument only if the child
-    // takes one (`open users`); `deploy run` takes none, so `deploy statsu`
-    // would fail in Commander and must not be recorded as `deploy run`.
-    if (node.commands.length === 0 || hasOwnArguments(node)) break;
+    // Not a subcommand: an argument of something, or a typo. A leaf takes it
+    // as its own. Under a group with a default child it goes to that child
+    // first, which must take an argument (`open users`); `deploy run` takes
+    // none, so `deploy statsu` fails in Commander and must not be recorded
+    // as `deploy run`. Only then is it the group's own argument.
+    if (node.commands.length === 0) break;
     const fallbackChild = defaultChild(node);
-    if (fallbackChild && hasOwnArguments(fallbackChild)) break;
+    if (fallbackChild) {
+      if (hasOwnArguments(fallbackChild)) break;
+      return { path: null, reason: "unknown" };
+    }
+    if (hasOwnArguments(node)) break;
     return { path: null, reason: "unknown" };
   }
   if (parts.length === 0) return { path: null, reason: "unknown" };
   const fallback = defaultChild(node);
-  if (fallback && !node._actionHandler) {
+  if (fallback) {
     parts.push(fallback.name());
     node = fallback;
   }
@@ -404,10 +470,13 @@ function validateShape(options: FeedbackOptions, tree: CommandTree): ValidatedFi
     command = resolved.path;
   }
 
-  const errorCode = trimmedOrUndefined(options.errorCode) ?? null;
+  // Lowercased, so `NOT_LINKED` and `not_linked` are one code for the repeat
+  // check and in the warehouse.
+  const errorCodeInput = trimmedOrUndefined(options.errorCode);
+  const errorCode = errorCodeInput?.toLowerCase() ?? null;
   if (errorCode !== null && !ERROR_CODE_PATTERN.test(errorCode)) {
     throwUsageError(
-      `Invalid --error-code "${errorCode}". Expected the code from the error output: lowercase letters, digits and underscores, e.g. not_linked.`,
+      `Invalid --error-code "${errorCodeInput}". Expected the code from the error output: letters, digits and underscores, e.g. not_linked.`,
       undefined,
       undefined,
       FEEDBACK_EXAMPLES,
@@ -621,7 +690,7 @@ function printEvent(payload: FeedbackPayload): void {
   log.data(JSON.stringify(feedbackEvent(payload), null, 2));
 }
 
-/** What became of a feedback send: sent, or refused, with whether a POST was attempted (which earns the report id). */
+/** What became of a feedback send: sent, or refused, with whether the report may have been stored (which earns the report id). */
 type FeedbackSendResult = { sent: true } | { sent: false; refusal: Refusal; posted: boolean };
 
 /**
@@ -673,17 +742,21 @@ function provesNoConnection(error: unknown): boolean {
  * notice, so an opt-out that landed during the confirmation neither posts nor
  * consumes the notice; the shared sender checks again at the POST.
  *
- * `posted` is true once the request may have reached the server, and it is
- * what earns the report id and the count against the cap: any response,
- * accepted or not, a timeout, or a failure the CLI cannot place. The id is
- * what a later removal needs. A failure that proves no connection was made
- * ({@link provesNoConnection}: refused, unresolvable host, no network, a
- * socket that could not open, a permission error on connect) sent nothing,
- * so it is `send_failed` with no id and no count, like a failure before the
- * POST (the config could not be read, the notice could not be recorded). An
- * interrupt is rethrown for the CLI's interrupt path; a send that may have
- * reached the server is counted first, usually, since the CLI's interrupt
- * handler can exit before the record is written.
+ * `posted` is true once the report may have been stored, and it is what
+ * earns the report id and the full count against the cap: a 2xx or 5xx
+ * answer, a timeout, or a failure the CLI cannot place. The id is what a
+ * later removal needs. A 4xx is the endpoint refusing the event, so nothing
+ * was stored: `send_failed` with no id, recorded toward the daily total only,
+ * so a corrected retry about the same command and code is not blocked while
+ * a retry loop against a refusing endpoint stays bounded. A failure that
+ * proves no connection was made ({@link provesNoConnection}: refused,
+ * unresolvable host, no network, a socket that could not open, a permission
+ * error on connect) sent nothing, so it is `send_failed` with no id and no
+ * count, like a failure before the POST (the config could not be read, the
+ * notice could not be recorded). An interrupt is rethrown for the CLI's
+ * interrupt path; a send that may have reached the server is counted first,
+ * usually, since the CLI's interrupt handler can exit before the record is
+ * written.
  */
 async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
   try {
@@ -700,11 +773,12 @@ async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
 
   let posted = false;
   let outcome: SendOutcome;
-  const record = async (): Promise<void> => {
+  const record = async (dailyTotalOnly = false): Promise<void> => {
     await recordFeedbackSend({
       sentAt: Date.now(),
       command: payload.command,
       errorCode: payload.error_code,
+      ...(dailyTotalOnly ? { dailyTotalOnly } : {}),
     });
   };
   const controller = new AbortController();
@@ -736,7 +810,12 @@ async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
   if (outcome === "disabled") {
     return { sent: false, refusal: { reason: "telemetry_disabled" }, posted: false };
   }
-  // Any response, accepted or not, means the request reached the server.
+  // Any response means the request reached the server, so it counts toward
+  // the daily total. A 4xx was not stored: no id, and no repeat block.
+  if (outcome === "refused") {
+    await record(true);
+    return { sent: false, refusal: { reason: "send_failed" }, posted: false };
+  }
   await record();
   if (outcome === "rejected") return { sent: false, refusal: { reason: "send_failed" }, posted };
   return { sent: true };
@@ -758,26 +837,20 @@ async function currentRefusal(): Promise<Refusal | null> {
 }
 
 /**
- * What a dry run would report: the refusal a real run would meet now, and the
- * envelope to show. Creates a machine id only when telemetry is on: an
- * opted-out machine shows the id it already has, or null.
+ * What a dry run would report: the refusal a real run would meet now from
+ * the opt-out or the rate limit, and the envelope to show. It does not try to
+ * foresee a config file that a real run could not write; that run still
+ * reports `send_failed`. Creates a machine id only when telemetry is on: an
+ * opted-out machine shows the id it already has, or null, and so does one
+ * whose id cannot be created.
  */
 async function dryRunVerdict(
   fields: CompleteFields,
 ): Promise<{ refusal: Refusal | null; envelope: TelemetryEnvelopePreview }> {
-  let refusal = await gate(fields);
+  const refusal = await gate(fields);
   const telemetryOff = refusal?.reason === "telemetry_disabled" || refusal?.reason === "dev_build";
-  if (telemetryOff) return { refusal, envelope: await peekTelemetryEnvelope() };
-  // `would_send` must be false in exactly the states where a real run
-  // reports `send_failed`: the machine id cannot be created, or the
-  // first-run notice is still owed and could not be recorded. The second is
-  // a write probe next to the config file, never a write to it.
-  const built = await buildEnvelopeOrNull();
-  const envelope = built ?? (await peekTelemetryEnvelope());
-  const cannotWrite =
-    built === null || ((await isTelemetryNoticeOwed()) && !(await probeConfigWritable()));
-  if (cannotWrite) refusal ??= { reason: "send_failed" };
-  return { refusal, envelope };
+  const built = telemetryOff ? null : await buildEnvelopeOrNull();
+  return { refusal, envelope: built ?? (await peekTelemetryEnvelope()) };
 }
 
 /**
@@ -786,7 +859,7 @@ async function dryRunVerdict(
  * sent) but reports what the gates would say. Whatever fails while deciding,
  * it prints its own shape, with `send_failed`.
  */
-async function dryRun(fields: CompleteFields, reportId: string): Promise<void> {
+async function dryRun(fields: CompleteFields): Promise<void> {
   let verdict: { refusal: Refusal | null; envelope: TelemetryEnvelopePreview };
   try {
     verdict = await dryRunVerdict(fields);
@@ -795,7 +868,7 @@ async function dryRun(fields: CompleteFields, reportId: string): Promise<void> {
     verdict = { refusal: { reason: "send_failed" }, envelope: await peekTelemetryEnvelope() };
   }
   const { refusal, envelope } = verdict;
-  const report = buildPayload(fields, envelope, reportId);
+  const report = buildPayload(fields, envelope, DRY_RUN_REPORT_ID);
 
   if (isAgent()) {
     const result: DryRunResult = {
@@ -838,12 +911,12 @@ async function dryRun(fields: CompleteFields, reportId: string): Promise<void> {
 export async function feedback(options: FeedbackOptions, tree: CommandTree): Promise<void> {
   const root = rootOf(tree);
   const fields = validateShape(options, root);
-  // Generated before anything else so a dry run shows the id a send would carry.
-  const reportId = crypto.randomUUID();
 
   if (isAgent()) {
     const complete = requireFields(fields);
-    if (options.dryRun) return dryRun(complete, reportId);
+    if (options.dryRun) return dryRun(complete);
+    // Only a real send has an id; a dry run shows a placeholder.
+    const reportId = crypto.randomUUID();
     const refused = await gate(complete);
     if (refused) return printRefusal(refused);
     const envelope = await buildEnvelopeOrNull();
@@ -851,7 +924,8 @@ export async function feedback(options: FeedbackOptions, tree: CommandTree): Pro
     return printOutcome(await send(buildPayload(complete, envelope, reportId)), reportId);
   }
 
-  if (options.dryRun) return dryRun(await promptMissingFields(fields), reportId);
+  if (options.dryRun) return dryRun(await promptMissingFields(fields));
+  const reportId = crypto.randomUUID();
 
   const refused = await gate(fields);
   if (refused) return printRefusal(refused);

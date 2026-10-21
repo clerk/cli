@@ -16,7 +16,6 @@ import { DEFAULT_TELEMETRY_ENDPOINT, TELEMETRY_TIMEOUT_MS } from "./constants.ts
 import {
   ensureMachineUuid,
   getTelemetryDisabled,
-  getTelemetryNoticeShown,
   markTelemetryNoticeShown,
   peekMachineUuid,
   resolveProfile,
@@ -545,10 +544,12 @@ export function asPostedTelemetryEvent<E extends TelemetryEvent>(
 }
 
 /**
- * `accepted`: the endpoint answered 2xx. `rejected`: it answered anything
- * else. `disabled`: telemetry is off on this machine, so nothing was sent.
+ * `accepted`: the endpoint answered 2xx. `refused`: it answered 4xx, refusing
+ * the event itself, so the event was not stored. `rejected`: it answered
+ * anything else (a 5xx), which may have come after the event was stored.
+ * `disabled`: telemetry is off on this machine, so nothing was sent.
  */
-export type SendOutcome = "accepted" | "rejected" | "disabled";
+export type SendOutcome = "accepted" | "refused" | "rejected" | "disabled";
 
 /**
  * Wrap one event in `{ sdk, sdkv }`, print it at debug level (this is what
@@ -589,7 +590,7 @@ export async function sendTelemetryEvent(
 async function postTelemetryEvent(
   event: TelemetryEvent,
   options: { signal: AbortSignal; ignoreInterrupt?: boolean },
-): Promise<"accepted" | "rejected"> {
+): Promise<Exclude<SendOutcome, "disabled">> {
   const wrapped = asPostedTelemetryEvent(event);
   log.debug(`telemetry: event ${JSON.stringify(wrapped)}`);
 
@@ -603,29 +604,11 @@ async function postTelemetryEvent(
     bestEffort: true,
     ignoreInterrupt: options.ignoreInterrupt ?? false,
   });
-  return response.ok ? "accepted" : "rejected";
+  if (response.ok) return "accepted";
+  return response.status >= 400 && response.status < 500 ? "refused" : "rejected";
 }
 
 const TELEMETRY_NOTICE_LAST_LINE = "Nothing has been sent during this run.";
-
-/**
- * Whether this run still owes the one-time disclosure notice: never in CI,
- * and never once a machine has shown it. `clerk feedback --dry-run` asks this
- * to predict what a real run would do. {@link showTelemetryNoticeOnce} applies
- * the same rule without calling it: the same CI check, then a mark that reads
- * the flag itself, so the end-of-run flush pays one config read, not two. (`lib/fetch.ts` keeps
- * its own copy for the User-Agent, because importing this module there would
- * be a cycle.)
- */
-export async function isTelemetryNoticeOwed(): Promise<boolean> {
-  if (noticeExemptRun()) return false;
-  return !(await getTelemetryNoticeShown());
-}
-
-/** CI is exempt from the notice; the one place both the notice and the predicate read it. */
-function noticeExemptRun(): boolean {
-  return Boolean(process.env.CI);
-}
 
 /**
  * One-time stderr disclosure for humans and agents alike. Returns true when
@@ -641,10 +624,7 @@ function noticeExemptRun(): boolean {
 export async function showTelemetryNoticeOnce(
   lastLine: string = TELEMETRY_NOTICE_LAST_LINE,
 ): Promise<boolean> {
-  // Not the predicate above: this runs at the end of every command, and the
-  // mark below already reads the flag, so a separate read would be a second
-  // config read on every run.
-  if (noticeExemptRun()) return false;
+  if (process.env.CI) return false;
   if (!(await markTelemetryNoticeShown())) return false;
   log.blank();
   log.info(

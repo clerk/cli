@@ -6,12 +6,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { chmod, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProgram } from "../../cli-program.ts";
 import * as config from "../../lib/config.ts";
-import * as hostExecution from "../../lib/host-execution.ts";
 import { _resetInterruptState, beginInterrupt } from "../../lib/signals.ts";
 import * as telemetry from "../../lib/telemetry.ts";
 import { CURRENT_VERSION } from "../../lib/version.ts";
@@ -143,6 +142,15 @@ describe("resolveCommand", () => {
     ["/usr/local/bin/clerk users list", "users list"],
     ["./node_modules/.bin/clerk users list", "users list"],
     ["npx users list", null],
+    // The README's own spellings: a version or tag after the package name,
+    // and the runner's own flags before it.
+    ["npx -y clerk@latest init", "init"],
+    ["npx clerk@latest users list", "users list"],
+    ["bunx clerk@latest init", "init"],
+    ["pnpm dlx clerk@latest init", "init"],
+    ["npx --yes clerk users list", "users list"],
+    ["npx clerk@1.2.3 users list", "users list"],
+    ["npx -y users list", null],
     ["  clerk   users   list  ", "users list"],
     ["feedback", "feedback"],
     // A group with a default child is recorded as that child.
@@ -174,8 +182,19 @@ describe("resolveCommand", () => {
     ["auth", null],
     ["apps", null],
     ["clerk env", null],
-    // Leading global flags are not parsed (documented).
-    ["--mode agent users list", null],
+    // Global flags before the command are skipped, with the value of any that
+    // takes one, as Commander reads them from the root's own options.
+    ["--mode agent users list", "users list"],
+    ["--mode=agent users list", "users list"],
+    ["--verbose users list", "users list"],
+    ["--input-json @f users list", "users list"],
+    ["clerk --mode agent users list", "users list"],
+    ["npx clerk@latest --verbose users list", "users list"],
+    ["-v users list", "users list"],
+    // A flag the root does not know fails in Commander before any command runs.
+    ["--nosuch users list", null],
+    // A value-taking flag with nothing after it leaves no command.
+    ["--mode", null],
     ["", null],
     ["clerk", null],
     // `clerk help <command>` is real, though Commander answers it before any
@@ -225,6 +244,53 @@ describe("resolveCommand", () => {
       parent: null,
     };
     expect(resolveCommand(root, "users ls").path).toBe("users list");
+  });
+
+  // Commander dispatches a group's default child before it considers the
+  // group's own action or arguments (`_parseCommand`), so a group with all
+  // three is recorded as its default child. No group in the real tree has
+  // all three, hence a small tree built for the test.
+  describe("a group with its own action, its own argument and a default child", () => {
+    const node = (
+      name: string,
+      extra: Partial<CommandTree> & { commands?: CommandTree[] } = {},
+    ): CommandTree => ({
+      name: () => name,
+      aliases: () => [],
+      commands: [],
+      parent: null,
+      ...extra,
+    });
+    const withArgument = node("takes", { registeredArguments: [{}] });
+    const withoutArgument = node("plain");
+    const root = node("clerk", {
+      commands: [
+        node("grp", {
+          commands: [withArgument],
+          registeredArguments: [{}],
+          _actionHandler: () => {},
+          _defaultCommandName: "takes",
+        }),
+        node("strict", {
+          commands: [withoutArgument],
+          registeredArguments: [{}],
+          _actionHandler: () => {},
+          _defaultCommandName: "plain",
+        }),
+      ],
+    });
+
+    test.each([
+      // Bare: the default child runs, not the group's action.
+      ["grp", "grp takes"],
+      // An unknown word goes to the default child, which takes an argument.
+      ["grp foo", "grp takes"],
+      ["strict", "strict plain"],
+      // The default child takes no argument, so Commander rejects the extra word.
+      ["strict foo", null],
+    ])("%j → %j", (input, expected) => {
+      expect(resolveCommand(root, input).path).toBe(expected);
+    });
   });
 });
 
@@ -347,6 +413,18 @@ describe("gating", () => {
     expect((await run({ ...first, command: undefined })).sent).toBe(true);
   });
 
+  // An error code is matched without regard to case: `NOT_LINKED` and
+  // `not_linked` are the same code.
+  test("the repeat check treats an error code in capitals as the same code", async () => {
+    await readyToSend();
+    const first = { ...COMPLETE, command: "users list", errorCode: "not_linked" };
+    expect((await run(first)).sent).toBe(true);
+    expect(await run({ ...first, errorCode: "NOT_LINKED" })).toMatchObject({
+      sent: false,
+      reason: "rate_limited",
+    });
+  });
+
   // A send stopped before any POST (here by an opt-out) is not recorded; a
   // POST that was attempted is, whatever the endpoint answered (see "sending").
   test("a refused send is never recorded against the cap", async () => {
@@ -374,7 +452,9 @@ describe("sending", () => {
     expect(event!.payload.source).toBe("cli");
   });
 
-  test.each([[400], [500]])(
+  // A 5xx may have been stored before the server failed, so the report keeps
+  // its id, as a timeout does.
+  test.each([[500], [503]])(
     "a %i from the endpoint yields send_failed with the report id",
     async (status) => {
       await readyToSend();
@@ -388,6 +468,43 @@ describe("sending", () => {
       expect(result.report_id).toMatch(/^[0-9a-f-]{36}$/);
     },
   );
+
+  // A 4xx is the endpoint refusing the event itself, so nothing was stored:
+  // there is no report to remove, and a corrected retry about the same
+  // command and code must not be blocked. It still counts toward the daily
+  // total, so a retry loop against a server that refuses everything stays
+  // bounded.
+  describe("a 4xx from the endpoint", () => {
+    const report = { ...COMPLETE, command: "users list", errorCode: "boom" };
+
+    test.each([[400], [413], [422]])("%i yields send_failed with no report id", async (status) => {
+      await readyToSend();
+      respondWith = () => new Response("refused", { status });
+      expect(await run(report)).toEqual({
+        sent: false,
+        reason: "send_failed",
+        fallback: GITHUB_ISSUES_URL,
+      });
+    });
+
+    test("does not block a retry with the same command and code", async () => {
+      await readyToSend();
+      respondWith = () => new Response("refused", { status: 400 });
+      await run(report);
+      respondWith = () => new Response("{}");
+      expect((await run(report)).sent).toBe(true);
+      expect(feedbackEvents()).toHaveLength(2);
+    });
+
+    test("still counts toward the daily total", async () => {
+      await readyToSend();
+      await recordSends(FEEDBACK_DAILY_LIMIT - 1);
+      respondWith = () => new Response("refused", { status: 400 });
+      await run(report);
+      respondWith = () => new Response("{}");
+      expect(await run(COMPLETE)).toMatchObject({ sent: false, reason: "rate_limited" });
+    });
+  });
 
   test("a network failure yields send_failed with the report id and never throws", async () => {
     await readyToSend();
@@ -627,6 +744,12 @@ describe("sending", () => {
     expect(feedbackEvents()[0]!.payload.command).toBe("users list");
   });
 
+  test("--error-code is sent in lowercase", async () => {
+    await readyToSend();
+    await run({ ...COMPLETE, errorCode: "NOT_LINKED" });
+    expect(feedbackEvents()[0]!.payload.error_code).toBe("not_linked");
+  });
+
   test("--verbose prints the CLI_FEEDBACK event before the POST", async () => {
     await readyToSend();
     setLogLevel("debug");
@@ -750,13 +873,15 @@ describe("--dry-run", () => {
     return JSON.parse(captured.out) as DryRun;
   };
 
-  test("when telemetry is on: would_send true, the report with its id, and nothing posted", async () => {
+  // No id is shown, because none exists until a report is sent: an id from a
+  // dry run would be one nobody could ever ask Clerk to remove.
+  test("when telemetry is on: would_send true, the report with a placeholder id, and nothing posted", async () => {
     process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
     const out = await dryRun();
     expect(out.dry_run).toBe(true);
     expect(out.would_send).toBe(true);
     expect(out.reason).toBeUndefined();
-    expect(out.event.payload.report_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(out.event.payload.report_id).toBe("<assigned when sent>");
     expect(out.event.payload.goal).toBe(COMPLETE.goal);
     expect(out.event.payload.machine_uuid).toMatch(/^[0-9a-f-]{36}$/);
     expect(posted).toHaveLength(0);
@@ -776,7 +901,7 @@ describe("--dry-run", () => {
     const out = await dryRun();
     expect(out.would_send).toBe(false);
     expect(out.reason).toBe("telemetry_disabled");
-    expect(out.event.payload.report_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(out.event.payload.report_id).toBe("<assigned when sent>");
     expect(out.event.payload.machine_uuid).toBeNull();
     expect((await readConfig()).machineUuid).toBeUndefined();
     expect(posted).toHaveLength(0);
@@ -800,42 +925,26 @@ describe("--dry-run", () => {
     expect(out.reason).toBe("rate_limited");
   });
 
-  // `would_send` must be false in exactly the states where a real run would
-  // return `send_failed`: the machine id cannot be created, or the first-run
-  // notice could not be recorded.
-  test("reports send_failed when the machine id cannot be created (read-only config dir)", async () => {
+  // The dry run predicts only the opt-out and the rate limit. A config
+  // directory that cannot be written still fails a real run (`send_failed`),
+  // but the dry run does not try to foresee it: it shows the report, with no
+  // machine id, and says a real run would send.
+  test("a config directory that cannot be written still prints the report, with no machine id", async () => {
     process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
     await chmod(configDir, 0o555);
     try {
       const out = await dryRun();
-      expect(out.would_send).toBe(false);
-      expect(out.reason).toBe("send_failed");
+      expect(out.would_send).toBe(true);
+      expect(out.reason).toBeUndefined();
       expect(out.event.payload.machine_uuid).toBeNull();
     } finally {
       await chmod(configDir, 0o755);
     }
   });
 
-  // The id exists, so building the envelope writes nothing; the config file
-  // itself is read-only, so marking the notice would fail (a read-only
-  // directory alone does not stop rewriting a file that already exists).
-  test("reports send_failed when the notice is still owed and the config file cannot be written", async () => {
-    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
-    await ensureMachineUuid();
-    const configFile = join(configDir, "config.json");
-    await chmod(configFile, 0o444);
-    try {
-      const out = await dryRun();
-      expect(out.would_send).toBe(false);
-      expect(out.reason).toBe("send_failed");
-      expect(out.event.payload.machine_uuid).toMatch(/^[0-9a-f-]{36}$/);
-    } finally {
-      await chmod(configFile, 0o644);
-    }
-  });
-
-  // The writability probe must not write: a rewrite would race a concurrent
-  // `clerk auth login` and would drop keys this version does not know.
+  // A dry run must not rewrite the config file: a rewrite would race a
+  // concurrent `clerk auth login` and would drop keys this version does not
+  // know.
   test("never rewrites the config file, keys it does not know included", async () => {
     process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
     await ensureMachineUuid();
@@ -849,55 +958,6 @@ describe("--dry-run", () => {
     expect((await dryRun()).would_send).toBe(true);
     expect(await Bun.file(configFile).text()).toBe(withUnknownKey);
     expect((await stat(configFile)).mtimeMs).toBe(before.mtimeMs);
-  });
-
-  // A sandbox can deny writes while the permission bits allow them, so the
-  // probe writes a temporary file next to the config file (never the config
-  // file itself) and removes it.
-  test("reports send_failed when a real write next to the config file is denied", async () => {
-    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
-    await ensureMachineUuid();
-    const probe = spyOn(hostExecution, "probeDirectoryWrite").mockImplementation(
-      async (label, dir) => ({
-        label,
-        path: join(dir, ".clerk-write-probe"),
-        error: "EPERM: operation not permitted",
-      }),
-    );
-    try {
-      const out = await dryRun();
-      expect(out.would_send).toBe(false);
-      expect(out.reason).toBe("send_failed");
-      expect(probe).toHaveBeenCalledWith(expect.any(String), configDir);
-    } finally {
-      probe.mockRestore();
-    }
-  });
-
-  test("the write probe leaves nothing behind in the config directory", async () => {
-    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
-    await ensureMachineUuid();
-    expect((await dryRun()).would_send).toBe(true);
-    expect(
-      (await readdir(configDir)).filter((name) => name.startsWith(".clerk-write-probe")),
-    ).toEqual([]);
-  });
-
-  // The dry run asks the same question the first-run notice asks, so the two
-  // cannot drift.
-  test("decides whether the notice is owed with the telemetry module's own predicate", async () => {
-    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
-    await ensureMachineUuid();
-    const configFile = join(configDir, "config.json");
-    await chmod(configFile, 0o444);
-    const owed = spyOn(telemetry, "isTelemetryNoticeOwed").mockImplementation(async () => false);
-    try {
-      expect((await dryRun()).would_send).toBe(true);
-      expect(owed).toHaveBeenCalled();
-    } finally {
-      owed.mockRestore();
-      await chmod(configFile, 0o644);
-    }
   });
 
   // Whatever fails inside a dry run, it still prints the dry-run shape.
@@ -918,24 +978,6 @@ describe("--dry-run", () => {
     expect(posted).toHaveLength(0);
   });
 
-  // A failure past the gates (here, reading whether the notice is owed)
-  // reaches the dry run's own catch rather than a gate's.
-  test("an error past the gates still prints the dry-run shape, with send_failed", async () => {
-    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
-    const owed = spyOn(telemetry, "isTelemetryNoticeOwed").mockImplementation(async () => {
-      throw new Error("EACCES: config unreadable");
-    });
-    try {
-      const out = await dryRun();
-      expect(out.dry_run).toBe(true);
-      expect(out.would_send).toBe(false);
-      expect(out.reason).toBe("send_failed");
-      expect(out.event.payload.goal).toBe(COMPLETE.goal);
-    } finally {
-      owed.mockRestore();
-    }
-  });
-
   // The preview is the event as posted, envelope wrapper included.
   test("shows the full event: sdk, CLI version, event name and payload", async () => {
     process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
@@ -944,19 +986,6 @@ describe("--dry-run", () => {
     expect(out.event.sdkv).toBe(CURRENT_VERSION);
     expect(out.event.event).toBe(FEEDBACK_EVENT);
     expect(Object.keys(out.event).sort()).toEqual(["event", "payload", "sdk", "sdkv"]);
-  });
-
-  test("would_send stays true in CI with an unwritable config file, where no notice is ever attempted", async () => {
-    process.env.CLERK_TELEMETRY_URL = CAPTURE_URL;
-    process.env.CI = "true";
-    await ensureMachineUuid();
-    const configFile = join(configDir, "config.json");
-    await chmod(configFile, 0o444);
-    try {
-      expect((await dryRun()).would_send).toBe(true);
-    } finally {
-      await chmod(configFile, 0o644);
-    }
   });
 });
 

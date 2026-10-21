@@ -5,7 +5,7 @@
  * tokens with known prefixes, private key blocks, `Authorization` headers and
  * Bearer or Basic tokens, credentials in URLs, and a value assigned to a
  * secret-looking name on one line (`CLERK_SECRET_KEY=…`, `password: …`,
- * `--token …`). It also replaces email addresses and home-directory paths.
+ * `--token …`), and curl's `-u user:password`. It also replaces email addresses and home-directory paths.
  * It does not understand structure, so it misses values that span lines,
  * values in structured config files (YAML blocks, pretty-printed JSON),
  * passwords with spaces in them, and labels wrapped in Markdown formatting
@@ -38,8 +38,9 @@
  *   same scan, and the words of a BEGIN or END header are bounded.
  *
  * The timing tests in `redact.test.ts` are the backstop: each adversarial
- * shape runs at two sizes and must take no more than about twice as long
- * when the input doubles.
+ * shape runs at half a megabyte and at one megabyte, and the larger run must
+ * finish in under a second and take less than three times as long as the
+ * smaller (linear time about doubles; quadratic time quadruples).
  *
  * ## The passes, in order
  *
@@ -57,18 +58,22 @@
  *    `name: value` (a quoted value, or an unquoted one up to the first
  *    whitespace or double quote, so the rest of a one-line log survives). A
  *    name is secret-looking when it contains a secret word (`SECRET`,
- *    `TOKEN`, `PASSWORD`, `PASSWD`, `API_KEY`, `PRIVATE_KEY`,
- *    `ENCRYPTION_KEY`, `AUTHORIZATION`, or `AUTH`, `PASS` or `PWD` as a whole
+ *    `TOKEN`, `PASSWORD`, `PASSWD`, `CREDENTIAL`, `API_KEY`, `PRIVATE_KEY`,
+ *    `ENCRYPTION_KEY`, `ACCESS_KEY`, `SIGNING_KEY`, `SESSION_KEY`,
+ *    `AUTHORIZATION`, or `AUTH`, `PASS` or `PWD` as a whole
  *    segment, camelCase included (`dbPass`, `clientAuth`); the shell's
  *    `PWD=/path` is left alone) or is
  *    one of the MCP server's spaced names (`api key`, `access token`,
  *    `refresh token`, `auth token`, `client secret`, `secret key`,
  *    `secret access key`). The separator may also be `:=`, `=>`, `==` or
  *    `===`. A value that is a `Bearer` or `Basic` scheme takes
- *    the token after it too. No separator crosses a line break.
+ *    the token after it too. No separator crosses a line break. Then, on a
+ *    line that runs `curl`, the value of `-u` or `--user` when it holds a
+ *    colon (`user:password`), whole; only on such a line, so
+ *    `docker run -u 1000:1000` keeps its ids.
  * 5. Known key prefixes: the MCP server's list, then the CLI's `ak_`
  *    Platform API keys, Clerk M2M (`mt_`) and OAuth access (`oat_`) tokens,
- *    and `sk-` keys (OpenAI, Anthropic). After the name
+ *    Clerk dev-browser tokens (`dvb_`), and `sk-` keys (OpenAI, Anthropic). After the name
  *    pass so a value already replaced is not counted twice.
  * 6. Credentials in URLs (`scheme://user:password@host`): the credential
  *    goes, scheme and host stay.
@@ -104,14 +109,18 @@
  * - What the scrubber does not understand: a value that spans lines, a value
  *   in a YAML block or nested JSON under a secret-looking key, a password
  *   with spaces (`password: correct horse` keeps `horse`), a password with a
- *   double quote in it, and a label wrapped in Markdown formatting.
+ *   double quote in it, a label wrapped in Markdown formatting, and a
+ *   password attached to a short flag (`mysql -pS3cret`).
  * - Two truncated quoted values on one line: the second's opening quote
  *   closes the first, and the second value survives.
  * - A URL password longer than {@link URL_PASSWORD_MAX_LENGTH} characters
  *   keeps its username; the email pass still removes the password.
  * - A home directory whose user name contains a space keeps the second word.
  * - Over-matches in the safe direction: any name containing `TOKEN`
- *   (`max_tokens=4096`), a user segment in a URL with no password
+ *   (`max_tokens=4096`) or `CREDENTIAL` (fetch's `credentials: "include"`,
+ *   git's `credential.helper=store`), a `-u x:y` later on a line that runs
+ *   curl even when another command owns it (`curl … | docker run -u 1:1`),
+ *   a user segment in a URL with no password
  *   (`https://git@github.com/x`), a URL with a port and an email in its query
  *   string, and prose naming the `Authorization` header, which loses the rest
  *   of its line.
@@ -243,6 +252,10 @@ function isCredential(scheme: string, value: string): boolean {
 
 // ── Pass 4: name and value ──────────────────────────────────────────────────
 
+/** The `<WORD> KEY` names, with `joiner` (or nothing, as in camelCase) between the halves. */
+const keyWord = (joiner: string): string =>
+  String.raw`(?:API|PRIVATE|ENCRYPTION|ACCESS|SIGNING|SESSION)${joiner}?KEY`;
+
 /**
  * A word that makes a name secret-looking wherever it appears in the name
  * (`CLERK_SECRET_KEY`, `clerkApiKey`, `DATABASE_PASSWORD`, `--db-password`).
@@ -251,7 +264,7 @@ function isCredential(scheme: string, value: string): boolean {
  * like: `_` or `-` in a bare name or a flag, a space too inside a quoted name.
  */
 const secretWord = (joiner: string): string =>
-  String.raw`(?:SECRET|TOKEN|PASSWORD|PASSWD|API${joiner}?KEY|PRIVATE${joiner}?KEY|ENCRYPTION${joiner}?KEY|AUTHORIZATION|(?<![A-Za-z0-9])(?:AUTH|PASS|PWD)(?![A-Za-z0-9]))`;
+  String.raw`(?:SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|${keyWord(joiner)}|AUTHORIZATION|(?<![A-Za-z0-9])(?:AUTH|PASS|PWD)(?![A-Za-z0-9]))`;
 
 /**
  * A run of name characters, taken atomically: the lookahead captures the
@@ -334,6 +347,23 @@ const camelSecretName = (chars: string, group: string): string =>
  * JSON field or a bare name, with the same separators and value rules as
  * {@link NAME_VALUE}. A value already replaced by the first half is left alone.
  */
+/**
+ * A line that runs curl, from the word `curl` to the end of the line. The
+ * matches never overlap, so {@link CURL_USER} reads each character once.
+ */
+const CURL_LINE = /\bcurl\b[^\r\n]*/g;
+
+/**
+ * curl's `-u user:password` (also `--user`, `--user=` and `-uuser:password`):
+ * the value is one shell word. The callback keeps a value with no colon,
+ * since curl then asks for the password. `--user-agent` is not matched: the
+ * value cannot start with `-`.
+ */
+const CURL_USER = new RegExp(
+  String.raw`(?<![^\s])(?<flag>-u|--user)(?<sep>=|[ \t]+|)(?!-)(?<value>${SHELL_WORD})`,
+  "g",
+);
+
 const CAMEL_NAME_VALUE = new RegExp(
   String.raw`(?<![A-Za-z0-9_.-])(?:` +
     String.raw`(?=--)${camelSecretName("[A-Za-z0-9_-]", "flag")}\k<flag>(?<flagSep>=|[ \t]+)(?!-)(?<flagValue>${SCHEME_VALUE}|${SHELL_WORD})` +
@@ -380,11 +410,14 @@ const UPSTREAM_PREFIX_PATTERNS = [
  * the body is permissive); Clerk M2M tokens (`mt_`) and OAuth access tokens
  * (`oat_`), whose prefixes `@clerk/backend` defines without a body format, so
  * the body is 16 or more letters and digits, long enough to leave identifiers
- * such as `mt_rand` alone; and `sk-` keys as OpenAI and Anthropic issue them.
+ * such as `mt_rand` alone; Clerk dev-browser tokens (`dvb_` and a 27-character
+ * id, or 64 hex digits), the `__clerk_db_jwt` value of a development
+ * instance; and `sk-` keys as OpenAI and Anthropic issue them.
  */
 const CLI_PREFIX_PATTERNS = [
   /\bak_[A-Za-z0-9_-]{8,}\b/g,
   /\b(?:mt|oat)_[A-Za-z0-9]{16,}\b/g,
+  /\bdvb_[A-Za-z0-9]{20,}\b/g,
   /\bsk-[A-Za-z0-9_-]{20,}/g,
 ];
 
@@ -530,6 +563,13 @@ export function redactText(text: string, options: { homedir?: string } = {}): Re
   };
   out = out.replace(NAME_VALUE, nameValue);
   out = out.replace(CAMEL_NAME_VALUE, nameValue);
+  out = out.replace(CURL_LINE, (line) =>
+    line.replace(CURL_USER, (match, flag: string, sep: string, value: string) => {
+      if (!value.includes(":") || stripQuotes(value).startsWith(REDACTED)) return match;
+      redactions += 1;
+      return `${flag}${sep}${REDACTED}`;
+    }),
+  );
 
   for (const pattern of UPSTREAM_PREFIX_PATTERNS) out = out.replace(pattern, count);
   for (const pattern of CLI_PREFIX_PATTERNS) out = out.replace(pattern, count);

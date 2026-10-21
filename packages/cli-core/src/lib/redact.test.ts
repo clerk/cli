@@ -685,6 +685,85 @@ describe("Clerk machine tokens", () => {
   );
 });
 
+// Clerk's dev-browser token (the `__clerk_db_jwt` value in development):
+// `dvb_` and an id, 27 letters and digits, or 64 hex digits in older ones.
+// Made-up values of the real shapes, assembled at runtime.
+describe("Clerk dev-browser tokens", () => {
+  const DVB = ["dvb_", "2nFq8LmW4xRtY6pZ0aKcVb3HsJe"].join("");
+  const DVB_HEX = ["dvb_", "9f2c4e6a8b0d1f3e5a7c9b1d3f5e7a9c0b2d4f6e8a1c3e5b7d9f0a2c4e6b8d1f"].join(
+    "",
+  );
+  test.each([
+    [`dev browser ${DVB} expired`, `dev browser ${REDACTED} expired`],
+    [`dev browser ${DVB_HEX} expired`, `dev browser ${REDACTED} expired`],
+    [`https://x.dev/?__clerk_db_jwt=${DVB}&a=1`, `https://x.dev/?__clerk_db_jwt=${REDACTED}&a=1`],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+
+  test("a value of 27 characters is the real length", () => {
+    expect(DVB.length - "dvb_".length).toBe(27);
+  });
+
+  test.each([["dvb_short"], ["the dvb_ prefix"]])("%j is left alone", (input) => {
+    expect(redact(input)).toEqual({ text: input, redactions: 0 });
+  });
+});
+
+// More secret words, with the same joiners as API_KEY: `_` or `-`, nothing in
+// camelCase, a space inside a quoted JSON name.
+describe("CREDENTIAL, ACCESS_KEY, SIGNING_KEY and SESSION_KEY", () => {
+  test.each([
+    ["DB_CREDENTIAL=plainvalue1", `DB_CREDENTIAL=${REDACTED}`],
+    ["GOOGLE_CREDENTIALS: plainvalue1", `GOOGLE_CREDENTIALS: ${REDACTED}`],
+    ["AWS_ACCESS_KEY=plainvalue1", `AWS_ACCESS_KEY=${REDACTED}`],
+    ["awsAccessKey=plainvalue1", `awsAccessKey=${REDACTED}`],
+    ["JWT_SIGNING_KEY=plainvalue1", `JWT_SIGNING_KEY=${REDACTED}`],
+    ['"signingKey": "plainvalue1"', `"signingKey": ${REDACTED}`],
+    ['"signing key": "plainvalue1"', `"signing key": ${REDACTED}`],
+    ["SESSION_KEY=plainvalue1", `SESSION_KEY=${REDACTED}`],
+    ["--session-key plainvalue1", `--session-key ${REDACTED}`],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+
+  test.each([["session started"], ["access granted, key rotated"], ["signing in"]])(
+    "%j is left alone",
+    (input) => {
+      expect(redact(input)).toEqual({ text: input, redactions: 0 });
+    },
+  );
+});
+
+// curl's `-u`/`--user` takes `user:password`; the whole value goes. Only on a
+// line that runs curl, so `docker run -u 1000:1000` keeps its ids, and only
+// with a colon: without one, curl asks for the password.
+describe("curl user credentials", () => {
+  test.each([
+    ["curl -u alice:hunter2 https://x.dev", `curl -u ${REDACTED} https://x.dev`],
+    ["curl --user alice:hunter2 https://x.dev", `curl --user ${REDACTED} https://x.dev`],
+    ["curl --user=alice:hunter2 https://x.dev", `curl --user=${REDACTED} https://x.dev`],
+    ["curl -ualice:hunter2 https://x.dev", `curl -u${REDACTED} https://x.dev`],
+    ['curl -s -u "alice:correct horse" https://x.dev', `curl -s -u ${REDACTED} https://x.dev`],
+    [
+      "$ sudo curl -X POST -u bob:pw https://x.dev",
+      `$ sudo curl -X POST -u ${REDACTED} https://x.dev`,
+    ],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+
+  test.each([
+    ["docker run -u 1000:1000 node"],
+    ["curl -u alice https://x.dev"],
+    ["curl --user-agent a:b https://x.dev"],
+    // curl on an earlier line does not reach a later one.
+    ["curl https://x.dev\ndocker run -u 1000:1000 node"],
+  ])("%j is left alone", (input) => {
+    expect(redact(input)).toEqual({ text: input, redactions: 0 });
+  });
+});
+
 // Cookie headers carry session tokens: treated like Authorization.
 describe("Cookie and Set-Cookie headers", () => {
   test.each([
@@ -758,6 +837,26 @@ describe("PASS and PWD as secret words", () => {
 
 describe("known limitations", () => {
   // Best-effort by design: these are the shapes the scrubber does not understand.
+  test("a password attached to mysql's -p keeps the password", () => {
+    expect(redact("mysql -u root -pS3cretPw db")).toEqual({
+      text: "mysql -u root -pS3cretPw db",
+      redactions: 0,
+    });
+  });
+
+  // Over-matches in the safe direction: a name containing CREDENTIAL that
+  // holds no secret loses its value too.
+  test.each([
+    ['fetch(url, { credentials: "include" })', `fetch(url, { credentials: ${REDACTED} })`],
+    ["git config credential.helper=store", `git config credential.helper=${REDACTED}`],
+    [
+      "curl -s https://x.dev | docker run -u 1000:1000 node",
+      `curl -s https://x.dev | docker run -u ${REDACTED} node`,
+    ],
+  ])("over-match %j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+
   test("a password with spaces keeps every word after the first", () => {
     expect(redact("DB_PASSWORD=correct horse battery staple")).toEqual({
       text: `DB_PASSWORD=${REDACTED} horse battery staple`,
@@ -908,6 +1007,12 @@ describe("large pastes stay linear", () => {
     ["a camelCase secret word repeated with no separator", (n) => fill("dbPass", n)],
     ["camelCase secret names each without a separator", (n) => fill("aPass ", n)],
     ["camelCase flag run with no value", (n) => fill("--dbPass ", n)],
+    ["dev-browser prefixes too short to be tokens", (n) => fill("dvb_abc ", n)],
+    ["a CREDENTIAL word repeated with no separator", (n) => fill("credential", n)],
+    ["curl repeated with a user flag and no value", (n) => fill("curl -u ", n)],
+    ["curl user flags without a colon on one line", (n) => "curl " + fill("-u a ", n)],
+    ["curl with an unterminated quoted user", (n) => 'curl -u "' + fill("a:", n)],
+    ["curl words with no user flag", (n) => fill("curl x ", n)],
     ["one long camelCase flag name", (n) => "--" + fill("dbPass-", n)],
     ["Authorization headers on one line", (n) => fill("Authorization: ", n)],
     ["Bearer words", (n) => fill("Bearer ", n)],
