@@ -1,15 +1,31 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { log, setLogLevel, getLogLevel, pushPrefix, popPrefix, type LogLevel } from "./log.ts";
+import { dim } from "./color.ts";
+import { _resetMode, setMode } from "../mode.ts";
 import { useCaptureLog } from "../test/lib/stubs.ts";
 
 let savedLevel: LogLevel;
+// A developer's own NO_COLOR or FORCE_COLOR would decide what these tests see.
+const COLOR_VARS = ["NO_COLOR", "FORCE_COLOR"] as const;
+let savedColor: Partial<Record<(typeof COLOR_VARS)[number], string>>;
 
 beforeEach(() => {
   savedLevel = getLogLevel();
+  savedColor = {};
+  for (const key of COLOR_VARS) {
+    if (process.env[key] !== undefined) savedColor[key] = process.env[key];
+    delete process.env[key];
+  }
 });
 
 afterEach(() => {
   setLogLevel(savedLevel);
+  _resetMode();
+  for (const key of COLOR_VARS) {
+    const saved = savedColor[key];
+    if (saved === undefined) delete process.env[key];
+    else process.env[key] = saved;
+  }
 });
 
 describe("log levels", () => {
@@ -88,6 +104,7 @@ describe("withTag", () => {
   });
 
   test("preserves outer color after dim tag", () => {
+    setMode("human");
     const tagged = log.withTag("api");
     tagged.error("broken");
     expect(captured.stderr).toHaveLength(1);
@@ -101,6 +118,11 @@ describe("withTag", () => {
 
 describe("inline highlighting", () => {
   const captured = useCaptureLog();
+
+  // Styling only happens for humans; pinned so the runner's TTY doesn't decide.
+  beforeEach(() => {
+    setMode("human");
+  });
 
   test("backtick spans are highlighted in cyan", () => {
     log.info("Run `clerk link` to continue");
@@ -144,5 +166,69 @@ describe("raw", () => {
     log.raw(payload);
     expect(captured.stderr.length).toBe(3);
     expect(captured.stderr.every((line) => line === payload)).toBe(true);
+  });
+});
+
+describe("agent mode", () => {
+  const captured = useCaptureLog();
+
+  function styledCalls() {
+    log.info(dim("x"));
+    log.info("use `clerk`");
+    log.warn("w");
+    log.withTag("api").info("tagged");
+    pushPrefix();
+    log.info("in gutter");
+    log.blank();
+    popPrefix();
+  }
+
+  test("writes no escape codes", () => {
+    setMode("agent");
+    styledCalls();
+    expect(captured.stderr).toEqual(["x", "use `clerk`", "w", "[api] tagged", "│  in gutter", "│"]);
+  });
+
+  test("humans still get styled output", () => {
+    setMode("human");
+    styledCalls();
+    expect(captured.stderr.every((line) => line.includes("\x1b["))).toBe(true);
+  });
+
+  test("NO_COLOR gives humans plain output", () => {
+    setMode("human");
+    const saved = process.env.NO_COLOR;
+    process.env.NO_COLOR = "1";
+    try {
+      styledCalls();
+    } finally {
+      if (saved === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = saved;
+    }
+    expect(captured.stderr).toEqual(["x", "use `clerk`", "w", "[api] tagged", "│  in gutter", "│"]);
+  });
+
+  test("data passes through unaltered", () => {
+    setMode("agent");
+    const payload = JSON.stringify(
+      [{ first_name: "Eve\x10\x90\x9b\x9d" }, { first_name: "Bob" }],
+      null,
+      2,
+    );
+    log.data(payload);
+    expect(captured.stdout).toEqual([payload]);
+  });
+
+  test("strips SGR with colon-separated parameters too", () => {
+    setMode("agent");
+    log.info("\x1b[38:2::255:0:0mred\x1b[0m and \x1b[4:3mcurly\x1b[0m");
+    expect(captured.stderr).toEqual(["red and curly"]);
+  });
+
+  test("keeps user text that contains C1 bytes or a lone ESC", () => {
+    setMode("agent");
+    log.warn("Skipped (Eve\x90): taken\nSkipped (Bob): taken");
+    log.info("\x1b and");
+    expect(captured.stderr).toEqual(["Skipped (Eve\x90): taken\nSkipped (Bob): taken", "\x1b and"]);
   });
 });

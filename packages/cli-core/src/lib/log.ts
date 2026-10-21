@@ -1,4 +1,5 @@
-import { dim, green, red, yellow } from "./color.ts";
+import { isHuman } from "../mode.ts";
+import { colorDisabled, dim, green, red, yellow } from "./color.ts";
 
 // ── Log level ────────────────────────────────────────────────────────────
 
@@ -138,13 +139,30 @@ export function setActiveCapture(captured: CapturedLogs | null): void {
   activeCapture = captured;
 }
 
+/**
+ * Our styling (color.ts, highlight(), formatTag(), the gutter) is all SGR.
+ * `:` too: a truecolor or underline-style SGR may separate its parameters so.
+ */
+const SGR = new RegExp(String.raw`\x1b\[[0-9:;]*m`, "g");
+
+/**
+ * Drops our styling for agents and NO_COLOR. Only SGR is removed: a broader
+ * strip would treat C1 bytes in user data (e.g. a name) as escape starts and
+ * swallow the rest of the message.
+ */
+export function plain(msg: string): string {
+  return isHuman() && !colorDisabled() ? msg : msg.replace(SGR, "");
+}
+
 function writeln(stream: NodeJS.WriteStream, channel: "stdout" | "stderr", msg: string) {
+  // stdout carries data (JSON, raw API bodies) that must reach the reader unaltered.
+  const text = channel === "stderr" ? plain(msg) : msg;
   if (activeCapture) {
-    activeCapture[channel].push(msg);
+    activeCapture[channel].push(text);
     return;
   }
-  if (!shouldWrite(channel, msg)) return;
-  stream.write(msg + "\n");
+  if (!shouldWrite(channel, text)) return;
+  stream.write(text + "\n");
 }
 
 // ── Tagged child logger ──────────────────────────────────────────────────
@@ -198,7 +216,7 @@ function createLogger(tag?: string): Logger {
     },
     /** Blank line to stderr. Preserves pipe prefix inside intro/outro flow. */
     blank() {
-      const prefix = applyPrefix("");
+      const prefix = plain(applyPrefix(""));
       if (activeCapture) {
         activeCapture.stderr.push(prefix);
       } else {

@@ -8,7 +8,17 @@
  * `mode.ts` has no way to clear a forced mode once the file is done.
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+  spyOn,
+} from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -42,8 +52,12 @@ mock.module("../../lib/prompts.ts", () => ({
 }));
 
 const { run } = await import("./run.ts");
+const { terminal } = await import("./lib/terminal.ts");
+// The prompts are stubs; whether this process has a terminal is a test of its own.
+const terminalAvailable = spyOn(terminal, "available");
 const { UserAbortError } = await import("../../lib/errors.ts");
 const { _setConfigDir } = await import("../../lib/config.ts");
+const { listRuns, sha256File, startRun } = await import("./lib/run-store.ts");
 
 const captured = useCaptureLog();
 
@@ -72,6 +86,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  terminalAvailable.mockRestore();
   if (originalMode === undefined) delete process.env.CLERK_MODE;
   else process.env.CLERK_MODE = originalMode;
   globalThis.fetch = originalFetch;
@@ -82,6 +97,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  terminalAvailable.mockReturnValue(true);
   requests = [];
   confirmAnswer = true;
   instanceSettings = undefined;
@@ -125,6 +141,25 @@ const created = () =>
 
 const importOptions = { input: "export.json", source: "clerk", secretKey: "sk_test_x" };
 
+// A yes at the prompt is consent to this run, so the retry it suggests runs
+// as printed, like `runs <id>`'s continue.
+test("after a yes at the prompt, the suggested retry carries --yes", async () => {
+  const clerk = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const body = typeof init?.body === "string" ? init.body : "";
+    return init?.method === "POST" && body.includes('"u2"')
+      ? Response.json(
+          { errors: [{ message: "taken", code: "form_identifier_exists" }] },
+          { status: 422 },
+        )
+      : clerk(input, init);
+  }) as typeof fetch;
+
+  await run(importOptions);
+
+  expect(Bun.stripANSI(captured.err)).toMatch(/--yes` to retry them/);
+});
+
 describe("prompts for what was not passed", () => {
   test("bare `clerk migrate import` asks for the file, then the source, then imports", async () => {
     await run({ secretKey: "sk_test_x" });
@@ -140,6 +175,43 @@ describe("prompts for what was not passed", () => {
     expect(mockText).not.toHaveBeenCalled();
     expect(mockSelect).not.toHaveBeenCalled();
   });
+
+  // The envelope names the source, so asking would only invite a wrong answer.
+  test("does not ask for a source when the file names its own", async () => {
+    const exportRun = startRun(runsDir(), {
+      kind: "export",
+      target: { platform: "clerk" },
+      source: "clerk",
+    });
+    const file = path.join(exportRun.dir, "export.json");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        clerkMigrate: 1,
+        source: "clerk",
+        exportedAt: "2026-09-01T00:00:00.000Z",
+        runId: exportRun.record.id,
+        users: EXPORT,
+      }),
+    );
+    exportRun.update({ file: { path: file, sha256: sha256File(file) } });
+    exportRun.finish();
+
+    await run({ input: exportRun.record.id, secretKey: "sk_test_x" });
+
+    expect(mockSelect).not.toHaveBeenCalled();
+    expect(created()).toHaveLength(2);
+  });
+});
+
+// `CLERK_MODE=human` with no terminal: the prompt would fail to open one and spin.
+test("with no terminal, refuses for consent rather than prompting", async () => {
+  terminalAvailable.mockReturnValue(false);
+
+  await expect(run(importOptions)).rejects.toThrow(/--yes/);
+
+  expect(confirmMessages).toEqual([]);
+  expect(requests.some((r) => r.url.endsWith("/v1/users") && r.method === "POST")).toBe(false);
 });
 
 describe("consent", () => {
@@ -168,7 +240,7 @@ describe("consent", () => {
     await expect(run(importOptions)).rejects.toThrow(UserAbortError);
 
     expect(created()).toHaveLength(0);
-    expect(fs.existsSync(runsDir())).toBe(false);
+    expect(listRuns(runsDir())).toHaveLength(0);
   });
 
   test("--yes does not ask", async () => {
