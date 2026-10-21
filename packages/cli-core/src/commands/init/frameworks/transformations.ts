@@ -53,22 +53,61 @@ export function insertAfterLastImport(source: string, snippet: string): string {
   return source.slice(0, lineEnd + 1) + snippet + source.slice(lineEnd + 1);
 }
 
-/** Whether an import statement binds a runtime `Suspense` (not type-only, not aliased away). */
-function bindsSuspense(statement: string): boolean {
-  if (/^\s*import\s+type\b/.test(statement)) return false;
-  const named = /\{([^}]*)\}/.exec(statement)?.[1] ?? "";
-  return named
+/**
+ * How a comment-masked React import binds `Suspense`: as a value, type-only, or not at all.
+ * An alias like `Suspense as Pending` binds `Pending`, not `Suspense`.
+ */
+function suspenseBinding(masked: string): "value" | "type" | undefined {
+  const specifiers = (/\{([^}]*)\}/.exec(masked)?.[1] ?? "")
     .split(",")
-    .map((specifier) => specifier.trim())
-    .some(
-      (specifier) => specifier === "Suspense" || /^(?!type\s)\S+\s+as\s+Suspense$/.test(specifier),
-    );
+    .map((specifier) => specifier.trim());
+  if (specifiers.includes("type Suspense")) return "type";
+  const named =
+    specifiers.includes("Suspense") ||
+    specifiers.some((specifier) => /^(?!type\s)\S+\s+as\s+Suspense$/.test(specifier));
+  if (!named) return undefined;
+  return /^\s*import\s+type\b/.test(masked) ? "type" : "value";
 }
 
 /**
- * Insert `import { Suspense } from "react";` on its own line after the last import whose
- * module specifier satisfies `isAnchor`, or after the last import when none does. No-op
- * when the file already binds `Suspense` from React.
+ * Make a type-only `Suspense` in a React import a value import. Other specifiers of an
+ * `import type { ... }` statement stay type-only through inline `type` modifiers.
+ */
+function promoteSuspense(statement: string, masked: string): string {
+  const modifier = /\btype\s+(?=Suspense\s*[,}])/.exec(masked);
+  if (modifier) {
+    return (
+      statement.slice(0, modifier.index) + statement.slice(modifier.index + modifier[0].length)
+    );
+  }
+
+  const open = masked.indexOf("{");
+  const close = masked.indexOf("}", open);
+  const parts: [number, number][] = [];
+  let from = open + 1;
+  for (let i = from; i <= close; i++) {
+    if (masked[i] !== "," && i !== close) continue;
+    parts.push([from, i]);
+    from = i + 1;
+  }
+
+  let result = statement.slice(0, open + 1).replace(/^(\s*import)\s+type\b/, "$1");
+  parts.forEach(([partStart, partEnd], index) => {
+    const text = statement.slice(partStart, partEnd);
+    const name = masked.slice(partStart, partEnd).trim();
+    const lead = text.length - text.trimStart().length;
+    const prefix = name && name !== "Suspense" ? "type " : "";
+    const separator = index < parts.length - 1 ? "," : "";
+    result += text.slice(0, lead) + prefix + text.slice(lead) + separator;
+  });
+  return result + statement.slice(close);
+}
+
+/**
+ * Make sure a file binds a runtime `Suspense` from React. A type-only `Suspense` import is
+ * promoted in place, since a second import of the same name fails with TS2300. Otherwise
+ * `import { Suspense } from "react";` goes on its own line after the last import whose
+ * module specifier satisfies `isAnchor`, or after the last import when none does.
  */
 export function addSuspenseImport(
   source: string,
@@ -76,12 +115,20 @@ export function addSuspenseImport(
 ): string {
   const masked = maskCommentsAndStrings(source);
   const imports = [...masked.matchAll(IMPORT_STATEMENT)].map((match) => {
-    const end = match.index + match[0].length;
-    const specifier = /["']([^"'\n]*)["'][ \t]*;?$/.exec(source.slice(match.index, end))?.[1];
-    return { end, specifier, masked: match[0] };
+    const start = match.index;
+    const end = start + match[0].length;
+    const specifier = /["']([^"'\n]*)["'][ \t]*;?$/.exec(source.slice(start, end))?.[1];
+    return { start, end, specifier, masked: match[0] };
   });
-  if (imports.some((imp) => imp.specifier === "react" && bindsSuspense(imp.masked))) {
-    return source;
+
+  const reactImports = imports
+    .filter((imp) => imp.specifier === "react")
+    .map((imp) => ({ ...imp, binding: suspenseBinding(imp.masked) }));
+  if (reactImports.some((imp) => imp.binding === "value")) return source;
+  const typeOnly = reactImports.find((imp) => imp.binding === "type");
+  if (typeOnly) {
+    const statement = promoteSuspense(source.slice(typeOnly.start, typeOnly.end), typeOnly.masked);
+    return source.slice(0, typeOnly.start) + statement + source.slice(typeOnly.end);
   }
 
   const statement = `import { Suspense } from "react";\n`;

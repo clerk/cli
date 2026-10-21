@@ -84,16 +84,29 @@ describe("addSuspenseImport", () => {
   });
 
   test.each([
-    `import type { Suspense } from "react";`,
-    `import { type Suspense } from "react";`,
-    `import { Suspense as Pending } from "react";`,
-  ])("adds the import when %s binds no runtime Suspense", (reactImport) => {
+    [`import type { Suspense } from "react";`, `import { Suspense } from "react";`],
+    [`import { type Suspense } from "react";`, `import { Suspense } from "react";`],
+    [
+      `import type { ReactNode, Suspense } from "react";`,
+      `import { type ReactNode, Suspense } from "react";`,
+    ],
+    [
+      `import { type ReactNode, type Suspense } from "react";`,
+      `import { type ReactNode, Suspense } from "react";`,
+    ],
+  ])("promotes %s to a value import instead of adding a duplicate", (reactImport, promoted) => {
     const source = `import { ClerkProvider } from "@clerk/nextjs";\n${reactImport}\n`;
 
-    const result = addSuspenseImport(source, isClerk);
+    expect(addSuspenseImport(source, isClerk)).toBe(
+      `import { ClerkProvider } from "@clerk/nextjs";\n${promoted}\n`,
+    );
+  });
 
-    expect(result).toBe(
-      `import { ClerkProvider } from "@clerk/nextjs";\nimport { Suspense } from "react";\n${reactImport}\n`,
+  test("adds the import when Suspense is aliased away", () => {
+    const source = `import { ClerkProvider } from "@clerk/nextjs";\nimport { Suspense as Pending } from "react";\n`;
+
+    expect(addSuspenseImport(source, isClerk)).toBe(
+      `import { ClerkProvider } from "@clerk/nextjs";\nimport { Suspense } from "react";\nimport { Suspense as Pending } from "react";\n`,
     );
   });
 });
