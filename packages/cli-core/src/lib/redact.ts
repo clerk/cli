@@ -167,25 +167,42 @@ const ANY_QUOTED = `${ESCAPED_QUOTED}|${ESCAPED_OPEN_QUOTED}|${QUOTED}|${OPEN_QU
 
 /**
  * A header that starts inside a quoted string (`curl -H "Authorization:
- * Bearer x" https://…`): the value runs to that string's closing quote (the
- * same quote, escaped or not, that opened it) and no further, so the rest of
- * the command, a second header included, is still scanned. Not a JSON key:
- * a quote right after the name makes it one, and the general pattern below
- * takes that. Groups: 1 opening quote, 2 name and separator, 3 value.
+ * Bearer x" https://…`): the value runs to that string's closing delimiter
+ * and no further, so the rest of the command, a second header included, is
+ * still scanned. In a string opened by a plain quote, an escaped quote is
+ * part of the value (a Digest header's `username=\"bob\"`) and only an
+ * unescaped quote ends it; in escaped JSON, opened by `\"`, the next `\"`
+ * ends it. Not a JSON key: a quote right after the name makes it one, and
+ * the general pattern below takes that.
  */
+const HEADER_NAME_IN_STRING = String.raw`\bAuthorization\b(?!["'])[ \t]*[:=][ \t]*`;
 const AUTHORIZATION_IN_STRING = new RegExp(
-  String.raw`(\\?["'])(\bAuthorization\b(?!["'])[ \t]*[:=][ \t]*)((?:(?!\1)[^\r\n])*)`,
+  String.raw`(?:(?<escOpen>\\["'])(?<escName>${HEADER_NAME_IN_STRING})(?<escValue>(?:(?!\k<escOpen>)[^\r\n])*)` +
+    String.raw`|(?<open>["'])(?<name>${HEADER_NAME_IN_STRING})(?<value>(?:\\.|(?!\k<open>)[^\\\r\n])*))`,
   "gi",
 );
+
+type HeaderInStringGroups = {
+  escOpen?: string;
+  escName?: string;
+  escValue?: string;
+  open?: string;
+  name?: string;
+  value?: string;
+};
 
 /**
  * `Authorization: <anything to the end of the line>`, or a quoted value when
  * the header is a JSON field. Any scheme: `Authorization: token abc123` and
- * an all-letter Bearer token are credentials too. Groups: 1 name and
- * separator, 2 value.
+ * an all-letter Bearer token are credentials too. A value that already
+ * starts with the marker (a header taken inside a quoted string) does not
+ * match, so the scan resumes after it and a later header on the same line is
+ * still read. The test sits right after the colon and reads past the blanks
+ * itself, so the separator giving a blank back cannot defeat it. Groups:
+ * 1 name and separator, 2 value.
  */
 const AUTHORIZATION_HEADER = new RegExp(
-  String.raw`(["']?\bAuthorization\b["']?[ \t]*[:=][ \t]*)(${QUOTED}|[^\r\n]+)`,
+  String.raw`(["']?\bAuthorization\b["']?[ \t]*[:=](?![ \t]*["']?\[REDACTED\])[ \t]*)(${QUOTED}|[^\r\n]+)`,
   "gi",
 );
 
@@ -351,12 +368,13 @@ const HOME_DIR_START = String.raw`(?:(?<![\w/\\])|(?<=file:\/\/))`;
  * `C:/Users/<name>`, and the Git Bash and WSL spellings `/c/Users/<name>` and
  * `/mnt/c/Users/<name>`). The rest of the path survives: `/Users/a/app` →
  * `~/app`. The POSIX forms are case-sensitive on purpose: `/users/user_123`
- * is a Backend API path, not a home. The user name is letters, digits, `_`
- * and `-`, with dots between them, so punctuation after it stays
+ * is a Backend API path, not a home. The user name is letters (with their
+ * combining marks, as in a decomposed accent or a Devanagari vowel sign),
+ * digits, `_` and `-`, with dots between them, so punctuation after it stays
  * (`see /Users/bob.` → `see ~.`, `(/Users/bob)` → `(~)`).
  */
 const GENERIC_HOME_DIR = new RegExp(
-  String.raw`${HOME_DIR_START}(?:\/Users\/|\/home\/|(?:\/mnt)?\/[A-Za-z]\/Users\/|[A-Za-z]:(?:\\{1,2}[Uu]sers\\{1,2}|\/[Uu]sers\/))[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)*`,
+  String.raw`${HOME_DIR_START}(?:\/Users\/|\/home\/|(?:\/mnt)?\/[A-Za-z]\/Users\/|[A-Za-z]:(?:\\{1,2}[Uu]sers\\{1,2}|\/[Uu]sers\/))[\p{L}\p{M}\p{N}_-]+(?:\.[\p{L}\p{M}\p{N}_-]+)*`,
   "gu",
 );
 
@@ -371,11 +389,14 @@ function literalHomeDirPattern(home: string): RegExp | null {
   if (trimmed.length < 2 || !/[\\/].+/.test(trimmed)) return null;
   // A Windows home may appear with doubled backslashes inside a JSON string.
   const body = escapeRegExp(trimmed).replaceAll("\\\\", "\\\\{1,2}");
-  // Not followed by another user-name character (letters, digits, `_`, `-`,
-  // and `.` when a name character follows it), so `/Users/shane-old` is not
-  // `~-old`; any other character, punctuation and brackets included, ends the
-  // home (`/root.`, `(/srv/alice)`).
-  return new RegExp(`${HOME_DIR_START}${body}(?![A-Za-z0-9_-]|\\.[A-Za-z0-9_-])`, "g");
+  // Not followed by another user-name character (the generic pattern's: letters
+  // with their combining marks, digits, `_`, `-`, and `.` when a name character
+  // follows it), so `/Users/shane-old` is not `~-old`; any other character,
+  // punctuation and brackets included, ends the home (`/root.`, `(/srv/alice)`).
+  return new RegExp(
+    `${HOME_DIR_START}${body}(?![\\p{L}\\p{M}\\p{N}_-]|\\.[\\p{L}\\p{M}\\p{N}_-])`,
+    "gu",
+  );
 }
 
 // ── Pass 8: email addresses ─────────────────────────────────────────────────
@@ -417,7 +438,10 @@ export function redactText(text: string, options: { homedir?: string } = {}): Re
 
   let out = text.replace(PRIVATE_KEY_BLOCK, count);
 
-  out = out.replace(AUTHORIZATION_IN_STRING, (match, open: string, name: string, value: string) => {
+  out = out.replace(AUTHORIZATION_IN_STRING, (match: string, ...rest: unknown[]) => {
+    const g = rest.at(-1) as HeaderInStringGroups;
+    const [open, name, value] =
+      g.escOpen !== undefined ? [g.escOpen, g.escName!, g.escValue!] : [g.open!, g.name!, g.value!];
     if (value.trim() === "" || value.startsWith(REDACTED)) return match;
     redactions += 1;
     return `${open}${name}${REDACTED}`;

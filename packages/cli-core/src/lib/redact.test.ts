@@ -591,6 +591,36 @@ describe("an Authorization header inside a quoted string", () => {
     expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
 
+  // After a quoted header, an unquoted one later on the same line is still read.
+  test("an unquoted header after a quoted one on the same line is taken too", () => {
+    expect(
+      redact(
+        'curl -H "Authorization: Bearer abcdefghijklmnop" url; echo Authorization: token ghx12345',
+      ),
+    ).toEqual({
+      text: `curl -H "Authorization: ${REDACTED}" url; echo Authorization: ${REDACTED}`,
+      redactions: 2,
+    });
+  });
+
+  // In a string delimited by a plain quote, only an unescaped quote ends the
+  // value; in escaped JSON, delimited by \", the escaped quote ends it.
+  test("an escaped quote inside a double-quoted header does not end its value", () => {
+    expect(
+      redact('"Authorization: Digest username=\\"bob\\", response=\\"secret123\\"" next'),
+    ).toEqual({
+      text: `"Authorization: ${REDACTED}" next`,
+      redactions: 1,
+    });
+  });
+
+  test("in escaped JSON the escaped quote ends the header value", () => {
+    expect(redact('{\\"msg\\": \\"Authorization: token abc123\\", \\"n\\": 1}')).toEqual({
+      text: `{\\"msg\\": \\"Authorization: ${REDACTED}\\", \\"n\\": 1}`,
+      redactions: 1,
+    });
+  });
+
   test("two quoted headers on one line are both taken", () => {
     expect(
       redact('curl -H "Authorization: token a1b2" -H "Authorization: token c3d4" -X GET'),
@@ -613,6 +643,10 @@ describe("home directories in other spellings", () => {
     ["see /home/bob, then", "see ~, then"],
     ["/Users/john.doe/app", "~/app"],
     ["/home/jos\u00e9/app", "~/app"],
+    // Combining marks are part of a name: a Devanagari name, and decomposed accents.
+    ["C:\\Users\\\u092A\u094D\u0930\u093F\u092F\u093E\\project", "~\\project"],
+    ["/Users/ana\u0301-maria/project", "~/project"],
+    ["/home/jose\u0301.dupont/app", "~/app"],
   ])("%j → %j", (input, expected) => {
     expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
@@ -761,6 +795,8 @@ describe("large pastes stay linear", () => {
     ["escaped quotes only", (n) => fill('\\"', n)],
     ["home paths", (n) => fill("/Users/alice/x ", n)],
     ["quoted Authorization headers on one line", (n) => fill('"Authorization: ', n)],
+    ["escaped quotes inside a quoted header", (n) => '"Authorization: ' + fill('\\"x ', n)],
+    ["combining marks in a user name", (n) => "/Users/a" + fill("\u0301", n)],
     ["Git Bash home prefixes repeated", (n) => fill("/c/Users/", n)],
     ["a dotted user name after a home prefix", (n) => "/Users/" + fill("a.", n)],
     ["scheme words after secret names", (n) => fill("token: Bearer ", n)],
