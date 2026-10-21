@@ -3,7 +3,7 @@
  *
  * Every message that says a folder isn't linked takes its advice from here,
  * so the same folder gets the same advice from every command. Classifying
- * reads local files and checks whether credentials exist, and makes no API
+ * reads local files and checks which credential is present, and makes no API
  * call, so it's safe on any error path.
  *
  * `lib/config.ts` must load this module lazily, on its not-linked path only:
@@ -11,15 +11,17 @@
  * `lib/config.ts`. Nothing here uses an import at module load.
  */
 
-import { hasAccountCredentials } from "./credential-store.ts";
+import { hasStoredCredentials } from "./credential-store.ts";
 import type { Example } from "./help.ts";
 import { peekKeylessBreadcrumb } from "./keyless.ts";
 import {
   couldntTellReason,
   describeKeyLocation,
   isSdkOnly,
+  LINK_EXISTING_APP_SENTENCE,
+  noUsableClaimLinkSentence,
   readFolderKeys,
-  SDK_KEYLESS_SOURCE,
+  readSdkClaimLink,
   sdkFileWithoutKeyReason,
   unreadableFolderReason,
   type FolderKeys,
@@ -28,10 +30,27 @@ import {
 import { log } from "./log.ts";
 import { capitalize } from "./text.ts";
 
+/**
+ * The credential Platform API calls would use. `CLERK_PLATFORM_API_KEY` wins
+ * over a stored session (`getAuthToken` in `plapi.ts`), so it's what decides
+ * where a claim goes and what a refusal means.
+ */
+export type Credential = "api_key" | "session" | "none";
+
 /** Where a key sits, for display. Never its value. */
 export interface KeyLocation {
   name: string;
   source: string;
+}
+
+/**
+ * Why an SDK-created app can't be claimed from this folder. `findableByKey`:
+ * the file still has a publishable key, so `clerk link` finds the app by it
+ * when it's already in the account.
+ */
+export interface SdkClaimProblem {
+  reason: string;
+  findableByKey: boolean;
 }
 
 /**
@@ -48,82 +67,132 @@ export interface KeyLocation {
  *   gets the picker and an agent the usage error.
  * - `sdk_app`: the folder's only keys are the ones a Clerk SDK wrote for an
  *   app it created itself, by `clerk link`'s own test (`isSdkOnly`).
- *   `unusable` says why the file gives no publishable key, when it doesn't:
- *   then `clerk link` stops before any sign-in, saying to link by ID.
+ *   `unusable` says why its file can't send anyone to claim the app: then
+ *   `clerk link` stops saying to link by ID, after finding the app by key
+ *   when the file has one.
  * - `no_app`: none of these.
  */
 export type UnlinkedFolder =
-  | { kind: "init_app"; signedIn: boolean }
+  | { kind: "init_app"; credential: Credential }
   | {
       kind: "unknown_owner";
-      signedIn: boolean;
+      credential: Credential;
       publishableKey?: KeyLocation;
       secretKey?: KeyLocation;
       couldntTell?: string;
     }
-  | { kind: "sdk_app"; signedIn: boolean; unusable?: string }
-  | { kind: "no_app"; signedIn: boolean };
+  | { kind: "sdk_app"; credential: Credential; unusable?: SdkClaimProblem }
+  | { kind: "no_app"; credential: Credential };
 
 /** What the classifier decides from, so a caller holding its own reads (`doctor`) can pass them. */
 export interface UnlinkedFolderFacts {
   /** The folder has an init token. */
   initToken: boolean;
-  /** Credentials exist: a stored session or `CLERK_PLATFORM_API_KEY`. Presence only. */
-  signedIn: boolean;
+  /** Presence only: whether a credential works is known only from an API call. */
+  credential: Credential;
   /** The keys the app loads (`readFolderKeys`), or why they couldn't be read, as a clause. */
   keys: FolderKeys | { readError: string };
+  /**
+   * Why the SDK keyless file's claim link can't be used (`readSdkClaimLink`'s
+   * reason), for an SDK-only folder with a publishable key; undefined when it
+   * can, or doesn't apply. Required, so a caller can't skip the check and
+   * leave an unclaimable app looking claimable.
+   */
+  sdkClaimLinkProblem: string | undefined;
 }
 
 /** Decides the kind from facts. Pure. */
 export function classifyUnlinkedFolder({
   initToken,
-  signedIn,
+  credential,
   keys,
+  sdkClaimLinkProblem,
 }: UnlinkedFolderFacts): UnlinkedFolder {
-  if (initToken) return { kind: "init_app", signedIn };
+  if (initToken) return { kind: "init_app", credential };
   // Unread files may hold any key, so it's never "no app".
-  if ("readError" in keys) return { kind: "unknown_owner", signedIn, couldntTell: keys.readError };
+  if ("readError" in keys) {
+    return { kind: "unknown_owner", credential, couldntTell: keys.readError };
+  }
   if (isSdkOnly(keys)) {
-    return keys.publishableKey
-      ? { kind: "sdk_app", signedIn }
-      : { kind: "sdk_app", signedIn, unusable: sdkFileWithoutKeyReason(keys.sdkFile) };
+    // The same order as `clerk link`: no publishable key stops it before any
+    // lookup; with one, it matches first and needs the claim link only after.
+    if (!keys.publishableKey) {
+      return {
+        kind: "sdk_app",
+        credential,
+        unusable: { reason: sdkFileWithoutKeyReason(keys.sdkFile), findableByKey: false },
+      };
+    }
+    return sdkClaimLinkProblem
+      ? {
+          kind: "sdk_app",
+          credential,
+          unusable: { reason: sdkClaimLinkProblem, findableByKey: true },
+        }
+      : { kind: "sdk_app", credential };
   }
   const couldntTell = couldntTellReason(keys);
   if (keys.publishableKey || keys.secretKey || couldntTell || keys.undecided) {
     return {
       kind: "unknown_owner",
-      signedIn,
+      credential,
       ...(keys.publishableKey && { publishableKey: locationOf(keys.publishableKey) }),
       ...(keys.secretKey && { secretKey: locationOf(keys.secretKey) }),
       ...(couldntTell && { couldntTell }),
     };
   }
-  return { kind: "no_app", signedIn };
+  return { kind: "no_app", credential };
 }
 
 function locationOf({ name, source }: LocatedKey): KeyLocation {
   return { name, source };
 }
 
+/** Whether any credential is present; a refused one still counts until a call says so. */
+function isSignedIn(credential: Credential): boolean {
+  return credential !== "none";
+}
+
 /**
  * Reads and classifies the folder at `cwd`, and only `cwd`: from a monorepo
  * package below the folder with the keys, it's `no_app`. Never throws, and
  * changes nothing: a malformed token file is left in place, and a credential
- * read failure (a sandboxed keychain, say) counts as signed out, which only
+ * read failure (a sandboxed keychain, say) counts as no credential, which only
  * adds a sign-in step to the advice.
  */
 export async function readUnlinkedFolder(cwd: string): Promise<UnlinkedFolder> {
-  const [token, keys, signedIn] = await Promise.all([
+  const [token, keys, credential] = await Promise.all([
     peekKeylessBreadcrumb(cwd),
     readFolderKeys(cwd).catch((error: unknown) => ({ readError: unreadableFolderReason(error) })),
-    hasAccountCredentials().catch(() => false),
+    readCredential(),
   ]);
-  const folder = classifyUnlinkedFolder({ initToken: Boolean(token), signedIn, keys });
-  log.debug(`unlinked-folder: ${folder.kind}, signed ${signedIn ? "in" : "out"}`);
+  const folder = classifyUnlinkedFolder({
+    initToken: Boolean(token),
+    credential,
+    keys,
+    sdkClaimLinkProblem: await sdkClaimLinkProblem(cwd, keys),
+  });
+  log.debug(`unlinked-folder: ${folder.kind}, credential ${credential}`);
   return folder;
 }
 
-/** The command that stopped, to run again once the folder is linked. */
+/** In `getAuthToken`'s order. A failed read of the stored session counts as none. */
+async function readCredential(): Promise<Credential> {
+  if (process.env.CLERK_PLATFORM_API_KEY) return "api_key";
+  return (await hasStoredCredentials().catch(() => false)) ? "session" : "none";
+}
+
+/** Only the reason: the claim URL carries a claim token. */
+async function sdkClaimLinkProblem(
+  cwd: string,
+  keys: FolderKeys | { readError: string },
+): Promise<string | undefined> {
+  if ("readError" in keys || !isSdkOnly(keys) || !keys.publishableKey) return undefined;
+  const claimLink = await readSdkClaimLink(cwd);
+  return claimLink.status === "unusable" ? claimLink.reason : undefined;
+}
+
+/** A command to run again, as a clause and, when it can be echoed, the command. */
 export interface Rerun {
   /** In the form `clerk link`'s `rerun` option takes: "run `clerk deploy` again". */
   clause: string;
@@ -135,13 +204,16 @@ export interface Rerun {
  * What agent-mode `clerk link` (or `clerk init` through it) knew when it
  * stopped without linking. Its stop already says why, so the advice adds
  * only what to run, and never sends the agent back into the same stop.
- * `sessionRefused`: Clerk refused the stored session, so it's as good as none.
+ *
+ * A failed list carries `refused` (`isCredentialRefused`: the credential has
+ * to change) and `retry`, the command that stopped: the one time the advice
+ * is that command, worded as a retry.
  */
 export type LinkStop =
   | { autolink: "no_key" }
   | { autolink: "no_match" }
   | { autolink: "couldnt_tell" }
-  | { autolink: "list_failed"; sessionRefused: boolean };
+  | { autolink: "list_failed"; refused: boolean; retry: Rerun };
 
 export interface NextStep {
   text: string;
@@ -152,9 +224,9 @@ export interface NextStep {
 export interface NextStepContext {
   agent: boolean;
   /**
-   * Appended as "Then <clause>." For `clerk link`'s own stop, only a retry
-   * needs it: once `clerk link --app` has linked the folder, rerunning
-   * `clerk link` does nothing.
+   * The command to run again once the folder is linked, appended as "Then
+   * <clause>." `clerk link`'s own stop passes none: once the folder is
+   * linked, rerunning `clerk link` does nothing.
    */
   rerun?: Rerun;
   /** Set only by agent-mode `clerk link`'s stop. */
@@ -172,6 +244,11 @@ const EXAMPLE = {
     command: "clerk apps list --json",
     description: "List your applications, to find the ID of the one this folder uses",
   },
+  // For a folder whose app isn't in the list, or that has none of its own.
+  appsListExisting: {
+    command: "clerk apps list --json",
+    description: "List your applications, to choose an existing one",
+  },
   linkById: {
     command: "clerk link --app <app_id>",
     description: "Link this folder to that application",
@@ -186,13 +263,8 @@ const EXAMPLE = {
 /** The step for `folder`: the text to put after a site's own lead sentence, and its commands. */
 export function unlinkedFolderNextStep(folder: UnlinkedFolder, context: NextStepContext): NextStep {
   const { agent, rerun, linkStop } = context;
-  if (agent && linkStop && folder.kind !== "init_app") {
-    if (linkStop.autolink === "list_failed" && folder.signedIn && !linkStop.sessionRefused) {
-      return retry(rerun);
-    }
-    return withRerun(afterLinkStop(folder, linkStop), rerun);
-  }
-  return withRerun(stepFor(folder, agent, folder.signedIn), rerun);
+  if (agent && linkStop) return afterLinkStop(folder, linkStop, rerun);
+  return withRerun(stepFor(folder, agent, isSignedIn(folder.credential)), rerun);
 }
 
 function stepFor(folder: UnlinkedFolder, agent: boolean, signedIn: boolean): NextStep {
@@ -202,7 +274,7 @@ function stepFor(folder: UnlinkedFolder, agent: boolean, signedIn: boolean): Nex
     case "sdk_app":
       return folder.unusable
         ? unusableSdkApp(folder.unusable, agent, signedIn)
-        : sdkApp(agent, signedIn);
+        : sdkApp(agent, signedIn ? folder.credential : "none");
     case "unknown_owner":
       return unknownOwner(folder, agent, signedIn);
     case "no_app":
@@ -210,39 +282,94 @@ function stepFor(folder: UnlinkedFolder, agent: boolean, signedIn: boolean): Nex
   }
 }
 
-/**
- * After agent-mode `clerk link` stopped. A failed list that wasn't about
- * sign-in is a retry, handled by the caller.
- */
-function afterLinkStop(folder: UnlinkedFolder, stop: LinkStop): NextStep {
-  switch (stop.autolink) {
-    case "no_match": {
-      const key =
-        folder.kind === "unknown_owner" && folder.publishableKey
-          ? `the publishable key in ${folder.publishableKey.source}`
-          : "this folder's publishable key";
-      return chooseById(`No application in your account uses ${key}.`, true);
+/** After agent-mode `clerk link` stopped: never back into the same stop. */
+function afterLinkStop(folder: UnlinkedFolder, stop: LinkStop, rerun: Rerun | undefined): NextStep {
+  const signedIn = isSignedIn(folder.credential);
+  if (stop.autolink === "list_failed") {
+    // Platform API calls use the key over any session, so signing in can't help.
+    if (stop.refused && folder.credential === "api_key") return fixApiKey(stop.retry);
+    if (stop.refused || !signedIn) {
+      // A credential problem, not proof the app needs claiming: after signing
+      // in, the retry decides. An init app's sign-in claims and links it.
+      return folder.kind === "init_app"
+        ? withRerun(initApp(true, false), rerun)
+        : signInThenRetry(stop.retry);
     }
+    return retryThenLinkById(stop.retry, rerun);
+  }
+  // Without a credential, `link` skipped the claim: signing in claims the app.
+  if (!signedIn && folder.kind === "init_app") return withRerun(initApp(true, false), rerun);
+  switch (stop.autolink) {
     case "couldnt_tell":
       // The stop's reason already says why.
-      return chooseById(undefined, folder.signedIn);
-    case "list_failed":
-      // Clerk refused the session: as good as signed out.
-      return stepFor(folder, true, false);
+      return withRerun(chooseById(undefined, signedIn, "folders_app"), rerun);
+    case "no_match":
+      return withRerun(noMatch(folder, signedIn), rerun);
     case "no_key":
-      if (folder.kind === "no_app" && folder.signedIn) {
-        // Today's wording at this stop, kept.
-        return {
-          text: "Pass --app <id>, or run `clerk apps list --json` and retry.",
-          examples: [EXAMPLE.appsList, EXAMPLE.linkById],
-        };
-      }
-      if (folder.kind === "unknown_owner" && folder.publishableKey && folder.signedIn) {
-        // `clerk link` would just stop again.
-        return chooseById(undefined, true);
-      }
-      return stepFor(folder, true, folder.signedIn);
+      return withRerun(noKey(folder, signedIn), rerun);
   }
+}
+
+/** No app in the account holds the folder's key. */
+function noMatch(folder: UnlinkedFolder, signedIn: boolean): NextStep {
+  switch (folder.kind) {
+    case "sdk_app":
+      // The SDK's app isn't in the account, so listing the account to link by
+      // ID would pick another app. A claimable one is claimed first; one that
+      // can't be claimed leaves only an existing app, as `link`'s stop says.
+      return folder.unusable
+        ? chooseById(noUsableClaimLinkSentence(folder.unusable.reason), signedIn, "existing_app")
+        : sdkApp(true, signedIn ? folder.credential : "none");
+    case "unknown_owner": {
+      const where = folder.publishableKey ? ` (${describeKeyLocation(folder.publishableKey)})` : "";
+      return chooseById(
+        `No application in ${searched(folder.credential)} uses this folder's publishable key${where}.`,
+        signedIn,
+        "existing_app",
+      );
+    }
+    case "init_app":
+    case "no_app":
+      return chooseById(
+        `No application in ${searched(folder.credential)} uses this folder's publishable key.`,
+        signedIn,
+        "existing_app",
+      );
+  }
+}
+
+/** Auto-link found no publishable key the folder's app loads. */
+function noKey(folder: UnlinkedFolder, signedIn: boolean): NextStep {
+  if (!signedIn) return stepFor(folder, true, false);
+  switch (folder.kind) {
+    case "no_app":
+      // Today's wording at this stop, kept.
+      return {
+        text: "Pass --app <id>, or run `clerk apps list --json` and retry.",
+        examples: [EXAMPLE.appsListExisting, EXAMPLE.linkById],
+      };
+    case "init_app":
+      // A signed-in agent's `link` already claimed the token, so one still on
+      // disk is spent: `clerk link` would stop here again.
+      return chooseById(undefined, true, "folders_app");
+    case "sdk_app":
+      // `clerk link` would stop again on a file it can't claim from.
+      return folder.unusable
+        ? chooseById(noUsableClaimLinkSentence(folder.unusable.reason), true, "existing_app")
+        : sdkApp(true, folder.credential);
+    case "unknown_owner":
+      // With a publishable key, `clerk link` would stop here again.
+      return folder.publishableKey
+        ? chooseById(undefined, true, "folders_app")
+        : unknownOwner(folder, true, true);
+  }
+}
+
+/** Where `clerk apps list` searched: the API key's workspace wins over a session's account. */
+function searched(credential: Credential): string {
+  return credential === "api_key"
+    ? "the workspace `CLERK_PLATFORM_API_KEY` belongs to"
+    : "your account";
 }
 
 function initApp(agent: boolean, signedIn: boolean): NextStep {
@@ -267,7 +394,17 @@ function initApp(agent: boolean, signedIn: boolean): NextStep {
   };
 }
 
-function sdkApp(agent: boolean, signedIn: boolean): NextStep {
+/**
+ * Where a person must claim an SDK-created app for the agent's next
+ * `clerk link` to find it: the account or workspace its credential reaches.
+ */
+const CLAIM_INTO: Record<Credential, string> = {
+  api_key: "the workspace `CLERK_PLATFORM_API_KEY` belongs to",
+  session: "the account this CLI is signed in to",
+  none: "the account `clerk auth login` will sign in to",
+};
+
+function sdkApp(agent: boolean, credential: Credential): NextStep {
   const lead = "This folder runs on an app the Clerk SDK created during development.";
   if (!agent) {
     return {
@@ -279,8 +416,8 @@ function sdkApp(agent: boolean, signedIn: boolean): NextStep {
   }
   // An agent can't claim it; a person does, from the link `clerk open` prints.
   const linkClaimed = { command: "clerk link", description: "Link the app once it's claimed" };
-  const open = "Run `clerk open` to print its claim link for a person to claim the app";
-  return signedIn
+  const open = `Run \`clerk open\` to print its claim link for a person to claim the app into ${CLAIM_INTO[credential]}`;
+  return isSignedIn(credential)
     ? {
         text: `${lead} ${open}, then \`clerk link\` once it's claimed.`,
         examples: [EXAMPLE.open, linkClaimed],
@@ -291,16 +428,26 @@ function sdkApp(agent: boolean, signedIn: boolean): NextStep {
       };
 }
 
-function unusableSdkApp(why: string, agent: boolean, signedIn: boolean): NextStep {
-  // `clerk link`'s own stop for this file, before any sign-in or app list.
-  const lead = `This folder's Clerk SDK keyless file (\`${SDK_KEYLESS_SOURCE}\`) has no usable claim link: ${why}.`;
-  if (!agent) {
-    return {
-      text: `${lead} Link an existing application with \`clerk link --app <app_id>\`.`,
-      examples: [EXAMPLE.linkById],
+function unusableSdkApp(problem: SdkClaimProblem, agent: boolean, signedIn: boolean): NextStep {
+  const lead = noUsableClaimLinkSentence(problem.reason);
+  if (problem.findableByKey) {
+    // `clerk link` finds the app by its key if it's already in the account,
+    // and otherwise stops saying to link by ID, so this can't loop.
+    const find =
+      "`clerk link`: it links the app if it's already in your account, and otherwise says to link one with `clerk link --app <app_id>`";
+    const linkByKey = {
+      command: "clerk link",
+      description: "Link the app if it's already in your account",
     };
+    return agent && !signedIn
+      ? { text: `${lead} Run ${SIGN_IN}, then ${find}.`, examples: [EXAMPLE.signIn, linkByKey] }
+      : { text: `${lead} Run ${find}.`, examples: [linkByKey] };
   }
-  return chooseById(lead, signedIn);
+  // No key to find it by: `clerk link`'s own stop, before any sign-in or list.
+  if (!agent) {
+    return { text: `${lead} ${LINK_EXISTING_APP_SENTENCE}`, examples: [EXAMPLE.linkById] };
+  }
+  return chooseById(lead, signedIn, "existing_app");
 }
 
 function unknownOwner(
@@ -312,7 +459,7 @@ function unknownOwner(
   // the usage error. So choose by ID, never a promise of detection.
   if (folder.couldntTell) {
     const lead = `${capitalize(folder.couldntTell)}.`;
-    return agent ? chooseById(lead, signedIn) : pickInLink(lead);
+    return agent ? chooseById(lead, signedIn, "folders_app") : pickInLink(lead);
   }
   if (folder.publishableKey) {
     const lead = `This folder's Clerk publishable key is ${describeKeyLocation(folder.publishableKey)}.`;
@@ -330,7 +477,7 @@ function unknownOwner(
   const lead = folder.secretKey
     ? `This folder's Clerk secret key is ${describeKeyLocation(folder.secretKey)}, but it has no publishable key, so \`clerk link\` can't match it to an application.`
     : "This folder has Clerk secret keys but no publishable key, so `clerk link` can't match them to an application.";
-  return agent ? chooseById(lead, signedIn) : pickInLink(lead);
+  return agent ? chooseById(lead, signedIn, "folders_app") : pickInLink(lead);
 }
 
 function noApp(agent: boolean, signedIn: boolean): NextStep {
@@ -346,10 +493,13 @@ function noApp(agent: boolean, signedIn: boolean): NextStep {
   const choose =
     "`clerk apps list --json`, then `clerk link --app <app_id>`; or `clerk init` to create an app";
   return signedIn
-    ? { text: `Run ${choose}.`, examples: [EXAMPLE.appsList, EXAMPLE.linkById, EXAMPLE.init] }
+    ? {
+        text: `Run ${choose}.`,
+        examples: [EXAMPLE.appsListExisting, EXAMPLE.linkById, EXAMPLE.init],
+      }
     : {
         text: `Run ${SIGN_IN} first, then ${choose}.`,
-        examples: [EXAMPLE.signIn, EXAMPLE.appsList, EXAMPLE.linkById, EXAMPLE.init],
+        examples: [EXAMPLE.signIn, EXAMPLE.appsListExisting, EXAMPLE.linkById, EXAMPLE.init],
       };
 }
 
@@ -361,27 +511,86 @@ function pickInLink(lead: string): NextStep {
   };
 }
 
+/**
+ * Which app an agent picks from the list: the folder's own, when it may be
+ * there, or an existing one, when the folder's app isn't in the list or can't
+ * be found by key (`link`'s own wording for that case).
+ */
+type Pick = "folders_app" | "existing_app";
+
+const PICK: Record<Pick, { closing: string; list: Example }> = {
+  folders_app: { closing: "with the app this folder uses", list: EXAMPLE.appsList },
+  existing_app: {
+    closing: "to link an existing application instead",
+    list: EXAMPLE.appsListExisting,
+  },
+};
+
 /** For an agent, which can't use the picker: list the apps, then link one by ID. */
-function chooseById(lead: string | undefined, signedIn: boolean): NextStep {
-  const choose =
-    "`clerk apps list --json`, then `clerk link --app <app_id>` with the app this folder uses";
+function chooseById(lead: string | undefined, signedIn: boolean, pick: Pick): NextStep {
+  const { closing, list } = PICK[pick];
+  const choose = `\`clerk apps list --json\`, then \`clerk link --app <app_id>\` ${closing}`;
   const action = signedIn ? `Run ${choose}.` : `Run ${SIGN_IN}, then ${choose}.`;
   return {
     text: lead ? `${lead} ${action}` : action,
-    examples: signedIn
-      ? [EXAMPLE.appsList, EXAMPLE.linkById]
-      : [EXAMPLE.signIn, EXAMPLE.appsList, EXAMPLE.linkById],
+    examples: signedIn ? [list, EXAMPLE.linkById] : [EXAMPLE.signIn, list, EXAMPLE.linkById],
   };
 }
 
 /**
- * A list that failed for a reason other than sign-in can be temporary: the
- * one time the advice is the command that stopped, as a retry.
+ * The key Platform API calls use was refused, or isn't a Platform API key.
+ * Signing in can't help while it's set, so the person fixes or removes it,
+ * then the command that stopped runs again.
  */
-function retry(rerun: Rerun | undefined): NextStep {
+function fixApiKey(retry: Rerun): NextStep {
   return {
-    text: `A failed list can be temporary, so retry: ${rerun?.clause ?? "run the same command again"}.`,
-    examples: rerun?.command ? [{ command: rerun.command, description: "Retry" }] : [],
+    text: `Replace \`CLERK_PLATFORM_API_KEY\` with a working Platform API key, or unset it and sign in with ${SIGN_IN}. Then ${retry.clause}.`,
+    examples: retry.command
+      ? [
+          {
+            command: retry.command,
+            description: "Run it again once CLERK_PLATFORM_API_KEY is replaced or unset",
+          },
+        ]
+      : [],
+  };
+}
+
+/** The list failed on its credential: sign in, then run the command that stopped again. */
+function signInThenRetry(retry: Rerun): NextStep {
+  return {
+    text: `Run ${SIGN_IN}, then ${retry.clause}.`,
+    examples: [
+      EXAMPLE.signIn,
+      ...(retry.command
+        ? [{ command: retry.command, description: "Run it again once signed in" }]
+        : []),
+    ],
+  };
+}
+
+/**
+ * A list that failed for a reason other than its credential can be temporary,
+ * so the advice is the command that stopped, as a retry. One that keeps
+ * failing (a server bug on one account, say) would loop on retries alone, so
+ * the same message offers linking by an ID from the Dashboard: that's a
+ * different API call, so it can work while the list doesn't.
+ */
+function retryThenLinkById(retry: Rerun, rerun: Rerun | undefined): NextStep {
+  const thenRerun = rerun ? `, then ${rerun.clause}` : "";
+  return {
+    text: `A failed list can be temporary, so retry: ${retry.clause}. If it fails again, have a person find the app's ID in the Clerk Dashboard and run \`clerk link --app <app_id>\`${thenRerun}.`,
+    examples: [
+      ...(retry.command ? [{ command: retry.command, description: "Retry" }] : []),
+      {
+        command: "clerk link --app <app_id>",
+        description:
+          "If it fails again: link the app by the ID a person finds in the Clerk Dashboard",
+      },
+      ...(rerun?.command
+        ? [{ command: rerun.command, description: "Run it again once this folder is linked" }]
+        : []),
+    ],
   };
 }
 
