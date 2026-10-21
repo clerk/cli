@@ -42,7 +42,7 @@ No decisions are open. Everything below is decided.
   - **Scope** (settled by the orchestrator as following from Shane's decision): "any claim" means every claim a person triggers. That includes a signed-out person's direct `clerk auth login` (the prompt comes after the browser sign-in), `clerk migrate --app` (which keeps login's own claim), and a person with only `CLERK_PLATFORM_API_KEY` set. The prompt appears when either credential exists; with only the key, Yes claims with no browser step. The exceptions are `clerk auth login -y` and agent mode, which claim without the prompt.
 - **Error and exit codes for `clerk link`'s new outcomes reuse existing codes:**
   - **An agent in an SDK-only folder with no matching app** (it stops and says to run `clerk open`): `usage_error`, exit 2, matching agent-mode `clerk link`'s existing error.
-  - **An agent in an SDK-only folder whose app list failed** (signed out, expired session, server error): the same `usage_error`, exit 2, with the "list failed" reason in the wording (milestone 6). This keeps today's code at this site; settled by the orchestrator under the working rule that codes stay the same at existing sites.
+  - **An agent in an SDK-only folder whose app list failed** (signed out, expired session, server error): the same `usage_error`, exit 2, with the "list failed" reason in the wording (written in milestone 4). This keeps today's code at this site; settled by the orchestrator under the working rule that codes stay the same at existing sites.
   - **A folder whose SDK keyless file has no usable claim link** (no publishable key, no `claimUrl`, or one that isn't https), either mode: `usage_error`, exit 2.
   - **A refused claim** (managed workspace or no organization): `not_linked`, exit 1, because the folder stays unlinked.
   - **A temporary claim failure:** the original API or auth error, unchanged.
@@ -63,13 +63,19 @@ No decisions are open. Everything below is decided.
   - **One branch, one PR.** Everything lands on `shane/grow-1285-claim-first-link`, with commits in milestone order: behavior milestones 1 to 4 first, message milestones 5 onward second. Milestone numbers are unchanged. `shane/grow-1249-clerk-deploy-deploy-status-and-link-tell-unclaimed-apps-to` keeps only the plan commits and is no longer rebased onto anything.
   - **The PR description has one section per ticket:** GROW-1285 (milestones 1 to 4) and GROW-1249 (milestones 5 onward), each with its own "what a person sees", tests, and evidence.
   - **One changeset file, as the repo's convention requires** (`.claude/skills/changesets/references/policy.md`: "one changeset per PR"; a second file needs an explicit opt-in). A changeset's first line becomes one CHANGELOG bullet and continuation lines become sub-bullets, so the file gets one summary line and one sub-bullet per ticket. Create it with `/changesets create` at the end, covering both halves.
-  - **The PR waits for PR 536** (`clerk deploy --domain`) to merge. The message milestones start only after merging 536's code into this branch, because 536 rewrites `commands/deploy/index.ts`, `commands/deploy/status.ts`, and `commands/env/pull.ts`, which milestones 6, 9, and 10 touch. Milestone 2 already edits `commands/env/pull.ts` (`defaultTargetFile`, round 3), so that merge may conflict there; resolve it by keeping 536's rewrite and re-applying the typed default target.
+  - **The PR waits for PR 550** (https://github.com/clerk/cli/pull/550, `clerk deploy --domain`; it was PR 536 when this plan was written) to merge. The message milestones start only after merging 550's code into this branch, because 550 rewrites `commands/deploy/index.ts`, `commands/deploy/status.ts`, and `commands/env/pull.ts`, which milestones 6, 9, and 10 touch. Milestone 2 already edits `commands/env/pull.ts` (`defaultTargetFile`, round 3), so that merge may conflict there; resolve it by keeping 550's rewrite and re-applying the typed default target. Done on 2026-10-21: `origin/main` merged as `9ebe0f937` and PR 550's branch as `115c1e6dc`, with no conflict in `env/pull.ts`. PR 550 is still open and changing, so milestone 6 merges it again first.
   - **Milestones 1 and 2 stay pushed on this branch meanwhile.** Milestones 3 and 4 continue before the merge, since they don't touch those files.
-  - **This week's PRs:** 536, the combined CLI PR, and the skills PR.
+  - **This week's PRs:** 550, the combined CLI PR, and the skills PR.
 
 **Decided by Shane on 2026-10-20:**
 
 - **`clerk init`'s key check after a claim attempt (option (b)).** When `init` calls `link` after a claim attempt, `link` verifies that every Clerk key in the folder belongs to the chosen app before saving the link. On any mismatch it saves nothing, and `init` stops with `not_linked`, exit 1, naming the key and its file. It's the only option where the folder never points at an app it doesn't run on, and it needs no new error code. (The alternatives were keeping the link and skipping the key write with a soft exit, which gives agents no JSON error, or a new `keys_mismatch` code.)
+
+**Decided by Shane on 2026-10-21:**
+
+- **Milestones 5 and 6 take nine changes** from checking them against the code after milestone 4 and PR 550 (listed in those milestones as changes 1 to 9). They keep every guarantee this plan states. The one exception to "agent `link`'s advice never names `clerk link` again" is a retry of the same command after an app list that failed for a reason other than sign-in, worded as a retry, not a new step.
+- **Option (a)** is filed as https://github.com/clerk/cli/issues/556, outside this work.
+- **Agent `deploy`'s "app not found" advice** stays out of this branch; Shane is raising it separately.
 
 **Confirmed by Shane on 2026-10-19** (first recommended by the orchestrator):
 
@@ -199,7 +205,7 @@ The remaining conventions:
 - **Rationale in code.** Each non-obvious rule in this plan goes into a comment at the code that enforces it. Examples: why the guard runs after the claim, why "same app" means the same Frontend API host, and why the lead sentences stay verbatim.
 - **Checks before handing over the PR.** Run `bun run format`, `bun run lint`, `bun run typecheck`, `bun run test`, and `bun changeset status --since=origin/main`. The E2E suite (`bun run test:e2e:op`) doesn't exercise any of these paths: its fixtures pre-link with `clerk link --app`, and nothing in it claims. Don't count it as coverage.
 - **Changesets.** The PR is a user-facing fix for two tickets. Create its one changeset with the repo's `changesets` skill (`/changesets create`), as `.claude/rules/changesets.md` requires: one summary line, one sub-bullet per ticket (see "One CLI PR").
-- **Working rules.** Don't commit, push, or open a PR until Shane approves after review. All milestones land on one branch, `shane/grow-1285-claim-first-link`, cut from the plan commits (decided by Shane 2026-10-19; see "One CLI PR"). Merge `origin/main` into it after PR 536 merges, before milestone 5.
+- **Working rules.** Don't commit, push, or open a PR until Shane approves after review. All milestones land on one branch, `shane/grow-1285-claim-first-link`, cut from the plan commits (decided by Shane 2026-10-19; see "One CLI PR"). Merge `origin/main` and PR 550's branch into it before milestone 5 (done 2026-10-21), and PR 550's branch again before milestone 6.
 - **Real runs.** A from-source run on macOS uses the `clerk-cli-dev` keychain namespace, which may hold a real session. Don't run `link`, `auth login`, `init`, `open`, or `doctor` from source against a real account. Use the integration harness for every state. A real claim needs Shane's approval and a throwaway account.
 
 ---
@@ -581,24 +587,33 @@ These items go into the GROW-1285 section of the one PR description; the PR itse
 
 ## PR 2: one classifier decides the advice for every unlinked folder
 
-### Milestone 5: a shared classifier and next-step wording, next to `lib/keyless-target.ts`
+### Milestone 5: a shared classifier and next-step wording, in its own module next to `lib/keyless-target.ts`
+
+**Revised 2026-10-21** after checking this milestone and milestone 6 against the code once milestone 4, `origin/main`, and PR 550's branch were merged (`115c1e6dc`). Shane accepted all nine changes. They keep every guarantee this plan states. Changes 1 to 4 are in this milestone; 5 to 9 are in milestone 6.
 
 **Goal and outcome.** One module answers "this folder isn't linked: what does it hold, and what should the person run next?" Every message site uses it, so the same folder gets the same advice from every command. Nothing user-visible changes in this milestone.
 
 **Implementation outline.**
 
-1. **Contract.** Types and names are illustrative; the shape is the decision:
+1. **Contract.** In `lib/unlinked-folder.ts`. Names are illustrative; the shape is the decision:
 
    ```ts
-   // A folder with no linked application, classified from local files only.
-   export type UnlinkedFolder = {
-     // Precedence: init token, then plain keys, then the SDK keyless file, then nothing.
-     kind: "init_app" | "unknown_owner" | "sdk_app" | "no_app";
-     signedIn: boolean;
-     // For unknown_owner: which plain keys exist, and where, from the shared key reader.
-     publishableKeySource?: string; // ".env.local", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY env var", for display
-     secretKeySource?: string;
-   };
+   // Where a key sits, for display. Never its value.
+   type KeyLocation = { name: string; source: string };
+
+   // A folder with no linked application, classified from local files and credential presence only.
+   // Precedence: init token, then plain keys, then the SDK keyless file, then nothing.
+   export type UnlinkedFolder =
+     | { kind: "init_app"; signedIn: boolean }
+     | {
+         kind: "unknown_owner";
+         signedIn: boolean;
+         publishableKey?: KeyLocation;
+         secretKey?: KeyLocation;
+         couldntTell?: string; // why the CLI can't tell which key the app loads, as a clause (change 1)
+       }
+     | { kind: "sdk_app"; signedIn: boolean; unusable?: string } // why no claim link is usable (change 2)
+     | { kind: "no_app"; signedIn: boolean };
 
    // Pure: decides the kind from facts. doctor calls this with its memoized facts.
    export function classifyUnlinkedFolder(facts: UnlinkedFolderFacts): UnlinkedFolder;
@@ -607,40 +622,56 @@ These items go into the GROW-1285 section of the one PR description; the PR itse
    export async function readUnlinkedFolder(cwd: string): Promise<UnlinkedFolder>;
 
    // The step text for one situation, plus runnable commands for agent JSON.
-   // `detection` is set only by a caller that already ran key detection (agent-mode `clerk link`).
    export function unlinkedFolderNextStep(
      folder: UnlinkedFolder,
-     context: { agent: boolean; rerun?: string; detection?: "no_match" | "list_failed" },
+     context: { agent: boolean; rerun?: Rerun; linkStop?: LinkStop },
    ): { text: string; examples: Example[] };
    ```
 
+   - **`Rerun`** (change 4) is the command that stopped, to run again once the folder is linked: `{ clause, command? }`. `clause` has the form `link`'s own `rerun` option takes ("run `clerk init` again", "run the same `clerk migrate import` command again"), so a caller passes the same clause to both. `command` is set only when it can be echoed; `migrate import`'s arguments can hold a secret key, so it has none.
+   - **`LinkStop`** replaces the earlier `detection` field. It is what agent-mode `clerk link` (or `clerk init` through it) knew when it stopped: `no_key`, `no_match`, `couldnt_tell`, or `list_failed` with whether Clerk refused the session. Milestone 6 maps every auto-link outcome to it.
+   - **`Example`** is the existing type in `lib/help.ts`. `CliError`, `throwUsageError`, and agent JSON's `error.examples` (`cli-program.ts:402`) already carry examples, and person mode prints them as an "Examples:" block. So this milestone only builds the list; no error printer changes.
+
 2. **The four kinds.**
    - `init_app`: an init token is present, whatever else the folder holds. The token is the strongest signal, and the claim guard from milestone 2 makes acting on it safe even when the folder's keys belong to another app.
-   - `unknown_owner`: a plain publishable key or a plain secret key (or both), from an env var, `.env`, or `.env.local`, and no init token. A folder with only a publishable key belongs here, not in `no_app`. The app may be in this account, in another one, or unclaimed with its token lost. The wording must never call it unclaimed.
-   - `sdk_app`: no init token, no plain key of either kind, and the SDK keyless file holds a publishable key. This is the same SDK-only test milestone 4 uses. An SDK keyless file without a publishable key isn't `sdk_app`; with nothing else in the folder it classifies as `no_app`, and `clerk link` itself gives the "no usable claim link" stop for it.
+   - `unknown_owner`: no init token, and the keys the app loads (`readFolderKeys`) include a plain key of either kind, a Clerk line the CLI can't parse, or keys it can't choose between; or the env files couldn't be read. A folder with only a publishable key belongs here, not in `no_app`. The app may be in this account, in another one, or unclaimed with its token lost. The wording must never call it unclaimed.
+     - **Couldn't tell (change 1).** `couldntTell` is set when the CLI can't tell which publishable key the app loads: an unparsable Clerk line, files that disagree with no documented order, or env files it couldn't read. It reuses milestone 4's clauses (`couldntTellReason`, `unreadableFolderReason` in `lib/local-keys.ts`). Then `clerk link` can't match by key: a person gets the reason and the picker, an agent gets the usage error. So the advice chooses the app by ID instead of promising detection. A read error never throws out of the classifier, so a `not_linked` error can't turn into a file-read error.
+   - `sdk_app`: `link`'s own SDK-only test, shared (change 2). That's `isSdkOnly`, moved from `commands/link/sdk-only.ts` to `lib/local-keys.ts` so the two can't drift: no init token, no plain key, no unparsable line, no undecided key, and an SDK keyless file present.
+     - **Unusable.** `unusable` is set when that file has no publishable key or can't be read, with `link`'s own reason ("it has no publishable key", "it can't be read"). `link` stops there with `usage_error` before any sign-in or picker, saying to use `clerk link --app <app_id>`. The advice says the same, instead of the `no_app` advice that would send the person into that stop.
    - `no_app`: none of the above.
 3. **Reading the facts.**
-   - **Init token:** use `peekKeylessBreadcrumb` (no side effects; `readKeylessBreadcrumb` deletes a malformed file).
-   - **Keys and their sources:** use the shared key reader from milestone 2 (shared rule 2). It reports the publishable and secret keys separately. It must not throw, so a malformed key can't turn a `not_linked` error into `invalid_key_format`.
-   - **Signed in:** use `hasAccountCredentials`. A credential read failure, such as a sandboxed keychain, counts as signed out. That wording only adds a sign-in step, which is harmless.
-4. **Avoid an import cycle.** `lib/config.ts` will call the reader (milestone 8), and `lib/keyless-target.ts` imports `lib/config.ts`. The shared key reader is already a leaf module (shared rule 2). Put the classifier in its own module too, and make sure it doesn't import `lib/config.ts` directly or through `keyless-target.ts`.
-5. **Next-step wording.** These are drafts for review. The implementer may polish wording but not change which commands each cell names. Every site supplies its own lead sentence, and `rerun` appends "then rerun `<command>`".
+   - **Init token:** `peekKeylessBreadcrumb` (`lib/keyless.ts:148`; no side effects, while `readKeylessBreadcrumb` deletes a malformed file).
+   - **Keys and their sources:** `readFolderKeys` (`lib/local-keys.ts:387`), the reader `clerk link` matches with. Its rejection becomes `couldntTell` via `unreadableFolderReason`.
+   - **Signed in:** `hasAccountCredentials`. A credential read failure, such as a sandboxed keychain, counts as signed out. That wording only adds a sign-in step, which is harmless.
+4. **Import loop (change 3).** `lib/config.ts` will call the classifier (milestone 8). The plan used to require that the classifier never reach `lib/config.ts`, even indirectly. That can't hold: `peekKeylessBreadcrumb` and `hasAccountCredentials` both reach it through `lib/fetch.ts` (runtime imports: `keyless.ts` → `fetch.ts` → `config.ts`, and `credential-store.ts` → `token-exchange.ts` → `fetch.ts`). `lib/config.ts` already avoids this kind of loop with a lazy import on the path that needs it (`config.ts:411`, `await import("./plapi.ts")`).
+   - Milestone 8 loads the classifier the same way, on the not-linked error path only.
+   - Here, the classifier uses its imports only inside functions, never at module load.
+5. **Next-step wording.** These are drafts for review. The implementer may polish wording but not change which commands each cell names. Every site supplies its own lead sentence. `rerun` appends "Then <clause>." and ends `examples` with its command when it has one.
 
-   | Kind                                     | Person (signed in or not; `clerk link` signs in itself)                                                                                                                                                                         | Agent, signed in                                                                                        | Agent, signed out                                                                                                 |
-   | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-   | `init_app`                               | This folder's app was created by `clerk init` and isn't in an account yet. Run `clerk link`; it claims the app into your account and links this folder.                                                                         | same                                                                                                    | `clerk auth login` (it opens a browser, so a person must finish sign-in); it claims the app and links this folder |
-   | `sdk_app`                                | This folder runs on an app the Clerk SDK created during development, which isn't in an account yet. Run `clerk link`: it opens the Clerk Dashboard page to claim the app. After claiming, run `clerk link` again.               | `clerk open` (it prints the claim link for a person to open), then `clerk link` once the app is claimed | `clerk open`, then `clerk auth login`, then `clerk link`                                                          |
-   | `unknown_owner`, publishable key present | This folder has a Clerk key in `<publishableKeySource>`. Run `clerk link`; it finds the app in your account by that key. If it finds no match, no app in this account uses this key: link one with `clerk link --app <app_id>`. | same                                                                                                    | `clerk auth login`, then `clerk link`                                                                             |
-   | `unknown_owner`, secret key only         | This folder has a Clerk secret key in `<secretKeySource>` but no publishable key, so `clerk link` can't match it automatically. Run `clerk link` and choose the app this key belongs to.                                        | `clerk apps list --json`, then `clerk link --app <app_id>`                                              | `clerk auth login`, then as signed in                                                                             |
-   | `no_app`                                 | Run `clerk link` to choose one of your apps, or `clerk init` to create one.                                                                                                                                                     | `clerk apps list --json`, then `clerk link --app <app_id>`; or `clerk init` to create an app            | `clerk auth login` first, then as signed in                                                                       |
+   | Kind                                      | Person (signed in or not; `clerk link` signs in itself)                                                                                                                                                                   | Agent, signed in                                                                                        | Agent, signed out                                                                                                 |
+   | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+   | `init_app`                                | This folder's app was created by `clerk init` and isn't in an account yet. Run `clerk link`; it claims the app into your account and links this folder.                                                                   | same                                                                                                    | `clerk auth login` (it opens a browser, so a person must finish sign-in); it claims the app and links this folder |
+   | `sdk_app`                                 | This folder runs on an app the Clerk SDK created during development. Run `clerk link`: it links the app if it's in your account, or opens the Clerk Dashboard page to claim it. After claiming, run `clerk link` again.   | `clerk open` (it prints the claim link for a person to open), then `clerk link` once the app is claimed | `clerk open`, then `clerk auth login`, then `clerk link`                                                          |
+   | `sdk_app`, unusable (change 2)            | The SDK keyless file has no usable claim link (the reason). Link an existing app with `clerk link --app <app_id>`.                                                                                                        | `clerk apps list --json`, then `clerk link --app <app_id>`                                              | `clerk auth login`, then as signed in                                                                             |
+   | `unknown_owner`, publishable key present  | This folder has a Clerk key in `<publishableKey>`. Run `clerk link`; it finds the app in your account by that key. If it finds no match, no app in this account uses this key: link one with `clerk link --app <app_id>`. | same                                                                                                    | `clerk auth login`, then `clerk link`                                                                             |
+   | `unknown_owner`, secret key only          | This folder has a Clerk secret key in `<secretKey>` but no publishable key, so `clerk link` can't match it automatically. Run `clerk link` and choose the app this key belongs to.                                        | `clerk apps list --json`, then `clerk link --app <app_id>`                                              | `clerk auth login`, then as signed in                                                                             |
+   | `unknown_owner`, couldn't tell (change 1) | The reason, then: run `clerk link` and choose the app this folder uses.                                                                                                                                                   | `clerk apps list --json`, then `clerk link --app <app_id>`                                              | `clerk auth login`, then as signed in                                                                             |
+   | `no_app`                                  | Run `clerk link` to choose one of your apps, or `clerk init` to create one.                                                                                                                                               | `clerk apps list --json`, then `clerk link --app <app_id>`; or `clerk init` to create an app            | `clerk auth login` first, then as signed in                                                                       |
 
-   Why `clerk link`, not `clerk auth login`, for `init_app`: after PR 1, `clerk link` claims the app itself. `clerk auth login` checks only for a stored session (`commands/auth/login.ts:36-47`). An agent whose only credential is `CLERK_PLATFORM_API_KEY` counts as signed in, but `clerk auth login` would start a browser sign-in it can't finish. Only a signed-out agent needs `clerk auth login`.
+   Why `clerk link`, not `clerk auth login`, for `init_app`: after PR 1, `clerk link` claims the app itself. An agent whose only credential is `CLERK_PLATFORM_API_KEY` counts as signed in, and `clerk link` claims with that key, with no browser step. Only a signed-out agent needs `clerk auth login`.
 
-   When `detection` is set (agent-mode `clerk link`, which just ran key detection), the advice changes so it never sends the agent back to the command that just failed:
-   - `no_match`: no app in this account uses the folder's key. Advise `clerk apps list --json`, then `clerk link --app <app_id>`. The first example is never `clerk link`.
-   - `list_failed`: the app list failed, so ownership is unknown (shared rule 1). Advise the failure's own step, such as `clerk auth login` for an expired session or retrying after a server error. Never say the app isn't in this account.
+   **When `linkStop` is set** (agent-mode `clerk link`, or `clerk init` through it, just stopped), the advice never sends the agent back into the same stop:
 
-   `examples` lists the same commands in order, each with a one-line description, ending with the `rerun` command when given. Sites attach `examples` to the error only in agent mode.
+   | What `link` knew                             | Advice                                                                                                                                                                                                                                                    |
+   | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | Any outcome, folder has an init token        | The `init_app` cell. A signed-out agent's `link` skips the claim, and `clerk auth login` claims and links.                                                                                                                                                |
+   | `no_match`                                   | No app in this account uses the folder's key: `clerk apps list --json`, then `clerk link --app <app_id>`. The first example is never `clerk link`.                                                                                                        |
+   | `couldnt_tell`                               | `clerk apps list --json`, then `clerk link --app <app_id>`                                                                                                                                                                                                |
+   | `list_failed`, signed out or session refused | The kind's signed-out cell, which starts with `clerk auth login`. Never says the app isn't in this account.                                                                                                                                               |
+   | `list_failed`, any other failure             | A retry of the same command, worded as a retry, not a new step: "A failed list can be temporary, so retry: run `clerk link` again." The one exception to "never advise `clerk link` again" (Shane, 2026-10-21). Never says the app isn't in this account. |
+   | `no_key`                                     | The kind's own cell. A signed-in `no_app` keeps today's "Pass --app <id>, or run `clerk apps list --json` and retry." A cell that would start with a bare `clerk link` chooses by ID instead.                                                             |
+
+   `examples` lists the same commands in order, each with a one-line description, ending with the `rerun` command when it has one. Sites attach `examples` to the error only in agent mode.
 
 **Definition of done.**
 
@@ -649,7 +680,8 @@ These items go into the GROW-1285 section of the one PR description; the PR itse
   - init token with `.env` keys;
   - init token with only the SDK keyless file;
   - SDK keyless file only;
-  - SDK keyless file with a secret key but no publishable key (expect `no_app`, matching milestone 4's SDK-only test);
+  - SDK keyless file with a secret key but no publishable key (expect `sdk_app`, unusable: change 2);
+  - an SDK keyless file that can't be read (expect `sdk_app`, unusable);
   - SDK keyless file with `.env` keys (expect `unknown_owner`);
   - a plain secret key next to an SDK keyless file (expect `unknown_owner`, secret key only; the SDK file's publishable key isn't used);
   - `.env` only;
@@ -658,50 +690,76 @@ These items go into the GROW-1285 section of the one PR description; the PR itse
   - secret key only (expect `unknown_owner`, secret key only);
   - secret key in an env var only;
   - a malformed key (expect `unknown_owner`, no throw);
+  - files that disagree with no documented order, and an unparsable Clerk line (expect `unknown_owner`, couldn't tell: change 1);
+  - env files that can't be read (expect `unknown_owner`, couldn't tell, no throw);
   - nothing.
   - A run from a subdirectory of a folder with keys expects `no_app`, which documents the limitation.
   - A malformed token file is still on disk after reading.
 - Unit tests for the wording that assert which commands are named, not whole strings:
   - `init_app` names `clerk link` for people and signed-in agents, and `clerk auth login` only for signed-out agents.
-  - `sdk_app` names `clerk link` for people (it opens the claim page), and `clerk open` before `clerk link` for agents. No cell contains a claim URL.
-  - `unknown_owner` never contains "unclaimed". With a publishable key it promises detection; with a secret key only it doesn't.
+  - `sdk_app` names `clerk link` for people (it opens the claim page), and `clerk open` before `clerk link` for agents. Unusable, it names `clerk link --app <app_id>`. No cell contains a claim URL.
+  - `unknown_owner` never contains "unclaimed". With a publishable key it promises detection; with a secret key only, or when the CLI couldn't tell, it doesn't.
   - `no_app` names both `clerk link` and `clerk init`.
-  - With `detection: "no_match"`, the first example is never `clerk link`. With `detection: "list_failed"`, the text never says the app isn't in this account.
+  - For each `linkStop` outcome, the first example is never `clerk link`, except the retry after a failed list. With `list_failed`, the text never says the app isn't in this account.
   - No output ever contains `deploy --app`, `init --accountless`, or a URL.
-  - Every agent signed-out cell starts with `clerk auth login`, except `sdk_app`, which starts with `clerk open`.
-- Each test is seen failing at least once, for example by temporarily breaking the precedence.
+  - Every agent signed-out cell starts with `clerk auth login`, except the usable `sdk_app`, which starts with `clerk open`.
+- `link`'s existing tests pass unchanged after `isSdkOnly` moves.
+- The module is new, so its tests can only pass once it exists. Each is seen failing at least once by temporarily breaking the code it checks: the precedence, the shared SDK-only test, the no-throw paths.
 
 **What could go wrong.**
 
-- **An import cycle through `lib/config.ts`.** Run `bun run typecheck` and `bun run lint`, and check that `lib/config.ts` doesn't import the classifier module transitively.
+- **The classifier and `link` judge the same folder differently.** The advice then names a command that does something else, e.g. "it finds the app by that key" in a folder where `link` couldn't tell which key. Changes 1 and 2 exist for this. The guard is to share `link`'s own predicates and reason clauses, never copy them.
+- **A test reads the developer's real keychain.** `hasAccountCredentials` does unless the test sets `_setTokenOverride`.
 - **Wording drift.** Later milestones must not write their own step text. Any site that needs something new extends `unlinkedFolderNextStep`.
 
 ### Milestone 6: `deploy`, `deploy status`, and agent-mode `link` use the classifier
 
 **Goal and outcome.** The messages from the state table's "`deploy` advises after PR 2" column, per row.
 
-- `clerk deploy` and `clerk deploy status` still exit 1 with `not_linked` and still start with "No Clerk project linked to this directory.", then give the classified step and "then rerun `clerk deploy`" (or `clerk deploy status`).
-- When agent-mode `clerk link` reaches its existing generic error (no keys to match, no match, or a failed app list, including in an SDK-only folder), it still exits 2 with `usage_error` and still starts with "Cannot select an application in agent mode.", then gives the classified step with `detection` set from milestone 4's auto-link result. It never advises `clerk link` again. The signed-in `no_app` case keeps today's "Pass --app <id>, or run `clerk apps list --json` and retry." Agent `link`'s other outcomes come from milestone 4: a signed-in agent with an init token claims and links (exit 0), and the SDK and claim stops use the codes decided under "What's decided".
+- `clerk deploy` and `clerk deploy status` still exit 1 with `not_linked` and still start with "No Clerk project linked to this directory.", then give the classified step and the rerun.
+- **The rerun keeps `--domain` (change 5).** After PR 550, an agent creates production only with `clerk deploy --domain <domain>`; plain `clerk deploy` prints a read-only report and exits 0. So the rerun repeats `--domain <domain>` when the run had it, in both modes, or an agent that links and reruns gets exit 0 and no production instance. `deploy` validates the domain before it checks the link (`deploy/index.ts:108-114`), and a domain isn't secret, so echoing it is safe. `deploy status` refuses both flags, so its rerun stays "run `clerk deploy status` again".
+- **Agent-mode `clerk link` keeps milestone 4's reason (change 6).** When it reaches its generic stop, it still exits 2 with `usage_error` and still starts with "Cannot select an application in agent mode.", followed by milestone 4's reason clause (couldn't tell, an unreadable env file, a failed app list, or secret keys that disagree). Only the tail after the reason, today's "Pass --app <id>, or run `clerk apps list --json` and retry.", becomes the classified step with `linkStop`. It never advises `clerk link` again, except as a retry of the same command after a list that failed for a reason other than sign-in. Agent `link`'s other outcomes come from milestone 4: a signed-in agent with an init token claims and links (exit 0), and the SDK and claim stops use the codes decided under "What's decided".
+- **The SDK-only agent stops already say what this milestone planned (change 7).** Milestone 4 wrote them: no match says to run `clerk open` for a person to claim the app, and a failed list names the failed list and says "Sign in with `clerk auth login`, or retry". This milestone only adds `examples` there.
+- **`clerk init` agents reach the same stop (change 8).** `init` calls `link` with its own rerun clause ("run `clerk init` again", `init/index.ts:677`), and `link`'s stop is thrown inside that call. The advice uses the caller's clause, never a fixed `clerk link`.
 - Agent JSON includes `examples`.
 
-**Implementation outline.**
+**Implementation outline.** References checked at `115c1e6dc`. PR 550 kept the wording, code, and exit code of `deploy`'s three not-linked throws, and moved them:
 
-- Replace the three inline throws with one helper in the `deploy` command folder that calls `readUnlinkedFolder` only on the failure path. The throws are at `deploy/index.ts:134` (agent handoff), `deploy/index.ts:148` (person), and `deploy/status-command.ts:48`. A successful run reads nothing extra.
-- Leave `resolveDeployContext` (`deploy/status.ts:191`) as it is.
-- `deploy/errors.ts:86-91` (the linked app no longer exists) stays as it is; its "re-link" advice is right for that case.
-- For agent-mode `link`, reuse the classifier at `link/index.ts:55-59`, passing `detection` from the auto-link result (no match, or list failed).
+| Site                                   | Where                                                                                                                                              |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent `deploy`                         | `deploy/index.ts:161`, in `runAgentDeploy`. Without `--domain` it prints the read-only report; with `--domain` it creates the production instance. |
+| Person `deploy`                        | `deploy/index.ts:301`, in `runDeploy`                                                                                                              |
+| `deploy status`                        | `deploy/status-command.ts:49`                                                                                                                      |
+| `resolveDeployContext` (left as it is) | `deploy/status.ts:303`                                                                                                                             |
+| The linked app is gone (left as it is) | `deploy/errors.ts:96-102`. PR 550 added `onNotFound`, so a 404 on a domain request no longer reads as the app being gone.                          |
+| Agent `link`'s generic stop            | `decideNextStep`, `link/index.ts:410-419`                                                                                                          |
+| Agent `link`'s SDK-only stops          | `link/sdk-only.ts:63`, `:82`, `:106`                                                                                                               |
+
+- Replace the three `deploy` throws with one helper in a new file in the `deploy` folder, which calls `readUnlinkedFolder` only on the failure path. A successful run reads nothing extra. Keeping the edits to the throw sites keeps any conflict with later PR 550 commits to those lines.
+- **Agent `link`:** `decideNextStep` maps every auto-link outcome to a `LinkStop` in a switch that lists them all, so a new outcome fails the typecheck until someone writes its advice (the pattern of milestone 4's `autolinkAllowsCreate`). `list_failed` passes whether Clerk refused the session, using `isSessionRefused` from `lib/claim-prompt.ts` (exported for this). `link` classifies the folder when it builds the stop, after any claim, so a claim that consumed the token reads as the folder's keys.
+- **Merge PR 550 again just before starting (change 9).** Its branch is still moving: two commits landed on 2026-10-21 after the merge instructions were written. It rewrites the `deploy` files this milestone edits.
 
 **Definition of done.**
 
-- One or two mapping tests per command: given a classified folder, the error has the expected lead sentence, code, exit code, and first example command. Update the existing assertions at `deploy/index.test.ts:2663-2677` and in `status-command.test.ts`. They use a real temporary config directory, so set credentials with `_setTokenOverride`.
-- In the integration harness, one table-driven test per command (`deploy`, `deploy status`, agent `link`) over the four kinds, with `unknown_owner` run once with a publishable key and once with a secret key only. Assert the JSON `error.code`, the exit code, and `error.examples[0].command`. For agent `link`, the signed-in `init_app` cell expects success: exit 0, the folder linked, and no error JSON, because PR 1 claims and links it. Every other agent `link` cell that reaches the generic error asserts `usage_error`, exit 2, and an `error.examples[0].command` that is never `clerk link`. Assert that person-mode output has no "Examples:" block. Each test names its credential; the `init_app` cases run once with a stored session only and once with an API key only.
+- One or two mapping tests per command: given a classified folder, the error has the expected lead sentence, code, exit code, and first example command. Update the existing assertions: person at `deploy/index.test.ts:3323-3338`, telemetry at `deploy/index.test.ts:4014` and `status-command.test.ts:998`. Those tests use a real temporary config directory and don't mock the credential store, so set credentials with `_setTokenOverride`.
+- In the integration harness, one table-driven test per command (`deploy`, `deploy --domain`, `deploy status`, agent `link`, and agent `init` for the cells that reach `link`'s stop) over the kinds, with `unknown_owner` run with a publishable key, a secret key only, and couldn't tell. For `deploy`, extend PR 550's not-linked table in `test/integration/agent-deploy.test.ts:188-203` rather than starting a new one; new `link` tests go in a new file. Assert the JSON `error.code`, the exit code, and `error.examples[0].command`.
+  - For agent `link`, the signed-in `init_app` cell expects success: exit 0, the folder linked, and no error JSON, because PR 1 claims and links it.
+  - Every other agent `link` cell that reaches the generic stop asserts `usage_error`, exit 2, and an `error.examples[0].command` that is never `clerk link`, except the retry after a failed list.
+  - For `deploy --domain`, the last example repeats `--domain`.
+  - Person-mode output has no "Examples:" block.
+  - Each test names its credential; the `init_app` cases run once with a stored session only and once with an API key only.
 - Follow-the-advice tests (shared rule 4), one per situation in the state table: starting from the `deploy` error, run the commands its `examples` name, in order, and assert the folder ends linked to the app its keys belong to, or still unlinked with a next step that isn't the command that just ran. The agent API-key-only `init_app` case must end linked without any browser sign-in. For `sdk_app`, the test stands in for the person's Dashboard claim by adding the app to the mocked account between the first `clerk link` (or `clerk open`) and the rerun.
 - The existing telemetry assertions (`not_linked`, stage `null`) still pass unchanged.
 - `commands/deploy/README.md` and `commands/link/README.md` describe the advice per situation.
 
 **What could go wrong.**
 
-- **Changing the lead sentence** breaks the skill's troubleshooting lookup. The integration tests should assert it verbatim.
+- **Changing a lead sentence** breaks the skill's troubleshooting lookup. The integration tests assert "No Clerk project linked to this directory." and "Cannot select an application in agent mode." verbatim.
+- **Advice that loops**, telling an agent to run the command that just stopped it. The `LinkStop` switch and the first-example assertions guard this.
+- **A rerun that drops `--domain`**, after which the agent thinks the deploy ran.
+- **The follow-the-advice tests for SDK apps are the hardest to write.** They fake the person's Dashboard claim in the mocked account.
+
+**Out of this branch:** agent `deploy`'s "app not found" advice. When Clerk returns 404 for the linked app, `deploy` says "Run `clerk link` to re-link this directory." (`deploy/errors.ts:96-102`). That works for a person, whose `clerk link` offers to re-link. An agent's bare `clerk link` in a linked folder prints the existing link and changes nothing (`link/index.ts:184-189`). The folder is linked, so the classifier doesn't apply. Shane is raising it separately (2026-10-21).
 
 ### Milestone 7: `doctor` uses the classifier
 
@@ -795,12 +853,12 @@ These items go into the GROW-1285 section of the one PR description; the PR itse
 These items go into the GROW-1249 section of the one PR description, and close out the combined PR (decided by Shane 2026-10-19).
 
 - **Changeset:** create the PR's one changeset with `/changesets create`: one summary line, a sub-bullet for GROW-1285 and one for GROW-1249.
-- **Before starting milestone 5:** PR 536 has merged, and `origin/main` (with 536's code) is merged into this branch, with the tests run after the merge.
+- **Before starting milestone 5:** `origin/main` and PR 550's branch are merged into this branch, with the tests run after each merge (done 2026-10-21: `9ebe0f937` and `115c1e6dc`). PR 550 hasn't merged to `main` yet, so this PR still waits for it.
 - **READMEs:** `deploy`, `link`, `doctor`, `open`, `env`, and `whoami` (milestones 6 to 9), wherever they describe a changed message.
 - **Checks:** the commands in "Conventions both PRs share".
 - **The site inventory (shared rule 3).** Rerun the three searches and put the result in the PR description: every hit either fixed by this PR or listed with its reason. At `2133e7ea3`, these hits are expected to stay as they are, each for the reason given. Recheck each one against the code at the time; this list is a starting point, not a substitute for the search.
   - `lib/bapi-command.ts:119` and `commands/api/fapi.ts:38`: they fire only when the folder has no local key, and those commands accept `--app`, so "`clerk link`, or pass `--app`" is right.
-  - `commands/deploy/errors.ts:89`: the linked app no longer exists, so "re-link" is right.
+  - `commands/deploy/errors.ts:100`: the linked app no longer exists. "Re-link" is right for a person; for an agent a bare `clerk link` in a linked folder changes nothing. Shane is raising that separately (2026-10-21), so it stays out of this branch.
   - `commands/doctor/checks.ts:297, 325, 371, 469`: no keys at all, or a linked app with a problem, so `clerk link` is right.
   - `commands/open/index.ts:41`: a linked profile without a development instance.
   - `commands/users/open.ts:128, 201`: `--secret-key` with no app target.
@@ -944,7 +1002,7 @@ Two effects today:
 
 ### An agent's `clerk init` creates a new app over Clerk keys the folder holds (separate ticket, option (a))
 
-Deferred from GROW-1285's milestone 4 review (2026-10-20). Needs Shane's confirmation of the fix, and his approval to create.
+Deferred from GROW-1285's milestone 4 review (2026-10-20). Filed as https://github.com/clerk/cli/issues/556 (2026-10-21); not part of this work.
 
 **Title:** An agent's `clerk init` creates a new app and writes its keys over a real app's keys in the folder
 
