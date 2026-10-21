@@ -105,6 +105,13 @@ export const SDK_KEYLESS_SOURCE = SDK_KEYLESS_FILE.join("/");
 /** How an exported variable is named as a key's source: `NUXT_CLERK_SECRET_KEY env var`. */
 export const ENV_VAR_SOURCE_SUFFIX = " env var";
 
+/** "`CLERK_SECRET_KEY` in .env.local", or "the `CLERK_SECRET_KEY` env var". Never the value. */
+export function describeKeyLocation({ name, source }: { name: string; source: string }): string {
+  return source === `${name}${ENV_VAR_SOURCE_SUFFIX}`
+    ? `the \`${name}\` env var`
+    : `\`${name}\` in ${source}`;
+}
+
 /** The current Clerk key formats, `pk_`/`sk_`. */
 const KEY_SHAPE = /^(?:pk|sk)_(?:test|live)_[A-Za-z0-9+/=_-]+$/;
 /** The legacy `test_`/`live_` key format. */
@@ -423,6 +430,26 @@ export async function readFolderKeys(cwd: string): Promise<FolderKeys> {
 
   const sdkFile = await readSdkKeylessFile(cwd);
   return { ...sdkFileKeys(sdkFile), sdkFile };
+}
+
+/**
+ * Whether the folder's only Clerk keys are the ones a Clerk SDK wrote for an
+ * app it created itself. The SDK writes its keyless file only when nothing
+ * else configures Clerk, so the folder is SDK-only when it holds no plain key,
+ * no Clerk line the CLI can't read, and no undecided key, and the SDK file
+ * exists. Shared by `clerk link` and the unlinked-folder advice, so the two
+ * never judge a folder differently.
+ */
+export function isSdkOnly(keys: FolderKeys): boolean {
+  return Boolean(keys.sdkFile) && keys.sdkFile?.state !== "absent";
+}
+
+/**
+ * Why an SDK-only folder's keyless file gives no publishable key to find or
+ * claim its app by, as a clause. For a folder whose SDK file holds none.
+ */
+export function sdkFileWithoutKeyReason(sdkFile: SdkKeylessFile | undefined): string {
+  return sdkFile?.state === "unreadable" ? "it can't be read" : "it has no publishable key";
 }
 
 /**

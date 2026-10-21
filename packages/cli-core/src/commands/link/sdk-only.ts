@@ -14,7 +14,13 @@
 import { linkApp, matchKeyToApp } from "../../lib/autolink.ts";
 import { claimDestination, describeClaimDestination } from "../../lib/claim-prompt.ts";
 import { CliError, ERROR_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
-import { readSdkClaimLink, SDK_KEYLESS_SOURCE, type FolderKeys } from "../../lib/local-keys.ts";
+import {
+  isSdkOnly,
+  readSdkClaimLink,
+  SDK_KEYLESS_SOURCE,
+  sdkFileWithoutKeyReason,
+  type FolderKeys,
+} from "../../lib/local-keys.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { listApplications, type Application } from "../../lib/plapi.ts";
@@ -67,11 +73,7 @@ export async function linkSdkOnlyFolder(
   // Before any list or sign-in: without a publishable key there's nothing to
   // match and no way to claim, so the CLI never guesses with a picker.
   const publishableKey = keys.publishableKey?.value;
-  if (!publishableKey) {
-    noUsableLink(
-      keys.sdkFile?.state === "unreadable" ? "it can't be read" : "it has no publishable key",
-    );
-  }
+  if (!publishableKey) noUsableLink(sdkFileWithoutKeyReason(keys.sdkFile));
 
   const account = agent ? null : await signedInAccount();
   let apps: Application[];
@@ -110,15 +112,6 @@ export async function linkSdkOnlyFolder(
 
   await sendToClaimPage(claimLink.url, account, rerun);
   return { status: "claim_page_opened" };
-}
-
-/**
- * The SDK writes its keyless file only when nothing else configures Clerk, so
- * the folder is SDK-only when it holds no plain key, no Clerk line the CLI
- * can't read, and no undecided key, and the SDK file exists.
- */
-function isSdkOnly(keys: FolderKeys): boolean {
-  return Boolean(keys.sdkFile) && keys.sdkFile?.state !== "absent";
 }
 
 /**

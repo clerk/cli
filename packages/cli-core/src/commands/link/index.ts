@@ -7,7 +7,6 @@ import { login } from "../auth/login.ts";
 import {
   claimWarning,
   claimedNextSteps,
-  describeKeyLocation,
   reportClaimSkipped,
   reportClaimed,
 } from "../auth/claim-report.ts";
@@ -32,6 +31,7 @@ import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
 import { autolink, findLinkKey, matchKeyToApp, type AutolinkResult } from "../../lib/autolink.ts";
 import {
   couldntTellReason,
+  describeKeyLocation,
   isClerkKeyShaped,
   mayBeAnAppsKey,
   readAllFolderKeys,

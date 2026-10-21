@@ -6,6 +6,7 @@
 
 import type { AutoclaimResult, FolderUnchanged } from "../../lib/autoclaim.ts";
 import { describeClaimDestination } from "../../lib/claim-prompt.ts";
+import { describeKeyLocation } from "../../lib/local-keys.ts";
 import { buildDashboardUrl } from "../../lib/environment.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { log } from "../../lib/log.ts";
@@ -119,11 +120,6 @@ function folderLeftAlone(
         next: `${chooseById}, or run \`clerk link --app ${claimed.id}\` to use \`${claimed.label}\`.`,
       };
   }
-}
-
-/** "`CLERK_SECRET_KEY` in .env.local", or "the `CLERK_SECRET_KEY` env var". */
-export function describeKeyLocation({ name, source }: { name: string; source: string }): string {
-  return source === `${name} env var` ? `the \`${name}\` env var` : `\`${name}\` in ${source}`;
 }
 
 export function claimedNextSteps({ app, local }: ClaimedResult): readonly string[] {
