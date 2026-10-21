@@ -104,11 +104,15 @@ describe("addSuspenseImport", () => {
     );
   });
 
-  test("adds the import when Suspense is aliased away", () => {
-    const source = `import { ClerkProvider } from "@clerk/nextjs";\nimport { Suspense as Pending } from "react";\n`;
+  test.each([
+    `import { Suspense as Pending } from "react";`,
+    `import type { Suspense as SuspenseProps } from "react";`,
+    `import { type\nSuspense as SuspenseProps } from "react";`,
+  ])("adds the import when %s aliases Suspense away", (reactImport) => {
+    const source = `import { ClerkProvider } from "@clerk/nextjs";\n${reactImport}\n`;
 
     expect(addSuspenseImport(source, isClerk)).toBe(
-      `import { ClerkProvider } from "@clerk/nextjs";\nimport { Suspense } from "react";\nimport { Suspense as Pending } from "react";\n`,
+      `import { ClerkProvider } from "@clerk/nextjs";\nimport { Suspense } from "react";\n${reactImport}\n`,
     );
   });
 });
