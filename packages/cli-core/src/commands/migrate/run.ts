@@ -295,6 +295,8 @@ async function resolveInput(options: MigrateRunOptions): Promise<{
   exportSha256?: string;
   /** The instance an export run read its users from. */
   exportInstanceId?: string;
+  /** The export run's source cut it short, so its file is not every user. */
+  exportTruncated?: true;
 }> {
   const value = options.input;
   if (!value) {
@@ -345,12 +347,6 @@ async function resolveInput(options: MigrateRunOptions): Promise<{
   if (sha256File(file) !== sha256 || readEnvelope(file)?.runId !== record.id) {
     throwChangedExport(value, file);
   }
-  if (record.truncated) {
-    log.warn(
-      `Export run ${value} did not get every user: the source cut it short. ` +
-        "Users it never reached are not in this import.",
-    );
-  }
   // Carried on, so the file is checked again where the users are read: another
   // export can still overwrite the path after this.
   return {
@@ -358,6 +354,7 @@ async function resolveInput(options: MigrateRunOptions): Promise<{
     fromExport: record.id,
     exportSha256: sha256,
     ...(record.target.instanceId ? { exportInstanceId: record.target.instanceId } : {}),
+    ...(record.truncated ? { exportTruncated: true as const } : {}),
   };
 }
 
@@ -1045,6 +1042,14 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           spinner,
         }),
       );
+      // With the checks' warnings, so `--json` carries it too: an agent reads
+      // stdout, not the stderr a separate warning would go to.
+      if (input.exportTruncated) {
+        checks.warnings.unshift(
+          `Export run ${input.fromExport} did not get every user: the source cut it short. ` +
+            "Users it never reached are not in this import.",
+        );
+      }
 
       const refused = checks.rejects.length > 0 && !options.allowPartial;
       // The users --require-password left out never reach the checks, so the
