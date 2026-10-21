@@ -104,8 +104,8 @@ The Clerk CLI collects usage telemetry: command name, flag names, duration, outc
 environment signals (OS, install method, terminal), a random machine identifier — and
 your workspace and app IDs when a project is linked. It never collects command
 arguments, option values, file paths, or personal data, except the text you choose to
-send with `clerk feedback`, which is scrubbed for common secret formats, home-directory
-paths and email addresses before it leaves your machine (`clerk feedback --dry-run` shows
+send with `clerk feedback`, which is scrubbed on a best-effort basis for common secret
+formats, home-directory paths and email addresses before it leaves your machine (`clerk feedback --dry-run` shows
 exactly what would be sent and whether a real run would send it, and sends no report,
 though the run's usual usage event still applies; with telemetry on it may create the
 config directory and the local machine id, and briefly writes a temporary file there to

@@ -303,8 +303,9 @@ describe("help", () => {
     expect(help).toContain("capability you needed is missing");
     expect(help).toContain("--dry-run");
     expect(help).toContain("telemetry opt-out");
+    expect(help).toContain("scrubbed before it leaves your machine, on a best-effort basis");
     expect(help).toContain(
-      "Scrubbing is pattern-based and can miss things, so never include secrets",
+      "It misses values that span lines, structured config files such as YAML and pretty-printed JSON, passwords with spaces, and Markdown formatting around a label, so never include secrets",
     );
   });
 

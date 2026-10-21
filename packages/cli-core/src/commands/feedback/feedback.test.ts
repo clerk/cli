@@ -494,6 +494,84 @@ describe("sending", () => {
     expect(posted).toHaveLength(1);
   });
 
+  // Whether a failed send counts is decided only from structured facts that
+  // prove no connection was made: the error code (and, for a permission
+  // error, the connect syscall), on the error or on its cause. Message text
+  // and the URL are never read, so a proxy saying "access denied" or a
+  // telemetry URL containing "sandbox" still counts and keeps its id.
+  test.each([
+    ["EPERM", "connect EPERM 203.0.113.5:443"],
+    ["EACCES", "connect EACCES 203.0.113.5:443"],
+  ])(
+    "a permission error raised by connect (%s) is not counted and prints no report id",
+    async (code, message) => {
+      await readyToSend();
+      const report = { ...COMPLETE, command: "users list", errorCode: "boom" };
+      respondWith = () => {
+        throw Object.assign(new Error(message), { code, syscall: "connect" });
+      };
+      expect(await run(report)).toEqual({
+        sent: false,
+        reason: "send_failed",
+        fallback: GITHUB_ISSUES_URL,
+      });
+      respondWith = () => new Response("{}");
+      expect((await run(report)).sent).toBe(true);
+    },
+  );
+
+  test("a permission error on connect wrapped as the cause (Node's fetch) is not counted", async () => {
+    await readyToSend();
+    const report = { ...COMPLETE, command: "users list", errorCode: "boom" };
+    respondWith = () => {
+      throw new TypeError("fetch failed", {
+        cause: Object.assign(new Error("connect EPERM"), { code: "EPERM", syscall: "connect" }),
+      });
+    };
+    expect((await run(report)).report_id).toBeUndefined();
+    respondWith = () => new Response("{}");
+    expect((await run(report)).sent).toBe(true);
+  });
+
+  test.each([
+    [
+      "a proxy error whose message says access denied",
+      new Error("Proxy error: access denied by policy"),
+    ],
+    ["a message that says permission denied", new Error("upstream said: permission denied")],
+    [
+      "EPERM raised by something other than connect",
+      Object.assign(new Error("EPERM"), { code: "EPERM", syscall: "write" }),
+    ],
+  ])("%s is counted and keeps its report id", async (_label, error) => {
+    await readyToSend();
+    const report = { ...COMPLETE, command: "users list", errorCode: "boom" };
+    respondWith = () => {
+      throw error;
+    };
+    const failed = await run(report);
+    expect(failed).toMatchObject({ sent: false, reason: "send_failed" });
+    expect(failed.report_id).toMatch(/^[0-9a-f-]{36}$/);
+    respondWith = () => new Response("{}");
+    expect(await run(report)).toMatchObject({ sent: false, reason: "rate_limited" });
+  });
+
+  test("a telemetry URL containing sandbox does not make a failed send uncounted", async () => {
+    await markTelemetryNoticeShown();
+    const sandboxUrl = "https://telemetry-sandbox.invalid/v1/event";
+    process.env.CLERK_TELEMETRY_URL = sandboxUrl;
+    let calls = 0;
+    globalThis.fetch = (async (url: unknown) => {
+      calls += 1;
+      if (calls === 1) throw new Error(`request to ${String(url)} failed, reason: sandbox`);
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    const report = { ...COMPLETE, command: "users list", errorCode: "boom" };
+    const failed = await run(report);
+    expect(failed.report_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await run(report)).toMatchObject({ sent: false, reason: "rate_limited" });
+  });
+
   test.each([
     ["refused or unresolvable (Bun reports both this way)", "ConnectionRefused"],
     ["a socket that could not open", "FailedToOpenSocket"],

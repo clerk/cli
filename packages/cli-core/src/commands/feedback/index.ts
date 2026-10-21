@@ -20,11 +20,15 @@ const DESCRIPTION =
   "The report is one event on the CLI's telemetry channel: your goal, what you " +
   "attempted, what went wrong, how it ended, and optionally the command, the error " +
   "text, the error code and a suggestion, plus the usual telemetry envelope: " +
-  `${ATTACHED_FIELD_PHRASES.join(", ")}. Every text field is ` +
-  "scrubbed for common secret formats, home-directory paths and email addresses before " +
-  "it leaves your machine, and --dry-run prints exactly what would be sent. Scrubbing " +
-  "is pattern-based and can miss things, so never include secrets, API keys or personal " +
-  `data about end users. A text field longer than ${FIELD_MAX_LENGTH_TEXT} is refused ` +
+  `${ATTACHED_FIELD_PHRASES.join(", ")}.\n\n` +
+  "Every text field is scrubbed before it leaves your machine, on a best-effort basis: " +
+  "keys and tokens by their shape, private key blocks, Authorization headers, " +
+  "credentials in URLs, values assigned to secret-looking names on one line, email " +
+  "addresses and home-directory paths. It misses values that span lines, structured " +
+  "config files such as YAML and pretty-printed JSON, passwords with spaces, and " +
+  "Markdown formatting around a label, so never include secrets, API keys or personal " +
+  "data about end users. --dry-run prints exactly what would be sent.\n\n" +
+  `A text field longer than ${FIELD_MAX_LENGTH_TEXT} is refused ` +
   "rather than cut. A telemetry opt-out " +
   "(`clerk telemetry disable`, CLERK_TELEMETRY_DISABLED or DO_NOT_TRACK) blocks the " +
   "send; file at https://github.com/clerk/cli/issues instead.";

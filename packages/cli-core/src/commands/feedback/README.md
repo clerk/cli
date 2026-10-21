@@ -56,27 +56,33 @@ The report is built once per run. In human mode the object shown under "This is 
 what will be sent" is the whole event that is posted, wrapper included:
 `{"sdk", "sdkv", "event": "CLI_FEEDBACK", "payload": {...}}`.
 
-Every text field is scrubbed whole before it is capped and before anything leaves your
-machine: common secret formats (API keys and tokens by their prefixes, including `sk-`
-keys, private key blocks including PGP, `Authorization` headers, credentials in URLs,
-assignments whose name contains a secret-looking word such as SECRET, TOKEN, PASSWORD,
-API_KEY, PRIVATE_KEY or ENCRYPTION_KEY (`CLERK_SECRET_KEY=...`), the same names as
-command-line flags (`--password x`), names with spaces (`api key: x`), YAML values on the
-lines below a secret-looking key (`password: |` block scalars, and the children of a
-parent such as `secrets:`), and escaped JSON pasted inside a string) become
-`[REDACTED]`; home-directory paths become `~`; email addresses become `[EMAIL]`. The
-variable or flag name stays and only the value goes (`export TOKEN=abc` becomes
-`export TOKEN=[REDACTED]`), so a reader learns which setting was involved. An unquoted value is the rest of
-its line when the name starts the line, after indentation and an optional `#`, `*`, `-`,
-`+` or `1.` prefix (`DB_PASSWORD=a b c` loses all of `a b c`); in the middle of a line it
-is one word, and inside a quoted string it runs to the string's closing quote, so the rest
-of a one-line JSON object or log survives. An object or array under a secret-looking JSON
-key goes whole (`{"secrets":{...}}`). Scrubbing is
-pattern-based and can miss things, so never include secrets, API keys or personal data
-about end users. The scrubber is documented in `src/lib/redact.ts`, including its known
-limits (one to expect: a quoted value that spans several lines keeps its later lines).
-Scrubbing runs on the client and sees the whole field, so a secret that runs past the
-cap is still matched whole, and the cap is applied only afterwards.
+Every text field is scrubbed on the client, whole, before it is capped and before anything
+leaves your machine. **Scrubbing is best-effort.** It catches secrets by their shape:
+
+- API keys and tokens by their prefixes (Clerk `sk_`/`pk_`/`rk_` and `ak_` keys, GitHub,
+  Slack, npm, AWS, Google, Stripe webhook secrets, JWTs, and `sk-` keys such as OpenAI's and
+  Anthropic's);
+- private key blocks, PGP included;
+- `Authorization` headers, and `Bearer` or `Basic` tokens in prose;
+- a value assigned on one line to a secret-looking name: a name containing SECRET, TOKEN,
+  PASSWORD, API_KEY, PRIVATE_KEY, ENCRYPTION_KEY or AUTHORIZATION (`CLERK_SECRET_KEY=...`,
+  `export DATABASE_PASSWORD=...`, `"apiToken": "..."`), a spaced name such as `api key:`,
+  and the same names as command-line flags (`--password x`, `--token=x`);
+- credentials in URLs (`postgres://user:password@host`).
+
+Secrets become `[REDACTED]`, home-directory paths become `~`, and email addresses become
+`[EMAIL]`. The variable or flag name stays and only the value goes (`export TOKEN=abc`
+becomes `export TOKEN=[REDACTED]`), so a reader learns which setting was involved. An
+unquoted value ends at the first space or double quote; a quoted one ends at its closing
+quote.
+
+It does not understand structure, so it misses: values that span several lines; values in
+structured config files such as YAML blocks and pretty-printed or nested JSON; passwords
+with spaces in them (`password: correct horse` keeps `horse`); and Markdown formatting
+around a label (`**Password**: x`). **Never include secrets, API keys or personal data
+about end users.** The scrubber and its known limits are documented in `src/lib/redact.ts`.
+Because it sees the whole field, a secret that runs past the cap is still matched whole,
+and the cap is applied only afterwards.
 
 **Never attached:** files, environment variables, transcripts, or the command line
 (`argv`). The report is built only from the fields above and the envelope.
@@ -127,10 +133,12 @@ Agent mode prints one JSON object on stdout and exits 0 in every case after vali
 `dev_build`, `rate_limited`, `send_failed`. `report_id` is present exactly when a POST was
 attempted, including a `send_failed` from a timeout, a rejection or a network failure: a
 send that timed out can still have reached the endpoint, and the id is what a later
-removal needs. A `send_failed` without a report id means the run failed before any POST
-(the local config file could not be written or read, or the first-run notice could not be
-recorded). Ctrl-C during the send is not a result: the command follows the CLI's
-interrupt path and exits 130 without printing one.
+removal needs. A `send_failed` without a report id means nothing left the machine: the run
+failed before any POST (the local config file could not be written or read, or the
+first-run notice could not be recorded), or a sandbox refused the connection with a
+permission error. Ctrl-C during the send is not a result: the command follows the CLI's
+interrupt path and exits 130 without printing one, after counting the send against the
+rate limit when the request may have reached the server.
 
 Agent-mode `--dry-run` prints the event a real run would post, with whether it would post it now:
 
@@ -166,8 +174,8 @@ server: any response, accepted or not, and a timeout, because a send that timed 
 rejected may still have landed and a retry loop against a slow endpoint must still meet
 the cap. The CLI cannot tell a timeout before the connection from one after the request
 was sent, so every timeout counts. A connection that was never made (refused, a host that
-does not resolve, no network) sent nothing and is not recorded, and neither is a send
-refused before any POST. The cap fails open: where the
+does not resolve, no network, or a sandbox refusing it with a permission error) sent
+nothing and is not recorded, and neither is a send refused before any POST. The cap fails open: where the
 cache file cannot be written, sends are accepted but not counted, because failing closed
 would block feedback entirely in sandboxes that forbid cache writes. Why this shape: agent-mode
 errors tend to come from retry loops, so a per-hour cap alone would admit hundreds of

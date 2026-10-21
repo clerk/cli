@@ -632,14 +632,37 @@ const CONNECTION_NEVER_MADE = new Set([
   "EHOSTUNREACH",
 ]);
 
+/** Permission errors that, raised by the `connect` syscall, mean a sandbox or firewall refused the connection. */
+const CONNECT_DENIED = new Set(["EPERM", "EACCES"]);
+
+type ConnectFailure = "refused" | "denied";
+
 /**
- * Whether a failed request may still have reached the server. Anything the
- * CLI cannot place counts as yes, and so does a timeout: the CLI cannot tell a
- * timeout before the connection from one after the request was sent.
+ * Whether the error proves no connection was made, read only from structured
+ * fields (`code`, `syscall`) on the error or on its cause, where Node's
+ * fetch puts them. Never from the message or the URL: a proxy answering
+ * "access denied", or a telemetry URL containing "sandbox", says nothing
+ * about whether the request left the machine.
+ *
+ * - `refused`: no connection (refused, unresolvable host, no network). Not
+ *   counted against the cap; the report id is still printed, since a POST
+ *   was attempted.
+ * - `denied`: a permission error raised by `connect`, as a sandbox
+ *   produces. Not counted, and no report id: nothing left the machine.
+ *
+ * Anything else, a timeout included, may have reached the server: the CLI
+ * cannot tell a timeout before the connection from one after the request
+ * was sent.
  */
-function mayHaveReachedServer(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  return !(typeof code === "string" && CONNECTION_NEVER_MADE.has(code));
+function connectFailure(error: unknown): ConnectFailure | null {
+  for (const candidate of [error, (error as { cause?: unknown } | null)?.cause]) {
+    const fields = candidate as { code?: unknown; syscall?: unknown } | null | undefined;
+    const code = fields?.code;
+    if (typeof code !== "string") continue;
+    if (CONNECTION_NEVER_MADE.has(code)) return "refused";
+    if (CONNECT_DENIED.has(code) && fields?.syscall === "connect") return "denied";
+  }
+  return null;
 }
 
 /**
@@ -656,7 +679,9 @@ function mayHaveReachedServer(error: unknown): boolean {
  *
  * The cap counts a send whenever the request may have reached the server: any
  * response, a timeout, or a failure the CLI cannot place. A connection that
- * was never made sent nothing and is not counted. An interrupt is rethrown
+ * was never made sent nothing and is not counted, and neither is one that
+ * `connect` refused with a permission error, which also prints no report id
+ * (see {@link connectFailure}: structured error fields only). An interrupt is rethrown
  * for the CLI's interrupt path, after the send is counted when the request
  * may have reached the server.
  */
@@ -695,12 +720,15 @@ async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
       },
     );
   } catch (error) {
+    // A sandbox that refused the connection sent nothing: no count, no id.
+    const failure = connectFailure(error);
+    const sent = posted && failure !== "denied";
     // Recorded first even on Ctrl-C: a request that was out may have landed,
     // and the interrupt is only rethrown once the cap has counted it.
-    if (posted && mayHaveReachedServer(error)) await record();
+    if (sent && failure === null) await record();
     if (isCancelled(error)) throw error;
     log.debug(`feedback: send failed: ${error}`);
-    return { sent: false, refusal: { reason: "send_failed" }, posted };
+    return { sent: false, refusal: { reason: "send_failed" }, posted: sent };
   } finally {
     clearTimeout(timer);
   }

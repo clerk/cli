@@ -163,10 +163,10 @@ describe("shell assignments and JSON fields stop differently", () => {
   test.each([
     ["DATABASE_PASSWORD=alpha,beta", `DATABASE_PASSWORD=${REDACTED}`],
     ["PASSWORD=alpha;beta", `PASSWORD=${REDACTED}`],
-    ["DB_PASSWD=alpha;beta tail", `DB_PASSWD=${REDACTED}`],
+    ["DB_PASSWD=alpha;beta tail", `DB_PASSWD=${REDACTED} tail`],
     ["auth=alpha,beta", `auth=${REDACTED}`],
     ["authorization=abc,def", `authorization=${REDACTED}`],
-    ["X_AUTH=abc,def rest", `X_AUTH=${REDACTED}`],
+    ["X_AUTH=abc,def rest", `X_AUTH=${REDACTED} rest`],
     ["export TOKEN=plain_value_1", `export TOKEN=${REDACTED}`],
     // A shell word runs through a quoted part, spaces included.
     ['MY_TOKEN="alpha beta" next', `MY_TOKEN=${REDACTED} next`],
@@ -316,8 +316,9 @@ describe("adjacent JSON fields with secret names", () => {
   });
 });
 
-// A name may be two or three words when its last word is the secret noun
-// (`api key`, `secret access key`, `the password`). The name stays.
+// The MCP server's names that may be written with a space (`api key`,
+// `access token`, `client secret`, `secret access key`, …), as fixed phrases.
+// The name stays.
 describe("names with spaces", () => {
   test.each([
     ["api key: plainvalue123", `api key: ${REDACTED}`],
@@ -330,8 +331,8 @@ describe("names with spaces", () => {
     expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
 
-  // The words before a separator only join the name when the last of them is
-  // a secret noun, so a value elsewhere on the line is not taken.
+  // Only those phrases have spaces: other words before a separator are not
+  // part of a name, so a value elsewhere on the line is not taken.
   test.each([["invalid token for user_id=user_123"], ["token and limit=5"], ["primary key: id"]])(
     "%s is left alone",
     (input) => {
@@ -340,76 +341,23 @@ describe("names with spaces", () => {
   );
 });
 
-// YAML: the separator never crosses a line break, so a parent key cannot
-// take its child's name as its value. Under a parent whose name is
-// secret-looking, every line indented deeper than it is part of its value:
-// a child's name stays and its value goes.
-describe("YAML parents and block scalars", () => {
+// A separator never crosses a line break, so a YAML parent cannot take its
+// child's name as its value; a child whose own name is secret-looking still
+// loses its value.
+describe("a value never starts on a later line", () => {
   test.each([
-    ["auth:\n  password: hunter2", `auth:\n  password: ${REDACTED}`, 1],
-    ["tokens:\n  clerk: plainvalue123", `tokens:\n  clerk: ${REDACTED}`, 1],
-    ["secrets:\n  db_password: hunter2pass", `secrets:\n  db_password: ${REDACTED}`, 1],
-    [
-      "secrets:\n  db:\n    password: x\n  api: y\nnext: 1",
-      `secrets:\n  db:\n    password: ${REDACTED}\n  api: ${REDACTED}\nnext: 1`,
-      2,
-    ],
-    ["tokens:\n  - abc123\n  - def456", `tokens:\n  - ${REDACTED}\n  - ${REDACTED}`, 2],
-    // Block scalars: the indicator and every deeper line become one marker.
-    ["password: |\n  hunter2\nnext: 1", `password: ${REDACTED}\nnext: 1`, 1],
-    ["password: >-\n  hunter2\n  more\n\nnext: 1", `password: ${REDACTED}\n\nnext: 1`, 1],
-    [
-      "  private_key: |+\n    line1\n    line2\n  other: x",
-      `  private_key: ${REDACTED}\n  other: x`,
-      1,
-    ],
-    ["token: | # the token\n  abc", `token: ${REDACTED}`, 1],
-    ["- password: |\n    abc\n- next", `- password: ${REDACTED}\n- next`, 1],
-    ["api key: |\n  abc\nnext: 1", `api key: ${REDACTED}\nnext: 1`, 1],
-    // Windows line endings.
-    ["password: |\r\n  hunter2\r\nnext: 1", `password: ${REDACTED}\r\nnext: 1`, 1],
-    // A compact sequence: list items at the parent's own indentation.
-    [
-      "tokens:\n- first-secret\n- second-secret\nnext: 1",
-      `tokens:\n- ${REDACTED}\n- ${REDACTED}\nnext: 1`,
-      2,
-    ],
-    ["password:\n- item", `password:\n- ${REDACTED}`, 1],
-    ["  tokens:\n  - a1\n  b: 1", `  tokens:\n  - ${REDACTED}\n  b: 1`, 1],
-    // Pretty-printed JSON: an object or array opened at the end of the key's line.
-    [
-      '  "secrets": {\n    "db": "first-secret",\n    "api": "second-secret"\n  },\n  "n": 1',
-      `  "secrets": {\n    "db": ${REDACTED}\n    "api": ${REDACTED}\n  },\n  "n": 1`,
-      2,
-    ],
-    ['"tokens": [\n  "a1",\n  "b2"\n]', `"tokens": [\n  ${REDACTED}\n  ${REDACTED}\n]`, 2],
-    // Spaces or a tab after the colon or the indicator.
-    ["auth:  \n  pass: hunter2", `auth:  \n  pass: ${REDACTED}`, 1],
-    ["auth:\t\n  pass: hunter2", `auth:\t\n  pass: ${REDACTED}`, 1],
-    ["password: |  \n  hunter2", `password: ${REDACTED}`, 1],
-  ])("%j → %j", (input, expected, count) => {
-    expect(redact(input)).toEqual({ text: expected, redactions: count });
+    ["auth:\n  password: hunter2", `auth:\n  password: ${REDACTED}`],
+    ["secrets:\n  db_password: hunter2pass", `secrets:\n  db_password: ${REDACTED}`],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
 
   test.each([
-    // An empty value with nothing deeper after it is not a parent.
     ["password:\nnext: 1"],
     ["api_key=\nnext=1"],
-    // A heading in prose: its last word is not a secret noun.
     ["Token refresh fails:\n  run clerk auth login"],
-    // A list item after a parent that is itself a list item is a sibling.
-    ["- tokens:\n- next"],
   ])("%j is left alone", (input) => {
     expect(redact(input)).toEqual({ text: input, redactions: 0 });
-  });
-
-  // The key-block pass runs first; the block scalar around it is then
-  // already the marker and is not counted again.
-  test("a private key in a block scalar is counted once", () => {
-    expect(redact(`private_key: |\n  ${PRIVATE_KEY_BLOCK.replaceAll("\n", "\n  ")}`)).toEqual({
-      text: `private_key: ${REDACTED}`,
-      redactions: 1,
-    });
   });
 });
 
@@ -433,40 +381,6 @@ describe("a quoted value never continues past its line", () => {
       text: `DB_PASSWD=${REDACTED}\nline two"`,
       redactions: 1,
     });
-  });
-});
-
-// A dotenv or YAML line has no shell quoting: `KEY=a b c` and `key: a b c`
-// both mean the whole rest of the line. Such lines start with the name (after
-// indentation, a list dash or `export`), and so does a colon anywhere in
-// prose (`the db password: a b c`). Only an `=` in the middle of a line
-// (logfmt, a query string) keeps the shell-word rule.
-describe("an unquoted value runs to the end of its line", () => {
-  test.each([
-    ["db_password: correct horse battery staple", `db_password: ${REDACTED}`],
-    ["DB_PASSWORD=correct horse battery staple", `DB_PASSWORD=${REDACTED}`],
-    ["export DB_PASSWORD=correct horse battery", `export DB_PASSWORD=${REDACTED}`],
-    ["  - api_key: correct horse", `  - api_key: ${REDACTED}`],
-    ["the db password: correct horse battery staple", `the db password: ${REDACTED}`],
-    // Comment, bullet and numbered-list prefixes still start the line.
-    ["# DB_PASSWORD=correct horse battery", `# DB_PASSWORD=${REDACTED}`],
-    ["#DB_PASSWORD=correct horse battery", `#DB_PASSWORD=${REDACTED}`],
-    ["## api_key: correct horse", `## api_key: ${REDACTED}`],
-    ["* DB_PASSWORD=correct horse battery", `* DB_PASSWORD=${REDACTED}`],
-    ["+ DB_PASSWORD=correct horse battery", `+ DB_PASSWORD=${REDACTED}`],
-    ["- DB_PASSWORD=correct horse battery", `- DB_PASSWORD=${REDACTED}`],
-    ["1. DB_PASSWORD=correct horse battery", `1. DB_PASSWORD=${REDACTED}`],
-    ["12) DB_PASSWORD=correct horse battery", `12) DB_PASSWORD=${REDACTED}`],
-    ["  # export DB_PASSWORD=correct horse", `  # export DB_PASSWORD=${REDACTED}`],
-    ["DB_PASSWORD=correct horse\nNEXT=1", `DB_PASSWORD=${REDACTED}\nNEXT=1`],
-    ["DB_PASSWORD=correct horse\r\nNEXT=1", `DB_PASSWORD=${REDACTED}\r\nNEXT=1`],
-    // A quoted value still ends at its closing quote.
-    ['PASSWORD="alpha beta" next', `PASSWORD=${REDACTED} next`],
-    // An `=` in the middle of a line keeps the shell-word rule.
-    ["run with api_key=abc123 then retry", `run with api_key=${REDACTED} then retry`],
-    ["GET /x?MY_API_KEY=abc123&user=bob HTTP/1.1", `GET /x?MY_API_KEY=${REDACTED} HTTP/1.1`],
-  ])("%j → %j", (input, expected) => {
-    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
 });
 
@@ -516,57 +430,24 @@ describe("URL credentials", () => {
   });
 });
 
-// Markdown and log brackets around an address. The `[REDACTED]@host` a URL
-// credential leaves behind is still not an address: `]` cannot end a local part.
-// One-line JSON and logs: a value that starts inside a quoted string ends at
-// that string's closing quote, and a colon in unquoted prose takes one word,
-// so the rest of the line survives.
+// A bare value stops at the first whitespace or double quote, so the rest of a
+// one-line JSON object or log line survives the assignment inside it.
 describe("the rest of a one-line log survives", () => {
   test.each([
     [
       '{"message":"password: must be 8 chars","code":"weak_password","status":422}',
-      `{"message":"password: ${REDACTED}","code":"weak_password","status":422}`,
+      `{"message":"password: ${REDACTED} be 8 chars","code":"weak_password","status":422}`,
     ],
     [
       'level=error msg="auth: token expired" user=bob request_id=abc',
-      `level=error msg="auth: ${REDACTED}" user=bob request_id=abc`,
+      `level=error msg="auth: ${REDACTED} expired" user=bob request_id=abc`,
     ],
     [
       "Error: token: invalid, then I tried clerk whoami and it worked",
       `Error: token: ${REDACTED} then I tried clerk whoami and it worked`,
     ],
-    [
-      '{"msg":"login failed, password: abc def","user":"bob"}',
-      `{"msg":"login failed, password: ${REDACTED}","user":"bob"}`,
-    ],
-    ["msg='password: abc def' user=bob", `msg='password: ${REDACTED}' user=bob`],
-    [
-      '{\\"message\\":\\"password: abc def\\",\\"code\\":\\"x\\"}',
-      `{\\"message\\":\\"password: ${REDACTED}\\",\\"code\\":\\"x\\"}`,
-    ],
-    [
-      '{"message":"Authorization: header missing","code":"x"}',
-      `{"message":"Authorization: ${REDACTED}","code":"x"}`,
-    ],
-    ['note="set token=abc, done" next=1', `note="set token=${REDACTED}" next=1`],
-  ])("%j → %j", (input, expected) => {
-    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
-  });
-});
-
-// The value of a secret-looking JSON key that is an object or an array goes
-// whole, up to its matching close bracket on the same line.
-describe("JSON objects and arrays under a secret-looking key", () => {
-  test.each([
-    ['{"secrets":{"db":"first-secret","api":"second-secret"}}', `{"secrets":${REDACTED}}`],
-    ['{"tokens":["a1","b2"],"user":"bob"}', `{"tokens":${REDACTED},"user":"bob"}`],
-    ['{"auth":{"db":{"pw":"x"},"y":"z"},"n":1}', `{"auth":${REDACTED},"n":1}`],
-    // A bracket inside a string is not structure.
-    ['{"secrets":{"a":"x}y","b":"z"},"n":1}', `{"secrets":${REDACTED},"n":1}`],
-    // Unbalanced on its line: to the end of the line.
-    ['{"secrets":{"db":"x","api":"y"', `{"secrets":${REDACTED}`],
-    ['{"secrets":{"db":"x",\n"n":1}', `{"secrets":${REDACTED}\n"n":1}`],
-    ['{\\"secrets\\":{\\"a\\":\\"x\\"},\\"n\\":1}', `{\\"secrets\\":${REDACTED},\\"n\\":1}`],
+    ['{"note":"token=abc","next":"x"}', `{"note":"token=${REDACTED}","next":"x"}`],
+    ['note="set token=abc" next=1', `note="set token=${REDACTED}" next=1`],
   ])("%j → %j", (input, expected) => {
     expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
@@ -679,42 +560,44 @@ test.each([
 );
 
 describe("known limitations", () => {
-  test("a colon in the middle of unquoted prose keeps only its first word redacted", () => {
-    expect(redact("I set my password: correct horse")).toEqual({
-      text: `I set my password: ${REDACTED} horse`,
+  // Best-effort by design: these are the shapes the scrubber does not understand.
+  test("a password with spaces keeps every word after the first", () => {
+    expect(redact("DB_PASSWORD=correct horse battery staple")).toEqual({
+      text: `DB_PASSWORD=${REDACTED} horse battery staple`,
       redactions: 1,
     });
   });
 
-  test("an object or array under a secret-looking JSON key keeps lines past its own", () => {
-    // Pretty-printed JSON is handled by the YAML pass when the bracket ends the
-    // key's line; here the bracket's content starts on the key's line.
-    expect(redact('{"secrets":{"db":"x",\n"api":"second-secret"}}')).toEqual({
-      text: `{"secrets":${REDACTED}\n"api":"second-secret"}}`,
+  test("a password with a double quote in it keeps the part from the quote", () => {
+    expect(redact('then password=abc"def ghi" ran')).toEqual({
+      text: `then password=${REDACTED}"def ghi" ran`,
       redactions: 1,
     });
   });
 
-  // Mid-line: more than three words before the name, so they cannot be the
-  // start of a spaced name (`config password=` at a line start would be one).
-  test("an assignment in the middle of a line keeps only its first word redacted", () => {
-    expect(redact("then I ran it with password=correct horse")).toEqual({
-      text: `then I ran it with password=${REDACTED} horse`,
-      redactions: 1,
-    });
+  test.each([
+    // A YAML block scalar: only the indicator is taken.
+    ["password: |\n  hunter2", `password: ${REDACTED}\n  hunter2`],
+    // A YAML child whose own name does not look secret.
+    ["tokens:\n  clerk: plainvalue123", "tokens:\n  clerk: plainvalue123"],
+    // Nested JSON: only the first inner value goes with the object's start.
+    [
+      '{"secrets":{"db":"first-secret","api":"second-secret"}}',
+      `{"secrets":${REDACTED},"api":"second-secret"}}`,
+    ],
+    // Pretty-printed JSON: the lines below the key are not read as its value.
+    [
+      '"secrets": {\n  "db": "first-secret"\n}',
+      `"secrets": ${REDACTED}\n  "db": "first-secret"\n}`,
+    ],
+  ])("a value in a structured config file is not followed: %j", (input, expected) => {
+    expect(redact(input).text).toBe(expected);
   });
 
-  test("a command after an environment assignment at the start of a line is redacted with it", () => {
-    expect(redact("DB_PASSWORD=abc npm start")).toEqual({
-      text: `DB_PASSWORD=${REDACTED}`,
-      redactions: 1,
-    });
-  });
-
-  test("every child of a YAML parent with a secret-looking name loses its value, secret or not", () => {
-    expect(redact("auth:\n  enabled: true\n  provider: github")).toEqual({
-      text: `auth:\n  enabled: ${REDACTED}\n  provider: ${REDACTED}`,
-      redactions: 2,
+  test("a label wrapped in Markdown formatting keeps its value", () => {
+    expect(redact("**Password**: hunter2")).toEqual({
+      text: "**Password**: hunter2",
+      redactions: 0,
     });
   });
 
@@ -812,22 +695,11 @@ describe("large pastes stay linear", () => {
       (n) => "-----BEGIN PRIVATE KEY-----\nabc\n-----END " + fill("PRIVATE KEY ", n),
     ],
     ["spaced name words with no separator", (n) => fill("my api ", n)],
-    ["secret-looking YAML parents on every line", (n) => fill("token:\n", n)],
-    ["one YAML parent followed by indented children", (n) => "secrets:\n" + fill("  a: b\n", n)],
-    ["one YAML block scalar with a long body", (n) => "password: |\n" + fill("  abc def\n", n)],
     ["a line of spaces ending in a colon", (n) => "token" + fill(" ", n) + ":"],
     ["colon assignments repeated on one line", (n) => fill("token: a ", n)],
     ["equals assignments repeated mid-line", (n) => "x " + fill("token=a ", n)],
-    ["indented lines each starting with a secret name", (n) => fill("  token \n", n)],
-    ["quoted strings each holding a secret assignment", (n) => fill('"token: a" ', n)],
-    ["one unclosed quote before many assignments", (n) => '"' + fill("token: a ", n)],
     ["quotes only", (n) => fill('"', n)],
     ["escaped quotes only", (n) => fill('\\"', n)],
-    ["JSON objects under secret keys, repeated", (n) => fill('{"secrets":{"a":1}}', n)],
-    ["one secret JSON key followed by open braces", (n) => '{"secrets":' + fill("{", n)],
-    ["commented assignments on every line", (n) => fill("# token=a b\n", n)],
-    ["numbered-list prefixes with no name", (n) => fill("1. ", n)],
-    ["compact YAML list under a secret parent", (n) => "tokens:\n" + fill("- a\n", n)],
     ["home paths", (n) => fill("/Users/alice/x ", n)],
     ["Authorization headers on one line", (n) => fill("Authorization: ", n)],
     ["Bearer words", (n) => fill("Bearer ", n)],
