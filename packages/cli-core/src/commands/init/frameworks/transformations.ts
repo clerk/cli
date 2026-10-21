@@ -74,12 +74,13 @@ export function addSuspenseImport(
   source: string,
   isAnchor: (specifier: string) => boolean,
 ): string {
-  const imports = [...maskCommentsAndStrings(source).matchAll(IMPORT_STATEMENT)].map((match) => {
-    const text = source.slice(match.index, match.index + match[0].length);
-    const specifier = /["']([^"'\n]*)["'][ \t]*;?$/.exec(text)?.[1];
-    return { end: match.index + match[0].length, text, specifier };
+  const masked = maskCommentsAndStrings(source);
+  const imports = [...masked.matchAll(IMPORT_STATEMENT)].map((match) => {
+    const end = match.index + match[0].length;
+    const specifier = /["']([^"'\n]*)["'][ \t]*;?$/.exec(source.slice(match.index, end))?.[1];
+    return { end, specifier, masked: match[0] };
   });
-  if (imports.some((imp) => imp.specifier === "react" && bindsSuspense(imp.text))) {
+  if (imports.some((imp) => imp.specifier === "react" && bindsSuspense(imp.masked))) {
     return source;
   }
 

@@ -77,6 +77,12 @@ describe("addSuspenseImport", () => {
     expect(addSuspenseImport(source, isClerk)).toBe(source);
   });
 
+  test("leaves a commented Suspense import unchanged", () => {
+    const source = `import { ClerkProvider } from "@clerk/nextjs";\nimport { /* layout */ Suspense } from "react";\n`;
+
+    expect(addSuspenseImport(source, isClerk)).toBe(source);
+  });
+
   test.each([
     `import type { Suspense } from "react";`,
     `import { type Suspense } from "react";`,
