@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import {
+  addSuspenseImport,
   authFileSpecs,
   hasTailwindStyles,
   injectHeaderInProvider,
@@ -15,6 +16,11 @@ import {
 } from "./helpers.js";
 import { enrichNextjsContext } from "./nextjs-context.js";
 import type { FileAction, FrameworkScaffold, ProjectContext, ScaffoldPlan } from "./types.js";
+
+// Place the Suspense import after the Clerk and Next.js imports, before local and CSS imports.
+function precedesSuspenseImport(specifier: string): boolean {
+  return specifier === "@clerk/nextjs" || specifier === "next" || specifier.startsWith("next/");
+}
 
 async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction> {
   const base = srcPrefix(ctx);
@@ -52,7 +58,8 @@ async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction> {
     newContent = safeAddImport(newContent, "@clerk/nextjs", "SignInButton");
     newContent = safeAddImport(newContent, "@clerk/nextjs", "SignUpButton");
     newContent = safeAddImport(newContent, "@clerk/nextjs", "UserButton");
-    newContent = injectHeaderInProvider(newContent, hasTailwindStyles(ctx));
+    newContent = addSuspenseImport(newContent, precedesSuspenseImport);
+    newContent = injectHeaderInProvider(newContent, hasTailwindStyles(ctx), { suspense: true });
   }
 
   return {

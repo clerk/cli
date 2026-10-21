@@ -15,6 +15,7 @@ export {
   indentBlock,
   safeAddImport,
   insertAfterLastImport,
+  addSuspenseImport,
   wrapBodyWithProvider,
   injectHeaderInProvider,
   addBootstrapHeader,

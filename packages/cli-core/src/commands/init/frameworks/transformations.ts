@@ -53,6 +53,33 @@ export function insertAfterLastImport(source: string, snippet: string): string {
   return source.slice(0, lineEnd + 1) + snippet + source.slice(lineEnd + 1);
 }
 
+/**
+ * Insert `import { Suspense } from "react";` on its own line after the last import whose
+ * module specifier satisfies `isAnchor`, or after the last import when none does. No-op
+ * when the file already imports `Suspense` from React.
+ */
+export function addSuspenseImport(
+  source: string,
+  isAnchor: (specifier: string) => boolean,
+): string {
+  const imports = [...maskCommentsAndStrings(source).matchAll(IMPORT_STATEMENT)].map((match) => {
+    const text = source.slice(match.index, match.index + match[0].length);
+    const specifier = /["']([^"'\n]*)["'][ \t]*;?$/.exec(text)?.[1];
+    return { end: match.index + match[0].length, text, specifier };
+  });
+  if (imports.some((imp) => imp.specifier === "react" && /\bSuspense\b/.test(imp.text))) {
+    return source;
+  }
+
+  const statement = `import { Suspense } from "react";\n`;
+  const anchor = imports.findLast((imp) => imp.specifier !== undefined && isAnchor(imp.specifier));
+  if (!anchor) return insertAfterLastImport(source, statement);
+
+  const lineEnd = source.indexOf("\n", anchor.end);
+  if (lineEnd === -1) return `${source}\n${statement}`;
+  return source.slice(0, lineEnd + 1) + statement + source.slice(lineEnd + 1);
+}
+
 type HeaderSyntax = "html" | "jsx";
 
 const HEADER_ATTRS: Record<HeaderSyntax, { tailwind: string; inline: string }> = {
@@ -68,20 +95,32 @@ const HEADER_ATTRS: Record<HeaderSyntax, { tailwind: string; inline: string }> =
 
 const AUTH_HEADER_COMPONENTS = ["Show", "SignInButton", "SignUpButton", "UserButton"] as const;
 
-function buildHeaderBlock(indent: string, tailwind: boolean, syntax: HeaderSyntax): string {
+function buildHeaderBlock(
+  indent: string,
+  tailwind: boolean,
+  syntax: HeaderSyntax,
+  suspense = false,
+): string {
   const innerIndent = indent + "  ";
   const attrs = HEADER_ATTRS[syntax];
   const attr = tailwind ? attrs.tailwind : attrs.inline;
 
+  const showIndent = suspense ? innerIndent + "  " : innerIndent;
+  const showBlocks = [
+    `${showIndent}<Show when="signed-out">`,
+    `${showIndent}  <SignInButton />`,
+    `${showIndent}  <SignUpButton />`,
+    `${showIndent}</Show>`,
+    `${showIndent}<Show when="signed-in">`,
+    `${showIndent}  <UserButton />`,
+    `${showIndent}</Show>`,
+  ];
+
   return [
     `${indent}<header ${attr}>`,
-    `${innerIndent}<Show when="signed-out">`,
-    `${innerIndent}  <SignInButton />`,
-    `${innerIndent}  <SignUpButton />`,
-    `${innerIndent}</Show>`,
-    `${innerIndent}<Show when="signed-in">`,
-    `${innerIndent}  <UserButton />`,
-    `${innerIndent}</Show>`,
+    ...(suspense
+      ? [`${innerIndent}<Suspense>`, ...showBlocks, `${innerIndent}</Suspense>`]
+      : showBlocks),
     `${indent}</header>`,
   ].join("\n");
 }
@@ -97,14 +136,21 @@ export function headerHtmlBlock(indent: string, tailwind: boolean): string {
 /**
  * Inject a navigation header with auth buttons inside `<ClerkProvider>`.
  * Must be called AFTER `wrapBodyWithProvider` has already wrapped body contents.
+ * `suspense` wraps the `<Show>` blocks in React's `<Suspense>`, which Next.js App Router
+ * needs when Cache Components is enabled (`<Show>` reads the request during prerendering).
+ * The caller adds the `Suspense` import.
  */
-export function injectHeaderInProvider(content: string, tailwind: boolean): string {
+export function injectHeaderInProvider(
+  content: string,
+  tailwind: boolean,
+  options: { suspense?: boolean } = {},
+): string {
   const providerPattern = /^( *).*<ClerkProvider[^>]*>/m;
   const match = providerPattern.exec(content);
   if (!match) return content;
 
   const innerIndent = match[1] + "  ";
-  const headerBlock = buildHeaderBlock(innerIndent, tailwind, "jsx");
+  const headerBlock = buildHeaderBlock(innerIndent, tailwind, "jsx", options.suspense ?? false);
 
   return content.replace(providerPattern, (fullMatch) => `${fullMatch}\n${headerBlock}`);
 }

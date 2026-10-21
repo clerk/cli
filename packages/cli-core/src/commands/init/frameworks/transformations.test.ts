@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { insertAfterLastImport } from "./transformations.ts";
+import { addSuspenseImport, insertAfterLastImport } from "./transformations.ts";
 
 describe("insertAfterLastImport", () => {
   test("inserts after a single-line import", () => {
@@ -45,5 +45,35 @@ const x = 1;
     const result = insertAfterLastImport(source, "SNIPPET\n");
 
     expect(result.indexOf("SNIPPET")).toBeLessThan(result.indexOf("// import"));
+  });
+});
+
+describe("addSuspenseImport", () => {
+  const isClerk = (specifier: string) => specifier === "@clerk/nextjs";
+
+  test("inserts after the last anchor import", () => {
+    const source = `import { ClerkProvider } from "@clerk/nextjs";\nimport "./globals.css";\n`;
+
+    const result = addSuspenseImport(source, isClerk);
+
+    expect(result).toBe(
+      `import { ClerkProvider } from "@clerk/nextjs";\nimport { Suspense } from "react";\nimport "./globals.css";\n`,
+    );
+  });
+
+  test("ignores a subpath of the anchor package", () => {
+    const source = `import { auth } from "@clerk/nextjs/server";\nimport { a } from "a";\nconst x = 1;\n`;
+
+    const result = addSuspenseImport(source, isClerk);
+
+    expect(result).toBe(
+      `import { auth } from "@clerk/nextjs/server";\nimport { a } from "a";\nimport { Suspense } from "react";\nconst x = 1;\n`,
+    );
+  });
+
+  test("leaves a file that already imports Suspense unchanged", () => {
+    const source = `import { ClerkProvider } from "@clerk/nextjs";\nimport { Suspense, type ReactNode } from 'react';\n`;
+
+    expect(addSuspenseImport(source, isClerk)).toBe(source);
   });
 });
