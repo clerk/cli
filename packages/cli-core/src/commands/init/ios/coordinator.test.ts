@@ -364,6 +364,16 @@ test.each([
     expect(entitlements.includes("webcredentials:")).toBe(domain);
     expect(entitlements.includes("com.apple.developer.applesignin")).toBe(apple);
     if (platform === "macos") expect(entitlements).toContain("com.apple.security.network.client");
+    // What was left out is explained, never as "rerun with --sign-in-with-apple".
+    const remaining: string[] = JSON.parse(captured.out).handoff.remaining.map(
+      (item: { detail: string }) => item.detail,
+    );
+    const explained = (text: string) => remaining.some((detail) => detail.includes(text));
+    expect(explained("signed by a Personal Team, which can't use Sign in with Apple")).toBe(
+      starter && personal,
+    );
+    expect(explained("Associated Domains were left out")).toBe(!domain);
+    expect(explained("rerun with --sign-in-with-apple")).toBe(false);
   },
 );
 

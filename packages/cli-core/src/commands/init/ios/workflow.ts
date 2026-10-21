@@ -55,6 +55,11 @@ import {
   type InspectOptions,
 } from "./xcode.ts";
 
+const PERSONAL_TEAM_APPLE =
+  "This app is signed by a Personal Team, which can't use Sign in with Apple, so its capability was left out. Choose a paid Apple Developer Program team in Xcode, then run clerk init again.";
+const PERSONAL_TEAM_DOMAINS =
+  "Associated Domains were left out: a Personal Team can't provision them for a Mac app, so passkeys and password AutoFill stay off. Choose a paid Apple Developer Program team in Xcode, then run clerk init again.";
+
 export interface SetupOptions extends InspectOptions {
   remote?: RemoteSelection;
   capabilities?: boolean;
@@ -63,8 +68,8 @@ export interface SetupOptions extends InspectOptions {
   starter?: boolean;
   inspectOnly?: boolean;
   checkAppleConnection?: boolean;
-  /** False when the signing team can't provision Associated Domains (a new macOS starter on a Personal Team). */
-  associatedDomain?: boolean;
+  /** A new starter signed by a Personal Team: no Sign in with Apple, and on macOS no Associated Domains. */
+  personalTeam?: boolean;
   /** An inspection of the same project taken earlier (say, before prompting), to avoid a second xcodebuild pass. */
   inspection?: Inspection;
 }
@@ -90,6 +95,8 @@ export interface SetupPreview {
   apple?: IOSNativeApplePlan;
   appleRequested: boolean;
   appleWarning?: string;
+  /** Why a Personal Team's macOS starter has no Associated Domain. */
+  personalTeamNote?: string;
   signInUIRequested: boolean;
   starter?: Awaited<ReturnType<typeof planStarter>>;
 }
@@ -145,7 +152,8 @@ export async function prepareSetup(
       // Follow Clerk's setting only when the user wasn't asked; an explicit
       // "no" must not add the Sign in with Apple entitlement.
       if (options.signInWithApple === undefined) appleEnabled = enabledInClerk;
-      if (enabledInClerk && options.signInWithApple === false)
+      if (enabledInClerk && options.personalTeam) appleWarning = PERSONAL_TEAM_APPLE;
+      else if (enabledInClerk && options.signInWithApple === false)
         appleWarning =
           "Sign in with Apple is enabled for this Clerk instance, but its capability was not added. Apple sign-in fails on device until you add it, or rerun with --sign-in-with-apple.";
       else if (
@@ -167,7 +175,7 @@ export async function prepareSetup(
           originalAction.type === "modify" ? originalAction.content : inspection.document.source,
           remote?.context.frontendHost,
           appleEnabled,
-          options.associatedDomain !== false,
+          !(options.personalTeam && inspection.input.selection.sdk === "macosx"),
         )
       : undefined;
   if (capabilities) {
@@ -254,6 +262,10 @@ export async function prepareSetup(
     apple,
     appleRequested: options.signInWithApple === true,
     appleWarning,
+    personalTeamNote:
+      options.personalTeam && capabilities && inspection.input.selection.sdk === "macosx"
+        ? PERSONAL_TEAM_DOMAINS
+        : undefined,
     signInUIRequested: options.signInUI === true,
     starter,
     sdk: originalAction,
@@ -474,6 +486,8 @@ export async function applySetup(
       );
     if (preview.appleWarning)
       remaining.push({ id: "apple-provider-review", detail: preview.appleWarning });
+    if (preview.personalTeamNote)
+      remaining.push({ id: "associated-domains", detail: preview.personalTeamNote });
     if (sdkCheck.status === "fail" || (preview.sdk.type === "skip" && sdkCheck.status !== "pass"))
       remaining.push({ id: "sdk-version", detail: sdkCheck.message });
     if (preview.resolvePackages)

@@ -102,6 +102,7 @@ export function printSetupPreview(preview: SetupPreview): void {
   }
   if (preview.appleRequested) log.info("  Configure native Sign in with Apple");
   if (preview.appleWarning) log.warn(preview.appleWarning);
+  if (preview.personalTeamNote) log.warn(preview.personalTeamNote);
   if (preview.dirtyFiles.length) log.info("  Existing edits will be preserved in backups.");
   if (preview.capabilities?.status === "manual")
     log.warn(preview.capabilities.reason ?? "Some capabilities need manual setup.");
@@ -262,7 +263,7 @@ export async function runAppleInit(
           "Sign in with Apple needs a paid Apple Developer Program team, and this app is signed by a Personal Team. Choose a paid team in Xcode, or drop --sign-in-with-apple.",
         );
       setup.signInWithApple = false;
-      if (inspection.input.selection.sdk === "macosx") setup.associatedDomain = false;
+      setup.personalTeam = true;
     }
     let installedProducts: "core" | "ui" | undefined;
     if (!options.appleSdk && !options.prebuiltAuthUi) {

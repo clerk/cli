@@ -57,7 +57,7 @@ When running in agent mode (`--mode agent`, `CLERK_MODE=agent`, a recognized age
 - For **existing projects**: framework and package manager are auto-detected, no flags required
 - For **new projects** (`--starter` or blank directory): `--framework` is required (no way to auto-detect in an empty dir). Package manager is auto-selected by availability (bun → pnpm → yarn → npm) unless `--pm` is provided
 - Project name defaults to the framework's default (e.g. `my-clerk-next-app`) unless `--name` is provided
-- An iOS or macOS starter (`--framework ios` or `macos`) takes `--bundle-id` (defaulting to Xcode's Organization Identifier plus the name) and `--team-id` (defaulting to the only paid team, or else the only team, in Xcode's accounts). Without `--app` or a linked profile, init creates the app and prints the next step: run `clerk init --app <id> --json` inside it
+- An iOS or macOS starter (`--framework ios` or `macos`) takes `--bundle-id` (defaulting to Xcode's Organization Identifier plus the name) and `--team-id` (defaulting to the only paid team, or else the only team, in Xcode's accounts). Without `--app` or a linked profile, init creates the app and prints the next step, `cd <app> && clerk init --app <app_id> --json`, with this run's setup options (see **New apps** under iOS and macOS)
 - For accountless-capable frameworks with no `--app` and no linked profile:
   - When **authenticated**, init creates a real Clerk app named after the project (`package.json#name`, `--name`, or directory basename) and links it.
   - When **unauthenticated**, init uses accountless: the app runs on auto-generated dev keys, and init writes a legacy-named `.clerk/keyless.json` breadcrumb so the next `clerk auth login` claims the app automatically.
