@@ -142,6 +142,34 @@ test("skips sign-in page when it already exists", async () => {
   });
 });
 
+test("wraps auth page components in Suspense", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx({ deps: { tailwindcss: "^4.0.0" } }));
+
+  expect(findAction(plan.actions, "app/sign-in/[[...sign-in]]/page.tsx")).toMatchObject({
+    type: "create",
+    content: `import { Suspense } from "react";
+import { SignIn } from "@clerk/nextjs";
+
+export default function SignInPage() {
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <Suspense>
+        <SignIn />
+      </Suspense>
+    </div>
+  );
+}
+`,
+  });
+  expect(findAction(plan.actions, "app/sign-up/[[...sign-up]]/page.tsx")).toMatchObject({
+    type: "create",
+    content: expect.stringContaining("<Suspense>\n        <SignUp />\n      </Suspense>"),
+  });
+});
+
 test("uses src/ paths when srcDir is true", async () => {
   await mkdir(join(tempDir, "src/app"), { recursive: true });
   await Bun.write(join(tempDir, "src/app/layout.tsx"), "<html><body>{children}</body></html>");

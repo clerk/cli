@@ -74,6 +74,7 @@ test("scaffolds all actions for a fresh Next.js Pages Router project", async () 
   expect(signIn.type).toBe("create");
   if (signIn.type === "create") {
     expect(signIn.content).toContain("SignIn");
+    expect(signIn.content).not.toContain("Suspense");
   }
 
   const signUp = findAction(plan.actions, "pages/sign-up/[[...sign-up]].tsx");
