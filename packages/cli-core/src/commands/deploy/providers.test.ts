@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildOAuthProviderDescriptors,
   inspectNativeAppleConfiguration,
+  oauthWalkthroughUrls,
   providerFields,
   providerLabel,
   type NativeAppleStatus,
@@ -312,5 +313,16 @@ describe("deploy OAuth provider descriptors", () => {
   test("providerLabel falls back to title-cased unknown slugs", () => {
     expect(providerLabel("linkedin_oidc")).toBe("LinkedIn");
     expect(providerLabel("new_provider")).toBe("New Provider");
+  });
+
+  test("oauth walkthrough origins add www only when the domain does not already have it", () => {
+    expect(oauthWalkthroughUrls("example.com", "https://clerk.example.com")).toEqual({
+      authorizedOrigins: ["https://example.com", "https://www.example.com"],
+      redirectUri: "https://clerk.example.com/v1/oauth_callback",
+    });
+    expect(oauthWalkthroughUrls("www.example.com", "https://clerk.example.com")).toEqual({
+      authorizedOrigins: ["https://www.example.com", "https://example.com"],
+      redirectUri: "https://clerk.example.com/v1/oauth_callback",
+    });
   });
 });

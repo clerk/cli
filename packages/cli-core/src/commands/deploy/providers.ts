@@ -520,14 +520,18 @@ export function providerSetupIntro(provider: OAuthProvider | OAuthProviderDescri
   return [bold(`Configure ${label} OAuth for production`), setupCopy, dim(`Reference: ${docsUrl}`)];
 }
 
-function oauthWalkthroughUrls(
+export function oauthWalkthroughUrls(
   domain: string,
   frontendApiUrl?: string,
 ): { authorizedOrigins: string[]; redirectUri: string } {
   const callbackBase =
     frontendApiUrl?.replace(/\/+$/, "") ?? `https://${clerkSubdomains(domain).frontendApi}`;
+  const hasWww = /^www\./i.test(domain);
+  const authorizedOrigins = hasWww
+    ? [`https://${domain}`, `https://${domain.replace(/^www\./i, "")}`]
+    : [`https://${domain}`, `https://www.${domain}`];
   return {
-    authorizedOrigins: [`https://${domain}`, `https://www.${domain}`],
+    authorizedOrigins,
     redirectUri: `${callbackBase}/v1/oauth_callback`,
   };
 }
