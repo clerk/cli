@@ -820,20 +820,29 @@ describe("sending", () => {
 // captured request. Fixtures are assembled at runtime where their shape would
 // trip GitHub's push protection.
 describe("every free-text field is scrubbed before the POST", () => {
-  const SECRETS: Array<[string, string]> = [
-    ["Platform API key", ["ak_", "1234567890abcdef"].join("")],
-    ["named assignment", "CLERK_SECRET_KEY=notsk_value_123"],
-    ["URL credentials", "postgres://alice:hunter2@db.example.com/app"],
-    ["Authorization header", "Authorization: token abc123"],
-    ["home directory", "/Users/alice/app/index.ts"],
-    ["email", "alice@example.com"],
+  // Each fixture with what its field must carry in its place: the secret's
+  // marker, or the home path rewritten to `~`.
+  const SECRETS: Array<[string, string, string]> = [
+    ["Platform API key", ["ak_", "1234567890abcdef"].join(""), REDACTED],
+    ["named assignment", "CLERK_SECRET_KEY=notsk_value_123", REDACTED],
+    ["URL credentials", "postgres://alice:hunter2@db.example.com/app", REDACTED],
+    ["Authorization header", "Authorization: token abc123", REDACTED],
+    ["home directory", "/Users/alice/app/index.ts", "~/app/index.ts"],
+    ["email", "alice@example.com", EMAIL_MARKER],
   ];
   const FIELDS = ["goal", "attempted", "issue", "errorText", "suggestion"] as const;
+  const PAYLOAD_KEY = {
+    goal: "goal",
+    attempted: "attempted",
+    issue: "issue",
+    errorText: "error_text",
+    suggestion: "suggestion",
+  } as const;
   const cases = FIELDS.flatMap((field) =>
-    SECRETS.map(([label, secret]) => [field, label, secret] as const),
+    SECRETS.map(([label, secret, replacement]) => [field, label, secret, replacement] as const),
   );
 
-  test.each(cases)("%s containing a %s", async (field, _label, secret) => {
+  test.each(cases)("%s containing a %s", async (field, _label, secret, replacement) => {
     await readyToSend();
     await run({ ...COMPLETE, [field]: `context ${secret} more context` });
     const body = JSON.stringify(posted[0]!.body);
@@ -841,11 +850,8 @@ describe("every free-text field is scrubbed before the POST", () => {
       ? "notsk_value_123"
       : secret.replace(/^Authorization: /, "");
     expect(body).not.toContain(needle);
-    expect(body).toMatch(
-      new RegExp(
-        `${REDACTED.replace(/[[\]]/g, "\\$&")}|${EMAIL_MARKER.replace(/[[\]]/g, "\\$&")}|~`,
-      ),
-    );
+    // The field itself, as posted, carries the replacement where the secret was.
+    expect(feedbackEvents()[0]!.payload[PAYLOAD_KEY[field]]).toContain(replacement);
     expect(feedbackEvents()[0]!.payload.redactions).toBeGreaterThanOrEqual(1);
   });
 
