@@ -844,6 +844,27 @@ describe("a date that holds no real date", () => {
     expect(users[0]).not.toHaveProperty("email_verified");
   });
 
+  // SQLite TEXT can hold these. The import reads them as unverified, so the
+  // export neither writes them nor counts them as verified.
+  test.each([["0"], ["not-a-date"]])("treats an Auth.js %p as unverified", (value) => {
+    const { users, coverage } = buildAuthJsExport([
+      { id: "aj1", email: "a@x.dev", email_verified: value },
+    ]);
+    expect(users[0]).not.toHaveProperty("email_verified");
+    expect(coverage.find((c) => c.label === "have a verified email")?.count).toBe(0);
+  });
+
+  test('lets --trust-oauth-emails mark an OAuth user whose value was "0"', () => {
+    const now = "2026-10-21T00:00:00.000Z";
+    const { users, trusted } = buildAuthJsExport(
+      [{ id: "aj1", email: "a@x.dev", email_verified: "0" }],
+      () => {},
+      { accounts: new Map([["aj1", ["github"]]]), trustOauthEmails: true, now },
+    );
+    expect(users[0]).toMatchObject({ email_verified: now });
+    expect(trusted).toBe(1);
+  });
+
   // Counted from what is exported, so coverage agrees with the file.
   test.each([
     [

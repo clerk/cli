@@ -2,6 +2,21 @@ import type { SourceEntry } from "../types.ts";
 import { routeByVerification, splitName } from "./shared.ts";
 
 /**
+ * Whether an Auth.js `emailVerified` value is a verification: a real date.
+ * `0` (the epoch) is a default, not one, and text that isn't a date is none;
+ * digits alone are a stored integer timestamp. The export reads values by
+ * the same rule, so its coverage is what the import does.
+ */
+export function isAuthJsVerified(value: unknown): boolean {
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return /^\d+$/.test(trimmed) ? Number(trimmed) !== 0 : !Number.isNaN(Date.parse(trimmed));
+  }
+  return Boolean(value);
+}
+
+/**
  * Auth.js (formerly NextAuth) → Clerk transformer.
  *
  * Auth.js has no export tool and no fixed user table, so this assumes the
@@ -53,14 +68,7 @@ const authjsSource = {
     providers: "socialProviders",
   },
   postTransform: (user) => {
-    const verified = user.emailVerified;
-    if (
-      verified === 0 ||
-      (typeof verified === "string" &&
-        (/^\d+$/.test(verified.trim())
-          ? Number(verified) === 0
-          : Number.isNaN(Date.parse(verified))))
-    ) {
+    if (user.emailVerified != null && !isAuthJsVerified(user.emailVerified)) {
       user.emailVerified = null;
     }
     routeByVerification(user, "email", "emailVerified", "timestamp");
