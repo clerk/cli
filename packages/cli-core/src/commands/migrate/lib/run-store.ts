@@ -122,7 +122,10 @@ export type UserLine = {
   /** Why a user was skipped. */
   reason?: string;
   error?: string;
-  /** Failed: the HTTP status, or "unknown". Skipped: a machine reason, NO_PASSWORD_CODE or IN_FILE_CODE. */
+  /**
+   * Failed: the HTTP status, or "unknown". Skipped: a machine reason,
+   * NO_PASSWORD_CODE, IN_FILE_CODE or SOURCE_SKIP_CODE.
+   */
   code?: string;
   passwordDropped?: boolean;
 };
@@ -352,6 +355,13 @@ export const NO_PASSWORD_CODE = "no_password";
 export const IN_FILE_CODE = "in_file";
 
 /**
+ * The `code` on a user its source asked to skip (an anonymous guest, a
+ * soft-deleted account). Nobody means to bring them across, so they leave a
+ * run `complete`, and a continue has nothing to retry for them.
+ */
+export const SOURCE_SKIP_CODE = "source_skip";
+
+/**
  * Whether a continue has users to retry: one never sent, or a latest line it
  * retries. Not a `--require-password` skip, nor one for the file's own data:
  * the continue carries the flag and reads the same file, so it leaves that
@@ -363,7 +373,9 @@ export function hasRetryableUsers(record: RunRecord, latest: Iterable<UserLine>)
   if (!record.finishedAt || (record.counts.notSent ?? 0) > 0) return true;
   return [...latest].some((line) =>
     line.status === "skipped"
-      ? line.code !== NO_PASSWORD_CODE && line.code !== IN_FILE_CODE
+      ? line.code !== NO_PASSWORD_CODE &&
+        line.code !== IN_FILE_CODE &&
+        line.code !== SOURCE_SKIP_CODE
       : line.status !== "created" || (line.pending?.length ?? 0) > 0,
   );
 }
@@ -510,11 +522,17 @@ function openRun(runsDir: string, record: RunRecord): Run {
       writeRecord(runsDir, run.record);
     },
     finish(options) {
-      const counts = countLines(latestUserLines(runsDir, run.record.id).values());
+      const latest = [...latestUserLines(runsDir, run.record.id).values()];
+      const counts = countLines(latest);
       if (options?.notSent) counts.notSent = options.notSent;
+      // Counted as skipped, but no reason to call the run partial.
+      const sourceSkipped = latest.filter(
+        (line) => line.status === "skipped" && line.code === SOURCE_SKIP_CODE,
+      ).length;
       const unfinished =
         (counts.failed ?? 0) +
-        (counts.skipped ?? 0) +
+        (counts.skipped ?? 0) -
+        sourceSkipped +
         (counts.creating ?? 0) +
         (counts.notSent ?? 0) +
         (counts.pending ?? 0);

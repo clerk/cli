@@ -75,6 +75,7 @@ import {
   hasRetryableUsers,
   NO_PASSWORD_CODE,
   IN_FILE_CODE,
+  SOURCE_SKIP_CODE,
   unfinishedUndoMessage,
   inUseMessage,
   openUndoOf,
@@ -769,13 +770,16 @@ function continueWithExport(run: Run, fromExport: string | undefined): Run {
  * user: it is created already.
  */
 function recordRejects(run: Run, checks: ImportChecks): void {
-  for (const { sourceId, reason, keptSourceId, inFile } of [...checks.rejects, ...checks.skipped]) {
+  for (const { sourceId, reason, keptSourceId, inFile } of checks.rejects) {
     run.append({
       sourceId,
       status: "skipped",
       reason: keptSourceId ? `${reason} (kept: ${keptSourceId})` : reason,
       ...(inFile ? { code: IN_FILE_CODE } : {}),
     });
+  }
+  for (const { sourceId, reason } of checks.skipped) {
+    run.append({ sourceId, status: "skipped", reason, code: SOURCE_SKIP_CODE });
   }
 }
 

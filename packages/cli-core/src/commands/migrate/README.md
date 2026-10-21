@@ -165,7 +165,8 @@ in the import's `--json`) counts those users.
 
 A run is `partial` when any user failed, was skipped, is still `creating`, has
 identifiers still `pending`, or was never sent (`counts.notSent`), and
-`complete` otherwise. A run whose process died, or that never recorded a finish
+`complete` otherwise. A user its source asked to skip (`code: "source_skip"`)
+doesn't count: nobody meant to bring it across. A run whose process died, or that never recorded a finish
 time, lists as `interrupted`. A Ctrl-C leaves a run that way. Its run ID and
 folder are printed as the run starts, so they are on screen however it ends. A
 lock held by another live process refuses a second writer with exit 2, and names
@@ -763,7 +764,8 @@ after them. They sort the users four ways:
   guests, Firebase users with no email or phone (such as anonymous ones), and
   Supabase's soft-deleted and anonymous users. Nobody means to bring these
   across, so they never stop the import: each is recorded as `skipped` with its
-  source's reason, and `--json` lists them as `checks.skipped`.
+  source's reason (`code: "source_skip"`), and `--json` lists them as
+  `checks.skipped`. They leave the run `complete`.
 - **Rejected** — users Clerk would refuse. Each gets the first reason that
   applies:
   - it failed schema validation
