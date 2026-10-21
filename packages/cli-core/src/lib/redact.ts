@@ -326,19 +326,21 @@ const NAME_VALUE = new RegExp(
  * support them, and an unsupported one would fail at load.
  */
 const CAMEL_SECRET_WORD = String.raw`(?<=[a-z0-9])(?:(?:Pass|Pwd|Auth)(?![a-z])|(?:PASS|PWD|AUTH)(?![A-Za-z]))`;
-const camelSecretName = (group: string): string =>
-  String.raw`(?=[A-Za-z0-9_.-]*?${CAMEL_SECRET_WORD})(?=(?<${group}>[A-Za-z0-9_.-]+))`;
+const camelSecretName = (chars: string, group: string): string =>
+  String.raw`(?=${chars}*?${CAMEL_SECRET_WORD})(?=(?<${group}>${chars}+))`;
 
 /**
- * Pass 4, second half: a camelCase secret name and its value, as a JSON field
- * or a bare name, with the same separators and value rules as
+ * Pass 4, second half: a camelCase secret name and its value, as a flag, a
+ * JSON field or a bare name, with the same separators and value rules as
  * {@link NAME_VALUE}. A value already replaced by the first half is left alone.
  */
 const CAMEL_NAME_VALUE = new RegExp(
   String.raw`(?<![A-Za-z0-9_.-])(?:` +
-    String.raw`(?<quote>\\?["'])${camelSecretName("jsonName")}\k<jsonName>\k<quote>(?<jsonSep>${ASSIGN})(?<jsonValue>${JSON_VALUE})` +
+    String.raw`(?=--)${camelSecretName("[A-Za-z0-9_-]", "flag")}\k<flag>(?<flagSep>=|[ \t]+)(?!-)(?<flagValue>${SCHEME_VALUE}|${SHELL_WORD})` +
     "|" +
-    String.raw`${camelSecretName("bare")}\k<bare>(?<bareSep>${ASSIGN})(?<bareValue>${BARE_VALUE})` +
+    String.raw`(?<quote>\\?["'])${camelSecretName("[A-Za-z0-9_.-]", "jsonName")}\k<jsonName>\k<quote>(?<jsonSep>${ASSIGN})(?<jsonValue>${JSON_VALUE})` +
+    "|" +
+    String.raw`${camelSecretName("[A-Za-z0-9_.-]", "bare")}\k<bare>(?<bareSep>${ASSIGN})(?<bareValue>${BARE_VALUE})` +
     ")",
   "g",
 );

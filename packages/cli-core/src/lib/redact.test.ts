@@ -717,6 +717,13 @@ describe("PASS and PWD as secret words", () => {
     ["clientAuth: abc123", `clientAuth: ${REDACTED}`],
     ['{"dbPass": "hunter2", "n": 1}', `{"dbPass": ${REDACTED}, "n": 1}`],
     ["dbPASS=hunter2", `dbPASS=${REDACTED}`],
+    ["--dbPass hunter2", `--dbPass ${REDACTED}`],
+    ["--dbPwd hunter2", `--dbPwd ${REDACTED}`],
+    ["--clientAuth abc123", `--clientAuth ${REDACTED}`],
+    ["--dbPass=hunter2", `--dbPass=${REDACTED}`],
+    ["mysql --dbPass hunter2 --host db", `mysql --dbPass ${REDACTED} --host db`],
+    // One shell word, through any quoted part, as for any other flag.
+    ['--dbPass "correct horse" --host db', `--dbPass ${REDACTED} --host db`],
   ])("camelCase %j → %j", (input, expected) => {
     expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
@@ -727,6 +734,11 @@ describe("PASS and PWD as secret words", () => {
     ["isPassed=true"],
     ["clientAuthor=alice"],
     ["myAUTHOR=alice"],
+    ["--bypass hunter2"],
+    ["--isPassed true"],
+    ["--clientAuthor alice"],
+    // A flag followed by another flag has no value.
+    ["--dbPass --host db"],
   ])("camelCase lookalike %j is left alone", (input) => {
     expect(redact(input)).toEqual({ text: input, redactions: 0 });
   });
@@ -832,8 +844,9 @@ describe("known limitations", () => {
 
 /**
  * Every pass is linear by construction (see the module comment); these tests
- * are the backstop. Each shape is one that made an earlier version of a pass
- * rescan the text from every candidate position. A quadratic pass takes four
+ * are the backstop. Most shapes are ones that made an earlier version of a
+ * pass rescan the text from every candidate position; the rest probe the
+ * newer patterns the same way. A quadratic pass takes four
  * times as long when the input doubles; a linear one about twice. The ratio
  * is checked only when the smaller run took long enough to time (a run under
  * a few milliseconds is noise), and the 1 MB run must also finish well under
@@ -894,6 +907,8 @@ describe("large pastes stay linear", () => {
     ["scheme words after secret names", (n) => fill("token: Bearer ", n)],
     ["a camelCase secret word repeated with no separator", (n) => fill("dbPass", n)],
     ["camelCase secret names each without a separator", (n) => fill("aPass ", n)],
+    ["camelCase flag run with no value", (n) => fill("--dbPass ", n)],
+    ["one long camelCase flag name", (n) => "--" + fill("dbPass-", n)],
     ["Authorization headers on one line", (n) => fill("Authorization: ", n)],
     ["Bearer words", (n) => fill("Bearer ", n)],
     ["email local part with no domain", (n) => fill("a.", n) + "@"],

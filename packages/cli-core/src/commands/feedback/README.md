@@ -68,7 +68,7 @@ leaves your machine. **Scrubbing is best-effort.** It catches secrets by their s
 - a value assigned on one line to a secret-looking name: a name containing SECRET, TOKEN,
   PASSWORD, PASSWD, API_KEY, PRIVATE_KEY, ENCRYPTION_KEY, AUTHORIZATION, or AUTH, PASS or PWD
   as a whole segment (`CLERK_SECRET_KEY=...`, `export DATABASE_PASSWORD=...`,
-  `"apiToken": "..."`, `X_AUTH=...`, `DB_PASS=...`, camelCase `dbPass=...`; the shell's
+  `"apiToken": "..."`, `X_AUTH=...`, `DB_PASS=...`, camelCase `dbPass=...` and `--dbPass ...`; the shell's
   `PWD=/path` is left alone),
   a spaced name such as `api key:` or `client secret:`, and the same names as command-line
   flags (`--password x`, `--token=x`, `--api_key x`). The separator may be `:`, `=`, `:=`,
