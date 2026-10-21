@@ -749,6 +749,8 @@ describe("curl user credentials", () => {
       "$ sudo curl -X POST -u bob:pw https://x.dev",
       `$ sudo curl -X POST -u ${REDACTED} https://x.dev`,
     ],
+    // A user name that is already the marker still has a password after it.
+    [`curl -u ${REDACTED}:hunter2 https://x.dev`, `curl -u ${REDACTED} https://x.dev`],
   ])("%j → %j", (input, expected) => {
     expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });

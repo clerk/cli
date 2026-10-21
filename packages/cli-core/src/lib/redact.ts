@@ -343,11 +343,6 @@ const camelSecretName = (chars: string, group: string): string =>
   String.raw`(?=${chars}*?${CAMEL_SECRET_WORD})(?=(?<${group}>${chars}+))`;
 
 /**
- * Pass 4, second half: a camelCase secret name and its value, as a flag, a
- * JSON field or a bare name, with the same separators and value rules as
- * {@link NAME_VALUE}. A value already replaced by the first half is left alone.
- */
-/**
  * A line that runs curl, from the word `curl` to the end of the line. The
  * matches never overlap, so {@link CURL_USER} reads each character once.
  */
@@ -356,7 +351,8 @@ const CURL_LINE = /\bcurl\b[^\r\n]*/g;
 /**
  * curl's `-u user:password` (also `--user`, `--user=` and `-uuser:password`):
  * the value is one shell word. The callback keeps a value with no colon,
- * since curl then asks for the password. `--user-agent` is not matched: the
+ * since curl then asks for the password, and one that is already exactly
+ * the marker. `--user-agent` is not matched: the
  * value cannot start with `-`.
  */
 const CURL_USER = new RegExp(
@@ -364,6 +360,11 @@ const CURL_USER = new RegExp(
   "g",
 );
 
+/**
+ * Pass 4, second half: a camelCase secret name and its value, as a flag, a
+ * JSON field or a bare name, with the same separators and value rules as
+ * {@link NAME_VALUE}. A value already replaced by the first half is left alone.
+ */
 const CAMEL_NAME_VALUE = new RegExp(
   String.raw`(?<![A-Za-z0-9_.-])(?:` +
     String.raw`(?=--)${camelSecretName("[A-Za-z0-9_-]", "flag")}\k<flag>(?<flagSep>=|[ \t]+)(?!-)(?<flagValue>${SCHEME_VALUE}|${SHELL_WORD})` +
@@ -565,7 +566,7 @@ export function redactText(text: string, options: { homedir?: string } = {}): Re
   out = out.replace(CAMEL_NAME_VALUE, nameValue);
   out = out.replace(CURL_LINE, (line) =>
     line.replace(CURL_USER, (match, flag: string, sep: string, value: string) => {
-      if (!value.includes(":") || stripQuotes(value).startsWith(REDACTED)) return match;
+      if (!value.includes(":") || stripQuotes(value) === REDACTED) return match;
       redactions += 1;
       return `${flag}${sep}${REDACTED}`;
     }),

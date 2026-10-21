@@ -169,6 +169,7 @@ export type CommandTree = {
   _defaultCommandName?: string | null;
   _actionHandler?: unknown;
   _hidden?: boolean;
+  _versionOptionName?: string;
 };
 
 export const FEEDBACK_EXAMPLES: Example[] = [
@@ -240,6 +241,7 @@ type CommandOption = {
   required?: boolean;
   /** `[value]`: takes the next word unless it is a flag. */
   optional?: boolean;
+  attributeName?(): string;
 };
 
 type CommandResolution =
@@ -283,9 +285,11 @@ function dropPackageRunner(words: string[]): void {
 /**
  * Drop the global flags before the command, with the value of each that
  * takes one, read from the root's own options as Commander parses them:
- * `--mode agent`, `--mode=agent`, `--verbose`. False when a flag is one the
- * root does not have, or its value is missing: Commander fails such a line
- * before any command runs, so no usage event carries a command for it.
+ * `--mode agent`, `--mode=agent`, `--verbose`. False when the line runs no
+ * command, so no usage event carries one for it: the version flag (it prints
+ * the version and exits; help does the same and is not in the option list at
+ * all), a flag the root does not have, a value attached to a flag that takes
+ * none (`--verbose=foo`), or a missing value.
  */
 function dropGlobalFlags(root: CommandTree, words: string[]): boolean {
   while (words[0]?.startsWith("-")) {
@@ -293,9 +297,11 @@ function dropGlobalFlags(root: CommandTree, words: string[]): boolean {
     const long = word.startsWith("--");
     const name = long ? word.split("=", 1)[0] : word.slice(0, 2);
     const option = root.options?.find((o) => (long ? o.long : o.short) === name);
-    if (!option) return false;
+    if (!option || option.attributeName?.() === root._versionOptionName) return false;
+    const takesValue = option.required || option.optional;
     const attached = long ? word.includes("=") : word.length > 2;
-    if (attached || !(option.required || option.optional)) continue;
+    if (attached && !takesValue) return false;
+    if (attached || !takesValue) continue;
     if (option.required) {
       if (words.length === 0) return false;
       words.shift();

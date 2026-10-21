@@ -190,9 +190,13 @@ describe("resolveCommand", () => {
     ["--input-json @f users list", "users list"],
     ["clerk --mode agent users list", "users list"],
     ["npx clerk@latest --verbose users list", "users list"],
-    ["-v users list", "users list"],
     // A flag the root does not know fails in Commander before any command runs.
     ["--nosuch users list", null],
+    // The version flag prints the version and runs no command, like help.
+    ["--version users list", null],
+    ["-v users list", null],
+    // A value attached to a flag that takes none fails option parsing.
+    ["--verbose=foo users list", null],
     // A value-taking flag with nothing after it leaves no command.
     ["--mode", null],
     ["", null],
