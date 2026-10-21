@@ -7,6 +7,9 @@ import {
   BILLING_ERROR_REASON,
   CliError,
   ERROR_CODE,
+  AuthError,
+  AUTH_ERROR_REASON,
+  isCredentialRefused,
 } from "./errors.ts";
 
 describe("ApiError envelope parsing (via PlapiError.fromBody)", () => {
@@ -180,5 +183,35 @@ describe("BillingError", () => {
     });
     expect(err.reason).toBe(BILLING_ERROR_REASON.QUOTA_EXCEEDED);
     expect(err.docsUrl).toBe("https://dashboard.clerk.com/settings/billing");
+  });
+});
+
+// A refused credential has to change before a retry can work; anything else
+// may pass on its own.
+describe("isCredentialRefused", () => {
+  test.each([
+    { what: "not signed in", error: new AuthError({ reason: AUTH_ERROR_REASON.NOT_LOGGED_IN }) },
+    {
+      what: "an expired session",
+      error: new AuthError({ reason: AUTH_ERROR_REASON.SESSION_EXPIRED }),
+    },
+    { what: "a 401", error: new PlapiError(401, "{}") },
+    { what: "a 403", error: new PlapiError(403, "{}") },
+    {
+      what: "a secret key in CLERK_PLATFORM_API_KEY",
+      error: new CliError("Expected a Platform API key", { code: ERROR_CODE.INVALID_KEY_FORMAT }),
+    },
+  ])("$what: refused", ({ error }) => {
+    expect(isCredentialRefused(error)).toBe(true);
+  });
+
+  test.each([
+    { what: "a 500", error: new PlapiError(500, "{}") },
+    { what: "a 429", error: new PlapiError(429, "{}") },
+    { what: "a 404", error: new PlapiError(404, "{}") },
+    { what: "a network failure", error: new TypeError("fetch failed") },
+    { what: "another CLI error", error: new CliError("the application list wasn't a list") },
+  ])("$what: not refused", ({ error }) => {
+    expect(isCredentialRefused(error)).toBe(false);
   });
 });

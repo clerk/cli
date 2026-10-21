@@ -525,6 +525,20 @@ export function isAuthError(error: unknown): error is AuthError | ApiError {
 }
 
 /**
+ * Whether a Platform API call failed because of its credential: none, a session
+ * Clerk won't refresh or accept, a refused key (401, 403), or a
+ * `CLERK_PLATFORM_API_KEY` of the wrong kind. Retrying can't fix any of these;
+ * the credential has to change. Anything else (a network error, a 5xx, a 429)
+ * may pass on its own.
+ */
+export function isCredentialRefused(error: unknown): boolean {
+  return (
+    isAuthError(error) ||
+    (error instanceof CliError && error.code === ERROR_CODE.INVALID_KEY_FORMAT)
+  );
+}
+
+/**
  * Throw a usage error indicating the user provided invalid arguments or options.
  *
  * Exits with `EXIT_CODE.USAGE` (2). Use this for validation failures in
