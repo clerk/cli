@@ -106,6 +106,8 @@ type Stub = {
   count?: number;
   /** Source IDs whose `POST /v1/users` fails with a 422. */
   failing?: Set<string>;
+  /** Source IDs whose `POST /v1/users` gets a 503: Clerk may or may not hold them. */
+  unanswered?: Set<string>;
   /** `GET /v1/instance` fails, so the target falls back to the key's stand-in ID. */
   instanceDown?: boolean;
 };
@@ -168,6 +170,7 @@ describe("run", () => {
       }
       if (method === "POST" && url.pathname === "/v1/users") {
         const externalId = body?.external_id as string;
+        if (stub.unanswered?.has(externalId)) return new Response("upstream", { status: 503 });
         if (stub.failing?.has(externalId)) {
           return Response.json(
             {
@@ -2108,6 +2111,42 @@ describe("run", () => {
       ).toEqual([
         { user_id: "user_found", phone_number: "+31612345678", primary: false, verified: false },
       ]);
+    });
+
+    // A reserved create with no answer: its latest line has to keep `reserved`,
+    // or the continue adopts the user as unreserved and attaches the email
+    // Clerk already holds reserved.
+    test("adopts a reserved create that got no answer as reserved", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", primary_email_address: "b@x.dev", unverified_email_addresses: "c@x.dev" },
+        ]),
+      );
+      stubClerk({ unanswered: new Set(["u2"]) });
+      await run({ ...baseOptions, reserveUnverified: true });
+      const [first] = listRuns(runsDir());
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "creating",
+        reserved: true,
+      });
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
+      await run({ ...baseOptions, reserveUnverified: true });
+
+      expect(created()).toEqual([]);
+      expect(requests.filter((r) => r.url.endsWith("/v1/email_addresses"))).toEqual([]);
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+      });
     });
 
     // Created reserved by the run that stopped: its unverified email exists
