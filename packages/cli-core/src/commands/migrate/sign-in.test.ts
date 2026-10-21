@@ -6,7 +6,7 @@
  * login's own claim, and its question, stays on.
  */
 
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,6 +41,9 @@ mock.module("../link/index.ts", () => ({
 }));
 
 const { run } = await import("./run.ts");
+const { terminal } = await import("./lib/terminal.ts");
+// A person at a terminal: without one, `migrate` treats the run as unable to prompt.
+const terminalAvailable = spyOn(terminal, "available");
 const { _setConfigDir } = await import("../../lib/config.ts");
 
 const savedSecretKey = process.env.CLERK_SECRET_KEY;
@@ -57,6 +60,11 @@ beforeEach(() => {
   // An exported secret key names the import target on its own, with no sign-in.
   delete process.env.CLERK_SECRET_KEY;
   mockLogin.mockResolvedValue({ userId: "user_1", email: "jane@example.com" });
+  terminalAvailable.mockReturnValue(true);
+});
+
+afterAll(() => {
+  terminalAvailable.mockRestore();
 });
 
 afterEach(() => {

@@ -13,11 +13,16 @@ import { getStoredSession, hasAccountCredentials, type OAuthSession } from "./cr
 import { CliError, ERROR_CODE, throwUsageError } from "./errors.ts";
 import { decodePublishableKey } from "./fapi.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "./framework.ts";
-import { findKeyInProject, readSdkKeylessApp, SDK_KEYLESS_SOURCE } from "./local-keys.ts";
+import {
+  ENV_VAR_SOURCE_SUFFIX,
+  findKeyInProject,
+  readSdkKeylessApp,
+  SDK_KEYLESS_SOURCE,
+} from "./local-keys.ts";
 import { log } from "./log.ts";
 
 // Moved to the leaf module `local-keys.ts`; re-exported so importers are unchanged.
-export { readSdkKeylessApp, SDK_KEYLESS_SOURCE };
+export { ENV_VAR_SOURCE_SUFFIX, readSdkKeylessApp, SDK_KEYLESS_SOURCE };
 
 export interface KeylessTarget {
   secretKey: string;

@@ -102,6 +102,9 @@ const SDK_KEYLESS_FILE = [".clerk", ".tmp", "keyless.json"];
  */
 export const SDK_KEYLESS_SOURCE = SDK_KEYLESS_FILE.join("/");
 
+/** How an exported variable is named as a key's source: `NUXT_CLERK_SECRET_KEY env var`. */
+export const ENV_VAR_SOURCE_SUFFIX = " env var";
+
 /** The current Clerk key formats, `pk_`/`sk_`. */
 const KEY_SHAPE = /^(?:pk|sk)_(?:test|live)_[A-Za-z0-9+/=_-]+$/;
 /** The legacy `test_`/`live_` key format. */
@@ -272,7 +275,7 @@ function namedIn(
 
 function fromEnv(name: string): LocatedKey | undefined {
   const value = process.env[name];
-  return value ? { value, name, source: `${name} env var` } : undefined;
+  return value ? { value, name, source: `${name}${ENV_VAR_SOURCE_SUFFIX}` } : undefined;
 }
 
 interface EffectiveKey {

@@ -10,9 +10,9 @@
  */
 
 import { isHuman } from "../mode.ts";
-import { bold, dim } from "./color.ts";
+import { bold, colorDisabled, dim } from "./color.ts";
 import { getCurrentEnvName } from "./environment.ts";
-import { colorDisabled, isInteractive, rgbTo256, supportsTruecolor } from "./gradient.ts";
+import { isInteractive, rgbTo256, supportsTruecolor } from "./gradient.ts";
 import { log } from "./log.ts";
 import { CURRENT_VERSION } from "./version.ts";
 

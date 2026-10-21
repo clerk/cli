@@ -5,7 +5,7 @@ import { resolveProfile, removeProfile } from "../../lib/config.ts";
 import { getGitRepoRoot } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../lib/errors.ts";
-import { log } from "../../lib/log.ts";
+import { log, plain } from "../../lib/log.ts";
 import { intro, outro } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 
@@ -44,7 +44,7 @@ export async function unlink(options: UnlinkOptions = {}): Promise<void> {
   }
 
   await removeProfile(existing.path);
-  log.data(`\nUnlinked ${cyan(label)} from ${dim(displayPath)}`);
+  log.data(plain(`\nUnlinked ${cyan(label)} from ${dim(displayPath)}`));
   await outro(NEXT_STEPS.UNLINK);
 }
 
