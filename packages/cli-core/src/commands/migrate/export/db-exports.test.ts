@@ -846,13 +846,16 @@ describe("a date that holds no real date", () => {
 
   // SQLite TEXT can hold these. The import reads them as unverified, so the
   // export neither writes them nor counts them as verified.
-  test.each([["0"], ["not-a-date"]])("treats an Auth.js %p as unverified", (value) => {
-    const { users, coverage } = buildAuthJsExport([
-      { id: "aj1", email: "a@x.dev", email_verified: value },
-    ]);
-    expect(users[0]).not.toHaveProperty("email_verified");
-    expect(coverage.find((c) => c.label === "have a verified email")?.count).toBe(0);
-  });
+  test.each([["0"], ["not-a-date"], ["1970-01-01T00:00:00.000Z"]])(
+    "treats an Auth.js %p as unverified",
+    (value) => {
+      const { users, coverage } = buildAuthJsExport([
+        { id: "aj1", email: "a@x.dev", email_verified: value },
+      ]);
+      expect(users[0]).not.toHaveProperty("email_verified");
+      expect(coverage.find((c) => c.label === "have a verified email")?.count).toBe(0);
+    },
+  );
 
   test('lets --trust-oauth-emails mark an OAuth user whose value was "0"', () => {
     const now = "2026-10-21T00:00:00.000Z";

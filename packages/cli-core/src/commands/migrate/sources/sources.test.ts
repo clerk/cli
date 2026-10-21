@@ -286,13 +286,19 @@ describe("authjs", () => {
     expect(user?.unverifiedEmailAddresses).toBeUndefined();
   });
 
-  test.each([[null], [""], [undefined], [0], ["0"], ["not-a-date"]])(
-    "treats email_verified=%p as unverified",
-    (value) => {
-      const user = one("authjs", { ...base, email_verified: value });
-      expect(user?.unverifiedEmailAddresses).toBe("a@x.dev");
-    },
-  );
+  test.each([
+    [null],
+    [""],
+    [undefined],
+    [0],
+    ["0"],
+    ["not-a-date"],
+    // The epoch as a date string is the same default as `0`.
+    ["1970-01-01T00:00:00.000Z"],
+  ])("treats email_verified=%p as unverified", (value) => {
+    const user = one("authjs", { ...base, email_verified: value });
+    expect(user?.unverifiedEmailAddresses).toBe("a@x.dev");
+  });
 
   // A SQLite integer column exports as digits, and Postgres or MySQL as a
   // date string: each is a real verification.

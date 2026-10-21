@@ -3,15 +3,17 @@ import { routeByVerification, splitName } from "./shared.ts";
 
 /**
  * Whether an Auth.js `emailVerified` value is a verification: a real date.
- * `0` (the epoch) is a default, not one, and text that isn't a date is none;
- * digits alone are a stored integer timestamp. The export reads values by
+ * The epoch, as `0` or as a date string, is a default, not one, and text that
+ * isn't a date is none; digits alone are a stored integer timestamp. The export reads values by
  * the same rule, so its coverage is what the import does.
  */
 export function isAuthJsVerified(value: unknown): boolean {
   if (typeof value === "number") return value !== 0;
   if (typeof value === "string") {
     const trimmed = value.trim();
-    return /^\d+$/.test(trimmed) ? Number(trimmed) !== 0 : !Number.isNaN(Date.parse(trimmed));
+    if (/^\d+$/.test(trimmed)) return Number(trimmed) !== 0;
+    const time = Date.parse(trimmed);
+    return !Number.isNaN(time) && time !== 0;
   }
   return Boolean(value);
 }
