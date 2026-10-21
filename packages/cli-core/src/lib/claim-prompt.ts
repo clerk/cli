@@ -8,7 +8,7 @@
 
 import { getAuth } from "./config.ts";
 import { getValidToken } from "./credential-store.ts";
-import { ApiError, AuthError } from "./errors.ts";
+import { isAuthError } from "./errors.ts";
 import { confirm } from "./prompts.ts";
 import { fetchUserInfo, type UserInfo } from "./token-exchange.ts";
 
@@ -48,18 +48,11 @@ export async function lookUpAccount(): Promise<AccountLookup> {
     if (!token) return { status: "signed_out" };
     return { status: "account", account: await fetchUserInfo(token) };
   } catch (error) {
-    return isSessionRefused(error) ? { status: "signed_out" } : { status: "lookup_failed" };
+    // The refresh step throws `AuthError` for a session it can't refresh (a
+    // spent or refused refresh token, or a stored value it can't read); the
+    // account lookup answers 401 or 403 for a token it won't accept.
+    return isAuthError(error) ? { status: "signed_out" } : { status: "lookup_failed" };
   }
-}
-
-/**
- * The refresh step throws `AuthError` for a session it can't refresh (a
- * spent or refused refresh token, or a stored value it can't read); the
- * account lookup answers 401 or 403 for a token it won't accept.
- */
-function isSessionRefused(error: unknown): boolean {
-  if (error instanceof AuthError) return true;
-  return error instanceof ApiError && (error.status === 401 || error.status === 403);
 }
 
 /**

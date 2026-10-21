@@ -16,7 +16,14 @@ import {
   listageStubs,
   useCaptureLog,
 } from "../../test/lib/stubs.ts";
-import { ApiError, AuthError, PlapiError, UserAbortError } from "../../lib/errors.ts";
+import {
+  ApiError,
+  AuthError,
+  CliError,
+  ERROR_CODE,
+  PlapiError,
+  UserAbortError,
+} from "../../lib/errors.ts";
 import * as localKeys from "../../lib/local-keys.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -336,6 +343,14 @@ describe("a folder with an init token, not linked", () => {
       how: "an expired session that can't be refreshed",
       refuse: () =>
         mockGetValidToken.mockRejectedValue(new AuthError({ reason: "session_expired" })),
+    },
+    {
+      // Deliberate since milestone 5: only signing in fixes it.
+      how: "a refresh that returns no refresh token",
+      refuse: () =>
+        mockGetValidToken.mockRejectedValue(
+          new CliError("No refresh token", { code: ERROR_CODE.AUTH_REQUIRED }),
+        ),
     },
     {
       how: "a token the account lookup rejects (401)",
