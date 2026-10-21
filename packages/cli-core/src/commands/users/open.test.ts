@@ -1,6 +1,7 @@
 import { test, expect, describe, afterEach, beforeEach, mock } from "bun:test";
 import { setMode } from "../../mode.ts";
 import { setCurrentEnv } from "../../lib/environment.ts";
+import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { configStubs, keylessTargetStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockResolveAppContext = mock();
@@ -31,9 +32,11 @@ mock.module("../../lib/open.ts", () => ({
 }));
 
 const mockResolveKeylessTarget = mock();
+const mockKeyAccess = mock();
 mock.module("../../lib/keyless-target.ts", () => ({
   ...keylessTargetStubs,
   resolveKeylessTarget: (...args: unknown[]) => mockResolveKeylessTarget(...args),
+  keyAccess: (...args: unknown[]) => mockKeyAccess(...args),
 }));
 
 mock.module("../../lib/spinner.ts", () => ({
@@ -73,6 +76,7 @@ describe("users open", () => {
     mockResolveUsersInstanceContext.mockResolvedValue(CTX);
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "open" });
     mockResolveKeylessTarget.mockResolvedValue(undefined);
+    mockKeyAccess.mockResolvedValue({ claimed: false, source: ".env.local" });
   });
 
   afterEach(() => {
@@ -83,6 +87,7 @@ describe("users open", () => {
     mockPickUser.mockReset();
     mockOpenBrowser.mockReset();
     mockResolveKeylessTarget.mockReset();
+    mockKeyAccess.mockReset();
   });
 
   describe("on an unclaimed keyless application", () => {
@@ -109,6 +114,31 @@ describe("users open", () => {
       // `clerk users get` does not exist; `clerk api` is the reader that does.
       expect((error as Error).message).toContain("clerk auth login");
       expect((error as Error).message).toContain("clerk api /users/user_abc");
+    });
+
+    // Any `sk_` key lands here, so a claimed application's key does too.
+    test("points a claimed application at `clerk link`, without calling it unclaimed", async () => {
+      mockKeyAccess.mockResolvedValue({ claimed: true, source: ".env.local" });
+
+      const error = (await open({ userId: "user_abc" }).catch(
+        (thrown: unknown) => thrown,
+      )) as CliError;
+
+      expect(error.message).toContain("This application belongs to a Clerk account");
+      expect(error.message).toContain("Run `clerk link` (or pass `--app <id>`)");
+      expect(error.message).toContain("clerk api /users/user_abc");
+      expect(error.message).not.toContain("unclaimed");
+      expect(error.code).toBe(ERROR_CODE.NOT_LINKED);
+    });
+
+    test("covers both cases when Clerk can't say whether the application is claimed", async () => {
+      mockKeyAccess.mockResolvedValue({ claimed: undefined, source: ".env.local" });
+
+      const error = await open({ userId: "user_abc" }).catch((thrown: unknown) => thrown);
+
+      const message = (error as Error).message;
+      expect(message).toContain("If this application is unclaimed, run `clerk auth login`");
+      expect(message).toContain("If it belongs to a Clerk account, run `clerk link`");
     });
 
     test("does not hijack an explicit --app target", async () => {

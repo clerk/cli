@@ -41,6 +41,10 @@ const pastSecretKey = (access: KeyAccess, cant: string, unclaimed: string): stri
     ? `This application belongs to a Clerk account, so a secret key can't ${cant}. ${accountRoute(access.source)}`
     : `If this application is unclaimed, ${unclaimed} If it belongs to a Clerk account, a secret key can't ${cant}. ${accountRoute(access.source)}`;
 
+/** Completes "run …" for a claimed application's dashboard link. */
+const linkForDashboard = (userId: string): string =>
+  `\`clerk link\` (or pass \`--app <id>\`), with \`clerk auth login\` or \`CLERK_PLATFORM_API_KEY\`, then \`clerk users open ${userId}\` will work.`;
+
 const claimForConfig = "run `clerk auth login` to claim it and use the full config document.";
 
 export const keylessCopy = {
@@ -144,8 +148,14 @@ export const keylessCopy = {
       : `--instance is not supported for an unclaimed accountless application: the secret key in ${source} already targets its own instance.\n` +
         "Run `clerk auth login` to claim the application, then target instances by name.",
 
-  userDashboardNeedsClaim: (keySource: string, userId: string): string =>
-    `This directory holds an unclaimed accountless application (secret key from ${keySource}), which has no Dashboard page — a dashboard link needs an application ID, and one is only assigned when the application is claimed.\n` +
-    `Run \`clerk auth login\` to claim it, then \`clerk users open ${userId}\` will work.\n` +
+  userDashboardNeedsClaim: (userId: string, access: KeyAccess): string =>
+    (access.claimed === false
+      ? `This directory holds an unclaimed accountless application (secret key from ${access.source}), which has no Dashboard page — a dashboard link needs an application ID, and one is only assigned when the application is claimed.\n` +
+        `Run \`clerk auth login\` to claim it, then \`clerk users open ${userId}\` will work.\n`
+      : access.claimed
+        ? `This application belongs to a Clerk account, but a dashboard link needs its application ID, which the secret key from ${access.source} doesn't carry.\n` +
+          `Run ${linkForDashboard(userId)}\n`
+        : `A dashboard link needs an application ID, which the secret key from ${access.source} doesn't carry.\n` +
+          `If this application is unclaimed, run \`clerk auth login\` to claim it. If it belongs to a Clerk account, run ${linkForDashboard(userId)}\n`) +
     `To inspect the user right now, \`clerk api /users/${userId}\` reads it straight from the instance.`,
 };

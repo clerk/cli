@@ -129,18 +129,25 @@ In agent mode the user-id is required (no interactive picker) and output is a JS
 
 `--secret-key` chooses the Backend API key used for user lookup. `users open` still requires an app target to resolve the dashboard URL, either from `--app`, a linked project, or the human-mode app picker. Use `--instance` when you want something other than the default development instance.
 
-#### On an unclaimed accountless application
+#### With only a secret key
 
 This is the one command in the family that an unclaimed accountless application cannot satisfy, and the reason is structural rather than a missing code path: a dashboard link is `/apps/{appId}/instances/{instanceId}/users/{userId}`, and an application has no `appId` until somebody claims it.
 
 Rather than report the generic "no Clerk project linked", `users open` detects the accountless project and says so — because the two remedies that message implies, `clerk link` and `--app`, both want an application ID that does not exist yet. The error names `clerk auth login` to claim the application, and `clerk api /users/<id>` to read the user right now without claiming anything. Passing `--app` explicitly skips this check: naming an application says the request isn't about the accountless one in this directory.
 
+A secret key for a **claimed** application takes the same path, since the key alone doesn't say which it is. So before refusing, `users open` reads `GET /v1/instance` once:
+
+- `workspace_id` null: the application is unclaimed, and the error is the one above.
+- `workspace_id` set: the application belongs to an account. The error says the key doesn't carry the application ID, and to run `clerk link` (or pass `--app <id>`) with `clerk auth login` or `CLERK_PLATFORM_API_KEY`. It exits `not_linked`.
+- The lookup fails: the error gives both, and never calls the application unclaimed.
+
 ## API Endpoints
 
-| Method | Endpoint    | Command(s)                                  |
-| ------ | ----------- | ------------------------------------------- |
-| `GET`  | `/v1/users` | `list`, `open` (when picking interactively) |
-| `POST` | `/v1/users` | `create`                                    |
+| Method | Endpoint       | Command(s)                                              |
+| ------ | -------------- | ------------------------------------------------------- |
+| `GET`  | `/v1/users`    | `list`, `open` (when picking interactively)             |
+| `POST` | `/v1/users`    | `create`                                                |
+| `GET`  | `/v1/instance` | `open` (only when refusing a secret-key-only directory) |
 
 ## Notes
 
