@@ -109,7 +109,8 @@ formats, home-directory paths and email addresses before it leaves your machine 
 exactly what would be sent and whether a real run would send it, and sends no report,
 though the run's usual usage event still applies; with telemetry on it may create the
 config directory and the local machine id, and briefly writes a temporary file there to
-check it is writable, and with telemetry off it writes nothing). The first run only shows a disclosure
+check it is writable; with telemetry off it writes no machine id or record, though in
+agent mode the CLI's usual sandbox check may still create the config directory). The first run only shows a disclosure
 notice and sends nothing (CI environments send from the first run), except
 `clerk feedback`, which shows the notice and then sends the report you asked it to send
 and the run's usage event. `clerk --verbose` prints every event before it is sent. Shell completion (`clerk

@@ -136,6 +136,13 @@ describe("resolveCommand", () => {
   test.each([
     ["users list", "users list"],
     ["clerk users list", "users list"],
+    // A package runner or a path to the binary before `clerk`.
+    ["npx clerk users list", "users list"],
+    ["bunx clerk users list", "users list"],
+    ["pnpm dlx clerk users list", "users list"],
+    ["/usr/local/bin/clerk users list", "users list"],
+    ["./node_modules/.bin/clerk users list", "users list"],
+    ["npx users list", null],
     ["  clerk   users   list  ", "users list"],
     ["feedback", "feedback"],
     // A group with a default child is recorded as that child.

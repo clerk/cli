@@ -652,6 +652,98 @@ describe("home directories in other spellings", () => {
   });
 });
 
+// Two-character assignment operators from other languages: Go's :=, Ruby
+// and PHP's =>, and comparisons (== and ===).
+describe("assignment operators from other languages", () => {
+  test.each([
+    ['password := "hunter2"', `password := ${REDACTED}`],
+    ["'password' => 'hunter2'", `'password' => ${REDACTED}`],
+    ["password == hunter2", `password == ${REDACTED}`],
+    ['if (token === "abc123") {', `if (token === ${REDACTED}) {`],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+});
+
+// Clerk machine tokens: M2M tokens (`mt_`) and OAuth access tokens (`oat_`),
+// built at runtime. Short identifiers with the same prefix are left alone.
+describe("Clerk machine tokens", () => {
+  const OAT = ["oat_", "abcdefghijklmnop"].join("");
+  const MT = ["mt_", "abcdefghijklmnopqrstu"].join("");
+  test.each([
+    [`token ${OAT} rejected`, `token ${REDACTED} rejected`],
+    [`m2m ${MT} rejected`, `m2m ${REDACTED} rejected`],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+
+  test.each([["mt_rand(1, 6)"], ["oat_milk is better"], ["call mt_getrandmax()"]])(
+    "%j is left alone",
+    (input) => {
+      expect(redact(input)).toEqual({ text: input, redactions: 0 });
+    },
+  );
+});
+
+// Cookie headers carry session tokens: treated like Authorization.
+describe("Cookie and Set-Cookie headers", () => {
+  test.each([
+    ["Cookie: __client=abcdefghijklmnop1234", `Cookie: ${REDACTED}`],
+    ["Set-Cookie: __session=abc123; Path=/", `Set-Cookie: ${REDACTED}`],
+    ['curl -H "Cookie: __client=abc123" https://x', `curl -H "Cookie: ${REDACTED}" https://x`],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+});
+
+// Short password names, as whole segments of a name.
+describe("PASS and PWD as secret words", () => {
+  test.each([
+    ["DB_PASS=hunter2", `DB_PASS=${REDACTED}`],
+    ["MYSQL_PWD=x", `MYSQL_PWD=${REDACTED}`],
+    ["pwd=hunter2", `pwd=${REDACTED}`],
+    ["pass: hunter2", `pass: ${REDACTED}`],
+    ["--pass hunter2", `--pass ${REDACTED}`],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+
+  // A camelCase segment counts too; lowercase words that contain the letters
+  // do not.
+  test.each([
+    ["dbPass=hunter2", `dbPass=${REDACTED}`],
+    ["dbPwd=hunter2", `dbPwd=${REDACTED}`],
+    ["userPwd=hunter2", `userPwd=${REDACTED}`],
+    ["clientAuth: abc123", `clientAuth: ${REDACTED}`],
+    ['{"dbPass": "hunter2", "n": 1}', `{"dbPass": ${REDACTED}, "n": 1}`],
+    ["dbPASS=hunter2", `dbPASS=${REDACTED}`],
+  ])("camelCase %j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+
+  test.each([
+    ["bypass=1"],
+    ["compass=north"],
+    ["isPassed=true"],
+    ["clientAuthor=alice"],
+    ["myAUTHOR=alice"],
+  ])("camelCase lookalike %j is left alone", (input) => {
+    expect(redact(input)).toEqual({ text: input, redactions: 0 });
+  });
+
+  // Ordinary words that contain the letters, and the shell's working
+  // directory (a path is not a password).
+  test.each([
+    ["tests passed: 4"],
+    ["bypass=1"],
+    ["compass=north"],
+    ["PWD=/srv/app"],
+    ["OLDPWD=/srv/app"],
+  ])("%j is left alone", (input) => {
+    expect(redact(input)).toEqual({ text: input, redactions: 0 });
+  });
+});
+
 describe("known limitations", () => {
   // Best-effort by design: these are the shapes the scrubber does not understand.
   test("a password with spaces keeps every word after the first", () => {
@@ -800,6 +892,8 @@ describe("large pastes stay linear", () => {
     ["Git Bash home prefixes repeated", (n) => fill("/c/Users/", n)],
     ["a dotted user name after a home prefix", (n) => "/Users/" + fill("a.", n)],
     ["scheme words after secret names", (n) => fill("token: Bearer ", n)],
+    ["a camelCase secret word repeated with no separator", (n) => fill("dbPass", n)],
+    ["camelCase secret names each without a separator", (n) => fill("aPass ", n)],
     ["Authorization headers on one line", (n) => fill("Authorization: ", n)],
     ["Bearer words", (n) => fill("Bearer ", n)],
     ["email local part with no domain", (n) => fill("a.", n) + "@"],

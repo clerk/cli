@@ -97,20 +97,71 @@ describe("the sends file", () => {
     expect(await readRecentFeedbackSends(NOW + 1)).toHaveLength(2);
   });
 
-  test("drops sends outside the window, future-dated ones, and malformed entries", async () => {
+  test("drops sends outside the window and malformed entries", async () => {
     await Bun.write(
       file(),
       JSON.stringify({
         sends: [
           send(NOW - FEEDBACK_WINDOW_MS), // exactly one window old: out
           send(NOW - FEEDBACK_WINDOW_MS + 1), // just inside
-          send(NOW + 1), // clock went backwards: out
           { sentAt: "yesterday" },
           "garbage",
         ],
       }),
     );
     expect(await readRecentFeedbackSends(NOW)).toEqual([send(NOW - FEEDBACK_WINDOW_MS + 1)]);
+  });
+
+  // A clock that jumped backwards makes recent sends look like the future.
+  // They still count, and the window is measured from the newest send, so the
+  // cap is not wiped by setting the clock back.
+  test("a send dated after now still counts, and the window runs from the newest send", async () => {
+    const later = NOW + 60 * 60 * 1000;
+    await Bun.write(
+      file(),
+      JSON.stringify({
+        sends: [send(later - FEEDBACK_WINDOW_MS), send(later - 1000), send(later)],
+      }),
+    );
+    expect(await readRecentFeedbackSends(NOW)).toEqual([send(later - 1000), send(later)]);
+  });
+
+  // A send recorded while the clock ran far ahead must not block reports
+  // until real time catches up: a record more than one window ahead of now is
+  // ignored, both as a send and as the end of the window.
+  test("a send dated more than one window ahead of now is ignored", async () => {
+    const yearAhead = NOW + 365 * 24 * 60 * 60 * 1000;
+    await Bun.write(
+      file(),
+      JSON.stringify({
+        sends: [send(NOW - 1000, "users list", "boom"), send(yearAhead, "users list", "boom")],
+      }),
+    );
+    const recent = await readRecentFeedbackSends(NOW);
+    expect(recent).toEqual([send(NOW - 1000, "users list", "boom")]);
+  });
+
+  test("ten sends dated a year ahead do not block a report now", async () => {
+    const yearAhead = NOW + 365 * 24 * 60 * 60 * 1000;
+    await Bun.write(
+      file(),
+      JSON.stringify({
+        sends: Array.from({ length: 10 }, (_, i) => send(yearAhead + i, "users list", "boom")),
+      }),
+    );
+    expect(
+      checkFeedbackRateLimit(await readRecentFeedbackSends(NOW), {
+        command: "users list",
+        errorCode: "boom",
+      }),
+    ).toEqual({ allowed: true });
+  });
+
+  test("recording after a backward clock jump keeps the sends recorded before it", async () => {
+    const later = NOW + 60 * 60 * 1000;
+    await recordFeedbackSend(send(later));
+    await recordFeedbackSend(send(NOW));
+    expect(await readRecentFeedbackSends(NOW)).toEqual([send(NOW), send(later)]);
   });
 
   test("recording prunes what is outside the window", async () => {

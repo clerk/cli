@@ -68,7 +68,15 @@ function isFeedbackSend(value: unknown): value is FeedbackSend {
   );
 }
 
-/** Sends inside the window as of `now`, oldest first. Anything unreadable, or dated in the future, is dropped. */
+/**
+ * Sends inside the window, oldest first; anything unreadable is dropped. The
+ * window ends at `now` or at the newest recorded send, whichever is later: a
+ * clock that jumped backwards makes recent sends look like the future, and
+ * dropping them, or measuring the window from the earlier clock, would wipe
+ * the cap. A record more than one window ahead of now is ignored: it was
+ * written while the clock ran far ahead, and counting it would block reports
+ * until real time caught up.
+ */
 export async function readRecentFeedbackSends(now: number = Date.now()): Promise<FeedbackSend[]> {
   const path = sendsFile();
   try {
@@ -77,9 +85,12 @@ export async function readRecentFeedbackSends(now: number = Date.now()): Promise
     const data: unknown = await file.json();
     const sends = (data as { sends?: unknown })?.sends;
     if (!Array.isArray(sends)) return [];
-    return sends
+    const valid = sends
       .filter(isFeedbackSend)
-      .filter((send) => send.sentAt <= now && now - send.sentAt < FEEDBACK_WINDOW_MS)
+      .filter((send) => send.sentAt - now <= FEEDBACK_WINDOW_MS);
+    const windowEnd = valid.reduce((latest, send) => Math.max(latest, send.sentAt), now);
+    return valid
+      .filter((send) => windowEnd - send.sentAt < FEEDBACK_WINDOW_MS)
       .sort((a, b) => a.sentAt - b.sentAt);
   } catch (error) {
     log.debug(`feedback: failed to read ${path}: ${error}`);
@@ -102,7 +113,7 @@ export function checkFeedbackRateLimit(
   return { allowed: true };
 }
 
-/** Append one attempted send, pruning anything outside the window. Best effort. */
+/** Append one attempted send, pruning anything outside the window (measured as {@link readRecentFeedbackSends} does). Best effort. */
 export async function recordFeedbackSend(send: FeedbackSend): Promise<void> {
   const path = sendsFile();
   try {

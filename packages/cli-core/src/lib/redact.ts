@@ -45,7 +45,7 @@
  *
  * 1. Private key blocks, to the matching END line or the end of the text, PGP
  *    included. First because they span lines.
- * 2. `Authorization` headers, any scheme: the rest of the line, the quoted
+ * 2. `Authorization`, `Cookie` and `Set-Cookie` headers, any scheme: the rest of the line, the quoted
  *    value when the header is a JSON field, or up to the closing quote when
  *    the header starts inside a quoted string (`curl -H "Authorization: …"`). Before the name pass, which would
  *    take only the first word (`Bearer`).
@@ -58,13 +58,17 @@
  *    whitespace or double quote, so the rest of a one-line log survives). A
  *    name is secret-looking when it contains a secret word (`SECRET`,
  *    `TOKEN`, `PASSWORD`, `PASSWD`, `API_KEY`, `PRIVATE_KEY`,
- *    `ENCRYPTION_KEY`, `AUTHORIZATION`, or `AUTH` as a whole segment) or is
+ *    `ENCRYPTION_KEY`, `AUTHORIZATION`, or `AUTH`, `PASS` or `PWD` as a whole
+ *    segment, camelCase included (`dbPass`, `clientAuth`); the shell's
+ *    `PWD=/path` is left alone) or is
  *    one of the MCP server's spaced names (`api key`, `access token`,
  *    `refresh token`, `auth token`, `client secret`, `secret key`,
- *    `secret access key`). A value that is a `Bearer` or `Basic` scheme takes
+ *    `secret access key`). The separator may also be `:=`, `=>`, `==` or
+ *    `===`. A value that is a `Bearer` or `Basic` scheme takes
  *    the token after it too. No separator crosses a line break.
  * 5. Known key prefixes: the MCP server's list, then the CLI's `ak_`
- *    Platform API keys and `sk-` keys (OpenAI, Anthropic). After the name
+ *    Platform API keys, Clerk M2M (`mt_`) and OAuth access (`oat_`) tokens,
+ *    and `sk-` keys (OpenAI, Anthropic). After the name
  *    pass so a value already replaced is not counted twice.
  * 6. Credentials in URLs (`scheme://user:password@host`): the credential
  *    goes, scheme and host stay.
@@ -175,7 +179,7 @@ const ANY_QUOTED = `${ESCAPED_QUOTED}|${ESCAPED_OPEN_QUOTED}|${QUOTED}|${OPEN_QU
  * ends it. Not a JSON key: a quote right after the name makes it one, and
  * the general pattern below takes that.
  */
-const HEADER_NAME_IN_STRING = String.raw`\bAuthorization\b(?!["'])[ \t]*[:=][ \t]*`;
+const HEADER_NAME_IN_STRING = String.raw`\b(?:Authorization|Set-Cookie|Cookie)\b(?!["'])[ \t]*[:=][ \t]*`;
 const AUTHORIZATION_IN_STRING = new RegExp(
   String.raw`(?:(?<escOpen>\\["'])(?<escName>${HEADER_NAME_IN_STRING})(?<escValue>(?:(?!\k<escOpen>)[^\r\n])*)` +
     String.raw`|(?<open>["'])(?<name>${HEADER_NAME_IN_STRING})(?<value>(?:\\.|(?!\k<open>)[^\\\r\n])*))`,
@@ -202,7 +206,7 @@ type HeaderInStringGroups = {
  * 1 name and separator, 2 value.
  */
 const AUTHORIZATION_HEADER = new RegExp(
-  String.raw`(["']?\bAuthorization\b["']?[ \t]*[:=](?![ \t]*["']?\[REDACTED\])[ \t]*)(${QUOTED}|[^\r\n]+)`,
+  String.raw`(["']?\b(?:Authorization|Set-Cookie|Cookie)\b["']?[ \t]*[:=](?![ \t]*["']?\[REDACTED\])[ \t]*)(${QUOTED}|[^\r\n]+)`,
   "gi",
 );
 
@@ -247,7 +251,7 @@ function isCredential(scheme: string, value: string): boolean {
  * like: `_` or `-` in a bare name or a flag, a space too inside a quoted name.
  */
 const secretWord = (joiner: string): string =>
-  String.raw`(?:SECRET|TOKEN|PASSWORD|PASSWD|API${joiner}?KEY|PRIVATE${joiner}?KEY|ENCRYPTION${joiner}?KEY|AUTHORIZATION|(?<![A-Za-z0-9])AUTH(?![A-Za-z0-9]))`;
+  String.raw`(?:SECRET|TOKEN|PASSWORD|PASSWD|API${joiner}?KEY|PRIVATE${joiner}?KEY|ENCRYPTION${joiner}?KEY|AUTHORIZATION|(?<![A-Za-z0-9])(?:AUTH|PASS|PWD)(?![A-Za-z0-9]))`;
 
 /**
  * A run of name characters, taken atomically: the lookahead captures the
@@ -280,8 +284,13 @@ const JSON_VALUE = String.raw`(?:${ANY_QUOTED}|[^\s,;}]+)`;
  */
 const BARE_VALUE = String.raw`(?:${SCHEME_VALUE}|${ANY_QUOTED}|(?:[^\s"\\]|\\(?!"))+)`;
 
-/** Separator of an assignment or a field. It never crosses a line break. */
-const ASSIGN = String.raw`[ \t]*[:=][ \t]*`;
+/**
+ * Separator of an assignment or a field: `:` or `=`, or a two- or three-
+ * character operator from another language (Go's `:=`, Ruby and PHP's `=>`,
+ * and the comparisons `==` and `===`), longest first. It never crosses a line
+ * break.
+ */
+const ASSIGN = String.raw`[ \t]*(?:===|==|=>|:=|[:=])[ \t]*`;
 
 /**
  * The three name shapes, in one left-to-right pass so none can take part of
@@ -304,6 +313,34 @@ const NAME_VALUE = new RegExp(
     String.raw`(?:(?<spaced>${SPACED_SECRET_NAME})|${secretName("[A-Za-z0-9_.-]", "[_-]", "bare")}\k<bare>)(?<bareSep>${ASSIGN})(?<bareValue>${BARE_VALUE})` +
     ")",
   "gi",
+);
+
+/**
+ * A camelCase segment `Pass`, `Pwd` or `Auth` (or all capitals) after a
+ * lowercase letter or digit, ending where the next segment starts:
+ * `dbPass`, `userPwd`, `clientAuth`, `dbPASS`. `NAME_VALUE` runs
+ * case-insensitively, so it cannot see a camelCase boundary; this pattern is
+ * case-sensitive instead, and lowercase words that contain the letters
+ * (`bypass`, `compass`, `isPassed`, `clientAuthor`) do not match. No
+ * inline case modifiers: the Bun that builds release binaries may not
+ * support them, and an unsupported one would fail at load.
+ */
+const CAMEL_SECRET_WORD = String.raw`(?<=[a-z0-9])(?:(?:Pass|Pwd|Auth)(?![a-z])|(?:PASS|PWD|AUTH)(?![A-Za-z]))`;
+const camelSecretName = (group: string): string =>
+  String.raw`(?=[A-Za-z0-9_.-]*?${CAMEL_SECRET_WORD})(?=(?<${group}>[A-Za-z0-9_.-]+))`;
+
+/**
+ * Pass 4, second half: a camelCase secret name and its value, as a JSON field
+ * or a bare name, with the same separators and value rules as
+ * {@link NAME_VALUE}. A value already replaced by the first half is left alone.
+ */
+const CAMEL_NAME_VALUE = new RegExp(
+  String.raw`(?<![A-Za-z0-9_.-])(?:` +
+    String.raw`(?<quote>\\?["'])${camelSecretName("jsonName")}\k<jsonName>\k<quote>(?<jsonSep>${ASSIGN})(?<jsonValue>${JSON_VALUE})` +
+    "|" +
+    String.raw`${camelSecretName("bare")}\k<bare>(?<bareSep>${ASSIGN})(?<bareValue>${BARE_VALUE})` +
+    ")",
+  "g",
 );
 
 type NameValueGroups = {
@@ -336,8 +373,18 @@ const UPSTREAM_PREFIX_PATTERNS = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
 ];
 
-/** The CLI's additions: Platform API keys (only the prefix is documented, so the body is permissive), and `sk-` keys as OpenAI and Anthropic issue them. */
-const CLI_PREFIX_PATTERNS = [/\bak_[A-Za-z0-9_-]{8,}\b/g, /\bsk-[A-Za-z0-9_-]{20,}/g];
+/**
+ * The CLI's additions: Platform API keys (only the prefix is documented, so
+ * the body is permissive); Clerk M2M tokens (`mt_`) and OAuth access tokens
+ * (`oat_`), whose prefixes `@clerk/backend` defines without a body format, so
+ * the body is 16 or more letters and digits, long enough to leave identifiers
+ * such as `mt_rand` alone; and `sk-` keys as OpenAI and Anthropic issue them.
+ */
+const CLI_PREFIX_PATTERNS = [
+  /\bak_[A-Za-z0-9_-]{8,}\b/g,
+  /\b(?:mt|oat)_[A-Za-z0-9]{16,}\b/g,
+  /\bsk-[A-Za-z0-9_-]{20,}/g,
+];
 
 // ── Pass 6: credentials in URLs ─────────────────────────────────────────────
 
@@ -465,7 +512,7 @@ export function redactText(text: string, options: { homedir?: string } = {}): Re
     },
   );
 
-  out = out.replace(NAME_VALUE, (match: string, ...rest: unknown[]) => {
+  const nameValue = (match: string, ...rest: unknown[]): string => {
     const g = rest.at(-1) as NameValueGroups;
     const [name, separator, value] =
       g.flag !== undefined
@@ -474,9 +521,13 @@ export function redactText(text: string, options: { homedir?: string } = {}): Re
           ? [`${g.quote}${g.jsonName}${g.quote}`, g.jsonSep!, g.jsonValue!]
           : [g.spaced ?? g.bare!, g.bareSep!, g.bareValue!];
     if (stripQuotes(value).startsWith(REDACTED)) return match;
+    // The shell's working directory is a path, not a password.
+    if (/^(?:OLD)?PWD$/i.test(name) && /^[~/]/.test(value)) return match;
     redactions += 1;
     return `${name}${separator}${REDACTED}`;
-  });
+  };
+  out = out.replace(NAME_VALUE, nameValue);
+  out = out.replace(CAMEL_NAME_VALUE, nameValue);
 
   for (const pattern of UPSTREAM_PREFIX_PATTERNS) out = out.replace(pattern, count);
   for (const pattern of CLI_PREFIX_PATTERNS) out = out.replace(pattern, count);

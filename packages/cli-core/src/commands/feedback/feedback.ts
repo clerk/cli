@@ -245,7 +245,8 @@ function defaultChild(node: CommandTree): CommandTree | undefined {
 /**
  * Resolve `--command` to the spelling usage events record: the command whose
  * action ran (`commandPathOf` in `lib/telemetry.ts`). The input is the path
- * as typed after `clerk`, a leading `clerk` tolerated, and may be a whole
+ * as typed after `clerk`, a leading `clerk` tolerated (also after `npx`,
+ * `bunx` or `pnpm dlx`, or as a path to the binary), and may be a whole
  * pasted command line: anything after the command is dropped (arguments and
  * flags are never sent). Leading global flags are not parsed.
  *
@@ -265,7 +266,15 @@ function defaultChild(node: CommandTree): CommandTree | undefined {
  */
 export function resolveCommand(tree: CommandTree, input: string): CommandResolution {
   const words = input.trim().split(/\s+/).filter(Boolean);
-  if (words[0] === "clerk") words.shift();
+  // A package runner or a path to the binary before `clerk`, as pasted from a
+  // command line: `npx clerk …`, `bunx clerk …`, `pnpm dlx clerk …`,
+  // `/usr/local/bin/clerk …`.
+  // A runner is stripped only when clerk follows it.
+  const isClerk = (word: string | undefined): boolean =>
+    word !== undefined && /^(?:.*[\\/])?clerk(?:\.exe)?$/.test(word);
+  if ((words[0] === "npx" || words[0] === "bunx") && isClerk(words[1])) words.shift();
+  else if (words[0] === "pnpm" && words[1] === "dlx" && isClerk(words[2])) words.splice(0, 2);
+  if (isClerk(words[0])) words.shift();
   if (words[0] === "help") return resolveHelp(tree, words.slice(1));
   let node = tree;
   const parts: string[] = [];
@@ -672,8 +681,9 @@ function provesNoConnection(error: unknown): boolean {
  * socket that could not open, a permission error on connect) sent nothing,
  * so it is `send_failed` with no id and no count, like a failure before the
  * POST (the config could not be read, the notice could not be recorded). An
- * interrupt is rethrown for the CLI's interrupt path, after the send is
- * counted when the request may have reached the server.
+ * interrupt is rethrown for the CLI's interrupt path; a send that may have
+ * reached the server is counted first, usually, since the CLI's interrupt
+ * handler can exit before the record is written.
  */
 async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
   try {
@@ -712,8 +722,9 @@ async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
   } catch (error) {
     // A connection that was never made sent nothing: no count, no id.
     const sent = posted && !provesNoConnection(error);
-    // Recorded first even on Ctrl-C: a request that was out may have landed,
-    // and the interrupt is only rethrown once the cap has counted it.
+    // Recorded first even on Ctrl-C, because a request that was out may have
+    // landed. Usually that record is written; the CLI's interrupt handler can
+    // exit the process before it is.
     if (sent) await record();
     if (isCancelled(error)) throw error;
     log.debug(`feedback: send failed: ${error}`);
