@@ -1361,8 +1361,18 @@ describe("run", () => {
       expect(latestUserLines(runsDir(), record!.id).get("sb2")).toMatchObject({
         status: "skipped",
         reason: "deleted in Supabase",
+        code: "source_skip",
       });
-      expect(process.exitCode).toBe(0);
+      // Everyone meant to come across did: nothing makes the run partial.
+      expect(record?.status).toBe("complete");
+      // Unset or 0: either is a clean exit, whichever test ran before.
+      expect(process.exitCode ?? 0).toBe(0);
+
+      // So the same import again has nothing to continue.
+      captured.clear();
+      await run({ ...baseOptions, source: "supabase", json: true });
+      expect(JSON.parse(captured.out)).toMatchObject({ alreadyImported: true });
+      expect(created()).toEqual(["sb1"]);
     });
 
     test("names the fields Clerk won't store", async () => {
