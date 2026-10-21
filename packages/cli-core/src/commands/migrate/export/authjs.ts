@@ -122,11 +122,14 @@ async function storedName(client: DbClient, table: string): Promise<string> {
  * must not hide Auth.js's. When nothing reads, the first column error is the
  * one thrown, since it names a table that was there.
  *
- * @returns The rows and the table they came from, so the run can say which.
+ * @returns The rows; `table`, the candidate that answered, which names the
+ *   account table beside it; and `storedName`, the table as the database
+ *   holds it, for the run to say which it read. They differ only in case, on
+ *   SQLite.
  */
 export async function fetchAuthJsUsers(
   client: DbClient,
-): Promise<{ rows: AuthJsRow[]; table: string }> {
+): Promise<{ rows: AuthJsRow[]; table: string; storedName: string }> {
   let lastError: unknown;
   let columnError: unknown;
 
@@ -137,7 +140,7 @@ export async function fetchAuthJsUsers(
         const rows = await client.query<AuthJsRow>(
           buildAuthJsQuery(client, table, verifiedColumn, createdAt),
         );
-        return { rows, table: await storedName(client, table) };
+        return { rows, table, storedName: await storedName(client, table) };
       } catch (error) {
         // The table is there: try the next shape of it.
         if (isMissingColumn(error)) {
@@ -319,7 +322,7 @@ export async function exportAuthJs(
   await withGutter("Exporting users from Auth.js", async () => {
     if (!options.json) printTarget({ platform: "authjs" });
     const {
-      value: { rows, table, accounts },
+      value: { rows, table, storedName: tableName, accounts },
     } = await withInputRetry(
       dbUrl,
       async () => promptDbUrl(AUTHJS_DB),
@@ -332,7 +335,7 @@ export async function exportAuthJs(
         ),
       options,
     );
-    log.info(`Read ${rows.length} row${rows.length === 1 ? "" : "s"} from ${table}.`);
+    log.info(`Read ${rows.length} row${rows.length === 1 ? "" : "s"} from ${tableName}.`);
 
     const run = await startExportRun(options, { platform: "authjs" });
     const { users, coverage, sections, oauthUnverified, trusted } = buildAuthJsExport(
@@ -351,7 +354,7 @@ export async function exportAuthJs(
     }
     if (!accounts && users.length > 0) {
       log.warn(
-        `No account table beside ${table}, so the export could not tell who signs in with OAuth. ` +
+        `No account table beside ${tableName}, so the export could not tell who signs in with OAuth. ` +
           "Auth.js leaves an OAuth user's email unverified, and Clerk won't link a social sign-in to an unverified email.",
       );
     }

@@ -250,9 +250,9 @@ describe("authjs export", () => {
   test.each([["User"], ["user"], ["users"]])(
     "finds the %s table, by its own name",
     async (table) => {
-      const { rows, table: found } = await withClient(authJsDb(table), fetchAuthJsUsers);
+      const { rows, storedName } = await withClient(authJsDb(table), fetchAuthJsUsers);
       expect(rows).toHaveLength(2);
-      expect(found).toBe(table);
+      expect(storedName).toBe(table);
     },
   );
 
@@ -467,6 +467,26 @@ describe("authjs OAuth accounts", () => {
     const written = JSON.parse(fs.readFileSync(path.join(workDir, "trusted.json"), "utf-8"));
     expect(written.users.find((u: { id: string }) => u.id === "aj2")?.email_verified).toBeString();
     expect(captured.err).toContain("Marked 1 email verified because the user signs in with OAuth");
+  });
+
+  // SQLite matches `users` to a table stored as `Users`; the account table is
+  // found from the candidate that matched, not the stored casing.
+  test("finds the account table beside a user table stored in other casing", async () => {
+    const file = makeDb((db) => {
+      db.run(
+        `CREATE TABLE "Users" (id TEXT PRIMARY KEY, name TEXT, email TEXT, email_verified TEXT)`,
+      );
+      db.run(`INSERT INTO "Users" VALUES (?,?,?,?)`, ["n1", "Ann", "ann@x.dev", null]);
+      db.run(`CREATE TABLE accounts (user_id TEXT, provider_type TEXT, provider_id TEXT)`);
+      db.run(`INSERT INTO accounts VALUES (?,?,?)`, ["n1", "oauth", "github"]);
+    });
+
+    await exportAuthJs({ dbUrl: file, output: "cased.json" });
+
+    const written = JSON.parse(fs.readFileSync(path.join(workDir, "cased.json"), "utf-8"));
+    expect(written.users[0]).toMatchObject({ providers: ["github"] });
+    expect(captured.err).toContain("from Users.");
+    expect(captured.err).not.toContain("No account table");
   });
 
   test("warns when there is no account table to read", async () => {
