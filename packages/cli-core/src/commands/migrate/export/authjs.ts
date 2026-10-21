@@ -254,10 +254,10 @@ export function buildAuthJsExport(
     }
     // A nullable timestamp, not a boolean: the transformer reads presence.
     // A zero date is no verification, as a number or as a driver's Date.
-    const zeroDate = row.email_verified instanceof Date && row.email_verified.getTime() === 0;
-    const exported = row.email_verified && !zeroDate ? exportValue(row.email_verified) : undefined;
-    // As the import reads it: "0" and text that isn't a date are no
-    // verification, so they are neither exported nor counted as one.
+    const exported = row.email_verified ? exportValue(row.email_verified) : undefined;
+    // As the import reads it: the epoch (a driver's zero Date serializes to
+    // it), "0" and text that isn't a date are no verification, so they are
+    // neither exported nor counted as one.
     const verified = exported !== undefined && isAuthJsVerified(exported) ? exported : undefined;
     const providers = options.accounts?.get(userId) ?? [];
     if (providers.length > 0) {
