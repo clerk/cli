@@ -477,14 +477,17 @@ describe("authjs OAuth accounts", () => {
         `CREATE TABLE "Users" (id TEXT PRIMARY KEY, name TEXT, email TEXT, email_verified TEXT)`,
       );
       db.run(`INSERT INTO "Users" VALUES (?,?,?,?)`, ["n1", "Ann", "ann@x.dev", null]);
-      db.run(`CREATE TABLE accounts (user_id TEXT, provider_type TEXT, provider_id TEXT)`);
-      db.run(`INSERT INTO accounts VALUES (?,?,?)`, ["n1", "oauth", "github"]);
+      db.run(`CREATE TABLE "Accounts" (user_id TEXT, provider_type TEXT, provider_id TEXT)`);
+      db.run(`INSERT INTO "Accounts" VALUES (?,?,?)`, ["n1", "oauth", "github"]);
     });
 
-    await exportAuthJs({ dbUrl: file, output: "cased.json" });
+    await exportAuthJs({ dbUrl: file, output: "cased.json", trustOauthEmails: true });
 
     const written = JSON.parse(fs.readFileSync(path.join(workDir, "cased.json"), "utf-8"));
     expect(written.users[0]).toMatchObject({ providers: ["github"] });
+    // The account table was read, so the flag has someone to trust.
+    expect(written.users[0].email_verified).toBeString();
+    expect(captured.err).toContain("Marked 1 email verified");
     expect(captured.err).toContain("from Users.");
     expect(captured.err).not.toContain("No account table");
   });
