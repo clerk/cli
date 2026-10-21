@@ -86,6 +86,8 @@ describe("addSuspenseImport", () => {
   test.each([
     [`import type { Suspense } from "react";`, `import { Suspense } from "react";`],
     [`import { type Suspense } from "react";`, `import { Suspense } from "react";`],
+    [`import { type  Suspense } from "react";`, `import { Suspense } from "react";`],
+    [`import {\n  type\n  Suspense,\n} from "react";`, `import {\n  Suspense,\n} from "react";`],
     [
       `import type { ReactNode, Suspense } from "react";`,
       `import { type ReactNode, Suspense } from "react";`,

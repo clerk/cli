@@ -60,7 +60,7 @@ export function insertAfterLastImport(source: string, snippet: string): string {
 function suspenseBinding(masked: string): "value" | "type" | undefined {
   const specifiers = (/\{([^}]*)\}/.exec(masked)?.[1] ?? "")
     .split(",")
-    .map((specifier) => specifier.trim());
+    .map((specifier) => specifier.trim().replace(/\s+/g, " "));
   if (specifiers.includes("type Suspense")) return "type";
   const named =
     specifiers.includes("Suspense") ||
