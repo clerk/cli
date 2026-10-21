@@ -135,10 +135,12 @@ All scaffolding is idempotent — files are skipped if they already contain Cler
 | ------ | ------------------------------------- | ----------------------------------------------------- |
 | CREATE | `proxy.ts` or `middleware.ts`         | Bare `clerkMiddleware` (no route protection)          |
 | MODIFY | `app/layout.tsx`                      | Add `ClerkProvider` import and wrap `<body>` children |
-| CREATE | `app/sign-in/[[...sign-in]]/page.tsx` | Sign-in page with `<SignIn />` component              |
-| CREATE | `app/sign-up/[[...sign-up]]/page.tsx` | Sign-up page with `<SignUp />` component              |
+| CREATE | `app/sign-in/[[...sign-in]]/page.tsx` | Sign-in page with `<SignIn />` inside `<Suspense>`    |
+| CREATE | `app/sign-up/[[...sign-up]]/page.tsx` | Sign-up page with `<SignUp />` inside `<Suspense>`    |
 
 The middleware filename is version-aware: `proxy.ts` for Next.js 16+, `middleware.ts` for ≤15. Existing middleware files are preserved and composed with `clerkMiddleware`.
+
+The auth pages wrap the component in `<Suspense>` because `<SignIn />` and `<SignUp />` read the URL during prerendering. With Cache Components enabled, the default for new `create-next-app` projects, `next build` fails without the boundary.
 
 ### Next.js (Pages Router)
 
