@@ -290,9 +290,9 @@ export function jsxAuthPageContent(
   const pageName = component === "SignIn" ? "SignInPage" : "SignUpPage";
   const suspense = options.suspense ?? false;
   const content = indentBlock(jsxAuthComponentMarkup(component, tailwind, suspense), "    ");
-  const reactImport = suspense ? `import { Suspense } from "react";\n` : "";
+  const reactImport = suspense ? `\nimport { Suspense } from "react";` : "";
 
-  return `${reactImport}import { ${component} } from "${clerkPackage}";
+  return `import { ${component} } from "${clerkPackage}";${reactImport}
 
 export default function ${pageName}() {
   return (

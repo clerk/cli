@@ -150,8 +150,8 @@ test("wraps auth page components in Suspense", async () => {
 
   expect(findAction(plan.actions, "app/sign-in/[[...sign-in]]/page.tsx")).toMatchObject({
     type: "create",
-    content: `import { Suspense } from "react";
-import { SignIn } from "@clerk/nextjs";
+    content: `import { SignIn } from "@clerk/nextjs";
+import { Suspense } from "react";
 
 export default function SignInPage() {
   return (
