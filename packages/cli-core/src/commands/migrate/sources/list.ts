@@ -86,6 +86,7 @@ function toJson(entry: SourceEntry, custom?: string) {
     carries: entry.carries,
     export_command: exportCommand(entry) ?? null,
     fields: entry.transformer,
+    defaults: entry.defaults ?? {},
     caveats: entry.caveats ?? [],
   };
 }
