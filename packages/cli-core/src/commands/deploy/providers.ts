@@ -5,6 +5,7 @@ import { clerkSubdomains } from "./copy.ts";
 import { log } from "../../lib/log.ts";
 import { wrap } from "../../lib/wrap.ts";
 import { openBrowser } from "../../lib/open.ts";
+import { OAUTH_KEY_PREFIX } from "../../lib/oauth-connections.ts";
 import type {
   ConfigSchemaProperty,
   IOSApplication,
@@ -134,8 +135,6 @@ type ProviderWithOverride = keyof typeof PROVIDER_OVERRIDES;
 
 const SYSTEM_FIELD_KEYS = new Set(["enabled", "authenticatable", "block_email_subaddresses"]);
 const DEFAULT_FIELD_ORDER = ["client_id", "client_secret"];
-export const OAUTH_KEY_PREFIX = "connection_oauth_";
-
 const SHARED_OAUTH_METADATA = new Map<string, (typeof OAUTH_PROVIDERS)[number]>(
   OAUTH_PROVIDERS.map((provider) => [provider.provider, provider]),
 );

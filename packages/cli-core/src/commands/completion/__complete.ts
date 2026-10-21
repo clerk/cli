@@ -1,5 +1,6 @@
 import type { CommandUnknownOpts, Option } from "@commander-js/extra-typings";
 import { sources } from "../migrate/sources/registry.ts";
+import { CHECKS, findCheck } from "../security/catalog.ts";
 import { KNOWN_DASHBOARD_PATHS } from "../open/dashboard-paths.ts";
 
 const DIRECTIVE = {
@@ -60,6 +61,10 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
     { name: "canary", description: "Latest canary (pre-release) build" },
   ],
   "--source": SOURCE_COMPLETIONS,
+  "--factors": [
+    ...findCheck("mfa")!.decision!.options.map((o) => ({ name: o.value, description: o.label })),
+    { name: "authenticator,backup-code", description: "Authenticator app and backup codes" },
+  ],
   "--for": [
     { name: "orgs", description: "Organizations only" },
     { name: "users", description: "Users only" },
@@ -78,6 +83,7 @@ const KNOWN_POSITIONAL_COMPLETIONS: Record<string, Completion[]> = {
     name: path,
     description: "Dashboard subpath",
   })),
+  "security fix": CHECKS.map((check) => ({ name: check.id, description: check.title })),
 };
 
 /**
@@ -219,11 +225,14 @@ function completeArguments(
   consumedCount: number,
 ): CompletionResult {
   const registeredArgs = cmd.registeredArguments;
-  if (consumedCount >= registeredArgs.length) {
-    return EMPTY_NO_FILE;
-  }
-
-  const arg = registeredArgs[consumedCount];
+  const last = registeredArgs.at(-1);
+  const arg =
+    consumedCount < registeredArgs.length
+      ? registeredArgs[consumedCount]
+      : last?.variadic
+        ? last
+        : undefined;
+  if (!arg) return EMPTY_NO_FILE;
 
   // Prefer strict Commander choices when available.
   if (arg?.argChoices) {
