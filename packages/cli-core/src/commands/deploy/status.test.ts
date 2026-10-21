@@ -1272,6 +1272,7 @@ clerk() {
   case "$SCENARIO" in
     pull_fails) echo "error: not signed in" >&2; return 1 ;;
     pull_prints_then_fails) printf '%s\n' 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_FAKE'; return 1 ;;
+    trailing_equals) printf '%s\n' 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_FAKE=' 'CLERK_SECRET_KEY=sk_live_FAKE=' ;;
     *) printf '%s\n' 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_FAKE' 'CLERK_SECRET_KEY=sk_live_FAKE=with=equals' ;;
   esac
 }
@@ -1393,6 +1394,20 @@ vercel() {
         expect(result.output).not.toContain("FAKE");
       },
     );
+
+    // The value is everything after the first `=`. Split with IFS='=', bash's
+    // `read` drops a single trailing `=` (zsh keeps it), which would upload a
+    // truncated key and still exit 0.
+    test.skipIf(!installed)("uploads a value ending in a single = intact", async () => {
+      const result = await run("trailing_equals");
+
+      expect(result.exitCode).toBe(0);
+      expect(result.uploads).toEqual([
+        "env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production --force|pk_live_FAKE=",
+        "env add CLERK_SECRET_KEY production --force|sk_live_FAKE=",
+      ]);
+      expect(result.output).not.toContain("FAKE");
+    });
 
     test.skipIf(!installed)("lists the variables with color turned off", async () => {
       const result = await run("none");

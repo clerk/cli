@@ -760,6 +760,10 @@ function oauthSetupGuides(
  * long listing, and `pipefail` would turn that into a failure. The parentheses
  * keep `pipefail`, `exit`, and `allow_shared` out of the agent's shell.
  * `${name}` has braces because zsh reads `$name[` as an array subscript.
+ * Each key line is split at its first `=` by parameter expansion rather than
+ * `IFS='=' read -r key value`: bash's `read` drops a single trailing `=` from
+ * the last field (zsh keeps it), which would upload a truncated value and
+ * still exit 0.
  */
 function vercelKeyCopyCommand(pull: string): string {
   return (
@@ -771,7 +775,7 @@ function vercelKeyCopyCommand(pull: string): string {
     `printf '%s\\n' "$vars" | grep -E "^[[:space:]]*\${name}[[:space:]]" | grep -iE "production[[:space:]]*,|,[[:space:]]*production" >/dev/null && echo "$name"; done); ` +
     `if [ -n "$shared" ] && [ "$allow_shared" != 1 ]; then ` +
     `echo "Also set for an environment other than Production: $shared" >&2; exit 3; fi; ` +
-    `printf '%s\\n' "$keys" | while IFS='=' read -r key value; do ` +
+    `printf '%s\\n' "$keys" | while IFS= read -r line; do key=\${line%%=*}; value=\${line#*=}; ` +
     `printf '%s' "$value" | vercel env add "$key" production --force || exit 1; done )`
   );
 }
