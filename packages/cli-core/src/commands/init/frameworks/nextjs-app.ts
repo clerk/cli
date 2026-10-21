@@ -78,7 +78,7 @@ async function scaffoldAuthPages(ctx: ProjectContext): Promise<FileAction[]> {
     ctx.cwd,
     authFileSpecs({
       path: (kind) => authPagePath(ctx, kind),
-      content: (kind) => jsxAuthPageContent(kind, "@clerk/nextjs", tailwind),
+      content: (kind) => jsxAuthPageContent(kind, "@clerk/nextjs", tailwind, { suspense: true }),
       surface: "page",
     }),
   );

@@ -80,22 +80,31 @@ function authWrapper(markup: AuthWrapperMarkup, tailwind: boolean): string {
 }
 
 function renderCenteredAuthComponent(
-  component: string,
+  element: string,
   markup: AuthWrapperMarkup,
   tailwind: boolean,
 ): string {
   const wrapper = authWrapper(markup, tailwind);
   return `${wrapper}
-  <${component} />
+${indentBlock(element, "  ")}
 </div>`;
 }
 
 export function htmlAuthComponentMarkup(component: string, tailwind: boolean): string {
-  return renderCenteredAuthComponent(component, HTML_AUTH_WRAPPER, tailwind);
+  return renderCenteredAuthComponent(`<${component} />`, HTML_AUTH_WRAPPER, tailwind);
 }
 
-export function jsxAuthComponentMarkup(component: string, tailwind: boolean): string {
-  return renderCenteredAuthComponent(component, JSX_AUTH_WRAPPER, tailwind);
+export function jsxAuthComponentMarkup(
+  component: string,
+  tailwind: boolean,
+  suspense = false,
+): string {
+  const element = suspense
+    ? `<Suspense>
+  <${component} />
+</Suspense>`
+    : `<${component} />`;
+  return renderCenteredAuthComponent(element, JSX_AUTH_WRAPPER, tailwind);
 }
 
 function buildAuthFileSpec(
@@ -266,17 +275,24 @@ export function authComponentName(kind: AuthKind): "SignIn" | "SignUp" {
 
 export const MISSING_PUBLISHABLE_KEY_ERROR = `Missing VITE_CLERK_PUBLISHABLE_KEY. Add your key to .env.local.\\nRun: 1) clerk auth login  2) clerk link  3) clerk env pull — then restart the dev server.`;
 
-/** Generate a JSX auth page component for a Clerk framework SDK that exports SignIn/SignUp. */
+/**
+ * Generate a JSX auth page component for a Clerk framework SDK that exports SignIn/SignUp.
+ * `suspense` wraps the component in React's `<Suspense>`, which Next.js App Router needs
+ * when Cache Components is enabled (the component reads the URL during prerendering).
+ */
 export function jsxAuthPageContent(
   kind: AuthKind,
   clerkPackage: JsxClerkPackage,
   tailwind: boolean,
+  options: { suspense?: boolean } = {},
 ): string {
   const component = authComponentName(kind);
   const pageName = component === "SignIn" ? "SignInPage" : "SignUpPage";
-  const content = indentBlock(jsxAuthComponentMarkup(component, tailwind), "    ");
+  const suspense = options.suspense ?? false;
+  const content = indentBlock(jsxAuthComponentMarkup(component, tailwind, suspense), "    ");
+  const reactImport = suspense ? `\nimport { Suspense } from "react";` : "";
 
-  return `import { ${component} } from "${clerkPackage}";
+  return `import { ${component} } from "${clerkPackage}";${reactImport}
 
 export default function ${pageName}() {
   return (
