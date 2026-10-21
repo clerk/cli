@@ -45,8 +45,9 @@
  *
  * 1. Private key blocks, to the matching END line or the end of the text, PGP
  *    included. First because they span lines.
- * 2. `Authorization` headers, any scheme: the rest of the line, or the quoted
- *    value when the header is a JSON field. Before the name pass, which would
+ * 2. `Authorization` headers, any scheme: the rest of the line, the quoted
+ *    value when the header is a JSON field, or up to the closing quote when
+ *    the header starts inside a quoted string (`curl -H "Authorization: …"`). Before the name pass, which would
  *    take only the first word (`Bearer`).
  * 3. `Bearer` and `Basic` tokens in prose, with guards that keep the ordinary
  *    words out. Before the name pass so `token: Bearer xyz` loses `xyz`.
@@ -60,7 +61,8 @@
  *    `ENCRYPTION_KEY`, `AUTHORIZATION`, or `AUTH` as a whole segment) or is
  *    one of the MCP server's spaced names (`api key`, `access token`,
  *    `refresh token`, `auth token`, `client secret`, `secret key`,
- *    `secret access key`). No separator crosses a line break.
+ *    `secret access key`). A value that is a `Bearer` or `Basic` scheme takes
+ *    the token after it too. No separator crosses a line break.
  * 5. Known key prefixes: the MCP server's list, then the CLI's `ak_`
  *    Platform API keys and `sk-` keys (OpenAI, Anthropic). After the name
  *    pass so a value already replaced is not counted twice.
@@ -68,8 +70,9 @@
  *    goes, scheme and host stay.
  * 7. Home directories: the current user's own home first (ending at any
  *    character that cannot continue a user name), then the generic
- *    `/Users/<name>`, `/home/<name>` and `C:\Users\<name>` forms, also after
- *    `file://`.
+ *    `/Users/<name>`, `/home/<name>` and `C:\Users\<name>` forms (also
+ *    `C:/Users`, Git Bash's `/c/Users` and WSL's `/mnt/c/Users`, and after
+ *    `file://`), whose user name likewise stops at punctuation.
  * 8. Email addresses, last, so an address inside a secret already replaced is
  *    not counted twice.
  *
@@ -163,6 +166,19 @@ const ANY_QUOTED = `${ESCAPED_QUOTED}|${ESCAPED_OPEN_QUOTED}|${QUOTED}|${OPEN_QU
 // ── Pass 2: Authorization headers ───────────────────────────────────────────
 
 /**
+ * A header that starts inside a quoted string (`curl -H "Authorization:
+ * Bearer x" https://…`): the value runs to that string's closing quote (the
+ * same quote, escaped or not, that opened it) and no further, so the rest of
+ * the command, a second header included, is still scanned. Not a JSON key:
+ * a quote right after the name makes it one, and the general pattern below
+ * takes that. Groups: 1 opening quote, 2 name and separator, 3 value.
+ */
+const AUTHORIZATION_IN_STRING = new RegExp(
+  String.raw`(\\?["'])(\bAuthorization\b(?!["'])[ \t]*[:=][ \t]*)((?:(?!\1)[^\r\n])*)`,
+  "gi",
+);
+
+/**
  * `Authorization: <anything to the end of the line>`, or a quoted value when
  * the header is a JSON field. Any scheme: `Authorization: token abc123` and
  * an all-letter Bearer token are credentials too. Groups: 1 name and
@@ -228,6 +244,14 @@ const secretName = (chars: string, joiner: string, group: string): string =>
 /** The MCP server's names that may be written with a space, as fixed phrases. */
 const SPACED_SECRET_NAME = String.raw`(?:api key|access token|refresh token|auth token|client secret|secret (?:access )?key)(?![A-Za-z0-9_.-])`;
 
+/**
+ * A Bearer or Basic scheme followed by its token, as the value of a
+ * secret-looking name (`token: Bearer xyz`). Pass 3 skips a token that looks
+ * like an ordinary word; after a secret-looking name it is a credential
+ * whatever it looks like.
+ */
+const SCHEME_VALUE = String.raw`(?:Bearer|Basic)[ \t]+(?:[^\s"\\]|\\(?!"))+`;
+
 /** A shell word: non-blank characters, through any quoted part they contain (`MY_TOKEN="alpha beta"`). */
 const SHELL_WORD = String.raw`(?:${ANY_QUOTED}|[^\s"'])+`;
 /** A JSON field's value: quoted, or a number or boolean that stops at `,`, `;` or `}`. */
@@ -237,7 +261,7 @@ const JSON_VALUE = String.raw`(?:${ANY_QUOTED}|[^\s,;}]+)`;
  * quote (an escaped one included). Stopping at a double quote keeps the rest
  * of a JSON string or log line that the assignment sits in.
  */
-const BARE_VALUE = String.raw`(?:${ANY_QUOTED}|(?:[^\s"\\]|\\(?!"))+)`;
+const BARE_VALUE = String.raw`(?:${SCHEME_VALUE}|${ANY_QUOTED}|(?:[^\s"\\]|\\(?!"))+)`;
 
 /** Separator of an assignment or a field. It never crosses a line break. */
 const ASSIGN = String.raw`[ \t]*[:=][ \t]*`;
@@ -256,7 +280,7 @@ const ASSIGN = String.raw`[ \t]*[:=][ \t]*`;
  */
 const NAME_VALUE = new RegExp(
   String.raw`(?<![A-Za-z0-9_.-])(?:` +
-    String.raw`(?=--)${secretName("[A-Za-z0-9_-]", "[_-]", "flag")}\k<flag>(?<flagSep>=|[ \t]+)(?!-)(?<flagValue>${SHELL_WORD})` +
+    String.raw`(?=--)${secretName("[A-Za-z0-9_-]", "[_-]", "flag")}\k<flag>(?<flagSep>=|[ \t]+)(?!-)(?<flagValue>${SCHEME_VALUE}|${SHELL_WORD})` +
     "|" +
     String.raw`(?<quote>\\?["'])${secretName("[A-Za-z0-9_. -]", "[_ -]", "jsonName")}\k<jsonName>\k<quote>(?<jsonSep>${ASSIGN})(?<jsonValue>${JSON_VALUE})` +
     "|" +
@@ -323,13 +347,17 @@ const HOME_DIR_START = String.raw`(?:(?<![\w/\\])|(?<=file:\/\/))`;
 
 /**
  * `/Users/<name>`, `/home/<name>` and `C:\Users\<name>` (also with the doubled
- * backslashes of a JSON string, and lowercase on Windows). The rest of the
- * path survives: `/Users/a/app` → `~/app`. The POSIX forms are case-sensitive
- * on purpose: `/users/user_123` is a Backend API path, not a home.
+ * backslashes of a JSON string, lowercase on Windows, forward slashes
+ * `C:/Users/<name>`, and the Git Bash and WSL spellings `/c/Users/<name>` and
+ * `/mnt/c/Users/<name>`). The rest of the path survives: `/Users/a/app` →
+ * `~/app`. The POSIX forms are case-sensitive on purpose: `/users/user_123`
+ * is a Backend API path, not a home. The user name is letters, digits, `_`
+ * and `-`, with dots between them, so punctuation after it stays
+ * (`see /Users/bob.` → `see ~.`, `(/Users/bob)` → `(~)`).
  */
 const GENERIC_HOME_DIR = new RegExp(
-  String.raw`${HOME_DIR_START}(?:\/Users\/|\/home\/|[A-Za-z]:\\{1,2}[Uu]sers\\{1,2})[^\s/\\:"'${"`"}]+`,
-  "g",
+  String.raw`${HOME_DIR_START}(?:\/Users\/|\/home\/|(?:\/mnt)?\/[A-Za-z]\/Users\/|[A-Za-z]:(?:\\{1,2}[Uu]sers\\{1,2}|\/[Uu]sers\/))[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)*`,
+  "gu",
 );
 
 function escapeRegExp(value: string): string {
@@ -389,6 +417,11 @@ export function redactText(text: string, options: { homedir?: string } = {}): Re
 
   let out = text.replace(PRIVATE_KEY_BLOCK, count);
 
+  out = out.replace(AUTHORIZATION_IN_STRING, (match, open: string, name: string, value: string) => {
+    if (value.trim() === "" || value.startsWith(REDACTED)) return match;
+    redactions += 1;
+    return `${open}${name}${REDACTED}`;
+  });
   out = out.replace(AUTHORIZATION_HEADER, (match, name: string, value: string) => {
     if (stripQuotes(value).startsWith(REDACTED)) return match;
     redactions += 1;

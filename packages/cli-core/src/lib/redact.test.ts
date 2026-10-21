@@ -559,6 +559,65 @@ test.each([
   },
 );
 
+// When the value after a secret-looking name is a Bearer or Basic scheme, the
+// token after it goes too, whatever it looks like.
+describe("a scheme word as the value of a secret-looking name", () => {
+  test.each([
+    ["token: Bearer xyz", `token: ${REDACTED}`],
+    ["TOKEN=Bearer x7k2", `TOKEN=${REDACTED}`],
+    ["token: Bearer abcdefghij", `token: ${REDACTED}`],
+    ["token: Bearer xyz then retried", `token: ${REDACTED} then retried`],
+    ["password: basic hunter", `password: ${REDACTED}`],
+    ["--token Bearer abcdefghij next", `--token ${REDACTED} next`],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+});
+
+// An Authorization header inside a quoted string (curl's -H) ends at the
+// string's closing quote, and the rest of the command survives.
+describe("an Authorization header inside a quoted string", () => {
+  test.each([
+    [
+      'curl -H "Authorization: Bearer abcdefghijklmnop" https://api.clerk.com/v1/users',
+      `curl -H "Authorization: ${REDACTED}" https://api.clerk.com/v1/users`,
+    ],
+    ["curl -H 'Authorization: token abc123' -X GET", `curl -H 'Authorization: ${REDACTED}' -X GET`],
+    [
+      'curl -H \\"Authorization: token abc123\\" -X GET',
+      `curl -H \\"Authorization: ${REDACTED}\\" -X GET`,
+    ],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+
+  test("two quoted headers on one line are both taken", () => {
+    expect(
+      redact('curl -H "Authorization: token a1b2" -H "Authorization: token c3d4" -X GET'),
+    ).toEqual({
+      text: `curl -H "Authorization: ${REDACTED}" -H "Authorization: ${REDACTED}" -X GET`,
+      redactions: 2,
+    });
+  });
+});
+
+// Other users' homes: Git Bash and WSL spellings of a Windows home, the
+// forward-slash Windows form, and punctuation after the user name.
+describe("home directories in other spellings", () => {
+  test.each([
+    ["/c/Users/bob/project/app.ts", "~/project/app.ts"],
+    ["/mnt/c/Users/bob/project", "~/project"],
+    ["C:/Users/bob/project", "~/project"],
+    ["see /Users/bob.", "see ~."],
+    ["(/Users/bob)", "(~)"],
+    ["see /home/bob, then", "see ~, then"],
+    ["/Users/john.doe/app", "~/app"],
+    ["/home/jos\u00e9/app", "~/app"],
+  ])("%j → %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+});
+
 describe("known limitations", () => {
   // Best-effort by design: these are the shapes the scrubber does not understand.
   test("a password with spaces keeps every word after the first", () => {
@@ -701,6 +760,10 @@ describe("large pastes stay linear", () => {
     ["quotes only", (n) => fill('"', n)],
     ["escaped quotes only", (n) => fill('\\"', n)],
     ["home paths", (n) => fill("/Users/alice/x ", n)],
+    ["quoted Authorization headers on one line", (n) => fill('"Authorization: ', n)],
+    ["Git Bash home prefixes repeated", (n) => fill("/c/Users/", n)],
+    ["a dotted user name after a home prefix", (n) => "/Users/" + fill("a.", n)],
+    ["scheme words after secret names", (n) => fill("token: Bearer ", n)],
     ["Authorization headers on one line", (n) => fill("Authorization: ", n)],
     ["Bearer words", (n) => fill("Bearer ", n)],
     ["email local part with no domain", (n) => fill("a.", n) + "@"],

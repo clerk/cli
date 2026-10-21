@@ -63,18 +63,32 @@ leaves your machine. **Scrubbing is best-effort.** It catches secrets by their s
   Slack, npm, AWS, Google, Stripe webhook secrets, JWTs, and `sk-` keys such as OpenAI's and
   Anthropic's);
 - private key blocks, PGP included;
-- `Authorization` headers, and `Bearer` or `Basic` tokens in prose;
+- `Authorization` headers with any scheme, and `Bearer` or `Basic` tokens in prose;
 - a value assigned on one line to a secret-looking name: a name containing SECRET, TOKEN,
-  PASSWORD, API_KEY, PRIVATE_KEY, ENCRYPTION_KEY or AUTHORIZATION (`CLERK_SECRET_KEY=...`,
-  `export DATABASE_PASSWORD=...`, `"apiToken": "..."`), a spaced name such as `api key:`,
-  and the same names as command-line flags (`--password x`, `--token=x`);
+  PASSWORD, PASSWD, API_KEY, PRIVATE_KEY, ENCRYPTION_KEY, AUTHORIZATION, or AUTH as a whole
+  segment (`CLERK_SECRET_KEY=...`, `export DATABASE_PASSWORD=...`, `"apiToken": "..."`,
+  `X_AUTH=...`), a spaced name such as `api key:` or `client secret:`, and the same names
+  as command-line flags (`--password x`, `--token=x`, `--api_key x`);
 - credentials in URLs (`postgres://user:password@host`).
 
 Secrets become `[REDACTED]`, home-directory paths become `~`, and email addresses become
 `[EMAIL]`. The variable or flag name stays and only the value goes (`export TOKEN=abc`
-becomes `export TOKEN=[REDACTED]`), so a reader learns which setting was involved. An
-unquoted value ends at the first space or double quote; a quoted one ends at its closing
-quote.
+becomes `export TOKEN=[REDACTED]`), so a reader learns which setting was involved. Where
+a value ends:
+
+- after a bare name (`NAME=value`, `name: value`): an unquoted value at the first space or
+  double quote, a quoted one at its closing quote; a `Bearer` or `Basic` value takes the
+  token after it too (`token: Bearer xyz` loses `Bearer xyz`);
+- after a JSON field name (`"name": value`): a quoted value at its closing quote, an
+  unquoted one at the first space, `,`, `;` or `}`;
+- after a flag: one shell word, through any quoted part it contains
+  (`--token MY_TOKEN="alpha beta"` loses all of `MY_TOKEN="alpha beta"`);
+- an `Authorization` header: the rest of the line, or the closing quote when the header
+  sits inside a quoted string (`curl -H "Authorization: …" https://…` keeps the URL).
+
+Home directories are recognised as `/Users/<name>`, `/home/<name>` and `C:\Users\<name>`,
+including `C:/Users/<name>`, Git Bash's `/c/Users/<name>` and WSL's `/mnt/c/Users/<name>`;
+punctuation after the user name stays (`(/Users/bob)` becomes `(~)`).
 
 It does not understand structure, so it misses: values that span several lines; values in
 structured config files such as YAML blocks and pretty-printed or nested JSON; passwords
@@ -130,13 +144,15 @@ Agent mode prints one JSON object on stdout and exits 0 in every case after vali
 ```
 
 `reason` is one of `telemetry_disabled` (an env var or `clerk telemetry disable`),
-`dev_build`, `rate_limited`, `send_failed`. `report_id` is present exactly when a POST was
-attempted, including a `send_failed` from a timeout, a rejection or a network failure: a
-send that timed out can still have reached the endpoint, and the id is what a later
-removal needs. A `send_failed` without a report id means nothing left the machine: the run
-failed before any POST (the local config file could not be written or read, or the
-first-run notice could not be recorded), or a sandbox refused the connection with a
-permission error. Ctrl-C during the send is not a result: the command follows the CLI's
+`dev_build`, `rate_limited`, `send_failed`. `report_id` is present exactly when the
+request may have reached the endpoint, including a `send_failed` from a timeout, a
+rejection or a failure the CLI cannot place: a send that timed out can still have landed,
+and the id is what a later removal needs. A `send_failed` without a report id means
+nothing left the machine: the run failed before any POST (the local config file could not
+be written or read, or the first-run notice could not be recorded), or the connection was
+never made (refused, a host that does not resolve, no network, a sandbox blocking it). The
+CLI decides that only from the structured error code, never from the error message or
+the URL. Ctrl-C during the send is not a result: the command follows the CLI's
 interrupt path and exits 130 without printing one, after counting the send against the
 rate limit when the request may have reached the server.
 
@@ -174,8 +190,8 @@ server: any response, accepted or not, and a timeout, because a send that timed 
 rejected may still have landed and a retry loop against a slow endpoint must still meet
 the cap. The CLI cannot tell a timeout before the connection from one after the request
 was sent, so every timeout counts. A connection that was never made (refused, a host that
-does not resolve, no network, or a sandbox refusing it with a permission error) sent
-nothing and is not recorded, and neither is a send refused before any POST. The cap fails open: where the
+does not resolve, no network, a sandbox blocking it) sent nothing and is not recorded, and
+neither is a send refused before any POST. The cap fails open: where the
 cache file cannot be written, sends are accepted but not counted, because failing closed
 would block feedback entirely in sandboxes that forbid cache writes. Why this shape: agent-mode
 errors tend to come from retry loops, so a per-hour cap alone would admit hundreds of

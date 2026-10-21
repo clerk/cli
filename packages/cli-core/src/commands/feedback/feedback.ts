@@ -617,9 +617,11 @@ type FeedbackSendResult = { sent: true } | { sent: false; refusal: Refusal; post
 
 /**
  * Connection failures where the request never left the machine: a refused
- * connection, a host that does not resolve, no network. Bun reports both a
- * refused connection and an unresolvable host as `ConnectionRefused`; the
- * Node-style codes cover the same failures from other runtimes and proxies.
+ * connection, a host that does not resolve, no network, a socket that could
+ * not open. Bun reports a refused connection, an unresolvable host and a
+ * sandbox that blocks outbound connections as `ConnectionRefused` or
+ * `FailedToOpenSocket`; the Node-style codes cover the same failures from
+ * other runtimes and proxies.
  */
 const CONNECTION_NEVER_MADE = new Set([
   "ConnectionRefused",
@@ -635,34 +637,25 @@ const CONNECTION_NEVER_MADE = new Set([
 /** Permission errors that, raised by the `connect` syscall, mean a sandbox or firewall refused the connection. */
 const CONNECT_DENIED = new Set(["EPERM", "EACCES"]);
 
-type ConnectFailure = "refused" | "denied";
-
 /**
- * Whether the error proves no connection was made, read only from structured
+ * Whether the error proves no connection was made: one of the codes above,
+ * or a permission error raised by `connect`. Read only from structured
  * fields (`code`, `syscall`) on the error or on its cause, where Node's
- * fetch puts them. Never from the message or the URL: a proxy answering
- * "access denied", or a telemetry URL containing "sandbox", says nothing
- * about whether the request left the machine.
- *
- * - `refused`: no connection (refused, unresolvable host, no network). Not
- *   counted against the cap; the report id is still printed, since a POST
- *   was attempted.
- * - `denied`: a permission error raised by `connect`, as a sandbox
- *   produces. Not counted, and no report id: nothing left the machine.
- *
- * Anything else, a timeout included, may have reached the server: the CLI
- * cannot tell a timeout before the connection from one after the request
- * was sent.
+ * fetch puts them; never from the message or the URL, since a proxy
+ * answering "access denied", or a telemetry URL containing "sandbox", says
+ * nothing about whether the request left the machine. When it is true,
+ * nothing left the machine: the send is not counted and gets no report id.
+ * Anything else, a timeout included, may have reached the server.
  */
-function connectFailure(error: unknown): ConnectFailure | null {
+function provesNoConnection(error: unknown): boolean {
   for (const candidate of [error, (error as { cause?: unknown } | null)?.cause]) {
     const fields = candidate as { code?: unknown; syscall?: unknown } | null | undefined;
     const code = fields?.code;
     if (typeof code !== "string") continue;
-    if (CONNECTION_NEVER_MADE.has(code)) return "refused";
-    if (CONNECT_DENIED.has(code) && fields?.syscall === "connect") return "denied";
+    if (CONNECTION_NEVER_MADE.has(code)) return true;
+    if (CONNECT_DENIED.has(code) && fields?.syscall === "connect") return true;
   }
-  return null;
+  return false;
 }
 
 /**
@@ -671,19 +664,16 @@ function connectFailure(error: unknown): ConnectFailure | null {
  * notice, so an opt-out that landed during the confirmation neither posts nor
  * consumes the notice; the shared sender checks again at the POST.
  *
- * `posted` is true once the sender has passed its opt-out check and made the
- * request, and it is what earns the report id: a rejected POST, a timeout or
- * a network failure is `send_failed` with the id, since the id is what a
- * later removal needs; a failure before the POST (the config could not be
- * read, the notice could not be recorded) is `send_failed` without one.
- *
- * The cap counts a send whenever the request may have reached the server: any
- * response, a timeout, or a failure the CLI cannot place. A connection that
- * was never made sent nothing and is not counted, and neither is one that
- * `connect` refused with a permission error, which also prints no report id
- * (see {@link connectFailure}: structured error fields only). An interrupt is rethrown
- * for the CLI's interrupt path, after the send is counted when the request
- * may have reached the server.
+ * `posted` is true once the request may have reached the server, and it is
+ * what earns the report id and the count against the cap: any response,
+ * accepted or not, a timeout, or a failure the CLI cannot place. The id is
+ * what a later removal needs. A failure that proves no connection was made
+ * ({@link provesNoConnection}: refused, unresolvable host, no network, a
+ * socket that could not open, a permission error on connect) sent nothing,
+ * so it is `send_failed` with no id and no count, like a failure before the
+ * POST (the config could not be read, the notice could not be recorded). An
+ * interrupt is rethrown for the CLI's interrupt path, after the send is
+ * counted when the request may have reached the server.
  */
 async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
   try {
@@ -720,12 +710,11 @@ async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
       },
     );
   } catch (error) {
-    // A sandbox that refused the connection sent nothing: no count, no id.
-    const failure = connectFailure(error);
-    const sent = posted && failure !== "denied";
+    // A connection that was never made sent nothing: no count, no id.
+    const sent = posted && !provesNoConnection(error);
     // Recorded first even on Ctrl-C: a request that was out may have landed,
     // and the interrupt is only rethrown once the cap has counted it.
-    if (sent && failure === null) await record();
+    if (sent) await record();
     if (isCancelled(error)) throw error;
     log.debug(`feedback: send failed: ${error}`);
     return { sent: false, refusal: { reason: "send_failed" }, posted: sent };

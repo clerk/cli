@@ -578,14 +578,38 @@ describe("sending", () => {
     ["an unresolvable host", "ENOTFOUND"],
     ["a refused connection", "ECONNREFUSED"],
     ["no network", "ENETUNREACH"],
-  ])("a connection never made (%s) is not recorded against the cap", async (_label, code) => {
+  ])(
+    "a connection never made (%s) is not counted and prints no report id",
+    async (_label, code) => {
+      await readyToSend();
+      const report = { ...COMPLETE, command: "users list", errorCode: "boom" };
+      respondWith = connectionError(code);
+      // Nothing left the machine, so there is no report anyone could remove.
+      expect(await run(report)).toEqual({
+        sent: false,
+        reason: "send_failed",
+        fallback: GITHUB_ISSUES_URL,
+      });
+      respondWith = () => new Response("{}");
+      expect((await run(report)).sent).toBe(true);
+    },
+  );
+
+  // The error Bun itself throws, not a hand-built one: a fetch to a local port
+  // that nothing listens on (the port is taken from the OS, then released).
+  test("the error Bun's fetch throws for a connection refused is not counted and prints no report id", async () => {
     await readyToSend();
+    const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const closedPort = listener.port;
+    listener.stop(true);
     const report = { ...COMPLETE, command: "users list", errorCode: "boom" };
-    respondWith = connectionError(code);
-    const failed = await run(report);
-    expect(failed).toMatchObject({ sent: false, reason: "send_failed" });
-    // A POST was attempted, so the id is still printed.
-    expect(failed.report_id).toMatch(/^[0-9a-f-]{36}$/);
+    respondWith = () =>
+      originalFetch(`http://127.0.0.1:${closedPort}/v1/event`, { method: "POST" });
+    expect(await run(report)).toEqual({
+      sent: false,
+      reason: "send_failed",
+      fallback: GITHUB_ISSUES_URL,
+    });
     respondWith = () => new Response("{}");
     expect((await run(report)).sent).toBe(true);
   });
