@@ -108,6 +108,8 @@ describe("sources <source>", () => {
       key: "auth0",
       export_command: "clerk migrate export auth0",
       fields: { user_id: "userId" },
+      // The fixed defaults the detail view prints, as the README says.
+      defaults: { passwordHasher: "bcrypt" },
       carries: { passwords: { level: "partial" } },
     });
   });
