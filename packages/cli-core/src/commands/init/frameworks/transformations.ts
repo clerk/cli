@@ -53,10 +53,22 @@ export function insertAfterLastImport(source: string, snippet: string): string {
   return source.slice(0, lineEnd + 1) + snippet + source.slice(lineEnd + 1);
 }
 
+/** Whether an import statement binds a runtime `Suspense` (not type-only, not aliased away). */
+function bindsSuspense(statement: string): boolean {
+  if (/^\s*import\s+type\b/.test(statement)) return false;
+  const named = /\{([^}]*)\}/.exec(statement)?.[1] ?? "";
+  return named
+    .split(",")
+    .map((specifier) => specifier.trim())
+    .some(
+      (specifier) => specifier === "Suspense" || /^(?!type\s)\S+\s+as\s+Suspense$/.test(specifier),
+    );
+}
+
 /**
  * Insert `import { Suspense } from "react";` on its own line after the last import whose
  * module specifier satisfies `isAnchor`, or after the last import when none does. No-op
- * when the file already imports `Suspense` from React.
+ * when the file already binds `Suspense` from React.
  */
 export function addSuspenseImport(
   source: string,
@@ -67,7 +79,7 @@ export function addSuspenseImport(
     const specifier = /["']([^"'\n]*)["'][ \t]*;?$/.exec(text)?.[1];
     return { end: match.index + match[0].length, text, specifier };
   });
-  if (imports.some((imp) => imp.specifier === "react" && /\bSuspense\b/.test(imp.text))) {
+  if (imports.some((imp) => imp.specifier === "react" && bindsSuspense(imp.text))) {
     return source;
   }
 

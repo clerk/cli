@@ -76,4 +76,18 @@ describe("addSuspenseImport", () => {
 
     expect(addSuspenseImport(source, isClerk)).toBe(source);
   });
+
+  test.each([
+    `import type { Suspense } from "react";`,
+    `import { type Suspense } from "react";`,
+    `import { Suspense as Pending } from "react";`,
+  ])("adds the import when %s binds no runtime Suspense", (reactImport) => {
+    const source = `import { ClerkProvider } from "@clerk/nextjs";\n${reactImport}\n`;
+
+    const result = addSuspenseImport(source, isClerk);
+
+    expect(result).toBe(
+      `import { ClerkProvider } from "@clerk/nextjs";\nimport { Suspense } from "react";\n${reactImport}\n`,
+    );
+  });
 });
