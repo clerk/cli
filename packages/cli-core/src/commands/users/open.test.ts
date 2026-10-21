@@ -105,7 +105,7 @@ describe("users open", () => {
 
     test("says the application is unclaimed rather than that nothing is linked", async () => {
       await expect(open({ userId: "user_abc" })).rejects.toThrow(
-        /unclaimed accountless application \(secret key from \.env\.local\).*no Dashboard page/s,
+        /secret key from \.env\.local belongs to an unclaimed accountless application.*no Dashboard page/s,
       );
     });
 
@@ -218,29 +218,53 @@ describe("users open", () => {
     );
   });
 
-  test("--secret-key without a resolvable dashboard target: throws usage error", async () => {
-    setMode("agent");
-    const { CliError, ERROR_CODE } = await import("../../lib/errors.ts");
-    mockResolveAppContext.mockRejectedValueOnce(
-      new CliError("Not linked.", {
-        code: ERROR_CODE.NOT_LINKED,
-      }),
-    );
-    mockResolveUsersInstanceContext
-      .mockRejectedValueOnce(
-        new CliError("Not linked.", {
-          code: ERROR_CODE.NOT_LINKED,
-        }),
-      )
-      .mockResolvedValueOnce({
-        secretKey: "sk_test_loose",
+  describe("--secret-key without a resolvable dashboard target", () => {
+    beforeEach(() => {
+      setMode("agent");
+      mockResolveAppContext.mockRejectedValue(
+        new CliError("Not linked.", { code: ERROR_CODE.NOT_LINKED }),
+      );
+      mockResolveUsersInstanceContext.mockRejectedValue(
+        new CliError("Not linked.", { code: ERROR_CODE.NOT_LINKED }),
+      );
+      // A different key in this directory must not speak for the one passed.
+      mockResolveKeylessTarget.mockResolvedValue({
+        secretKey: "sk_test_local",
+        source: ".env.local",
       });
+    });
 
-    await expect(open({ secretKey: "sk_test_loose", userId: "user_2x9k" })).rejects.toThrow(
-      /dashboard URL|--app/,
-    );
-    expect(mockResolveUsersInstanceContext).toHaveBeenCalledTimes(2);
-    expect(mockOpenBrowser).not.toHaveBeenCalled();
+    test("classifies the passed key, not the directory's", async () => {
+      mockKeyAccess.mockResolvedValue({ claimed: false, source: "the `--secret-key` flag" });
+
+      await expect(open({ secretKey: "sk_test_loose", userId: "user_2x9k" })).rejects.toThrow(
+        /secret key from the `--secret-key` flag belongs to an unclaimed/,
+      );
+      expect(mockKeyAccess).toHaveBeenCalledWith({
+        secretKey: "sk_test_loose",
+        source: "the `--secret-key` flag",
+      });
+      expect(mockResolveKeylessTarget).not.toHaveBeenCalled();
+      expect(mockOpenBrowser).not.toHaveBeenCalled();
+    });
+
+    test("points a claimed passed key at `--app`, as not_linked", async () => {
+      mockKeyAccess.mockResolvedValue({ claimed: true, source: "the `--secret-key` flag" });
+
+      const error = (await open({ secretKey: "sk_test_loose", userId: "user_2x9k" }).catch(
+        (thrown: unknown) => thrown,
+      )) as CliError;
+
+      expect(error.message).toContain("or pass `--app <id>`");
+      expect(error.code).toBe(ERROR_CODE.NOT_LINKED);
+    });
+
+    test("rejects a passed key that isn't a secret key before asking Clerk", async () => {
+      await expect(open({ secretKey: "ak_test_wrong", userId: "user_2x9k" })).rejects.toThrow(
+        /Expected a Secret key/,
+      );
+      expect(mockKeyAccess).not.toHaveBeenCalled();
+    });
   });
 
   test("no user-id + human mode: invokes pickUser and uses returned id", async () => {

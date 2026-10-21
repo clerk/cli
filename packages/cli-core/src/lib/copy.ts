@@ -150,7 +150,7 @@ export const keylessCopy = {
 
   userDashboardNeedsClaim: (userId: string, access: KeyAccess): string =>
     (access.claimed === false
-      ? `This directory holds an unclaimed accountless application (secret key from ${access.source}), which has no Dashboard page — a dashboard link needs an application ID, and one is only assigned when the application is claimed.\n` +
+      ? `The secret key from ${access.source} belongs to an unclaimed accountless application, which has no Dashboard page — a dashboard link needs an application ID, and one is only assigned when the application is claimed.\n` +
         `Run \`clerk auth login\` to claim it, then \`clerk users open ${userId}\` will work.\n`
       : access.claimed
         ? `This application belongs to a Clerk account, but a dashboard link needs its application ID, which the secret key from ${access.source} doesn't carry.\n` +

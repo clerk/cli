@@ -5,6 +5,7 @@ import { keyAccess, resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { keylessCopy } from "../../lib/copy.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
+import { validateKeyPrefix } from "../../lib/plapi.ts";
 import { intro, outro } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import { buildDashboardUrl } from "../open/index.ts";
@@ -67,8 +68,9 @@ async function resolveKnownUserDashboardTarget(options: UsersOpenOptions): Promi
 }
 
 /**
- * Fails with the real reason when the directory holds only a secret key,
- * rather than letting the caller land on `not_linked`.
+ * Fails with the real reason when the only target is a secret key, rather
+ * than letting the caller land on `not_linked`. That key is `--secret-key`
+ * when given, or else the one this directory holds.
  *
  * A dashboard link needs an application ID, and the key doesn't carry one.
  * For an unclaimed application there is nothing to link to yet: `clerk link`
@@ -81,7 +83,10 @@ async function assertNotKeyless(options: UsersOpenOptions, userId: string): Prom
   // and the original error is the accurate one.
   if (options.app || options.instance) return;
 
-  const keyless = await resolveKeylessTarget({ cwd: process.cwd() });
+  if (options.secretKey) validateKeyPrefix(options.secretKey, "sk_");
+  const keyless = options.secretKey
+    ? { secretKey: options.secretKey, source: "the `--secret-key` flag" }
+    : await resolveKeylessTarget({ cwd: process.cwd() });
   if (keyless) {
     const access = await keyAccess(keyless);
     throw new CliError(keylessCopy.userDashboardNeedsClaim(userId, access), {
@@ -111,9 +116,9 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     } catch (error) {
       // A secret key alone can't build the deep-link — it is `/apps/{appId}/…`,
       // and an unclaimed application has no appId until somebody claims it.
-      // Checked before the `--secret-key` branch below because the advice that
-      // branch would eventually give ("use --app", "run `clerk link`") is
-      // unreachable here: no app exists to name.
+      // Checked before the `--secret-key` branch below, and against that key
+      // when given, because the advice that branch would give ("use --app",
+      // "run `clerk link`") is unreachable for an unclaimed one.
       await assertNotKeyless(options, userId);
 
       if (!options.secretKey) {

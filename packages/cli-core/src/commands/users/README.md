@@ -135,7 +135,7 @@ This is the one command in the family that an unclaimed accountless application 
 
 Rather than report the generic "no Clerk project linked", `users open` detects the accountless project and says so — because the two remedies that message implies, `clerk link` and `--app`, both want an application ID that does not exist yet. The error names `clerk auth login` to claim the application, and `clerk api /users/<id>` to read the user right now without claiming anything. Passing `--app` explicitly skips this check: naming an application says the request isn't about the accountless one in this directory.
 
-A secret key for a **claimed** application takes the same path, since the key alone doesn't say which it is. So before refusing, `users open` reads `GET /v1/instance` once:
+A secret key for a **claimed** application takes the same path, since the key alone doesn't say which it is. So before refusing, `users open` reads `GET /v1/instance` once, with `--secret-key` when it was passed and otherwise with the key this directory holds:
 
 - `workspace_id` null: the application is unclaimed, and the error is the one above.
 - `workspace_id` set: the application belongs to an account. The error says the key doesn't carry the application ID, and to run `clerk link` (or pass `--app <id>`) with `clerk auth login` or `CLERK_PLATFORM_API_KEY`. It exits `not_linked`.
