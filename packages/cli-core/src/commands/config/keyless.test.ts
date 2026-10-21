@@ -794,6 +794,69 @@ describe("keyless config", () => {
       expect(captured.err).not.toContain("belongs to a Clerk account");
     });
 
+    // `--keys` names the groups, so "only reads" them is no news.
+    test("pull --keys of a claimed application says nothing extra", async () => {
+      bapiState["/v1/instance"] = { ...INSTANCE, workspace_id: "org_123" };
+      const { configPull } = await import("./pull.ts");
+
+      await configPull({ keys: ["protect"] });
+
+      expect(captured.err).not.toContain("belongs to a Clerk account");
+    });
+
+    // A patch diffs against a pull, but the warning is the pull command's alone.
+    test("patch of a claimed application's instance doesn't warn about the pull", async () => {
+      bapiState["/v1/instance"] = { ...INSTANCE, workspace_id: "org_123" };
+      const { configPatch } = await import("./push.ts");
+
+      await configPatch({ json: '{"instance":{"support_email":"new@example.com"}}', yes: true });
+
+      expect(captured.err).not.toContain("only reads");
+    });
+
+    test("a valid patch that doesn't touch instance never reads it", async () => {
+      const requests: string[] = [];
+      const answer = globalThis.fetch;
+      stubFetch(async (input, init) => {
+        requests.push(
+          `${(init?.method ?? "GET").toUpperCase()} ${new URL(input.toString()).pathname}`,
+        );
+        return answer(input, init);
+      });
+      const { configPatch } = await import("./push.ts");
+
+      await configPatch({ json: '{"organization_settings":{"enabled":true}}', yes: true });
+
+      expect(requests).not.toContain("GET /v1/instance");
+    });
+
+    test("billing on a claimed application points at the account, not at claiming it", async () => {
+      stubWorkspace("org_123");
+      const { billingEnable } = await import("../billing/index.ts");
+
+      const error = await billingEnable({ for: ["users"], yes: true }).catch((e: unknown) => e);
+
+      const message = (error as Error).message;
+      expect(message).toContain(
+        "This application belongs to a Clerk account, so a secret key can't configure billing.",
+      );
+      expect(message).toContain("A login alone isn't enough");
+      expect(message).not.toContain("unclaimed");
+    });
+
+    test("billing covers both cases when Clerk can't say whether the application is claimed", async () => {
+      stubWorkspace("fail");
+      const { billingEnable } = await import("../billing/index.ts");
+
+      const error = await billingEnable({ for: ["users"], yes: true }).catch((e: unknown) => e);
+
+      const message = (error as Error).message;
+      expect(message).toContain("If this application is unclaimed, run `clerk auth login`");
+      expect(message).toContain(
+        "If it belongs to a Clerk account, a secret key can't configure billing.",
+      );
+    });
+
     test("patch rejects config keys BAPI cannot reach", async () => {
       const { configPatch } = await import("./push.ts");
 

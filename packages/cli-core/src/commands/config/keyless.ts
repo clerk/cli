@@ -14,7 +14,7 @@
 
 import { bapiRequest } from "../../lib/bapi.ts";
 import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
-import { isClaimedKeylessTarget, keyAccess, type KeylessTarget } from "../../lib/keyless-target.ts";
+import { keyAccess, type KeylessTarget } from "../../lib/keyless-target.ts";
 import { keylessCopy, type KeyAccess } from "../../lib/copy.ts";
 import { log } from "../../lib/log.ts";
 
@@ -248,18 +248,6 @@ export async function pullKeylessConfig(
       `Failed to fetch ${name}`,
     );
     config[name] = response.body;
-  }
-
-  // A claimed application's key reads only these groups, and the pull looks
-  // complete: say what it left out. The instance group, when read, already
-  // says whether it is claimed.
-  const instance = config.instance as { workspace_id?: unknown } | undefined;
-  const claimed =
-    instance && "workspace_id" in instance
-      ? typeof instance.workspace_id === "string" && instance.workspace_id.length > 0
-      : await isClaimedKeylessTarget(target);
-  if (claimed) {
-    log.warn(keylessCopy.pullCoversLessForClaimed(Object.keys(config), target.source));
   }
 
   return config;

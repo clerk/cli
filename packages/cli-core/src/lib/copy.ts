@@ -99,9 +99,16 @@ export const keylessCopy = {
 
   // --- "needs a claimed application" refusals ---
 
-  billingNeedsClaimedApplication: (): string =>
-    "Billing can only be configured on a claimed application — Clerk's Backend API has no billing settings, so an unclaimed accountless application can't reach them.\n" +
-    "Run `clerk auth login` to claim this application, then re-run the command.",
+  billingNeedsClaimedApplication: (access?: KeyAccess): string =>
+    access && !isUnclaimed(access)
+      ? "Billing lives in the account-level config document — Clerk's Backend API has no billing settings.\n" +
+        pastSecretKey(
+          access,
+          "configure billing",
+          "run `clerk auth login` to claim it, then re-run the command.",
+        )
+      : "Billing can only be configured on a claimed application — Clerk's Backend API has no billing settings, so an unclaimed accountless application can't reach them.\n" +
+        "Run `clerk auth login` to claim this application, then re-run the command.",
 
   schemaNeedsClaimedApplication: (access?: KeyAccess): string =>
     access && !isUnclaimed(access)

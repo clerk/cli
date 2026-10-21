@@ -194,7 +194,7 @@ The same path takes a secret key for a **claimed** application, since the key al
 - `workspace_id` set: the application belongs to an account. The refusal says a secret key can't change those keys, and to pass `--app <id> --instance <dev|prod>` (or run `clerk link`) with `clerk auth login` or `CLERK_PLATFORM_API_KEY`. A login alone isn't enough while the secret key is found, since it takes precedence.
 - The lookup fails: the refusal gives both, and never calls the application unclaimed.
 
-A `config pull` of a claimed application warns that the secret key read only some groups, worded the same way. It reads `workspace_id` from the `instance` group it pulls, so it costs no extra request when that group is included.
+A default `config pull` (no `--keys`) of a claimed application warns that the secret key read only some groups, worded the same way. It reads `workspace_id` from the `instance` group it pulls, so it makes no extra request. A pull with `--keys`, and the read a `patch` makes to diff against, never warn.
 
 The secret key is resolved the way the app itself would resolve one, and this order is shared by every accountless-capable command (`lib/keyless-target.ts`):
 
