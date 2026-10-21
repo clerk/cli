@@ -146,9 +146,10 @@ Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 
 On a `failed` line, `code` is the HTTP status, such as `422` or `429`, or
 `unknown`. On a `skipped` line it gives the reason in machine form:
-`no_password` for a user `--require-password` left out, or `in_file` for one
-the checks skipped for the file's own data (invalid, a duplicate within it, an
-email Clerk refuses, a malformed hash).
+`no_password` for a user `--require-password` left out, `in_file` for one the
+checks skipped for the file's own data (invalid, a duplicate within it, an
+email Clerk refuses, a malformed hash), or `source_skip` for one its source
+asked to skip.
 
 A user's status is `creating`, `created`, `failed`, `skipped`, `deleted` or
 `exported`. The last line for each `sourceId` wins. A `429` retry, an extra
@@ -765,7 +766,7 @@ after them. They sort the users four ways:
   Supabase's soft-deleted and anonymous users. Nobody means to bring these
   across, so they never stop the import: each is recorded as `skipped` with its
   source's reason (`code: "source_skip"`), and `--json` lists them as
-  `checks.skipped`. They leave the run `complete`.
+  `checks.skipped`. On their own, they leave the run `complete`.
 - **Rejected** — users Clerk would refuse. Each gets the first reason that
   applies:
   - it failed schema validation
