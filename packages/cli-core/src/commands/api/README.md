@@ -40,8 +40,8 @@ clerk api /users/user_abc123 -X DELETE
 # Read body from file
 clerk api /users --file create-user.json
 
-# Pipe body from stdin
-cat payload.json | clerk api /users
+# Pipe body from stdin (`--file -` is required so an open stdin cannot hang GET)
+cat payload.json | clerk api /users --file -
 
 # Show response headers
 clerk api /users --include
@@ -88,11 +88,13 @@ cmd.exe:
   the same way: `'{user_id:x}'`.
 
 `--file` and piped stdin sidestep the shell entirely and behave the same
-everywhere, so prefer them for anything non-trivial and in scripts:
+everywhere, so prefer them for anything non-trivial and in scripts. Stdin is
+only read when you pass `--file -`; otherwise `clerk api` will not wait on an
+open pipe.
 
 ```sh
 clerk api /users --file body.json
-cat body.json | clerk api /users
+cat body.json | clerk api /users --file -
 ```
 
 ## Options
@@ -101,7 +103,7 @@ cat body.json | clerk api /users
 | ----------------------- | ------------------------------------------------------------------------------- |
 | `-X, --method <method>` | HTTP method. Defaults to GET, or POST if body is provided.                      |
 | `-d, --data <json>`     | JSON request body (inline)                                                      |
-| `--file <path>`         | Read request body from a file                                                   |
+| `--file <path>`         | Read request body from a file (`-` for stdin)                                   |
 | `--include`             | Show response status and headers                                                |
 | `--app <id>`            | Application ID to target when resolving keys                                    |
 | `--secret-key <key>`    | Override the secret key                                                         |
