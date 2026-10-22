@@ -142,6 +142,74 @@ test("skips sign-in page when it already exists", async () => {
   });
 });
 
+test("creates both auth pages when none exist", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+
+  expect(findAction(plan.actions, "app/sign-in/[[...sign-in]]/page.tsx").type).toBe("create");
+  expect(findAction(plan.actions, "app/sign-up/[[...sign-up]]/page.tsx").type).toBe("create");
+});
+
+test("skips auth pages that already exist inside a route group", async () => {
+  await mkdir(join(tempDir, "app/(marketing)/sign-in/[[...sign-in]]"), { recursive: true });
+  await mkdir(join(tempDir, "app/(marketing)/sign-up/[[...sign-up]]"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/(marketing)/sign-in/[[...sign-in]]/page.tsx"),
+    "export default function() {}",
+  );
+  await Bun.write(
+    join(tempDir, "app/(marketing)/sign-up/[[...sign-up]]/page.tsx"),
+    "export default function() {}",
+  );
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+
+  expect(findAction(plan.actions, "app/sign-in/[[...sign-in]]/page.tsx")).toMatchObject({
+    type: "skip",
+    skipReason: "Sign-in page already exists at app/(marketing)/sign-in/[[...sign-in]]/page.tsx",
+  });
+  expect(findAction(plan.actions, "app/sign-up/[[...sign-up]]/page.tsx")).toMatchObject({
+    type: "skip",
+    skipReason: "Sign-up page already exists at app/(marketing)/sign-up/[[...sign-up]]/page.tsx",
+  });
+});
+
+test("skips auth pages inside nested route groups", async () => {
+  await mkdir(join(tempDir, "src/app/(site)/(auth)/sign-in/[[...sign-in]]"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "src/app/(site)/(auth)/sign-in/[[...sign-in]]/page.jsx"),
+    "export default function() {}",
+  );
+  await Bun.write(join(tempDir, "src/app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(
+    makeCtx({ srcDir: true, layoutPath: "src/app/layout.tsx" }),
+  );
+
+  expect(findAction(plan.actions, "src/app/sign-in/[[...sign-in]]/page.tsx")).toMatchObject({
+    type: "skip",
+    skipReason:
+      "Sign-in page already exists at src/app/(site)/(auth)/sign-in/[[...sign-in]]/page.jsx",
+  });
+  expect(findAction(plan.actions, "src/app/sign-up/[[...sign-up]]/page.tsx").type).toBe("create");
+});
+
+test("ignores auth pages under a non-group segment", async () => {
+  await mkdir(join(tempDir, "app/docs/sign-in/[[...sign-in]]"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/docs/sign-in/[[...sign-in]]/page.tsx"),
+    "export default function() {}",
+  );
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+
+  expect(findAction(plan.actions, "app/sign-in/[[...sign-in]]/page.tsx").type).toBe("create");
+});
+
 test("wraps auth page components in Suspense", async () => {
   await mkdir(join(tempDir, "app"), { recursive: true });
   await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
@@ -421,6 +489,34 @@ test("skips i18n auth page when it already exists inside [locale]", async () => 
     type: "skip",
     skipReason: "Sign-in page already exists",
   });
+});
+
+test("skips i18n auth page inside route groups around [locale]", async () => {
+  await mkdir(join(tempDir, "app/(main)/[locale]/(auth)/sign-in/[[...sign-in]]"), {
+    recursive: true,
+  });
+  await Bun.write(
+    join(tempDir, "app/(main)/[locale]/(auth)/sign-in/[[...sign-in]]/page.tsx"),
+    "export default function() {}",
+  );
+  await mkdir(join(tempDir, "app/(main)/sign-up/[[...sign-up]]"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/(main)/sign-up/[[...sign-up]]/page.tsx"),
+    "export default function() {}",
+  );
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx({ i18nLocaleDir: "[locale]" }));
+
+  expect(findAction(plan.actions, "app/[locale]/sign-in/[[...sign-in]]/page.tsx")).toMatchObject({
+    type: "skip",
+    skipReason:
+      "Sign-in page already exists at app/(main)/[locale]/(auth)/sign-in/[[...sign-in]]/page.tsx",
+  });
+  // A sign-up page outside [locale] serves a different URL, so init still creates one.
+  expect(findAction(plan.actions, "app/[locale]/sign-up/[[...sign-up]]/page.tsx").type).toBe(
+    "create",
+  );
 });
 
 test("creates composed Clerk + next-intl middleware when next-intl is a dep", async () => {

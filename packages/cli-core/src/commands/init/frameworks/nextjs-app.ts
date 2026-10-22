@@ -1,7 +1,9 @@
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
   addSuspenseImport,
   authFileSpecs,
+  findFirstFile,
   hasTailwindStyles,
   injectHeaderInProvider,
   jsxAuthPageContent,
@@ -12,6 +14,7 @@ import {
   scaffoldNextjsMiddleware,
   SIGN_ROUTE_ENV_VARS,
   srcPrefix,
+  type AuthKind,
   wrapBodyWithProvider,
 } from "./helpers.js";
 import { enrichNextjsContext } from "./nextjs-context.js";
@@ -74,9 +77,55 @@ async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction> {
   };
 }
 
-function authPagePath(ctx: ProjectContext, kind: "sign-in" | "sign-up"): string {
+function authPagePath(ctx: ProjectContext, kind: AuthKind): string {
   const localeSegment = ctx.i18nLocaleDir ? `${ctx.i18nLocaleDir}/` : "";
   return `${srcPrefix(ctx)}app/${localeSegment}${kind}/[[...${kind}]]/page.${jsxExt(ctx)}`;
+}
+
+const PAGE_EXTENSIONS = ["tsx", "jsx", "ts", "js"] as const;
+
+function isRouteGroup(segment: string): boolean {
+  return segment.startsWith("(") && segment.endsWith(")");
+}
+
+/**
+ * Find an existing catch-all auth page that serves the same URL as `authPagePath`.
+ * Route groups like `(marketing)` don't change the URL, so they may appear at any depth,
+ * before or after the i18n locale segment.
+ */
+async function findExistingAuthPage(ctx: ProjectContext, kind: AuthKind): Promise<string | null> {
+  const pending = [{ dir: `${srcPrefix(ctx)}app`, needsLocale: Boolean(ctx.i18nLocaleDir) }];
+
+  while (pending.length > 0) {
+    const { dir, needsLocale } = pending.shift()!;
+
+    if (!needsLocale) {
+      const pageDir = `${dir}/${kind}/[[...${kind}]]`;
+      const page = await findFirstFile(
+        ctx.cwd,
+        PAGE_EXTENSIONS.map((ext) => `${pageDir}/page.${ext}`),
+      );
+      if (page) return page;
+    }
+
+    let entries;
+    try {
+      entries = await readdir(join(ctx.cwd, dir), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!entry.isDirectory()) continue;
+      if (isRouteGroup(entry.name)) {
+        pending.push({ dir: `${dir}/${entry.name}`, needsLocale });
+      } else if (needsLocale && entry.name === ctx.i18nLocaleDir) {
+        pending.push({ dir: `${dir}/${entry.name}`, needsLocale: false });
+      }
+    }
+  }
+
+  return null;
 }
 
 async function scaffoldAuthPages(ctx: ProjectContext): Promise<FileAction[]> {
@@ -88,6 +137,7 @@ async function scaffoldAuthPages(ctx: ProjectContext): Promise<FileAction[]> {
       content: (kind) => jsxAuthPageContent(kind, "@clerk/nextjs", tailwind, { suspense: true }),
       surface: "page",
     }),
+    { findExisting: async (kind) => findExistingAuthPage(ctx, kind) },
   );
 }
 
