@@ -405,6 +405,36 @@ describe("bapi-command", () => {
     },
   );
 
+  // An exported key may belong to any app, so the description names none, as
+  // for --secret-key. E.g. a Nuxt folder whose `.env` holds
+  // NUXT_CLERK_SECRET_KEY, which the folder reader takes first.
+  test.each([
+    {
+      other: "the folder's own key",
+      setUp: () =>
+        resolveKeylessTargetSpy.mockResolvedValue({ secretKey: "sk_test_disk", source: ".env" }),
+    },
+    {
+      other: "a linked profile",
+      setUp: () =>
+        resolveAppContextSpy.mockResolvedValue({
+          appId: "app_123",
+          appLabel: "My App",
+          instanceId: "ins_dev",
+          instanceLabel: "development",
+        }),
+    },
+  ])(
+    "an exported CLERK_SECRET_KEY wins over $other in the description, as in the run",
+    async ({ setUp }) => {
+      process.env.CLERK_SECRET_KEY = "sk_env_123";
+      setUp();
+
+      await expect(describeBapiTarget({})).resolves.toBeUndefined();
+      await expect(resolveBapiSecretKey({})).resolves.toBe("sk_env_123");
+    },
+  );
+
   test("an explicit --secret-key wins over a keyless target on disk, matching resolveBapiSecretKey", async () => {
     resolveKeylessTargetSpy.mockResolvedValue({ secretKey: "sk_test_disk", source: ".env.local" });
 
