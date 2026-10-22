@@ -543,10 +543,15 @@ describe("api command", () => {
     expect(captured.out).toContain(JSON.stringify(errorBody, null, 2));
   });
 
-  test("--fapi without --app and no linked project errors with NOT_LINKED guidance", async () => {
+  // The shared not-linked error carries the folder's step; this site keeps exit 2.
+  test("--fapi without --app and no linked project passes the not-linked error on as a usage error", async () => {
     delete process.env.CLERK_SECRET_KEY;
 
-    await expect(runApi("/environment", { fapi: true })).rejects.toThrow(/clerk link|--app/);
+    await expect(runApi("/environment", { fapi: true })).rejects.toMatchObject({
+      code: "not_linked",
+      exitCode: 2,
+      message: "No Clerk project linked to this directory.",
+    });
   });
 
   test.each([

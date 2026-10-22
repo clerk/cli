@@ -10,9 +10,10 @@
  * the test if a secret key or claim token from the folder reaches the output.
  */
 
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { join } from "node:path";
 import type { Example } from "../../lib/help.ts";
+import * as unlinkedFolder from "../../lib/unlinked-folder.ts";
 import {
   clerk,
   http,
@@ -248,11 +249,11 @@ describe("the covers-fewer-settings warning", () => {
   });
 });
 
-// `--app` can't reach an app that isn't in an account yet, as in the shared
-// not-linked error.
+// The shared not-linked error's step, and its rule that `--app` can't reach an
+// app that isn't in an account yet; still a usage error, exit 2.
 describe("clerk api --fapi", () => {
-  const LINK = "No instance found. Link a project with `clerk link`.";
-  const OR_APP = "No instance found. Link a project with `clerk link`, or pass --app <app_id>.";
+  const LEAD = "No Clerk project linked to this directory.";
+  const APP_FLAG = "Or pass `--app <app_id>` to target an app directly.";
 
   test.each([
     {
@@ -261,19 +262,43 @@ describe("clerk api --fapi", () => {
         await writeInitToken();
         await write(".env", PUBLISHABLE_KEY);
       },
-      says: LINK,
+      step: CLAIM_IT,
+      appFlag: false,
     },
-    { kind: "a claimable SDK app", setUp: writeClaimableSdkFile, says: LINK },
-    { kind: "plain keys", setUp: () => write(".env", KEYS), says: OR_APP },
-    { kind: "no app", setUp: async () => {}, says: OR_APP },
-  ])("agent, stored session and API key, $kind: $says", async ({ setUp, says }) => {
-    await setUp();
+    {
+      kind: "a claimable SDK app",
+      setUp: writeClaimableSdkFile,
+      step: "This folder runs on an app the Clerk SDK created during development.",
+      appFlag: false,
+    },
+    { kind: "plain keys", setUp: () => write(".env", KEYS), step: FIND_BY_KEY, appFlag: true },
+    {
+      kind: "no app",
+      setUp: async () => {},
+      step: "Run `clerk apps list --json`, then `clerk link --app <app_id>`",
+      appFlag: true,
+    },
+  ])(
+    "agent, stored session and API key, $kind: the folder's step, reading the folder once",
+    async ({ setUp, step, appFlag }) => {
+      await setUp();
+      const reads = spyOn(unlinkedFolder, "readUnlinkedFolder");
+      try {
+        const result = await run("--mode", "agent", "api", "--fapi", "/environment");
+        const error = agentError(result);
 
-    const error = agentError(await run("--mode", "agent", "api", "--fapi", "/environment"));
-
-    expect(error.code).toBe("not_linked");
-    expect(error.message).toBe(says);
-  });
+        expect(result.exitCode).toBe(2);
+        expect(error.code).toBe("not_linked");
+        expect(error.message).toStartWith(LEAD);
+        expect(error.message).toContain(step);
+        expect(error.message.endsWith(APP_FLAG)).toBe(appFlag);
+        expect(error.examples?.length).toBeGreaterThan(0);
+        expect(reads).toHaveBeenCalledTimes(1);
+      } finally {
+        reads.mockRestore();
+      }
+    },
+  );
 });
 
 // Plain keys may belong to an app already in an account.
