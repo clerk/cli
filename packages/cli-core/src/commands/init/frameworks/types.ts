@@ -20,6 +20,8 @@ export interface ProjectContext {
   i18nLocaleDir?: string;
   /** When true, the project was created via bootstrap (empty repo). Scaffolders may add starter UI. */
   isBootstrap?: boolean;
+  /** The `clerk init` an agent runs after choosing an application, with this run's native setup options. */
+  nativeContinuation?: string;
 }
 
 export type FileAction =
