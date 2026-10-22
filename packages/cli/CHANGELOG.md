@@ -1,5 +1,40 @@
 # clerk
 
+## 4.1.0
+
+### Minor Changes
+
+- Sign in from a machine without a browser: `clerk auth login` now accepts the URL your browser lands on after signing in on another device, pasted back into the terminal. ([#513](https://github.com/clerk/cli/pull/513)) by [@wyattjoh](https://github.com/wyattjoh)
+
+- Let AI agents take a Clerk application to production. ([#550](https://github.com/clerk/cli/pull/550)) by [@shane-kercheval](https://github.com/shane-kercheval)
+
+  - `clerk deploy --domain <domain>` in agent mode creates the production instance (or resumes the existing one) without prompting and prints the deploy report. Without `--domain` it stays read-only. In the wizard, `--domain` skips the domain prompt and `--yes` skips the confirmations.
+  - `clerk deploy --domain` refuses a domain it can't apply: with an existing production instance on another domain it fails with `production_instance_exists`, and while Clerk hasn't returned the existing instance's domain yet it fails with the new `deploy_domain_unchecked`, in agent mode and the wizard alike. A wizard run whose typed domain loses a create race to another run's instance stops the same way, rather than carrying on into that instance's setup.
+  - `clerk deploy` refuses more hosting providers' domains, both in `--domain` and at the wizard's domain prompt: `*.replit.app`, `*.replit.dev`, `*.onrender.com`, `*.railway.app`, `*.emergent.host`, `*.emergentagent.com`, `*.web.app`, `*.firebaseapp.com`, `*.hosted.app`, `*.workers.dev`, `*.github.io`, `*.lovable.app`, `*.bolt.host`, and `*.base44.app`, alongside `*.vercel.app` and the others it already refused. `clerk deploy` needs a domain whose DNS records you can add.
+  - A 404 on the production domain's status, in `clerk deploy`, `clerk deploy status`, or the wizard's DNS polling, now fails with `deploy_instance_unresolved` instead of `not_linked` and its advice to re-link the directory. Unless the run just created the instance, the message adds that if the production instance was deleted, `clerk deploy status` reports `not_started` once Clerk stops listing it, and to run `clerk deploy --domain` then.
+  - The deploy report gains `oauth.setup`: for each provider missing production credentials, the redirect URI, authorized origins, fields, and the `clerk config patch` payload and command that save them. `nextAction` now names the command to run instead of handing off to a human terminal, except for Apple's private key and, when the app uses native-only Sign in with Apple, Apple web credentials, which still go through `clerk deploy` in a terminal. OAuth secrets go into a file outside the project that the user fills in and that is removed afterward. When native-only Sign in with Apple isn't ready in production, Apple is left out of `oauth.setup` so the native fix in `nextAction` isn't buried. Once Clerk's side is complete, `nextAction` says to pipe the production keys into the host's CLI without reading them, and the new `hostSetup` field holds the command for Vercel (with `host`, `label`, `shells`, and `command`), so an agent copies it verbatim from the field instead of out of the sentence. On macOS and Linux, that command and each `oauth.setup` command start with `clerk` only when the `clerk` on PATH resolves to the running binary itself, and otherwise with the running CLI's quoted absolute path (an npm or bun global install puts npm's launcher script on PATH, so it gets the binary's path), so they work when the CLI was started with `npx`. On Windows they keep `clerk`. `hostSetup` is `[]` in every other state.
+  - `clerk env pull --print` prints `KEY=value` lines to stdout instead of writing an env file, for sending production keys to a hosting provider. It fails without printing anything when Clerk returns no secret key. For an unclaimed accountless app, whose keys exist only on this machine, it prints the secret key alone, with a warning, when no publishable key is found locally.
+  - `clerk config patch` and `clerk config put` print `[REDACTED]` in place of the value of any key whose name contains `secret` or `private_key` (in any case), in the diff they show before writing and in the response they print after (dry runs included). Values under other keys are printed as before. Both refuse a payload that still holds `[REDACTED]` under such a key, naming each field, so their own output can't be saved over a real secret. Error bodies logged under `--verbose` are not redacted.
+  - `clerk config patch` and `clerk config put` refuse a payload that still holds an `oauth.setup` placeholder (`<client_secret>` under `client_secret`), naming each such field, and `clerk deploy status` no longer counts such a value as a saved credential.
+
+- `clerk doctor` checks an iOS or macOS app's Release build against the production instance: that Release's Bundle ID is registered there with Native API enabled, that its entitlements list the production Associated Domain, and that it configures Clerk with the production publishable key when the key is loaded in a way that can be read without building (otherwise it reports the key as not verified). Without a production instance this is a single note. Run in an Xcode project, `clerk deploy` and `clerk deploy status` now point to `clerk doctor` for this check. ([#548](https://github.com/clerk/cli/pull/548)) by [@seanperez29](https://github.com/seanperez29)
+
+- Create a new iOS or macOS app with `clerk init --starter`: pick iOS (SwiftUI) or macOS (SwiftUI) on a Mac with Xcode, and init writes a SwiftUI Xcode project, then sets up Clerk, the sign-in screen, and native registration. Use `--framework ios` or `--framework macos` with `--name`, `--bundle-id`, and the new `--team-id` to skip the prompts. ([#547](https://github.com/clerk/cli/pull/547)) by [@seanperez29](https://github.com/seanperez29)
+
+- Add `clerk migrate export clerk` and `clerk migrate export supabase`, and let `clerk migrate import` take the export's run ID in place of a file and `--source`. `clerk migrate` is still experimental and needs `CLERK_EXPERIMENTAL=migrate`. ([#524](https://github.com/clerk/cli/pull/524)) by [@royanger](https://github.com/royanger)
+
+- Add `clerk migrate runs` and `clerk migrate undo`, and let a re-run of `clerk migrate import` continue where a stopped one left off. `clerk migrate` is still experimental and needs `CLERK_EXPERIMENTAL=migrate`. ([#515](https://github.com/clerk/cli/pull/515)) by [@royanger](https://github.com/royanger)
+
+  Every user an import creates now carries `clerkMigrateRun` (the run's ID) in its `private_metadata`, replacing any value the source had under that key. A re-run reads it to adopt a user whose create was cut off. Nothing removes it afterwards, and your backend can read it.
+
+### Patch Changes
+
+- Wrap the sign-in and sign-up pages that `clerk init` creates for Next.js App Router apps in `<Suspense>`, so they no longer fail `next build` when Cache Components is enabled, as it is in new `create-next-app` projects. ([#560](https://github.com/clerk/cli/pull/560)) by [@manovotny](https://github.com/manovotny)
+
+- Wrap the auth header that `clerk init --starter` adds to Next.js App Router layouts in `<Suspense>`, so new apps no longer fail `next build` when Cache Components is enabled, as it is in new `create-next-app` projects. ([#567](https://github.com/clerk/cli/pull/567)) by [@manovotny](https://github.com/manovotny)
+
+- Print plain text without terminal color codes in agent mode, so AI agents no longer see escape sequences in command output when they run without `--json`. Pass `--mode human` or set `CLERK_MODE=human` to keep colors. Status messages now also honor `NO_COLOR`. ([#534](https://github.com/clerk/cli/pull/534)) by [@royanger](https://github.com/royanger)
+
 ## 4.0.0
 
 ### Major Changes
