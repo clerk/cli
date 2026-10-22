@@ -54,10 +54,13 @@ const ENTRY_RE = /^(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
 export function parseEnvFile(content: string): EnvLine[] {
   if (!content) return [];
   const raw = content.endsWith("\n") ? content.slice(0, -1) : content;
-  return raw.split("\n").map((line): EnvLine => {
+  return raw.split("\n").map((rawLine): EnvLine => {
+    // A CRLF file's "\r" isn't part of the value; `raw` keeps it, so an
+    // untouched line is written back as it was.
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     if (line.trim() === "") return { type: "blank" };
     const match = line.match(ENTRY_RE);
-    if (!match) return { type: "comment", raw: line };
+    if (!match) return { type: "comment", raw: rawLine };
     const key = match[2]!;
     let value = match[3]!;
     // Strip surrounding quotes
@@ -67,7 +70,7 @@ export function parseEnvFile(content: string): EnvLine[] {
     ) {
       value = value.slice(1, -1);
     }
-    return { type: "entry", key, value, raw: line };
+    return { type: "entry", key, value, raw: rawLine };
   });
 }
 

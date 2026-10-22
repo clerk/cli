@@ -132,6 +132,19 @@ test("agent, stored session and API key: claims silently and links the init app"
   expect(await linkedAppId()).toBe(APP_A.application_id);
 });
 
+// Windows editors save CRLF line endings.
+test("agent, stored session and API key, init's keys in a CRLF .env: claims and links the init app", async () => {
+  await useStoredSessionOnly();
+  process.env.CLERK_PLATFORM_API_KEY = "test_platform_key";
+  await Bun.write(join(h.tempDir, ".env"), INIT_ENV.replaceAll("\n", "\r\n"));
+
+  const result = await clerk.raw("--mode", "agent", "link");
+
+  expect(result.exitCode).toBe(0);
+  expect(requests("POST", CLAIM_PATH)).toHaveLength(1);
+  expect(await linkedAppId()).toBe(APP_A.application_id);
+});
+
 test("person, signed out: signs in once, is asked about that account, then the claim links the init app", async () => {
   delete process.env.CLERK_PLATFORM_API_KEY;
   mockState.storedToken = null;

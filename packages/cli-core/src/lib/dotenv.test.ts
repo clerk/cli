@@ -133,6 +133,22 @@ describe("mergeEnvVars", () => {
   });
 });
 
+// Windows editors save CRLF line endings; the "\r" isn't part of the value.
+describe("a file with CRLF line endings", () => {
+  test("parses each entry without the carriage return", () => {
+    const lines = parseEnvFile('CLERK_SECRET_KEY=sk_test_crlf\r\nNAME="quoted"\r\n');
+    expect(lines.map((line) => (line.type === "entry" ? [line.key, line.value] : line))).toEqual([
+      ["CLERK_SECRET_KEY", "sk_test_crlf"],
+      ["NAME", "quoted"],
+    ]);
+  });
+
+  test("round-trips without modification", () => {
+    const input = "# Header\r\nFOO=bar\r\nBAZ=qux\r\n";
+    expect(serializeEnvFile(parseEnvFile(input))).toBe(input);
+  });
+});
+
 describe("serializeEnvFile", () => {
   test("ends with trailing newline", () => {
     const lines = parseEnvFile("FOO=bar\n");

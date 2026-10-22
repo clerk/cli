@@ -133,6 +133,20 @@ test("agent rerun, signed in, init token: claims and links the init app, creatin
   expect(await read(".env.local")).toContain(APP_A.instances[0]!.publishable_key);
 });
 
+// Windows editors save CRLF line endings.
+test("agent rerun, signed in, init token, init's keys in a CRLF .env.local: claims and links the init app, creating none", async () => {
+  await useBothCredentials();
+  await writeInitToken();
+  await Bun.write(join(h.tempDir, ".env.local"), envFor(APP_A).replaceAll("\n", "\r\n"));
+
+  const result = await clerk.raw("--mode", "agent", "init", "--no-skills", "-y");
+
+  expect(result.exitCode).toBe(0);
+  expect(requests("POST", CLAIM_PATH)).toHaveLength(1);
+  expect(requests("POST", APPS_PATH)).toHaveLength(0);
+  expect(await linkedAppId()).toBe(APP_A.application_id);
+});
+
 test("person rerun, stored session only, init token, Yes: links the init app and keeps its keys, with no picker", async () => {
   await useStoredSessionOnly();
   await writeInitToken();

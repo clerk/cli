@@ -171,6 +171,17 @@ test("a folder holding the keys `clerk init` wrote is linked to the claimed app"
   expect(result.stderr).toContain("Claimed and linked application: `init-app`");
 });
 
+// Windows editors save CRLF line endings.
+test("a CRLF .env holding the keys `clerk init` wrote is linked to the claimed app", async () => {
+  await Bun.write(join(h.tempDir, ".env"), envFileFor(APP_A).replaceAll("\n", "\r\n"));
+
+  await clerk.raw("--mode", "agent", "auth", "login");
+
+  expect(claimRequests()).toHaveLength(1);
+  expect((await readConfig()).profiles[PROFILE_KEY]?.appId).toBe(APP_A.application_id);
+  expect(await tokenFileExists()).toBe(false);
+});
+
 // The folder's keys can live in any file the app loads, and `env pull` writes
 // to whichever of them it picks (`.env.development.local` first, in any
 // framework). Every key there must belong to the claimed app before the claim
