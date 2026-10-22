@@ -317,9 +317,11 @@ function noMatch(folder: UnlinkedFolder, signedIn: boolean): NextStep {
       // The SDK's app isn't in the account, so listing the account to link by
       // ID would pick another app. A claimable one is claimed first; one that
       // can't be claimed leaves only an existing app, as `link`'s stop says.
+      // `link`'s stop already says the Clerk SDK created the app, so a
+      // claimable one's advice doesn't open by saying it again.
       return folder.unusable
         ? chooseById(noUsableClaimLinkSentence(folder.unusable.reason), signedIn, "existing_app")
-        : sdkApp(true, signedIn ? folder.credential : "none");
+        : claimThenLink(signedIn ? folder.credential : "none");
     case "unknown_owner": {
       const where = folder.publishableKey ? ` (${describeKeyLocation(folder.publishableKey)})` : "";
       return chooseById(
@@ -414,16 +416,21 @@ function sdkApp(agent: boolean, credential: Credential): NextStep {
       ],
     };
   }
-  // An agent can't claim it; a person does, from the link `clerk open` prints.
+  const step = claimThenLink(credential);
+  return { ...step, text: `${lead} ${step.text}` };
+}
+
+/** An agent can't claim an SDK-created app; a person does, from the link `clerk open` prints. */
+function claimThenLink(credential: Credential): NextStep {
   const linkClaimed = { command: "clerk link", description: "Link the app once it's claimed" };
   const open = `Run \`clerk open\` to print its claim link for a person to claim the app into ${CLAIM_INTO[credential]}`;
   return isSignedIn(credential)
     ? {
-        text: `${lead} ${open}, then \`clerk link\` once it's claimed.`,
+        text: `${open}, then \`clerk link\` once it's claimed.`,
         examples: [EXAMPLE.open, linkClaimed],
       }
     : {
-        text: `${lead} ${open}, then ${SIGN_IN}, then \`clerk link\` once it's claimed.`,
+        text: `${open}, then ${SIGN_IN}, then \`clerk link\` once it's claimed.`,
         examples: [EXAMPLE.open, EXAMPLE.signIn, linkClaimed],
       };
 }

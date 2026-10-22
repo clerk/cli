@@ -482,6 +482,8 @@ describe("after agent-mode `clerk link` stopped", () => {
 
       expect(step.examples.map((example) => example.command)).toEqual(["clerk open", "clerk link"]);
       expect(step.text).toContain(`claim the app into ${into}`);
+      // `link`'s stop already says the Clerk SDK created the app.
+      expect(step.text).not.toContain("created during development");
     },
   );
 
