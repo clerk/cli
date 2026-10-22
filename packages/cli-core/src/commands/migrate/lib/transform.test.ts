@@ -223,6 +223,23 @@ describe("transformUsers", () => {
     }
   });
 
+  test("names the source and the row when postTransform throws", () => {
+    registerCustomSource({
+      ...clerkSource,
+      key: "throwing-post",
+      postTransform: (user) => {
+        if (user.userId === "u2") throw new Error("boom");
+      },
+    });
+    try {
+      expect(() => transformUsers([{ id: "u1" }, { id: "u2" }], "throwing-post")).toThrow(
+        'The "throwing-post" source\'s postTransform failed on row 2: boom',
+      );
+    } finally {
+      __resetCustomSourcesForTesting();
+    }
+  });
+
   test("skips validation when asked, so analysis passes see every row", () => {
     const { transformedData, validationFailed } = transformUsers([{ id: "u1" }], "clerk", {
       validate: false,
