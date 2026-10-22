@@ -569,8 +569,10 @@ async function claimFirst(
   } else {
     const account = await signedInAccount();
     const destination = claimDestination(account);
-    // With neither a session nor `CLERK_PLATFORM_API_KEY` there's no
-    // destination to name, so nothing is claimed.
+    // With neither a session nor `CLERK_PLATFORM_API_KEY`, `signedInAccount`
+    // signs the person in through the browser first, so there's an account to
+    // name; without a destination, nothing is claimed into one they weren't
+    // told about.
     if (!destination) return undefined;
     const yes = await confirmClaim({ appName: initClaim.appName, destination });
     if (!yes) {
