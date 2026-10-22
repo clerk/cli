@@ -146,14 +146,17 @@ export function claimedNextSteps({ app, local }: ClaimedResult): readonly string
 /**
  * Login exits 0 after a declined claim, so this says plainly that the app
  * wasn't claimed. With the API key set, it also says how to claim into the
- * signed-in account instead.
+ * signed-in account instead, or the account they sign in to when nobody is
+ * signed in (`account` null).
  */
-export function reportClaimSkipped(appName: string, account: { email?: string }): void {
+export function reportClaimSkipped(appName: string, account: { email?: string } | null): void {
   log.warn(
     `Skipped the claim, so \`${appName}\` is still unclaimed. Its claim token stays in this folder.`,
   );
   if (process.env.CLERK_PLATFORM_API_KEY) {
-    const own = describeClaimDestination({ kind: "account", email: account.email || undefined });
+    const own = account
+      ? describeClaimDestination({ kind: "account", email: account.email || undefined })
+      : "the account you sign in to";
     log.info(
       "Claims go to the workspace your `CLERK_PLATFORM_API_KEY` belongs to while it's set. " +
         `Unset it to claim \`${appName}\` into ${own} instead.`,

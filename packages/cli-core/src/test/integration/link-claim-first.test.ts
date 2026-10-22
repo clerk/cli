@@ -195,9 +195,13 @@ test("person, API key only, No: says the app is still unclaimed, and claims noth
   const result = await clerk.raw("link");
 
   expect(result.exitCode).toBe(0);
-  expect(Bun.stripANSI(result.stderr)).toContain(
+  const stderr = Bun.stripANSI(result.stderr);
+  expect(stderr).toContain(
     "Skipped the claim, so `my-app` is still unclaimed. Its claim token stays in this folder.",
   );
+  // Nobody is signed in, so the account is the one they'll sign in to.
+  expect(stderr).toContain("Unset it to claim `my-app` into the account you sign in to instead.");
+  expect(stderr).not.toContain("you're signed in to");
   expect(requests("POST", CLAIM_PATH)).toHaveLength(0);
   expect(await tokenFileExists()).toBe(true);
 });
