@@ -47,6 +47,11 @@ beforeEach(() => {
 });
 afterAll(() => readUnlinkedFolderSpy.mockRestore());
 
+// No stored session, read from the token override instead of the keychain.
+const { _setTokenOverride } = await import("../../lib/credential-store.ts");
+_setTokenOverride(null);
+afterAll(() => _setTokenOverride(undefined));
+
 const PROFILE = {
   path: "/test/project",
   profile: {
@@ -352,7 +357,7 @@ describe("openDashboard: unclaimed keyless application", () => {
     await expect(openDashboard(undefined)).rejects.toMatchObject({
       code: "not_linked",
       message:
-        "Found a secret key (from .env.local) but no claim link on disk, so there's no dashboard page to open yet. This folder's Clerk publishable key is `CLERK_PUBLISHABLE_KEY` in .env.local. Run `clerk link`: it finds the app in your account by that key. If none uses it, link one with `clerk link --app <app_id>`.",
+        "Found a secret key (from .env.local) but no claim link on disk, and this folder isn't linked, so there's no dashboard page to open. This folder's Clerk publishable key is `CLERK_PUBLISHABLE_KEY` in .env.local. Run `clerk link`: it finds the app in your account by that key. If none uses it, link one with `clerk link --app <app_id>`.",
     });
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });

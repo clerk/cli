@@ -164,11 +164,34 @@ describe("clerk open", () => {
     const result = await run("open");
 
     expect(result.exitCode).toBe(1);
-    expect(stderr(result)).toContain("Found a secret key (from .env) but no claim link on disk");
+    expect(stderr(result)).toContain(
+      "Found a secret key (from .env) but no claim link on disk, and this folder isn't linked, so there's no dashboard page to open.",
+    );
+    expect(stderr(result)).not.toContain("to open yet");
     expect(stderr(result)).toContain(FIND_BY_KEY);
     expect(stderr(result)).not.toContain("init --accountless");
     expect(stderr(result)).not.toContain("regenerate");
     expect(stderr(result)).not.toContain("Examples:");
+  });
+
+  // An SDK-created app whose claim link can't be used may already be claimed.
+  test('person, stored session, an SDK file whose claim link isn\'t https: no "yet"', async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    await write(
+      ".clerk/.tmp/keyless.json",
+      JSON.stringify({
+        publishableKey: publishableKeyFor("sdk-app.clerk.accounts.dev"),
+        secretKey: SECRET_KEY,
+        claimUrl: `http://dashboard.clerk.com/apps/claim?token=${SDK_CLAIM_TOKEN}`,
+      }),
+    );
+
+    const result = await run("open");
+
+    expect(result.exitCode).toBe(1);
+    expect(stderr(result)).toContain(
+      "Found a secret key (from .clerk/.tmp/keyless.json) but no claim link on disk, and this folder isn't linked, so there's no dashboard page to open.",
+    );
   });
 
   test("agent, stored session, plain keys and no claim link: not_linked with `clerk link` as the example", async () => {

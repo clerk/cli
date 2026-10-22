@@ -9,7 +9,11 @@ import { bold, cyan, dim } from "../../lib/color.ts";
 import { intro, outro } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
-import { readUnlinkedFolder, unlinkedFolderError } from "../../lib/unlinked-folder.ts";
+import {
+  appInNoAccount,
+  readUnlinkedFolder,
+  unlinkedFolderError,
+} from "../../lib/unlinked-folder.ts";
 import { isKnownDashboardPath } from "./dashboard-paths.ts";
 import { describeKeylessInstance, findKeylessClaimUrl } from "./keyless-claim.ts";
 
@@ -115,11 +119,16 @@ async function openKeylessDashboard(
     // Never advise `clerk init --accountless`: it creates a new app and
     // overwrites the folder's keys.
     const keyless = await resolveKeylessTarget({ cwd });
-    throw unlinkedFolderError(await readUnlinkedFolder(cwd), {
-      lead: keyless
-        ? `Found a secret key (from ${keyless.source}) but no claim link on disk, so there's no dashboard page to open yet.`
-        : "No Clerk project linked to this directory, and no accountless application was found either.",
-    });
+    const folder = await readUnlinkedFolder(cwd);
+    let lead =
+      "No Clerk project linked to this directory, and no accountless application was found either.";
+    if (keyless) {
+      const found = `Found a secret key (from ${keyless.source}) but no claim link on disk`;
+      lead = appInNoAccount(folder)
+        ? `${found}, so there's no dashboard page to open yet.`
+        : `${found}, and this folder isn't linked, so there's no dashboard page to open.`;
+    }
+    throw unlinkedFolderError(folder, { lead });
   }
 
   if (subpath) {

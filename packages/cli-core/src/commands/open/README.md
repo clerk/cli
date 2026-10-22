@@ -29,7 +29,7 @@ An unknown `subpath` (not in [`dashboard-paths.ts`](./dashboard-paths.ts)'s allo
 
 ### Unclaimed accountless applications
 
-`clerk link` cannot help an accountless application that has never been claimed — there is no application in any account yet to link to. For that case `open` instead looks for the application's **claim link**, via [`keyless-claim.ts`](./keyless-claim.ts), checking (in order):
+An application in no account yet has no Dashboard page of its own, so `open` looks for its one-time **claim link**, via [`keyless-claim.ts`](./keyless-claim.ts), checking (in order):
 
 1. `.clerk/.tmp/keyless.json` — an SDK that self-provisioned keys (e.g. `next dev` with none configured) writes its own full `claimUrl` here.
 2. `.clerk/keyless.json` — the legacy-named breadcrumb `clerk init --accountless` writes (see [`lib/keyless.ts`](../../lib/keyless.ts)'s `readKeylessBreadcrumb`), holding just the claim token; the URL is rebuilt as `{dashboardUrl}/apps/claim?token={claimToken}`.
@@ -46,7 +46,7 @@ claim it, then retry the subpath once it's linked.
 
 When **no** claim link can be found at all, `open` fails with `not_linked`. The lead depends on whether a secret key is on disk, and the advice after it is the step for what the folder holds, from [`lib/unlinked-folder.ts`](../../lib/unlinked-folder.ts), as every not-linked message gives (in agent mode, its commands come as `examples`):
 
-- A secret key exists locally but no claim source does (e.g. Dashboard keys pasted into `.env`) — "Found a secret key (from `<source>`) but no claim link on disk, so there's no dashboard page to open yet." For plain keys the step is `clerk link`, which finds the app in your account by the publishable key. It never suggests `clerk init --accountless`: that creates a new app and overwrites the folder's keys.
+- A secret key exists locally but no claim source does (e.g. Dashboard keys pasted into `.env`) — "Found a secret key (from `<source>`) but no claim link on disk, and this folder isn't linked, so there's no dashboard page to open." For an app in no account yet (an init app, or an SDK app whose claim link works), it ends "so there's no dashboard page to open yet." instead. For plain keys the step is `clerk link`, which finds the app in your account by the publishable key. It never suggests `clerk init --accountless`: that creates a new app and overwrites the folder's keys.
 - Nothing at all is found — "No Clerk project linked to this directory, and no accountless application was found either.", then `clerk link` to choose one of your apps, or `clerk init` to create one.
 
 | Method | Endpoint       | Description                                                                                                                              |
