@@ -6,7 +6,7 @@ import { CliError, ERROR_CODE, errorMessage, isAuthError, PlapiError } from "../
 import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
 import { parseEnvFile } from "../../lib/dotenv.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
-import { unlinkedFolderNextStep, type UnlinkedFolder } from "../../lib/unlinked-folder.ts";
+import { appInNoAccount, unlinkedFolderNextStep } from "../../lib/unlinked-folder.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "../../lib/version.ts";
 import {
   getUpdateChannel,
@@ -78,9 +78,9 @@ function keylessLabel(keyless: KeylessTarget, instance: KeylessInstanceInfo | nu
 /**
  * What an unlinked folder with a secret key on disk is running on, and the
  * step to take, from the unlinked-folder module, so `doctor` gives the same
- * advice as every other command. Only an app `clerk init` or a Clerk SDK
- * created is called unclaimed: plain keys may belong to an app in any
- * account, this one or another.
+ * advice as every other command. Only an app in no account yet is called
+ * unclaimed (`appInNoAccount`): plain keys, or an SDK app whose claim link
+ * can't be used, may belong to an app in any account.
  *
  * The step rides in a passing check's message rather than its detail:
  * `detail` only renders under `--verbose`, and guidance nobody sees by
@@ -93,25 +93,20 @@ async function unlinkedKeyless(
   const folder = await ctx.getUnlinkedFolder();
   const step = unlinkedFolderNextStep(folder, { agent: isAgent() }).text;
   const source = `\`${keyless.source}\``;
-  if (!isUnclaimedApp(folder)) return { source, step };
+  if (!appInNoAccount(folder)) return { source, step };
   return { unclaimedApp: keylessLabel(keyless, await ctx.getKeylessInstance()), source, step };
-}
-
-/** An app `clerk init` or a Clerk SDK created: the only kind called accountless. */
-function isUnclaimedApp(folder: UnlinkedFolder): boolean {
-  return folder.kind === "init_app" || folder.kind === "sdk_app";
 }
 
 /**
  * The file plain keys' secret key comes from, for a check that names what the
- * key runs without giving the step; undefined for an init or SDK app, which
- * is called the accountless application (see `unlinkedKeyless`).
+ * key runs without giving the step; undefined for an app in no account yet,
+ * which is called the accountless application (see `unlinkedKeyless`).
  */
 async function plainKeysSource(
   ctx: DoctorContext,
   keyless: KeylessTarget,
 ): Promise<string | undefined> {
-  return isUnclaimedApp(await ctx.getUnlinkedFolder()) ? undefined : `\`${keyless.source}\``;
+  return appInNoAccount(await ctx.getUnlinkedFolder()) ? undefined : `\`${keyless.source}\``;
 }
 
 export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
@@ -253,7 +248,7 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
 
       // Same fallback whoami uses: an expired session doesn't strand a project
       // with a secret key on disk, so don't tell the user their setup is
-      // broken. Only an init or SDK app is called accountless (see
+      // broken. Only an app in no account yet is called accountless (see
       // `unlinkedKeyless`).
       const keyless = await ctx.getKeylessTarget();
       if (keyless) {

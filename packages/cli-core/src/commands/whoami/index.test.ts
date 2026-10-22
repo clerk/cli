@@ -457,6 +457,18 @@ describe("whoami", () => {
         step: "or opens the Clerk Dashboard page to claim it",
         unclaimed: true,
       },
+      {
+        kind: "an SDK app with no usable claim link",
+        folder: {
+          kind: "sdk_app",
+          credential: "none",
+          unusable: { reason: "its claim URL isn't https", findableByKey: true },
+        } as const,
+        status:
+          "Not logged in — this folder uses the secret key from `.env.local` and isn't linked",
+        step: "Run `clerk link`: it links the app if it's already in your account",
+        unclaimed: false,
+      },
     ])(
       "human output names the instance, what the key runs, and the folder's step: $kind",
       async ({ folder, status, step, unclaimed }) => {

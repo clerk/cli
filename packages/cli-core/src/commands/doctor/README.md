@@ -55,23 +55,24 @@ command for what the folder holds. Statuses and fix labels don't depend on it.
 - No token, a secret key present → **pass**, with the step in the message
   (`detail` only shows under `--verbose`):
   - **An init token** (`.clerk/keyless.json`, left by `clerk init` run signed
-    out) **or only an SDK keyless file** (`.clerk/.tmp/keyless.json`): it names
-    the **unclaimed accountless application** and its instance. A person is
+    out) **or only an SDK keyless file with a working claim link**
+    (`.clerk/.tmp/keyless.json`): it names the **unclaimed accountless
+    application** and its instance. A person is
     told to run `clerk link`, which claims an init app, or links an SDK app
     (opening its claim page when it isn't in the account). An agent is told
     `clerk auth login` for an init app (it can't sign in itself), and
     `clerk open` for an SDK app, since a person has to claim it.
-  - **Plain keys** (pasted from the Dashboard, say): it says the folder uses
-    the secret key from its file and isn't linked, then `clerk link`'s step
-    for those keys, e.g. that it finds the app by the publishable key. It
-    doesn't call the app unclaimed: such keys may belong to an app that's
-    already in an account.
+  - **Plain keys** (pasted from the Dashboard, say), **or an SDK keyless file
+    whose claim link can't be used**: it says the folder uses the secret key
+    from its file and isn't linked, then the step for what the folder holds,
+    e.g. that `clerk link` finds the app by the publishable key. It doesn't
+    call the app unclaimed: such an app may already be in an account.
 - No token, a secret key present → Token validity **passes**: no session is
-  needed. As above, only an init or SDK app is called accountless; for plain
-  keys it says the secret key from their file works.
+  needed. As above, only an app in no account yet is called accountless;
+  otherwise it says the secret key from its file works.
 - Stored session expired, a secret key present → **warn** (not fail): the key
-  still works, so logging in again is optional. As above, only an init or SDK
-  app is called accountless; plain keys are named by their file.
+  still works, so logging in again is optional. As above, only an app in no
+  account yet is called accountless; otherwise the key is named by its file.
 - Signed in (has account credentials) but this directory isn't linked, a secret
   key present → **warn**, with the `clerk link` fix: the account could reach
   the fuller configuration by linking. The remedy is the step for what the
@@ -85,7 +86,7 @@ The Linked application and Instances checks are account-only (the Platform
 API application/instance-list concepts have no accountless equivalent), so they
 continue to skip for a project running on a secret key — the skip reason names
 what the key runs instead of reading like a problem: the accountless application
-for an init or SDK app, the key's file for plain keys.
+for an app in no account yet, otherwise the key's file.
 
 ### iOS and macOS projects
 

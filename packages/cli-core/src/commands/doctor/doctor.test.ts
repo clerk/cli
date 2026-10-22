@@ -171,6 +171,12 @@ const PLAIN_KEYS: UnlinkedFolder = {
 };
 const INIT_SIGNED_OUT: UnlinkedFolder = { kind: "init_app", credential: "none" };
 const SDK_SIGNED_OUT: UnlinkedFolder = { kind: "sdk_app", credential: "none" };
+/** An SDK app whose claim link can't be used may already be claimed: never called unclaimed. */
+const SDK_NO_CLAIM_LINK: UnlinkedFolder = {
+  kind: "sdk_app",
+  credential: "none",
+  unusable: { reason: "its claim URL isn't https", findableByKey: true },
+};
 
 /** Signed out with a secret key on disk, by what the folder holds and the mode. */
 const SIGNED_OUT_CASES: {
@@ -220,6 +226,13 @@ const SIGNED_OUT_CASES: {
     folder: { kind: "sdk_app", credential: "none" },
     says: ["unclaimed accountless application", "Run `clerk open`"],
     saysNot: [],
+  },
+  {
+    kind: "an SDK app with no usable claim link",
+    mode: "human",
+    folder: SDK_NO_CLAIM_LINK,
+    says: ["secret key from `.env.local`", "isn't linked", "has no usable claim link"],
+    saysNot: ["unclaimed", "accountless"],
   },
 ];
 
@@ -634,6 +647,11 @@ describe("checkTokenValid", () => {
       folder: PLAIN_KEYS,
       message: "No account session — not required: the secret key from `.env.local` works",
     },
+    {
+      kind: "an SDK app with no usable claim link",
+      folder: SDK_NO_CLAIM_LINK,
+      message: "No account session — not required: the secret key from `.env.local` works",
+    },
   ])(
     "pass (not skip) when no token but a secret key is present: $kind",
     async ({ folder, message }) => {
@@ -871,6 +889,11 @@ describe("checkLinkedAppExists", () => {
       folder: PLAIN_KEYS,
       message: "Skipped (secret key from `.env.local`, no linked app to verify)",
     },
+    {
+      kind: "an SDK app with no usable claim link",
+      folder: SDK_NO_CLAIM_LINK,
+      message: "Skipped (secret key from `.env.local`, no linked app to verify)",
+    },
   ])(
     "skip reason names what the secret key runs instead of implying a problem: $kind",
     async ({ folder, message }) => {
@@ -970,6 +993,11 @@ describe("checkInstances", () => {
     {
       kind: "plain keys",
       folder: PLAIN_KEYS,
+      message: "Skipped (secret key from `.env.local`, no linked instances to verify)",
+    },
+    {
+      kind: "an SDK app with no usable claim link",
+      folder: SDK_NO_CLAIM_LINK,
       message: "Skipped (secret key from `.env.local`, no linked instances to verify)",
     },
   ])(

@@ -28,7 +28,7 @@ clerk whoami --json
 
 An unclaimed accountless application has no account to name, so the instance itself is the identity. When there's no stored token but the directory holds an instance secret key (env var, `.env`/`.env.local`, or `.clerk/.tmp/keyless.json` — see [`lib/keyless-target.ts`](../../lib/keyless-target.ts)), `whoami` reads `GET /v1/instance` with that key and reports the instance instead of erroring. A secret key the API rejects (revoked, malformed) surfaces as an error naming the key and where it came from, not a bare "Request failed (401)".
 
-In human mode it then says what the key runs, from [`lib/unlinked-folder.ts`](../../lib/unlinked-folder.ts): "running on an unclaimed accountless application" only for an app `clerk init` or a Clerk SDK created, and for plain keys (pasted from the Dashboard, say) that the folder uses the secret key from its file and isn't linked, since such keys may belong to an app already in an account. The next step is the one every not-linked message gives that folder, e.g. `clerk link`, which claims an init app or finds plain keys' app by key.
+In human mode it then says what the key runs, from [`lib/unlinked-folder.ts`](../../lib/unlinked-folder.ts): "running on an unclaimed accountless application" only for an app in no account yet (an init app, or an SDK app whose claim link works). Otherwise, e.g. for plain keys pasted from the Dashboard, it says the folder uses the secret key from its file and isn't linked, since that app may already be in an account. The next step is the one every not-linked message gives that folder, e.g. `clerk link`, which claims an init app or finds plain keys' app by key.
 
 ```json
 {

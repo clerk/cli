@@ -7,7 +7,11 @@ import { AuthError, errorMessage, withApiContext } from "../../lib/errors.ts";
 import { profileLabel, resolveProfile } from "../../lib/config.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 import { isAgent } from "../../mode.ts";
-import { readUnlinkedFolder, unlinkedFolderNextStep } from "../../lib/unlinked-folder.ts";
+import {
+  appInNoAccount,
+  readUnlinkedFolder,
+  unlinkedFolderNextStep,
+} from "../../lib/unlinked-folder.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import {
   findLocalPublishableKey,
@@ -200,13 +204,12 @@ function toJson(identity: Identity): Record<string, unknown> {
 async function render(identity: Identity): Promise<void> {
   if (identity.kind === "keyless") {
     log.data(identity.instanceId ?? "unknown instance");
-    // Only an app `clerk init` or a Clerk SDK created is called unclaimed:
-    // plain keys may belong to an app already in an account. The next step
-    // comes from the unlinked-folder module, so it's the same as every other
-    // command gives this folder.
+    // Only an app in no account yet is called unclaimed: plain keys, or an SDK
+    // app whose claim link can't be used, may already be in one. The next
+    // step is the one every other command gives this folder.
     const folder = await readUnlinkedFolder(process.cwd());
     log.info(
-      folder.kind === "init_app" || folder.kind === "sdk_app"
+      appInNoAccount(folder)
         ? `Not logged in — running on an unclaimed accountless application (key from \`${identity.keySource}\`)`
         : `Not logged in — this folder uses the secret key from \`${identity.keySource}\` and isn't linked`,
     );
