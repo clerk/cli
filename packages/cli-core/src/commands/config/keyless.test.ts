@@ -809,7 +809,8 @@ describe("keyless config", () => {
 
       const written = await Bun.file(join(projectDir, ".env.written")).text();
       expect(written).toContain(`CLERK_SECRET_KEY=${SECRET_KEY}`);
-      expect(captured.err).toContain("Accountless application keys");
+      // Plain keys: the folder holds no init token or SDK keyless file.
+      expect(captured.err).toContain("This folder's application keys from `.env` written to");
     });
 
     test("enable billing explains that billing needs a linked application", async () => {

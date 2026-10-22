@@ -9,9 +9,10 @@
  * key or claim token reaches the output.
  */
 
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { join } from "node:path";
 import { quoteArg } from "../../lib/json-body.ts";
+import * as unlinkedFolder from "../../lib/unlinked-folder.ts";
 import {
   clerk,
   http,
@@ -233,6 +234,115 @@ test.each([
   expect(result.text).not.toContain("clerk auth login");
 });
 
+// The secret key's instance has no domain matching the publishable key's host.
+// The advice says where the stray publishable key is and how to remove it from
+// there; `clerk link` would find the app by that key, which may be the wrong one.
+const OTHER_APP_KEY = publishableKeyFor("another-app.clerk.accounts.dev");
+test.each([
+  {
+    kind: "an init token, both keys in .env",
+    setUp: FOLDERS.initApp,
+    says: "Remove the mismatched `CLERK_PUBLISHABLE_KEY` from .env, then pull again.",
+  },
+  {
+    kind: "plain keys in .env",
+    setUp: FOLDERS.plainKeys,
+    says: "Remove the mismatched `CLERK_PUBLISHABLE_KEY` from .env, then pull again.",
+  },
+  {
+    kind: "the publishable key exported in the shell",
+    setUp: async () => {
+      await write(".env", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
+      process.env.CLERK_PUBLISHABLE_KEY = OTHER_APP_KEY;
+    },
+    says: "Unset the `CLERK_PUBLISHABLE_KEY` env var in your shell, then pull again.",
+  },
+  {
+    kind: "the publishable key only in a stale SDK keyless file",
+    setUp: async () => {
+      await write(".env", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
+      await write(".clerk/.tmp/keyless.json", JSON.stringify({ publishableKey: OTHER_APP_KEY }));
+    },
+    says: "Add the publishable key of the secret key's app as `CLERK_PUBLISHABLE_KEY` in your env file (a key there wins over the SDK keyless file), then pull again. Or delete the stale `.clerk/.tmp/keyless.json`, which also deletes its app's claim link.",
+  },
+])(
+  "env pull, a mismatched key pair, $kind: key_pair_mismatch, and says where to remove the key",
+  async ({ setUp, says }) => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    await setUp();
+    // The secret key's own instance: neither publishable key in these folders matches it.
+    http.stub(async () =>
+      Response.json({ data: [{ frontend_api_url: "https://secret-key-app.clerk.accounts.dev" }] }),
+    );
+
+    const result = refusal(await run("--mode", "agent", "env", "pull"), true);
+
+    expect(result.code).toBe("key_pair_mismatch");
+    expect(result.exitCode).toBe(1);
+    expect(result.text).toContain(says);
+    expect(result.text).not.toContain("clerk link");
+    // A claim link may be named; claiming is never advised.
+    expect(result.text).not.toMatch(/claim(?! link)/);
+  },
+);
+
+// What `env pull` names after writing the keys.
+test.each([
+  {
+    kind: "an init token",
+    setUp: FOLDERS.initApp,
+    says: "Accountless application keys from `.env` written to",
+  },
+  {
+    kind: "plain keys",
+    setUp: FOLDERS.plainKeys,
+    says: "This folder's application keys from `.env` written to",
+  },
+])(
+  "env pull, matching keys, $kind: the written line names what the key reaches",
+  async ({ setUp, says }) => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    await setUp();
+    http.stub(async () =>
+      Response.json({ data: [{ frontend_api_url: "https://folder-app.clerk.accounts.dev" }] }),
+    );
+
+    const text = Bun.stripANSI((await run("env", "pull")).stderr);
+
+    expect(text).toContain(says);
+  },
+);
+
+// The publishable key is missing, so `env pull` writes only the secret key.
+describe("env pull, no publishable key", () => {
+  test.each([
+    {
+      kind: "a plain secret key",
+      setUp: () => write(".env", `CLERK_SECRET_KEY=${SECRET_KEY}\n`),
+      step: "Run `clerk link` and choose the app this folder uses. Then run `clerk env pull` again.",
+    },
+    {
+      kind: "an SDK keyless file with no publishable key",
+      setUp: () => write(".clerk/.tmp/keyless.json", JSON.stringify({ secretKey: SECRET_KEY })),
+      step: "This folder's Clerk SDK keyless file (`.clerk/.tmp/keyless.json`) has no usable claim link: it has no publishable key. Link an existing application with `clerk link --app <app_id>`. Then run `clerk env pull` again.",
+    },
+  ])(
+    "person, stored session, $kind: the step for the folder, never a claim by sign-in",
+    async ({ setUp, step }) => {
+      delete process.env.CLERK_PLATFORM_API_KEY;
+      await setUp();
+
+      const text = Bun.stripANSI((await run("env", "pull")).stderr);
+
+      expect(text).toContain(
+        "No publishable key found locally. Set CLERK_PUBLISHABLE_KEY manually, or link this folder's app to pull it.",
+      );
+      expect(text).toContain(step);
+      expect(text).not.toContain("clerk auth login");
+    },
+  );
+});
+
 // Progress lines name what the key reaches.
 describe("config pull's progress line", () => {
   test.each([
@@ -280,6 +390,26 @@ test("enable billing, an SDK file whose claim link isn't https: not called uncla
 
 // A rerun repeats the run's flags, shell-quoted, and never `--secret-key`.
 describe("reruns keep the run's flags", () => {
+  test("env pull --file, no publishable key: the warning reruns with the same --file", async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    await write(".env", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
+
+    const text = Bun.stripANSI((await run("env", "pull", "--file", "local keys.env")).stderr);
+
+    expect(text).toContain(
+      `Then run \`clerk env pull --file ${quoteArg("local keys.env")}\` again.`,
+    );
+  });
+
+  test("env pull --print, no publishable key: the warning reruns with --print", async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    await write(".env", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
+
+    const result = await clerk.raw("env", "pull", "--print");
+
+    expect(Bun.stripANSI(result.stderr)).toContain("Then run `clerk env pull --print` again.");
+  });
+
   test("config schema --keys --output, agent: the rerun repeats both", async () => {
     delete process.env.CLERK_PLATFORM_API_KEY;
     await FOLDERS.plainKeys();
@@ -322,5 +452,31 @@ describe("reruns keep the run's flags", () => {
 
     expect(examples.at(-1)).toBe("clerk users open user_123 --print");
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("sk_test_flag_secret");
+  });
+});
+
+// `--print` with both keys found prints no line that needs the folder's kind.
+describe("env pull --print with both keys", () => {
+  let readFolder: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    readFolder = spyOn(unlinkedFolder, "readUnlinkedFolder");
+  });
+
+  afterEach(() => {
+    readFolder.mockRestore();
+  });
+
+  test("doesn't read the folder", async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    await FOLDERS.plainKeys();
+    http.stub(async () =>
+      Response.json({ data: [{ frontend_api_url: "https://folder-app.clerk.accounts.dev" }] }),
+    );
+
+    const result = await clerk.raw("env", "pull", "--print");
+
+    expect(result.exitCode).toBe(0);
+    expect(readFolder).not.toHaveBeenCalled();
   });
 });

@@ -314,7 +314,11 @@ describe("whoami", () => {
     /** Points the keyless fallback at an instance the Backend API will answer for. */
     function withKeylessProject(): void {
       mockResolveKeylessTarget.mockResolvedValue(KEYLESS_TARGET);
-      mockFindLocalPublishableKey.mockResolvedValue("pk_test_keyless");
+      mockFindLocalPublishableKey.mockResolvedValue({
+        value: "pk_test_keyless",
+        name: "CLERK_PUBLISHABLE_KEY",
+        source: ".env.local",
+      });
       mockBapiRequest.mockResolvedValue({
         body: { id: "ins_keyless_1", environment_type: "development" },
       });

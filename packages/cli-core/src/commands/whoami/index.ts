@@ -130,7 +130,7 @@ async function describeKeyless(keyless: KeylessTarget): Promise<Identity> {
     return response.body as { id?: string; environment_type?: string };
   });
 
-  const publishableKey = (await findLocalPublishableKey(process.cwd())) ?? null;
+  const publishableKey = (await findLocalPublishableKey(process.cwd()))?.value ?? null;
   const publishableKeyMismatch = publishableKey
     ? await checkKeyPairMismatch(keyless, publishableKey)
     : false;

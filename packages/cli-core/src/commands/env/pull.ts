@@ -24,6 +24,21 @@ import {
 } from "../../lib/keyless-target.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
+import { keylessCopy } from "../../lib/copy.ts";
+import {
+  appInNoAccount,
+  readUnlinkedFolder,
+  unlinkedFolderNextStep,
+  type Rerun,
+} from "../../lib/unlinked-folder.ts";
+import {
+  describeKeyLocation,
+  ENV_VAR_SOURCE_SUFFIX,
+  SDK_KEYLESS_SOURCE,
+  type LocatedKey,
+} from "../../lib/local-keys.ts";
+import { quoteArg } from "../../lib/json-body.ts";
+import { isAgent } from "../../mode.ts";
 
 const DEV_LOCAL_ENV_FILE: EnvFileName = ".env.development.local";
 
@@ -184,21 +199,27 @@ async function pullKeylessKeys(
   // checks — whoami only warns, this refuses to write.
   if (publishableKey) {
     const mismatch = await withApiContext(
-      hasKeyPairMismatch(keyless, publishableKey),
+      hasKeyPairMismatch(keyless, publishableKey.value),
       `Failed to verify the accountless secret key from \`${keyless.source}\``,
     );
     if (mismatch) {
+      // No `clerk link` advice: it would find the app by this publishable key,
+      // which may be the wrong one.
       throw new CliError(
-        `The publishable key found locally doesn't belong to the application the secret key from \`${keyless.source}\` addresses. Writing this pair would leave the server trusting one app while the browser talks to another.\n` +
-          `Remove the mismatched ${publishableKeyName} from your env files, or run \`clerk auth login\` to claim the intended application, then pull again.`,
+        `The publishable key found locally (${describeKeyLocation(publishableKey)}) doesn't belong to the application the secret key from \`${keyless.source}\` addresses. Writing this pair would leave the server trusting one app while the browser talks to another.\n` +
+          removeStrayPublishableKey(publishableKey, publishableKeyName),
         { code: ERROR_CODE.KEY_PAIR_MISMATCH },
       );
     }
   }
 
+  // Read before the write below adds the secret key to an env file, and only
+  // when a line below names the folder's app or gives its step.
+  const folder = !options.print || !publishableKey ? await readUnlinkedFolder(cwd) : undefined;
+
   const vars = {
     [secretKeyName]: keyless.secretKey,
-    ...(publishableKey && { [publishableKeyName]: publishableKey }),
+    ...(publishableKey && { [publishableKeyName]: publishableKey.value }),
   };
 
   if (options.print) {
@@ -207,12 +228,41 @@ async function pullKeylessKeys(
     const targetFile = await resolveTargetFile(cwd, options.file, await detectEnvFile(cwd));
     await mergeKeysIntoEnvFile(targetFile, vars);
     log.info(
-      `Accountless application keys from \`${keyless.source}\` written to ${options.file ?? basename(targetFile)}`,
+      `${folder && appInNoAccount(folder) ? "Accountless application" : "This folder's application"} keys from \`${keyless.source}\` written to ${options.file ?? basename(targetFile)}`,
     );
   }
-  if (!publishableKey) {
-    log.warn(
-      `No publishable key found locally — set ${publishableKeyName} manually, or run \`clerk auth login\` to claim the application.`,
+  if (folder && !publishableKey) {
+    const { text: step } = unlinkedFolderNextStep(folder, {
+      agent: isAgent(),
+      rerun: envPullRerun(options),
+    });
+    log.warn(keylessCopy.missingPublishableKey(publishableKeyName, step));
+  }
+}
+
+/**
+ * How to stop using a publishable key that belongs to another app, from where
+ * it was found. `envName` is the name the framework reads it under.
+ */
+function removeStrayPublishableKey(located: LocatedKey, envName: string): string {
+  // Deleting the SDK keyless file also deletes its app's claim link, so the
+  // first fix is a key in an env file, which wins over that file.
+  if (located.source === SDK_KEYLESS_SOURCE) {
+    return (
+      `Add the publishable key of the secret key's app as \`${envName}\` in your env file (a key there wins over the SDK keyless file), then pull again. ` +
+      `Or delete the stale \`${SDK_KEYLESS_SOURCE}\`, which also deletes its app's claim link.`
     );
   }
+  if (located.source === `${located.name}${ENV_VAR_SOURCE_SUFFIX}`) {
+    return `Unset ${describeKeyLocation(located)} in your shell, then pull again.`;
+  }
+  return `Remove the mismatched \`${located.name}\` from ${located.source}, then pull again.`;
+}
+
+/** `clerk env pull` with the run's own flags, shell-quoted; the keyless path takes no others. */
+function envPullRerun({ file, print }: Pick<EnvPullOptions, "file" | "print">): Rerun {
+  const command = ["clerk env pull", file && `--file ${quoteArg(file)}`, print && "--print"]
+    .filter(Boolean)
+    .join(" ");
+  return { clause: `run \`${command}\` again`, command };
 }

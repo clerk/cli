@@ -126,7 +126,7 @@ describe("keyless-target", () => {
         "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_framework\nCLERK_PUBLISHABLE_KEY=pk_test_generic\n",
       );
 
-      expect(await findLocalPublishableKey(tempDir)).toBe("pk_test_framework");
+      expect((await findLocalPublishableKey(tempDir))?.value).toBe("pk_test_framework");
     });
 
     test("the framework-specific name wins regardless of line order", async () => {
@@ -135,7 +135,7 @@ describe("keyless-target", () => {
         "CLERK_PUBLISHABLE_KEY=pk_test_generic\nNEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_framework\n",
       );
 
-      expect(await findLocalPublishableKey(tempDir)).toBe("pk_test_framework");
+      expect((await findLocalPublishableKey(tempDir))?.value).toBe("pk_test_framework");
     });
 
     test("within one name a later file still overrides an earlier one", async () => {
@@ -145,13 +145,17 @@ describe("keyless-target", () => {
         "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_env_local\n",
       );
 
-      expect(await findLocalPublishableKey(tempDir)).toBe("pk_test_env_local");
+      expect(await findLocalPublishableKey(tempDir)).toEqual({
+        value: "pk_test_env_local",
+        name: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+        source: ".env.local",
+      });
     });
 
     test("the generic fallback is still found when the framework name is absent", async () => {
       await writeFile(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_test_generic\n");
 
-      expect(await findLocalPublishableKey(tempDir)).toBe("pk_test_generic");
+      expect((await findLocalPublishableKey(tempDir))?.value).toBe("pk_test_generic");
     });
   });
 

@@ -18,6 +18,7 @@ import {
   findKeyInProject,
   readSdkKeylessApp,
   SDK_KEYLESS_SOURCE,
+  type LocatedKey,
 } from "./local-keys.ts";
 import { log } from "./log.ts";
 import { keylessCopy } from "./copy.ts";
@@ -79,12 +80,14 @@ async function sdkKeylessTarget(cwd: string): Promise<KeylessTarget | undefined>
   return { secretKey: sdkApp.secretKey, source: SDK_KEYLESS_SOURCE };
 }
 
-/** The publishable key a keyless project holds locally, when one can be found. */
-export async function findLocalPublishableKey(cwd: string): Promise<string | undefined> {
+/** The publishable key a keyless project holds locally, and where, when one can be found. */
+export async function findLocalPublishableKey(cwd: string): Promise<LocatedKey | undefined> {
   const names = [await detectPublishableKeyName(cwd), "CLERK_PUBLISHABLE_KEY"];
   const located = await findKeyInProject(cwd, names);
+  if (located) return located;
 
-  return located?.value ?? (await readSdkKeylessApp(cwd))?.publishableKey;
+  const sdkKey = (await readSdkKeylessApp(cwd))?.publishableKey;
+  return sdkKey ? { value: sdkKey, name: "publishableKey", source: SDK_KEYLESS_SOURCE } : undefined;
 }
 
 /**
