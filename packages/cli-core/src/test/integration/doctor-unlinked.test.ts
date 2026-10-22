@@ -66,9 +66,7 @@ async function sessionWithInitToken(): Promise<void> {
   await Bun.write(join(h.tempDir, ".env"), KEYS);
 }
 
-// Before: both checks called this "the unclaimed accountless application" and
-// said to claim it from the Dashboard. Keys pasted from the Dashboard belong
-// to an app that may already be in an account.
+// Keys pasted from the Dashboard may belong to an app already in an account.
 test.each(["Logged in", "Project linked"])(
   "signed out, Dashboard keys in `.env`: %s passes, names the key's file, and gives `clerk link`'s step",
   async (name) => {
@@ -86,7 +84,6 @@ test.each(["Logged in", "Project linked"])(
   },
 );
 
-// Before: each said "accountless application".
 test.each([
   [
     "Authentication valid",
@@ -130,9 +127,6 @@ test("signed out, Dashboard keys in `.env`: every check runs, and none calls the
   expect(accountless).toEqual([]);
 });
 
-// Before: "Run `clerk link` to use the full account configuration", which led
-// to a picker that couldn't show the init app. After PR 1, `clerk link`
-// claims it first.
 test("stored session only, an init token: Project linked warns, names the claim, and keeps link's fix", async () => {
   await sessionWithInitToken();
 
