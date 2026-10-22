@@ -1331,7 +1331,7 @@ vercel() {
 
     async function run(
       scenario: string,
-      options: { command?: string; env?: Record<string, string> } = {},
+      options: { command?: string; env?: Record<string, string>; errexit?: boolean } = {},
     ): Promise<{
       exitCode: number;
       output: string;
@@ -1347,7 +1347,9 @@ vercel() {
       };
       try {
         // `-f` keeps zsh from reading the developer's startup files.
-        const args = shell === "zsh" ? ["zsh", "-f", "-c"] : ["bash", "-c"];
+        // `-e`: the caller's shell may have `set -e` on, which the command inherits.
+        const errexit = options.errexit ? ["-e"] : [];
+        const args = shell === "zsh" ? ["zsh", "-f", ...errexit, "-c"] : ["bash", ...errexit, "-c"];
         const proc = Bun.spawn([...args, `${stubs}\n${options.command ?? keyCopyCommand()}`], {
           env: {
             PATH: process.env.PATH ?? "",
@@ -1407,6 +1409,35 @@ vercel() {
         "env add CLERK_SECRET_KEY production --force|sk_live_FAKE=",
       ]);
       expect(result.output).not.toContain("FAKE");
+    });
+
+    // An agent may run the command from a shell with `set -e` on. Each run has
+    // to end the way the command decides, not at a check that found nothing.
+    test
+      .skipIf(!installed)
+      .each([
+        "none",
+        "unrelated",
+        "trailing_equals",
+        "shared",
+        "unrecognized",
+        "pull_fails",
+        "ls_fails",
+        "first_upload_fails",
+      ])("under set -e, %s ends as it does without it", async (scenario) => {
+      const without = await run(scenario);
+      const withErrexit = await run(scenario, { errexit: true });
+
+      expect(withErrexit.exitCode).toBe(without.exitCode);
+      expect(withErrexit.uploads).toEqual(without.uploads);
+      expect(withErrexit.output).toBe(without.output);
+    });
+
+    test.skipIf(!installed)("under set -e, replaces both production keys and exits 0", async () => {
+      const result = await run("none", { errexit: true });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.uploads).toEqual(bothUploaded);
     });
 
     test.skipIf(!installed)("lists the variables with color turned off", async () => {

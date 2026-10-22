@@ -760,6 +760,10 @@ function oauthSetupGuides(
  * long listing, and `pipefail` would turn that into a failure. The parentheses
  * keep `pipefail`, `exit`, and `allow_shared` out of the agent's shell.
  * `${name}` has braces because zsh reads `$name[` as an array subscript.
+ * The shared check is an `if`, not `grep ... && echo`: with no shared key the
+ * `&&` form ends the loop with grep's 1, which `pipefail` carries into
+ * `shared=$(...)`, and a caller with `set -e` on would exit there, silently,
+ * before uploading anything.
  * Each key line is split at its first `=` by parameter expansion rather than
  * `IFS='=' read -r key value`: bash's `read` drops a single trailing `=` from
  * the last field (zsh keeps it), which would upload a truncated value and
@@ -772,7 +776,7 @@ function vercelKeyCopyCommand(pull: string): string {
     `printf '%s\\n' "$vars" | grep -iE "^[[:space:]]*name[[:space:]].*environments|No Environment Variables found" >/dev/null || ` +
     `{ echo "Couldn't read the variable list from vercel env ls; check the project's variables before replacing any." >&2; exit 1; }; ` +
     `shared=$(printf '%s\\n' "$keys" | cut -d= -f1 | while read -r name; do ` +
-    `printf '%s\\n' "$vars" | grep -E "^[[:space:]]*\${name}[[:space:]]" | grep -iE "production[[:space:]]*,|,[[:space:]]*production" >/dev/null && echo "$name"; done); ` +
+    `if printf '%s\\n' "$vars" | grep -E "^[[:space:]]*\${name}[[:space:]]" | grep -iE "production[[:space:]]*,|,[[:space:]]*production" >/dev/null; then echo "$name"; fi; done); ` +
     `if [ -n "$shared" ] && [ "$allow_shared" != 1 ]; then ` +
     `echo "Also set for an environment other than Production: $shared" >&2; exit 3; fi; ` +
     `printf '%s\\n' "$keys" | while IFS= read -r line; do key=\${line%%=*}; value=\${line#*=}; ` +
