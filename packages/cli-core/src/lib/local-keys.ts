@@ -542,6 +542,40 @@ export async function readAllFolderKeys(cwd: string): Promise<AllFolderKeys> {
   };
 }
 
+/**
+ * Whether `file` names a Clerk key on any line, under any name a Clerk SDK
+ * reads: with a value, with an empty one, or on a line the CLI can't parse
+ * (listed). `unreadable` when the file exists but can't be read. For `env
+ * pull`, which mustn't write below a file that may still set a key.
+ */
+export async function clerkLinesIn(
+  cwd: string,
+  file: string,
+): Promise<{ any: boolean; unreadableLines: UnreadableKeyLine[] } | "unreadable"> {
+  const handle = Bun.file(join(cwd, file));
+  if (!(await handle.exists())) return { any: false, unreadableLines: [] };
+  let text: string;
+  try {
+    text = await handle.text();
+  } catch (error) {
+    log.debug(`local-keys: couldn't read ${file} — ${errorMessage(error)}`);
+    return "unreadable";
+  }
+  const names = new Set([...CLERK_KEY_NAMES.publishable, ...CLERK_KEY_NAMES.secret]);
+  const unreadableLines: UnreadableKeyLine[] = [];
+  let any = false;
+  for (const line of parseEnvFile(text)) {
+    if (line.type === "entry") {
+      if (names.has(line.key)) any = true;
+      continue;
+    }
+    if (line.type !== "comment" || line.raw.trim().startsWith("#")) continue;
+    const named = namedIn(line.raw, CLERK_KEY_NAMES);
+    if (named) unreadableLines.push({ ...named, source: file });
+  }
+  return { any: any || unreadableLines.length > 0, unreadableLines };
+}
+
 /** Why the folder's env files couldn't be read, as a clause; never a key. */
 export function unreadableFolderReason(error: unknown): string {
   return `the CLI couldn't read this folder's env files (${errorMessage(error)})`;

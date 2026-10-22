@@ -9,12 +9,13 @@
  * `env pull`'s third rule depends on. It can't anticipate a new rule's files.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ENV_FILE_CANDIDATES, type PreferredEnvFile } from "../../lib/dotenv.ts";
 import { FRAMEWORK_MAP, NATIVE_FRAMEWORK_MAP } from "../../lib/framework.ts";
+import * as localKeys from "../../lib/local-keys.ts";
 import { defaultTargetFile, targetByFiles } from "./pull.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 
@@ -172,17 +173,49 @@ test.each(LOCAL_CASES)(
   },
 );
 
-describe("a Clerk line the CLI can't parse in a file ranked above the target", () => {
+// Any Clerk line in a file the framework loads before the target may still set
+// a key there, so it redirects too: an empty value, a line the CLI can't
+// parse, or a file it can't read at all.
+describe("a Vite folder whose committed .env.development may still set a Clerk key", () => {
   const captured = useCaptureLog();
 
-  test("Vite: warns and names the file", async () => {
+  beforeEach(async () => {
     await Bun.write(join(dir, "package.json"), JSON.stringify({ dependencies: { vite: "1.0.0" } }));
     await Bun.write(join(dir, ".env.local"), "CLERK_SECRET_KEY=sk_test_x\n");
+  });
+
+  test("an empty value: writes .env.development.local", async () => {
+    await Bun.write(join(dir, ".env.development"), "VITE_CLERK_PUBLISHABLE_KEY=\n");
+
+    expect(await defaultTargetFile(dir, ".env.local")).toBe(".env.development.local");
+  });
+
+  test("a line the CLI can't parse: writes .env.development.local, and warns naming the file", async () => {
     await Bun.write(join(dir, ".env.development"), "VITE_CLERK_PUBLISHABLE_KEY = pk_test_old\n");
 
-    expect(await defaultTargetFile(dir, ".env.local")).toBe(".env.local");
+    expect(await defaultTargetFile(dir, ".env.local")).toBe(".env.development.local");
     expect(Bun.stripANSI(captured.err)).toContain(
       "`.env.development` has a `VITE_CLERK_PUBLISHABLE_KEY` line the CLI can't read",
     );
+  });
+
+  // A rejecting spy stands in for the unreadable file: chmod doesn't stop root in CI.
+  test("a file the CLI can't read: writes .env.development.local", async () => {
+    await Bun.write(join(dir, ".env.development"), "OTHER=1\n");
+    const real = localKeys.clerkLinesIn;
+    const scan = spyOn(localKeys, "clerkLinesIn").mockImplementation(async (cwd, file) =>
+      file === ".env.development" ? "unreadable" : real(cwd, file),
+    );
+    try {
+      expect(await defaultTargetFile(dir, ".env.local")).toBe(".env.development.local");
+    } finally {
+      scan.mockRestore();
+    }
+  });
+
+  test("no Clerk line there: keeps .env.local", async () => {
+    await Bun.write(join(dir, ".env.development"), "OTHER=1\n");
+
+    expect(await defaultTargetFile(dir, ".env.local")).toBe(".env.local");
   });
 });

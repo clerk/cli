@@ -42,8 +42,8 @@ import {
 } from "../../lib/unlinked-folder.ts";
 import {
   describeKeyLocation,
+  clerkLinesIn,
   ENV_VAR_SOURCE_SUFFIX,
-  readAllFolderKeys,
   SDK_KEYLESS_SOURCE,
   unreadGenericPublishableKey,
   type LocatedKey,
@@ -83,9 +83,10 @@ async function resolveTargetFile(
  * (`ENV_FILE_CANDIDATES`); exported for the test that pins that down.
  *
  * `targetByFiles` picks it. When the framework documents its load order and a
- * file it loads before that target still holds a Clerk key, the new keys would
- * keep losing to it, so they go in the highest-ranked `.local` file instead,
- * never a file meant to be committed.
+ * file it loads before that target may still set a Clerk key (a line naming
+ * one, even empty or unparseable, or a file the CLI can't read), the new keys
+ * could keep losing to it, so they go in the highest-ranked `.local` file
+ * instead, never a file meant to be committed.
  */
 export async function defaultTargetFile(
   cwd: string,
@@ -95,27 +96,25 @@ export async function defaultTargetFile(
   const loadOrder = framework?.envLoadOrder;
   const byFiles = await targetByFiles(cwd, fallbackFile, loadOrder);
   // With no documented order, which file the app loads is unknown.
-  if (!framework || !loadOrder) return byFiles;
-  const all = await readAllFolderKeys(cwd).catch(() => undefined);
-  if (!all) return byFiles;
-
-  const ranksAbove = (source: string, file: EnvFileName) =>
-    loadOrder.includes(source as EnvFileName) &&
-    loadOrder.indexOf(source as EnvFileName) < loadOrder.indexOf(file);
+  if (!loadOrder) return byFiles;
   const highestLocal = loadOrder.find((file) => file.endsWith(".local"));
-  const stale = [...all.publishableKeys, ...all.secretKeys].some((key) =>
-    ranksAbove(key.source, byFiles),
-  );
-  const target = stale && highestLocal ? highestLocal : byFiles;
+  const before = loadOrder.slice(0, Math.max(loadOrder.indexOf(byFiles), 0));
 
-  for (const line of all.unreadableLines ?? []) {
-    if (!ranksAbove(line.source, target)) continue;
-    log.warn(
-      `\`${line.source}\` has a \`${line.name}\` line the CLI can't read, and ${framework.name} loads that file before \`${target}\`. ` +
-        "If it holds an old key, it may keep beating the new one: fix or remove that line.",
-    );
+  let stale = false;
+  for (const file of before) {
+    const lines = await clerkLinesIn(cwd, file);
+    if (lines === "unreadable") {
+      stale = true;
+      continue;
+    }
+    stale ||= lines.any;
+    for (const line of lines.unreadableLines) {
+      log.warn(
+        `\`${line.source}\` has a \`${line.name}\` line the CLI can't read. If it holds an old key, fix or remove that line.`,
+      );
+    }
   }
-  return target;
+  return stale && highestLocal ? highestLocal : byFiles;
 }
 
 /**

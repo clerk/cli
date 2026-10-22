@@ -8,7 +8,7 @@ For an unclaimed **accountless** application there is no account to pull from â€
 
 The secret key and publishable key are each the one the app loads, but can still belong to _different_ applications (e.g. leftovers from two apps in the same `.env.local`). Before writing, `env pull` calls `GET /v1/domains` with the secret key and confirms the publishable key's Frontend API host (decoded via `decodePublishableKey` in `lib/fapi.ts`) matches one of that instance's own domains. A mismatch aborts the pull with an error that says where the mismatched publishable key was found and how to remove it from there (its env file or the shell variable; for an SDK keyless file whose two keys belong to different apps, it says to add both keys of the app you want to an env file, since keys there win over the SDK file, or to delete the stale file, which also deletes its claim link), and writes nothing â€” a wrong pair on disk produces an app that fails at runtime in a way that's very hard to trace, so this is stricter than `clerk whoami`, which only warns about the same mismatch (see [`commands/whoami/README.md`](../whoami/README.md)).
 
-Without `--file`, `env pull` picks its target by which env files exist and hold Clerk keys (the diagram below). When the framework documents its env load order and a file it loads before that target still holds a Clerk key (e.g. a Vite folder's committed `.env.development`), the new keys would keep losing to it, so `env pull` writes to the highest-ranked `.local` file the framework loads instead (`.env.development.local`), never into that file. A Clerk line it can't read in such a file gets a warning naming the file.
+Without `--file`, `env pull` picks its target by which env files exist and hold Clerk keys (the diagram below). When the framework documents its env load order and a file it loads before that target may still set a Clerk key (e.g. a Vite folder's committed `.env.development` with a Clerk line, even an empty or unparseable one, or a file the CLI can't read), the new keys could keep losing to it, so `env pull` writes to the highest-ranked `.local` file the framework loads instead (`.env.development.local`), never into that file. A Clerk line it can't parse there gets a warning naming the file.
 
 ## Usage
 
@@ -81,10 +81,10 @@ sequenceDiagram
         CLI->>CLI: Default to the preferred file
     end
     opt No --file, and the framework documents its load order
-        CLI->>FS: Read every Clerk key in the env files
-        FS-->>CLI: { keys, unreadable lines, by file }
-        CLI->>CLI: A key in a file loaded before the target? Use the highest-ranked .local file
-        CLI->>User: Warn about a Clerk line it can't read in a file loaded before the target
+        CLI->>FS: Read each file loaded before the target
+        FS-->>CLI: Clerk lines (any value, empty, or unparseable), or a read error
+        CLI->>CLI: Any of those? Use the highest-ranked .local file
+        CLI->>User: Warn about a Clerk line it can't parse there
     end
 
     %% Read, merge, write
