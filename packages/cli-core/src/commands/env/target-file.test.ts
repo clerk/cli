@@ -65,3 +65,31 @@ test.each(CASES)(
     expect(ENV_FILE_CANDIDATES).toContain(await defaultTargetFile(dir, preferred));
   },
 );
+
+// Nuxt loads only `.env`, and the CLI reads a Nuxt folder's keys from there, so
+// a write anywhere else would be read by neither.
+test.each([
+  { label: "an existing .env.development.local", existing: [".env.development.local"] },
+  {
+    label: "an existing .env.development.local and .env",
+    existing: [".env.development.local", ".env"],
+  },
+  { label: "Clerk keys only in .env.local", existing: [".env.local"], keysIn: ".env.local" },
+])("Nuxt, $label: writes .env", async ({ existing, keysIn }) => {
+  await Bun.write(join(dir, "package.json"), JSON.stringify({ dependencies: { nuxt: "3.0.0" } }));
+  await Promise.all(
+    existing.map((file) =>
+      Bun.write(join(dir, file), file === keysIn ? "CLERK_SECRET_KEY=sk_test_x\n" : "OTHER=1\n"),
+    ),
+  );
+
+  expect(await defaultTargetFile(dir, ".env")).toBe(".env");
+});
+
+// Next.js loads `.env.development.local` first in development.
+test("Next.js, an existing .env.development.local: writes it", async () => {
+  await Bun.write(join(dir, "package.json"), JSON.stringify({ dependencies: { next: "15.0.0" } }));
+  await Bun.write(join(dir, ".env.development.local"), "OTHER=1\n");
+
+  expect(await defaultTargetFile(dir, ".env.local")).toBe(".env.development.local");
+});

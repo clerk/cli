@@ -63,17 +63,20 @@ sequenceDiagram
     FS-->>CLI: { dependencies }
     CLI->>CLI: Map framework → publishable key env var name
 
-    %% Resolve target file
+    %% Resolve target file (only files the framework loads, when it documents its order)
     alt --file flag provided
         CLI->>CLI: Use specified file
-    else .env.local exists
-        CLI->>FS: Check .env.local
+    else .env.development.local exists, and the framework loads it
+        CLI->>FS: Check .env.development.local
         FS-->>CLI: exists
-    else .env exists
-        CLI->>FS: Check .env
+    else The framework's preferred file exists (.env.local, or .env for Astro and Nuxt)
+        CLI->>FS: Check the preferred file
         FS-->>CLI: exists
-    else No env file
-        CLI->>CLI: Default to .env.local
+    else The other of .env and .env.local holds Clerk keys, and the framework loads it
+        CLI->>FS: Check it for Clerk keys
+        FS-->>CLI: has Clerk keys
+    else Otherwise
+        CLI->>CLI: Default to the preferred file
     end
 
     %% Read, merge, write

@@ -77,20 +77,27 @@ async function resolveTargetFile(
 /**
  * The env file `env pull` writes when no `--file` is given. Typed as an
  * `EnvFileName` so it can only be a file the claim check also reads
- * (`ENV_FILE_CANDIDATES`); exported for the test that pins that down.
+ * (`ENV_FILE_CANDIDATES`); exported for the test that pins that down. Only a
+ * file the framework loads, when it documents its load order: Nuxt loads only
+ * `.env`, so keys written anywhere else would be read by neither Nuxt nor the CLI.
  */
 export async function defaultTargetFile(
   cwd: string,
   fallbackFile: PreferredEnvFile,
 ): Promise<EnvFileName> {
-  if (await Bun.file(join(cwd, DEV_LOCAL_ENV_FILE)).exists()) return DEV_LOCAL_ENV_FILE;
+  const loadOrder = (await detectFramework(cwd))?.envLoadOrder;
+  const loads = (file: EnvFileName) => !loadOrder || loadOrder.includes(file);
+
+  if (loads(DEV_LOCAL_ENV_FILE) && (await Bun.file(join(cwd, DEV_LOCAL_ENV_FILE)).exists())) {
+    return DEV_LOCAL_ENV_FILE;
+  }
 
   if (await Bun.file(join(cwd, fallbackFile)).exists()) return fallbackFile;
 
   // Backwards compat: if the non-fallback file already has Clerk keys,
   // keep writing there so we don't leave stale keys behind.
   const other: PreferredEnvFile = fallbackFile === ".env" ? ".env.local" : ".env";
-  if (await hasClerkKeys(join(cwd, other))) return other;
+  if (loads(other) && (await hasClerkKeys(join(cwd, other)))) return other;
 
   return fallbackFile;
 }
