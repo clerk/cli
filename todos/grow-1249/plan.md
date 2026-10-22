@@ -921,6 +921,35 @@ These items go into the GROW-1285 section of the one PR description; the PR itse
   - `printKeylessInfo` (`:156`) stays as it is; it runs right after `init` wrote a token.
   - GROW-1242 plans to rewrite `printKeylessInfo` in the same file, so expect a trivial merge.
 
+**Added by the orchestrator, acting for Shane, on 2026-10-22,** from the milestone 8 review:
+
+- **`clerk open`'s lead "so there's no dashboard page to open yet"** keeps "yet" only for an app `clerk init` or a Clerk SDK created. For other kinds: "…but no claim link on disk, and this folder isn't linked, so there's no dashboard page to open."
+- **The progress lines of `config pull`, `config push`, and the feature toggles** name an app `clerk init` or a Clerk SDK created "this accountless application (secret key from `<file>`)", and plain keys' app "this folder's application (secret key from `<file>`)".
+
+**Calls made while building this milestone (2026-10-22), pending review:**
+
+1. **Plain keys' first sentences name a linked application.** E.g. "Billing can only be configured on a linked application — … so the secret key from `.env` can't reach them." An app `clerk init` or a Clerk SDK created keeps today's sentence word for word.
+2. **Each refusal error gives an agent the step's commands as `examples`**, per confirmed rule 2.
+3. **Reruns:** `enable billing` says "run the command again", `config schema` "run `clerk config schema` again", `users open` "run `clerk users open <id>` again" (with the command as an example), and the `env pull` warning "run `clerk env pull` again". `config put` offers `clerk config patch` instead, and the config validation errors have no rerun.
+4. **Config validation gives the step once,** after the account-only keys or the `instance` fields with no Backend API route. `config pull --keys <name>` gives no step, since a typo lands there too.
+5. **`env pull`'s missing-publishable-key warning classifies the folder before writing the secret key.** After the write, an SDK-created app's folder would read as holding plain keys.
+
+**Decided by Shane on 2026-10-22:**
+
+- **`env pull`'s key-pair mismatch error says only how to remove the mismatched publishable key.** It gives no claim or link advice: `clerk link` would find the app by that publishable key, which may be the wrong one.
+- **`env pull`'s line after writing keyless keys follows the progress lines:** "Accountless application keys from `<file>` written to …" for an app `clerk init` or a Clerk SDK created, and "This folder's application keys from `<file>` written to …" for plain keys.
+
+**Decided by the orchestrator, acting for Shane, on 2026-10-22,** after the milestone 9 review:
+
+1. **The mismatch error says where the publishable key was found and how to remove it from there:** remove it from the env file it's in, or unset the shell variable. For a stale `.clerk/.tmp/keyless.json`, it leads with adding the right key to an env file (a key there wins over the SDK file), and offers deleting the file second, since that also deletes its app's claim link. `findLocalPublishableKey` returns the key's source. "Remove it from your env files" looped when the key came from the shell or the SDK file.
+2. **`clerk init` offers to replace an existing app only when it's in no account yet** (`appInNoAccount`), and calls only that app unclaimed. In a folder of plain keys (e.g. Dashboard keys in `.env.local` beside an old SDK keyless file) it keeps them without asking, says "This project already has Clerk keys (`CLERK_SECRET_KEY` in .env.local), so init kept them.", and gives no `clerk init --accountless --fresh` line, which would create a new app and overwrite the pasted keys. An SDK app whose claim link can't be used is kept without asking, named by its file, and still offered `--fresh`.
+3. **`describeBapiTarget`** (`users` lifecycle `--dry-run`, `migrate export`) names the app as the config progress lines do.
+4. **Reruns repeat the run's flags, shell-quoted:** `env pull`'s `--file` and `--print`, `config schema`'s `--keys` and `--output`, and `users open`'s `--print`. `--secret-key` is never echoed.
+5. **Error and exit codes are pinned for every changed refusal:** `auth_required` (exit 1) for billing, schema, and put; `usage_error` (exit 2) for the config validation and `--instance` errors; `instance_not_found` (exit 1) for `users open`; `key_pair_mismatch` (exit 1) for `env pull`.
+6. **Only an app in no account yet is called unclaimed in this milestone's messages** (`appInNoAccount`: an init app, or an SDK app whose claim link works). An SDK app whose claim link can't be used may already be claimed, and its step says `clerk link` links it if it's in the account. This covers the refusals, the progress lines, `env pull`'s written line, and `clerk open`'s "yet".
+7. **`env pull --print` with both keys found reads no folder facts,** since nothing it prints names the folder's app.
+8. **`doctor` and `whoami` follow the same rule** (Shane's decision, 2026-10-22), so every command names the same folder the same way: an SDK app whose claim link can't be used is named by its key's file, not called unclaimed.
+
 **Definition of done.**
 
 - Tests for each changed message asserting `clerk auth login` appears only for `init_app` (signed-out agents) and "unclaimed" never appears for `unknown_owner`.
@@ -941,6 +970,7 @@ These items go into the GROW-1285 section of the one PR description; the PR itse
 
 - Tests for `whoami` and `env pull` with keys only in `.env.development.local`, and with a plain secret key next to an SDK keyless file (no pairing).
 - A `doctor` case for a Nuxt folder with `NUXT_CLERK_SECRET_KEY` in `.env.local` and an SDK keyless file (milestone 7 review, 2026-10-22; deferred here by Shane). Nuxt loads only `.env`, so the classifier sees an SDK-only folder, while `resolveKeylessTarget` reads `.env.local`. Today `doctor` calls the `.env.local` key's app "the unclaimed accountless application" and names that file. After this milestone both read the same key, so `doctor` names the SDK keyless file and doesn't call the `.env.local` key's app unclaimed.
+- A milestone 9 refusal case for a Nuxt folder with the secret key only in `.env.local` (milestone 9 review, 2026-10-22). Nuxt loads only `.env`, so the classifier finds no keys and gives the no-app step, which offers `clerk init`, while the command runs on the `.env.local` key. After this milestone the refusals must not suggest `clerk init` there.
 - Search for every remaining caller of the two helpers and account for each.
 
 **Known limitation until then: one `clerk link` run reads the folder's keys several times** (milestone 4 review round 2, deferred here 2026-10-20). `inspectFolder` in `commands/link/index.ts` reads them once; auto-link (`findLinkKey`), detection (`tryDetectApp`), and `init`'s key check each read them again, and each read detects the framework again. Facts from different moments can combine, e.g. if `next dev` writes the SDK keyless file during the run. Here, pass the first read into auto-link and detection. The key check's read just before saving can stay: that's the moment that matters.
