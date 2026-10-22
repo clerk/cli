@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +26,8 @@ mock.module("../../lib/sleep.ts", () => ({
 }));
 
 const { _setConfigDir, setProfile } = await import("../../lib/config.ts");
+const { _setTokenOverride } = await import("../../lib/credential-store.ts");
+const unlinkedFolder = await import("../../lib/unlinked-folder.ts");
 const { setMode } = await import("../../mode.ts");
 const { beginInterrupt, interruptedExitCode, _resetInterruptState } =
   await import("../../lib/signals.ts");
@@ -126,9 +128,18 @@ describe("deploy status", () => {
   const originalFetch = globalThis.fetch;
   let tempDir = "";
   let exitCodeBefore: typeof process.exitCode;
+  let readUnlinkedFolderSpy: ReturnType<typeof spyOn>;
 
   beforeEach(async () => {
     captured.clear();
+    // The not-linked error reads the folder and the stored session: a fixture
+    // stands in for the folder, and the session reads as signed out, never
+    // this repo's files or the developer's keychain.
+    _setTokenOverride(null);
+    readUnlinkedFolderSpy = spyOn(unlinkedFolder, "readUnlinkedFolder").mockResolvedValue({
+      kind: "no_app",
+      credential: "none",
+    });
     setMode("agent");
     exitCodeBefore = process.exitCode;
     // Bun ignores `process.exitCode = undefined`; only a number resets it.
@@ -148,6 +159,8 @@ describe("deploy status", () => {
   afterEach(async () => {
     _resetInterruptState();
     _setConfigDir(undefined);
+    _setTokenOverride(undefined);
+    readUnlinkedFolderSpy.mockRestore();
     if (tempDir) await rm(tempDir, { recursive: true, force: true });
     process.exitCode = exitCodeBefore ?? EXIT_CODE.SUCCESS;
     process.env = { ...originalEnv };
@@ -162,6 +175,35 @@ describe("deploy status", () => {
     mockTriggerApplicationDomainDNSCheck.mockReset();
     mockSleep.mockReset();
   });
+
+  // The lead sentence stays verbatim: agents and the skill's troubleshooting
+  // table match on it. The rerun keeps `--wait`.
+  test.each([
+    {
+      mode: "agent" as const,
+      examples: ["clerk open", "clerk link", "clerk deploy status --wait"],
+    },
+    { mode: "human" as const, examples: undefined },
+  ])(
+    "not linked, $mode: the lead sentence, not_linked, exit 1, the folder's step",
+    async (cell) => {
+      setMode(cell.mode);
+      await rm(join(tempDir, "config.json"), { force: true });
+      readUnlinkedFolderSpy.mockResolvedValue({ kind: "sdk_app", credential: "session" });
+
+      const thrown = (await deployStatus({ wait: true }).catch(
+        (error: unknown) => error,
+      )) as CliError;
+
+      expect(thrown.code).toBe(ERROR_CODE.NOT_LINKED);
+      expect(thrown.exitCode).toBe(EXIT_CODE.GENERAL);
+      expect(thrown.message.startsWith("No Clerk project linked to this directory. ")).toBe(true);
+      expect(thrown.message).toContain("Then run `clerk deploy status --wait` again.");
+      expect(thrown.examples?.map((example) => example.command)).toEqual(
+        cell.examples && [...cell.examples],
+      );
+    },
+  );
 
   test("agent mode not_started emits JSON with state not_started and exit 1", async () => {
     mockFetchApplication.mockResolvedValue(appWith(false));

@@ -1,5 +1,5 @@
 import { isAgent } from "../../mode.ts";
-import { CliError, ERROR_CODE, EXIT_CODE } from "../../lib/errors.ts";
+import { EXIT_CODE } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { sleep } from "../../lib/sleep.ts";
@@ -22,6 +22,7 @@ import {
 } from "./status.ts";
 import { recordDeployObservation, recordDeployPoll } from "./telemetry.ts";
 import type { DeployContext } from "./state.ts";
+import { deployStatusRerun, notLinkedError } from "./not-linked.ts";
 
 type DeployStatusOptions = {
   wait?: boolean;
@@ -46,10 +47,7 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
     const ctx = await resolveDeployContext();
     // Not an interrupt, so the catch rethrows this untouched.
     if (!ctx.appId || !ctx.developmentInstanceId) {
-      throw new CliError(
-        "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy status`.",
-        { code: ERROR_CODE.NOT_LINKED },
-      );
+      throw await notLinkedError(deployStatusRerun(options));
     }
 
     const preflightTriggered = await runPreflightDeployStatusCheck(ctx);
