@@ -41,8 +41,8 @@ beforeEach(async () => {
 
 type Check = { name: string; status: string; message: string; remedy?: string; fix?: string };
 
-async function doctorChecks(): Promise<Record<string, Check>> {
-  const result = await clerk.raw("doctor", "--json");
+async function doctorChecks(modeArgs: readonly string[] = []): Promise<Record<string, Check>> {
+  const result = await clerk.raw(...modeArgs, "doctor", "--json");
   const checks = JSON.parse(result.stdout) as Check[];
   return Object.fromEntries(checks.map((check) => [check.name, check]));
 }
@@ -137,6 +137,37 @@ test("stored session only, an init token: Project linked warns, names the claim,
     "Run `clerk link`: it claims the app into your account and links this folder.",
   );
   expect(linked.fix).toBe("Link project with clerk link");
+});
+
+// With no secret key there's no keyless target, but the folder still has an
+// app: the remedy is its step, as `deploy` gives it.
+describe("API key only, an SDK keyless file with no secret key", () => {
+  beforeEach(async () => {
+    mockState.storedToken = null;
+    await Bun.write(
+      join(h.tempDir, ".clerk", ".tmp", "keyless.json"),
+      JSON.stringify({
+        publishableKey: publishableKeyFor("sdk-app.clerk.accounts.dev"),
+        claimUrl: "https://dashboard.clerk.com/apps/claim?token=claim_token_sdk",
+      }),
+    );
+  });
+
+  test.each([
+    { mode: "person", modeArgs: [], step: "Run `clerk link`" },
+    { mode: "agent", modeArgs: ["--mode", "agent"], step: "Run `clerk open`" },
+  ])(
+    "$mode: Project linked fails, keeps link's fix, and gives the SDK app's step",
+    async ({ modeArgs, step }) => {
+      const linked = (await doctorChecks(modeArgs))["Project linked"]!;
+
+      expect(linked.status).toBe("fail");
+      expect(linked.fix).toBe("Link project with clerk link");
+      expect(linked.remedy).toStartWith(
+        `This folder runs on an app the Clerk SDK created during development. ${step}`,
+      );
+    },
+  );
 });
 
 // `doctor` only reads: naming the claim must not claim, and reading the folder

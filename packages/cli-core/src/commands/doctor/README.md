@@ -81,9 +81,13 @@ command for what the folder holds. Statuses and fix labels don't depend on it.
   application.
 - No token **and** no accountless key found anywhere → still **fail**. Accountless
   only changes the outcome when there's actually a secret key to fall back to.
+- Not linked and no secret key to run on → Project linkage **fails**, with the
+  `clerk link` fix. Its remedy is the step for what the folder holds, e.g. an
+  SDK keyless file with no secret key gets `clerk open` for an agent, as
+  `deploy` gives it.
 - An env file that can't be read → no check crashes. The accountless key is then
-  only one exported in the shell, and when there's none, Project linkage fails
-  with the step for the folder as its remedy, which starts with the read error.
+  only one exported in the shell, and when there's none, Project linkage's
+  remedy starts with the read error.
 
 The Linked application and Instances checks are account-only (the Platform
 API application/instance-list concepts have no accountless equivalent), so they
