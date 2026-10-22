@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { assertStableVersion, sendCliReleaseDispatch } from "./dispatch-evals.ts";
+import { assertStableVersion, sendCliReleaseDispatch } from "./dispatch-cli-released.ts";
 
-describe("stable CLI eval dispatch", () => {
+describe("stable CLI release dispatch", () => {
   test("rejects canary and snapshot versions", () => {
     expect(() => assertStableVersion("3.5.0-canary.1")).toThrow("stable");
     expect(() => assertStableVersion("3.5.0-snapshot.1")).toThrow("stable");
@@ -23,7 +23,7 @@ describe("stable CLI eval dispatch", () => {
   });
 
   test("requires the dedicated credential and reports API rejection", async () => {
-    await expect(sendCliReleaseDispatch("3.5.0", "")).rejects.toThrow("CLERK_EVALS_DISPATCH_TOKEN");
+    await expect(sendCliReleaseDispatch("3.5.0", "")).rejects.toThrow("CLERK_CLI_DISPATCH_TOKEN");
     await expect(
       sendCliReleaseDispatch(
         "3.5.0",

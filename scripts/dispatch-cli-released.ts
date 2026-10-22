@@ -1,4 +1,4 @@
-/** Notify the add-auth eval receiver after a stable CLI release is published. */
+/** Dispatch a stable CLI release event after publishing. */
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -14,7 +14,7 @@ export async function sendCliReleaseDispatch(
   fetchImpl: Fetch = fetch,
 ): Promise<void> {
   assertStableVersion(version);
-  if (!token) throw new Error("CLERK_EVALS_DISPATCH_TOKEN is not configured");
+  if (!token) throw new Error("CLERK_CLI_DISPATCH_TOKEN is not configured");
 
   const response = await fetchImpl("https://api.github.com/repos/clerk/clerk-evals/dispatches", {
     method: "POST",
@@ -37,8 +37,7 @@ export async function sendCliReleaseDispatch(
 
 if (import.meta.main) {
   const version = process.env.CLERK_CLI_VERSION ?? "";
-  const token = process.env.CLERK_EVALS_DISPATCH_TOKEN ?? "";
-  if (!token) throw new Error("CLERK_EVALS_DISPATCH_TOKEN is not configured");
+  const token = process.env.CLERK_CLI_DISPATCH_TOKEN ?? "";
   await sendCliReleaseDispatch(version, token);
   console.log(`Sent clerk_cli_released for clerk@${version} to clerk/clerk-evals`);
 }
