@@ -898,7 +898,8 @@ function recordRejects(run: Run, checks: ImportChecks): void {
 }
 
 export async function run(rawOptions: MigrateRunOptions): Promise<void> {
-  // Released however the import ends: a return, a refusal or a Ctrl-C.
+  // Released on a return or a refusal. A Ctrl-C can kill the process first;
+  // the next import reclaims a lock whose PID is gone.
   const lock: ImportLock = {};
   try {
     await runImport(rawOptions, lock);
