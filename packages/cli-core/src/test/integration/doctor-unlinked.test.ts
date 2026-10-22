@@ -46,15 +46,32 @@ async function doctorChecks(): Promise<Record<string, Check>> {
   return Object.fromEntries(checks.map((check) => [check.name, check]));
 }
 
+/** Signed out, with keys pasted from the Dashboard in `.env`. */
+async function signedOutWithDashboardKeys(): Promise<void> {
+  delete process.env.CLERK_PLATFORM_API_KEY;
+  mockState.storedToken = null;
+  await Bun.write(join(h.tempDir, ".env"), KEYS);
+}
+
+const INIT_TOKEN_FILE = [".clerk", "keyless.json"];
+
+/** A stored session, and an init token beside the keys in `.env`. */
+async function sessionWithInitToken(): Promise<void> {
+  delete process.env.CLERK_PLATFORM_API_KEY;
+  await Bun.write(
+    join(h.tempDir, ...INIT_TOKEN_FILE),
+    JSON.stringify({ claimToken: "claim_token_init", createdAt: new Date().toISOString() }),
+  );
+  await Bun.write(join(h.tempDir, ".env"), KEYS);
+}
+
 // Before: both checks called this "the unclaimed accountless application" and
 // said to claim it from the Dashboard. Keys pasted from the Dashboard belong
 // to an app that may already be in an account.
 test.each(["Logged in", "Project linked"])(
   "signed out, Dashboard keys in `.env`: %s passes, names the key's file, and gives `clerk link`'s step",
   async (name) => {
-    delete process.env.CLERK_PLATFORM_API_KEY;
-    mockState.storedToken = null;
-    await Bun.write(join(h.tempDir, ".env"), KEYS);
+    await signedOutWithDashboardKeys();
 
     const check = (await doctorChecks())[name]!;
 
@@ -68,16 +85,55 @@ test.each(["Logged in", "Project linked"])(
   },
 );
 
+// Before: each said "accountless application".
+test.each([
+  [
+    "Authentication valid",
+    "pass",
+    "No account session — not required: the secret key from `.env` works",
+  ],
+  ["Application reachable", "warn", "Skipped (secret key from `.env`, no linked app to verify)"],
+  ["Instance IDs", "warn", "Skipped (secret key from `.env`, no linked instances to verify)"],
+])(
+  "signed out, Dashboard keys in `.env`: %s is %s and names the key's file",
+  async (name, status, message) => {
+    await signedOutWithDashboardKeys();
+
+    const check = (await doctorChecks())[name]!;
+
+    expect(check.status).toBe(status);
+    expect(check.message).toBe(message);
+  },
+);
+
+test("signed out, Dashboard keys in `.env`: every check runs, and none calls the app accountless or unclaimed", async () => {
+  await signedOutWithDashboardKeys();
+
+  const checks = Object.values(await doctorChecks());
+
+  expect(checks.map((check) => check.name)).toEqual([
+    "CLI version",
+    "Logged in",
+    "Authentication valid",
+    "Project linked",
+    "Application reachable",
+    "Instance IDs",
+    "Environment variables",
+    "CLI configuration",
+    "Shell completion",
+    "MCP server",
+  ]);
+  const accountless = checks.filter((check) =>
+    /accountless|unclaimed/.test(`${check.message} ${check.remedy ?? ""}`),
+  );
+  expect(accountless).toEqual([]);
+});
+
 // Before: "Run `clerk link` to use the full account configuration", which led
 // to a picker that couldn't show the init app. After PR 1, `clerk link`
 // claims it first.
 test("stored session only, an init token: Project linked warns, names the claim, and keeps link's fix", async () => {
-  delete process.env.CLERK_PLATFORM_API_KEY;
-  await Bun.write(
-    join(h.tempDir, ".clerk", "keyless.json"),
-    JSON.stringify({ claimToken: "claim_token_init", createdAt: new Date().toISOString() }),
-  );
-  await Bun.write(join(h.tempDir, ".env"), KEYS);
+  await sessionWithInitToken();
 
   const linked = (await doctorChecks())["Project linked"]!;
 

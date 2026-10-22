@@ -66,6 +66,9 @@ command for what the folder holds. Statuses and fix labels don't depend on it.
     for those keys, e.g. that it finds the app by the publishable key. It
     doesn't call the app unclaimed: such keys may belong to an app that's
     already in an account.
+- No token, a secret key present → Token validity **passes**: no session is
+  needed. As above, only an init or SDK app is called accountless; for plain
+  keys it says the secret key from their file works.
 - Stored session expired, a secret key present → **warn** (not fail): the key
   still works, so logging in again is optional. As above, only an init or SDK
   app is called accountless; plain keys are named by their file.
@@ -80,8 +83,9 @@ command for what the folder holds. Statuses and fix labels don't depend on it.
 
 The Linked application and Instances checks are account-only (the Platform
 API application/instance-list concepts have no accountless equivalent), so they
-continue to skip for an accountless project — the skip reason names the accountless
-application instead of reading like a problem.
+continue to skip for a project running on a secret key — the skip reason names
+what the key runs instead of reading like a problem: the accountless application
+for an init or SDK app, the key's file for plain keys.
 
 ### iOS and macOS projects
 

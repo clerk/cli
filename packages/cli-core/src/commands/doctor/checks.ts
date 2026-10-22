@@ -6,7 +6,7 @@ import { CliError, ERROR_CODE, errorMessage, isAuthError, PlapiError } from "../
 import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
 import { parseEnvFile } from "../../lib/dotenv.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
-import { unlinkedFolderNextStep } from "../../lib/unlinked-folder.ts";
+import { unlinkedFolderNextStep, type UnlinkedFolder } from "../../lib/unlinked-folder.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "../../lib/version.ts";
 import {
   getUpdateChannel,
@@ -93,8 +93,25 @@ async function unlinkedKeyless(
   const folder = await ctx.getUnlinkedFolder();
   const step = unlinkedFolderNextStep(folder, { agent: isAgent() }).text;
   const source = `\`${keyless.source}\``;
-  if (folder.kind !== "init_app" && folder.kind !== "sdk_app") return { source, step };
+  if (!isUnclaimedApp(folder)) return { source, step };
   return { unclaimedApp: keylessLabel(keyless, await ctx.getKeylessInstance()), source, step };
+}
+
+/** An app `clerk init` or a Clerk SDK created: the only kind called accountless. */
+function isUnclaimedApp(folder: UnlinkedFolder): boolean {
+  return folder.kind === "init_app" || folder.kind === "sdk_app";
+}
+
+/**
+ * The file plain keys' secret key comes from, for a check that names what the
+ * key runs without giving the step; undefined for an init or SDK app, which
+ * is called the accountless application (see `unlinkedKeyless`).
+ */
+async function plainKeysSource(
+  ctx: DoctorContext,
+  keyless: KeylessTarget,
+): Promise<string | undefined> {
+  return isUnclaimedApp(await ctx.getUnlinkedFolder()) ? undefined : `\`${keyless.source}\``;
 }
 
 export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
@@ -209,9 +226,13 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
   const storedToken = await ctx.getToken();
   if (!storedToken) {
     const keyless = await ctx.getKeylessTarget();
-    return keyless
-      ? check.pass("No account session — not required for this accountless application")
-      : check.skip("no token");
+    if (!keyless) return check.skip("no token");
+    const source = await plainKeysSource(ctx, keyless);
+    return check.pass(
+      source
+        ? `No account session — not required: the secret key from ${source} works`
+        : "No account session — not required for this accountless application",
+    );
   }
 
   try {
@@ -322,12 +343,13 @@ export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckRes
   const check = defineCheck(CHECK_NAME.linkedAppExists, ctx.fixes.link);
   if (!(await ctx.hasAccountCredentials())) {
     // This check is account-only — the Platform API application record has no
-    // keyless equivalent — so an unclaimed keyless project has nothing to skip
+    // keyless equivalent — so a project running on a secret key has nothing to skip
     // *over*, just nothing to verify.
     const keyless = await ctx.getKeylessTarget();
-    return check.skip(
-      keyless ? "accountless application, no linked app to verify" : "not authenticated",
-    );
+    if (!keyless) return check.skip("not authenticated");
+    const source = await plainKeysSource(ctx, keyless);
+    const runs = source ? `secret key from ${source}` : "accountless application";
+    return check.skip(`${runs}, no linked app to verify`);
   }
 
   const resolved = await ctx.getProfile();
@@ -358,9 +380,10 @@ export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
     // A linked profile's dev/prod instance IDs are an account-only concept —
     // the secret key on disk already addresses its one instance directly.
     const keyless = await ctx.getKeylessTarget();
-    return check.skip(
-      keyless ? "accountless application, no linked instances to verify" : "not authenticated",
-    );
+    if (!keyless) return check.skip("not authenticated");
+    const source = await plainKeysSource(ctx, keyless);
+    const runs = source ? `secret key from ${source}` : "accountless application";
+    return check.skip(`${runs}, no linked instances to verify`);
   }
 
   const resolved = await ctx.getProfile();

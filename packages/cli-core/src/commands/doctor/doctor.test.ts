@@ -169,6 +169,8 @@ const PLAIN_KEYS: UnlinkedFolder = {
   publishableKey: { name: "CLERK_PUBLISHABLE_KEY", source: ".env.local" },
   secretKey: { name: "CLERK_SECRET_KEY", source: ".env.local" },
 };
+const INIT_SIGNED_OUT: UnlinkedFolder = { kind: "init_app", credential: "none" };
+const SDK_SIGNED_OUT: UnlinkedFolder = { kind: "sdk_app", credential: "none" };
 
 /** Signed out with a secret key on disk, by what the folder holds and the mode. */
 const SIGNED_OUT_CASES: {
@@ -614,15 +616,37 @@ describe("checkTokenValid", () => {
     expectCheck(result, { name: "Authentication valid", status: "warn", message: "Skipped" });
   });
 
-  test("pass (not skip) when no token but an unclaimed keyless application is present", async () => {
-    const ctx = createMockContext({ token: null, keylessTarget: mockKeylessTarget });
-    const result = await checkTokenValid(ctx);
-    expectCheck(result, {
-      name: "Authentication valid",
-      status: "pass",
-      message: "No account session",
-    });
-  });
+  // Only an init app or an SDK app is called accountless: plain keys may
+  // belong to an app in any account, so the check names their file.
+  test.each([
+    {
+      kind: "an init token",
+      folder: INIT_SIGNED_OUT,
+      message: "No account session — not required for this accountless application",
+    },
+    {
+      kind: "an SDK app",
+      folder: SDK_SIGNED_OUT,
+      message: "No account session — not required for this accountless application",
+    },
+    {
+      kind: "plain keys",
+      folder: PLAIN_KEYS,
+      message: "No account session — not required: the secret key from `.env.local` works",
+    },
+  ])(
+    "pass (not skip) when no token but a secret key is present: $kind",
+    async ({ folder, message }) => {
+      const ctx = createMockContext({
+        token: null,
+        keylessTarget: mockKeylessTarget,
+        unlinkedFolder: folder,
+      });
+      const result = await checkTokenValid(ctx);
+      expectCheck(result, { name: "Authentication valid", status: "pass" });
+      expect(result.message).toBe(message);
+    },
+  );
 
   // Only an init app or an SDK app is called accountless: plain keys may
   // belong to an app in any account.
@@ -829,15 +853,37 @@ describe("checkLinkedAppExists", () => {
     expectCheck(result, { name: "Application reachable", status: "warn", message: "Skipped" });
   });
 
-  test("skip reason names the keyless application instead of implying a problem", async () => {
-    const ctx = createMockContext({ token: null, keylessTarget: mockKeylessTarget });
-    const result = await checkLinkedAppExists(ctx);
-    expectCheck(result, {
-      name: "Application reachable",
-      status: "warn",
-      message: ["Skipped", "accountless application"],
-    });
-  });
+  // Plain keys may belong to an app in any account: the reason names their
+  // file instead of calling the app accountless.
+  test.each([
+    {
+      kind: "an init token",
+      folder: INIT_SIGNED_OUT,
+      message: "Skipped (accountless application, no linked app to verify)",
+    },
+    {
+      kind: "an SDK app",
+      folder: SDK_SIGNED_OUT,
+      message: "Skipped (accountless application, no linked app to verify)",
+    },
+    {
+      kind: "plain keys",
+      folder: PLAIN_KEYS,
+      message: "Skipped (secret key from `.env.local`, no linked app to verify)",
+    },
+  ])(
+    "skip reason names what the secret key runs instead of implying a problem: $kind",
+    async ({ folder, message }) => {
+      const ctx = createMockContext({
+        token: null,
+        keylessTarget: mockKeylessTarget,
+        unlinkedFolder: folder,
+      });
+      const result = await checkLinkedAppExists(ctx);
+      expectCheck(result, { name: "Application reachable", status: "warn" });
+      expect(result.message).toBe(message);
+    },
+  );
 });
 
 describe("checkInstances", () => {
@@ -908,15 +954,37 @@ describe("checkInstances", () => {
     expectCheck(result, { name: "Instance IDs", status: "warn", message: "Skipped" });
   });
 
-  test("skip reason names the keyless application instead of implying a problem", async () => {
-    const ctx = createMockContext({ token: null, keylessTarget: mockKeylessTarget });
-    const result = await checkInstances(ctx);
-    expectCheck(result, {
-      name: "Instance IDs",
-      status: "warn",
-      message: ["Skipped", "accountless application"],
-    });
-  });
+  // Plain keys may belong to an app in any account: the reason names their
+  // file instead of calling the app accountless.
+  test.each([
+    {
+      kind: "an init token",
+      folder: INIT_SIGNED_OUT,
+      message: "Skipped (accountless application, no linked instances to verify)",
+    },
+    {
+      kind: "an SDK app",
+      folder: SDK_SIGNED_OUT,
+      message: "Skipped (accountless application, no linked instances to verify)",
+    },
+    {
+      kind: "plain keys",
+      folder: PLAIN_KEYS,
+      message: "Skipped (secret key from `.env.local`, no linked instances to verify)",
+    },
+  ])(
+    "skip reason names what the secret key runs instead of implying a problem: $kind",
+    async ({ folder, message }) => {
+      const ctx = createMockContext({
+        token: null,
+        keylessTarget: mockKeylessTarget,
+        unlinkedFolder: folder,
+      });
+      const result = await checkInstances(ctx);
+      expectCheck(result, { name: "Instance IDs", status: "warn" });
+      expect(result.message).toBe(message);
+    },
+  );
 });
 
 describe("checkEnvVars", () => {
