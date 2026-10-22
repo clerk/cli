@@ -23,10 +23,11 @@ creates the production instance, prints the DNS records you must add, collects
 production OAuth credentials, and verifies the domain. It needs a terminal;
 re-run it at any time to resume where you left off.
 
-When run by an agent (or without a TTY), it is read-only: it prints a JSON
+When run by an agent (or without a TTY), it never prompts. It prints a JSON
 status report with the current state and a \`nextAction\` field saying what to
-do next. \`clerk deploy status\` prints the same report; add \`--wait\` to keep
-checking until DNS, SSL, and email DNS are verified.`;
+do next, and creates the production instance only when \`--domain\` is passed.
+\`clerk deploy status\` prints the same report; add \`--wait\` to keep checking
+until DNS, SSL, and email DNS are verified.`;
 
 export const INTRO_PREAMBLE = `This will prepare your linked Clerk app for production by cloning your
 development instance into a new production instance and walking you through
@@ -542,6 +543,19 @@ export function productionSummary(
   ];
 }
 
+/**
+ * Prints the production keys as `KEY=value` lines and writes no file: a bare
+ * `env pull` writes them over the development keys in the local env file,
+ * which breaks localhost. Names the instance by id when known, since `prod`
+ * reads the local profile. `cli` is the command's first words.
+ */
+export function keyPullCommand(
+  cli: string,
+  productionInstanceId: string | null | undefined,
+): string {
+  return `${cli} env pull --instance ${productionInstanceId ?? "prod"} --print`;
+}
+
 export function nextStepsBody(
   appId: string,
   productionInstanceId: string,
@@ -561,17 +575,17 @@ export function nextStepsBody(
     { hang: 6 },
   ).join("\n");
   return `
-  1. Pull production keys into your environment
-       clerk env pull --instance prod
+  1. Print the production keys
+       ${keyPullCommand("clerk", productionInstanceId)}
 
-     This writes pk_live_... and sk_live_... to your env file. They
-     replace your pk_test_... and sk_test_... keys.
+     This prints the pk_live_... and sk_live_... lines and writes no file,
+     so your env file keeps its pk_test_... and sk_test_... keys.
 
   2. Update env vars on your hosting provider
      Vercel, AWS, GCP, Heroku, Render, etc. all expose env vars in their UI.
-       - Add the same pk_live_/sk_live_ values there.
+       - Add the printed pk_live_/sk_live_ values there.
        - Also copy the other Clerk variables from your env file, such as
-         NEXT_PUBLIC_CLERK_SIGN_IN_URL. \`env pull\` writes only the two keys.
+         NEXT_PUBLIC_CLERK_SIGN_IN_URL. \`env pull\` prints only the two keys.
 
 ${step3}
 

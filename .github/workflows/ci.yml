@@ -86,6 +86,10 @@ jobs:
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run check:patches
+      # The deploy report's key-copying command is tested in bash and zsh,
+      # the shells agents run it in; zsh isn't on the Ubuntu image.
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh
       - run: bun run test
 
   test-e2e:
