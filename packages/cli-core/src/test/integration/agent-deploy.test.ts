@@ -206,7 +206,11 @@ describe("without a linked project", () => {
   const write = (file: string, content: string) => Bun.write(join(h.tempDir, file), content);
   const FOLDERS = {
     initApp: async () => {
-      await write(".clerk/keyless.json", JSON.stringify({ claimToken: "claim_token_init" }));
+      // The token file needs both fields, or the CLI ignores it.
+      await write(
+        ".clerk/keyless.json",
+        JSON.stringify({ claimToken: "claim_token_init", createdAt: new Date().toISOString() }),
+      );
       await write(".env", `CLERK_PUBLISHABLE_KEY=${KEY}\n`);
     },
     sdkApp: () =>
@@ -231,48 +235,86 @@ describe("without a linked project", () => {
     none: async () => {},
   };
   type Credential = "session" | "api_key" | "none";
+  const LIST_AND_LINK = ["clerk apps list --json", "clerk link --app <app_id>"];
+  // The commands before the rerun, for each kind and credential.
   const KINDS: {
     kind: string;
     credential: Credential;
     setUp: () => Promise<unknown>;
-    first: string;
+    expected: string[];
+    says?: string;
   }[] = [
-    { kind: "an init app", credential: "session", setUp: FOLDERS.initApp, first: "clerk link" },
-    { kind: "an init app", credential: "api_key", setUp: FOLDERS.initApp, first: "clerk link" },
-    { kind: "an init app", credential: "none", setUp: FOLDERS.initApp, first: "clerk auth login" },
-    { kind: "an SDK app", credential: "session", setUp: FOLDERS.sdkApp, first: "clerk open" },
-    { kind: "an SDK app", credential: "none", setUp: FOLDERS.sdkApp, first: "clerk open" },
+    {
+      kind: "an init app",
+      credential: "session",
+      setUp: FOLDERS.initApp,
+      expected: ["clerk link"],
+      says: "created by `clerk init`",
+    },
+    {
+      kind: "an init app",
+      credential: "api_key",
+      setUp: FOLDERS.initApp,
+      expected: ["clerk link"],
+      says: "created by `clerk init`",
+    },
+    {
+      kind: "an init app",
+      credential: "none",
+      setUp: FOLDERS.initApp,
+      expected: ["clerk auth login"],
+      says: "created by `clerk init`",
+    },
+    {
+      kind: "an SDK app",
+      credential: "session",
+      setUp: FOLDERS.sdkApp,
+      expected: ["clerk open", "clerk link"],
+    },
+    {
+      kind: "an SDK app",
+      credential: "none",
+      setUp: FOLDERS.sdkApp,
+      expected: ["clerk open", "clerk auth login", "clerk link"],
+    },
     {
       kind: "a publishable key",
       credential: "session",
       setUp: FOLDERS.publishableKey,
-      first: "clerk link",
+      expected: ["clerk link"],
+      says: "publishable key is `CLERK_PUBLISHABLE_KEY` in .env",
     },
     {
       kind: "a publishable key",
       credential: "none",
       setUp: FOLDERS.publishableKey,
-      first: "clerk auth login",
+      expected: ["clerk auth login", "clerk link"],
+      says: "publishable key is `CLERK_PUBLISHABLE_KEY` in .env",
     },
     {
       kind: "a secret key only",
       credential: "session",
       setUp: FOLDERS.secretKeyOnly,
-      first: "clerk apps list --json",
+      expected: LIST_AND_LINK,
     },
     {
       kind: "keys the CLI couldn't tell apart",
       credential: "session",
       setUp: FOLDERS.couldntTell,
-      first: "clerk apps list --json",
+      expected: LIST_AND_LINK,
     },
     {
       kind: "no keys",
       credential: "session",
       setUp: FOLDERS.none,
-      first: "clerk apps list --json",
+      expected: [...LIST_AND_LINK, "clerk init"],
     },
-    { kind: "no keys", credential: "none", setUp: FOLDERS.none, first: "clerk auth login" },
+    {
+      kind: "no keys",
+      credential: "none",
+      setUp: FOLDERS.none,
+      expected: ["clerk auth login", ...LIST_AND_LINK, "clerk init"],
+    },
   ];
   // The rerun keeps the flags: an agent creates production only with --domain.
   const CELLS = KINDS.flatMap((kind) => [
@@ -287,21 +329,23 @@ describe("without a linked project", () => {
   }
 
   test.each(CELLS)(
-    "$kind, $credential, deploy $args: not_linked, exit 1, creates nothing, $first first, $rerun last",
-    async ({ setUp, credential, args, first, rerun }) => {
+    "$kind, $credential, deploy $args: not_linked, exit 1, creates nothing, $expected then $rerun",
+    async ({ setUp, credential, args, expected, says, rerun }) => {
       await setUp();
       await useCredential(credential);
       stubPlatformApi();
 
       const result = await deploy(...args);
       const error = agentError(result);
-      const examples = (error.examples ?? []).map((example) => example.command);
 
       expect(result.exitCode).toBe(1);
       expect(error.code).toBe("not_linked");
       expect(error.message.startsWith(`${LEAD} `)).toBe(true);
-      expect(examples[0]).toBe(first);
-      expect(examples.at(-1)).toBe(rerun);
+      expect((error.examples ?? []).map((example) => example.command)).toEqual([
+        ...expected,
+        rerun,
+      ]);
+      if (says) expect(error.message).toContain(says);
       expect(error.message).not.toContain("deploy --app");
       expect(result.stdout).toBe("");
       // Classifying the folder makes no API call.
