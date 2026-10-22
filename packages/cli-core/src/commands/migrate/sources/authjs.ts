@@ -1,5 +1,5 @@
 import type { SourceEntry } from "../types.ts";
-import { routeByVerification, splitName } from "./shared.ts";
+import { parseDate, routeByVerification, splitName } from "./shared.ts";
 
 /**
  * Whether an Auth.js `emailVerified` value is a verification: a real date.
@@ -12,7 +12,7 @@ export function isAuthJsVerified(value: unknown): boolean {
   if (typeof value === "string") {
     const trimmed = value.trim();
     if (/^\d+$/.test(trimmed)) return Number(trimmed) !== 0;
-    const time = Date.parse(trimmed);
+    const time = parseDate(trimmed).getTime();
     return !Number.isNaN(time) && time !== 0;
   }
   return Boolean(value);

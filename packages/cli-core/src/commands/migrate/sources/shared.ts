@@ -115,6 +115,19 @@ export function splitName(user: Record<string, unknown>, field = "name"): void {
 }
 
 /**
+ * Parses a date string as `Date` does, but reads a date and time with no
+ * offset (`2024-08-24 03:40:02`, as SQL and CSV exports write them) as UTC
+ * rather than the machine's local time, so an import means the same on any
+ * clock.
+ */
+export function parseDate(value: string): Date {
+  const trimmed = value.trim();
+  return /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(trimmed)
+    ? new Date(`${trimmed.replace(" ", "T")}Z`)
+    : new Date(trimmed);
+}
+
+/**
  * Converts a source timestamp to ISO 8601, leaving it untouched when it does
  * not parse so the schema reports it as a validation failure with the original
  * value visible in the log.
@@ -128,7 +141,7 @@ export function toIsoDate(value: unknown, epochMillis = false): unknown {
   const parsed =
     epochMillis && (typeof value === "number" || /^\d+$/.test(String(value)))
       ? new Date(Number(value))
-      : new Date(String(value));
+      : parseDate(String(value));
 
   return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
 }
