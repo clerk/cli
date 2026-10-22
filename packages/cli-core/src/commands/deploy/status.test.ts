@@ -1192,7 +1192,7 @@ describe("buildDeployStatusReport", () => {
         "(Preview, Development, or a custom one), it stops with exit 3 and names it: ask the user " +
         "before replacing it, because `--force` may rewrite that shared variable and put the " +
         "production secret key in those deployments. " +
-        "If they agree, run the command again with its leading `allow_shared=0` changed to " +
+        "If they agree, run the command again with its `allow_shared=0` changed to " +
         "`allow_shared=1`.",
     );
     expect(report.nextAction).toContain("it stops with exit 1 if it can't read that list");
@@ -1226,7 +1226,7 @@ describe("buildDeployStatusReport", () => {
     ]);
     const command = report.hostSetup[0]!.command;
     expect(command).toStartWith(
-      "( allow_shared=0; set -o pipefail; keys=$(clerk env pull --instance ins_prod --print) || exit 1; ",
+      "( set +x; allow_shared=0; set -o pipefail; keys=$(clerk env pull --instance ins_prod --print) || exit 1; ",
     );
     expect(command).toContain("FORCE_COLOR=0 vercel env ls --no-color");
     expect(command).toEndWith('vercel env add "$key" production --force || exit 1; done )');
@@ -1331,7 +1331,12 @@ vercel() {
 
     async function run(
       scenario: string,
-      options: { command?: string; env?: Record<string, string>; errexit?: boolean } = {},
+      options: {
+        command?: string;
+        env?: Record<string, string>;
+        errexit?: boolean;
+        xtrace?: boolean;
+      } = {},
     ): Promise<{
       exitCode: number;
       output: string;
@@ -1347,9 +1352,10 @@ vercel() {
       };
       try {
         // `-f` keeps zsh from reading the developer's startup files.
-        // `-e`: the caller's shell may have `set -e` on, which the command inherits.
-        const errexit = options.errexit ? ["-e"] : [];
-        const args = shell === "zsh" ? ["zsh", "-f", ...errexit, "-c"] : ["bash", ...errexit, "-c"];
+        // `-e` and `-x`: the caller's shell may have `set -e` or `set -x` on,
+        // which the command inherits.
+        const flags = [...(options.errexit ? ["-e"] : []), ...(options.xtrace ? ["-x"] : [])];
+        const args = shell === "zsh" ? ["zsh", "-f", ...flags, "-c"] : ["bash", ...flags, "-c"];
         const proc = Bun.spawn([...args, `${stubs}\n${options.command ?? keyCopyCommand()}`], {
           env: {
             PATH: process.env.PATH ?? "",
@@ -1433,6 +1439,22 @@ vercel() {
       expect(withErrexit.output).toBe(without.output);
     });
 
+    // With `set -x` on, the shell would trace every line that holds a key to
+    // stderr, which the agent reads.
+    test
+      .skipIf(!installed)
+      .each(["none", "trailing_equals", "shared", "ls_fails", "first_upload_fails"])(
+      "under set -x, %s prints no key and ends as it does without it",
+      async (scenario) => {
+        const without = await run(scenario);
+        const traced = await run(scenario, { xtrace: true });
+
+        expect(traced.output).not.toContain("FAKE");
+        expect(traced.exitCode).toBe(without.exitCode);
+        expect(traced.uploads).toEqual(without.uploads);
+      },
+    );
+
     test.skipIf(!installed)("under set -e, replaces both production keys and exits 0", async () => {
       const result = await run("none", { errexit: true });
 
@@ -1472,7 +1494,7 @@ vercel() {
     // Consent lives in the command the user sees, for that one run.
     test.skipIf(!installed)("replaces a shared key when rerun with allow_shared=1", async () => {
       const command = keyCopyCommand();
-      expect(command).toStartWith("( allow_shared=0; ");
+      expect(command).toStartWith("( set +x; allow_shared=0; ");
 
       const result = await run("shared", {
         command: command.replace("allow_shared=0", "allow_shared=1"),

@@ -760,6 +760,8 @@ function oauthSetupGuides(
  * long listing, and `pipefail` would turn that into a failure. The parentheses
  * keep `pipefail`, `exit`, and `allow_shared` out of the agent's shell.
  * `${name}` has braces because zsh reads `$name[` as an array subscript.
+ * `set +x` comes first: a caller with `set -x` on would otherwise trace every
+ * line that holds a key to stderr, which the agent reads.
  * The shared check is an `if`, not `grep ... && echo`: with no shared key the
  * `&&` form ends the loop with grep's 1, which `pipefail` carries into
  * `shared=$(...)`, and a caller with `set -e` on would exit there, silently,
@@ -771,7 +773,7 @@ function oauthSetupGuides(
  */
 function vercelKeyCopyCommand(pull: string): string {
   return (
-    `( allow_shared=0; set -o pipefail; keys=$(${pull}) || exit 1; ` +
+    `( set +x; allow_shared=0; set -o pipefail; keys=$(${pull}) || exit 1; ` +
     `e=$(printf '\\033'); vars=$(FORCE_COLOR=0 vercel env ls --no-color 2>&1 | sed "s/$e\\[[0-9;]*m//g") || { printf '%s\\n' "$vars" >&2; exit 1; }; ` +
     `printf '%s\\n' "$vars" | grep -iE "^[[:space:]]*name[[:space:]].*environments|No Environment Variables found" >/dev/null || ` +
     `{ echo "Couldn't read the variable list from vercel env ls; check the project's variables before replacing any." >&2; exit 1; }; ` +
@@ -997,7 +999,7 @@ export function agentNextAction(step: DeployNextStep): string {
         `with exit 1 if it can't read that list. If a key is already set as a production variable that also ` +
         `targets another environment (Preview, Development, or a custom one), it stops with exit 3 and names ` +
         `it: ask the user before replacing it, because \`--force\` may rewrite that shared variable and put ` +
-        `the production secret key in those deployments. If they agree, run the command again with its leading \`allow_shared=0\` changed to ` +
+        `the production secret key in those deployments. If they agree, run the command again with its \`allow_shared=0\` changed to ` +
         `\`allow_shared=1\`. Otherwise it replaces the production values and exits non-zero if the pull or ` +
         `any upload fails; redeploy only after it exits 0. ` +
         `For a host without a CLI, ask the user to run \`${pull}\` in a separate terminal, not through ` +
