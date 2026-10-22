@@ -362,6 +362,92 @@ describe("config push", () => {
     );
   });
 
+  // `clerk config` prints secret-named values as `[REDACTED]`. Fed back in,
+  // that text would be saved over the real secret.
+  describe("[REDACTED] values", () => {
+    async function push(op: "patch" | "put", payload: Record<string, unknown>, dryRun = false) {
+      const writes: string[] = [];
+      stubFetch(async (_input, init) => {
+        const isGet = !init?.method || init.method === "GET";
+        if (!isGet) writes.push(init?.method ?? "");
+        return new Response(JSON.stringify(isGet ? currentConfig : mockResponse), {
+          status: 200,
+        });
+      });
+      await setProfile(process.cwd(), {
+        workspaceId: "org_1",
+        appId: "app_1",
+        instances: { development: "ins_dev" },
+      });
+      const run = op === "patch" ? runConfigPatch : runConfigPut;
+      const error = await run({ json: JSON.stringify(payload), yes: true, dryRun }).catch(
+        (e: unknown) => e,
+      );
+      return { error, writes };
+    }
+
+    test.each([
+      { op: "patch" as const, dryRun: false },
+      { op: "patch" as const, dryRun: true },
+      { op: "put" as const, dryRun: false },
+    ])(
+      "$op refuses a secret that is still [REDACTED] (dryRun: $dryRun)",
+      async ({ op, dryRun }) => {
+        const { error, writes } = await push(
+          op,
+          {
+            connection_oauth_google: {
+              enabled: true,
+              client_id: "client.apps.googleusercontent.com",
+              client_secret: "[REDACTED]",
+            },
+          },
+          dryRun,
+        );
+
+        expect(error).toBeInstanceOf(CliError);
+        expect((error as CliError).exitCode).toBe(EXIT_CODE.USAGE);
+        expect((error as CliError).message).toBe(
+          "Nothing was saved: connection_oauth_google.client_secret holds [REDACTED], which " +
+            "`clerk config` prints in place of a secret. Replace it with the real value, then run " +
+            "the command again.",
+        );
+        expect(writes).toEqual([]);
+      },
+    );
+
+    test("names every secret still holding [REDACTED]", async () => {
+      const { error, writes } = await push("patch", {
+        connection_oauth_google: { enabled: true, client_secret: "[REDACTED]" },
+        connection_oauth_apple: { enabled: true, client_secret: "[REDACTED]" },
+      });
+
+      expect((error as CliError).message).toBe(
+        "Nothing was saved: connection_oauth_google.client_secret and " +
+          "connection_oauth_apple.client_secret hold [REDACTED], which `clerk config` prints in " +
+          "place of a secret. Replace them with the real values, then run the command again.",
+      );
+      expect(writes).toEqual([]);
+    });
+
+    // Only the exact text, and only under a key the redaction covers.
+    test.each([
+      {
+        label: "under a key that isn't secret-named",
+        payload: { session: { name: "[REDACTED]" } },
+      },
+      {
+        label: "inside a longer secret",
+        payload: { connection_oauth_google: { enabled: true, client_secret: "x[REDACTED]" } },
+      },
+    ])("saves [REDACTED] $label", async ({ payload }) => {
+      const { error, writes } = await push("patch", payload);
+
+      expect(error).toBeUndefined();
+      expect(writes).toEqual(["PATCH"]);
+    });
+  });
+
   test("patch shows 'Updating' label", async () => {
     await setProfile(process.cwd(), {
       workspaceId: "org_1",
