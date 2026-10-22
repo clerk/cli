@@ -113,7 +113,8 @@ export async function resolveSource(value: string): Promise<ResolvedSource> {
     const resolved = path.resolve(process.cwd(), value);
     // Hashed first, and loaded by that hash: the record names the very code
     // that maps the users, even if the file was edited since a last load.
-    const hash = fs.existsSync(resolved)
+    // Only a file: loadCustomSource reports a missing path or a directory.
+    const hash = fs.statSync(resolved, { throwIfNoEntry: false })?.isFile()
       ? createHash("sha256").update(fs.readFileSync(resolved)).digest("hex")
       : undefined;
     const entry = await loadCustomSource(value, sourceKeys(), hash);
