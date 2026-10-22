@@ -35,6 +35,7 @@ import {
   describeKeyLocation,
   ENV_VAR_SOURCE_SUFFIX,
   SDK_KEYLESS_SOURCE,
+  unreadGenericPublishableKey,
   type LocatedKey,
 } from "../../lib/local-keys.ts";
 import { quoteArg } from "../../lib/json-body.ts";
@@ -236,7 +237,15 @@ async function pullKeylessKeys(
       agent: isAgent(),
       rerun: envPullRerun(options),
     });
-    log.warn(keylessCopy.missingPublishableKey(publishableKeyName, step));
+    // The keys are written, so a file that can't be read now only drops the hint.
+    const skipped = await unreadGenericPublishableKey(cwd).catch(() => undefined);
+    log.warn(
+      keylessCopy.missingPublishableKey(
+        publishableKeyName,
+        step,
+        skipped && { line: describeKeyLocation(skipped.location), framework: skipped.framework },
+      ),
+    );
   }
 }
 

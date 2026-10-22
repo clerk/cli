@@ -94,9 +94,18 @@ export const keylessCopy = {
     `${step}\n` +
     `To inspect the user right now, \`clerk api /users/${userId}\` reads it straight from the instance.`,
 
-  /** `step` as above, with its rerun of `clerk env pull`. */
-  missingPublishableKey: (publishableKeyName: string, step: string): string =>
-    `No publishable key found locally. Set ${publishableKeyName} manually, or link this folder's app to pull it. ${step}`,
+  /**
+   * `step` as above, with its rerun of `clerk env pull`. `skipped`: a generic
+   * key line the framework doesn't read, as "`CLERK_PUBLISHABLE_KEY` in .env.local".
+   */
+  missingPublishableKey: (
+    publishableKeyName: string,
+    step: string,
+    skipped?: { line: string; framework: string },
+  ): string =>
+    skipped
+      ? `No publishable key found locally. ${skipped.line} isn't read by ${skipped.framework}: rename it to \`${publishableKeyName}\`, or link this folder's app to pull the key. ${step}`
+      : `No publishable key found locally. Set ${publishableKeyName} manually, or link this folder's app to pull it. ${step}`,
 
   instanceFlagNeedsLinkedApplication: (subject: KeylessSubject, step: string): string =>
     `--instance is not supported ${forApp(subject)}: the secret key in ${subject.source} already targets its own instance.\n` +

@@ -275,3 +275,24 @@ describe("a Next.js folder whose .env.development.local can't be read", () => {
     );
   });
 });
+
+// Next.js reads only `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, so env pull skips the generic name.
+describe("a Next.js folder whose publishable key is under the generic name", () => {
+  beforeEach(async () => {
+    signOut();
+    await useFramework("next");
+    await write(
+      ".env.local",
+      `CLERK_PUBLISHABLE_KEY=${FOLDER_PK}\nCLERK_SECRET_KEY=${SECRET_KEY}\n`,
+    );
+  });
+
+  test("env pull's missing-key warning names the line it skipped and the name to use", async () => {
+    const result = await run("env", "pull", "--file", "pulled.env");
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr(result)).toContain(
+      "No publishable key found locally. `CLERK_PUBLISHABLE_KEY` in .env.local isn't read by Next.js: rename it to `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, or link this folder's app to pull the key.",
+    );
+  });
+});

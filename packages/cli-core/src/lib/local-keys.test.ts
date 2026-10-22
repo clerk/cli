@@ -3,7 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { useCleanClerkKeyEnv, useSyntheticShellClerkKeys } from "../test/lib/clerk-key-env.ts";
-import { readAllFolderKeys, readFolderKeys, readSdkKeylessApp } from "./local-keys.ts";
+import {
+  readAllFolderKeys,
+  readFolderKeys,
+  readSdkKeylessApp,
+  unreadGenericPublishableKey,
+} from "./local-keys.ts";
 
 // The shell exports a synthetic key under every Clerk name for the whole file,
 // and every test starts with them cleared. A block that skipped the clearing
@@ -334,6 +339,33 @@ describe("the key the app loads, by framework", () => {
       name: "CLERK_PUBLISHABLE_KEY",
       source: "CLERK_PUBLISHABLE_KEY env var",
     });
+  });
+});
+
+// For `env pull`'s hint when the folder's app loads no publishable key.
+describe("unreadGenericPublishableKey", () => {
+  const useFramework = (dep: string) =>
+    write("package.json", JSON.stringify({ dependencies: { [dep]: "1.0.0" } }));
+
+  test("Next.js: the first generic line in its load order, and the framework's name", async () => {
+    await useFramework("next");
+    await write(".env", "CLERK_PUBLISHABLE_KEY=pk_test_env\n");
+    await write(".env.local", "CLERK_PUBLISHABLE_KEY=pk_test_local\n");
+
+    expect(await unreadGenericPublishableKey(dir)).toEqual({
+      location: { name: "CLERK_PUBLISHABLE_KEY", source: ".env.local" },
+      framework: "Next.js",
+    });
+  });
+
+  test.each([
+    { why: "Express reads the generic name", dep: "express", file: ".env" },
+    { why: "Nuxt doesn't load .env.local at all", dep: "nuxt", file: ".env.local" },
+  ])("none when $why", async ({ dep, file }) => {
+    await useFramework(dep);
+    await write(file, "CLERK_PUBLISHABLE_KEY=pk_test_generic\n");
+
+    expect(await unreadGenericPublishableKey(dir)).toBeUndefined();
   });
 });
 

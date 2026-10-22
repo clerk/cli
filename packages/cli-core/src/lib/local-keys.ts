@@ -410,6 +410,26 @@ function keyNames(
 }
 
 /**
+ * A generic `CLERK_PUBLISHABLE_KEY` line in the files the folder's app loads,
+ * when its framework's SDK reads only its own name (Next.js, say), and that
+ * framework's name. The first such line in load order; never its value.
+ */
+export async function unreadGenericPublishableKey(
+  cwd: string,
+): Promise<{ location: { name: string; source: string }; framework: string } | undefined> {
+  const framework = await detectFramework(cwd);
+  if (framework?.readsGenericPublishableKey !== false) return undefined;
+  const { keys } = await readKeyLines(cwd, framework.envLoadOrder ?? ENV_FILE_CANDIDATES, {
+    publishable: ["CLERK_PUBLISHABLE_KEY"],
+    secret: [],
+  });
+  const [first] = keys;
+  return (
+    first && { location: { name: first.name, source: first.source }, framework: framework.name }
+  );
+}
+
+/**
  * The key `readFolderKeys` returns before reading any file: one exported in
  * the shell under the first name the app reads. For a caller that must work
  * when an env file it doesn't need can't be read.
