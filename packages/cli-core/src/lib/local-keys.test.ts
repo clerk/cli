@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { useCleanClerkKeyEnv, useSyntheticShellClerkKeys } from "../test/lib/clerk-key-env.ts";
+import * as dotenv from "./dotenv.ts";
 import {
   readAllFolderKeys,
   readFolderKeys,
@@ -57,6 +58,23 @@ describe("readFolderKeys", () => {
       },
       secretKey: { value: "sk_test_from_local", name: "CLERK_SECRET_KEY", source: ".env.local" },
     });
+  });
+
+  test("parses each env file once for both keys", async () => {
+    await write("package.json", JSON.stringify({ dependencies: { next: "15.0.0" } }));
+    await write(
+      ".env",
+      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_env\nCLERK_SECRET_KEY=sk_test_env\n",
+    );
+    await write(".env.local", "CLERK_SECRET_KEY=sk_test_local\n");
+    const parse = spyOn(dotenv, "parseEnvFile");
+    try {
+      await readFolderKeys(dir);
+
+      expect(parse).toHaveBeenCalledTimes(2);
+    } finally {
+      parse.mockRestore();
+    }
   });
 
   test("an env var wins over both files", async () => {

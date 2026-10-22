@@ -286,36 +286,26 @@ interface EffectiveKey {
 }
 
 /**
- * The key under any of `names` the app loads, and any unreadable lines among
- * the files it would have come from.
+ * The key under any of `names` the app loads, from the shell and from `lines`,
+ * this kind's keys and unreadable lines in the files the app would load it from.
  *
  * Priority is by name, then source: the first name found anywhere wins, so
  * the framework's own name in a file beats a generic name exported in the
- * shell. Within one name, the shell beats the files. An exported first name
- * returns before any file is read, so an unreadable env file can't break a
- * caller that only needs that key.
+ * shell. Within one name, the shell beats the files.
  *
  * `loadOrder` lists the files the app loads, highest priority first. Without
  * one, every candidate file is read, and files holding different values leave
  * the key undecided: picking one would be a guess about which the app loads.
  */
-async function effectiveKey(
-  cwd: string,
-  kind: "publishable" | "secret",
-  names: string[],
+function effectiveKey(
+  names: readonly string[],
+  lines: { keys: FileKey[]; unreadable: UnreadableKeyLine[] },
   loadOrder: readonly string[] | undefined,
-): Promise<EffectiveKey> {
-  const unique = [...new Set(names)];
-  const exportedFirst = unique[0] ? fromEnv(unique[0]) : undefined;
-  if (exportedFirst) return { key: exportedFirst, unreadable: [] };
-
-  const { keys, unreadable } = await readKeyLines(cwd, loadOrder ?? ENV_FILE_CANDIDATES, {
-    publishable: kind === "publishable" ? unique : [],
-    secret: kind === "secret" ? unique : [],
-  });
+): EffectiveKey {
+  const { keys, unreadable } = lines;
   // Within one name, each file's last line is its value, and the file highest
   // in the load order wins.
-  for (const name of unique) {
+  for (const name of names) {
     const exported = fromEnv(name);
     if (exported) return { key: exported, unreadable };
     const perFile = new Map<string, LocatedKey>();
@@ -371,10 +361,37 @@ function sdkFileKeys(sdkFile: SdkKeylessFile): {
 export async function readFolderKeys(cwd: string): Promise<FolderKeys> {
   const framework = await detectFramework(cwd);
   const loadOrder = framework?.envLoadOrder;
-  const [publishable, secret] = await Promise.all([
-    effectiveKey(cwd, "publishable", keyNames(framework, "publishable"), loadOrder),
-    effectiveKey(cwd, "secret", keyNames(framework, "secret"), loadOrder),
-  ]);
+  const names = {
+    publishable: [...new Set(keyNames(framework, "publishable"))],
+    secret: [...new Set(keyNames(framework, "secret"))],
+  };
+  // A key exported under the first name the app reads needs no file, so an
+  // unreadable env file can't break a caller when both keys are exported.
+  const exported = {
+    publishable: names.publishable[0] ? fromEnv(names.publishable[0]) : undefined,
+    secret: names.secret[0] ? fromEnv(names.secret[0]) : undefined,
+  };
+  const lines =
+    exported.publishable && exported.secret
+      ? { keys: [], unreadable: [] }
+      : await readKeyLines(cwd, loadOrder ?? ENV_FILE_CANDIDATES, {
+          publishable: exported.publishable ? [] : names.publishable,
+          secret: exported.secret ? [] : names.secret,
+        });
+  const ofKind = (kind: "publishable" | "secret"): EffectiveKey => {
+    const first = exported[kind];
+    if (first) return { key: first, unreadable: [] };
+    return effectiveKey(
+      names[kind],
+      {
+        keys: lines.keys.filter((key) => key.kind === kind),
+        unreadable: lines.unreadable.filter((line) => line.kind === kind),
+      },
+      loadOrder,
+    );
+  };
+  const publishable = ofKind("publishable");
+  const secret = ofKind("secret");
   const unreadableLines = [...publishable.unreadable, ...secret.unreadable];
   const undecided =
     publishable.undecided || secret.undecided
