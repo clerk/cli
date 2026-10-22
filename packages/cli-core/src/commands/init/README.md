@@ -127,7 +127,7 @@ Package manager is detected from lock files: `bun.lockb`/`bun.lock` → bun, `ya
 
 ## Scaffolding
 
-Scaffolding is supported for every detected framework. iOS and Android write no files (their SDKs are not npm packages and their build files are not safe to modify automatically) — instead they print the exact quickstart steps as post-instructions.
+Scaffolding is supported for every detected framework. The iOS and Android scaffolders write no files (their SDKs are not npm packages and their build files are not safe to modify generically) — instead they print the exact quickstart steps as post-instructions. On a Mac with Xcode, iOS and macOS projects are set up by native setup instead, and `--starter` can create one; see [iOS and macOS (Swift)](#ios-and-macos-swift).
 
 All scaffolding is idempotent — files are skipped if they already contain Clerk setup.
 
