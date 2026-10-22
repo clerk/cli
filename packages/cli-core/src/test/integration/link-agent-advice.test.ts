@@ -488,7 +488,8 @@ describe("agent `clerk link` with a stored session the CLI can't refresh", () =>
 // `init` passes its own rerun, with the flags it ran with, so the advice ends
 // with that command, never a bare `clerk link`, and its retry is the same.
 describe("agent `clerk init` reaching `link`'s stop", () => {
-  const INIT_AGAIN = "clerk init";
+  // `--no-skills` matters most: agent mode installs skills without asking.
+  const INIT_AGAIN = "clerk init --yes --no-skills";
 
   beforeEach(async () => {
     await write(

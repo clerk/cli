@@ -1,0 +1,41 @@
+/**
+ * The `clerk init` to run again when `link` stops inside it, with the flags
+ * this run had. Left out, a flag changes the rerun: agent mode installs the
+ * agent skills without asking, so a rerun without `--no-skills` installs what
+ * the agent declined, and one without `--framework` or `--pm` detects them
+ * again, which in a monorepo can pick others. Values are shell-quoted, as
+ * `migrate` quotes the flags it carries; none of `init`'s flags holds a secret.
+ */
+
+import { relative } from "node:path";
+import { quoteArg } from "../../lib/json-body.ts";
+import type { Rerun } from "../../lib/unlinked-folder.ts";
+import { RERUN_FLAGS } from "./flags.ts";
+import type { InitOptions } from "./index.ts";
+
+/**
+ * Repeats `RERUN_FLAGS`; the flags in `NOT_RERUN` are left out. `where` says
+ * where `init` ran and the folder of the project it just created
+ * (`--starter`, or `--framework` in a folder with no project): the commands
+ * must run in that folder. A key exported in the shell can make `link` stop
+ * there, after a failed app list.
+ */
+export function initRerun(
+  options: InitOptions,
+  where?: { from: string; projectDir: string },
+): Rerun {
+  const flags = RERUN_FLAGS.flatMap(([key, flag]): string[] => {
+    const value = options[key];
+    if (key === "skills") return value === false ? [flag] : [];
+    if (value === undefined || value === false) return [];
+    return value === true ? [flag] : [flag, quoteArg(String(value))];
+  });
+  const command = ["clerk init", ...flags].join(" ");
+  const name = where ? relative(where.from, where.projectDir) : "";
+  if (!where || !name) return { clause: `run \`${command}\` again`, command };
+  return {
+    clause: `run \`${command}\` again in \`${name}\``,
+    command,
+    folder: { name, path: where.projectDir },
+  };
+}

@@ -71,8 +71,11 @@ import {
   type AppleInitOptions,
 } from "./ios/coordinator.js";
 import { withNativeProgress } from "./ios/progress.js";
+import { APPLE_FLAGS } from "./flags.ts";
+import { initRerun } from "./rerun.ts";
+import type { Rerun } from "../../lib/unlinked-folder.ts";
 
-type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
+export type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
   /** Framework to set up (skips auto-detection). */
   framework?: string;
   pm?: PackageManager;
@@ -193,6 +196,8 @@ export async function init(options: InitOptions = {}) {
       ctx.cwd,
       options.app,
       createIfMissing,
+      // A project `init` just created is a new folder below this one.
+      initRerun(options, bootstrap ? { from: cwd, projectDir: ctx.cwd } : undefined),
       // Native setup continues right after linking, so link's `clerk env pull` advice doesn't apply.
       ctx.framework.dep === "ios" && canSetUpXcode() ? { showNextSteps: false } : {},
     );
@@ -319,17 +324,6 @@ async function assertUsableFlags(
     );
   }
 }
-
-const APPLE_FLAGS = [
-  ["xcodeProject", "--xcode-project"],
-  ["xcodeTarget", "--xcode-target"],
-  ["xcodeConfiguration", "--xcode-configuration"],
-  ["appleSdk", "--apple-sdk"],
-  ["bundleId", "--bundle-id"],
-  ["appIdPrefix", "--app-id-prefix"],
-  ["signInWithApple", "--sign-in-with-apple"],
-  ["prebuiltAuthUi", "--prebuilt-auth-ui"],
-] as const;
 
 /** Rejects flags the detected (or requested) framework can't honour. */
 function assertFrameworkFlags(options: InitOptions, framework: FrameworkInfo): void {
@@ -649,6 +643,7 @@ async function authenticateAndLink(
   cwd: string,
   app: string | undefined,
   createIfMissing: string | undefined,
+  rerun: Rerun,
   linkOptions: { showNextSteps?: false } = {},
 ): Promise<LinkOutcome | undefined> {
   const label = await resolveAuthLabel(cwd, app);
@@ -673,8 +668,9 @@ async function authenticateAndLink(
     cwd,
     createIfMissing,
     onlyIfFolderKeysMatch: true,
-    // After claiming an SDK-created app, rerunning `init` finishes setup.
-    rerun: { clause: "run `clerk init` again", command: "clerk init" },
+    // After claiming an SDK-created app, rerunning `init`, flags and all,
+    // finishes setup.
+    rerun,
     ...linkOptions,
   });
 }

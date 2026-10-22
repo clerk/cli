@@ -253,8 +253,8 @@ test("person, signed in, SDK-only folder whose app isn't in the account: opens t
 
   expect(result.exitCode).toBe(1);
   expect(openedUrls).toEqual(["https://dashboard.clerk.com/apps/claim?token=sdk_token"]);
-  // The person reruns init, which finishes setup, and is told so once.
-  expect(Bun.stripANSI(result.stderr)).toContain("run `clerk init` again");
+  // The person reruns init, flags and all, which finishes setup.
+  expect(Bun.stripANSI(result.stderr)).toContain("run `clerk init --yes --no-skills` again");
   expect(Bun.stripANSI(result.stderr)).not.toContain("run `clerk link` again");
   expect(await linkedAppId()).toBeUndefined();
   // Stopped before scaffolding and before any key write.
