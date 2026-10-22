@@ -19,7 +19,7 @@ export type IdentityPrompt = (
   message: string,
   suggestion?: string,
 ) => Promise<string>;
-const validBundle = (value: string | undefined): value is string =>
+export const validBundle = (value: string | undefined): value is string =>
   !!value && value.length <= 255 && /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(value);
 
 export async function discoverBundleIdentifier(

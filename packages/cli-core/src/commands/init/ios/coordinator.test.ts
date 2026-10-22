@@ -293,3 +293,207 @@ test("installed core products and a compatible resolved SDK are preserved withou
   });
   expect(process.exitCode).toBe(0);
 });
+
+// Signed by PERSONAL01; Xcode's account list marks it a Personal Team only where `personal` is set.
+async function signedFixture(platform: "ios" | "macos", starter: boolean, personal: boolean) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-public-init-")));
+  roots.push(root);
+  const f = await capabilityFixture(root, platform);
+  if (starter) await useStarterSources(root);
+  // Apple is on in Clerk, so setup would add its entitlement unless the team rules it out.
+  f.state.apple = { ...f.state.apple, enabled: true, bundle_id: "com.example.MyApp" };
+  const run = f.dependencies.run;
+  const dependencies = {
+    ...f.dependencies,
+    xcodeTeams: [{ id: "PERSONAL01", name: "Sean Perez", personal }],
+    run: async (...args: Parameters<typeof run>) => {
+      const rows = JSON.parse(await run(...args));
+      for (const row of rows) row.buildSettings.DEVELOPMENT_TEAM = "PERSONAL01";
+      return JSON.stringify(rows);
+    },
+  };
+  return { root, f, dependencies };
+}
+
+test.each([
+  {
+    name: "a macOS starter on a Personal Team",
+    platform: "macos",
+    starter: true,
+    personal: true,
+    domain: false,
+    apple: false,
+  },
+  {
+    name: "a macOS starter on a paid team",
+    platform: "macos",
+    starter: true,
+    personal: false,
+    domain: true,
+    apple: true,
+  },
+  // A simulator build signs locally, so an iOS starter keeps the domain on a Personal Team.
+  {
+    name: "an iOS starter on a Personal Team",
+    platform: "ios",
+    starter: true,
+    personal: true,
+    domain: true,
+    apple: false,
+  },
+  // The signing team decides, not whether the files still match the template, so a rerun after
+  // the first setup, or any existing app, gets the same limits.
+  {
+    name: "a customized macOS app on a Personal Team",
+    platform: "macos",
+    starter: false,
+    personal: true,
+    domain: false,
+    apple: false,
+  },
+  {
+    name: "a customized macOS app on a paid team",
+    platform: "macos",
+    starter: false,
+    personal: false,
+    domain: true,
+    apple: true,
+  },
+] as const)(
+  "$name: Associated Domain $domain, Sign in with Apple $apple",
+  async ({ platform, starter, personal, domain, apple }) => {
+    const { root, dependencies } = await signedFixture(platform, starter, personal);
+    // No starterProject: the agent's run after creating the starter reads the team from the project.
+    await runAppleInit(
+      { root, agent: true, json: true, appIdPrefix: "PERSONAL01" },
+      "app_test",
+      dependencies,
+    );
+    const entitlements = await readFile(join(root, "MyApp/MyApp.entitlements"), "utf8");
+    expect(entitlements.includes("webcredentials:")).toBe(domain);
+    expect(entitlements.includes("com.apple.developer.applesignin")).toBe(apple);
+    if (platform === "macos") expect(entitlements).toContain("com.apple.security.network.client");
+    // What was left out is explained, never as "rerun with --sign-in-with-apple".
+    const remaining: string[] = JSON.parse(captured.out).handoff.remaining.map(
+      (item: { detail: string }) => item.detail,
+    );
+    const explained = (text: string) => remaining.some((detail) => detail.includes(text));
+    expect(explained("signed by a Personal Team, which can't use Sign in with Apple")).toBe(
+      personal,
+    );
+    expect(explained("Associated Domains were left out")).toBe(!domain);
+    expect(explained("rerun with --sign-in-with-apple")).toBe(false);
+  },
+);
+
+test("a second run on a macOS starter's Personal Team adds nothing it can't sign", async () => {
+  const { root, dependencies } = await signedFixture("macos", true, true);
+  const options = { root, agent: true, json: true, appIdPrefix: "PERSONAL01" };
+  await runAppleInit(options, "app_test", dependencies);
+  captured.clear();
+  await runAppleInit(options, "app_test", dependencies);
+  const entitlements = await readFile(join(root, "MyApp/MyApp.entitlements"), "utf8");
+  expect(entitlements).not.toContain("webcredentials:");
+  expect(entitlements).not.toContain("com.apple.developer.applesignin");
+});
+
+test("doctor applies the Personal Team rule instead of pointing back at clerk init", async () => {
+  const { root, dependencies } = await signedFixture("macos", true, true);
+  await runAppleInit(
+    { root, agent: true, json: true, appIdPrefix: "PERSONAL01" },
+    "app_test",
+    dependencies,
+  );
+  spies.push(spyOn(coordinator, "canSetUpXcode").mockReturnValue(true));
+  const ctx = {
+    getProfile: async () => ({ profile: { appId: "app_test" } }),
+  } as unknown as DoctorContext;
+  const results = await runIOSDoctorChecks(ctx, { root }, dependencies);
+  const personal = results.find((result) => result.name === "Personal Team");
+  expect(personal?.status).toBe("warn");
+  // Doctor changes nothing, so it doesn't say anything was left out.
+  expect(personal?.message).not.toContain("left out");
+  // Sign in with Apple is on in Clerk, but the team can't use it, so its entitlement isn't required.
+  expect(results.some((result) => result.name.startsWith("Apple entitlement:"))).toBe(false);
+  expect(
+    results
+      .filter((result) => result.name.startsWith("Capabilities:"))
+      .map((result) => result.status),
+  ).toEqual(["pass", "pass"]);
+});
+
+test("names entitlements a Personal Team can't sign when an app moves to one", async () => {
+  // Set up on a team Xcode doesn't mark personal, as 4.0.0 did, so both entitlements are added.
+  const { root, dependencies } = await signedFixture("macos", false, false);
+  const options = { root, agent: true, json: true, appIdPrefix: "PERSONAL01" };
+  await runAppleInit(options, "app_test", dependencies);
+  const personal = {
+    ...dependencies,
+    xcodeTeams: [{ id: "PERSONAL01", name: "Sean Perez", personal: true }],
+  };
+  spies.push(spyOn(coordinator, "canSetUpXcode").mockReturnValue(true));
+  const ctx = {
+    getProfile: async () => ({ profile: { appId: "app_test" } }),
+  } as unknown as DoctorContext;
+  const results = await runIOSDoctorChecks(ctx, { root }, personal);
+  const conflicts = results.filter((result) =>
+    result.name.startsWith("Personal Team entitlements:"),
+  );
+  expect(conflicts.map((result) => result.status)).toEqual(["warn", "warn"]);
+  expect(conflicts[0]!.message).toContain(
+    "still has Sign in with Apple and Associated Domains, which a Personal Team can't sign",
+  );
+
+  captured.clear();
+  await runAppleInit(options, "app_test", personal);
+  const remaining: { id: string; detail: string }[] = JSON.parse(captured.out).handoff.remaining;
+  // One note for the shared file, and nothing claims the entitlements were left out.
+  expect(remaining.filter((item) => item.id === "personal-team-entitlements")).toHaveLength(1);
+  expect(remaining.some((item) => item.detail.includes("left out"))).toBe(false);
+});
+
+test("rejects --sign-in-with-apple for a starter on a Personal Team", async () => {
+  const { root, dependencies } = await signedFixture("ios", true, true);
+  await expect(
+    runAppleInit(
+      { root, agent: true, json: true, appIdPrefix: "PERSONAL01", signInWithApple: true },
+      "app_test",
+      dependencies,
+    ),
+  ).rejects.toThrow("Sign in with Apple needs a paid Apple Developer Program team");
+});
+
+test.each([
+  { name: "takes the starter's sign-in screen default", options: {}, authView: true },
+  {
+    name: "keeps an explicit ClerkKit-only choice",
+    options: { appleSdk: "core" as const },
+    authView: false,
+  },
+  { name: "keeps --prebuilt-auth-ui off", options: { prebuiltAuthUi: false }, authView: false },
+  {
+    name: "leaves an agent's UI to the user",
+    options: { agent: true, json: true },
+    authView: false,
+  },
+])("a new starter with --yes $name", async ({ options, authView }) => {
+  const f = await fixture(true);
+  const p = promptsFor(true);
+  spies.push(spyOn(spinner, "outro").mockResolvedValue(undefined));
+  await runAppleInit(
+    {
+      root: f.root,
+      agent: false,
+      yes: true,
+      starterProject: { projectName: "MyApp", platform: "ios" },
+      ...options,
+    },
+    "app_test",
+    f.dependencies,
+  );
+  expect(p.confirm).not.toHaveBeenCalled();
+  expect(await readFile(join(f.root, "MyApp/MyAppApp.swift"), "utf8")).toContain("Clerk.configure");
+  expect(
+    (await readFile(join(f.root, "MyApp/ContentView.swift"), "utf8")).includes("AuthView()"),
+  ).toBe(authView);
+});

@@ -1,11 +1,18 @@
 import { auditIOSNativeAppleHealth } from "./native-apple.ts";
-import { hasCapabilities, planAllCapabilities, readEntitlements } from "./capabilities.ts";
+import {
+  hasCapabilities,
+  personalTeamConflictNote,
+  personalTeamConflicts,
+  planAllCapabilities,
+  readEntitlements,
+} from "./capabilities.ts";
 import { auditProduction } from "./production.ts";
 import { errorMessage } from "../../../lib/errors.ts";
 import { sdkLinked } from "./sdk.ts";
 import { discoverRemote, describeIdentity } from "./identity.ts";
 import { auditRemote, nativeAPI } from "./remote.ts";
 import { resolvedSDKHealth, type Check } from "./sdk-health.ts";
+import { signedByPersonalTeam } from "./teams.ts";
 import { describePreview, prepareSetup, type SetupOptions, type Dependencies } from "./workflow.ts";
 
 export async function doctor(options: SetupOptions, dependencies: Dependencies = {}) {
@@ -66,10 +73,44 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
           `Bundle ID from ${discovery.bundleSource}; App ID Prefix from ${discovery.prefixSource}.`,
       },
     );
+  // The same rule as setup: a Personal Team gets no Sign in with Apple, and no Associated Domain on macOS.
+  const personalTeam = signedByPersonalTeam(preview.inspection, dependencies.xcodeTeams);
+  const mac = preview.inspection.input.selection.sdk === "macosx";
+  if (personalTeam)
+    checks.push({
+      name: "Personal Team",
+      status: "warn",
+      // Doctor changes nothing, so it says what's unavailable rather than what setup left out.
+      message: mac
+        ? "This app is signed by a Personal Team, which can't use Sign in with Apple, or Associated Domains for passkeys and password AutoFill on a Mac."
+        : "This app is signed by a Personal Team, which can't use Sign in with Apple.",
+    });
+  // Setup never removes entitlements, so one the team can't sign can still be there.
+  if (personalTeam)
+    for (const context of preview.inspection.contexts) {
+      let conflicts: string[];
+      try {
+        const source = await readEntitlements(context);
+        conflicts = source === undefined ? [] : personalTeamConflicts(source, mac);
+      } catch {
+        continue;
+      }
+      if (conflicts.length)
+        checks.push({
+          name: `Personal Team entitlements: ${context.selection.configuration}`,
+          status: "warn",
+          message: personalTeamConflictNote(
+            context.settings.CODE_SIGN_ENTITLEMENTS!.trim(),
+            conflicts,
+          ),
+        });
+    }
   const capabilities = await planAllCapabilities(
     preview.inspection,
     preview.inspection.document.source,
     discovery?.instance.frontendHost,
+    false,
+    !(personalTeam && mac),
   );
   for (const context of capabilities.contexts)
     checks.push({
@@ -91,7 +132,8 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
         },
         dependencies.appleAPI,
       );
-      const required = options.signInWithApple || health.runtime.current?.enabled;
+      const required =
+        !personalTeam && (options.signInWithApple || health.runtime.current?.enabled);
       checks.push({
         name: "Native Apple connection",
         status:

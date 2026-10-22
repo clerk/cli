@@ -142,6 +142,34 @@ test("skips sign-in page when it already exists", async () => {
   });
 });
 
+test("wraps auth page components in Suspense", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx({ deps: { tailwindcss: "^4.0.0" } }));
+
+  expect(findAction(plan.actions, "app/sign-in/[[...sign-in]]/page.tsx")).toMatchObject({
+    type: "create",
+    content: `import { SignIn } from "@clerk/nextjs";
+import { Suspense } from "react";
+
+export default function SignInPage() {
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <Suspense>
+        <SignIn />
+      </Suspense>
+    </div>
+  );
+}
+`,
+  });
+  expect(findAction(plan.actions, "app/sign-up/[[...sign-up]]/page.tsx")).toMatchObject({
+    type: "create",
+    content: expect.stringContaining("<Suspense>\n        <SignUp />\n      </Suspense>"),
+  });
+});
+
 test("uses src/ paths when srcDir is true", async () => {
   await mkdir(join(tempDir, "src/app"), { recursive: true });
   await Bun.write(join(tempDir, "src/app/layout.tsx"), "<html><body>{children}</body></html>");
@@ -593,6 +621,72 @@ test("does not add auth header for non-bootstrap init", async () => {
   expect(layout.content).not.toContain("<Show");
   expect(layout.content).not.toContain("<SignInButton");
   expect(layout.content).not.toContain("<UserButton");
+});
+
+test("wraps the bootstrap header's Show blocks in Suspense", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/layout.tsx"),
+    `import type { Metadata } from "next";
+import { Geist } from "next/font/google";
+import "./globals.css";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
+`,
+  );
+
+  const plan = await nextjsApp.scaffold(
+    makeCtx({ isBootstrap: true, deps: { tailwindcss: "4.0.0" } }),
+  );
+
+  expect(findAction(plan.actions, "app/layout.tsx")).toMatchObject({
+    type: "modify",
+    content: `import { ClerkProvider, Show, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
+import type { Metadata } from "next";
+import { Geist } from "next/font/google";
+import { Suspense } from "react";
+import "./globals.css";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <ClerkProvider>
+          <header className="flex h-16 items-center justify-end gap-4 border-b px-4">
+            <Suspense>
+              <Show when="signed-out">
+                <SignInButton />
+                <SignUpButton />
+              </Show>
+              <Show when="signed-in">
+                <UserButton />
+              </Show>
+            </Suspense>
+          </header>
+          {children}
+        </ClerkProvider>
+      </body>
+    </html>
+  );
+}`,
+  });
+});
+
+test("does not import Suspense for non-bootstrap init", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const layout = findAction(plan.actions, "app/layout.tsx");
+
+  if (layout.type !== "modify") throw new Error("Expected modify action");
+  expect(layout.content).not.toContain("Suspense");
 });
 
 test("uses plain styles for auth header when no Tailwind", async () => {
