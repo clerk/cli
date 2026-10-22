@@ -188,7 +188,7 @@ and the instance, not the source, so a second import of the same file into the
 same instance is refused with exit 2 even before either has written a run,
 whichever source and `--runs-dir` each uses. It lives outside the runs folder because
 nothing may be written there before consent. It holds the importing process's
-PID and is removed however the import ends. One left by a process that died is
+PID and is removed when the import finishes. One left by a Ctrl-C or a process that died is
 reclaimed by the next import. The refusal names the file, which is safe to
 delete when no `clerk migrate import` is running.
 
