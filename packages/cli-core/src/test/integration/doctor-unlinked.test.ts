@@ -8,8 +8,9 @@
  * CLERK_PLATFORM_API_KEY by default.
  */
 
-import { beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { join } from "node:path";
+import * as localKeys from "../../lib/local-keys.ts";
 import {
   clerk,
   http,
@@ -142,4 +143,49 @@ test("stored session only, an init token: Project linked warns, names the claim,
     "Run `clerk link`: it claims the app into your account and links this folder.",
   );
   expect(linked.fix).toBe("Link project with clerk link");
+});
+
+// `doctor` only reads: naming the claim must not claim, and reading the folder
+// must not rewrite it.
+test("stored session only, an init token: doctor only reads Clerk and leaves `.env` and the init token as they were", async () => {
+  await sessionWithInitToken();
+  const env = join(h.tempDir, ".env");
+  const initToken = join(h.tempDir, ...INIT_TOKEN_FILE);
+  const before = { env: await Bun.file(env).bytes(), initToken: await Bun.file(initToken).bytes() };
+
+  await doctorChecks();
+
+  expect(http.requests.filter((request) => request.method !== "GET")).toEqual([]);
+  expect(await Bun.file(env).bytes()).toEqual(before.env);
+  expect(await Bun.file(initToken).bytes()).toEqual(before.initToken);
+});
+
+// Every check that names the folder's step shares one read of each file, so a
+// check that read the folder itself would read it again.
+describe("a full doctor run reads the folder's keys and its init token once", () => {
+  const spies: { mockRestore(): void }[] = [];
+
+  afterEach(() => {
+    for (const spy of spies.splice(0)) spy.mockRestore();
+  });
+
+  test.each([
+    ["signed out, Dashboard keys in `.env`", signedOutWithDashboardKeys],
+    ["stored session only, an init token", sessionWithInitToken],
+  ])("%s", async (_setup, setUp) => {
+    // Dynamic: keyless.ts loads a module the harness mocks.
+    const keyless = await import("../../lib/keyless.ts");
+    const readFolderKeys = spyOn(localKeys, "readFolderKeys");
+    const peekInitToken = spyOn(keyless, "peekKeylessBreadcrumb");
+    const readInitToken = spyOn(keyless, "readKeylessBreadcrumb");
+    spies.push(readFolderKeys, peekInitToken, readInitToken);
+    await setUp();
+
+    await doctorChecks();
+
+    expect(readFolderKeys).toHaveBeenCalledTimes(1);
+    expect(peekInitToken).toHaveBeenCalledTimes(1);
+    // Reading (not peeking) clears a malformed init token.
+    expect(readInitToken).not.toHaveBeenCalled();
+  });
 });
