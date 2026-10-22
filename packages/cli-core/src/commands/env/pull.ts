@@ -82,11 +82,10 @@ async function resolveTargetFile(
  * `EnvFileName` so it can only be a file the claim check also reads
  * (`ENV_FILE_CANDIDATES`); exported for the test that pins that down.
  *
- * When the framework documents its load order, keys go only in a `.local`
- * file it loads, since the others are meant to be committed, unless it loads
- * none (Nuxt loads only `.env`). A Clerk key in a file it loads before that
- * target would keep beating the new one, so the target becomes the
- * highest-ranked `.local` file instead.
+ * `targetByFiles` picks it. When the framework documents its load order and a
+ * file it loads before that target still holds a Clerk key, the new keys would
+ * keep losing to it, so they go in the highest-ranked `.local` file instead,
+ * never a file meant to be committed.
  */
 export async function defaultTargetFile(
   cwd: string,
@@ -94,25 +93,20 @@ export async function defaultTargetFile(
 ): Promise<EnvFileName> {
   const framework = await detectFramework(cwd);
   const loadOrder = framework?.envLoadOrder;
-  const base = await targetByFiles(cwd, fallbackFile, loadOrder);
+  const byFiles = await targetByFiles(cwd, fallbackFile, loadOrder);
   // With no documented order, which file the app loads is unknown.
-  if (!framework || !loadOrder) return base;
-  const locals = loadOrder.filter((file) => file.endsWith(".local"));
-  const [highestLocal] = locals;
-  if (!highestLocal) return base;
-
-  const local = base.endsWith(".local")
-    ? base
-    : locals.includes(".env.local")
-      ? ".env.local"
-      : highestLocal;
+  if (!framework || !loadOrder) return byFiles;
   const all = await readAllFolderKeys(cwd).catch(() => undefined);
-  if (!all) return local;
+  if (!all) return byFiles;
+
   const ranksAbove = (source: string, file: EnvFileName) =>
     loadOrder.includes(source as EnvFileName) &&
     loadOrder.indexOf(source as EnvFileName) < loadOrder.indexOf(file);
-  const keys = [...all.publishableKeys, ...all.secretKeys];
-  const target = keys.some((key) => ranksAbove(key.source, local)) ? highestLocal : local;
+  const highestLocal = loadOrder.find((file) => file.endsWith(".local"));
+  const stale = [...all.publishableKeys, ...all.secretKeys].some((key) =>
+    ranksAbove(key.source, byFiles),
+  );
+  const target = stale && highestLocal ? highestLocal : byFiles;
 
   for (const line of all.unreadableLines ?? []) {
     if (!ranksAbove(line.source, target)) continue;
@@ -124,8 +118,11 @@ export async function defaultTargetFile(
   return target;
 }
 
-/** The target by which files exist and hold Clerk keys, before the load order is weighed. */
-async function targetByFiles(
+/**
+ * The target by which files exist and hold Clerk keys, before a stale key in
+ * a file loaded earlier is weighed; exported for the test that compares them.
+ */
+export async function targetByFiles(
   cwd: string,
   fallbackFile: PreferredEnvFile,
   loadOrder: readonly EnvFileName[] | undefined,

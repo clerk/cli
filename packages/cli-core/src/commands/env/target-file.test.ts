@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ENV_FILE_CANDIDATES, type PreferredEnvFile } from "../../lib/dotenv.ts";
 import { FRAMEWORK_MAP, NATIVE_FRAMEWORK_MAP } from "../../lib/framework.ts";
-import { defaultTargetFile } from "./pull.ts";
+import { defaultTargetFile, targetByFiles } from "./pull.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 // Every framework's preferred file, plus `env pull`'s own default.
@@ -95,10 +95,9 @@ test("Next.js, an existing .env.development.local: writes it", async () => {
   expect(await defaultTargetFile(dir, ".env.local")).toBe(".env.development.local");
 });
 
-// Keys go in a `.local` file whenever the framework loads one: the others are
-// meant to be committed. A Clerk key in a file the framework loads before the
-// target would keep beating the new one, so the target moves up to the
-// highest-ranked `.local` file instead of into that file.
+// A Clerk key in a file the framework loads before the target would keep
+// beating the new one, so the target moves up to the highest-ranked `.local`
+// file instead of into that file, which may be committed.
 test.each([
   {
     label: "Vite, a publishable key in a committed .env.development, the secret key in .env.local",
@@ -118,11 +117,11 @@ test.each([
     writes: ".env.local",
   },
   {
-    label: "Astro, an old publishable key in .env.local beside an existing .env",
+    label: "Astro, an old publishable key in .env.local, ranked above an existing .env",
     dep: "astro",
     preferred: ".env" as const,
     files: { ".env": "OTHER=1\n", ".env.local": "PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_old\n" },
-    writes: ".env.local",
+    writes: ".env.development.local",
   },
   {
     label: "Nuxt, which loads only .env, with an old key in .env",
@@ -155,7 +154,7 @@ const LOCAL_CASES = LOADS_A_LOCAL_FILE.flatMap((fw) =>
 );
 
 test.each(LOCAL_CASES)(
-  "never a committed file when the framework loads a .local one: $label",
+  "the stale-key redirect never picks a non-.local file: $label",
   async ({ fw, existing, keysIn }) => {
     await Bun.write(
       join(dir, "package.json"),
@@ -167,7 +166,9 @@ test.each(LOCAL_CASES)(
       ),
     );
 
-    expect(await defaultTargetFile(dir, fw.envFile)).toEndWith(".local");
+    const byFiles = await targetByFiles(dir, fw.envFile, fw.envLoadOrder);
+    const target = await defaultTargetFile(dir, fw.envFile);
+    if (target !== byFiles) expect(target).toEndWith(".local");
   },
 );
 
