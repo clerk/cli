@@ -248,6 +248,34 @@ describe("the covers-fewer-settings warning", () => {
   });
 });
 
+// `--app` can't reach an app that isn't in an account yet, as in the shared
+// not-linked error.
+describe("clerk api --fapi", () => {
+  const LINK = "No instance found. Link a project with `clerk link`.";
+  const OR_APP = "No instance found. Link a project with `clerk link`, or pass --app <app_id>.";
+
+  test.each([
+    {
+      kind: "an init token",
+      setUp: async () => {
+        await writeInitToken();
+        await write(".env", PUBLISHABLE_KEY);
+      },
+      says: LINK,
+    },
+    { kind: "a claimable SDK app", setUp: writeClaimableSdkFile, says: LINK },
+    { kind: "plain keys", setUp: () => write(".env", KEYS), says: OR_APP },
+    { kind: "no app", setUp: async () => {}, says: OR_APP },
+  ])("agent, stored session and API key, $kind: $says", async ({ setUp, says }) => {
+    await setUp();
+
+    const error = agentError(await run("--mode", "agent", "api", "--fapi", "/environment"));
+
+    expect(error.code).toBe("not_linked");
+    expect(error.message).toBe(says);
+  });
+});
+
 // Plain keys may belong to an app already in an account.
 describe("whoami, signed out, with a secret key on disk", () => {
   test("plain keys: says the folder uses the key and isn't linked, with `clerk link`'s step", async () => {

@@ -10,6 +10,7 @@ import { resolveAppContext, resolveFetchedApplicationInstance } from "../../lib/
 import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
 import { decodePublishableKey } from "../../lib/fapi.ts";
 import { fetchApplication, type ApplicationInstance } from "../../lib/plapi.ts";
+import { appInNoAccount, readUnlinkedFolder } from "../../lib/unlinked-folder.ts";
 
 interface ResolveOptions {
   app?: string;
@@ -34,8 +35,12 @@ async function resolveInstance(options: ResolveOptions): Promise<ApplicationInst
     ctx = await resolveAppContext({ app: options.app, instance: options.instance });
   } catch (error) {
     if (error instanceof CliError && error.code === ERROR_CODE.NOT_LINKED) {
+      // `--app` can't reach an app that isn't in an account yet.
+      const orApp = appInNoAccount(await readUnlinkedFolder(process.cwd()))
+        ? ""
+        : ", or pass --app <app_id>";
       throwUsageError(
-        "No instance found. Link a project with `clerk link`, or pass --app <app_id>.",
+        "No instance found. Link a project with `clerk link`" + orApp + ".",
         "https://clerk.com/docs/guides/development/managing-environments",
         ERROR_CODE.NOT_LINKED,
       );
