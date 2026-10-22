@@ -2,6 +2,7 @@ import { resolve, join, basename } from "node:path";
 import { resolveAppContext, type AppContextOptions } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import {
+  ENV_FILE_CANDIDATES,
   parseEnvFile,
   mergeEnvVars,
   serializeEnvFile,
@@ -42,6 +43,7 @@ import {
 import {
   describeKeyLocation,
   ENV_VAR_SOURCE_SUFFIX,
+  readFolderKeys,
   SDK_KEYLESS_SOURCE,
   unreadGenericPublishableKey,
   type LocatedKey,
@@ -78,9 +80,13 @@ async function resolveTargetFile(
 /**
  * The env file `env pull` writes when no `--file` is given. Typed as an
  * `EnvFileName` so it can only be a file the claim check also reads
- * (`ENV_FILE_CANDIDATES`); exported for the test that pins that down. Only a
- * file the framework loads, when it documents its load order: Nuxt loads only
- * `.env`, so keys written anywhere else would be read by neither Nuxt nor the CLI.
+ * (`ENV_FILE_CANDIDATES`); exported for the test that pins that down.
+ *
+ * The file that supplies a key the app loads now comes first: written below
+ * it, the new keys would keep losing to the old ones, for the app and for the
+ * CLI's reader. Otherwise only a file the framework loads, when it documents
+ * its load order: Nuxt loads only `.env`, so keys written anywhere else would
+ * be read by neither Nuxt nor the CLI.
  */
 export async function defaultTargetFile(
   cwd: string,
@@ -88,6 +94,11 @@ export async function defaultTargetFile(
 ): Promise<EnvFileName> {
   const loadOrder = (await detectFramework(cwd))?.envLoadOrder;
   const loads = (file: EnvFileName) => !loadOrder || loadOrder.includes(file);
+
+  const keys = await readFolderKeys(cwd).catch(() => undefined);
+  const sources = [keys?.publishableKey?.source, keys?.secretKey?.source];
+  const supplying = (loadOrder ?? ENV_FILE_CANDIDATES).find((file) => sources.includes(file));
+  if (supplying) return supplying;
 
   if (loads(DEV_LOCAL_ENV_FILE) && (await Bun.file(join(cwd, DEV_LOCAL_ENV_FILE)).exists())) {
     return DEV_LOCAL_ENV_FILE;

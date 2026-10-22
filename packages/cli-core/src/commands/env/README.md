@@ -66,6 +66,9 @@ sequenceDiagram
     %% Resolve target file (only files the framework loads, when it documents its order)
     alt --file flag provided
         CLI->>CLI: Use specified file
+    else A file supplies a key the app loads now
+        CLI->>FS: Read the keys the app loads
+        FS-->>CLI: that file, the highest in the load order
     else .env.development.local exists, and the framework loads it
         CLI->>FS: Check .env.development.local
         FS-->>CLI: exists

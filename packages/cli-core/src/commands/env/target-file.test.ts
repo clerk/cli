@@ -93,3 +93,37 @@ test("Next.js, an existing .env.development.local: writes it", async () => {
 
   expect(await defaultTargetFile(dir, ".env.local")).toBe(".env.development.local");
 });
+
+// A key written below the file that supplies the app's key now would keep
+// losing to the old one, for the app and for the CLI's reader.
+test.each([
+  {
+    label: "Astro, an old publishable key in .env.local beside an existing .env",
+    dep: "astro",
+    preferred: ".env" as const,
+    files: { ".env": "OTHER=1\n", ".env.local": "PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_old\n" },
+    writes: ".env.local",
+  },
+  {
+    label: "Vite, an old publishable key in .env.development beside an existing .env.local",
+    dep: "vite",
+    preferred: ".env.local" as const,
+    files: {
+      ".env.local": "OTHER=1\n",
+      ".env.development": "VITE_CLERK_PUBLISHABLE_KEY=pk_test_old\n",
+    },
+    writes: ".env.development",
+  },
+  {
+    label: "Vite, an old secret key in .env.development and none in .env.local",
+    dep: "vite",
+    preferred: ".env.local" as const,
+    files: { ".env.local": "OTHER=1\n", ".env.development": "CLERK_SECRET_KEY=sk_test_old\n" },
+    writes: ".env.development",
+  },
+])("$label: writes $writes", async ({ dep, preferred, files, writes }) => {
+  await Bun.write(join(dir, "package.json"), JSON.stringify({ dependencies: { [dep]: "1.0.0" } }));
+  await Promise.all(Object.entries(files).map(([file, text]) => Bun.write(join(dir, file), text)));
+
+  expect(await defaultTargetFile(dir, preferred)).toBe(writes);
+});
