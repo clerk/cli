@@ -87,7 +87,7 @@ type Profile = {
   instances: { development: string; production?: string };
 };
 
-const noopFix = () => ({ label: "noop", run: async () => {} });
+const fixNamed = (label: string) => () => ({ label, run: async () => {} });
 
 const mockProfile = {
   path: "github.com/org/repo",
@@ -146,9 +146,9 @@ function createMockContext(
     getUnlinkedFolder: async () =>
       overrides.unlinkedFolder ?? { kind: "no_app", credential: "none" },
     fixes: {
-      login: noopFix,
-      link: noopFix,
-      envPull: noopFix,
+      login: fixNamed("login fix"),
+      link: fixNamed("link fix"),
+      envPull: fixNamed("env pull fix"),
     },
   };
 }
@@ -162,6 +162,64 @@ const mockKeylessInstance: KeylessInstanceInfo = {
   id: "ins_keyless_1",
   environmentType: "development",
 };
+
+const PLAIN_KEYS: UnlinkedFolder = {
+  kind: "unknown_owner",
+  credential: "none",
+  publishableKey: { name: "CLERK_PUBLISHABLE_KEY", source: ".env.local" },
+  secretKey: { name: "CLERK_SECRET_KEY", source: ".env.local" },
+};
+
+/** Signed out with a secret key on disk, by what the folder holds and the mode. */
+const SIGNED_OUT_CASES: {
+  kind: string;
+  mode: "human" | "agent";
+  folder: UnlinkedFolder;
+  says: string[];
+  saysNot: string[];
+}[] = [
+  {
+    kind: "plain keys",
+    mode: "human",
+    folder: PLAIN_KEYS,
+    says: [
+      "secret key from `.env.local`",
+      "isn't linked",
+      "finds the app in your account by that key",
+    ],
+    saysNot: ["unclaimed", "accountless"],
+  },
+  {
+    kind: "an init token",
+    mode: "human",
+    folder: { kind: "init_app", credential: "none" },
+    says: [
+      "unclaimed accountless application",
+      "ins_keyless_1",
+      "created by `clerk init`",
+      "Run `clerk link`: it claims the app",
+    ],
+    saysNot: [],
+  },
+  {
+    kind: "an SDK app",
+    mode: "human",
+    folder: { kind: "sdk_app", credential: "none" },
+    says: [
+      "unclaimed accountless application",
+      "Run `clerk link`",
+      "opens the Clerk Dashboard page",
+    ],
+    saysNot: [],
+  },
+  {
+    kind: "an SDK app",
+    mode: "agent",
+    folder: { kind: "sdk_app", credential: "none" },
+    says: ["unclaimed accountless application", "Run `clerk open`"],
+    saysNot: [],
+  },
+];
 
 interface ExpectedCheck {
   name: string;
@@ -281,21 +339,29 @@ describe("checkLoggedIn", () => {
     });
   });
 
-  test("pass (not fail) when no token but an unclaimed keyless application is present", async () => {
-    const ctx = createMockContext({
-      token: null,
-      keylessTarget: mockKeylessTarget,
-      keylessInstance: mockKeylessInstance,
-    });
-    const result = await checkLoggedIn(ctx);
-    expectCheck(result, {
-      name: "Logged in",
-      status: "pass",
-      // The claim hint has to ride in the message: `detail` only renders
-      // under --verbose, and guidance nobody sees by default isn't guidance.
-      message: ["unclaimed accountless application", "ins_keyless_1", "Claim it"],
-    });
-  });
+  // Signed out with a secret key on disk: still a pass, and the step for
+  // what the folder holds rides in the message (`detail` only renders under
+  // --verbose). Only an init app or an SDK app is called unclaimed: plain
+  // keys may belong to an app in any account.
+  test.each(SIGNED_OUT_CASES)(
+    "pass (not fail) when no token but a secret key is present: $kind, $mode",
+    async ({ folder, mode, says, saysNot }) => {
+      process.env.CLERK_MODE = mode;
+      const ctx = createMockContext({
+        token: null,
+        keylessTarget: mockKeylessTarget,
+        keylessInstance: mockKeylessInstance,
+        unlinkedFolder: folder,
+      });
+      const result = await checkLoggedIn(ctx);
+      expectCheck(result, {
+        name: "Logged in",
+        status: "pass",
+        message: says,
+        messageNot: [...saysNot, "Claim it from the Clerk Dashboard"],
+      });
+    },
+  );
 
   test("fail when no token and the local secret key is malformed", async () => {
     const ctx = createMockContext({
@@ -558,18 +624,45 @@ describe("checkTokenValid", () => {
     });
   });
 
-  test("warn (not fail) when token is expired but a keyless application is present", async () => {
-    mockUserInfoError = new ApiError(401, "Unauthorized");
-    const ctx = createMockContext({ token: "expired_token", keylessTarget: mockKeylessTarget });
-    const result = await checkTokenValid(ctx);
-    expectCheck(result, {
-      name: "Authentication valid",
-      status: "warn",
+  // Only an init app or an SDK app is called accountless: plain keys may
+  // belong to an app in any account.
+  test.each([
+    {
+      kind: "an init token",
+      folder: { kind: "init_app", credential: "session" } as UnlinkedFolder,
       message: ["Stored session is expired", "accountless application"],
-      remedy: "clerk auth login",
-      fix: false,
-    });
-  });
+      messageNot: [],
+      remedy:
+        "Run `clerk auth login` to re-authenticate your account (optional for accountless work).",
+    },
+    {
+      kind: "plain keys",
+      folder: { ...PLAIN_KEYS, credential: "session" } as UnlinkedFolder,
+      message: ["Stored session is expired", "secret key from `.env.local`"],
+      messageNot: ["accountless"],
+      remedy:
+        "Run `clerk auth login` to re-authenticate your account (optional: the secret key still works).",
+    },
+  ])(
+    "warn (not fail) when token is expired but a secret key is present: $kind",
+    async ({ folder, message, messageNot, remedy }) => {
+      mockUserInfoError = new ApiError(401, "Unauthorized");
+      const ctx = createMockContext({
+        token: "expired_token",
+        keylessTarget: mockKeylessTarget,
+        unlinkedFolder: folder,
+      });
+      const result = await checkTokenValid(ctx);
+      expectCheck(result, {
+        name: "Authentication valid",
+        status: "warn",
+        message: [...message],
+        messageNot: [...messageNot],
+        remedy,
+        fix: false,
+      });
+    },
+  );
 });
 
 describe("checkProjectLinked", () => {
@@ -596,29 +689,75 @@ describe("checkProjectLinked", () => {
     });
   });
 
-  test("pass (not fail) when unlinked but running an unclaimed keyless application", async () => {
-    delete process.env.CLERK_PLATFORM_API_KEY; // no account credentials at all
-    const ctx = createMockContext({
-      keylessTarget: mockKeylessTarget,
-      keylessInstance: mockKeylessInstance,
-    });
-    const result = await checkProjectLinked(ctx);
-    expectCheck(result, {
-      name: "Project linked",
-      status: "pass",
-      // The claim hint has to ride in the message: `detail` only renders
-      // under --verbose, and guidance nobody sees by default isn't guidance.
-      message: ["unclaimed accountless application", "ins_keyless_1", "Claim it"],
-    });
-  });
+  test.each(SIGNED_OUT_CASES)(
+    "pass (not fail) when unlinked and signed out with a secret key present: $kind, $mode",
+    async ({ folder, mode, says, saysNot }) => {
+      process.env.CLERK_MODE = mode;
+      delete process.env.CLERK_PLATFORM_API_KEY; // no account credentials at all
+      const ctx = createMockContext({
+        keylessTarget: mockKeylessTarget,
+        keylessInstance: mockKeylessInstance,
+        unlinkedFolder: folder,
+      });
+      const result = await checkProjectLinked(ctx);
+      expectCheck(result, {
+        name: "Project linked",
+        status: "pass",
+        message: says.filter((part) => part !== "isn't linked"),
+        messageNot: [...saysNot, "Claim it from the Clerk Dashboard"],
+      });
+      expect(result.fix).toBeUndefined();
+    },
+  );
+
+  // Signed in, `clerk link` claims an init app and finds plain keys' app by
+  // key: the remedy names that step, and the fix is still `link`'s.
+  test.each([
+    {
+      kind: "an init token",
+      folder: { kind: "init_app", credential: "session" } as UnlinkedFolder,
+      message: ["accountless application", "fewer settings"],
+      messageNot: [],
+      remedy: "Run `clerk link`: it claims the app into your account and links this folder.",
+    },
+    {
+      kind: "plain keys",
+      folder: { ...PLAIN_KEYS, credential: "session" } as UnlinkedFolder,
+      message: ["secret key from `.env.local`"],
+      messageNot: ["accountless", "unclaimed"],
+      remedy: "Run `clerk link`: it finds the app in your account by that key.",
+    },
+  ])(
+    "warn when signed in but unlinked, with $kind: the remedy names the step, and the fix is link's",
+    async ({ folder, message, messageNot, remedy }) => {
+      process.env.CLERK_MODE = "human";
+      const ctx = createMockContext({
+        accountCredentials: true,
+        keylessTarget: mockKeylessTarget,
+        keylessInstance: mockKeylessInstance,
+        unlinkedFolder: folder,
+      });
+      const result = await checkProjectLinked(ctx);
+      expectCheck(result, {
+        name: "Project linked",
+        status: "warn",
+        message: [...message],
+        messageNot: [...messageNot],
+        remedy,
+      });
+      expect(result.fix?.label).toBe("link fix");
+    },
+  );
 
   test("warn (not fail) when signed in but unlinked, falling back to a keyless application", async () => {
     // The directory has account credentials, so it could reach the full
     // account configuration by linking.
+    process.env.CLERK_MODE = "human";
     const ctx = createMockContext({
       accountCredentials: true,
       keylessTarget: mockKeylessTarget,
       keylessInstance: mockKeylessInstance,
+      unlinkedFolder: { kind: "sdk_app", credential: "session" },
     });
     const result = await checkProjectLinked(ctx);
     expectCheck(result, {

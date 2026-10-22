@@ -45,21 +45,36 @@ clerk doctor --fix       # Offer to auto-fix issues
 The Authentication token, Token validity, and Project linkage checks resolve
 the same accountless fallback the rest of the CLI uses (`lib/keyless-target.ts`):
 a project with no account session and no linked profile, but a `sk_...` key
-on disk (or in `CLERK_SECRET_KEY`/framework env var), is running on an
-**unclaimed accountless application** — a legitimate, healthy state, not a broken
-one.
+on disk (or in `CLERK_SECRET_KEY`/framework env var), runs on that key's app —
+a legitimate, healthy state, not a broken one.
 
-- No token, accountless key present → **pass**, naming the instance. The claim
-  hint depends on where the app came from: with a `.clerk/keyless.json`
-  breadcrumb (left by `clerk init`) it says `clerk auth login` claims it;
-  without one — an SDK-minted `.clerk/.tmp/keyless.json`, or a hand-copied
-  `CLERK_SECRET_KEY` — it says to claim from the Clerk Dashboard instead,
-  because `clerk auth login` only auto-claims apps `clerk init` created.
-- Stored session expired, accountless key present → **warn** (not fail): the
-  accountless key still works, logging in again is optional.
-- Signed in (has account credentials) but this directory isn't linked, accountless
-  key present → **warn**: the account could reach the fuller configuration by
-  running `clerk link`, so that's called out unlike the fully unclaimed case.
+What the Authentication token and Project linkage checks say about it comes
+from `lib/unlinked-folder.ts`, so `doctor` gives the same step as every other
+command for what the folder holds. Statuses and fix labels don't depend on it.
+
+- No token, a secret key present → **pass**, with the step in the message
+  (`detail` only shows under `--verbose`):
+  - **An init token** (`.clerk/keyless.json`, left by `clerk init` run signed
+    out) **or only an SDK keyless file** (`.clerk/.tmp/keyless.json`): it names
+    the **unclaimed accountless application** and its instance. A person is
+    told to run `clerk link`, which claims an init app, or links an SDK app
+    (opening its claim page when it isn't in the account). An agent is told
+    `clerk auth login` for an init app (it can't sign in itself), and
+    `clerk open` for an SDK app, since a person has to claim it.
+  - **Plain keys** (pasted from the Dashboard, say): it says the folder uses
+    the secret key from its file and isn't linked, then `clerk link`'s step
+    for those keys, e.g. that it finds the app by the publishable key. It
+    doesn't call the app unclaimed: such keys may belong to an app that's
+    already in an account.
+- Stored session expired, a secret key present → **warn** (not fail): the key
+  still works, so logging in again is optional. As above, only an init or SDK
+  app is called accountless; plain keys are named by their file.
+- Signed in (has account credentials) but this directory isn't linked, a secret
+  key present → **warn**, with the `clerk link` fix: the account could reach
+  the fuller configuration by linking. The remedy is the step for what the
+  folder holds: `clerk link` claims an init app first, and finds plain keys'
+  app by its publishable key. Plain keys aren't called an accountless
+  application.
 - No token **and** no accountless key found anywhere → still **fail**. Accountless
   only changes the outcome when there's actually a secret key to fall back to.
 
