@@ -221,7 +221,7 @@ export async function resolveLiveApplicationContext(profile: DeployContext["prof
   developmentInstanceId: string;
   productionInstanceId?: string;
 }> {
-  const app = await fetchApplication(profile.appId);
+  const app = await mapDeployError(fetchApplication(profile.appId));
   const development = app.instances.find((entry) => entry.environment_type === "development");
   const production = app.instances.find((entry) => entry.environment_type === "production");
   return {
