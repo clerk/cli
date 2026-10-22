@@ -14,6 +14,7 @@ bun scripts/apple-setup/verify-capabilities.ts
 bun scripts/apple-setup/verify-packages.ts
 bun scripts/apple-setup/verify-starter.ts
 bun scripts/apple-setup/verify-ownership.ts
+bun scripts/apple-setup/verify-production.ts
 ```
 
 The package probe downloads Clerk, verifies lockfile entries, and builds the
@@ -32,3 +33,8 @@ The CLI selects a compatible installed Xcode for `.xcproj` when necessary.
 The ownership probe checks that Xcode's resolved settings, not file names, decide
 whether another target shares the app's entitlements (xcconfigs, `#include`
 chains, and CocoaPods-style files).
+
+The production probe checks that Xcode's resolved settings carry what doctor's
+production checks read: a per-configuration xcconfig key surfaced through an
+Info.plist entry and a Release-only entitlements file, and that `#if DEBUG`
+literals, which doctor doesn't evaluate, report the key as not verified.

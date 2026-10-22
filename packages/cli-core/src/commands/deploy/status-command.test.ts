@@ -1288,6 +1288,20 @@ describe("humanNextAction", () => {
     },
   );
 
+  test("a complete Apple project is pointed at clerk doctor for the Xcode side", () => {
+    const step = {
+      kind: "complete" as const,
+      domain: "example.com",
+      productionInstanceId: "ins_prod",
+      oauthUnsupported: [],
+      instanceUrl: URL,
+    };
+    expect(humanNextAction(step)).not.toContain("clerk doctor");
+    expect(humanNextAction({ ...step, appleProject: true })).toContain(
+      "For the iOS or macOS app, run `clerk doctor` in its Xcode project",
+    );
+  });
+
   // A bare `env pull` writes the production keys over the development ones in
   // the local env file, which breaks localhost. `--print` writes no file.
   test.each([

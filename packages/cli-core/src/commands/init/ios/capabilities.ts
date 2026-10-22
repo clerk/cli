@@ -140,6 +140,11 @@ export async function readEntitlements(
   return (await snapshotFile(context.selection.root, resolve(sourceRoot, path))).source;
 }
 
+/** Whether entitlements already grant a web-credentials domain and/or Sign in with Apple. Throws on XML it can't read. */
+export function hasCapabilities(source: string, domain?: string, apple = false): boolean {
+  return capabilityXML(source, domain, apple) === source;
+}
+
 /**
  * Capabilities already in an entitlements file that a Personal Team can't sign: Sign in with
  * Apple anywhere, and Associated Domains on macOS. Setup never removes entitlements, so these

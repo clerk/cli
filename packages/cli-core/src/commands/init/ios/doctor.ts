@@ -1,13 +1,13 @@
-import { dirname, resolve } from "node:path";
 import { auditIOSNativeAppleHealth } from "./native-apple.ts";
 import {
-  capabilityXML,
+  hasCapabilities,
   personalTeamConflictNote,
   personalTeamConflicts,
   planAllCapabilities,
   readEntitlements,
 } from "./capabilities.ts";
-import { snapshotFile } from "./files.ts";
+import { auditProduction } from "./production.ts";
+import { errorMessage } from "../../../lib/errors.ts";
 import { sdkLinked } from "./sdk.ts";
 import { discoverRemote, describeIdentity } from "./identity.ts";
 import { auditRemote, nativeAPI } from "./remote.ts";
@@ -153,25 +153,15 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
         for (const context of preview.inspection.contexts) {
           let status: Check["status"] = "fail";
           let message = `Apple sign-in is requested or enabled in Clerk, but ${context.selection.configuration} has no Apple entitlement.`;
-          const path = context.settings.CODE_SIGN_ENTITLEMENTS;
-          if (path) {
-            try {
-              const snapshot = await snapshotFile(
-                context.selection.root,
-                resolve(
-                  context.settings.SRCROOT ??
-                    resolve(context.selection.root, dirname(context.selection.project)),
-                  path,
-                ),
-              );
-              if (capabilityXML(snapshot.source, undefined, true) === snapshot.source) {
-                status = "pass";
-                message = `${context.selection.configuration} has the Apple entitlement. Provisioning and sign-in remain unverified.`;
-              }
-            } catch {
-              status = "warn";
-              message = `The ${context.selection.configuration} Apple entitlement file could not be verified; inspect it in Xcode.`;
+          try {
+            const source = await readEntitlements(context);
+            if (source !== undefined && hasCapabilities(source, undefined, true)) {
+              status = "pass";
+              message = `${context.selection.configuration} has the Apple entitlement. Provisioning and sign-in remain unverified.`;
             }
+          } catch {
+            status = "warn";
+            message = `The ${context.selection.configuration} Apple entitlement file could not be verified; inspect it in Xcode.`;
           }
           checks.push({
             name: `Apple entitlement: ${context.selection.configuration}`,
@@ -194,6 +184,36 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
       message:
         "Supply the Clerk application and confirmed native identity to check provider settings.",
     });
+  if (options.remote)
+    try {
+      // A prefix Clerk or the user confirmed for development is the app's; a signing-team guess isn't.
+      const confirmedPrefix =
+        discovery &&
+        ["explicit", "confirmed", "clerk-registration"].includes(discovery.prefixSource)
+          ? discovery.appIdPrefix
+          : undefined;
+      checks.push(
+        ...(await auditProduction(
+          preview.inspection,
+          {
+            applicationId: options.remote.applicationId,
+            appIdPrefix: confirmedPrefix,
+            configurationSelected: options.configuration != null,
+          },
+          dependencies.api ?? nativeAPI,
+          options.signal,
+        )),
+      );
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      checks.push({
+        name: "Production instance",
+        status: "warn",
+        message: `Production readiness could not be checked: ${errorMessage(error)}`,
+        remedy:
+          "Rerun clerk doctor. If it keeps failing, check the production instance in the Clerk Dashboard.",
+      });
+    }
   return {
     ...describePreview(preview),
     identity: discovery ? describeIdentity(discovery) : undefined,

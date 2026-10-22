@@ -1,4 +1,5 @@
 import { resolveProfile } from "../../lib/config.ts";
+import { detectFramework } from "../../lib/framework.ts";
 import {
   CliError,
   ERROR_CODE,
@@ -31,6 +32,7 @@ import {
   classifyDomainPending,
   domainsDashboardUrl,
   instanceDashboardUrl,
+  appleProjectNextStep,
   keyPullCommand,
   nativeAppleGuidance,
   nativeApplicationsDashboardUrl,
@@ -161,6 +163,12 @@ export interface DeployStatusReport {
   };
   nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
   /**
+   * Present when the command ran in an iOS or macOS app's directory. Clerk's
+   * side can't see the Xcode project, so `nextAction` points at `clerk doctor`
+   * for the Release build's key, Associated Domain, and native registration.
+   */
+  appleProject?: true;
+  /**
    * Dashboard pages for this deploy: the production instance and its Domains
    * page. Null before a production instance exists, and when the run was
    * interrupted before the state could be read.
@@ -195,6 +203,7 @@ export type DeployNextStep =
       productionInstanceId: string | null;
       oauthUnsupported: readonly string[];
       instanceUrl: string | null;
+      appleProject?: boolean;
     }
   | {
       kind: "oauth_pending";
@@ -238,6 +247,8 @@ export type LiveDeploySnapshot = Omit<
   unsupportedOAuthProviders: string[];
   nativeApple?: NativeAppleConfiguration;
   nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
+  /** Whether the command runs in an iOS or macOS app's directory. */
+  appleProject?: boolean;
 };
 
 export type DeployState =
@@ -478,9 +489,10 @@ export async function resolveLiveDeploySnapshot(
   const productionInstanceId = ctx.productionInstanceId;
   if (!productionInstanceId) return undefined;
 
-  const [domain, oauth] = await Promise.all([
+  const [domain, oauth, appleProject] = await Promise.all([
     loadProductionDomain(ctx),
     loadDevelopmentOAuthProviders(ctx),
+    inAppleProject(),
   ]);
   if (!domain) return undefined;
 
@@ -544,6 +556,7 @@ export async function resolveLiveDeploySnapshot(
     unsupportedOAuthProviderCount: unsupported.length,
     unsupportedOAuthProviders: unsupported,
     nativeApple,
+    appleProject,
     nativeAppleReadinessIssue:
       nativeApple && nativeApple.status !== "ready"
         ? {
@@ -560,6 +573,20 @@ export async function resolveLiveDeploySnapshot(
     domainComplete,
     pending: resolvePendingStep(pendingOAuthDescriptor, domainComplete),
   };
+}
+
+/**
+ * Whether this directory is an iOS or macOS app — the same detection `clerk
+ * doctor` uses to run its Xcode checks, so pointing there is only done where
+ * it will check something.
+ */
+export async function inAppleProject(cwd = process.cwd()): Promise<boolean> {
+  try {
+    return (await detectFramework(cwd))?.dep === "ios";
+  } catch (error) {
+    log.debug(`deploy: could not detect the project type: ${errorMessage(error)}`);
+    return false;
+  }
 }
 
 function resolvePendingStep(
@@ -691,6 +718,7 @@ function buildDeployStatusFacts(
       setup: oauthSetupGuides(snapshot, oauthPending, cli),
     },
     nativeAppleReadinessIssue: snapshot.nativeAppleReadinessIssue,
+    ...(snapshot.appleProject ? { appleProject: true as const } : {}),
     urls: snapshot.productionInstanceId
       ? dashboardUrls(snapshot.appId, snapshot.productionInstanceId)
       : null,
@@ -861,6 +889,7 @@ export function deployNextStep(report: DeployStatusFacts): DeployNextStep {
         productionInstanceId: report.productionInstanceId,
         oauthUnsupported: report.oauth.unsupported,
         instanceUrl: report.urls?.instance ?? null,
+        appleProject: report.appleProject === true,
       };
     case "oauth_pending":
       return {
@@ -1019,6 +1048,7 @@ export function agentNextAction(step: DeployNextStep, cli: string): string {
         `the lines to the clipboard without showing them. Set them alongside the other Clerk variables from your env file, ` +
         `redeploy, then sign up at https://${step.domain} to confirm.` +
         unsupported(step.oauthUnsupported) +
+        (step.appleProject ? ` ${appleProjectNextStep()}` : "") +
         (step.instanceUrl
           ? ` Manage users, settings, and billing for this instance: ${step.instanceUrl}`
           : "")
