@@ -157,6 +157,7 @@ describe("promptAppleStarter", () => {
   test.each([
     ["name", { name: "my-app" }, 'Invalid --name "my-app"'],
     ["name starting with an underscore", { name: "_App" }, 'Invalid --name "_App"'],
+    ["name of an imported module", { name: "ClerkKit" }, "ClerkKit is a module the app imports"],
     [
       "Bundle ID over 255 characters",
       { bundleId: `com.example.${"a".repeat(250)}` },
@@ -171,6 +172,7 @@ describe("promptAppleStarter", () => {
       message: expect.stringContaining(message),
     });
     expect(existsSync(join(tmp, "my-app"))).toBe(false);
+    expect(existsSync(join(tmp, "ClerkKit"))).toBe(false);
     expect(existsSync(join(tmp, "MyClerkApp"))).toBe(false);
   });
 

@@ -421,7 +421,8 @@ function assertFrameworkFlags(options: InitOptions, framework: FrameworkInfo): v
   const needsXcode = [options.dryRun && "--dry-run", options.json && "--json", ...apple].filter(
     Boolean,
   );
-  if (framework.dep === "ios" && !canSetUpXcode() && needsXcode.length)
+  // A new starter stops before writing with its own "needs Xcode on macOS" error.
+  if (framework.dep === "ios" && !canSetUpXcode() && needsXcode.length && !options.starter)
     throwUsageError(
       `${needsXcode.join(", ")} ${needsXcode.length === 1 ? "needs" : "need"} Xcode on macOS. Without them, clerk init links your app and prints the setup steps.`,
     );

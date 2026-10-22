@@ -47,9 +47,14 @@ const PERSONAL_TEAM_NOTE: Record<ApplePlatform, string> = {
     "A Personal Team runs the app on this Mac without Associated Domains, so passkeys and password AutoFill stay off. They and Sign in with Apple need a paid Apple Developer Program team.",
 };
 
+// The target name becomes the app's module name, so it can't be one the app imports.
+const IMPORTED_MODULES = new Set(["Swift", "SwiftUI", "Foundation", "ClerkKit", "ClerkKitUI"]);
+
 function nameProblem(name: string): string | undefined {
   if (!SWIFT_TARGET_NAME.test(name))
     return "App name must start with a letter and use only letters, numbers, and underscores, like MyApp.";
+  if (IMPORTED_MODULES.has(name))
+    return `${name} is a module the app imports. Pick a different name, like MyApp.`;
   return undefined;
 }
 

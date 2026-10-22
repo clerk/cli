@@ -382,6 +382,16 @@ describe("clerk init for native Apple projects", () => {
       );
     });
 
+    test("without Xcode, the starter's own error explains it, not the existing-app advice", async () => {
+      starter();
+      xcode.mockReturnValue(false);
+
+      await init({ starter: true, framework: "ios", teamId: "COMPANY001" });
+
+      // The real promptAndBootstrap stops here with "needs Xcode on macOS" before writing.
+      expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+    });
+
     test("--team-id needs --starter", async () => {
       setup();
 
