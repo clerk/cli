@@ -157,7 +157,12 @@ describe("keyless config", () => {
       });
     });
 
-    test(".env.local wins over .env", async () => {
+    // Next.js documents its order: `.env.local` before `.env`.
+    test("in a Next.js folder, .env.local wins over .env", async () => {
+      await writeFile(
+        join(projectDir, "package.json"),
+        JSON.stringify({ dependencies: { next: "1" } }),
+      );
       await writeEnv(".env", "CLERK_SECRET_KEY=sk_test_stale\n");
       await writeEnv(".env.local", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
       const { findLocalSecretKey } = await import("../../lib/keyless-target.ts");
@@ -166,6 +171,15 @@ describe("keyless config", () => {
         secretKey: SECRET_KEY,
         source: ".env.local",
       });
+    });
+
+    // With no framework, no documented order says which file the app loads.
+    test("with no framework, files holding different keys give no key, never a guess", async () => {
+      await writeEnv(".env", "CLERK_SECRET_KEY=sk_test_stale\n");
+      await writeEnv(".env.local", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
+      const { findLocalSecretKey } = await import("../../lib/keyless-target.ts");
+
+      expect(await findLocalSecretKey(projectDir)).toBeUndefined();
     });
 
     test("falls back to the keys an SDK created for itself", async () => {

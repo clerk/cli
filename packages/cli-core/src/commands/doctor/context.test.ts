@@ -10,6 +10,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as config from "../../lib/config.ts";
+import * as localKeys from "../../lib/local-keys.ts";
 import type { Application } from "../../lib/plapi.ts";
 import { useCleanClerkKeyEnv } from "../../test/lib/clerk-key-env.ts";
 
@@ -248,6 +249,51 @@ describe("createDoctorContext", () => {
 
       const ctx = createDoctorContext();
       expect(await ctx.getKeylessTarget()).toBeUndefined();
+    });
+
+    // Reading again would throw the file error into every check that asks.
+    describe("after the folder's keys couldn't be read", () => {
+      useCleanClerkKeyEnv();
+      const originalCwd = process.cwd;
+      let dir: string;
+      let readFolderKeys: ReturnType<typeof spyOn>;
+
+      beforeEach(async () => {
+        dir = await mkdtemp(join(tmpdir(), "clerk-doctor-unreadable-"));
+        process.cwd = () => dir;
+        readFolderKeys = spyOn(localKeys, "readFolderKeys").mockRejectedValue(
+          new Error("EACCES: permission denied, open '.env'"),
+        );
+      });
+
+      afterEach(async () => {
+        readFolderKeys.mockRestore();
+        process.cwd = originalCwd;
+        await rm(dir, { recursive: true, force: true });
+      });
+
+      test("resolves from the exported secret key only", async () => {
+        process.env.CLERK_SECRET_KEY = "sk_test_exported";
+
+        await createDoctorContext().getKeylessTarget();
+
+        expect(mockResolveKeylessTarget).toHaveBeenCalledWith({
+          cwd: dir,
+          folderKeys: {
+            secretKey: {
+              value: "sk_test_exported",
+              name: "CLERK_SECRET_KEY",
+              source: "CLERK_SECRET_KEY env var",
+            },
+          },
+        });
+      });
+
+      test("resolves from no keys when none is exported", async () => {
+        await createDoctorContext().getKeylessTarget();
+
+        expect(mockResolveKeylessTarget).toHaveBeenCalledWith({ cwd: dir, folderKeys: {} });
+      });
     });
   });
 

@@ -9,8 +9,13 @@ const credentialStoreModule = await import("./credential-store.ts");
 const bapiModule = await import("./bapi.ts");
 const { _resetMode, setMode } = await import("../mode.ts");
 
-const { resolveKeylessTarget, resolveInstanceTarget, hasKeyPairMismatch, findLocalPublishableKey } =
-  await import("./keyless-target.ts");
+const {
+  resolveKeylessTarget,
+  resolveInstanceTarget,
+  hasKeyPairMismatch,
+  findLocalPublishableKey,
+  findLocalSecretKey,
+} = await import("./keyless-target.ts");
 
 /** Encodes `<host>.clerk.accounts.dev$` the way a real publishable key would. */
 function encodeFapiHost(host: string): string {
@@ -152,10 +157,60 @@ describe("keyless-target", () => {
       });
     });
 
-    test("the generic fallback is still found when the framework name is absent", async () => {
+    // The key `clerk link` matches on, so the commands agree on the folder's key.
+    test("a generic key isn't one a Next.js app loads, so it isn't found", async () => {
+      await writeFile(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_test_generic\n");
+
+      expect(await findLocalPublishableKey(tempDir)).toBeUndefined();
+    });
+
+    test("with no framework detected, the generic name is found", async () => {
+      await writeFile(join(tempDir, "package.json"), JSON.stringify({ name: "my-app" }));
       await writeFile(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_test_generic\n");
 
       expect((await findLocalPublishableKey(tempDir))?.value).toBe("pk_test_generic");
+    });
+  });
+
+  // `whoami`, `env pull`, and every keyless command find the folder's secret
+  // key through here. An exported key is what the app loads, so an env file
+  // that can't be read mustn't break a command that needs only that key.
+  describe("findLocalSecretKey, an env file that can't be read", () => {
+    const originalFile = Bun.file;
+
+    beforeEach(() => {
+      const envPath = join(tempDir, ".env");
+      // A regular file whose read fails. (A directory won't do: Bun reports a
+      // directory as not existing, so it would be skipped either way.)
+      (Bun as unknown as { file: (path: string) => unknown }).file = (path: string) =>
+        path === envPath
+          ? {
+              exists: async () => true,
+              text: async () => {
+                throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+              },
+            }
+          : originalFile(path);
+    });
+
+    afterEach(() => {
+      (Bun as unknown as { file: typeof Bun.file }).file = originalFile;
+      delete process.env.CLERK_SECRET_KEY;
+    });
+
+    test("returns an exported secret key", async () => {
+      process.env.CLERK_SECRET_KEY = "sk_test_exported";
+
+      expect(await findLocalSecretKey(tempDir)).toEqual({
+        secretKey: "sk_test_exported",
+        source: "CLERK_SECRET_KEY env var",
+      });
+    });
+
+    test("with no exported key, the read error propagates: it's not mistaken for no key", async () => {
+      delete process.env.CLERK_SECRET_KEY;
+
+      await expect(findLocalSecretKey(tempDir)).rejects.toThrow("EACCES");
     });
   });
 

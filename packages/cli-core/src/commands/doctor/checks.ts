@@ -329,6 +329,14 @@ export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResul
     );
   }
 
+  // An env file that couldn't be read may hold the folder's keys, so the
+  // remedy is the step, which starts with the read error.
+  if ("readError" in (await ctx.getFolderKeys())) {
+    return check.fail("Not linked to a Clerk application", {
+      remedy: unlinkedFolderNextStep(await ctx.getUnlinkedFolder(), { agent: isAgent() }).text,
+    });
+  }
+
   return check.fail("Not linked to a Clerk application", {
     remedy: "Run `clerk link` to associate this project with a Clerk app.",
   });

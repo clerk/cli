@@ -258,11 +258,14 @@ test.each([
     says: "Unset the `CLERK_PUBLISHABLE_KEY` env var in your shell, then pull again.",
   },
   {
-    kind: "the publishable key only in a stale SDK keyless file",
-    setUp: async () => {
-      await write(".env", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
-      await write(".clerk/.tmp/keyless.json", JSON.stringify({ publishableKey: OTHER_APP_KEY }));
-    },
+    // The reader never pairs a plain key with the SDK file's other key, so an
+    // SDK-file mismatch is a file whose own two keys are different apps'.
+    kind: "an SDK keyless file whose two keys are different apps'",
+    setUp: () =>
+      write(
+        ".clerk/.tmp/keyless.json",
+        JSON.stringify({ publishableKey: OTHER_APP_KEY, secretKey: SECRET_KEY }),
+      ),
     says: "Add the publishable key of the secret key's app as `CLERK_PUBLISHABLE_KEY` in your env file (a key there wins over the SDK keyless file), then pull again. Or delete the stale `.clerk/.tmp/keyless.json`, which also deletes its app's claim link.",
   },
 ])(

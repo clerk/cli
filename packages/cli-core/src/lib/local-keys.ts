@@ -83,13 +83,6 @@ export interface AllFolderKeys {
 }
 
 /**
- * The env files `findKeyInProject` consults, highest priority first: the order
- * the CLI used before `readFolderKeys` followed each framework's own.
- * Milestone 10 of GROW-1249's plan moves its callers onto `readFolderKeys`.
- */
-const LEGACY_LOAD_ORDER = [".env.local", ".env"];
-
-/**
  * Where the Clerk SDKs park the keys for a keyless app they created themselves
  * (running `next dev` with no keys configured). Shape:
  * `{ publishableKey, secretKey, claimUrl, apiKeysUrl }`.
@@ -300,8 +293,7 @@ interface EffectiveKey {
  * the framework's own name in a file beats a generic name exported in the
  * shell. Within one name, the shell beats the files. An exported first name
  * returns before any file is read, so an unreadable env file can't break a
- * caller that only needs that key. `envFirst` keeps the older rule, every
- * exported name before any file, for `findKeyInProject`.
+ * caller that only needs that key.
  *
  * `loadOrder` lists the files the app loads, highest priority first. Without
  * one, every candidate file is read, and files holding different values leave
@@ -312,13 +304,10 @@ async function effectiveKey(
   kind: "publishable" | "secret",
   names: string[],
   loadOrder: readonly string[] | undefined,
-  { envFirst = false }: { envFirst?: boolean } = {},
 ): Promise<EffectiveKey> {
   const unique = [...new Set(names)];
-  for (const name of envFirst ? unique : unique.slice(0, 1)) {
-    const key = fromEnv(name);
-    if (key) return { key, unreadable: [] };
-  }
+  const exportedFirst = unique[0] ? fromEnv(unique[0]) : undefined;
+  if (exportedFirst) return { key: exportedFirst, unreadable: [] };
 
   const { keys, unreadable } = await readKeyLines(cwd, loadOrder ?? ENV_FILE_CANDIDATES, {
     publishable: kind === "publishable" ? unique : [],
@@ -341,18 +330,6 @@ async function effectiveKey(
     return { key: values[0], unreadable };
   }
   return { unreadable };
-}
-
-/**
- * Looks for a key under any of `names`, in the order the app itself would
- * resolve one: the environment first, then `.env.local` over `.env`.
- */
-export async function findKeyInProject(
-  cwd: string,
-  names: string[],
-): Promise<LocatedKey | undefined> {
-  // The kind only labels unreadable lines, which this caller doesn't use.
-  return (await effectiveKey(cwd, "publishable", names, LEGACY_LOAD_ORDER, { envFirst: true })).key;
 }
 
 /** The SDK keyless file's keys, labelled with their source. */
@@ -395,22 +372,8 @@ export async function readFolderKeys(cwd: string): Promise<FolderKeys> {
   const framework = await detectFramework(cwd);
   const loadOrder = framework?.envLoadOrder;
   const [publishable, secret] = await Promise.all([
-    effectiveKey(
-      cwd,
-      "publishable",
-      // Only the names the framework's SDK reads: a generic key isn't one a
-      // Next.js, Astro, Nuxt, or Vue app loads.
-      framework?.readsGenericPublishableKey === false
-        ? [framework.envVar]
-        : [framework?.envVar ?? "CLERK_PUBLISHABLE_KEY", "CLERK_PUBLISHABLE_KEY"],
-      loadOrder,
-    ),
-    effectiveKey(
-      cwd,
-      "secret",
-      [framework?.secretKeyEnvVar ?? "CLERK_SECRET_KEY", "CLERK_SECRET_KEY"],
-      loadOrder,
-    ),
+    effectiveKey(cwd, "publishable", keyNames(framework, "publishable"), loadOrder),
+    effectiveKey(cwd, "secret", keyNames(framework, "secret"), loadOrder),
   ]);
   const unreadableLines = [...publishable.unreadable, ...secret.unreadable];
   const undecided =
@@ -430,6 +393,33 @@ export async function readFolderKeys(cwd: string): Promise<FolderKeys> {
 
   const sdkFile = await readSdkKeylessFile(cwd);
   return { ...sdkFileKeys(sdkFile), sdkFile };
+}
+
+/** The names the folder's app reads a key under, its framework's own first. */
+function keyNames(
+  framework: Awaited<ReturnType<typeof detectFramework>>,
+  kind: "publishable" | "secret",
+): string[] {
+  if (kind === "secret")
+    return [framework?.secretKeyEnvVar ?? "CLERK_SECRET_KEY", "CLERK_SECRET_KEY"];
+  // Only the names the framework's SDK reads: a generic key isn't one a
+  // Next.js, Astro, Nuxt, or Vue app loads.
+  return framework?.readsGenericPublishableKey === false
+    ? [framework.envVar]
+    : [framework?.envVar ?? "CLERK_PUBLISHABLE_KEY", "CLERK_PUBLISHABLE_KEY"];
+}
+
+/**
+ * The key `readFolderKeys` returns before reading any file: one exported in
+ * the shell under the first name the app reads. For a caller that must work
+ * when an env file it doesn't need can't be read.
+ */
+export async function exportedFolderKey(
+  cwd: string,
+  kind: "publishable" | "secret",
+): Promise<LocatedKey | undefined> {
+  const [first] = keyNames(await detectFramework(cwd), kind);
+  return first ? fromEnv(first) : undefined;
 }
 
 /**

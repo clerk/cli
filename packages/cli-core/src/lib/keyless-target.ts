@@ -12,12 +12,13 @@ import { resolveAppContext, resolveProfile } from "./config.ts";
 import { getStoredSession, hasAccountCredentials, type OAuthSession } from "./credential-store.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "./errors.ts";
 import { decodePublishableKey } from "./fapi.ts";
-import { detectPublishableKeyName, detectSecretKeyName } from "./framework.ts";
 import {
   ENV_VAR_SOURCE_SUFFIX,
-  findKeyInProject,
+  exportedFolderKey,
+  readFolderKeys,
   readSdkKeylessApp,
   SDK_KEYLESS_SOURCE,
+  type FolderKeys,
   type LocatedKey,
 } from "./local-keys.ts";
 import { log } from "./log.ts";
@@ -58,44 +59,41 @@ export type InstanceTarget =
 export type KeylessInstanceTarget = Extract<InstanceTarget, { kind: "keyless" }>;
 
 /**
- * The instance secret key a keyless project keeps locally. Falls back to the
- * keys an SDK created for itself, which it only does when nothing else supplies
- * them — so that file goes last.
+ * The secret key the folder's app loads (`readFolderKeys`), the key `clerk
+ * link` and the unlinked-folder advice read: in the framework's env load
+ * order, or from the SDK keyless file when the folder holds no plain key.
+ * Undefined when there's none, or when the files disagree and no load order
+ * says which the app loads.
  */
-export async function findLocalSecretKey(cwd: string): Promise<KeylessTarget | undefined> {
-  const names = [await detectSecretKeyName(cwd), "CLERK_SECRET_KEY"];
-  const located = await findKeyInProject(cwd, names);
-
-  const found = located
-    ? { secretKey: located.value, source: located.source }
-    : await sdkKeylessTarget(cwd);
-
-  if (found) log.debug(`accountless: secret key from ${found.source}`);
-  return found;
+export async function findLocalSecretKey(
+  cwd: string,
+  keys?: FolderKeys,
+): Promise<KeylessTarget | undefined> {
+  const secretKey = await (keys ? Promise.resolve(keys) : readFolderKeys(cwd)).then(
+    (keys) => keys.secretKey,
+    async (error: unknown) => {
+      // An exported key is the one the app loads, so an env file that can't be
+      // read doesn't stop a command that needs only that key.
+      const exported = await exportedFolderKey(cwd, "secret");
+      if (!exported) throw error;
+      return exported;
+    },
+  );
+  if (!secretKey) return undefined;
+  log.debug(`accountless: secret key from ${secretKey.source}`);
+  return { secretKey: secretKey.value, source: secretKey.source };
 }
 
-async function sdkKeylessTarget(cwd: string): Promise<KeylessTarget | undefined> {
-  const sdkApp = await readSdkKeylessApp(cwd);
-  if (!sdkApp?.secretKey) return undefined;
-  return { secretKey: sdkApp.secretKey, source: SDK_KEYLESS_SOURCE };
-}
-
-/** The publishable key a keyless project holds locally, and where, when one can be found. */
+/** The publishable key the folder's app loads, and where, read as `findLocalSecretKey` reads it. */
 export async function findLocalPublishableKey(cwd: string): Promise<LocatedKey | undefined> {
-  const names = [await detectPublishableKeyName(cwd), "CLERK_PUBLISHABLE_KEY"];
-  const located = await findKeyInProject(cwd, names);
-  if (located) return located;
-
-  const sdkKey = (await readSdkKeylessApp(cwd))?.publishableKey;
-  return sdkKey ? { value: sdkKey, name: "publishableKey", source: SDK_KEYLESS_SOURCE } : undefined;
+  return (await readFolderKeys(cwd)).publishableKey;
 }
 
 /**
  * Whether a publishable key found locally does NOT belong to the same
- * application as a secret key found locally. `findLocalSecretKey` and
- * `findLocalPublishableKey` search independently — nothing stops one from
- * returning app A's key and the other app B's, e.g. two keyless apps whose
- * keys both happen to sit in the same `.env.local`. Presenting or writing
+ * application as a secret key found locally. Each plain key is the one the
+ * app loads, but nothing stops one being app A's and the other app B's, e.g.
+ * leftovers from two apps in the same `.env.local`. Presenting or writing
  * that pair as one identity produces an app that fails at runtime in a way
  * that's very hard to trace: the server trusts one app, the browser talks to
  * another.
@@ -158,13 +156,18 @@ export async function resolveKeylessTarget(options: {
   app?: string;
   instance?: string;
   cwd?: string;
+  /**
+   * The folder's keys, when the caller already read them (`readFolderKeys`).
+   * Not `keys`: `config pull` and `config schema` pass their `--keys` here.
+   */
+  folderKeys?: FolderKeys;
 }): Promise<KeylessTarget | undefined> {
   if (options.app) return undefined;
 
   const cwd = options.cwd ?? process.cwd();
   if (await resolveProfile(cwd)) return undefined;
 
-  const target = await findLocalSecretKey(cwd);
+  const target = await findLocalSecretKey(cwd, options.folderKeys);
   if (!target) return undefined;
 
   if (!target.secretKey.startsWith("sk_")) {

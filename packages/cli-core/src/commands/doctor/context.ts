@@ -3,7 +3,12 @@ import { resolveProfile } from "../../lib/config.ts";
 import { fetchApplication, listApplications, type Application } from "../../lib/plapi.ts";
 import { resolveKeylessTarget, type KeylessTarget } from "../../lib/keyless-target.ts";
 import { peekKeylessBreadcrumb } from "../../lib/keyless.ts";
-import { readFolderKeys, unreadableFolderReason, type FolderKeys } from "../../lib/local-keys.ts";
+import {
+  exportedFolderKey,
+  readFolderKeys,
+  unreadableFolderReason,
+  type FolderKeys,
+} from "../../lib/local-keys.ts";
 import {
   classifyUnlinkedFolder,
   sdkClaimLinkProblem,
@@ -92,21 +97,27 @@ export function createDoctorContext(): DoctorContext {
 
     getKeylessTarget() {
       if (!keylessPromise) {
-        // Same resolution every other command uses: an explicit --app/link rules
-        // keyless out, but account credentials alone don't (see keyless-target.ts).
+        // Same resolution every other command uses, from the folder read every
+        // other check shares: an explicit --app/link rules keyless out, but
+        // account credentials alone don't (see keyless-target.ts).
         //
         // A malformed local key (not `sk_`-prefixed) is caught here rather than
         // propagated: every keyless-aware check calls this getter, so letting it
         // throw turns one misconfiguration into a crashed-check line per check.
         // It's cached as a diagnosable state instead, and checkLoggedIn reports
         // it once, by name, with a remedy.
-        keylessPromise = resolveKeylessTarget({ cwd: process.cwd() }).catch((error) => {
-          if (error instanceof CliError && error.code === ERROR_CODE.INVALID_KEY_FORMAT) {
-            keylessKeyError = error;
-            return undefined;
-          }
-          throw error;
-        });
+        keylessPromise = ctx
+          .getFolderKeys()
+          .then(async (keys) =>
+            resolveKeylessTarget({ cwd: process.cwd(), folderKeys: await readableKeys(keys) }),
+          )
+          .catch((error: unknown) => {
+            if (error instanceof CliError && error.code === ERROR_CODE.INVALID_KEY_FORMAT) {
+              keylessKeyError = error;
+              return undefined;
+            }
+            throw error;
+          });
       }
       return keylessPromise;
     },
@@ -209,6 +220,18 @@ export function createDoctorContext(): DoctorContext {
       }),
     },
   };
+
+  /**
+   * The keys to resolve the keyless target from. After a failed read, only an
+   * exported secret key, as every other command finds (`findLocalSecretKey`):
+   * reading again would throw a file error into every check, and
+   * `checkProjectLinked` reports the read error.
+   */
+  async function readableKeys(keys: FolderKeys | { readError: string }): Promise<FolderKeys> {
+    if (!("readError" in keys)) return keys;
+    const exported = await exportedFolderKey(process.cwd(), "secret");
+    return exported ? { secretKey: exported } : {};
+  }
 
   /**
    * The credential Platform API calls would use: the API key over a stored

@@ -3,12 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { useCleanClerkKeyEnv, useSyntheticShellClerkKeys } from "../test/lib/clerk-key-env.ts";
-import {
-  findKeyInProject,
-  readAllFolderKeys,
-  readFolderKeys,
-  readSdkKeylessApp,
-} from "./local-keys.ts";
+import { readAllFolderKeys, readFolderKeys, readSdkKeylessApp } from "./local-keys.ts";
 
 // The shell exports a synthetic key under every Clerk name for the whole file,
 // and every test starts with them cleared. A block that skipped the clearing
@@ -500,39 +495,6 @@ describe("readAllFolderKeys", () => {
       state: "parsed",
       publishableKey: "pk_test_sdk",
       secretKey: "sk_test_sdk",
-    });
-  });
-});
-
-describe("findKeyInProject", () => {
-  const originalFile = Bun.file;
-
-  afterEach(() => {
-    (Bun as unknown as { file: typeof Bun.file }).file = originalFile;
-  });
-
-  // `whoami` and `env pull` find a folder's key through here. An exported key
-  // is what the app loads, so the env files must not be read at all: a file
-  // that can't be read mustn't break a command that doesn't need it.
-  test("returns an exported key without reading the env files", async () => {
-    process.env.CLERK_SECRET_KEY = "sk_test_exported";
-    const envPath = join(dir, ".env");
-    // A regular file whose read fails. (A directory won't do: Bun reports a
-    // directory as not existing, so it would be skipped either way.)
-    (Bun as unknown as { file: (path: string) => unknown }).file = (path: string) =>
-      path === envPath
-        ? {
-            exists: async () => true,
-            text: async () => {
-              throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
-            },
-          }
-        : originalFile(path);
-
-    expect(await findKeyInProject(dir, ["CLERK_SECRET_KEY"])).toEqual({
-      value: "sk_test_exported",
-      name: "CLERK_SECRET_KEY",
-      source: "CLERK_SECRET_KEY env var",
     });
   });
 });
