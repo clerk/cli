@@ -1216,7 +1216,13 @@ describe("humanNextAction", () => {
       oauthUnsupported: ["x"],
       instanceUrl: URL,
     },
-    { kind: "oauth_pending" as const, oauthPending: ["github"], oauthUnsupported: ["x"] },
+    {
+      kind: "oauth_pending" as const,
+      oauthPending: ["github"],
+      oauthUnsupported: ["x"],
+      setupFromFile: [],
+      setupCount: 1,
+    },
     ...(["records_available", "records_unavailable", "ssl_pending", "finalizing"] as const).map(
       (kind) => ({ kind, domain: "example.com", records: "DNS", domainsUrl: `${URL}/domains` }),
     ),

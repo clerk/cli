@@ -201,9 +201,9 @@ export type DeployNextStep =
       oauthUnsupported: readonly string[];
       nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
       /** Labels of `oauth.setup` entries with a field that takes a file's contents. */
-      setupFromFile?: readonly string[];
+      setupFromFile: readonly string[];
       /** How many entries `oauth.setup` has, those included. */
-      setupCount?: number;
+      setupCount: number;
     }
   | {
       kind: "records_available" | "records_unavailable" | "ssl_pending" | "finalizing";
@@ -1012,7 +1012,7 @@ export function agentNextAction(step: DeployNextStep): string {
       );
     }
     case "oauth_pending": {
-      const fromFile = step.setupFromFile ?? [];
+      const fromFile = step.setupFromFile;
       if (step.nativeAppleReadinessIssue) {
         const hostedPending = step.oauthPending.filter((provider) => provider !== "apple");
         // Apple has no `oauth.setup` entry here; the others still do. No
@@ -1021,7 +1021,7 @@ export function agentNextAction(step: DeployNextStep): string {
         const hostedAction =
           hostedPending.length > 0
             ? ` These OAuth providers are also missing production credentials: ${hostedPending.join(", ")}. ` +
-              oauthSetupSteps(fromFile, step.setupCount ?? hostedPending.length)
+              oauthSetupSteps(fromFile, step.setupCount)
             : "";
         return (
           `Domain verified, but setup is incomplete.${nativeApple}` +
@@ -1030,7 +1030,7 @@ export function agentNextAction(step: DeployNextStep): string {
           unsupported(step.oauthUnsupported)
         );
       }
-      const entryCount = step.setupCount ?? step.oauthPending.length;
+      const entryCount = step.setupCount;
       // The domain is verified, so there is nothing to monitor on the Domains
       // page. With every entry already sent to the wizard, offering it again
       // would only repeat the sentence before.
