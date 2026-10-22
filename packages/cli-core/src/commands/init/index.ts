@@ -106,7 +106,7 @@ export type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
   login?: boolean;
   /** Pre-configure the accountless application from a Clerk application template. */
   template?: KeylessTemplate;
-  /** Replace an existing unclaimed accountless application instead of keeping it. */
+  /** Replace this folder's existing accountless app instead of keeping it. */
   fresh?: boolean;
 };
 
@@ -896,7 +896,7 @@ export function registerInit(program: Program): void {
     )
     .option(
       "--fresh",
-      "Replace an existing unclaimed accountless application with a new one, instead of keeping it. Only applies when the strategy resolves to accountless — errors otherwise",
+      "Replace this folder's existing accountless app with a new one, including one a Clerk SDK created whose claim link can't be used, which may already be claimed. Only applies when the strategy resolves to accountless — errors otherwise",
     )
     .option(
       "--dry-run",
@@ -953,7 +953,7 @@ export function registerInit(program: Program): void {
       },
       {
         command: "clerk init --accountless --fresh",
-        description: "Replace an existing unclaimed accountless app with a new one",
+        description: "Replace this folder's existing accountless app with a new one",
       },
       {
         command: "clerk init --dry-run --json",
