@@ -215,7 +215,7 @@ clerk config patch --json '{
 | `oauth_application_settings` | `/v1/instance/oauth_application_settings` | Yes      | Dynamic OAuth client registration                                                   |
 | `instance_settings`          | `/v1/beta_features/instance_settings`     | No       | `test_mode`, `progressive_sign_up`, `from_email_address`, `restricted_to_allowlist` |
 
-Any other top-level key exits with a usage error naming the supported ones. Most of them (`session`, `sign_up`, `auth_email`, …) are genuinely account-only and the error points at `clerk auth login`. A handful — `enterprise_connections`, `saml_connections`, `oauth_applications`, `domains` — are BAPI resource _collections_ reachable on an unclaimed application today; they're just not part of this config document, so the error points at `clerk api /<resource>` instead of a login that wouldn't add them anyway.
+Any other top-level key exits with a usage error naming the supported ones. Most of them (`session`, `sign_up`, `auth_email`, …) are genuinely account-only, and the error gives the step for what the folder holds, e.g. `clerk link`, which claims an app `clerk init` created. A handful — `enterprise_connections`, `saml_connections`, `oauth_applications`, `domains` — are BAPI resource _collections_ the secret key reaches today; they're just not part of this config document, so the error points at `clerk api /<resource>` instead of linking, which wouldn't add them anyway.
 
 `instance_settings` is backed by a beta route, and is the only way to reach those four auth-config fields without an account — which is why it's included.
 
@@ -246,7 +246,7 @@ That leaves `PATCH /v1/instance`, which answers `204` with no body at all. Nothi
 | `config schema`    | Returns the JSON Schema                  | Errors — the schema describes the account-level document                                                                              |
 | Write confirmation | Trusts the response body outright        | Verifies each sent field round-tripped and names what couldn't be confirmed (see [Round-trip verification](#round-trip-verification)) |
 
-Run `clerk auth login` to claim the application; auto-claim links it, and every config command then uses account mode with full coverage.
+Once the folder is linked, every config command uses account mode with full coverage. The refusals above give the step for what the folder holds, from `lib/unlinked-folder.ts`: `clerk link` claims an app `clerk init` created and finds plain keys' app by its publishable key. They call the app unclaimed only for an app in no account yet (an init app, or an SDK app whose claim link works), and the progress lines name it "this accountless application" for those and "this folder's application" otherwise.
 
 ### API Endpoints (accountless mode)
 

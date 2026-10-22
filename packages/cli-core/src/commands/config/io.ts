@@ -39,7 +39,7 @@ export function assertPayloadWritable(
   target: InstanceTarget,
   payload: Record<string, unknown>,
 ): void {
-  if (target.kind === "keyless") assertKeylessPayload(payload);
+  if (target.kind === "keyless") assertKeylessPayload(payload, target);
 }
 
 /**
@@ -53,7 +53,7 @@ export async function readInstanceConfig(
   target: InstanceTarget,
   scope: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  if (target.kind === "keyless") return readCurrentGroups(target.keyless, scope);
+  if (target.kind === "keyless") return readCurrentGroups(target, scope);
 
   return withApiContext(
     fetchInstanceConfig(target.ctx.appId, target.ctx.instanceId),

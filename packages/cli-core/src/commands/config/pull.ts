@@ -18,7 +18,7 @@ export async function configPull(options: ConfigPullOptions): Promise<void> {
 
     const config = await withSpinner(`Pulling config from ${target.label}...`, async () =>
       target.kind === "keyless"
-        ? pullKeylessConfig(target.keyless, options.keys)
+        ? pullKeylessConfig(target, options.keys)
         : withApiContext(
             fetchInstanceConfig(target.ctx.appId, target.ctx.instanceId, options.keys),
             "Failed to fetch config",

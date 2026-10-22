@@ -8,6 +8,7 @@ import { isInsideGutter, log } from "../../lib/log.ts";
 import { keylessCopy } from "../../lib/copy.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 import { resolveInstanceTarget } from "../../lib/keyless-target.ts";
+import { keylessRefusal } from "../../lib/unlinked-folder.ts";
 import { credentialPlaceholder, credentialPlaceholderPaths } from "../../lib/oauth-config.ts";
 import type { KeylessWriteVerification } from "./keyless.ts";
 import { redactSecrets } from "./redact.ts";
@@ -62,8 +63,10 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   const target = await resolveInstanceTarget(options);
 
   if (target.kind === "keyless" && op.method === "PUT") {
-    throw new CliError(keylessCopy.putNeedsClaimedApplication(), {
+    const { subject, step, examples } = keylessRefusal(target.folder, target.keyless.source);
+    throw new CliError(keylessCopy.putNeedsClaimedApplication(subject, step), {
       code: ERROR_CODE.AUTH_REQUIRED,
+      examples,
     });
   }
 

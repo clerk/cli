@@ -11,6 +11,7 @@
  * `lib/config.ts`. Nothing here uses an import at module load.
  */
 
+import type { KeylessSubject } from "./copy.ts";
 import { hasStoredCredentials } from "./credential-store.ts";
 import { CliError, ERROR_CODE, type CredentialRefusal, type NextStepAdvice } from "./errors.ts";
 import type { Example } from "./help.ts";
@@ -286,20 +287,62 @@ export function appInNoAccount(folder: UnlinkedFolder): boolean {
 }
 
 /**
+ * An app `clerk init` or a Clerk SDK created: the only kinds a message calls
+ * unclaimed. Plain keys may belong to an app already in an account.
+ */
+export function isUnclaimedApp(folder: UnlinkedFolder): boolean {
+  return folder.kind === "init_app" || folder.kind === "sdk_app";
+}
+
+/**
+ * The step for `folder` in the current mode, for an error. Agents get its
+ * commands as `examples`; a person's text already names them, and
+ * `reportError` would print them again as an "Examples:" block.
+ */
+export function stepInCurrentMode(
+  folder: UnlinkedFolder,
+  rerun?: Rerun,
+): { text: string; examples?: Example[] } {
+  const agent = isAgent();
+  const step = unlinkedFolderNextStep(folder, { agent, rerun });
+  return { text: step.text, ...(agent && { examples: step.examples }) };
+}
+
+/**
+ * How a command names the app the folder's secret key reaches: "this
+ * accountless application" only for an app in no account yet; plain keys, or
+ * an SDK app whose claim link can't be used, may already be in one.
+ */
+export function keylessAppLabel(folder: UnlinkedFolder, source: string): string {
+  return `${appInNoAccount(folder) ? "this accountless application" : "this folder's application"} (secret key from ${source})`;
+}
+
+/**
+ * What a refusal from a command running on the folder's secret key says: what
+ * the key from `source` reaches, the step for what `folder` holds, and its
+ * commands for an agent.
+ */
+export function keylessRefusal(
+  folder: UnlinkedFolder,
+  source: string,
+  rerun?: Rerun,
+): { subject: KeylessSubject; step: string; examples?: Example[] } {
+  const { text, examples } = stepInCurrentMode(folder, rerun);
+  return { subject: { unclaimed: appInNoAccount(folder), source }, step: text, examples };
+}
+
+/**
  * The `not_linked` error for a command that stopped in `folder`: `lead`, the
- * step for what the folder holds, then `tail`. Agents get the step's commands
- * as `examples`; a person's text already names them, and `reportError` would
- * print them again as an "Examples:" block.
+ * step for what the folder holds, then `tail`.
  */
 export function unlinkedFolderError(
   folder: UnlinkedFolder,
   { lead, tail, rerun }: { lead: string; tail?: string; rerun?: Rerun },
 ): CliError {
-  const agent = isAgent();
-  const step = unlinkedFolderNextStep(folder, { agent, rerun });
+  const step = stepInCurrentMode(folder, rerun);
   return new CliError([lead, step.text, tail].filter(Boolean).join(" "), {
     code: ERROR_CODE.NOT_LINKED,
-    ...(agent && { examples: step.examples }),
+    examples: step.examples,
   });
 }
 

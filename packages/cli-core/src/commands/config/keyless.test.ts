@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
 import { useCaptureLog, credentialStoreStubs, gitStubs, stubFetch } from "../../test/lib/stubs.ts";
+import type { KeylessInstanceTarget } from "../../lib/keyless-target.ts";
+import type { UnlinkedFolder } from "../../lib/unlinked-folder.ts";
+import { _resetMode, setMode } from "../../mode.ts";
 
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
 mock.module("../../lib/git.ts", () => gitStubs);
@@ -20,6 +23,24 @@ mock.module("../../lib/spinner.ts", () => ({
 }));
 
 const SECRET_KEY = "sk_test_keyless";
+
+const INIT_APP: UnlinkedFolder = { kind: "init_app", credential: "session" };
+const PLAIN_KEYS: UnlinkedFolder = {
+  kind: "unknown_owner",
+  credential: "session",
+  publishableKey: { name: "CLERK_PUBLISHABLE_KEY", source: ".env" },
+  secretKey: { name: "CLERK_SECRET_KEY", source: ".env" },
+};
+
+/** A keyless target whose folder holds `folder`. */
+function keylessTarget(folder: UnlinkedFolder = INIT_APP): KeylessInstanceTarget {
+  return {
+    kind: "keyless",
+    keyless: { secretKey: SECRET_KEY, source: ".env" },
+    label: "this accountless application (secret key from .env)",
+    folder,
+  };
+}
 const BAPI_URL = "https://test-bapi.clerk.com";
 
 const INSTANCE = { object: "instance", id: "ins_1", support_email: "old@example.com" };
@@ -285,7 +306,7 @@ describe("keyless config", () => {
       const { resolveKeylessTarget } = await import("../../lib/keyless-target.ts");
 
       await expect(resolveKeylessTarget({ instance: "prod", cwd: projectDir })).rejects.toThrow(
-        /--instance is not supported for an unclaimed accountless application/,
+        /--instance is not supported without a linked application: the secret key in \.env already targets its own instance/,
       );
     });
 
@@ -303,22 +324,41 @@ describe("keyless config", () => {
     test("accepts the supported groups", async () => {
       const { assertKeylessPayload } = await import("./keyless.ts");
       expect(() =>
-        assertKeylessPayload({ instance: { support_email: "a@b.com" }, restrictions: {} }),
+        assertKeylessPayload(
+          { instance: { support_email: "a@b.com" }, restrictions: {} },
+          keylessTarget(),
+        ),
       ).not.toThrow();
     });
 
     test("rejects unknown keys and names the supported ones", async () => {
       const { assertKeylessPayload } = await import("./keyless.ts");
-      expect(() => assertKeylessPayload({ session: { lifetime: 10 } })).toThrow(
+      expect(() => assertKeylessPayload({ session: { lifetime: 10 } }, keylessTarget())).toThrow(
         /Unsupported config key .*session.*\n.*instance, communication, restrictions, organization_settings, protect, oauth_application_settings, instance_settings/s,
       );
     });
 
-    test("points account-only keys at `clerk auth login`", async () => {
+    test.each([
+      {
+        kind: "an init app",
+        folder: INIT_APP,
+        step: "Run `clerk link`: it claims the app into your account and links this folder.",
+      },
+      {
+        kind: "plain keys",
+        folder: PLAIN_KEYS,
+        step: "Run `clerk link`: it finds the app in your account by that key.",
+      },
+    ])("points account-only keys at the folder's step: $kind", async ({ folder, step }) => {
+      setMode("human");
       const { assertKeylessPayload } = await import("./keyless.ts");
-      expect(() => assertKeylessPayload({ session: { lifetime: 10 } })).toThrow(
-        /Run `clerk auth login` to claim the application/,
-      );
+      try {
+        expect(() =>
+          assertKeylessPayload({ session: { lifetime: 10 } }, keylessTarget(folder)),
+        ).toThrow(step);
+      } finally {
+        _resetMode();
+      }
     });
 
     // enterprise_connections/saml_connections/oauth_applications/domains are
@@ -328,19 +368,23 @@ describe("keyless config", () => {
     // doesn't add them to the config document either.
     test("points BAPI resource collections at `clerk api` instead of login", async () => {
       const { assertKeylessPayload } = await import("./keyless.ts");
-      expect(() => assertKeylessPayload({ enterprise_connections: {} })).toThrow(
+      expect(() => assertKeylessPayload({ enterprise_connections: {} }, keylessTarget())).toThrow(
         /use `clerk api \/enterprise_connections` directly instead of this config document/,
       );
     });
 
     test("does not suggest `clerk auth login` for a BAPI resource collection", async () => {
       const { assertKeylessPayload } = await import("./keyless.ts");
-      expect(() => assertKeylessPayload({ domains: {} })).not.toThrow(/clerk auth login/);
+      expect(() => assertKeylessPayload({ domains: {} }, keylessTarget())).not.toThrow(
+        /clerk auth login/,
+      );
     });
 
     test("rejects a group whose value is not an object", async () => {
       const { assertKeylessPayload } = await import("./keyless.ts");
-      expect(() => assertKeylessPayload({ instance: "nope" })).toThrow(/must be a JSON object/);
+      expect(() => assertKeylessPayload({ instance: "nope" }, keylessTarget())).toThrow(
+        /must be a JSON object/,
+      );
     });
 
     // `PATCH /v1/instance` answers 204 and drops field names it doesn't know,
@@ -348,9 +392,9 @@ describe("keyless config", () => {
     // place it can be caught is before the request goes out.
     test("rejects an `instance` field the Backend API would silently drop", async () => {
       const { assertKeylessPayload } = await import("./keyless.ts");
-      expect(() => assertKeylessPayload({ instance: { suport_email: "a@b.com" } })).toThrow(
-        /Unsupported field on `instance`.*suport_email/s,
-      );
+      expect(() =>
+        assertKeylessPayload({ instance: { suport_email: "a@b.com" } }, keylessTarget()),
+      ).toThrow(/Unsupported field on `instance`.*suport_email/s);
     });
 
     test.each([
@@ -359,7 +403,7 @@ describe("keyless config", () => {
       ["second_factors", "multi-factor authentication policy"],
     ])("explains that `instance.%s` has no Backend API route at all", async (field, reason) => {
       const { assertKeylessPayload } = await import("./keyless.ts");
-      expect(() => assertKeylessPayload({ instance: { [field]: true } })).toThrow(
+      expect(() => assertKeylessPayload({ instance: { [field]: true } }, keylessTarget())).toThrow(
         new RegExp(`no route for ${reason}`),
       );
     });
@@ -376,12 +420,16 @@ describe("keyless config", () => {
       "preferred_sign_in_strategy_when_password_required",
     ])("accepts the documented `instance` field %s", async (field) => {
       const { assertKeylessPayload } = await import("./keyless.ts");
-      expect(() => assertKeylessPayload({ instance: { [field]: "x" } })).not.toThrow();
+      expect(() =>
+        assertKeylessPayload({ instance: { [field]: "x" } }, keylessTarget()),
+      ).not.toThrow();
     });
 
     test("leaves fields on other groups alone — their writes echo back", async () => {
       const { assertKeylessPayload } = await import("./keyless.ts");
-      expect(() => assertKeylessPayload({ protect: { nonsense_field: true } })).not.toThrow();
+      expect(() =>
+        assertKeylessPayload({ protect: { nonsense_field: true } }, keylessTarget()),
+      ).not.toThrow();
     });
   });
 
@@ -389,7 +437,7 @@ describe("keyless config", () => {
     test("returns an envelope of the readable groups", async () => {
       const { pullKeylessConfig } = await import("./keyless.ts");
 
-      const config = await pullKeylessConfig({ secretKey: SECRET_KEY, source: ".env" });
+      const config = await pullKeylessConfig(keylessTarget());
 
       expect(config).toEqual(FULL_ENVELOPE);
     });
@@ -397,7 +445,7 @@ describe("keyless config", () => {
     test("stays quiet about restrictions on a default pull", async () => {
       const { pullKeylessConfig } = await import("./keyless.ts");
 
-      await pullKeylessConfig({ secretKey: SECRET_KEY, source: ".env" });
+      await pullKeylessConfig(keylessTarget());
 
       expect(captured.err).not.toContain("no read route");
     });
@@ -405,9 +453,7 @@ describe("keyless config", () => {
     test("warns that restrictions cannot be read and omits it", async () => {
       const { pullKeylessConfig } = await import("./keyless.ts");
 
-      const config = await pullKeylessConfig({ secretKey: SECRET_KEY, source: ".env" }, [
-        "restrictions",
-      ]);
+      const config = await pullKeylessConfig(keylessTarget(), ["restrictions"]);
 
       expect(config).toEqual({});
       expect(captured.err).toContain("no read route for restrictions");
@@ -416,9 +462,9 @@ describe("keyless config", () => {
     test("rejects unknown keys", async () => {
       const { pullKeylessConfig } = await import("./keyless.ts");
 
-      await expect(
-        pullKeylessConfig({ secretKey: SECRET_KEY, source: ".env" }, ["session"]),
-      ).rejects.toThrow(/Unsupported config key/);
+      await expect(pullKeylessConfig(keylessTarget(), ["session"])).rejects.toThrow(
+        /Unsupported config key/,
+      );
     });
   });
 
@@ -684,11 +730,13 @@ describe("keyless config", () => {
       ).rejects.toThrow(/Unsupported config key/);
     });
 
-    test("put explains that a full replace needs a claimed application", async () => {
+    // The folder holds a plain secret key, which may belong to an app already
+    // in an account: these refusals ask for a linked application.
+    test("put explains that a full replace needs a linked application", async () => {
       const { configPut } = await import("./push.ts");
 
       await expect(configPut({ json: '{"instance":{}}', yes: true })).rejects.toThrow(
-        /Replacing the entire configuration is only available for a claimed application/,
+        /Replacing the entire configuration is only available for a linked application/,
       );
     });
 
@@ -764,19 +812,19 @@ describe("keyless config", () => {
       expect(captured.err).toContain("Accountless application keys");
     });
 
-    test("enable billing explains that billing needs a claimed application", async () => {
+    test("enable billing explains that billing needs a linked application", async () => {
       const { billingEnable } = await import("../billing/index.ts");
 
       await expect(billingEnable({ for: ["users"], yes: true })).rejects.toThrow(
-        /Billing can only be configured on a claimed application/,
+        /Billing can only be configured on a linked application/,
       );
     });
 
-    test("schema explains that it needs a claimed application", async () => {
+    test("schema explains that it needs a linked application", async () => {
       const { configSchema } = await import("./schema.ts");
 
       await expect(configSchema({})).rejects.toThrow(
-        /Config schema is only available for a claimed application/,
+        /Config schema is only available for a linked application/,
       );
     });
   });

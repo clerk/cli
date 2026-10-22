@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
+import { test, expect, describe, beforeEach, afterAll, afterEach, spyOn } from "bun:test";
 import { BapiError, CliError, ERROR_CODE } from "./errors.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +8,21 @@ import { captureTelemetryPayload, useCaptureLog } from "../test/lib/stubs.ts";
 const configModule = await import("./config.ts");
 const plapiModule = await import("./plapi.ts");
 const keylessTargetModule = await import("./keyless-target.ts");
+const unlinkedFolderModule = await import("./unlinked-folder.ts");
+type UnlinkedFolder = import("./unlinked-folder.ts").UnlinkedFolder;
+
+// What the folder holds, for the keyless label: never the real working
+// directory or credential store.
+const readUnlinkedFolderSpy = spyOn(unlinkedFolderModule, "readUnlinkedFolder").mockResolvedValue({
+  kind: "init_app",
+  credential: "none",
+});
+afterAll(() => readUnlinkedFolderSpy.mockRestore());
+
+// No stored session, read from the token override instead of the keychain.
+const { _setTokenOverride } = await import("./credential-store.ts");
+_setTokenOverride(null);
+afterAll(() => _setTokenOverride(undefined));
 
 const { normalizeBapiPath, handleBapiError, resolveBapiSecretKey, describeBapiTarget } =
   await import("./bapi-command.ts");
@@ -352,15 +367,43 @@ describe("bapi-command", () => {
     await expect(describeBapiTarget({ secretKey: "sk_test_123" })).resolves.toBeUndefined();
   });
 
-  test("describes an unclaimed keyless target without querying the account", async () => {
-    resolveKeylessTargetSpy.mockResolvedValue({ secretKey: "sk_test_123", source: ".env.local" });
+  // Only an app in no account yet is called accountless: plain keys, or an SDK
+  // app whose claim link can't be used, may already be in one.
+  test.each([
+    {
+      kind: "an init app",
+      folder: { kind: "init_app", credential: "none" },
+      label: "this accountless application (secret key from .env.local)",
+    },
+    {
+      kind: "plain keys",
+      folder: {
+        kind: "unknown_owner",
+        credential: "none",
+        secretKey: { name: "CLERK_SECRET_KEY", source: ".env.local" },
+      },
+      label: "this folder's application (secret key from .env.local)",
+    },
+    {
+      kind: "an SDK app with no usable claim link",
+      folder: {
+        kind: "sdk_app",
+        credential: "none",
+        unusable: { reason: "its claim URL isn't https", findableByKey: true },
+      },
+      label: "this folder's application (secret key from .env.local)",
+    },
+  ] as { kind: string; folder: UnlinkedFolder; label: string }[])(
+    "describes a keyless target without querying the account: $kind",
+    async ({ folder, label }) => {
+      resolveKeylessTargetSpy.mockResolvedValue({ secretKey: "sk_test_123", source: ".env.local" });
+      readUnlinkedFolderSpy.mockResolvedValue(folder);
 
-    await expect(describeBapiTarget({})).resolves.toBe(
-      "this accountless application (secret key from .env.local)",
-    );
+      await expect(describeBapiTarget({})).resolves.toBe(label);
 
-    expect(resolveAppContextSpy).not.toHaveBeenCalled();
-  });
+      expect(resolveAppContextSpy).not.toHaveBeenCalled();
+    },
+  );
 
   test("an explicit --secret-key wins over a keyless target on disk, matching resolveBapiSecretKey", async () => {
     resolveKeylessTargetSpy.mockResolvedValue({ secretKey: "sk_test_disk", source: ".env.local" });

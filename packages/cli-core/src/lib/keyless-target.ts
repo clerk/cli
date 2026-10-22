@@ -20,7 +20,14 @@ import {
   SDK_KEYLESS_SOURCE,
 } from "./local-keys.ts";
 import { log } from "./log.ts";
-import { readUnlinkedFolder, unlinkedFolderNextStep } from "./unlinked-folder.ts";
+import { keylessCopy } from "./copy.ts";
+import {
+  keylessAppLabel,
+  keylessRefusal,
+  readUnlinkedFolder,
+  unlinkedFolderNextStep,
+  type UnlinkedFolder,
+} from "./unlinked-folder.ts";
 import { isAgent } from "../mode.ts";
 
 // Moved to the leaf module `local-keys.ts`; re-exported so importers are unchanged.
@@ -45,7 +52,9 @@ export interface AccountContext {
  */
 export type InstanceTarget =
   | { kind: "account"; ctx: AccountContext; label: string }
-  | { kind: "keyless"; keyless: KeylessTarget; label: string };
+  | { kind: "keyless"; keyless: KeylessTarget; label: string; folder: UnlinkedFolder };
+
+export type KeylessInstanceTarget = Extract<InstanceTarget, { kind: "keyless" }>;
 
 /**
  * The instance secret key a keyless project keeps locally. Falls back to the
@@ -165,9 +174,12 @@ export async function resolveKeylessTarget(options: {
   // The secret key addresses exactly one instance — its own — so there is no
   // instance to choose between.
   if (options.instance) {
+    const refusal = keylessRefusal(await readUnlinkedFolder(cwd), target.source);
     throwUsageError(
-      `--instance is not supported for an unclaimed accountless application: the secret key in ${target.source} already targets its own instance.\n` +
-        "Run `clerk auth login` to claim the application, then target instances by name.",
+      keylessCopy.instanceFlagNeedsLinkedApplication(refusal.subject, refusal.step),
+      undefined,
+      undefined,
+      refusal.examples,
     );
   }
 
@@ -193,15 +205,10 @@ export async function resolveKeylessTarget(options: {
  * network call, and right in the common case of a session stale by its own
  * clock rather than one the server revoked.
  */
-async function warnKeylessCoversLess(source: string, cwd: string): Promise<void> {
+async function warnKeylessCoversLess(source: string, folder: UnlinkedFolder): Promise<void> {
   if (!(await hasAccountCredentials())) return;
 
-  // What to run comes from the unlinked-folder module, so the same folder gets
-  // the same advice from every command: `clerk link` claims an init app first,
-  // and finds plain keys' app by key.
-  const { text: step } = unlinkedFolderNextStep(await readUnlinkedFolder(cwd), {
-    agent: isAgent(),
-  });
+  const { text: step } = unlinkedFolderNextStep(folder, { agent: isAgent() });
 
   // A platform API key never expires this way and is on its own enough to link,
   // so it always gets the plain wording.
@@ -233,11 +240,13 @@ export async function resolveInstanceTarget(options: {
 }): Promise<InstanceTarget> {
   const keyless = await resolveKeylessTarget(options);
   if (keyless) {
-    await warnKeylessCoversLess(keyless.source, options.cwd ?? process.cwd());
+    const folder = await readUnlinkedFolder(options.cwd ?? process.cwd());
+    await warnKeylessCoversLess(keyless.source, folder);
     return {
       kind: "keyless",
       keyless,
-      label: `this accountless application (secret key from ${keyless.source})`,
+      label: keylessAppLabel(folder, keyless.source),
+      folder,
     };
   }
 

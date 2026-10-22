@@ -129,11 +129,11 @@ In agent mode the user-id is required (no interactive picker) and output is a JS
 
 `--secret-key` chooses the Backend API key used for user lookup. `users open` still requires an app target to resolve the dashboard URL, either from `--app`, a linked project, or the human-mode app picker. Use `--instance` when you want something other than the default development instance.
 
-#### On an unclaimed accountless application
+#### In a folder that runs on its own secret key
 
-This is the one command in the family that an unclaimed accountless application cannot satisfy, and the reason is structural rather than a missing code path: a dashboard link is `/apps/{appId}/instances/{instanceId}/users/{userId}`, and an application has no `appId` until somebody claims it.
+This is the one command in the family that a folder running on its own secret key cannot satisfy: a dashboard link is `/apps/{appId}/instances/{instanceId}/users/{userId}`, and the secret key doesn't give the application's ID.
 
-Rather than report the generic "no Clerk project linked", `users open` detects the accountless project and says so — because the two remedies that message implies, `clerk link` and `--app`, both want an application ID that does not exist yet. The error names `clerk auth login` to claim the application, and `clerk api /users/<id>` to read the user right now without claiming anything. Passing `--app` explicitly skips this check: naming an application says the request isn't about the accountless one in this directory.
+Rather than report the generic "no Clerk project linked", `users open` says so, gives the step for what the folder holds (from `lib/unlinked-folder.ts`, e.g. `clerk link`, which claims an app `clerk init` created or finds plain keys' app by its publishable key), then says to run `clerk users open <id>` again (with `--print` if the run had it; never `--secret-key`), and offers `clerk api /users/<id>` to read the user right now. It calls the app unclaimed only for an app in no account yet (an init app, or an SDK app whose claim link works). Passing `--app` explicitly skips this check: naming an application says the request isn't about the one in this directory.
 
 ## API Endpoints
 

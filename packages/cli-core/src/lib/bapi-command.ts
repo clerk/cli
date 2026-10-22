@@ -2,6 +2,7 @@ import { resolveAppContext, resolveFetchedApplicationInstance } from "./config.t
 import { BapiError, CliError, ERROR_CODE, throwUsageError, withApiContext } from "./errors.ts";
 import { resolveKeylessTarget } from "./keyless-target.ts";
 import { log } from "./log.ts";
+import { keylessAppLabel, readUnlinkedFolder } from "./unlinked-folder.ts";
 import { fetchApplication, validateKeyPrefix } from "./plapi.ts";
 import { declareSoftExitError } from "./telemetry.ts";
 
@@ -26,15 +27,15 @@ export async function describeBapiTarget(
   // app/instance context to describe.
   if (options.secretKey) return undefined;
 
-  // Mirrors resolveBapiSecretKey's precedence: an unclaimed keyless project has
-  // no app/instance to describe, only the key's own source.
+  // Mirrors resolveBapiSecretKey's precedence: a folder running on its own
+  // secret key has no app/instance to describe, only the key's own source.
   const keyless = await resolveKeylessTarget({
     app: options.app,
     instance: options.instance,
     cwd: options.cwd,
   });
   if (keyless) {
-    return `this accountless application (secret key from ${keyless.source})`;
+    return keylessAppLabel(await readUnlinkedFolder(options.cwd ?? process.cwd()), keyless.source);
   }
 
   try {
