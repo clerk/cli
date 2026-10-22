@@ -843,6 +843,18 @@ These items go into the GROW-1285 section of the one PR description; the PR itse
 - **SDK-only folder:** gives the `sdk_app` step: `clerk link` for people (it opens the claim page), `clerk open` for agents.
 - Statuses and `fix` labels are unchanged. `doctor --fix` still runs `link`, which after PR 1 does the right thing in each case.
 
+**Decided by the orchestrator, acting for Shane, on 2026-10-22,** while building this milestone:
+
+1. **Signed in with plain keys, "Project linked" drops "accountless".** Its message names the key's file ("this folder uses the secret key from `.env`") instead of "using the accountless application", which is the same unproven claim as "unclaimed". An init app or SDK app keeps its message; only the remedy changes, to the step.
+2. **"Authentication valid", with an expired session and a secret key on disk, does the same.** Plain keys: "falling back to the secret key from `.env`", and the remedy says the key still works. An init app or SDK app keeps "the accountless application".
+3. **`doctor`'s JSON gets no `examples`.** Its result format has none; the step's text rides in `message` or `remedy`, as before.
+
+**Decided by the orchestrator, acting for Shane, on 2026-10-22,** after the milestone 7 review:
+
+4. **Three more checks drop "accountless" for plain keys.** With no account session, "Authentication valid" passes with "not required: the secret key from `.env` works", and "Application reachable" and "Instance IDs" skip with "secret key from `.env`" as the reason. An init app or SDK app keeps "accountless application" in all three. Statuses are unchanged. The integration run with Dashboard keys signed out asserts every check, and that none says "accountless" or "unclaimed".
+5. **A Nuxt folder whose `.env.local` and SDK keyless file disagree is deferred to milestone 10** (see its definition of done). `doctor` there calls the `.env.local` key's app unclaimed, because the key it names and the folder's kind come from two readers. Milestone 10 moves the one that reads `.env.local` onto the shared reader.
+6. **`doctor` is pinned as read-only and reading each file once.** With a stored session and an init token, every request it makes is a GET, and `.env` and the init token are byte for byte as they were. A full run reads the folder's keys once and peeks at the init token once, never reading it (a read clears a malformed token).
+
 **Implementation outline.**
 
 - `doctor` already holds most of the facts in its memoized context (`doctor/context.ts`: `getKeylessTarget`, `hasClaimBreadcrumb`, `hasAccountCredentials`). Add the shared key reader's result as one more memoized getter, because the classifier needs the publishable key separately from the secret key. Build `UnlinkedFolderFacts` from them and call the pure `classifyUnlinkedFolder`, so `doctor` keeps its no-side-effects and one-read-per-fact guarantees. The facts need which credential is present (API key over stored session, not just whether one is) and, for an SDK-only folder with a publishable key, the claim-link check (`readSdkClaimLink`); that field is required, so it can't be skipped.
@@ -917,7 +929,11 @@ These items go into the GROW-1285 section of the one PR description; the PR itse
 
 **Implementation outline.** Move `findLocalSecretKey`, `findLocalPublishableKey`, and through them `whoami`, `env pull`'s keyless path (`pullKeylessKeys`), and `resolveKeylessTarget` onto `readFolderKeys`. Keep their sources in messages. A folder whose files disagree ("couldn't tell") keeps today's not-linked advice from the classifier.
 
-**Definition of done.** Tests for `whoami` and `env pull` with keys only in `.env.development.local`, and with a plain secret key next to an SDK keyless file (no pairing). Search for every remaining caller of the two helpers and account for each.
+**Definition of done.**
+
+- Tests for `whoami` and `env pull` with keys only in `.env.development.local`, and with a plain secret key next to an SDK keyless file (no pairing).
+- A `doctor` case for a Nuxt folder with `NUXT_CLERK_SECRET_KEY` in `.env.local` and an SDK keyless file (milestone 7 review, 2026-10-22; deferred here by Shane). Nuxt loads only `.env`, so the classifier sees an SDK-only folder, while `resolveKeylessTarget` reads `.env.local`. Today `doctor` calls the `.env.local` key's app "the unclaimed accountless application" and names that file. After this milestone both read the same key, so `doctor` names the SDK keyless file and doesn't call the `.env.local` key's app unclaimed.
+- Search for every remaining caller of the two helpers and account for each.
 
 **Known limitation until then: one `clerk link` run reads the folder's keys several times** (milestone 4 review round 2, deferred here 2026-10-20). `inspectFolder` in `commands/link/index.ts` reads them once; auto-link (`findLinkKey`), detection (`tryDetectApp`), and `init`'s key check each read them again, and each read detects the framework again. Facts from different moments can combine, e.g. if `next dev` writes the SDK keyless file during the run. Here, pass the first read into auto-link and detection. The key check's read just before saving can stay: that's the moment that matters.
 
