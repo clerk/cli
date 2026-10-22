@@ -575,7 +575,7 @@ async function claimFirst(
     if (!destination) return undefined;
     const yes = await confirmClaim({ appName: initClaim.appName, destination });
     if (!yes) {
-      if (account) reportClaimSkipped(initClaim.appName, account);
+      reportClaimSkipped(initClaim.appName, account ?? {});
       await outro();
       throwUserAbort();
     }

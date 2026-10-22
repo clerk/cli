@@ -187,6 +187,21 @@ test("person, a claim refused by a managed workspace: stops with not_linked, no 
   expect(await tokenFileExists()).toBe(true);
 });
 
+// No session to name, but the app is still unclaimed, as `clerk auth login` says.
+test("person, API key only, No: says the app is still unclaimed, and claims nothing", async () => {
+  mockState.storedToken = null;
+  mockPrompts.confirm(false);
+
+  const result = await clerk.raw("link");
+
+  expect(result.exitCode).toBe(0);
+  expect(Bun.stripANSI(result.stderr)).toContain(
+    "Skipped the claim, so `my-app` is still unclaimed. Its claim token stays in this folder.",
+  );
+  expect(requests("POST", CLAIM_PATH)).toHaveLength(0);
+  expect(await tokenFileExists()).toBe(true);
+});
+
 test("person, No: a user abort with nothing claimed, no picker, and the token kept", async () => {
   await useStoredSessionOnly();
   mockPrompts.confirm(false);
