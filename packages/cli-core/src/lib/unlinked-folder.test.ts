@@ -318,22 +318,48 @@ describe("classifyUnlinkedFolder", () => {
     });
   });
 
-  test("secret keys that disagree, with no publishable key: secret key only, no location", () => {
+  const SECRETS_DISAGREE = {
+    secret: [
+      { value: "sk_test_one", name: "CLERK_SECRET_KEY", source: ".env" },
+      { value: "sk_test_two", name: "CLERK_SECRET_KEY", source: ".env.local" },
+    ],
+  };
+  const SECRETS_DISAGREE_REASON =
+    "`.env` and `.env.local` hold different Clerk secret keys, and the CLI doesn't know which one this app loads";
+
+  test("secret keys that disagree, with no publishable key: no location, and why", () => {
+    expect(
+      classifyUnlinkedFolder({
+        initToken: false,
+        sdkClaimLinkProblem: undefined,
+        credential: "session",
+        keys: { undecided: SECRETS_DISAGREE },
+      }),
+    ).toEqual({
+      kind: "unknown_owner",
+      credential: "session",
+      secretKeysDisagree: SECRETS_DISAGREE_REASON,
+    });
+  });
+
+  // `clerk link` still matches by the publishable key, so it isn't "couldn't tell".
+  test("secret keys that disagree next to one publishable key: its location, and why", () => {
     expect(
       classifyUnlinkedFolder({
         initToken: false,
         sdkClaimLinkProblem: undefined,
         credential: "session",
         keys: {
-          undecided: {
-            secret: [
-              { value: "sk_test_one", name: "CLERK_SECRET_KEY", source: ".env" },
-              { value: "sk_test_two", name: "CLERK_SECRET_KEY", source: ".env.local" },
-            ],
-          },
+          publishableKey: { value: "pk_test_one", name: "CLERK_PUBLISHABLE_KEY", source: ".env" },
+          undecided: SECRETS_DISAGREE,
         },
       }),
-    ).toEqual({ kind: "unknown_owner", credential: "session" });
+    ).toEqual({
+      kind: "unknown_owner",
+      credential: "session",
+      publishableKey: { name: "CLERK_PUBLISHABLE_KEY", source: ".env" },
+      secretKeysDisagree: SECRETS_DISAGREE_REASON,
+    });
   });
 
   test("never carries a key's value", () => {

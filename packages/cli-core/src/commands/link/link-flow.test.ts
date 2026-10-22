@@ -1084,9 +1084,12 @@ describe("when auto-link doesn't link the folder", () => {
     expect(mockCreateApplication).not.toHaveBeenCalled();
   });
 
-  test("an agent never creates an app when the folder's secret keys disagree", async () => {
+  // The stop's reason says the secret keys disagree, so the step doesn't say it
+  // again. An API key, because this file's stored-session stub doesn't reach
+  // the credential check the advice reads (`hasStoredCredentials`).
+  test("an agent never creates an app when the folder's secret keys disagree, and says why once", async () => {
     mockIsAgent.mockReturnValue(true);
-    storedSession();
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test_platform_key";
     await writeFile("package.json", JSON.stringify({ dependencies: { express: "4.0.0" } }));
     await writeFile(".env", "CLERK_SECRET_KEY=sk_test_one_app\n");
     await writeFile(".env.local", "CLERK_SECRET_KEY=sk_test_another_app\n");
@@ -1095,7 +1098,10 @@ describe("when auto-link doesn't link the folder", () => {
     await expect(link({ skipIfLinked: true, createIfMissing: "my-project" })).rejects.toMatchObject(
       {
         code: "usage_error",
-        message: expect.stringContaining("hold different Clerk secret keys"),
+        message:
+          "Cannot select an application in agent mode. `.env.local` and `.env` hold different Clerk secret keys, and the CLI doesn't know which one this app loads. " +
+          "This folder has Clerk secret keys but no publishable key, so `clerk link` can't match them to an application. " +
+          "Run `clerk apps list --json`, then `clerk link --app <app_id>` with the app this folder uses.",
       },
     );
 

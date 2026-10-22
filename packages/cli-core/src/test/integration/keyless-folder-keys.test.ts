@@ -200,6 +200,26 @@ describe("plain keys whose .env and .env.local disagree, no framework", () => {
   });
 });
 
+// Express documents no env file order, so files that disagree leave that key untold.
+describe("an Express folder whose secret keys disagree and whose publishable key doesn't", () => {
+  beforeEach(async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    await useFramework("express");
+    await write(".env", `CLERK_PUBLISHABLE_KEY=${FOLDER_PK}\nCLERK_SECRET_KEY=${SECRET_KEY}\n`);
+    await write(".env.local", `CLERK_SECRET_KEY=${SDK_SECRET_KEY}\n`);
+  });
+
+  test("env pull: not_linked, saying the secret keys disagree, then finding the app by its key", async () => {
+    const error = agentError(await run("--mode", "agent", "env", "pull"));
+
+    expect(error.code).toBe("not_linked");
+    expect(error.message).toStartWith(
+      "No Clerk project linked to this directory. `.env.local` and `.env` hold different Clerk secret keys, and the CLI doesn't know which one this app loads.",
+    );
+    expect(error.message).toContain("finds the app in your account by that key");
+  });
+});
+
 // The SDK writes its keyless file only when nothing else configures Clerk, so
 // its secret key isn't the app's next to a plain publishable key.
 describe("a plain publishable key next to an SDK keyless file", () => {

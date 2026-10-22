@@ -27,6 +27,7 @@ import {
   readSdkClaimLink,
   SDK_KEYLESS_SOURCE,
   sdkFileWithoutKeyReason,
+  secretKeysDisagreeReason,
   unreadableFolderReason,
   type FolderKeys,
   type LocatedKey,
@@ -69,7 +70,9 @@ export interface SdkClaimProblem {
  *   local says whose app that is (this account's, another's, or unclaimed
  *   with its token lost), so its advice never calls it unclaimed.
  *   `couldntTell` says why `clerk link` can't match by key here: then a person
- *   gets the picker and an agent the usage error.
+ *   gets the picker and an agent the usage error. `secretKeysDisagree` says
+ *   why no command runs on the folder's secret key; `clerk link` still
+ *   matches by the publishable key.
  * - `sdk_app`: the folder's only keys are the ones a Clerk SDK wrote for an
  *   app it created itself, by `clerk link`'s own test (`isSdkOnly`).
  *   `unusable` says why its file can't send anyone to claim the app: then
@@ -85,6 +88,7 @@ export type UnlinkedFolder =
       publishableKey?: KeyLocation;
       secretKey?: KeyLocation;
       couldntTell?: string;
+      secretKeysDisagree?: string;
     }
   | { kind: "sdk_app"; credential: Credential; unusable?: SdkClaimProblem }
   | { kind: "no_app"; credential: Credential };
@@ -137,6 +141,7 @@ export function classifyUnlinkedFolder({
       : { kind: "sdk_app", credential };
   }
   const couldntTell = couldntTellReason(keys);
+  const secretKeysDisagree = secretKeysDisagreeReason(keys);
   if (keys.publishableKey || keys.secretKey || couldntTell || keys.undecided) {
     return {
       kind: "unknown_owner",
@@ -144,6 +149,7 @@ export function classifyUnlinkedFolder({
       ...(keys.publishableKey && { publishableKey: locationOf(keys.publishableKey) }),
       ...(keys.secretKey && { secretKey: locationOf(keys.secretKey) }),
       ...(couldntTell && { couldntTell }),
+      ...(secretKeysDisagree && { secretKeysDisagree }),
     };
   }
   return { kind: "no_app", credential };
@@ -373,7 +379,14 @@ function stepFor(folder: UnlinkedFolder, agent: boolean, signedIn: boolean): Nex
 }
 
 /** After agent-mode `clerk link` stopped: never back into the same stop. */
-function afterLinkStop(folder: UnlinkedFolder, stop: LinkStop, rerun: Rerun | undefined): NextStep {
+function afterLinkStop(
+  stopped: UnlinkedFolder,
+  stop: LinkStop,
+  rerun: Rerun | undefined,
+): NextStep {
+  // The stop's reason already says the secret keys disagree.
+  const folder: UnlinkedFolder =
+    stopped.kind === "unknown_owner" ? { ...stopped, secretKeysDisagree: undefined } : stopped;
   const signedIn = isSignedIn(folder.credential);
   if (stop.autolink === "list_failed") {
     // Without a credential, the list never reached Clerk.
@@ -591,8 +604,10 @@ function unknownOwner(
     const lead = `${capitalize(folder.couldntTell)}.`;
     return agent ? chooseById(lead, signedIn, "folders_app") : pickInLink(lead);
   }
+  // First, so a command that found no secret key to run on says why.
+  const disagree = folder.secretKeysDisagree ? `${capitalize(folder.secretKeysDisagree)}. ` : "";
   if (folder.publishableKey) {
-    const lead = `This folder's Clerk publishable key is ${describeKeyLocation(folder.publishableKey)}.`;
+    const lead = `${disagree}This folder's Clerk publishable key is ${describeKeyLocation(folder.publishableKey)}.`;
     const find =
       "`clerk link`: it finds the app in your account by that key. If none uses it, link one with `clerk link --app <app_id>`";
     const linkByKey = {
@@ -606,7 +621,7 @@ function unknownOwner(
   // `clerk link` matches only publishable keys.
   const lead = folder.secretKey
     ? `This folder's Clerk secret key is ${describeKeyLocation(folder.secretKey)}, but it has no publishable key, so \`clerk link\` can't match it to an application.`
-    : "This folder has Clerk secret keys but no publishable key, so `clerk link` can't match them to an application.";
+    : `${disagree}This folder has Clerk secret keys but no publishable key, so \`clerk link\` can't match them to an application.`;
   return agent ? chooseById(lead, signedIn, "folders_app") : pickInLink(lead);
 }
 

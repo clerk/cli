@@ -281,6 +281,39 @@ describe("keys whose owner is unknown", () => {
     );
   });
 
+  // Commands that run on the folder's secret key found none, so the step says why first.
+  const SECRETS_DISAGREE =
+    "`.env` and `.env.local` hold different Clerk secret keys, and the CLI doesn't know which one this app loads";
+
+  test("secret keys that disagree next to a publishable key: the reason, then detection by that key", () => {
+    const folder: UnlinkedFolder = {
+      kind: "unknown_owner",
+      credential: "session",
+      publishableKey: { name: "CLERK_PUBLISHABLE_KEY", source: ".env" },
+      secretKeysDisagree: SECRETS_DISAGREE,
+    };
+
+    const step = unlinkedFolderNextStep(folder, { agent: false });
+
+    expect(step.text).toStartWith(
+      "`.env` and `.env.local` hold different Clerk secret keys, and the CLI doesn't know which one this app loads. This folder's Clerk publishable key is `CLERK_PUBLISHABLE_KEY` in .env.",
+    );
+    expect(step.text).toContain("finds the app");
+  });
+
+  test("secret keys that disagree, no publishable key: the reason, then no promise of detection", () => {
+    const folder: UnlinkedFolder = {
+      kind: "unknown_owner",
+      credential: "session",
+      secretKeysDisagree: SECRETS_DISAGREE,
+    };
+
+    const step = unlinkedFolderNextStep(folder, { agent: false });
+
+    expect(step.text).toStartWith(`${SECRETS_DISAGREE}.`);
+    expect(step.text).not.toContain("finds the app");
+  });
+
   test.each(EVERY_CELL.filter(({ folder }) => folder.kind === "unknown_owner"))(
     "$name, $mode, $credential: never says unclaimed",
     ({ folder, agent }) => {
