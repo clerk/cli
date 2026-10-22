@@ -3,10 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
-import { loadUsersFromFile, transformUsers } from "../lib/transform.ts";
+import { loadUsersFromFile, normalizeUserData, transformUsers } from "../lib/transform.ts";
 import type { FirebaseHashConfig, User } from "../types.ts";
 import { getSource, sourceKeys, sources } from "./registry.ts";
-import { isVerified } from "./shared.ts";
+import { isAuthJsVerified } from "./authjs.ts";
+import { isVerified, toIsoDate } from "./shared.ts";
 
 const FIREBASE_HASH: FirebaseHashConfig = {
   base64_signer_key: "SIGNERKEY==",
@@ -118,6 +119,36 @@ describe("isVerified", () => {
     [undefined, false],
   ])("timestamp style: %p -> %p", (value, expected) => {
     expect(isVerified(value, "timestamp")).toBe(expected);
+  });
+});
+
+describe("dates with no offset", () => {
+  // SQL and CSV exports write `2024-08-24 03:40:02` with no offset. Read in
+  // local time, the same file imports differently on every clock, and the
+  // epoch default stops being 0 off UTC. Pin a non-UTC zone so CI sees it too.
+  const originalTz = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "America/New_York";
+  });
+  afterAll(() => {
+    process.env.TZ = originalTz;
+  });
+
+  test("the epoch as a date string is no Auth.js verification", () => {
+    expect(isAuthJsVerified("1970-01-01 00:00:00")).toBe(false);
+  });
+
+  test("a source timestamp converts as UTC", () => {
+    expect(toIsoDate("2024-08-24 03:40:02")).toBe("2024-08-24T03:40:02.000Z");
+  });
+
+  test("a CSV createdAt and legalAcceptedAt normalize as UTC", () => {
+    const result = normalizeUserData({
+      createdAt: "2024-08-24 03:40:02",
+      legalAcceptedAt: "2024-08-24T03:40:02.5",
+    });
+    expect(result.createdAt).toBe("2024-08-24T03:40:02.000Z");
+    expect(result.legalAcceptedAt).toBe("2024-08-24T03:40:02.500Z");
   });
 });
 
