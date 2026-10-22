@@ -224,6 +224,11 @@ describe("promptAppleStarter", () => {
       () => Promise.resolve("/Applications/Xcode-26.app/Contents/Developer"),
       "sudo xcode-select -s /Applications/Xcode-26.app/Contents/Developer",
     ],
+    [
+      "the newer Xcode's path has a space",
+      () => Promise.resolve("/Applications/Xcode 26.app/Contents/Developer"),
+      "sudo xcode-select -s '/Applications/Xcode 26.app/Contents/Developer'`",
+    ],
   ] as const)("stops before writing when %s", async (_, selection, message) => {
     xcode({ teams: [PAID] });
     spies.push(spyOn(xcodeTools, "compatibleXcode").mockImplementation(selection));

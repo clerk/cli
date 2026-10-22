@@ -4,6 +4,7 @@ import { text } from "../../../lib/prompts.ts";
 import { select } from "../../../lib/listage.ts";
 import { log } from "../../../lib/log.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
+import { quoteArg } from "../../../lib/json-body.ts";
 import { dirExists } from "../context.ts";
 import { canSetUpXcode } from "./coordinator.ts";
 import { validBundle } from "./identity.ts";
@@ -203,7 +204,7 @@ async function assertStarterXcode(): Promise<void> {
   }
   if (developerDir)
     throw new CliError(
-      `A new iOS or macOS app needs Xcode ${MINIMUM_XCODE} or later as the selected Xcode. Select it with \`sudo xcode-select -s ${developerDir}\`, then run clerk init --starter again.`,
+      `A new iOS or macOS app needs Xcode ${MINIMUM_XCODE} or later as the selected Xcode. Select it with \`sudo xcode-select -s ${quoteArg(developerDir)}\`, then run clerk init --starter again.`,
       { code: ERROR_CODE.BOOTSTRAP_UNSUPPORTED },
     );
 }
