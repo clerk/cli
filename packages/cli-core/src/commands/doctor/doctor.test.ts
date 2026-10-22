@@ -19,6 +19,7 @@ import type {
 } from "./types.ts";
 import type { Application } from "../../lib/plapi.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
+import type { UnlinkedFolder } from "../../lib/unlinked-folder.ts";
 
 let mockUserInfo: { userId: string; email: string } | null = null;
 let mockUserInfoError: Error | null = null;
@@ -114,6 +115,7 @@ function createMockContext(
     accountCredentials?: boolean;
     platformAPIKey?: boolean;
     platformAPIKeyError?: Error;
+    unlinkedFolder?: UnlinkedFolder;
   } = {},
 ): DoctorContext {
   return {
@@ -140,6 +142,9 @@ function createMockContext(
     getKeylessInstance: async () => overrides.keylessInstance ?? null,
     hasClaimBreadcrumb: async () => overrides.claimBreadcrumb ?? false,
     getKeylessKeyError: async () => overrides.keylessKeyError,
+    getFolderKeys: async () => ({}),
+    getUnlinkedFolder: async () =>
+      overrides.unlinkedFolder ?? { kind: "no_app", credential: "none" },
     fixes: {
       login: noopFix,
       link: noopFix,

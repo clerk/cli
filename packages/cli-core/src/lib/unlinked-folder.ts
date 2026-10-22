@@ -185,8 +185,12 @@ async function readCredential(): Promise<Credential> {
   return (await hasStoredCredentials().catch(() => false)) ? "session" : "none";
 }
 
-/** Only the reason: the claim URL carries a claim token. */
-async function sdkClaimLinkProblem(
+/**
+ * `UnlinkedFolderFacts.sdkClaimLinkProblem` for these keys: why an SDK-only
+ * folder's claim link can't be used. Only the reason: the claim URL carries a
+ * claim token.
+ */
+export async function sdkClaimLinkProblem(
   cwd: string,
   keys: FolderKeys | { readError: string },
 ): Promise<string | undefined> {

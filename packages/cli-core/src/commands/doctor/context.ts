@@ -3,6 +3,13 @@ import { resolveProfile } from "../../lib/config.ts";
 import { fetchApplication, listApplications, type Application } from "../../lib/plapi.ts";
 import { resolveKeylessTarget, type KeylessTarget } from "../../lib/keyless-target.ts";
 import { peekKeylessBreadcrumb } from "../../lib/keyless.ts";
+import { readFolderKeys, unreadableFolderReason, type FolderKeys } from "../../lib/local-keys.ts";
+import {
+  classifyUnlinkedFolder,
+  sdkClaimLinkProblem,
+  type Credential,
+  type UnlinkedFolder,
+} from "../../lib/unlinked-folder.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import { log } from "../../lib/log.ts";
 import { CliError, ERROR_CODE, errorMessage } from "../../lib/errors.ts";
@@ -25,6 +32,8 @@ export function createDoctorContext(): DoctorContext {
   let keylessPromise: Promise<KeylessTarget | undefined> | undefined;
   let keylessInstancePromise: Promise<KeylessInstanceInfo | null> | undefined;
   let claimBreadcrumbPromise: Promise<boolean> | undefined;
+  let folderKeysPromise: Promise<FolderKeys | { readError: string }> | undefined;
+  let unlinkedFolderPromise: Promise<UnlinkedFolder> | undefined;
   let keylessKeyError: CliError | undefined;
 
   const ctx: DoctorContext = {
@@ -141,6 +150,34 @@ export function createDoctorContext(): DoctorContext {
       return claimBreadcrumbPromise;
     },
 
+    getFolderKeys() {
+      if (!folderKeysPromise) {
+        // An env file that can't be read leaves which key the app loads
+        // untold: a reason for the classifier, never a crashed check.
+        folderKeysPromise = readFolderKeys(process.cwd()).catch((error: unknown) => ({
+          readError: unreadableFolderReason(error),
+        }));
+      }
+      return folderKeysPromise;
+    },
+
+    getUnlinkedFolder() {
+      if (!unlinkedFolderPromise) {
+        // From doctor's own memoized reads, so every check shares one read of
+        // each fact, and the pure classifier, so nothing is changed.
+        unlinkedFolderPromise = (async () => {
+          const keys = await ctx.getFolderKeys();
+          return classifyUnlinkedFolder({
+            initToken: await ctx.hasClaimBreadcrumb(),
+            credential: await credentialPresent(),
+            keys,
+            sdkClaimLinkProblem: await sdkClaimLinkProblem(process.cwd(), keys),
+          });
+        })();
+      }
+      return unlinkedFolderPromise;
+    },
+
     fixes: {
       login: () => ({
         label: "Log in with clerk auth login",
@@ -172,6 +209,16 @@ export function createDoctorContext(): DoctorContext {
       }),
     },
   };
+
+  /**
+   * The credential Platform API calls would use: the API key over a stored
+   * session. With the key set, the session isn't read, as in `checkLoggedIn`.
+   * A failed read counts as none, which only adds a sign-in step.
+   */
+  async function credentialPresent(): Promise<Credential> {
+    if (ctx.hasPlatformAPIKey()) return "api_key";
+    return (await ctx.getToken().catch(() => null)) ? "session" : "none";
+  }
 
   return ctx;
 }
