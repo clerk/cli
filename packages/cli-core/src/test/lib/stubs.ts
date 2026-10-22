@@ -203,6 +203,9 @@ export const keylessTargetStubs = {
   findLocalPublishableKey: noop,
   hasKeyPairMismatch: async () => false,
   readSdkKeylessApp: noop,
+  isClaimedKeylessTarget: async () => false,
+  keyAccess: async (target: { source: string }) => ({ claimed: false, source: target.source }),
+  SDK_KEYLESS_SOURCE: ".clerk/.tmp/keyless.json",
 };
 
 export const autolinkStubs = {
