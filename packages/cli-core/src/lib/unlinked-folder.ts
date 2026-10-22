@@ -12,7 +12,7 @@
  */
 
 import { hasStoredCredentials } from "./credential-store.ts";
-import type { CredentialRefusal, NextStepAdvice } from "./errors.ts";
+import { CliError, ERROR_CODE, type CredentialRefusal, type NextStepAdvice } from "./errors.ts";
 import type { Example } from "./help.ts";
 import { quoteArg } from "./json-body.ts";
 import { peekKeylessBreadcrumb } from "./keyless.ts";
@@ -32,6 +32,7 @@ import {
 } from "./local-keys.ts";
 import { log } from "./log.ts";
 import { capitalize } from "./text.ts";
+import { isAgent } from "../mode.ts";
 
 /**
  * The credential Platform API calls would use. `CLERK_PLATFORM_API_KEY` wins
@@ -275,6 +276,32 @@ const EXAMPLE = {
   },
   init: { command: "clerk init", description: "Create a new application for this folder" },
 } satisfies Record<string, Example>;
+
+/**
+ * Whether the folder's app is in no account yet: an init app, or an SDK app
+ * whose claim link works. Until it's claimed, no app ID reaches it.
+ */
+export function appInNoAccount(folder: UnlinkedFolder): boolean {
+  return folder.kind === "init_app" || (folder.kind === "sdk_app" && !folder.unusable);
+}
+
+/**
+ * The `not_linked` error for a command that stopped in `folder`: `lead`, the
+ * step for what the folder holds, then `tail`. Agents get the step's commands
+ * as `examples`; a person's text already names them, and `reportError` would
+ * print them again as an "Examples:" block.
+ */
+export function unlinkedFolderError(
+  folder: UnlinkedFolder,
+  { lead, tail, rerun }: { lead: string; tail?: string; rerun?: Rerun },
+): CliError {
+  const agent = isAgent();
+  const step = unlinkedFolderNextStep(folder, { agent, rerun });
+  return new CliError([lead, step.text, tail].filter(Boolean).join(" "), {
+    code: ERROR_CODE.NOT_LINKED,
+    ...(agent && { examples: step.examples }),
+  });
+}
 
 /** The step for `folder`: the text to put after a site's own lead sentence, and its commands. */
 export function unlinkedFolderNextStep(folder: UnlinkedFolder, context: NextStepContext): NextStep {

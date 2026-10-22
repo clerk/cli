@@ -9,26 +9,14 @@
  * failure path, so a linked run reads nothing extra.
  */
 
-import { CliError, ERROR_CODE } from "../../lib/errors.ts";
-import {
-  readUnlinkedFolder,
-  unlinkedFolderNextStep,
-  type Rerun,
-} from "../../lib/unlinked-folder.ts";
-import { isAgent } from "../../mode.ts";
+import type { CliError } from "../../lib/errors.ts";
+import { readUnlinkedFolder, unlinkedFolderError, type Rerun } from "../../lib/unlinked-folder.ts";
 
 const LEAD = "No Clerk project linked to this directory.";
 
 /** The error for a run with no linked app. `rerun` is the command that stopped, flags and all. */
 export async function notLinkedError(rerun: Rerun): Promise<CliError> {
-  const agent = isAgent();
-  const step = unlinkedFolderNextStep(await readUnlinkedFolder(process.cwd()), { agent, rerun });
-  // A person's text already names the commands; examples would print again
-  // beneath it as an "Examples:" block.
-  return new CliError(`${LEAD} ${step.text}`, {
-    code: ERROR_CODE.NOT_LINKED,
-    ...(agent && { examples: step.examples }),
-  });
+  return unlinkedFolderError(await readUnlinkedFolder(process.cwd()), { lead: LEAD, rerun });
 }
 
 /**
