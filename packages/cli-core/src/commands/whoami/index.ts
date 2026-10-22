@@ -10,6 +10,8 @@ import { isAgent } from "../../mode.ts";
 import {
   appInNoAccount,
   readUnlinkedFolder,
+  rerunOf,
+  unlinkedFolderError,
   unlinkedFolderNextStep,
 } from "../../lib/unlinked-folder.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
@@ -55,7 +57,7 @@ type Identity =
     };
 
 export async function whoami(options: WhoamiOptions = {}) {
-  const identity = await resolveIdentity();
+  const identity = await resolveIdentity(options);
 
   if (options.json || isAgent()) {
     log.data(JSON.stringify(toJson(identity), null, 2));
@@ -65,7 +67,7 @@ export async function whoami(options: WhoamiOptions = {}) {
   await render(identity);
 }
 
-async function resolveIdentity(): Promise<Identity> {
+async function resolveIdentity(options: WhoamiOptions): Promise<Identity> {
   // Stored credentials that can no longer be refreshed are, for this command's
   // purposes, the same as no credentials: there is no account to report. Ask the
   // question in a way that can't throw, so an expired session falls through to
@@ -87,7 +89,7 @@ async function resolveIdentity(): Promise<Identity> {
         reason: (await hasStoredCredentials()) ? "session_expired" : "not_logged_in",
       });
     }
-    return describeKeyless(keyless);
+    return describeKeyless(keyless, options);
   }
 
   let userInfo;
@@ -125,7 +127,7 @@ async function resolveIdentity(): Promise<Identity> {
   };
 }
 
-async function describeKeyless(keyless: KeylessTarget): Promise<Identity> {
+async function describeKeyless(keyless: KeylessTarget, options: WhoamiOptions): Promise<Identity> {
   const instance = await withSpinner("Fetching instance info...", async () => {
     const response = await withApiContext(
       bapiRequest({ method: "GET", path: "/v1/instance", secretKey: keyless.secretKey }),
@@ -134,7 +136,15 @@ async function describeKeyless(keyless: KeylessTarget): Promise<Identity> {
     return response.body as { id?: string; environment_type?: string };
   });
 
-  const publishableKey = (await findLocalPublishableKey(process.cwd()))?.value ?? null;
+  // An exported secret key is found without the env files; with one the CLI
+  // can't read, which publishable key the app loads is untold.
+  const located = await findLocalPublishableKey(process.cwd()).catch(async () => {
+    throw unlinkedFolderError(await readUnlinkedFolder(process.cwd()), {
+      lead: "No Clerk project linked to this directory.",
+      rerun: rerunOf(["clerk whoami", options.json && "--json"]),
+    });
+  });
+  const publishableKey = located?.value ?? null;
   const publishableKeyMismatch = publishableKey
     ? await checkKeyPairMismatch(keyless, publishableKey)
     : false;

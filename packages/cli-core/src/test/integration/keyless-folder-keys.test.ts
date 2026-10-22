@@ -272,6 +272,19 @@ describe("a Next.js folder whose .env.development.local can't be read", () => {
     expect(error.message).toEndWith("Then run `clerk env pull` again.");
   });
 
+  test("whoami, signed out, with the secret key exported: not_linked, naming the unreadable file", async () => {
+    signOut();
+    process.env.CLERK_SECRET_KEY = SECRET_KEY;
+
+    const error = agentError(await run("--mode", "agent", "whoami"));
+
+    expect(error.code).toBe("not_linked");
+    expect(error.message).toStartWith(
+      "No Clerk project linked to this directory. The CLI couldn't read this folder's env files (EACCES: permission denied, open '.env.development.local').",
+    );
+    expect(error.message).toEndWith("Then run `clerk whoami` again.");
+  });
+
   test("doctor: no check crashes, and the not-linked check names the unreadable file", async () => {
     const result = await run("doctor", "--json");
     const checks = JSON.parse(result.stdout) as {
