@@ -321,10 +321,13 @@ describe("bapi-command", () => {
     expect(fetchApplicationSpy).not.toHaveBeenCalled();
   });
 
-  test("remaps not-linked app context errors to a no-secret-key usage error", async () => {
+  // The not-linked error carries the folder's step; this site keeps its code and exit 2.
+  test("passes the not-linked error's step on as a no-secret-key usage error", async () => {
+    const examples = [{ command: "clerk link", description: "Link this folder" }];
     resolveAppContextSpy.mockRejectedValue(
       new CliError("linked profile missing", {
         code: ERROR_CODE.NOT_LINKED,
+        examples,
       }),
     );
 
@@ -335,7 +338,10 @@ describe("bapi-command", () => {
     expect(error.docsUrl).toContain(
       "https://clerk.com/docs/guides/development/clerk-environment-variables",
     );
-    expect(error.message).toContain("No secret key found.");
+    expect(error.message).toBe(
+      "linked profile missing Or pass a secret key with `--secret-key <key>` or `CLERK_SECRET_KEY`.",
+    );
+    expect(error.examples).toEqual(examples);
 
     expect(fetchApplicationSpy).not.toHaveBeenCalled();
   });

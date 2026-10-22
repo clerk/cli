@@ -624,7 +624,11 @@ describe("api command", () => {
   test("errors when no secret key available", async () => {
     delete process.env.CLERK_SECRET_KEY;
 
-    await expect(runApi("/users")).rejects.toThrow("No secret key found");
+    await expect(runApi("/users")).rejects.toMatchObject({
+      code: "no_secret_key",
+      exitCode: 2,
+      message: expect.stringContaining("Or pass a secret key with `--secret-key <key>`"),
+    });
   });
 
   test("prints API error response body to stdout and exits 1", async () => {

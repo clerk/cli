@@ -128,13 +128,13 @@ async function profileSecretKey(options: ResolveBapiSecretKeyOptions): Promise<s
     });
   } catch (error) {
     if (error instanceof CliError && error.code === ERROR_CODE.NOT_LINKED) {
+      // The shared not-linked error already gives the folder's step; this site
+      // keeps its own code and exit 2.
       throwUsageError(
-        "No secret key found. Provide one via:\n" +
-          "  --secret-key <key>\n" +
-          "  CLERK_SECRET_KEY environment variable\n" +
-          "  Link a project with `clerk link`, or pass --app <app_id>",
+        `${error.message} Or pass a secret key with \`--secret-key <key>\` or \`CLERK_SECRET_KEY\`.`,
         "https://clerk.com/docs/guides/development/clerk-environment-variables",
         ERROR_CODE.NO_SECRET_KEY,
+        error.examples,
       );
     }
     throw error;

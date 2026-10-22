@@ -301,6 +301,43 @@ describe("clerk api --fapi", () => {
   );
 });
 
+// With no secret key anywhere, `clerk api` gives the shared not-linked step,
+// still as its usage error: exit 2, `no_secret_key`.
+describe("clerk api, no secret key", () => {
+  test.each([
+    {
+      kind: "an init token and its publishable key",
+      setUp: async () => {
+        await writeInitToken();
+        await write(".env", PUBLISHABLE_KEY);
+      },
+      step: CLAIM_IT,
+      appFlag: false,
+    },
+    {
+      kind: "a publishable key only",
+      setUp: () => write(".env", PUBLISHABLE_KEY),
+      step: FIND_BY_KEY,
+      appFlag: true,
+    },
+  ])(
+    "agent, stored session and API key, $kind: the folder's step",
+    async ({ setUp, step, appFlag }) => {
+      await setUp();
+
+      const result = await run("--mode", "agent", "api", "/users");
+      const error = agentError(result);
+
+      expect(result.exitCode).toBe(2);
+      expect(error.code).toBe("no_secret_key");
+      expect(error.message).toStartWith("No Clerk project linked to this directory.");
+      expect(error.message).toContain(step);
+      expect(error.message.includes("--app <app_id>` to target")).toBe(appFlag);
+      expect(error.examples?.length).toBeGreaterThan(0);
+    },
+  );
+});
+
 // Plain keys may belong to an app already in an account.
 describe("whoami, signed out, with a secret key on disk", () => {
   test("plain keys: says the folder uses the key and isn't linked, with `clerk link`'s step", async () => {
