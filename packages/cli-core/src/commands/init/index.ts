@@ -179,8 +179,8 @@ export async function init(options: InitOptions = {}) {
 
   await enrichProjectContext(ctx);
 
-  // Skip auth-related I/O entirely when the user opted into accountless setup — those
-  // values are not consumed once the strategy resolves to "keyless".
+  // Skip auth-related I/O entirely when the user opted into accountless setup (`--template`
+  // implies it) — those values are not consumed once the strategy resolves to "keyless".
   //
   // Agent mode has no way to recover if this lies: a human who turns out to be
   // unauthenticated just gets prompted to log in, but an agent that trusts a
@@ -188,17 +188,19 @@ export async function init(options: InitOptions = {}) {
   // round-trip it can never complete. So agent mode validates the credential
   // (it can fall back to keyless) instead of trusting mere presence.
   setTelemetryStage("strategy");
-  const authed = optsAccountless
+  const skipAuthLookup = optsAccountless || options.template != null;
+  const authed = skipAuthLookup
     ? false
     : agent
       ? await isAuthenticatedForAgent()
       : await isAuthenticated();
   const linkedProfile =
-    !optsAccountless && agent && !options.app ? await resolveProfile(ctx.cwd) : undefined;
+    !skipAuthLookup && agent && !options.app ? await resolveProfile(ctx.cwd) : undefined;
   const hasRealAppTarget = Boolean(options.app || linkedProfile);
 
   const strategy = pickStrategy({
     optsAccountless,
+    optsTemplate: options.template != null,
     optsLogin: options.login === true,
     agent,
     authed,
@@ -248,7 +250,9 @@ export async function init(options: InitOptions = {}) {
   const skipScaffoldConfirm = overrides.skipConfirm || bootstrap != null;
   const { alreadySetUp } = await detectAndInstall(ctx.cwd, ctx, skipScaffoldConfirm);
 
-  if (alreadySetUp) {
+  // `--template` asks for an application, not files, so it still runs the strategy
+  // when the scaffold has nothing left to do.
+  if (alreadySetUp && !options.template) {
     setTelemetryStage("already_set_up");
     log.success("\nClerk is already set up in this project.");
     if (agent && strategy === "manual") {
@@ -307,6 +311,11 @@ async function assertUsableFlags(
       "--template applies to accountless applications and cannot be combined with --login.",
     );
   }
+  if (options.template && options.app) {
+    throwUsageError(
+      "--template applies to accountless applications and cannot be combined with --app.",
+    );
+  }
   if (options.fresh && options.login) {
     throwUsageError(
       "--fresh applies to accountless applications and cannot be combined with --login.",
@@ -315,9 +324,9 @@ async function assertUsableFlags(
   if (options.starter && (options.dryRun || options.json)) {
     throwUsageError("--dry-run and --json work on an existing project, not with --starter.");
   }
-  if (options.dryRun && (options.app || accountless || options.login)) {
+  if (options.dryRun && (options.app || accountless || options.login || options.template)) {
     throwUsageError(
-      "--dry-run never signs in or changes your Clerk application; drop --app, --login, and --accountless.",
+      "--dry-run never signs in or changes your Clerk application; drop --app, --login, --accountless, and --template.",
     );
   }
   const xcodeSelection = [
@@ -638,7 +647,8 @@ function printBootstrapManualSetupInfo(ctx: ProjectContext): void {
 type InitStrategy = "keyless" | "manual" | "authenticate";
 
 // Picks how `clerk init` will reach a working Clerk setup:
-// - "keyless"      → temporary development keys, no login. Forced via `--accountless`, or the default
+// - "keyless"      → temporary development keys, no login. Forced via `--accountless` or `--template`
+//                    (unless `--login` or `--app` asks for a real app), or the default
 //                    for unauthenticated runs on a keyless-capable framework (human bootstrap and
 //                    all agent runs). A legacy `.clerk/keyless.json` breadcrumb lets the next
 //                    `clerk auth login` claim the app automatically.
@@ -648,6 +658,7 @@ type InitStrategy = "keyless" | "manual" | "authenticate";
 //                    via `--login`, and the default whenever accountless setup doesn't apply.
 function pickStrategy({
   optsAccountless,
+  optsTemplate,
   optsLogin,
   agent,
   authed,
@@ -656,6 +667,7 @@ function pickStrategy({
   framework,
 }: {
   optsAccountless: boolean;
+  optsTemplate: boolean;
   optsLogin: boolean;
   agent: boolean;
   authed: boolean;
@@ -672,6 +684,9 @@ function pickStrategy({
     return "keyless";
   }
   if (optsLogin || hasRealAppTarget) return "authenticate";
+  // `--template` only shapes a new accountless app, so it implies `--accountless`. Unsupported
+  // frameworks fall through, and `assertKeylessOnlyFlags` rejects the flag with the reason.
+  if (optsTemplate && framework.supportsKeyless) return "keyless";
   if (agent && !framework.supportsKeyless) return "manual";
   if (!authed && framework.supportsKeyless && (agent || isBootstrap)) return "keyless";
   return "authenticate";
@@ -924,7 +939,7 @@ export function registerInit(program: Program): void {
     .addOption(
       createOption(
         "--template <name>",
-        "Pre-configure the accountless application from a Clerk application template. Only applies when the strategy resolves to accountless — errors otherwise",
+        "Pre-configure the accountless application from a Clerk application template. Implies --accountless",
       ).choices(KEYLESS_TEMPLATES),
     )
     .option(
@@ -990,7 +1005,7 @@ export function registerInit(program: Program): void {
       },
       {
         command: "clerk init --template b2b-saas",
-        description: "Bootstrap an accountless app pre-configured for B2B SaaS",
+        description: "Set up an accountless app pre-configured for B2B SaaS, even when logged in",
       },
       {
         command: "clerk init --accountless --fresh",
