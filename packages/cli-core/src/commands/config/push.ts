@@ -60,7 +60,10 @@ export async function configPatch(options: ConfigPushOptions): Promise<void> {
 }
 
 async function configPush(options: ConfigPushOptions, op: Operation): Promise<void> {
-  const target = await resolveInstanceTarget(options);
+  const target = await resolveInstanceTarget({
+    ...options,
+    refusesKeyless: op.method === "PUT",
+  });
 
   if (target.kind === "keyless" && op.method === "PUT") {
     const { subject, step, examples } = keylessRefusal(target.folder, target.keyless.source);

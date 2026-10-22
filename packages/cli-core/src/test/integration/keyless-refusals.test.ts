@@ -208,6 +208,25 @@ describe.each(SITES)("$site", ({ args, code, exitCode, unclaimed, plain }) => {
   });
 });
 
+// These commands refuse every run on the folder's secret key, so the refusal
+// gives the step and the "covers fewer settings" warning would repeat it.
+describe.each(SITES.filter(({ code }) => code === "auth_required"))(
+  "$site, stored session and API key, plain keys: the step once",
+  ({ args }) => {
+    test.each([
+      { mode: "person", modeArgs: [] },
+      { mode: "agent", modeArgs: ["--mode", "agent"] },
+    ])("$mode", async ({ modeArgs }) => {
+      await FOLDERS.plainKeys();
+
+      const stderr = Bun.stripANSI((await run(...modeArgs, ...args)).stderr);
+
+      expect(stderr.split(FIND_BY_KEY).length - 1).toBe(1);
+      expect(stderr).not.toContain("covers fewer settings");
+    });
+  },
+);
+
 // A key name the Backend API has no route for: only the first sentence depends
 // on the folder, and there's no step to give.
 test.each([

@@ -243,11 +243,16 @@ export async function resolveInstanceTarget(options: {
   app?: string;
   instance?: string;
   cwd?: string;
+  /**
+   * The caller refuses a keyless target, and its refusal gives the folder's
+   * step, so the "covers fewer settings" warning would repeat it.
+   */
+  refusesKeyless?: boolean;
 }): Promise<InstanceTarget> {
   const keyless = await resolveKeylessTarget(options);
   if (keyless) {
     const folder = await readUnlinkedFolder(options.cwd ?? process.cwd());
-    await warnKeylessCoversLess(keyless.source, folder);
+    if (!options.refusesKeyless) await warnKeylessCoversLess(keyless.source, folder);
     return {
       kind: "keyless",
       keyless,

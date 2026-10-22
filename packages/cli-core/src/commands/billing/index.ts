@@ -78,7 +78,7 @@ function assertBillingTarget(target: InstanceTarget): void {
 
 export async function billingEnable(options: BillingOptions): Promise<void> {
   const targets = parseForTargets(options.for);
-  const target = await resolveInstanceTarget(options);
+  const target = await resolveInstanceTarget({ ...options, refusesKeyless: true });
   assertBillingTarget(target);
 
   const billing: Record<string, unknown> = {};
@@ -143,7 +143,7 @@ async function offerBillingSkillInstall(options: BillingOptions): Promise<void> 
 
 export async function billingDisable(options: BillingOptions): Promise<void> {
   const targets = parseForTargets(options.for);
-  const target = await resolveInstanceTarget(options);
+  const target = await resolveInstanceTarget({ ...options, refusesKeyless: true });
   assertBillingTarget(target);
 
   // No cascade: leave organization_settings untouched.

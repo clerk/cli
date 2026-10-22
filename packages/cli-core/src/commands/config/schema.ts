@@ -29,7 +29,7 @@ function schemaRerun({ keys, output }: ConfigSchemaOptions): Rerun {
 export async function configSchema(options: ConfigSchemaOptions): Promise<void> {
   await withGutter("Fetching configuration schema", async () => {
     // Same shape as config push/put: resolve the target once, branch on kind.
-    const target = await resolveInstanceTarget(options);
+    const target = await resolveInstanceTarget({ ...options, refusesKeyless: true });
     if (target.kind === "keyless") {
       const { subject, step, examples } = keylessRefusal(
         target.folder,
