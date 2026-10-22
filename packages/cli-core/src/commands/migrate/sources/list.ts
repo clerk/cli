@@ -12,6 +12,7 @@ import { bold, cyan, dim, green, red, yellow } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
 import { exportPlatforms } from "../export/registry.ts";
 import type { Carry, CarryLevel, SourceEntry } from "../types.ts";
+import { CUSTOM_SOURCES_URL } from "./load-custom.ts";
 import { ACCOUNT_LINKING_NOTE, resolveSource, sources as builtIns } from "./registry.ts";
 
 export type SourcesOptions = {
@@ -121,6 +122,7 @@ function printList(width: number): void {
   log.blank();
   log.info("Run `clerk migrate sources <source>` for what each field becomes.");
   log.info("Migrating from something else? Write a source and pass --source ./my-source.ts.");
+  log.info(`How to write one: ${CUSTOM_SOURCES_URL}`);
 }
 
 function printDetail(entry: SourceEntry, width: number, custom?: string): void {
