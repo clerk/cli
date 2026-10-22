@@ -375,13 +375,22 @@ export function transformUsers(
   const context = options.context ?? {};
   const transformed: Record<string, unknown>[] = [];
 
-  for (const user of users) {
+  for (const [i, user] of users.entries()) {
     const mapped = transformKeys(user, transformer);
 
     // The source's own cleanup first: the Clerk Dashboard's formula-safety TAB
     // has to come off before identifiers are compared, or "\t+1555…" and
     // "+1555…" read as two phones.
-    const result: unknown = transformer.postTransform?.(mapped, context);
+    let result: unknown;
+    try {
+      result = transformer.postTransform?.(mapped, context);
+    } catch (error) {
+      // 1-based, like the validation failures: the second user is row 2.
+      throw new CliError(
+        `The "${key}" source's postTransform failed on row ${i + 1}: ${error instanceof Error ? error.message : String(error)}`,
+        { docsUrl: CUSTOM_SOURCES_URL },
+      );
+    }
     // An async hook's changes after its first await land once this user is
     // already normalized and validated, so they would be lost without a word.
     if (result instanceof Promise) {
