@@ -276,7 +276,8 @@ describe("env pull", () => {
     expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
   });
 
-  test("falls back to .env when it contains NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", async () => {
+  // `.env` is meant to be committed; Next.js loads `.env.local` before it.
+  test("writes .env.local, not a committed .env holding Next.js's keys", async () => {
     await setProfile(tempDir, {
       workspaceId: "org_1",
       appId: "app_1",
@@ -293,12 +294,15 @@ describe("env pull", () => {
 
     await runEnvPull();
 
-    const content = await Bun.file(join(tempDir, ".env")).text();
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
     expect(content).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
-    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+    expect(await Bun.file(join(tempDir, ".env")).text()).toBe(
+      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=old_pk\nCLERK_SECRET_KEY=old_sk\n",
+    );
   });
 
-  test("falls back to .env when it contains VITE_CLERK_PUBLISHABLE_KEY", async () => {
+  // `.env` is meant to be committed; Vite loads `.env.local` before it.
+  test("writes .env.local, not a committed .env holding Vite's keys", async () => {
     await setProfile(tempDir, {
       workspaceId: "org_1",
       appId: "app_1",
@@ -315,9 +319,11 @@ describe("env pull", () => {
 
     await runEnvPull();
 
-    const content = await Bun.file(join(tempDir, ".env")).text();
+    const content = await Bun.file(join(tempDir, ".env.local")).text();
     expect(content).toContain("VITE_CLERK_PUBLISHABLE_KEY=pk_test_abc123");
-    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+    expect(await Bun.file(join(tempDir, ".env")).text()).toBe(
+      "VITE_CLERK_PUBLISHABLE_KEY=old_pk\nCLERK_SECRET_KEY=old_sk\n",
+    );
   });
 
   test("creates preferred file when .env exists but has no Clerk keys", async () => {

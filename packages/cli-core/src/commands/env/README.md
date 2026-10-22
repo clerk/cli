@@ -8,6 +8,8 @@ For an unclaimed **accountless** application there is no account to pull from â€
 
 The secret key and publishable key are each the one the app loads, but can still belong to _different_ applications (e.g. leftovers from two apps in the same `.env.local`). Before writing, `env pull` calls `GET /v1/domains` with the secret key and confirms the publishable key's Frontend API host (decoded via `decodePublishableKey` in `lib/fapi.ts`) matches one of that instance's own domains. A mismatch aborts the pull with an error that says where the mismatched publishable key was found and how to remove it from there (its env file or the shell variable; for an SDK keyless file whose two keys belong to different apps, it says to add both keys of the app you want to an env file, since keys there win over the SDK file, or to delete the stale file, which also deletes its claim link), and writes nothing â€” a wrong pair on disk produces an app that fails at runtime in a way that's very hard to trace, so this is stricter than `clerk whoami`, which only warns about the same mismatch (see [`commands/whoami/README.md`](../whoami/README.md)).
 
+Without `--file`, a framework with a documented env load order gets the keys only in a `.local` file it loads, since its other env files are meant to be committed; Nuxt, which loads only `.env`, gets `.env`. When a file the framework loads earlier still holds a Clerk key (e.g. a Vite folder's committed `.env.development`), `env pull` writes to the highest-ranked `.local` file (`.env.development.local`), so the new keys win without touching the committed file. A Clerk line it can't read in such a file gets a warning naming the file. With no documented load order (e.g. Express), it writes to the framework's preferred file, or to whichever of `.env` and `.env.local` already holds Clerk keys.
+
 ## Usage
 
 ```sh
@@ -66,9 +68,6 @@ sequenceDiagram
     %% Resolve target file (only files the framework loads, when it documents its order)
     alt --file flag provided
         CLI->>CLI: Use specified file
-    else A file supplies a key the app loads now
-        CLI->>FS: Read the keys the app loads
-        FS-->>CLI: that file, the highest in the load order
     else .env.development.local exists, and the framework loads it
         CLI->>FS: Check .env.development.local
         FS-->>CLI: exists
@@ -80,6 +79,13 @@ sequenceDiagram
         FS-->>CLI: has Clerk keys
     else Otherwise
         CLI->>CLI: Default to the preferred file
+    end
+    opt No --file, and the framework documents a load order that includes a .local file
+        CLI->>CLI: Not a .local file? Use .env.local (keys stay out of committed files)
+        CLI->>FS: Read every Clerk key in the env files
+        FS-->>CLI: { keys, unreadable lines, by file }
+        CLI->>CLI: A key in a file loaded before the target? Use the highest-ranked .local file
+        CLI->>User: Warn about a Clerk line it can't read in a file loaded before the target
     end
 
     %% Read, merge, write

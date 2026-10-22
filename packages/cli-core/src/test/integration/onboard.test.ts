@@ -51,7 +51,8 @@ const FRAMEWORK_CASES: FrameworkCase[] = [
     framework: "Astro",
     deps: { astro: "5.0.0" },
     expectedKey: "PUBLIC_CLERK_PUBLISHABLE_KEY",
-    envFile: ".env",
+    // Astro prefers `.env`, which is meant to be committed; it loads `.env.local` too.
+    envFile: ".env.local",
   },
   {
     framework: "Expo",

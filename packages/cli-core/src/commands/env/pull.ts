@@ -3,7 +3,6 @@ import { resolveAppContext, type AppContextOptions } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import {
   detectLineEnding,
-  ENV_FILE_CANDIDATES,
   parseEnvFile,
   mergeEnvVars,
   serializeEnvFile,
@@ -44,7 +43,7 @@ import {
 import {
   describeKeyLocation,
   ENV_VAR_SOURCE_SUFFIX,
-  readFolderKeys,
+  readAllFolderKeys,
   SDK_KEYLESS_SOURCE,
   unreadGenericPublishableKey,
   type LocatedKey,
@@ -83,23 +82,55 @@ async function resolveTargetFile(
  * `EnvFileName` so it can only be a file the claim check also reads
  * (`ENV_FILE_CANDIDATES`); exported for the test that pins that down.
  *
- * The file that supplies a key the app loads now comes first: written below
- * it, the new keys would keep losing to the old ones, for the app and for the
- * CLI's reader. Otherwise only a file the framework loads, when it documents
- * its load order: Nuxt loads only `.env`, so keys written anywhere else would
- * be read by neither Nuxt nor the CLI.
+ * When the framework documents its load order, keys go only in a `.local`
+ * file it loads, since the others are meant to be committed, unless it loads
+ * none (Nuxt loads only `.env`). A Clerk key in a file it loads before that
+ * target would keep beating the new one, so the target becomes the
+ * highest-ranked `.local` file instead.
  */
 export async function defaultTargetFile(
   cwd: string,
   fallbackFile: PreferredEnvFile,
 ): Promise<EnvFileName> {
-  const loadOrder = (await detectFramework(cwd))?.envLoadOrder;
-  const loads = (file: EnvFileName) => !loadOrder || loadOrder.includes(file);
+  const framework = await detectFramework(cwd);
+  const loadOrder = framework?.envLoadOrder;
+  const base = await targetByFiles(cwd, fallbackFile, loadOrder);
+  // With no documented order, which file the app loads is unknown.
+  if (!framework || !loadOrder) return base;
+  const locals = loadOrder.filter((file) => file.endsWith(".local"));
+  const [highestLocal] = locals;
+  if (!highestLocal) return base;
 
-  const keys = await readFolderKeys(cwd).catch(() => undefined);
-  const sources = [keys?.publishableKey?.source, keys?.secretKey?.source];
-  const supplying = (loadOrder ?? ENV_FILE_CANDIDATES).find((file) => sources.includes(file));
-  if (supplying) return supplying;
+  const local = base.endsWith(".local")
+    ? base
+    : locals.includes(".env.local")
+      ? ".env.local"
+      : highestLocal;
+  const all = await readAllFolderKeys(cwd).catch(() => undefined);
+  if (!all) return local;
+  const ranksAbove = (source: string, file: EnvFileName) =>
+    loadOrder.includes(source as EnvFileName) &&
+    loadOrder.indexOf(source as EnvFileName) < loadOrder.indexOf(file);
+  const keys = [...all.publishableKeys, ...all.secretKeys];
+  const target = keys.some((key) => ranksAbove(key.source, local)) ? highestLocal : local;
+
+  for (const line of all.unreadableLines ?? []) {
+    if (!ranksAbove(line.source, target)) continue;
+    log.warn(
+      `\`${line.source}\` has a \`${line.name}\` line the CLI can't read, and ${framework.name} loads that file before \`${target}\`. ` +
+        "If it holds an old key, it may keep beating the new one: fix or remove that line.",
+    );
+  }
+  return target;
+}
+
+/** The target by which files exist and hold Clerk keys, before the load order is weighed. */
+async function targetByFiles(
+  cwd: string,
+  fallbackFile: PreferredEnvFile,
+  loadOrder: readonly EnvFileName[] | undefined,
+): Promise<EnvFileName> {
+  const loads = (file: EnvFileName) => !loadOrder || loadOrder.includes(file);
 
   if (loads(DEV_LOCAL_ENV_FILE) && (await Bun.file(join(cwd, DEV_LOCAL_ENV_FILE)).exists())) {
     return DEV_LOCAL_ENV_FILE;

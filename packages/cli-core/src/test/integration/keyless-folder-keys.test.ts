@@ -326,6 +326,29 @@ describe("a Next.js folder whose .env.development.local can't be read", () => {
   });
 });
 
+// `.env.development` is meant to be committed, so the secret key never goes
+// there; `.env.development.local` ranks above it, so the new keys win.
+describe("a Vite folder with the publishable key in .env.development and the secret key in .env.local", () => {
+  beforeEach(async () => {
+    signOut();
+    await useFramework("vite");
+    await write(".env.development", `VITE_CLERK_PUBLISHABLE_KEY=${FOLDER_PK}\n`);
+    await write(".env.local", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
+  });
+
+  test("env pull writes both keys to .env.development.local and leaves .env.development alone", async () => {
+    const result = await run("env", "pull");
+
+    expect(result.exitCode).toBe(0);
+    expect(await Bun.file(join(h.tempDir, ".env.development")).text()).toBe(
+      `VITE_CLERK_PUBLISHABLE_KEY=${FOLDER_PK}\n`,
+    );
+    const written = await Bun.file(join(h.tempDir, ".env.development.local")).text();
+    expect(written).toContain(`CLERK_SECRET_KEY=${SECRET_KEY}`);
+    expect(written).toContain(`VITE_CLERK_PUBLISHABLE_KEY=${FOLDER_PK}`);
+  });
+});
+
 // Next.js reads only `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, so env pull skips the generic name.
 describe("a Next.js folder whose publishable key is under the generic name", () => {
   beforeEach(async () => {
