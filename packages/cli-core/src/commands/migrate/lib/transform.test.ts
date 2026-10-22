@@ -223,6 +223,21 @@ describe("transformUsers", () => {
     }
   });
 
+  test("rejects a postTransform that returns a non-native thenable", () => {
+    registerCustomSource({
+      ...clerkSource,
+      key: "thenable-post",
+      postTransform: (() => ({ then: () => undefined })) as unknown as SourceEntry["postTransform"],
+    });
+    try {
+      expect(() => transformUsers([{ id: "u1" }], "thenable-post")).toThrow(
+        /"thenable-post" source's postTransform returned a promise/,
+      );
+    } finally {
+      __resetCustomSourcesForTesting();
+    }
+  });
+
   test("names the source and the row when postTransform throws", () => {
     registerCustomSource({
       ...clerkSource,
