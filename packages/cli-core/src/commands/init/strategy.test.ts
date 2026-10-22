@@ -125,6 +125,19 @@ describe("init strategy", () => {
     expect(pullMod.pull).not.toHaveBeenCalled();
   });
 
+  test("--template still creates the app when the project is already set up", async () => {
+    setup();
+    mockExistingProject(KEYLESS_CTX);
+    spyOn(scaffoldMod, "scaffold").mockResolvedValue({ actions: [], postInstructions: [] });
+
+    await init({ template: "b2b-saas", yes: true });
+
+    expect(keylessMod.createAccountlessApp).toHaveBeenCalledWith(
+      KEYLESS_CTX.framework.dep,
+      "b2b-saas",
+    );
+  });
+
   test("--template with --login throws a usage error", async () => {
     setup();
 

@@ -221,7 +221,9 @@ export async function init(options: InitOptions = {}) {
   const skipScaffoldConfirm = overrides.skipConfirm || bootstrap != null;
   const { alreadySetUp } = await detectAndInstall(ctx.cwd, ctx, skipScaffoldConfirm);
 
-  if (alreadySetUp) {
+  // `--template` asks for an application, not files, so it still runs the strategy
+  // when the scaffold has nothing left to do.
+  if (alreadySetUp && !options.template) {
     setTelemetryStage("already_set_up");
     log.success("\nClerk is already set up in this project.");
     if (agent && strategy === "manual") {
