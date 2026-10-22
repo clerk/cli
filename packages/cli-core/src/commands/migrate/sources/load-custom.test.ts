@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
 import { loadCustomSource, validateSource } from "./load-custom.ts";
-import { __resetCustomSourcesForTesting } from "./registry.ts";
+import { __resetCustomSourcesForTesting, resolveSource } from "./registry.ts";
 
 let workDir: string;
 let originalCwd: string;
@@ -111,6 +111,13 @@ describe("loadCustomSource", () => {
   test("reports a directory given instead of a file", async () => {
     fs.mkdirSync(path.join(workDir, "adir"), { recursive: true });
     await expect(loadCustomSource("./adir")).rejects.toThrow(/is a directory/);
+  });
+
+  // `--source` hashes the file before loading it, and reading a directory
+  // threw a raw EISDIR ahead of the usage error.
+  test("--source reports a directory as a usage error, not EISDIR", async () => {
+    fs.mkdirSync(path.join(workDir, "adir"), { recursive: true });
+    await expect(resolveSource("./adir")).rejects.toThrow(/is a directory/);
   });
 
   test("reports a file that does not parse, quoting the syntax error", async () => {
