@@ -17,7 +17,12 @@ import {
   type AppliedFile,
 } from "./files.ts";
 import { planStarter } from "./starter.ts";
-import { planAllCapabilities } from "./capabilities.ts";
+import {
+  personalTeamConflictNote,
+  personalTeamConflicts,
+  planAllCapabilities,
+  readEntitlements,
+} from "./capabilities.ts";
 import { sdkHealth, resolvedSDKHealth } from "./sdk-health.ts";
 import { integrationHandoff } from "./handoff.ts";
 import {
@@ -97,6 +102,8 @@ export interface SetupPreview {
   appleWarning?: string;
   /** Why a Mac app signed by a Personal Team has no Associated Domain. */
   personalTeamNote?: string;
+  /** Entitlements already in a file that its Personal Team can't sign, one note per file. */
+  personalTeamConflicts: string[];
   signInUIRequested: boolean;
   starter?: Awaited<ReturnType<typeof planStarter>>;
 }
@@ -137,6 +144,7 @@ export async function prepareSetup(
       "Native Apple sign-in requires an explicitly selected Clerk application and confirmed native identity.",
     );
   const originalAction = local.actions[0]!;
+  const mac = inspection.input.selection.sdk === "macosx";
   let appleEnabled = options.signInWithApple === true;
   let appleWarning: string | undefined;
   if (options.checkAppleConnection && remote && !options.signInWithApple) {
@@ -175,9 +183,32 @@ export async function prepareSetup(
           originalAction.type === "modify" ? originalAction.content : inspection.document.source,
           remote?.context.frontendHost,
           appleEnabled,
-          !(options.personalTeam && inspection.input.selection.sdk === "macosx"),
+          !(options.personalTeam && mac),
         )
       : undefined;
+  // Setup never removes entitlements, so name the ones already there that the team can't sign,
+  // instead of saying they were left out.
+  const conflictNotes: string[] = [];
+  const conflicting = new Set<string>();
+  if (options.personalTeam && capabilities) {
+    const files = new Set<string>();
+    for (const context of inspection.contexts) {
+      const file = context.settings.CODE_SIGN_ENTITLEMENTS?.trim();
+      if (!file || files.has(file)) continue;
+      files.add(file);
+      let conflicts: string[];
+      try {
+        const source = await readEntitlements(context);
+        conflicts = source === undefined ? [] : personalTeamConflicts(source, mac);
+      } catch {
+        continue;
+      }
+      for (const conflict of conflicts) conflicting.add(conflict);
+      if (conflicts.length) conflictNotes.push(personalTeamConflictNote(file, conflicts));
+    }
+    if (appleWarning === PERSONAL_TEAM_APPLE && conflicting.has("Sign in with Apple"))
+      appleWarning = undefined;
+  }
   if (capabilities) {
     if (
       capabilities.projectSource !==
@@ -263,9 +294,10 @@ export async function prepareSetup(
     appleRequested: options.signInWithApple === true,
     appleWarning,
     personalTeamNote:
-      options.personalTeam && capabilities && inspection.input.selection.sdk === "macosx"
+      options.personalTeam && capabilities && mac && !conflicting.has("Associated Domains")
         ? PERSONAL_TEAM_DOMAINS
         : undefined,
+    personalTeamConflicts: conflictNotes,
     signInUIRequested: options.signInUI === true,
     starter,
     sdk: originalAction,
@@ -488,6 +520,8 @@ export async function applySetup(
       remaining.push({ id: "apple-provider-review", detail: preview.appleWarning });
     if (preview.personalTeamNote)
       remaining.push({ id: "associated-domains", detail: preview.personalTeamNote });
+    for (const detail of preview.personalTeamConflicts)
+      remaining.push({ id: "personal-team-entitlements", detail });
     if (sdkCheck.status === "fail" || (preview.sdk.type === "skip" && sdkCheck.status !== "pass"))
       remaining.push({ id: "sdk-version", detail: sdkCheck.message });
     if (preview.resolvePackages)

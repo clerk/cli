@@ -422,6 +422,36 @@ test("doctor applies the Personal Team rule instead of pointing back at clerk in
   ).toEqual(["pass", "pass"]);
 });
 
+test("names entitlements a Personal Team can't sign when an app moves to one", async () => {
+  // Set up on a team Xcode doesn't mark personal, as 4.0.0 did, so both entitlements are added.
+  const { root, dependencies } = await signedFixture("macos", false, false);
+  const options = { root, agent: true, json: true, appIdPrefix: "PERSONAL01" };
+  await runAppleInit(options, "app_test", dependencies);
+  const personal = {
+    ...dependencies,
+    xcodeTeams: [{ id: "PERSONAL01", name: "Sean Perez", personal: true }],
+  };
+  spies.push(spyOn(coordinator, "canSetUpXcode").mockReturnValue(true));
+  const ctx = {
+    getProfile: async () => ({ profile: { appId: "app_test" } }),
+  } as unknown as DoctorContext;
+  const results = await runIOSDoctorChecks(ctx, { root }, personal);
+  const conflicts = results.filter((result) =>
+    result.name.startsWith("Personal Team entitlements:"),
+  );
+  expect(conflicts.map((result) => result.status)).toEqual(["warn", "warn"]);
+  expect(conflicts[0]!.message).toContain(
+    "still has Sign in with Apple and Associated Domains, which a Personal Team can't sign",
+  );
+
+  captured.clear();
+  await runAppleInit(options, "app_test", personal);
+  const remaining: { id: string; detail: string }[] = JSON.parse(captured.out).handoff.remaining;
+  // One note for the shared file, and nothing claims the entitlements were left out.
+  expect(remaining.filter((item) => item.id === "personal-team-entitlements")).toHaveLength(1);
+  expect(remaining.some((item) => item.detail.includes("left out"))).toBe(false);
+});
+
 test("rejects --sign-in-with-apple for a starter on a Personal Team", async () => {
   const { root, dependencies } = await signedFixture("ios", true, true);
   await expect(

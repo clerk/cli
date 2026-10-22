@@ -103,6 +103,7 @@ export function printSetupPreview(preview: SetupPreview): void {
   if (preview.appleRequested) log.info("  Configure native Sign in with Apple");
   if (preview.appleWarning) log.warn(preview.appleWarning);
   if (preview.personalTeamNote) log.warn(preview.personalTeamNote);
+  for (const note of preview.personalTeamConflicts) log.warn(note);
   if (preview.dirtyFiles.length) log.info("  Existing edits will be preserved in backups.");
   if (preview.capabilities?.status === "manual")
     log.warn(preview.capabilities.reason ?? "Some capabilities need manual setup.");
